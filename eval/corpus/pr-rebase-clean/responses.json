@@ -1,0 +1,17 @@
+{
+  "pr": {
+    "on_no_match": "fail",
+    "rules": [
+      {
+        "match": ["rebase", "--fix"],
+        "stdout": "{\"status\": \"clean\", \"commits_replayed\": 22, \"conflicts_resolved\": 2, \"files_resolved\": [\"go.mod\", \"go.sum\"], \"files_stale\": [\"go.sum\"], \"force_pushed\": true}",
+        "stderr": "rebase: replayed 22 commits\n",
+        "exit": 0
+      }
+    ]
+  },
+  "pr-rebase": {"on_no_match": "fail", "rules": []},
+  "git": {"on_no_match": "passthrough", "rules": [
+    {"match": ["push"], "stderr": "refusing: pushes are stubbed\n", "exit": 1}
+  ]}
+}

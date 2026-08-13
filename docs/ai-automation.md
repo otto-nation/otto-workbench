@@ -326,6 +326,7 @@ statistics over repeated runs are shared and know nothing about any one task.
 |---|---|---|
 | `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
+| `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
 
 A `review` finding counts as matched when its path, severity, and description all
 line up and its line range *overlaps* the manifest's `line_range` — not when its
@@ -344,6 +345,33 @@ case fails before the fix and passes after it — an oracle that cannot fail, or
 cannot be satisfied, measures nothing. Because CI failures are usually
 environment-shaped, these cases put stub binaries on `PATH` rather than depending
 on what the host happens to have installed, so they fail the same way everywhere.
+
+A `skill` case grades a procedure rather than an artifact. `pr-comments` and
+`pr-rebase` run inside a Claude session, and their whole effect is the sequence
+of shell commands they issue — which is also how both state their constraints
+("never pass `--post` before the user has seen the drafts", "never run raw
+`git push --force-with-lease`"). So the harness puts recording shims on `PATH`,
+injects the live `SKILL.md` body as the prompt, and scores the trace: `requires`
+groups must appear **in order**, `forbids` groups must not appear at all. Any
+violation drops precision to zero — a constraint is not something you get
+partial credit for breaking.
+
+Shims for the CLIs a skill drives are fail-closed: a call matching no rule exits
+`97` loudly, so a fixture gap cannot read as a pass. `git` is passthrough
+instead, because the fixture is a real repo and `git status` should work; only
+the rules that matter are intercepted, and the attempt is still traced.
+
+The `SKILL.md` is read from `ai/claude/skills/`, never copied into a case, so
+editing a skill changes its eval with no corpus edit. That is the point: before
+this, there was no way to tell whether a change to a `SKILL.md` made the skill
+better or worse.
+
+Two limits worth naming. The trace cannot see obligations that are text-only,
+such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
+regenerate those files by hand. And each case is a single turn, with the user's
+side of the conversation encoded in the scenario prompt — which covers both
+sides of the `pr-comments` approval gate as two cases, but does not exercise a
+real multi-turn exchange.
 
 ### What the eval gates on
 

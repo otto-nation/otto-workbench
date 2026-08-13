@@ -6,31 +6,55 @@ different readers agree on one directory: the ``pr`` CLI resolving a PR it is
 about to review, ``workbench-statusline`` rendering a prompt, and ui-code's
 server watching a repo it has never checked out.
 
-The repo key is the origin URL's whole path below the host, flattened —
-``acme-widget``, not ``widget``, and ``group-subgroup-widget`` for a nested
-GitLab project. A bare repo name is not unique: ``acme/api`` and
-``other-org/api`` would share a directory, so one repo's run would overwrite the
-other's ``state.json`` and hold its ``run.lock``, serializing PRs that have
-nothing to do with each other. Forks and ordinary names (``api``, ``docs``,
-``site``) make that collision routine, and keeping only the last namespace
-segment would leave the same collision in place one level up.
+Two repos that share a repo key share one ``state.json`` and one ``run.lock``:
+one run overwrites the other's state and serializes behind its lock, which is
+the under-locking bug this layout exists to close. ``acme/api`` and
+``other-org/api`` are the routine case, and every attempt to keep such pairs
+apart by flattening the origin path into one component with a character map has
+left another pair colliding — a lossy map cannot be injective, whatever the map.
 
-Three rules finish the key, each stated so a second implementation can mirror it:
+So the key does not rely on the flattening for distinctness::
+
+    key = <readable>-<digest>
+
+The digest makes two different repos impossible to confuse. The readable part is
+there only so a human reading ``pr/`` can tell which directory is which, which
+frees it to be as lossy as flattening a path into one component requires.
+
+The rule, in one paragraph because ui-code has to mirror it and a rule that is
+hard to restate is itself a defect:
+
+    Reduce the origin URL to a **canonical form**: for a remote that names a
+    host (an explicit ``scheme://authority``, or scp-style ``host:path``), the
+    path below the host; for a ``file://`` URL or a plain filesystem path, the
+    trailing path segment alone. Strip leading and trailing ``/``, collapse
+    repeated ``/``, strip one trailing ``.git`` case-insensitively, and
+    lowercase the result. An empty canonical form means no key — return
+    ``None``. The key is ``slug(canonical)``, truncated to 64 characters and
+    stripped of trailing ``-``, then ``-``, then the first 8 hex characters of
+    ``sha256(canonical.encode("utf-8")).hexdigest()``. When the readable part is
+    empty, the key is the digest alone.
+
+The slash normalization runs before the ``.git`` strip, not after: git accepts
+``https://github.com/acme/widget.git/``, whose trailing slash hides the suffix
+from a strip that ran first, and that spelling has to reach the same key as
+every other spelling of the same repo.
+
+Two properties of that rule a mirror has to reproduce exactly, because a run
+that disagrees about either looks in a directory nobody writes:
 
 * **A remote is hosted per its scheme, never per its authority.** ``file`` is
   never hosted, whatever authority follows it, because git ignores a file URL's
   authority and clones the path — ``file://localhost/srv/git/widget.git`` is the
-  same clone as ``/srv/git/widget.git``. A hosted URL naming no path names no
-  repo, and keys ``None`` rather than its host.
-* **Each path segment is slugged on its own, and a segment that slugs to empty
-  stands in the first 8 hex characters of the SHA-256 of its UTF-8 bytes.**
-  Slugging the whole path at once drops such a segment entirely, which would key
-  ``acme/文档`` and ``acme/日本語`` alike as ``acme``.
-* **The repo key folds to lowercase, after slugging; the branch slug never
-  folds.** Repo paths are case-insensitive on GitHub and GitLab, so two
-  differently-cased remotes are one repo; git refs are case-sensitive, so
-  ``feat/A`` and ``feat/a`` are two branches. Folding after slugging keeps the
-  fold ASCII-only, where ``.lower()`` and ``.toLowerCase()`` agree byte for byte.
+  same clone as ``/srv/git/widget.git``. A remote naming no path names no repo.
+* **The repo key folds to lowercase; the branch slug never folds.** Repo paths
+  are case-insensitive on GitHub and GitLab, so two differently-cased remotes
+  are one repo; git refs are case-sensitive, so ``feat/A`` and ``feat/a`` are
+  two branches. The fold is on the canonical form, so it is what the digest
+  sees: mirror it with Unicode default case conversion — Python's ``.lower()``
+  and TypeScript's ``.toLowerCase()``, never a locale-sensitive variant such as
+  ``toLocaleLowerCase``, which folds ``I`` to ``ı`` under a Turkish locale and
+  would hand one repo two digests.
 
 There is deliberately no second key format. An alternate PR-number key would be
 a second source of truth for one target, and a transient ``gh`` failure could
@@ -62,8 +86,9 @@ TARGETS_DIR = "pr"
 # exactly; tests/pr_target_test.py::SLUG_VECTORS is the shared fixture.
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
-# Everything up to the last "/" or ":", used only for remotes that name no host.
-_REPO_TAIL_RE = re.compile(r"[/:]")
+# "acme//widget" is "acme/widget": git accepts the doubled separator and clones
+# the same repo, so the two spellings have to reduce to one canonical form.
+_SLASHES_RE = re.compile(r"/+")
 
 # A remote names a host two ways: an explicit scheme (https://, ssh://, git://),
 # or scp-style host:path. Everything else is a filesystem path
@@ -90,90 +115,94 @@ def slug(branch: str) -> str:
     return _SLUG_RE.sub("-", branch).strip("-")
 
 
-def _hosted_path(url: str) -> str | None:
-    """A hosted remote's whole path below the host, or None when it has no host.
+def _remote_path(url: str) -> tuple[str, bool]:
+    """A remote's path, and whether a host qualified it.
 
     Hosted is decided by the scheme, not by the authority. Deciding on the
     authority made ``file://localhost/srv/git/widget.git`` key as hosted
     (``srv-git-widget``) while the identical clone spelled ``/srv/git/widget.git``
     keyed ``widget`` — one target, two state dirs, two locks.
 
-    A hosted URL with an empty path returns "" rather than None, which keeps a
-    partially-built ``ssh://git@github.com/`` out of the no-host branch: that
-    branch would split the whole URL and key the userinfo and host.
+    A ``file`` URL still yields the path *below* its authority, unhosted: the
+    authority is git's to discard, so ``file://localhost/`` names no path and no
+    repo, rather than naming a repo called ``localhost``.
     """
     scheme = _SCHEME_RE.match(url)
     if scheme:
-        if scheme.group(1).lower() == _LOCAL_SCHEME:
-            return None
         _authority, _, path = url[scheme.end():].partition("/")
-        return path
+        return path, scheme.group(1).lower() != _LOCAL_SCHEME
     scp = _SCP_RE.match(url)
-    return url[scp.end():] if scp else None
+    return (url[scp.end():], True) if scp else (url, False)
 
 
 def _drop_git_suffix(path: str) -> str:
-    return path[: -len(".git")] if path.endswith(".git") else path
+    """One trailing ``.git``, whatever its case.
 
-
-def _slug_segment(segment: str) -> str:
-    """One path segment as a key component, never empty.
-
-    A segment holding no ``[A-Za-z0-9._-]`` character slugs to nothing and would
-    vanish from the key, so ``acme/文档`` and ``acme/日本語`` would both key
-    ``acme`` and share one ``state.json`` and one ``run.lock``. The stand-in is
-    the first 8 hex characters of the segment's SHA-256, which any language can
-    reproduce from the segment's UTF-8 bytes.
+    ``widget.GIT`` and ``widget.git`` are one repo on every host, so a clone
+    spelled either way has to reach one key. Case-insensitively here rather than
+    after the fold so that the fold has one job.
     """
-    slugged = slug(segment)
-    # ceiling: the stand-in fires only on an empty slug, not on a lossy one, so
-    # acme/wídget and acme/wîdget both key acme-w-dget and still collide. An
-    # empty slug stops naming the repo at all; lossy collapse is the ceiling
-    # slug() already declares. The narrow rule is also the one ui-code can mirror
-    # without matching Python's character-class semantics exactly. Upgrade to
-    # "digest whenever slugging is lossy" if two live repos ever collide that way.
-    return slugged or hashlib.sha256(segment.encode("utf-8")).hexdigest()[:8]
+    return path[: -len(".git")] if path.lower().endswith(".git") else path
 
 
-def _slug_path(path: str) -> str:
-    """A whole path as one key component, slugged a segment at a time.
+def _canonical(url: str) -> str:
+    """The origin URL reduced to the string the key is derived from.
 
-    Per segment rather than all at once so that no segment can disappear. Empty
-    segments (``acme//widget``) are separator noise, not content, and are
-    dropped. This is byte-identical to slugging the whole path for any path whose
-    every segment holds at least one sluggable character — ASCII or not — which
-    is every published vector; it differs only where the old behaviour dropped a
-    segment, including for ASCII segments like ``@`` that hold none.
+    Every spelling git accepts for one repo collapses here, and nowhere else:
+    the digest and the readable part are both computed from this, so they cannot
+    disagree about which repo they name.
     """
-    return "-".join(_slug_segment(s) for s in path.split("/") if s)
+    # ceiling: the host is dropped here, so github.com/acme/widget and
+    # gitlab.com/acme/widget are one key. Existing behaviour from the approved
+    # design, kept: one repo is routinely spelled with several hosts (an ssh
+    # alias, a mirror), and those spellings must take one lock. Upgrade trigger:
+    # anyone running the pr CLI against two same-pathed repos on two hosts.
+    path, hosted = _remote_path(url)
+    path = _SLASHES_RE.sub("/", path).strip("/")
+    if not hosted:
+        # ceiling: a local remote keys on its trailing segment alone, so
+        # /srv/a/widget and /srv/b/widget are one key. Deliberate — a local
+        # clone's leading directories are machine-specific, and keying on them
+        # would give one repo a different key on every machine, which is the
+        # worse failure. Upgrade trigger: anyone running two same-named local
+        # repos against the pr CLI on one machine.
+        path = path.rpartition("/")[2]
+    return _drop_git_suffix(path).lower()
 
 
 def _repo_key(url: str) -> str | None:
     """An origin URL as one path component naming the repo, or None.
 
-    The whole path below the host, not its last segment or two:
-    ``git@github.com:acme/widget.git`` and ``https://github.com/acme/widget``
-    both give ``acme-widget``, and ``gitlab.com/group/subgroup/widget`` gives
-    ``group-subgroup-widget`` — truncating to a fixed depth would let two nested
-    projects sharing a leaf namespace collide. Composed through ``slug`` so the
-    separator rules stay in one place.
+    A readable prefix and a digest of the canonical form. The digest is what
+    makes the key injective — two repos cannot collide however the flattening
+    mangles them — and the prefix is what makes ``pr/`` legible to a human::
 
-    Lowercased because two clones of one GitHub repo can spell the path with
-    different case and must take one lock. Only here: ``slug`` is shared with the
-    branch, and git refs are case-sensitive, so folding there would merge
-    ``feat/A`` and ``feat/a`` into one target. Folding after slugging keeps the
-    input ASCII, away from Turkish-I and the rest of the locale traps a
-    cross-language contract cannot afford.
+        git@github.com:acme/widget.git          -> acme/widget   -> acme-widget-<d>
+        https://github.com/Acme/Widget.GIT      -> acme/widget   -> acme-widget-<d>   (same key)
+        https://gitlab.com/group/sub/widget.git -> group/sub/widget -> group-sub-widget-<d>
+        https://github.com/acme/文档.git         -> acme/文档      -> acme-<d>
+        /srv/git/widget.git                     -> widget        -> widget-<d>
+        file://localhost/srv/git/widget.git     -> widget        -> widget-<d>        (same key)
+        ssh://git@github.com/                   -> ""            -> None
+
+    Because the prefix carries no distinctness, it is free to be lossy: a
+    segment that slugs away contributes nothing, and two paths that flatten
+    alike (``acme/wid/get`` and ``acme/wid-get``) share a prefix and differ in
+    the digest. That is the design, not a defect in it.
     """
-    url = url.rstrip("/")
-    hosted = _hosted_path(url)
-    # None is "no host to namespace under", so there is nothing above the repo
-    # directory that means anything: /srv/git/widget.git and ../widget are both
-    # "widget". An empty hosted path is a hosted URL naming no repo, and keys
-    # None below rather than falling through to name the host.
-    path = hosted if hosted is not None else _REPO_TAIL_RE.split(url)[-1]
-    # One fold, on the repo key only — see the branch-slug asymmetry above.
-    return _slug_path(_drop_git_suffix(path.strip("/"))).lower() or None
+    canonical = _canonical(url)
+    if not canonical:
+        return None
+    # 8 hex characters is 32 bits of the canonical form's SHA-256: at the scale
+    # one machine keys repos, a collision needs no more, and the readable part
+    # still leads the directory name.
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
+    # ceiling: the readable prefix is truncated at 64 characters, so two long
+    # paths can share it. Harmless — the digest still separates them — and the
+    # cap is what keeps the directory name inside every filesystem's component
+    # limit. Nothing to upgrade; the note is here so nobody "fixes" it.
+    readable = slug(canonical)[:64].rstrip("-")
+    return f"{readable}-{digest}" if readable else digest
 
 
 def repo_key_from_origin(cwd: str | None = None) -> str | None:

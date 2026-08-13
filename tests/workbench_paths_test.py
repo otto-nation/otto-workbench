@@ -15,8 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import init_worktree
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 MCP_SERVER = REPO_ROOT / "ai" / "claude" / "mcps" / "server.py"
@@ -244,6 +242,21 @@ class TestWorktreeStateDir:
         """Callers that only read must not leave a directory behind."""
         workbench_paths.worktree_state_dir(worktree)
         assert not (worktree / ".git/workbench").exists()
+
+    def test_the_git_dir_is_resolved_once_per_worktree(self, worktree, monkeypatch):
+        """One `pr` run resolves this for the lock, the trail, and every state
+        read and write — but the worktree does not move under it."""
+        real = workbench_paths.subprocess.run
+        calls = []
+
+        def _counted(*args, **kwargs):
+            calls.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(workbench_paths.subprocess, "run", _counted)
+        workbench_paths.worktree_state_dir(worktree)
+        workbench_paths.worktree_state_dir(worktree)
+        assert len(calls) == 1
 
     def test_a_directory_outside_a_worktree_raises(self, tmp_path):
         outside = tmp_path / "plain"

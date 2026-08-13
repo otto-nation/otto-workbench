@@ -20,10 +20,12 @@ from pr_state import (
     apply, _domains,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
-    STATE_FILE, STATE_VERSION,
+    STATE_VERSION,
 )
 import workbench_paths
 from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
+
+from conftest import state_path
 
 
 # ── Dataclass construction ──────────────────────────────────────────────────
@@ -325,14 +327,9 @@ def test_load_state_missing_file():
     assert result is None
 
 
-def _state_path(root: Path) -> Path:
-    """The state file of *root*, resolved the way the library resolves it."""
-    return workbench_paths.worktree_state_dir(root) / STATE_FILE
-
-
 def _write_raw_state(root: Path, payload) -> Path:
     """Write a state file's bytes directly, bypassing save_state."""
-    path = _state_path(root)
+    path = state_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload if isinstance(payload, str) else json.dumps(payload))
     return path
@@ -354,7 +351,7 @@ def _state_with_one_run(root: Path) -> dict:
         )},
     )
     save_state(root, state)
-    return json.loads(_state_path(root).read_text())
+    return json.loads(state_path(root).read_text())
 
 
 def test_load_state_returns_none_for_truncated_json(worktree, capsys):
@@ -469,7 +466,7 @@ def test_run_keys_load_back_as_ints(worktree):
     state.ci.latest_run_id = 999
     save_state(worktree, state)
 
-    raw = json.loads(_state_path(worktree).read_text())
+    raw = json.loads(state_path(worktree).read_text())
     assert list(raw["ci"]["runs"]) == ["999"]
 
     loaded = load_state(worktree)
@@ -765,7 +762,7 @@ def test_load_state_without_seen_ids_defaults_empty(worktree):
     """Old state files without seen_issue_comment_ids should deserialize with []."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     save_state(worktree, state)
-    path = _state_path(worktree)
+    path = state_path(worktree)
     data = json.loads(path.read_text())
     del data["comments"]["seen_issue_comment_ids"]
     path.write_text(json.dumps(data))
@@ -778,7 +775,7 @@ def test_load_state_without_seen_review_body_comment_ids_defaults_empty(worktree
     """Old state files without seen_review_body_comment_ids should deserialize with []."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     save_state(worktree, state)
-    path = _state_path(worktree)
+    path = state_path(worktree)
     data = json.loads(path.read_text())
     del data["comments"]["seen_review_body_comment_ids"]
     path.write_text(json.dumps(data))
@@ -925,10 +922,10 @@ def test_fix_summary_head_sha_defaults_empty_on_legacy_state(worktree):
         fix=FixSummary(head_sha="abc1234"),
     )
     save_state(worktree, state)
-    state_path = _state_path(worktree)
-    raw = json.loads(state_path.read_text())
+    path = state_path(worktree)
+    raw = json.loads(path.read_text())
     del raw["fix"]["head_sha"]
-    state_path.write_text(json.dumps(raw))
+    path.write_text(json.dumps(raw))
     assert load_state(worktree).fix.head_sha == ""
 
 
@@ -950,10 +947,10 @@ def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(worktree):
         fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
     )
     save_state(worktree, state)
-    state_path = _state_path(worktree)
-    raw = json.loads(state_path.read_text())
+    path = state_path(worktree)
+    raw = json.loads(path.read_text())
     del raw["fix"]["threads"][0]["commit_sha"]
-    state_path.write_text(json.dumps(raw))
+    path.write_text(json.dumps(raw))
     assert load_state(worktree).fix.threads[0].commit_sha == ""
 
 
@@ -1165,7 +1162,7 @@ def test_load_state_without_fix_defaults_empty(worktree):
     """Old state files without fix key should deserialize with empty FixSummary."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     save_state(worktree, state)
-    path = _state_path(worktree)
+    path = state_path(worktree)
     data = json.loads(path.read_text())
     del data["fix"]
     path.write_text(json.dumps(data))

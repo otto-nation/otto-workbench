@@ -23,6 +23,7 @@ loaded this module.
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
 import subprocess
@@ -101,19 +102,28 @@ class NotAWorktree(RuntimeError):
     """Raised when a path has no git dir to hang per-worktree state from."""
 
 
+@functools.lru_cache(maxsize=None)
 def _git_dir(worktree_root: Path) -> Path:
     """The worktree's own git dir, absolute.
 
     ``--absolute-git-dir`` reports ``<common>/worktrees/<name>`` for a linked
     worktree and ``<repo>/.git`` for the main one, which is what scopes the
     state to a single worktree rather than to the repository.
+
+    Cached for the life of the process: a single ``pr`` run resolves the state
+    dir once for the lock, once for the trail, and once per state read or
+    write, and a worktree does not move out from under a run. Failures are not
+    cached — ``lru_cache`` does not remember a raise — so a path that becomes a
+    worktree later still resolves.
     """
     try:
         result = subprocess.run(
             ["git", "-C", str(worktree_root), "rev-parse", "--absolute-git-dir"],
             capture_output=True, text=True,
         )
-    except (FileNotFoundError, NotADirectoryError) as exc:
+    except OSError as exc:
+        # git missing, not executable, or the path itself unusable — all the
+        # same answer here: there is no git dir to hang state from.
         raise NotAWorktree(f"no git available for {worktree_root}") from exc
     if result.returncode != 0:
         raise NotAWorktree(f"not inside a git worktree: {worktree_root}")

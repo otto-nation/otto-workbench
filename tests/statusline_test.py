@@ -28,6 +28,8 @@ sys.modules.setdefault("workbench_statusline", statusline)
 import pr_state  # noqa: E402
 import workbench_paths  # noqa: E402
 
+from conftest import state_path  # noqa: E402
+
 
 def _at(root: Path):
     """Make _pr_piece resolve its repo root to `root`.
@@ -35,7 +37,8 @@ def _at(root: Path):
     The patch lands on the subprocess module itself, so it also answers the
     `git rev-parse` behind the state's own path. Both questions are stubbed
     from the real worktree, or the segment would look for state somewhere the
-    test never wrote it.
+    test never wrote it. A third git call routed through here needs its own
+    branch in `_run`, or it silently gets answered with the repo root.
     """
     git_dir = workbench_paths.worktree_state_dir(root).parent
 
@@ -44,11 +47,6 @@ def _at(root: Path):
         return SimpleNamespace(returncode=0, stdout=str(out))
 
     return patch("workbench_statusline.subprocess.run", side_effect=_run)
-
-
-def _state_path(root: Path) -> Path:
-    """The state file of *root*, resolved the way the library resolves it."""
-    return workbench_paths.worktree_state_dir(root) / pr_state.STATE_FILE
 
 
 def _save(root: Path, *domains, pr_number: int | None = 42):
@@ -74,7 +72,7 @@ def test_pr_piece_is_blank_without_a_state_file(worktree):
 def test_pr_piece_is_blank_for_a_corrupt_state_file(worktree, capsys):
     """The status line renders or it does not. It never tracebacks, and it
     never leaks load_state's warning into the terminal."""
-    path = _state_path(worktree)
+    path = state_path(worktree)
     path.parent.mkdir(parents=True)
     path.write_text("{ not json")
 
@@ -88,7 +86,7 @@ def test_pr_piece_survives_null_behind_a_scalar_field(worktree):
     behind an int or dict field used to load successfully and then crash in
     `_pr_details` — `failure_count > 0` on a `None`, `by_state.get()` on a
     `None`. serde now degrades a `null` there to the field's default."""
-    path = _state_path(worktree)
+    path = state_path(worktree)
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({
         "identity": {
@@ -112,7 +110,7 @@ def test_pr_piece_survives_a_wrong_typed_scalar_field(worktree):
     """Regression: `"failure_count": "many"` parsed cleanly and then raised
     TypeError on `failure_count > 0`, which killed the whole line rather than
     the segment. serde now degrades an unrecoverable value to the default."""
-    path = _state_path(worktree)
+    path = state_path(worktree)
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({
         "identity": {

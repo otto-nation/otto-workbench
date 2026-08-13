@@ -40,7 +40,7 @@ def _make_trail(d: str, script: str, events: list[tuple[str, str]]) -> str:
 class TestTrailDiscovery:
     def test_discover_worktree_trail(self, worktree):
         wb_dir = workbench_paths.worktree_state_dir(worktree)
-        wb_dir.mkdir(parents=True)
+        wb_dir.mkdir(parents=True, exist_ok=True)
         _make_trail(str(wb_dir), "ci-check", [("fetch", "fetched")])
         trails = otto_log.discover_trails(worktree_root=str(worktree))
         assert len(trails) >= 1

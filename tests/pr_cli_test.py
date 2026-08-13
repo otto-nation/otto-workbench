@@ -1035,7 +1035,12 @@ def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree,
 @patch("pr_cli.review_gc.gc_reviews", return_value=0)
 @patch("pr_cli.pr_context.resolve")
 def test_main_locks_for_gc(mock_resolve, _gc, _prune, worktree):
-    """gc deletes the state directory, so it is not safe to run unlocked."""
+    """gc deletes the state directory, so it is not safe to run unlocked.
+
+    Takes no stub_state_dir, unlike its neighbours: nothing here mocks
+    `pr_cli.subprocess.run`, so the real `git rev-parse` answers for the
+    worktree and the state dir resolves on its own.
+    """
     mock_resolve.return_value = _make_ctx(worktree_root=worktree)
     _run_main("--repo-dir", str(worktree), "gc")
     assert _lock_file(worktree).is_file()

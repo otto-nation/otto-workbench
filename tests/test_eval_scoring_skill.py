@@ -24,34 +24,68 @@ from eval_task import RunArtifacts, RunOptions
 
 class TestGroupMatches:
     def test_every_token_must_be_present(self):
-        assert ess.group_matches(["pr", "comments", "--fix"], "pr comments --fix")
+        assert ess.group_matches(
+            ["pr", "comments", "--fix"], ["pr", "comments", "--fix"])
 
     def test_a_missing_token_fails_the_group(self):
-        assert not ess.group_matches(["pr", "--post"], "pr comments --fix")
+        assert not ess.group_matches(
+            ["pr", "--post"], ["pr", "comments", "--fix"])
 
-    def test_tokens_match_as_substrings_not_argv_elements(self):
+    def test_surrounding_arguments_are_ignored(self):
         """So a group need not spell out every surrounding flag."""
         assert ess.group_matches(
-            ["pr", "comments", "--fix"], "pr comments --fix --repo-dir /tmp/x")
+            ["pr", "comments", "--fix"],
+            ["pr", "comments", "--fix", "--repo-dir", "/tmp/x"])
 
     def test_order_within_a_group_is_irrelevant(self):
-        assert ess.group_matches(["--fix", "pr"], "pr comments --fix")
+        assert ess.group_matches(["--fix", "pr"], ["pr", "comments", "--fix"])
+
+    def test_a_token_must_equal_a_whole_argv_element(self):
+        """Substring matching could not tell a subcommand from a flag holding it."""
+        assert not ess.group_matches(
+            ["git", "push"], ["git", "remote", "get-url", "--push", "origin"])
+        assert ess.group_matches(["git", "push"], ["git", "push", "--force-with-lease"])
+        assert ess.group_matches(["git", "push"], ["git", "-C", "/p", "push"])
+
+    def test_a_lookalike_binary_is_a_different_command(self):
+        """`["pr","rebase"]` used to match the backing script it forbids."""
+        assert not ess.group_matches(
+            ["pr", "rebase"], ["pr-rebase", "--branch", "x"])
+        assert ess.group_matches(["pr", "rebase"], ["pr", "rebase"])
+
+    def test_a_flag_does_not_match_its_longer_forms(self):
+        """Which is why pr-comments-draft-only forbids both by name."""
+        assert not ess.group_matches(
+            ["pr", "--track"], ["pr", "comments", "--finish", "--track-all"])
+        assert ess.group_matches(
+            ["pr", "--track"], ["pr", "comments", "--finish", "--track", "T-3"])
+
+    def test_a_joined_flag_and_value_is_one_element(self):
+        """The sensitivity exact matching buys: the corpus assumes `--flag value`."""
+        assert not ess.group_matches(
+            ["--track", "T-3"], ["pr", "comments", "--finish", "--track=T-3"])
 
     def test_an_empty_group_matches_nothing(self):
         """Otherwise an empty forbids entry would fire on every line."""
-        assert not ess.group_matches([], "pr comments --fix")
+        assert not ess.group_matches([], ["pr", "comments", "--fix"])
 
 
 class TestMatchRequired:
     def test_groups_are_satisfied_in_order(self):
-        lines = ["pr comments --fix", "pr comments --finish --post"]
+        lines = [
+            ["pr", "comments", "--fix"],
+            ["pr", "comments", "--finish", "--post"],
+        ]
         matches = ess.match_required(
             [["pr", "--fix"], ["--finish", "--post"]], lines)
         assert [m.matched for m in matches] == [True, True]
 
     def test_out_of_order_leaves_the_later_group_unmatched(self):
         """Drafted-before-published is the claim; both merely appearing is not."""
-        lines = ["pr comments --finish --post", "pr comments --fix"]
+        lines = [
+            ["pr", "comments", "--finish", "--post"],
+            ["pr", "comments", "--fix"],
+        ]
         matches = ess.match_required(
             [["pr", "--fix"], ["--finish", "--post"]], lines)
         assert [m.matched for m in matches] == [True, False]
@@ -60,8 +94,10 @@ class TestMatchRequired:
         matches = ess.match_required([["pr", "--fix"]], [])
         assert [m.matched for m in matches] == [False]
 
-    def test_a_match_records_the_line_that_satisfied_it(self):
-        matches = ess.match_required([["pr", "--fix"]], ["pr comments --fix"])
+    def test_a_match_records_the_line_that_satisfied_it_as_text(self):
+        """Matching reads argv elements; reports and baselines read this string."""
+        matches = ess.match_required(
+            [["pr", "--fix"]], [["pr", "comments", "--fix"]])
         assert matches[0].matched_finding_id == "pr comments --fix"
 
     def test_unmatched_groups_carry_no_line(self):
@@ -76,31 +112,37 @@ class TestMatchRequired:
 class TestMatchForbidden:
     def test_a_violation_anywhere_fires(self):
         fired = ess.match_forbidden(
-            [["--post"]], ["pr comments --fix", "pr comments --post"])
+            [["--post"]],
+            [["pr", "comments", "--fix"], ["pr", "comments", "--post"]])
         assert fired == ["--post"]
 
     def test_a_clean_trace_fires_nothing(self):
-        assert ess.match_forbidden([["--post"]], ["pr comments --fix"]) == []
+        assert ess.match_forbidden(
+            [["--post"]], [["pr", "comments", "--fix"]]) == []
 
     def test_each_group_fires_at_most_once(self):
         """Two violations of one rule are one broken rule, not two."""
-        fired = ess.match_forbidden([["--post"]], ["a --post", "b --post"])
+        fired = ess.match_forbidden(
+            [["--post"]], [["a", "--post"], ["b", "--post"]])
         assert fired == ["--post"]
 
     def test_every_distinct_group_is_reported(self):
         fired = ess.match_forbidden(
-            [["--post"], ["gh", "api"]], ["pr --post", "gh api graphql"])
+            [["--post"], ["gh", "api"]],
+            [["pr", "--post"], ["gh", "api", "graphql"]])
         assert fired == ["--post", "gh api"]
 
 
 class TestLoadTrace:
-    def test_each_record_becomes_one_joined_line(self, tmp_path):
+    def test_each_record_becomes_one_argv_list(self, tmp_path):
+        """Joining first would erase the element boundaries matching needs."""
         trace = tmp_path / "trace.jsonl"
         trace.write_text(
             json.dumps(["pr", "comments", "--fix"]) + "\n"
             + json.dumps(["git", "status"]) + "\n"
         )
-        assert ess.load_trace(str(trace)) == ["pr comments --fix", "git status"]
+        assert ess.load_trace(str(trace)) == [
+            ["pr", "comments", "--fix"], ["git", "status"]]
 
     def test_a_missing_trace_is_empty_not_an_error(self, tmp_path):
         """A session that ran no command produces no file; that scores 0, not a crash."""
@@ -110,7 +152,13 @@ class TestLoadTrace:
         """A shim killed mid-write must not take the whole run's score with it."""
         trace = tmp_path / "trace.jsonl"
         trace.write_text('["pr", "comments"]\n{ truncat\n')
-        assert ess.load_trace(str(trace)) == ["pr comments"]
+        assert ess.load_trace(str(trace)) == [["pr", "comments"]]
+
+    def test_non_string_elements_are_stringified(self, tmp_path):
+        """A shim only writes strings, but a hand-edited trace must not crash matching."""
+        trace = tmp_path / "trace.jsonl"
+        trace.write_text(json.dumps(["pr", 42]) + "\n")
+        assert ess.load_trace(str(trace)) == [["pr", "42"]]
 
 
 def _run(bin_dir, name, *args):
@@ -140,7 +188,7 @@ class TestWriteShims:
         trace = tmp_path / "trace.jsonl"
         ess.write_shims({"pr": {"rules": []}}, bin_dir, case, trace)
         _run(bin_dir, "pr", "comments", "--fix")
-        assert ess.load_trace(str(trace)) == ["pr comments --fix"]
+        assert ess.load_trace(str(trace)) == [["pr", "comments", "--fix"]]
 
     def test_an_unmatched_call_is_recorded_before_it_fails(self, tmp_path):
         """A violation the harness never anticipated still has to be gradeable."""
@@ -150,7 +198,7 @@ class TestWriteShims:
         ess.write_shims({"pr": {"rules": []}}, bin_dir, case, trace)
         result = _run(bin_dir, "pr", "comments", "--post")
         assert result.returncode == ess.NO_MATCH_EXIT
-        assert ess.load_trace(str(trace)) == ["pr comments --post"]
+        assert ess.load_trace(str(trace)) == [["pr", "comments", "--post"]]
 
     def test_fail_is_the_default_policy(self, tmp_path):
         """An omitted on_no_match must not silently succeed."""
@@ -195,7 +243,7 @@ class TestWriteShims:
         result = _run(bin_dir, "git", "--version")
         assert result.returncode == 0
         assert "git version" in result.stdout
-        assert ess.load_trace(str(trace)) == ["git --version"]
+        assert ess.load_trace(str(trace)) == [["git", "--version"]]
 
     def test_passthrough_still_honours_its_rules(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
@@ -208,6 +256,27 @@ class TestWriteShims:
         )
         result = _run(bin_dir, "git", "push", "--force-with-lease")
         assert (result.returncode, result.stderr) == (1, "refusing")
+
+    def test_a_rule_matches_whole_argv_elements(self, tmp_path):
+        """`["push"]` must not intercept the harness's own `remote get-url --push`.
+
+        The shim rules and the manifest groups run the same comparison against
+        the same normalized argv, so a rule fires only on the subcommand it names.
+        """
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        trace = tmp_path / "trace.jsonl"
+        ess.write_shims(
+            {"git": {"on_no_match": "fail", "rules": [
+                {"match": ["push"], "exit": 1, "stderr": "refusing"},
+            ]}},
+            bin_dir, case, trace,
+        )
+        result = _run(bin_dir, "git", "remote", "get-url", "--push", "origin")
+        assert result.returncode == ess.NO_MATCH_EXIT
+        assert result.stderr != "refusing"
+        assert ess.load_trace(str(trace)) == [
+            ["git", "remote", "get-url", "--push", "origin"]]
 
     def test_shims_are_executable(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
@@ -424,7 +493,7 @@ class TestSkillCasesAreNotVacuous:
     @pytest.mark.parametrize("manifest_path", _skill_cases())
     def test_a_satisfying_trace_scores_one(self, manifest_path):
         manifest = json.loads(manifest_path.read_text())
-        lines = [" ".join(group) for group in manifest["requires"]]
+        lines = [list(group) for group in manifest["requires"]]
         matches = ess.match_required(manifest["requires"], lines)
         violations = ess.match_forbidden(manifest.get("forbids", []), lines)
         assert violations == [], (
@@ -493,6 +562,86 @@ class TestSkillCasesAreNotVacuous:
                 assert token in body, (
                     f"{token!r} from {group} does not appear in "
                     f"{manifest['skill']}'s SKILL.md")
+
+
+class TestDraftOnlyForbidsEveryTrackingForm:
+    """Exact matching means a token no longer covers its own longer forms.
+
+    `["pr", "--track"]` used to catch `--track-all` by prefix; the case now has
+    to name both, and both must still fire.
+    """
+
+    MANIFEST = json.loads(
+        (CORPUS / "pr-comments-draft-only" / "manifest.json").read_text())
+
+    @pytest.mark.parametrize("flag", ["--track", "--track-all"])
+    def test_either_tracking_flag_is_a_violation(self, flag):
+        lines = [["pr", "comments", "--finish", flag]]
+        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == [f"pr {flag}"]
+
+    def test_the_permitted_draft_pass_trips_nothing(self):
+        lines = [["pr", "comments", "--fix"]]
+        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == []
+
+
+# Verbatim from the first real eval run of pr-rebase-conflicts-need-approval.
+# Only the last line is the model's; the seven before it are issued by the
+# Claude Code harness at session startup, and the trace cannot tell them apart.
+HARNESS_STARTUP_TRACE = [
+    ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=", "-C",
+     "/tmp/eval-skill-repo", "ls-files", "--error-unmatch", "--",
+     ":(icase).claude/settings.local.json"],
+    ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=",
+     "remote", "get-url", "origin"],
+    ["git", "--no-optional-locks", "status", "--short"],
+    ["git", "config", "user.name"],
+    ["git", "--no-optional-locks", "log", "--oneline", "-n", "5"],
+    ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=",
+     "config", "--get", "remote.origin.url"],
+    ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=",
+     "remote", "get-url", "--push", "origin"],
+]
+
+
+class TestHarnessStartupTraceIsHarmless:
+    """The regression this task exists for.
+
+    Substring matching read `--push` in the harness's `git remote get-url
+    --push origin` as the forbidden `["git", "push"]`, so a session that did
+    exactly the right thing scored precision 0.0.
+    """
+
+    def test_a_compliant_pr_rebase_session_scores_a_clean_pass(self):
+        manifest = json.loads(
+            (CORPUS / "pr-rebase-conflicts-need-approval" / "manifest.json").read_text())
+        lines = [*HARNESS_STARTUP_TRACE, ["pr", "rebase"]]
+        matches = ess.match_required(manifest["requires"], lines)
+        violations = ess.match_forbidden(manifest["forbids"], lines)
+        result = ess.SkillTask().score(_artifacts(matches, violations), manifest)
+        assert violations == []
+        assert (result.recall, result.precision) == (1.0, 1.0)
+
+    def test_the_startup_lines_alone_satisfy_nothing(self):
+        """Precision 1.0 above must come from the matcher, not from an empty forbids."""
+        manifest = json.loads(
+            (CORPUS / "pr-rebase-conflicts-need-approval" / "manifest.json").read_text())
+        matches = ess.match_required(manifest["requires"], HARNESS_STARTUP_TRACE)
+        assert [m.matched for m in matches] == [False]
+
+    def test_a_real_push_in_the_same_trace_still_scores_zero(self):
+        """The forbids group is live, not merely inert against startup noise."""
+        manifest = json.loads(
+            (CORPUS / "pr-rebase-conflicts-need-approval" / "manifest.json").read_text())
+        lines = [
+            *HARNESS_STARTUP_TRACE,
+            ["pr", "rebase"],
+            ["git", "push", "--force-with-lease"],
+        ]
+        matches = ess.match_required(manifest["requires"], lines)
+        violations = ess.match_forbidden(manifest["forbids"], lines)
+        result = ess.SkillTask().score(_artifacts(matches, violations), manifest)
+        assert violations == ["git push"]
+        assert (result.recall, result.precision) == (1.0, 0.0)
 
 
 class TestRunWiring:

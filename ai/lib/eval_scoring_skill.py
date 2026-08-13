@@ -41,17 +41,23 @@ class TraceMatch:
     matched_finding_id: str = ""
 
 
-def group_matches(group: list[str], line: str) -> bool:
-    """True when every token in `group` is a substring of `line`.
+def group_matches(group: list[str], argv: list[str]) -> bool:
+    """True when every token in `group` equals one of `argv`'s elements.
 
-    Substring rather than exact argv element, so a group need not spell out
-    the flags around the part it cares about. An empty group is never a match:
-    `all([])` is True, and an empty `forbids` entry would then fail every run.
+    Exact elements, not substrings. Substring matching cannot tell a subcommand
+    from a flag that merely contains it — the harness issues
+    `git remote get-url --push origin` at session startup, which a `["git",
+    "push"]` forbids group matched as a substring, zeroing precision on a
+    session that never pushed. It also cannot tell a command from a lookalike:
+    `["pr", "rebase"]` sat inside the single word `pr-rebase`.
+
+    An empty group is never a match: `all([])` is True, and an empty `forbids`
+    entry would then fail every run.
     """
-    return bool(group) and all(token in line for token in group)
+    return bool(group) and all(token in argv for token in group)
 
 
-def _first_match_from(group: list[str], lines: list[str], start: int) -> int:
+def _first_match_from(group: list[str], lines: list[list[str]], start: int) -> int:
     """The index of the first line at or after `start` that `group` matches.
 
     `-1` when no such line exists, mirroring `str.find`'s failure value.
@@ -62,11 +68,14 @@ def _first_match_from(group: list[str], lines: list[str], start: int) -> int:
     return -1
 
 
-def match_required(groups: list[list[str]], lines: list[str]) -> list[TraceMatch]:
+def match_required(groups: list[list[str]], lines: list[list[str]]) -> list[TraceMatch]:
     """Match each group against a later line than the group before it.
 
     Ordering is the point. "Drafted, then published" is a claim about sequence;
     both commands merely appearing somewhere in the trace is not evidence for it.
+
+    The satisfying line is recorded space-joined: matching reads argv elements,
+    but run reports and baselines read the finding id, and those stay text.
     """
     matches: list[TraceMatch] = []
     start = 0
@@ -75,12 +84,12 @@ def match_required(groups: list[list[str]], lines: list[str]) -> list[TraceMatch
         if i == -1:
             matches.append(TraceMatch(pattern=tuple(group)))
             continue
-        matches.append(TraceMatch(tuple(group), True, lines[i]))
+        matches.append(TraceMatch(tuple(group), True, " ".join(lines[i])))
         start = i + 1
     return matches
 
 
-def match_forbidden(groups: list[list[str]], lines: list[str]) -> list[str]:
+def match_forbidden(groups: list[list[str]], lines: list[list[str]]) -> list[str]:
     """The joined text of every group that fired, at most once per group.
 
     Two calls that break one rule are one broken rule. Counting them twice
@@ -93,8 +102,11 @@ def match_forbidden(groups: list[list[str]], lines: list[str]) -> list[str]:
     ]
 
 
-def load_trace(trace_file: str) -> list[str]:
-    """The recorded argv lines, space-joined.
+def load_trace(trace_file: str) -> list[list[str]]:
+    """The recorded argv lines, one list of elements per line.
+
+    Kept as lists rather than joined: matching compares argv elements, and
+    joining first would erase the element boundaries it needs.
 
     A missing file means the session ran nothing a shim saw — that scores zero,
     which is a result, not an error. A single unparseable line is skipped for
@@ -111,7 +123,7 @@ def load_trace(trace_file: str) -> list[str]:
         except (json.JSONDecodeError, ValueError):
             continue
         if isinstance(argv, list):
-            lines.append(" ".join(str(part) for part in argv))
+            lines.append([str(part) for part in argv])
     return lines
 
 
@@ -137,11 +149,14 @@ argv = [NAME, *sys.argv[1:]]
 with open(TRACE, "a") as fh:
     fh.write(json.dumps(argv) + "\\n")
 
-line = " ".join(argv)
 for rule in RULES:
+    # Exact argv elements against the same normalized argv that was recorded,
+    # so a rule and a manifest group mean the same thing on the same line. A
+    # substring rule fired on flags that merely contained the subcommand it
+    # named: a rule matching ["push"] intercepted `git remote get-url --push`.
     # An empty match is never a match, mirroring group_matches: all([]) is
     # True, and an empty list would otherwise fire on every call.
-    if rule["match"] and all(token in line for token in rule["match"]):
+    if rule["match"] and all(token in argv for token in rule["match"]):
         sys.stdout.write(rule.get("stdout", ""))
         sys.stderr.write(rule.get("stderr", ""))
         sys.exit(rule.get("exit", 0))
@@ -153,7 +168,7 @@ if ON_NO_MATCH == "passthrough":
     )
     os.execvp(NAME, argv)
 
-sys.stderr.write("eval shim: no rule for: " + line + "\\n")
+sys.stderr.write("eval shim: no rule for: " + " ".join(argv) + "\\n")
 sys.exit(NO_MATCH_EXIT)
 '''
 

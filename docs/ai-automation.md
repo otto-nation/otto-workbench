@@ -395,24 +395,37 @@ every task shares:
 | `forbids` | Token groups that must match no trace line at all; any single hit zeroes precision |
 | `false_positives_max` | The `forbids` budget, same meaning as a `review` manifest's field of the same name — defaults to `0` |
 
-A group matches a trace line when every one of its tokens is a substring of
-that line's space-joined argv — so `["pr", "rebase", "--fix"]` matches
-`pr rebase --fix --branch main`, and this cuts both ways. A short flag matches
-inside a longer one that starts with it: `"--track" in "--track-all"` is
-`True`, which is why `pr-comments-draft-only`'s `["pr", "--track"]` catches
-every tracking form at once, while `pr-comments-approved` — which requires
-`--track` — has to forbid the narrower `["--track-all"]` by name, since the
-broad token can't tell the two apart.
-And a group's tokens don't need to land in separate argv elements: `all(t in
-"pr-rebase --branch eval" for t in ["pr", "rebase"])` is `True`, because both
-substrings are sitting inside the one word `pr-rebase`. That's not a
-theoretical hazard — it's exactly what let `pr-rebase-conflicts-need-approval`
-bank a full pass on a call to the very backing script the skill forbids, until
-a `forbids: ["pr-rebase"]` group was added to rule the lookalike out. A
-`requires` group matching is not by itself evidence that the intended command
-ran; pair it with a `forbids` group naming the lookalike whenever one exists.
-Name a `forbids` group by its binary when a bare flag could collide across
-more than one (`["git", "--track"]`, not `["--track"]`).
+A group matches a trace line when every one of its tokens **equals one of that
+line's argv elements** — so `["pr", "rebase", "--fix"]` matches
+`pr rebase --fix --branch main`, and a group never has to spell out the flags
+it doesn't care about. Tokens within a group are unordered; the groups in
+`requires` are ordered relative to each other.
+
+Whole elements, not substrings, so a flag and its longer forms are distinct:
+`["pr", "--track"]` does not match `pr comments --finish --track-all`. That is
+why `pr-comments-draft-only`, which forbids every tracking form, has to forbid
+`["pr", "--track"]` and `["pr", "--track-all"]` by name. A command name and a
+lookalike are distinct too: `["pr", "rebase"]` does not match
+`pr-rebase --branch eval`, because `pr-rebase` is a single element and neither
+token equals it.
+
+Both distinctions are load-bearing, because the substring rule this replaced
+got both wrong. At session startup the Claude Code harness issues
+`git remote get-url --push origin`; a `forbids: ["git", "push"]` group matched
+that as a substring and zeroed precision on sessions that never pushed. And
+`pr-rebase-conflicts-need-approval` could bank a full pass on a call to the
+very backing script the skill forbids, because `["pr", "rebase"]` sat inside
+the word `pr-rebase`. That case still forbids `["pr-rebase"]`, and it is still
+the group that makes such a call *score* — but it now guards against a real
+violation rather than patching a matcher artifact.
+
+The sensitivity this introduces is that a group naming `--track` and `T-3` as
+two tokens will not match `--track=T-3` written as one argv element.
+`pr-comments`' SKILL.md documents the space-separated form
+(`--track <thread_id>`), which is what the corpus assumes; a skill that
+switched to `--flag=value` would need its groups rewritten to match. Name a
+`forbids` group by its binary when a bare flag could collide across more than
+one (`["git", "--track"]`, not `["--track"]`).
 
 `responses.json` stubs the CLIs the skill drives, one top-level key per binary
 name:
@@ -420,7 +433,7 @@ name:
 | Field | Meaning |
 |---|---|
 | `on_no_match` | `"fail"` (the default) exits `97` on an unmatched call; `"passthrough"` execs the real binary instead |
-| `rules` | An ordered list; the first rule whose `match` tokens are all substrings of the call wins |
+| `rules` | An ordered list; the first rule whose `match` tokens all equal an argv element of the call wins — same matching as a manifest group, so a rule and a group mean the same thing on the same line |
 | `match` | Required on every rule — an empty list (`[]`) never fires, which is how a binary is stubbed purely to be traced without answering any call |
 | `stdout` / `stderr` | Literal text to emit |
 | `stdout_file` | A path resolved relative to the case directory (not the fixture repo), read and used as `stdout` instead |

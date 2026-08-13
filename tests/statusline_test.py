@@ -2,6 +2,7 @@
 
 import importlib.machinery
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -65,6 +66,31 @@ def test_pr_piece_is_blank_for_a_corrupt_state_file(tmp_path, capsys):
     with _at(tmp_path):
         assert statusline._pr_piece() == ""
     assert capsys.readouterr().err == ""
+
+
+def test_pr_piece_survives_null_behind_a_scalar_field(tmp_path):
+    """Regression: a syntactically valid state.json with an explicit `null`
+    behind an int or dict field used to load successfully and then crash in
+    `_pr_details` — `failure_count > 0` on a `None`, `by_state.get()` on a
+    `None`. serde now degrades a `null` there to the field's default."""
+    path = tmp_path / pr_state.STATE_DIR / pr_state.STATE_FILE
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "identity": {
+            "repo": "owner/repo",
+            "branch": "feat",
+            "pr_number": 42,
+            "head_sha": "abc",
+            "worktree_root": str(tmp_path),
+        },
+        "ci": {"conclusion": "failure", "failure_count": None},
+        "comments": {"by_state": None},
+    }))
+
+    with _at(tmp_path):
+        # failure_count degrades to 0, so the CI:<n>F branch does not fire —
+        # the point of this test is that it renders at all, not which branch.
+        assert statusline._pr_piece() == "PR#42 CI:failure"
 
 
 def test_pr_details_reads_typed_fields(tmp_path):

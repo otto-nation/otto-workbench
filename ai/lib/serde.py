@@ -15,6 +15,13 @@ from typing import get_args, get_origin, get_type_hints
 import log
 
 
+class _Omitted(Exception):
+    """Raised by `_coerce` for a value that cannot stand in for its hint.
+
+    Never escapes `from_dict`, which is `_coerce`'s only caller.
+    """
+
+
 def to_dict(obj) -> dict:
     """Serialize a dataclass to a dict, converting enums to their values."""
     def factory(pairs):
@@ -32,6 +39,11 @@ def from_dict(cls, data: dict):
     - `dict[int, V]` keys are restored to ints from the strings JSON makes of them
     - A nested dataclass defining `_from_raw` reconstructs itself through it,
       which is how a type stored in more than one shape stays readable
+    - An explicit `null` on a field with no null form of its own (enum, scalar,
+      list, tuple, dict) is treated as a missing key, falling back to the
+      field's default. A `null` nested inside a list or dict element propagates
+      the same way, dropping the whole field to its default rather than keeping
+      a `None` alongside real values
 
     Raises TypeError if the data omits a field that has no default.
     """
@@ -43,8 +55,10 @@ def from_dict(cls, data: dict):
     for f in fields:
         if f.name not in data:
             continue
-        raw = data[f.name]
-        kwargs[f.name] = _coerce(hints[f.name], raw)
+        try:
+            kwargs[f.name] = _coerce(hints[f.name], data[f.name])
+        except _Omitted:
+            continue
     return cls(**kwargs)
 
 
@@ -87,12 +101,6 @@ def _coerce(hint, value):
             return _coerce(non_none[0], value)
         return value
 
-    # Enum
-    if isinstance(hint, type) and issubclass(hint, Enum):
-        if isinstance(value, hint):
-            return value
-        return hint(value)
-
     # Nested dataclass. A class that can be stored in more than one shape owns
     # its own reconstruction through `_from_raw` — the plain path below only
     # knows how to read a dict.
@@ -109,6 +117,22 @@ def _coerce(hint, value):
             value = {}
         if isinstance(value, dict):
             return from_dict(hint, value)
+
+    # Every hint below this line — enum, scalar, list, tuple, dict — has no
+    # null form of its own. An explicit `null` written for one means what a
+    # missing key means: use the field's default. Only a hand-edited or
+    # partially-written file produces one, since `to_dict` emits real values;
+    # the alternative is a `None` sitting behind an `int` hint until a reader
+    # does arithmetic on it. A field with no default still raises TypeError
+    # from `cls(**kwargs)`, exactly as an absent key does.
+    if value is None:
+        raise _Omitted
+
+    # Enum
+    if isinstance(hint, type) and issubclass(hint, Enum):
+        if isinstance(value, hint):
+            return value
+        return hint(value)
 
     # list[X] — coerce elements
     if origin is list and args:

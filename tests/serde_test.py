@@ -184,13 +184,13 @@ class TestFromRawHook:
         assert obj.tags == {1: Tagged(value="legacy"), 2: Tagged(value="typed")}
 
 
-class TestNullOnNestedDataclass:
-    """`None` on a nested-dataclass field means "value omitted", not "field is None".
+class TestNullOnAField:
+    """`None` on a field means "value omitted", not "field is None".
 
-    A dataclass has no null state of its own, so an explicit `null` written for
-    one — e.g. a hand-edited state file, or a domain reset to its default — must
-    reconstruct the same way a missing key does: default fields fall back to
-    their defaults, required fields still raise.
+    Nothing in the schema has a null state of its own, so an explicit `null`
+    written for a field — e.g. a hand-edited state file, or a domain reset to
+    its default — must reconstruct the same way a missing key does: default
+    fields fall back to their defaults, required fields still raise.
     """
 
     def test_null_on_a_defaulted_field_yields_the_default_instance(self):
@@ -205,6 +205,35 @@ class TestNullOnNestedDataclass:
     def test_null_on_a_dataclass_with_required_fields_still_raises(self):
         with pytest.raises(TypeError):
             from_dict(HasRequired, {"inner": None})
+
+    def test_null_on_a_str_field_yields_the_default(self):
+        obj = from_dict(Inner, {"name": None})
+        assert obj.name == ""
+
+    def test_null_on_an_enum_field_yields_the_default_not_a_value_error(self):
+        obj = from_dict(Inner, {"color": None})
+        assert obj.color == Color.RED
+
+    def test_null_on_a_list_field_yields_the_default(self):
+        obj = from_dict(Outer, {"items": None})
+        assert obj.items == []
+
+    def test_null_on_a_dict_field_yields_the_default(self):
+        obj = from_dict(Container, {"entries": None})
+        assert obj.entries == {}
+
+    def test_null_as_a_list_element_drops_the_whole_field_to_its_default(self):
+        """A `null` inside a collection propagates: the field has no way to
+        hold "some real values, one hole" against its type hint, so it falls
+        back the same way a top-level `null` does, rather than keeping `None`
+        alongside the real entries.
+        """
+        obj = from_dict(Outer, {"items": ["a", None]})
+        assert obj.items == []
+
+    def test_null_on_a_field_with_no_default_still_raises(self):
+        with pytest.raises(TypeError):
+            from_dict(Required, {"name": None})
 
 
 # ── The round-trip guard ─────────────────────────────────────────────────────
@@ -310,6 +339,30 @@ def test_load_file_returns_none_for_an_unknown_enum_value(tmp_path):
     path.write_text(json.dumps({"color": "chartreuse"}))
 
     assert load_file(Inner, path) is None
+
+
+def test_load_file_recovers_a_null_behind_a_scalar_hint(tmp_path, capsys):
+    """The reported crash: a `null` written for an int-typed field must not
+    smuggle a `None` past the type hint and into a reader that does arithmetic
+    on it — it degrades to the field's default, the same as a missing key,
+    and is not a fault worth warning about."""
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({
+        "identity": {
+            "repo": "owner/repo",
+            "branch": "feat",
+            "pr_number": 42,
+            "head_sha": "abc",
+            "worktree_root": str(tmp_path),
+        },
+        "ci": {"conclusion": "failure", "failure_count": None},
+    }))
+
+    state = load_file(PRState, path)
+
+    assert state is not None
+    assert state.ci.failure_count == 0
+    assert capsys.readouterr().err == ""
 
 
 def test_load_file_returns_none_when_a_required_field_is_absent(tmp_path):

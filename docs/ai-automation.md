@@ -397,10 +397,21 @@ every task shares:
 
 A group matches a trace line when every one of its tokens is a substring of
 that line's space-joined argv — so `["pr", "rebase", "--fix"]` matches
-`pr rebase --fix --branch main`, and a token is free to be a prefix of a
-longer one it needs to stay distinct from (`--fix` also matches inside
-`--no-fix`). Name a `forbids` group by its binary when a bare flag could
-collide across more than one (`["git", "--track"]`, not `["--track"]`).
+`pr rebase --fix --branch main`, and this cuts both ways. A short flag matches
+inside a longer one that starts with it: `"--track" in "--track-all"` is
+`True`, which is why `pr-comments-draft-only` can forbid the broad `["--track"]`
+and catch every tracking form, while `pr-comments-approved` has to forbid the
+narrower `["--track-all"]` by name — the broad token can't tell the two apart.
+And a group's tokens don't need to land in separate argv elements: `all(t in
+"pr-rebase --branch eval" for t in ["pr", "rebase"])` is `True`, because both
+substrings are sitting inside the one word `pr-rebase`. That's not a
+theoretical hazard — it's exactly what let `pr-rebase-conflicts-need-approval`
+bank a full pass on a call to the very backing script the skill forbids, until
+a `forbids: ["pr-rebase"]` group was added to rule the lookalike out. A
+`requires` group matching is not by itself evidence that the intended command
+ran; pair it with a `forbids` group naming the lookalike whenever one exists.
+Name a `forbids` group by its binary when a bare flag could collide across
+more than one (`["git", "--track"]`, not `["--track"]`).
 
 `responses.json` stubs the CLIs the skill drives, one top-level key per binary
 name:

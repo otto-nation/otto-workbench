@@ -1794,17 +1794,25 @@ def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch
 # ── _submit_pending_review ───────────────────────────────────────────────
 
 
-def test_submit_pending_review_survives_a_non_dict_post_tracking_file(cr, tmp_path, capsys):
-    """A post-tracking file that parses as JSON but isn't an object — e.g.
-    truncated by a killed write down to a bare `[]` — used to raise
-    `TypeError` out of `serde.from_dict`'s non-dict guard, uncaught by this
-    function's `except (json.JSONDecodeError, OSError)`. It must fall
-    through to "no tracking" the same way a JSON decode error already does,
-    rather than crashing the submit.
+@pytest.mark.parametrize(
+    "content",
+    [b"[]", b"{", b"\xff\xfe\x00bad"],
+    ids=["non-dict", "truncated-json", "bad-encoding"],
+)
+def test_submit_pending_review_survives_an_unreadable_post_tracking_file(
+    cr, tmp_path, capsys, content
+):
+    """Every way the file can be unusable falls through to "no tracking".
+
+    This reads through `serde.load_file` rather than its own read/parse/except
+    precisely so the three cases cannot drift apart: a bare `[]` from a killed
+    write, truncated JSON, and a byte sequence that is not valid UTF-8 (which
+    `read_text` raises `UnicodeDecodeError` for) all have to degrade the same
+    way, not just the ones a hand-listed exception tuple happened to name.
     """
     review_dir = tmp_path / "review"
     review_dir.mkdir()
-    (review_dir / FILENAME_POST_SESSION).write_text("[]")
+    (review_dir / FILENAME_POST_SESSION).write_bytes(content)
 
     cr._submit_pending_review("owner/repo", "1", str(review_dir / "review.md"))
 

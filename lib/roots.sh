@@ -45,7 +45,7 @@ WORKBENCH_CONFIG_DIR="$(_wb_root "${WORKBENCH_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:
 # phase 4 fills in the rung and flips the fallback alongside that migration.
 WORKBENCH_STATE_DIR="$(_wb_root "${WORKBENCH_STATE_DIR:-}" "" "$HOME/.config/workbench")"
 
-# Recomputable data, safe to delete at any time.
+# Recomputable data, safe to delete at any time: vertex-quota/.
 WORKBENCH_CACHE_DIR="$(_wb_root "${WORKBENCH_CACHE_DIR:-}" "${XDG_CACHE_HOME:-}" "$HOME/.cache/workbench")"
 
 # The resolver has done its work. This file is sourced into every script that

@@ -48,7 +48,7 @@ def state_dir() -> Path:
 
 
 def cache_dir() -> Path:
-    """Recomputable data, safe to delete at any time."""
+    """Recomputable data, safe to delete at any time: ``vertex-quota/``."""
     return _root("WORKBENCH_CACHE_DIR", "XDG_CACHE_HOME", "~/.cache/workbench")
 
 

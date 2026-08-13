@@ -33,7 +33,7 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 |----------|-------|----------|---------|
 | `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `install.yml`, `overrides/`, `mcp-tools.json` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
 | `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `logs/`, `usage/`, applied migrations | *(none yet)* | `~/.config/workbench` |
-| `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time | `XDG_CACHE_HOME` | `~/.cache/workbench` |
+| `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: `vertex-quota/` | `XDG_CACHE_HOME` | `~/.cache/workbench` |
 
 The state root has no `XDG_STATE_HOME` rung yet: honouring it would relocate the existing reviews and logs with nothing to carry them. The rung and the `~/.local/state/workbench` default arrive together with that migration.
 

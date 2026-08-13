@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-import stat
 import sys
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import urllib.error
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -289,54 +290,57 @@ class TestCheckQuota:
 # ── Cache ────────────────────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def cache_root(tmp_path, monkeypatch) -> Path:
+    """Point the workbench cache root at a tmpdir, as a real run resolves it."""
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    return tmp_path
+
+
 class TestCache:
-    def test_fresh_cache_returns_models(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(vq, "_CACHE_DIR", tmp_path)
+    def test_cache_lives_under_the_workbench_cache_root(self, cache_root):
+        vq._write_cache("proj", "us-east5", {"anthropic-claude-sonnet-4-6": "1"})
+        written = list((cache_root / "vertex-quota").glob("*.json"))
+        assert len(written) == 1
+
+    def test_cache_root_is_reread_per_call(self, cache_root, tmp_path, monkeypatch):
+        """The root moves after import, so nothing may freeze it at import time."""
+        moved = tmp_path / "moved"
+        monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(moved))
+        assert vq._cache_key("proj", "us-east5").parent == moved / "vertex-quota"
+
+    def test_fresh_cache_returns_models(self, cache_root):
         models = {"anthropic-claude-sonnet-4-6": "2000000"}
         vq._write_cache("proj", "us-east5", models)
         result = vq._check_cache("proj", "us-east5")
         assert result == models
 
-    def test_stale_cache_returns_none(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(vq, "_CACHE_DIR", tmp_path)
+    def test_stale_cache_returns_none(self, cache_root):
         path = vq._cache_key("proj", "us-east5")
+        path.parent.mkdir(parents=True)
         path.write_text(json.dumps({"ts": time.time() - 600, "models": {}}))
         result = vq._check_cache("proj", "us-east5")
         assert result is None
 
-    def test_missing_cache_returns_none(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(vq, "_CACHE_DIR", tmp_path)
+    def test_missing_cache_returns_none(self, cache_root):
+        """The cache dir does not exist yet on a first run — a read must not raise."""
         result = vq._check_cache("proj", "us-east5")
         assert result is None
 
-    def test_corrupt_cache_returns_none(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(vq, "_CACHE_DIR", tmp_path)
+    def test_corrupt_cache_returns_none(self, cache_root):
         path = vq._cache_key("proj", "us-east5")
+        path.parent.mkdir(parents=True)
         path.write_text("not json")
         result = vq._check_cache("proj", "us-east5")
         assert result is None
 
-    def test_symlinked_cache_dir_is_refused(self, tmp_path, monkeypatch):
-        """A pre-planted symlink on a shared tmpdir must not be read or written."""
-        real = tmp_path / "attacker"
-        real.mkdir()
-        link = tmp_path / "cache"
-        link.symlink_to(real)
-        monkeypatch.setattr(vq, "_CACHE_DIR", link)
-
-        assert vq._cache_dir_ready() is False
+    def test_unwritable_cache_root_is_survivable(self, cache_root, monkeypatch):
+        """The cache is an optimisation — losing it costs one more API call."""
+        monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(cache_root / "wall" / "cache"))
+        (cache_root / "wall").write_text("not a directory")
 
         vq._write_cache("proj", "us-east5", {"anthropic-claude-sonnet-5": "1"})
-        assert list(real.iterdir()) == []
         assert vq._check_cache("proj", "us-east5") is None
-
-    def test_loose_permissions_are_tightened(self, tmp_path, monkeypatch):
-        cache = tmp_path / "cache"
-        cache.mkdir(mode=0o755)
-        monkeypatch.setattr(vq, "_CACHE_DIR", cache)
-
-        assert vq._cache_dir_ready() is True
-        assert stat.S_IMODE(cache.stat().st_mode) == 0o700
 
 
 # ── run_preflight ────────────────────────────────────────────────────────────

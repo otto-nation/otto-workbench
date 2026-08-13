@@ -32,6 +32,7 @@ from review_common import (
     TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
+    phase_artifacts,
     phase_log_path,
     phase_output_path,
     read_pipeline_status,
@@ -151,6 +152,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     _post_process_review(job)
     _write_review_sidecar(job)
+    _cleanup_intermediates(job)
 
 
 def _build_meta_header(
@@ -331,32 +333,28 @@ def _consolidate_logs(
         pass
 
 
-def _cleanup_intermediates(
-    job: ReviewJob,
-    holistic_output: str, holistic_log: str,
-    group_outputs: list[str], group_count: int, synthesis_log: str,
-):
-    group_logs = _group_log_paths(job, group_count)
-    cleanup = group_outputs + group_logs
-    if holistic_output:
-        cleanup.append(holistic_output)
-    if holistic_log:
-        cleanup.append(holistic_log)
-    if synthesis_log:
-        cleanup.append(synthesis_log)
-    cleanup.append(_pipeline_state_path(job))
+def _cleanup_intermediates(job: ReviewJob):
+    """Leave a completed review directory holding only its deliverable.
 
-    review_dir = str(Path(job.review_file).parent)
-    for p in Path(review_dir).glob("prompt-*"):
-        if p.name == FILENAME_PROMPT_STATS:
-            continue
-        cleanup.append(str(p))
+    What to remove is read off the directory rather than named by the caller,
+    so a phase the run happened to take — disprove, or one added later — is
+    cleaned without the call site listing it. That also lets both pipelines
+    share the pass: single-agent runs reach the same disprove gate, and the
+    multi-phase caller no longer has a list only it could supply.
+
+    This also sweeps fix.jsonl: a prior `--fix` pass's log is diagnostic, not a
+    finding, so it is swept the same as any other phase log rather than
+    surviving a re-review.
+    """
+    review_dir = Path(job.review_file).parent
+    cleanup = phase_artifacts(review_dir)
+    cleanup.append(Path(_pipeline_state_path(job)))
+    cleanup.extend(
+        p for p in review_dir.glob("prompt-*") if p.name != FILENAME_PROMPT_STATS
+    )
 
     for path in cleanup:
-        try:
-            Path(path).unlink()
-        except FileNotFoundError:
-            pass
+        path.unlink(missing_ok=True)
 
 
 def _write_clean_review(job: ReviewJob, group_count: int, skipped_groups: int = 0):
@@ -696,9 +694,7 @@ def run_multi_phase(
     )
 
     if not failed_groups:
-        _cleanup_intermediates(
-            job, holistic.output, holistic.log, group_outputs, group_count, synthesis.log,
-        )
+        _cleanup_intermediates(job)
 
 
 def _with_local_diff(pr: PRMetadata, local: PRMetadata) -> PRMetadata:

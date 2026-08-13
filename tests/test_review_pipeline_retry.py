@@ -213,6 +213,41 @@ class TestRetryMissingOutput:
         assert "## Summary" in output.read_text()
 
 
+class TestSingleAgentCleanup:
+    """A single-agent run leaves the directory holding only its deliverable."""
+
+    def _run(self, tmp_path, monkeypatch):
+        job = _make_job(tmp_path)
+
+        def _agent(*_args, **_kwargs) -> int:
+            Path(job.review_file).write_text("## Summary\n")
+            Path(job.session_log).write_text(_result("success") + "\n")
+            return 0
+
+        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review_phases, "invoke_agent", _agent)
+        review_pipeline.run_single_agent(job, disprove=False)
+        return job
+
+    def test_disprove_artifacts_do_not_survive(self, tmp_path, monkeypatch):
+        (tmp_path / "disprove.md").write_text("- [M1] SURVIVES — real\n")
+        (tmp_path / "disprove.jsonl").write_text(_result("success") + "\n")
+        (tmp_path / "prompt-single.md").write_text("PROMPT")
+
+        self._run(tmp_path, monkeypatch)
+
+        assert not (tmp_path / "disprove.md").exists()
+        assert not (tmp_path / "disprove.jsonl").exists()
+        assert not (tmp_path / "prompt-single.md").exists()
+
+    def test_the_deliverable_and_its_sidecars_are_kept(self, tmp_path, monkeypatch):
+        job = self._run(tmp_path, monkeypatch)
+
+        assert Path(job.review_file).exists()
+        assert Path(job.session_log).exists()
+        assert (tmp_path / "meta.json").exists()
+
+
 _PINNED_SHA = "old1234"
 _GROUPS = [
     review_preflight.Group(name="g1", files=["a.py"], lines=10),

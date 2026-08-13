@@ -17,7 +17,7 @@ from review_common import (
     FILENAME_PIPELINE_STATE,
     REVIEW_EXT,
     REVIEWS_DIR,
-    Phase,
+    phase_artifacts,
     read_pipeline_status,
     read_review_meta,
 )
@@ -42,19 +42,8 @@ def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
 def _clean_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
     """Remove stale intermediate files from a completed review directory."""
     count = 0
-    # Both an artifact and a session log are named after the phase that wrote
-    # them, so the list is derived rather than hand-copied — a phase added to
-    # the enum is collected here for free. review.md is the deliverable and
-    # names no phase, so it is never matched.
-    patterns = [
-        name.format("*")
-        for p in Phase
-        for name in (p.output_filename, p.log_filename)
-        if name
-    ]
-    files = [f for p in patterns for f in review_dir.glob(p) if f.is_file()]
     now = datetime.now().timestamp()
-    for f in files:
+    for f in phase_artifacts(review_dir):
         age_days = (now - f.stat().st_mtime) / 86400
         if age_days > stale_days:
             f.unlink(missing_ok=True)

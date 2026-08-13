@@ -559,6 +559,23 @@ def phase_log_path(review_file: str, phase: Phase, index: int | None = None) -> 
     return _derive_path(review_file, name.format(index))
 
 
+def phase_artifacts(review_dir: Path) -> list[Path]:
+    """Every phase artifact and session log present in *review_dir*.
+
+    Both an artifact and a session log are named after the phase that wrote
+    them, so the set is derived rather than hand-copied — a phase added to the
+    enum is found here for free. review.md is the deliverable and names no
+    phase, so it is never matched.
+    """
+    patterns = [
+        name.format("*")
+        for p in Phase
+        for name in (p.output_filename, p.log_filename)
+        if name
+    ]
+    return [f for pat in patterns for f in review_dir.glob(pat) if f.is_file()]
+
+
 def phase_output_path(review_file: str, phase: Phase, index: int | None = None) -> str:
     """Where ``phase`` writes its findings artifact for the review at ``review_file``.
 

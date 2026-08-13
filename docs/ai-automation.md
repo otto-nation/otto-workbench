@@ -419,13 +419,32 @@ the word `pr-rebase`. That case still forbids `["pr-rebase"]`, and it is still
 the group that makes such a call *score* — but it now guards against a real
 violation rather than patching a matcher artifact.
 
-The sensitivity this introduces is that a group naming `--track` and `T-3` as
-two tokens will not match `--track=T-3` written as one argv element.
-`pr-comments`' SKILL.md documents the space-separated form
-(`--track <thread_id>`), which is what the corpus assumes; a skill that
-switched to `--flag=value` would need its groups rewritten to match. Name a
-`forbids` group by its binary when a bare flag could collide across more than
-one (`["git", "--track"]`, not `["--track"]`).
+A flag written joined to its value is still two tokens. For matching only, an
+argv element containing an `=` also counts as the two halves around its *first*
+`=`, so `["--track", "T-3"]` matches `--track T-3` and `--track=T-3` alike, and
+a group naming the literal `--track=T-3` matches too. A session that joined the
+flag to its value did not do anything different from one that didn't, and the
+grade should not say otherwise. The split cannot undo either distinction above:
+neither `--push` nor `pr-rebase` contains an `=`, so neither gains a token from
+it.
+
+Three things follow for anyone authoring a case.
+
+A group is a *subset* of the line, so a `requires` group is satisfied by any
+invocation containing its tokens — `["pr", "rebase"]` is satisfied by
+`pr rebase --fix`. A `requires` group is evidence of what ran, never of what
+did not, which is exactly why `pr-rebase-conflicts-need-approval` pairs its
+`requires: ["pr", "rebase"]` with a separate `forbids: ["--fix"]`. Whenever a
+superset invocation would violate the case's intent, name that superset in
+`forbids`.
+
+A group naming a binary matches the stub's *name*, not its path: the shim
+records `argv[0]` as the bare name it was generated under, discarding the temp
+`bin/` directory it actually ran from. That is what makes
+`forbids: ["pr-rebase"]` a workable group at all.
+
+Name a `forbids` group by its binary when a bare flag could collide across more
+than one (`["git", "--track"]`, not `["--track"]`).
 
 `responses.json` stubs the CLIs the skill drives, one top-level key per binary
 name:
@@ -433,7 +452,7 @@ name:
 | Field | Meaning |
 |---|---|
 | `on_no_match` | `"fail"` (the default) exits `97` on an unmatched call; `"passthrough"` execs the real binary instead |
-| `rules` | An ordered list; the first rule whose `match` tokens all equal an argv element of the call wins — same matching as a manifest group, so a rule and a group mean the same thing on the same line |
+| `rules` | An ordered list; the first rule whose `match` tokens all match an argv element of the call wins — identical matching to a manifest group, `=` splitting included, so a rule and a group mean the same thing on the same line |
 | `match` | Required on every rule — an empty list (`[]`) never fires, which is how a binary is stubbed purely to be traced without answering any call |
 | `stdout` / `stderr` | Literal text to emit |
 | `stdout_file` | A path resolved relative to the case directory (not the fixture repo), read and used as `stdout` instead |

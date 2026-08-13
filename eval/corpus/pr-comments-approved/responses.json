@@ -19,7 +19,7 @@
   "wt": {
     "on_no_match": "fail",
     "rules": [
-      {"match": ["switch", "main"], "stdout": "{\"path\": \".\"}", "exit": 0}
+      {"match": ["switch"], "stdout": "{\"path\": \".\"}", "exit": 0}
     ]
   },
   "git": {"on_no_match": "passthrough", "rules": [

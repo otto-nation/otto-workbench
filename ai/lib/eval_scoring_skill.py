@@ -41,8 +41,28 @@ class TraceMatch:
     matched_finding_id: str = ""
 
 
+def match_tokens(argv: list[str]) -> set[str]:
+    """The tokens a group may match against on one recorded line.
+
+    Every argv element, plus — for an element holding an `=` — the two halves
+    around the first one. `--track=T-3` is one element on the wire but two
+    tokens to a manifest, and a session that wrote the joined form did not do
+    anything different from one that wrote `--track T-3`. The element itself
+    stays in the set, so a group naming the literal `--track=T-3` still works.
+
+    The split cannot resurrect either failure exact matching fixes: neither
+    `--push` nor `pr-rebase` contains an `=`, so neither gains a token here.
+    """
+    tokens = set(argv)
+    for element in argv:
+        head, sep, tail = element.partition("=")
+        if sep:
+            tokens.update((head, tail))
+    return tokens
+
+
 def group_matches(group: list[str], argv: list[str]) -> bool:
-    """True when every token in `group` equals one of `argv`'s elements.
+    """True when every token in `group` matches one of `argv`'s elements.
 
     Exact elements, not substrings. Substring matching cannot tell a subcommand
     from a flag that merely contains it — the harness issues
@@ -54,7 +74,10 @@ def group_matches(group: list[str], argv: list[str]) -> bool:
     An empty group is never a match: `all([])` is True, and an empty `forbids`
     entry would then fail every run.
     """
-    return bool(group) and all(token in argv for token in group)
+    if not group:
+        return False
+    tokens = match_tokens(argv)
+    return all(token in tokens for token in group)
 
 
 def _first_match_from(group: list[str], lines: list[list[str]], start: int) -> int:
@@ -149,14 +172,21 @@ argv = [NAME, *sys.argv[1:]]
 with open(TRACE, "a") as fh:
     fh.write(json.dumps(argv) + "\\n")
 
+# The same tokens match_tokens builds, over the same normalized argv that was
+# recorded, so a rule and a manifest group mean the same thing on the same line.
+TOKENS = set(argv)
+for element in argv:
+    head, sep, tail = element.partition("=")
+    if sep:
+        TOKENS.update((head, tail))
+
 for rule in RULES:
-    # Exact argv elements against the same normalized argv that was recorded,
-    # so a rule and a manifest group mean the same thing on the same line. A
-    # substring rule fired on flags that merely contained the subcommand it
-    # named: a rule matching ["push"] intercepted `git remote get-url --push`.
+    # Whole tokens, not substrings. A substring rule fired on flags that merely
+    # contained the subcommand it named: a rule matching ["push"] intercepted
+    # the harness's own `git remote get-url --push origin`.
     # An empty match is never a match, mirroring group_matches: all([]) is
     # True, and an empty list would otherwise fire on every call.
-    if rule["match"] and all(token in argv for token in rule["match"]):
+    if rule["match"] and all(token in TOKENS for token in rule["match"]):
         sys.stdout.write(rule.get("stdout", ""))
         sys.stderr.write(rule.get("stderr", ""))
         sys.exit(rule.get("exit", 0))

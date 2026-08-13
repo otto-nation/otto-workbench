@@ -60,10 +60,28 @@ class TestGroupMatches:
         assert ess.group_matches(
             ["pr", "--track"], ["pr", "comments", "--finish", "--track", "T-3"])
 
-    def test_a_joined_flag_and_value_is_one_element(self):
-        """The sensitivity exact matching buys: the corpus assumes `--flag value`."""
-        assert not ess.group_matches(
+    def test_a_joined_flag_and_value_matches_as_two_tokens(self):
+        """`--track=T-3` is one element on the wire but two tokens to a manifest."""
+        assert ess.group_matches(
             ["--track", "T-3"], ["pr", "comments", "--finish", "--track=T-3"])
+        assert ess.group_matches(
+            ["--track", "T-3"], ["pr", "comments", "--finish", "--track", "T-3"])
+
+    def test_the_joined_element_itself_is_still_a_token(self):
+        """So a group naming the literal joined form keeps working."""
+        assert ess.group_matches(
+            ["--track=T-3"], ["pr", "comments", "--finish", "--track=T-3"])
+
+    def test_only_the_first_equals_splits_an_element(self):
+        arg = "--filter=a=b"
+        assert ess.match_tokens([arg]) == {arg, "--filter", "a=b"}
+
+    def test_splitting_on_equals_cannot_resurrect_the_push_collision(self):
+        """The harness startup lines carry `=` args and `--push` on one line."""
+        assert not ess.group_matches(
+            ["git", "push"],
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=",
+             "remote", "get-url", "--push", "origin"])
 
     def test_an_empty_group_matches_nothing(self):
         """Otherwise an empty forbids entry would fire on every line."""
@@ -277,6 +295,18 @@ class TestWriteShims:
         assert result.stderr != "refusing"
         assert ess.load_trace(str(trace)) == [
             ["git", "remote", "get-url", "--push", "origin"]]
+
+    def test_a_rule_splits_a_joined_flag_the_way_a_manifest_group_does(self, tmp_path):
+        """A rule and a group have to mean the same thing on the same line."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": ["--track", "T-3"], "stdout": "tracked"},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl",
+        )
+        assert _run(bin_dir, "pr", "comments", "--track=T-3").stdout == "tracked"
 
     def test_shims_are_executable(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
@@ -562,6 +592,57 @@ class TestSkillCasesAreNotVacuous:
                 assert token in body, (
                     f"{token!r} from {group} does not appear in "
                     f"{manifest['skill']}'s SKILL.md")
+
+
+class TestApprovedAcceptsEitherFlagSpelling:
+    """The one corpus group pairing a flag with a value.
+
+    Scoring `--track=T-3` below 1.0 would be a gate flap on a compliant
+    session — the same class of false signal exact matching exists to remove.
+    """
+
+    MANIFEST = json.loads(
+        (CORPUS / "pr-comments-approved" / "manifest.json").read_text())
+
+    @pytest.mark.parametrize("tail", [["--track", "T-3"], ["--track=T-3"]])
+    def test_a_compliant_session_scores_a_clean_pass(self, tail):
+        lines = [
+            ["pr", "comments", "--fix"],
+            ["pr", "comments", "--finish", "--post", *tail],
+        ]
+        matches = ess.match_required(self.MANIFEST["requires"], lines)
+        violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)
+        result = ess.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
+        assert violations == []
+        assert (result.recall, result.precision) == (1.0, 1.0)
+
+    def test_the_blanket_form_is_still_a_violation(self):
+        """Splitting on `=` must not soften the flag this case forbids."""
+        lines = [["pr", "comments", "--finish", "--post", "--track-all"]]
+        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == ["--track-all"]
+
+
+class TestWorktreeStubAnswersEverySwitchSpelling:
+    """`wt` is fail-closed, so a rule narrower than the skill is a fixture gap.
+
+    A rule of `["switch", "main"]` used to catch `wt switch origin/main` by
+    substring. Under exact matching it would not, and the stub would exit 97
+    mid-session — the session observing a hard failure, not a graded outcome.
+    """
+
+    @pytest.mark.parametrize(
+        "case_name", ["pr-comments-draft-only", "pr-comments-approved"])
+    @pytest.mark.parametrize("target", ["main", "origin/main"])
+    def test_the_stub_returns_a_path_for_any_branch_spelling(
+        self, tmp_path, case_name, target,
+    ):
+        case = CORPUS / case_name
+        responses = json.loads((case / "responses.json").read_text())
+        bin_dir = tmp_path / "bin"
+        ess.write_shims(responses, bin_dir, case, tmp_path / "t.jsonl")
+        result = _run(bin_dir, "wt", "switch", target)
+        assert result.returncode == 0
+        assert json.loads(result.stdout)["path"]
 
 
 class TestDraftOnlyForbidsEveryTrackingForm:

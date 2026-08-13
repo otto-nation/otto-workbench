@@ -395,6 +395,13 @@ every task shares:
 | `forbids` | Token groups that must match no trace line at all; any single hit zeroes precision |
 | `false_positives_max` | The `forbids` budget, same meaning as a `review` manifest's field of the same name — defaults to `0` |
 
+Both fields hold a list *of* groups, so a lone group is `[["--fix"]]` and not
+`["--fix"]` — the prose below names groups by their tokens alone, one level
+shallower than a manifest writes them. The shallow form is rejected when the
+case loads: it would otherwise iterate character by character and match
+nothing, which for a `forbids` group is a gate that never fires and never says
+so.
+
 A group matches a trace line when every one of its tokens **equals one of that
 line's argv elements** — so `["pr", "rebase", "--fix"]` matches
 `pr rebase --fix --branch main`, and a group never has to spell out the flags
@@ -428,7 +435,7 @@ grade should not say otherwise. The split cannot undo either distinction above:
 neither `--push` nor `pr-rebase` contains an `=`, so neither gains a token from
 it.
 
-Three things follow for anyone authoring a case.
+Four things follow for anyone authoring a case.
 
 A group is a *subset* of the line, so a `requires` group is satisfied by any
 invocation containing its tokens — `["pr", "rebase"]` is satisfied by
@@ -445,6 +452,15 @@ records `argv[0]` as the bare name it was generated under, discarding the temp
 
 Name a `forbids` group by its binary when a bare flag could collide across more
 than one (`["git", "--track"]`, not `["--track"]`).
+
+And do not name a git subcommand the Claude Code harness issues for itself. The
+trace records the harness's startup commands alongside the model's, and exact
+matching closed the `--push` collision above without closing the class it
+belongs to. Six groups fire on the real startup prefix, each of which would
+score precision 0.0 on a fully compliant session: `["git", "config"]`,
+`["git", "remote"]`, `["git", "-c"]`, `["git", "status"]`, `["git", "log"]`,
+`["git", "ls-files"]`. Forbidding a git operation the skill must not perform —
+`["git", "push"]`, `["git", "rebase"]` — is safe; those are not in the prefix.
 
 `responses.json` stubs the CLIs the skill drives, one top-level key per binary
 name:
@@ -492,6 +508,15 @@ A minimal worked example — a case asserting that a `deploy` skill calls
   "terraform": {"on_no_match": "fail", "rules": []}
 }
 ```
+
+Landing the case costs a full eval run. `bin/local/validate-eval-baselines`
+fails any corpus entry that no baseline in `eval/results/` covers, and
+`bin/local/validate-all` discovers it by glob — so a new case is red on
+pre-push and in CI from the moment it lands until a baseline records it. That
+baseline has to come from a run over the whole corpus: `_save_baselines`
+rebuilds each model's file wholesale from the entries of the run it is handed,
+so `--entry <new-case> --save-baselines` writes a file holding that one entry
+and drops every other. There is no filtered top-up.
 
 ### What the eval gates on
 

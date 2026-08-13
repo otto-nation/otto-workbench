@@ -25,7 +25,11 @@ from typing import get_type_hints
 # own pr_state import under TYPE_CHECKING, which is what keeps this acyclic.
 from ci_failures import RunState
 import log
-from serde import from_dict as _serde_from_dict, to_dict as _serde_to_dict
+from serde import (
+    from_dict as _serde_from_dict,
+    load_file as _serde_load_file,
+    to_dict as _serde_to_dict,
+)
 
 
 STATE_DIR = ".workbench"
@@ -377,12 +381,9 @@ def state_to_dict(state: PRState) -> dict:
 
 
 def state_from_dict(d: dict) -> PRState:
-    # ceiling: strict reconstruction — a field with no dataclass default must be present in
-    # the file or serde raises TypeError. Every writer has always been dataclasses.asdict,
-    # which emits every field, so no shape ever written can be missing one. The state file
-    # is a regenerable per-worktree cache, so the recovery is `rm -rf .workbench/`. Upgrade
-    # to catching and returning None (as PipelineState.load does) if it ever fires in
-    # practice, or give the field a default if it becomes genuinely optional.
+    # Strict: a field with no dataclass default must be present or serde raises.
+    # Tolerance belongs at the file level, where discarding is a real recovery —
+    # see load_state.
     return _serde_from_dict(PRState, d)
 
 
@@ -390,13 +391,17 @@ def state_from_dict(d: dict) -> PRState:
 
 
 def load_state(worktree_root: Path) -> PRState | None:
-    """Load unified PR state. Returns None if file doesn't exist."""
-    path = worktree_root / STATE_DIR / STATE_FILE
-    if not path.exists():
-        return None
-    with open(path) as f:
-        data = json.load(f)
-    return state_from_dict(data)
+    """Load unified PR state, or None if there is no usable file.
+
+    A missing file and an unreadable one both come back as None. Nothing stored
+    here is authoritative — every field is rebuilt by the command that wrote it —
+    so discarding a file that will not parse is always a correct recovery, and
+    the next write replaces it. `pr gc` clears one on demand.
+
+    No caller needs to tell corrupt from missing; the warning serde emits is
+    what supplies the part "no state yet" leaves out.
+    """
+    return _serde_load_file(PRState, worktree_root / STATE_DIR / STATE_FILE)
 
 
 def _ensure_gitignored(worktree_root: Path) -> None:

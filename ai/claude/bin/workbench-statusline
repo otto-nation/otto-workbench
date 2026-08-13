@@ -10,7 +10,8 @@ Usage: workbench-statusline
 
 from __future__ import annotations
 
-import json
+import contextlib
+import io
 import subprocess
 import sys
 from pathlib import Path
@@ -20,8 +21,17 @@ if "--help" in sys.argv or "-h" in sys.argv:
         print(line)
     sys.exit(0)
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+BIN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BIN_DIR))
+sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 from _reuse_levels import read_default, read_level
+
+try:
+    import pr_state
+except Exception:
+    # The status line renders on every turn and has no way to report a fault.
+    # A broken ai/lib blanks the PR segment rather than killing the line.
+    pr_state = None
 
 
 def _reuse_piece() -> str:
@@ -33,6 +43,9 @@ def _reuse_piece() -> str:
 
 
 def _pr_piece() -> str:
+    if pr_state is None:
+        return ""
+
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -44,44 +57,36 @@ def _pr_piece() -> str:
     except Exception:
         return ""
 
-    state_file = Path(repo_root) / ".workbench" / "state.json"
-    if not state_file.is_file():
+    # load_state warns on stderr when the file will not parse. The status line
+    # has nowhere to put that, so it is swallowed here; `pr status` and every
+    # write path still surface it.
+    with contextlib.redirect_stderr(io.StringIO()):
+        state = pr_state.load_state(Path(repo_root))
+
+    if state is None or not state.identity.pr_number:
         return ""
 
-    try:
-        state = json.loads(state_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return ""
-
-    pr_number = (state.get("identity") or {}).get("pr_number")
-    if not pr_number:
-        return ""
-
-    label = f"PR#{pr_number}"
+    label = f"PR#{state.identity.pr_number}"
     details = _pr_details(state)
     if details:
         label = f"{label} {details}"
     return label
 
 
-def _pr_details(state: dict) -> str:
+def _pr_details(state: pr_state.PRState) -> str:
     parts: list[str] = []
 
-    ci = state.get("ci") or {}
-    ci_conclusion = ci.get("conclusion") or ""
-    ci_failures = ci.get("failure_count") or 0
-    if ci_conclusion == "failure" and ci_failures > 0:
-        parts.append(f"CI:{ci_failures}F")
-    elif ci_conclusion == "success":
+    if state.ci.conclusion == "failure" and state.ci.failure_count > 0:
+        parts.append(f"CI:{state.ci.failure_count}F")
+    elif state.ci.conclusion == "success":
         parts.append("CI:ok")
-    elif ci_conclusion:
-        parts.append(f"CI:{ci_conclusion}")
+    elif state.ci.conclusion:
+        parts.append(f"CI:{state.ci.conclusion}")
 
-    verdict = (state.get("review") or {}).get("verdict") or ""
-    if verdict:
-        parts.append(f"review:{verdict}")
+    if state.review.verdict:
+        parts.append(f"review:{state.review.verdict}")
 
-    open_threads = (state.get("comments") or {}).get("by_state", {}).get("open") or 0
+    open_threads = state.comments.by_state.get("open") or 0
     if open_threads > 0:
         parts.append(f"{open_threads}open")
 
@@ -93,7 +98,13 @@ def main() -> None:
     reuse = _reuse_piece()
     if reuse:
         pieces.append(reuse)
-    pr = _pr_piece()
+    try:
+        pr = _pr_piece()
+    except Exception:
+        # Same policy as the guarded import above, applied to the whole segment:
+        # the status line has nowhere to report a fault, so a broken PR segment
+        # blanks itself instead of taking the line — and `reuse:` — down with it.
+        pr = ""
     if pr:
         pieces.append(pr)
     if pieces:

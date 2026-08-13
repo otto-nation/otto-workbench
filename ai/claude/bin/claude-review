@@ -43,7 +43,7 @@ from ai_usage import SessionUsage, parse_session_log
 import review_issue
 import review_worktree
 from pr_state import PostTracking
-from serde import from_dict as serde_from_dict, to_dict as serde_to_dict
+from serde import load_file as serde_load_file, to_dict as serde_to_dict
 
 BIN_DIR = Path(__file__).resolve().parent
 LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude"))) / "reviews"
@@ -598,10 +598,7 @@ def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
         log.error(f"No post tracking file found: {post_file}")
         return
 
-    try:
-        tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
-    except (json.JSONDecodeError, OSError):
-        tracking = None
+    tracking = serde_load_file(PostTracking, post_file)
 
     if not tracking or not tracking.review_id:
         log.error(f"Could not read review_id from {post_file}")

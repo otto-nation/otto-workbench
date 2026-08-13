@@ -18,7 +18,9 @@ import pr_context
 import pr_state
 from pr_comments import ThreadState
 from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
-from pr_thread_models import CommentItem, PRReport, ReportThread
+from pr_thread_models import (
+    CommentItem, PRReport, ReportThread, TriageStats, triage_result_from_dict,
+)
 from review_common import Diagnosis, DiagnosisKind
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
@@ -2440,6 +2442,59 @@ class TestDiffContextForFile:
         mock_run.return_value.returncode = 1
         mock_run.return_value.stdout = ""
         assert rt._diff_context_for_file("src/foo.go", Path("/wt")) == ""
+
+
+# ── triage_result_from_dict ──────────────────────────────────────────────
+
+class TestTriageResultFromDict:
+    """The AI is the input class that is malformed occasionally by nature —
+    this must degrade a wrong-shaped field rather than crash the whole
+    triage pass, the same as it did before `serde.from_dict` started
+    rejecting non-dict input outright.
+    """
+
+    def test_a_non_dict_stats_value_degrades_to_default_stats(self):
+        result = triage_result_from_dict({
+            "threads": [{"id": "t1", "summary": "ok"}],
+            "stats": [],
+        })
+        assert result.stats == TriageStats()
+        assert result.threads == [CommentItem(id="t1", summary="ok")]
+
+    def test_a_non_dict_thread_entry_degrades_to_a_default_item(self):
+        result = triage_result_from_dict({
+            "threads": ["not-a-dict", {"id": "t2", "summary": "real"}],
+        })
+        assert result.threads == [CommentItem(), CommentItem(id="t2", summary="real")]
+
+    def test_a_non_dict_comment_item_degrades_to_a_default_item(self):
+        result = triage_result_from_dict({"comment_items": [0]})
+        assert result.comment_items == [CommentItem()]
+
+    def test_an_explicit_null_list_degrades_to_no_entries(self):
+        """`d.get(key, [])` only defaults on an absent key, not a null one."""
+        result = triage_result_from_dict({"threads": None, "comment_items": None})
+        assert result.threads == []
+        assert result.comment_items == []
+
+    def test_a_scalar_where_a_list_belongs_degrades_to_no_entries(self):
+        result = triage_result_from_dict({"threads": "t1", "comment_items": 7})
+        assert result.threads == []
+        assert result.comment_items == []
+
+    def test_a_null_stats_value_degrades_to_default_stats(self):
+        assert triage_result_from_dict({"stats": None}).stats == TriageStats()
+
+    def test_well_formed_input_is_unaffected(self):
+        result = triage_result_from_dict({
+            "threads": [{"id": "t1"}],
+            "comment_items": [{"id": "c1"}],
+            "stats": {"total": 3, "actionable": 2},
+        })
+        assert result.threads == [CommentItem(id="t1")]
+        assert result.comment_items == [CommentItem(id="c1")]
+        assert result.stats.total == 3
+        assert result.stats.actionable == 2
 
 
 # ── _classify_triage_entries (complexity) ──────────────────────────────────

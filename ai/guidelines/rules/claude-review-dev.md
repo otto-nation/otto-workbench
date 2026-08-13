@@ -92,5 +92,10 @@ messages on stderr.
 - A write replaces the stored domain. A domain that must accumulate across
   rounds overrides `merge_into` to fold the prior value in (see `FixSummary`)
 - Scripts own their state updates — Python scripts import `pr_state` directly
+- **Every reader goes through `pr_state.load_state()`** — never `json.load` on
+  `state.json`. The dataclasses in `pr_state.py` are the schema; a raw-dict
+  reader duplicates it and silently blanks when a field is renamed
+- `load_state()` returns `None` for a missing file and an unreadable one alike,
+  warning on the latter. Callers degrade; they do not need to tell them apart
 - `pr_state.load_or_init()` provides DRY state loading across all scripts
 - `pr_state.apply_state_update()` provides generic dict-based state updates

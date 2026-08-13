@@ -1072,3 +1072,24 @@ def test_gc_clears_state_without_deleting_the_live_lock(tmp_path):
     assert (state_dir / worktree_lock.LOCK_FILE).is_file()
     assert not (state_dir / pr_state.STATE_FILE).exists()
     assert not (state_dir / "trails").exists()
+
+
+def test_gc_removes_an_unreadable_state_file(tmp_path):
+    """load_state folds corrupt into missing, but gc stats the file first, so
+    it is the one caller that can still tell them apart — and the one command
+    whose job is deleting the state dir."""
+    state_dir = tmp_path / pr_state.STATE_DIR
+    state_dir.mkdir()
+    (state_dir / pr_state.STATE_FILE).write_text("{ not json")
+
+    assert pr_cli._gc_stale_pr_state(tmp_path) == 1
+    assert not (state_dir / pr_state.STATE_FILE).exists()
+
+
+def test_gc_leaves_a_readable_state_file_with_no_pr(tmp_path):
+    state = pr_state.new_state("owner/repo", "feat", pr_number=None,
+                               head_sha="abc", worktree_root=str(tmp_path))
+    pr_state.save_state(tmp_path, state)
+
+    assert pr_cli._gc_stale_pr_state(tmp_path) == 0
+    assert (tmp_path / pr_state.STATE_DIR / pr_state.STATE_FILE).is_file()

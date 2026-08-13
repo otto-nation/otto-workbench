@@ -614,6 +614,36 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
     assert first.target_dir == tmp_path / "pr" / "widget-feat-a"
 
 
+def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tmp_path):
+    """The converse: one PR's branch, launched from two different directories,
+    resolves to the same target dir. This is what lets `pr review --self` run
+    from inside the PR's own worktree and `pr review 2973` run from the repo
+    root take the same lock instead of two independent ones."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
+    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "feat/login")
+    monkeypatch.setattr(pr_target, "repo_name_from_origin", lambda cwd=None: "widget")
+    monkeypatch.setattr(pr_context, "_resolve_branch", lambda hint, cwd=None: hint)
+    monkeypatch.setattr(pr_context, "_pr_from_branch", lambda repo, branch: 2973)
+
+    monkeypatch.setattr(pr_context, "_resolve_worktree",
+                        lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
+    from_root = pr_context.resolve(branch="feat/login", repo_dir="/repo-root")
+
+    monkeypatch.setattr(
+        pr_context, "_resolve_worktree",
+        lambda cwd, pr, branch: (
+            Path("/repo-root/.worktrees/feat-login"), "/repo-root/.worktrees/feat-login",
+        ),
+    )
+    from_worktree = pr_context.resolve(branch="feat/login",
+                                       repo_dir="/repo-root/.worktrees/feat-login")
+
+    assert from_root.worktree_root != from_worktree.worktree_root
+    assert from_root.target_dir == from_worktree.target_dir
+
+
 def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr_context, "_resolve_worktree",
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))

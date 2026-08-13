@@ -68,17 +68,9 @@ def test_two_targets_lock_independently(tmp_path):
             assert (second / LOCK_FILE).is_file()
 
 
-def test_one_target_excludes_regardless_of_caller(tmp_path):
-    """Same PR, two launch directories, one lock."""
-    target = tmp_path / "pr" / "widget-feat-a"
-    with acquire(target, command="pr review --self", started="t"):
-        with pytest.raises(LockBusy):
-            _contend(target)
-
-
 def test_acquire_creates_lock_file_and_marks_env(worktree):
     with acquire(worktree, command="pr review", started="2026-08-12T00:00:00+00:00"):
-        assert os.environ[LOCK_ENV] == str(worktree.resolve())
+        assert os.environ[LOCK_ENV] == str(worktree)
         record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["pid"] == os.getpid()
         assert record["command"] == "pr review"
@@ -122,7 +114,7 @@ def test_reentrant_acquire_in_same_process_tree(worktree):
             record = json.loads((worktree / LOCK_FILE).read_text())
             assert record["command"] == "pr review"
         # Leaving the inner block must not release the parent's lock.
-        assert os.environ[LOCK_ENV] == str(worktree.resolve())
+        assert os.environ[LOCK_ENV] == str(worktree)
 
 
 def test_reentrancy_is_keyed_on_the_target(worktree):
@@ -134,7 +126,7 @@ def test_reentrancy_is_keyed_on_the_target(worktree):
             assert (other / LOCK_FILE).exists()
         # Releasing the inner lock must hand the marker back to the outer one,
         # not leave it pointing at a target we no longer hold.
-        assert os.environ[LOCK_ENV] == str(worktree.resolve())
+        assert os.environ[LOCK_ENV] == str(worktree)
 
 
 def test_lock_released_when_body_raises(worktree):
@@ -171,7 +163,7 @@ def test_lock_busy_tolerates_an_unreadable_holder_record(worktree):
 def test_claim_for_process_holds_without_a_context_manager(worktree):
     """Delegates lock for their whole run; the kernel releases it at exit."""
     run_lock.claim_for_process(worktree, command="ci-check --fix", started="t")
-    assert os.environ[LOCK_ENV] == str(worktree.resolve())
+    assert os.environ[LOCK_ENV] == str(worktree)
     record = json.loads((worktree / LOCK_FILE).read_text())
     assert record["command"] == "ci-check --fix"
     with pytest.raises(LockBusy):

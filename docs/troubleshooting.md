@@ -114,12 +114,12 @@ If the hook printed no config origins, the identity is coming from `GIT_AUTHOR_N
 
 Commits already made under the bad identity keep it — rewriting them requires `git filter-branch --env-filter` plus a force push.
 
-## "another pr run already owns this worktree"
+## "another pr run already owns this target"
 
-A second `pr` run refused to start because one is already in flight against the same worktree. The message names the holder:
+A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the holder:
 
 ```
-✗ another pr run already owns this worktree: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
+✗ another pr run already owns this target: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
 ```
 
 Two runs on one worktree corrupt each other — they both read-modify-write the worktree's `state.json`, and with `--fix` they both edit and commit the same files. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
@@ -128,7 +128,7 @@ Two runs on one worktree corrupt each other — they both read-modify-write the 
 
 `claude-review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `claude-review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_RUN_LOCK` from it and pass through rather than deadlocking on their own parent's lock.
 
-The lock is an advisory `flock` on `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
+The lock is an advisory `flock` on the target's `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 
 Both files live in the worktree's own git dir, under `workbench/` — `<repo>/.git/workbench/` for the main worktree, `<repo>/.git/worktrees/<name>/workbench/` for a linked one. `git rev-parse --absolute-git-dir` prints the git dir of whichever worktree you are standing in. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` takes the state with the worktree.
 

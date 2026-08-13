@@ -423,12 +423,14 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
 
 
 def _clear_state_dir(state_dir: Path) -> None:
-    """Empty the state directory, leaving the lock file in place.
+    """Empty the state directory, skipping the lock file by name.
 
-    Deleting run.lock would unlink the inode this very run holds its flock
-    on, so the next contender would create a fresh file and take an
-    uncontended lock while we are still working — exclusion only holds
-    while every process agrees on one inode.
+    Currently a no-op: the lock lives in ctx.target_dir now, not state_dir,
+    so run_lock.LOCK_FILE never actually turns up in this iteration. It
+    starts to matter once state.json moves into target_dir alongside the
+    lock — at that point, unlinking run.lock here would drop the inode this
+    very run holds its flock on, handing the next contender an uncontended
+    lock on a fresh file while we are still working.
     """
     for entry in state_dir.iterdir():
         if entry.name == run_lock.LOCK_FILE:
@@ -685,15 +687,16 @@ def main():
 
     # Read-only commands take no lock at all. Acquired before _dispatch so
     # contention costs no trail artifacts.
-    lock = (
-        contextlib.nullcontext() if args.command in _NO_LOCK_COMMANDS
-        else run_lock.acquire(
-            ctx.target_dir,
-            command=" ".join([SCRIPT] + sys.argv[1:]),
-            started=pr_state.now_iso(),
-        )
-    )
+
     try:
+        lock = (
+            contextlib.nullcontext() if args.command in _NO_LOCK_COMMANDS
+            else run_lock.acquire(
+                ctx.target_dir,
+                command=" ".join(["pr"] + sys.argv[1:]),
+                started=pr_state.now_iso(),
+            )
+        )
         with lock:
             sys.exit(_dispatch(args, ctx, extra, global_args,
                                original_pr=original_pr,

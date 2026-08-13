@@ -142,6 +142,7 @@ class TestAgentInvocation:
         assert inv.task is None
         assert inv.repo is None
         assert inv.pr is None
+        assert inv.env is None
 
     def test_is_frozen(self):
         import dataclasses
@@ -377,6 +378,64 @@ class TestBackendsRunInTheGivenDirectory:
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         ))
         assert seen["cwd"] == str(tmp_path)
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_claude_agents_get_the_invocation_env(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        import ai_backend_claude
+
+        seen = {}
+
+        class FakeProc:
+            returncode = 0
+            stdin = io.StringIO()
+            stdout = io.StringIO("")
+            stderr = io.StringIO("")
+
+            def wait(self):
+                return 0
+
+        def fake_popen(cmd, **kwargs):
+            seen.update(kwargs)
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        getattr(ai_backend_claude, entry_point)(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            env={"PATH": "/stub:/usr/bin"},
+        ))
+        assert seen["env"] == {"PATH": "/stub:/usr/bin"}
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_claude_agents_inherit_when_env_is_unset(
+        self, monkeypatch, tmp_path, entry_point,
+    ):
+        """None means inherit — the field must not turn every call into a scrub."""
+        import ai_backend_claude
+
+        seen = {}
+
+        class FakeProc:
+            returncode = 0
+            stdin = io.StringIO()
+            stdout = io.StringIO("")
+            stderr = io.StringIO("")
+
+            def wait(self):
+                return 0
+
+        def fake_popen(cmd, **kwargs):
+            seen.update(kwargs)
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        getattr(ai_backend_claude, entry_point)(ai_backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert seen["env"] is None
 
 
 class TestBuildAddDirs:

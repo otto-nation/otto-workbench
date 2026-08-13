@@ -21,8 +21,8 @@ from pathlib import Path
 import log
 from review_common import (
     count_severity,
-    FILENAME_HOLISTIC, FILENAME_META,
-    FILENAME_PROMPT_STATS, FILENAME_SCOUT,
+    FILENAME_META,
+    FILENAME_PROMPT_STATS,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
@@ -33,6 +33,7 @@ from review_common import (
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
     phase_log_path,
+    phase_output_path,
     read_pipeline_status,
 )
 from review_findings import (
@@ -460,7 +461,7 @@ def _run_holistic_phase(
     use_scout = _use_scout(job, skip_scout)
 
     if use_scout:
-        scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
+        scout_output = phase_output_path(job.review_file, Phase.SCOUT)
         if resume_exists and _has_output(scout_output):
             raw = Path(scout_output).read_text()
             leads, no_scrutiny = parse_scout_output(raw)
@@ -475,7 +476,7 @@ def _run_holistic_phase(
         _write_pipeline_state(job, state)
         return result
 
-    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
+    holistic_output = phase_output_path(job.review_file, Phase.HOLISTIC)
     if resume_exists and _has_output(holistic_output):
         log.info("Phase 1: Holistic scan skipped (exists)")
         return PhaseResult(

@@ -29,13 +29,11 @@ from review_agent import (
 )
 from review_common import (
     FILE_STAT_FMT,
-    FILENAME_DISPROVE,
-    FILENAME_GROUP, FILENAME_HOLISTIC, FILENAME_SCOUT,
     AgentKind, Diagnosis, DiagnosisKind, Effort, Phase, Thinking,
     EFFORT_PRESETS,
     TEMPLATE_DISPROVE, TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT,
-    _derive_path,
     phase_log_path,
+    phase_output_path,
 )
 from review_disprove import apply_disprove_results, parse_disprove_output
 from review_findings import _count_findings, _validate_group_output, merge_reviews
@@ -288,7 +286,7 @@ def _review_group(
     max_turns: int | None = None,
     retry_hint: str = "",
 ) -> tuple[int, str, GroupFailure | None]:
-    group_output = _derive_path(job.review_file, FILENAME_GROUP.format(i))
+    group_output = phase_output_path(job.review_file, Phase.GROUP, i)
 
     if skip:
         if _has_output(group_output):
@@ -346,7 +344,7 @@ def _review_group(
 
 
 def _phase_holistic(job: ReviewJob, group_count: int) -> PhaseResult:
-    holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
+    holistic_output = phase_output_path(job.review_file, Phase.HOLISTIC)
 
     _touch(holistic_output)
 
@@ -381,7 +379,7 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> PhaseResult:
 
 
 def _phase_scout(job: ReviewJob, group_count: int) -> PhaseResult:
-    scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
+    scout_output = phase_output_path(job.review_file, Phase.SCOUT)
 
     _touch(scout_output)
 
@@ -423,7 +421,7 @@ def _phase_disprove(job: ReviewJob) -> PhaseResult:
         log.info("Disprove gate skipped — no must-fix or should-fix findings")
         return PhaseResult()
 
-    disprove_output = _derive_path(job.review_file, FILENAME_DISPROVE)
+    disprove_output = phase_output_path(job.review_file, Phase.DISPROVE)
 
     _touch(disprove_output)
 
@@ -639,7 +637,10 @@ def _phase_group_reviews(
     skip_groups: set[int] | None = None,
     pipeline_state: PipelineState | None = None,
 ) -> tuple[list[str], list[GroupFailure]]:
-    group_outputs = [_derive_path(job.review_file, FILENAME_GROUP.format(i)) for i in range(1, group_count + 1)]
+    group_outputs = [
+        phase_output_path(job.review_file, Phase.GROUP, i)
+        for i in range(1, group_count + 1)
+    ]
 
     workers = min(max_parallel, group_count)
     if workers <= 1:

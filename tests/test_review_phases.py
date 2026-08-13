@@ -481,14 +481,26 @@ class TestNoDuplicateDefaults:
         ):
             assert not hasattr(review_preflight, name), f"{name} is a stale copy"
 
-    def test_phase_log_names_are_not_also_constants(self):
-        # `Phase.log_filename` is the one owner. A second module-level string
-        # holding the same value — under any name — would be a second owner,
-        # and the two would drift.
-        log_names = {p.log_filename for p in Phase if p.log_filename}
+    def test_phase_artifact_names_are_not_also_constants(self):
+        # `Phase.log_filename` and `Phase.output_filename` are the one owner
+        # each. A second module-level string holding the same value — under
+        # any name — would be a second owner, and the two would drift.
+        #
+        # TEMPLATE_* is excluded: the prompt templates in
+        # lib/review-templates/ are legitimately named holistic.md, scout.md
+        # and disprove.md. They are a different file in a different
+        # directory that happens to share the phase's name.
+        artifact_names = {
+            name
+            for p in Phase
+            for name in (p.log_filename, p.output_filename)
+            if name
+        }
         duplicates = {
             name for name, value in vars(review_common).items()
-            if isinstance(value, str) and value in log_names
+            if isinstance(value, str)
+            and value in artifact_names
+            and not name.startswith("TEMPLATE_")
         }
         assert duplicates == set()
 

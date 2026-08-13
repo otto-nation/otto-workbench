@@ -484,10 +484,6 @@ def build_worktree_block(wt_path: str) -> str:
 
 FILENAME_PRIOR = "prior.md"
 FILENAME_SESSION = "session.jsonl"
-FILENAME_HOLISTIC = "holistic.md"
-FILENAME_GROUP = "group-{}.md"
-FILENAME_SCOUT = "scout.md"
-FILENAME_DISPROVE = "disprove.md"
 FILENAME_META = "meta.json"
 FILENAME_PIPELINE_STATE = "pipeline.json"
 FILENAME_PROMPT_STATS = "prompt-stats.json"

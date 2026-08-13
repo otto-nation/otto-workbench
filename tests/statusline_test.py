@@ -93,6 +93,37 @@ def test_pr_piece_survives_null_behind_a_scalar_field(tmp_path):
         assert statusline._pr_piece() == "PR#42 CI:failure"
 
 
+def test_pr_piece_survives_a_wrong_typed_scalar_field(tmp_path):
+    """Regression: `"failure_count": "many"` parsed cleanly and then raised
+    TypeError on `failure_count > 0`, which killed the whole line rather than
+    the segment. serde now degrades an unrecoverable value to the default."""
+    path = tmp_path / pr_state.STATE_DIR / pr_state.STATE_FILE
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "identity": {
+            "repo": "owner/repo",
+            "branch": "feat",
+            "pr_number": 42,
+            "head_sha": "abc",
+            "worktree_root": str(tmp_path),
+        },
+        "ci": {"conclusion": "failure", "failure_count": "many"},
+    }))
+
+    with _at(tmp_path):
+        assert statusline._pr_piece() == "PR#42 CI:failure"
+
+
+def test_main_keeps_the_reuse_segment_when_the_pr_segment_raises(capsys):
+    """The PR segment is guarded as a whole, not just its import: a raise
+    inside it must not take down a status line that has something to say."""
+    with patch.object(statusline, "_reuse_piece", return_value="reuse:ultra"), \
+            patch.object(statusline, "_pr_piece", side_effect=RuntimeError("boom")):
+        statusline.main()
+
+    assert capsys.readouterr().out == "reuse:ultra"
+
+
 def test_pr_details_reads_typed_fields(tmp_path):
     """Regression: the status line hand-parsed the JSON, so a rename on
     PRState blanked the segment with nothing to catch it."""

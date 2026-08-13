@@ -186,15 +186,7 @@ class PipelineState:
         """
         if not review_dir:
             return None
-        path = review_dir / FILENAME_PIPELINE_STATE
-        if not path.is_file():
-            return None
-        try:
-            return serde.from_dict(cls, json.loads(path.read_text()))
-        except (OSError, TypeError, ValueError):
-            # ValueError covers JSONDecodeError, which subclasses it, along with
-            # a field whose stored value cannot be coerced to its declared type.
-            return None
+        return serde.load_file(cls, review_dir / FILENAME_PIPELINE_STATE)
 
     @property
     def group_count(self):

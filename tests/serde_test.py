@@ -15,7 +15,7 @@ sys.path.insert(0, str(LIB_DIR))
 
 from pr_state import PRState
 from review_preflight import PipelineState
-from serde import from_dict, to_dict
+from serde import from_dict, load_file, to_dict
 
 
 class Color(str, Enum):
@@ -79,6 +79,22 @@ class Required:
 @dataclass
 class HasRequired:
     inner: Required = field(default_factory=lambda: Required(name="x"))
+
+
+@dataclass
+class Scalars:
+    """One field per scalar hint, so a mismatch can be aimed at each."""
+    count: int = 0
+    ratio: float = 0.0
+    name: str = ""
+    enabled: bool = False
+
+
+@dataclass
+class Bare:
+    """Container hints with no element type — shape is all there is to check."""
+    mapping: dict = field(default_factory=dict)
+    sequence: list = field(default_factory=list)
 
 
 class TestToDict:
@@ -183,14 +199,29 @@ class TestFromRawHook:
         obj = from_dict(Keyed, {"tags": {"1": "legacy", "2": {"value": "typed"}}})
         assert obj.tags == {1: Tagged(value="legacy"), 2: Tagged(value="typed")}
 
+    def test_a_null_direct_field_yields_the_field_default_not_the_hook(self):
+        """`_from_raw` has no null form of its own: `Tagged._from_raw(None)`
+        would happily coerce it to `Tagged(value="None")` via `str(raw)`, a
+        wrong value with no warning. `None` must be routed to the field
+        default before it reaches the hook, exactly like a missing key."""
+        obj = from_dict(Keyed, {"tagged": None})
+        assert obj.tagged == Tagged()
 
-class TestNullOnNestedDataclass:
-    """`None` on a nested-dataclass field means "value omitted", not "field is None".
+    def test_a_null_under_a_dict_hint_yields_the_field_default_not_the_hook(self):
+        """Same guard, reached through `dict[int, Tagged]` instead of a bare
+        field — a null value must drop the whole field to its default rather
+        than calling the hook on `None`."""
+        obj = from_dict(Keyed, {"tags": {"1": None}})
+        assert obj.tags == {}
 
-    A dataclass has no null state of its own, so an explicit `null` written for
-    one — e.g. a hand-edited state file, or a domain reset to its default — must
-    reconstruct the same way a missing key does: default fields fall back to
-    their defaults, required fields still raise.
+
+class TestNullOnAField:
+    """`None` on a field means "value omitted", not "field is None".
+
+    Nothing in the schema has a null state of its own, so an explicit `null`
+    written for a field — e.g. a hand-edited state file, or a domain reset to
+    its default — must reconstruct the same way a missing key does: default
+    fields fall back to their defaults, required fields still raise.
     """
 
     def test_null_on_a_defaulted_field_yields_the_default_instance(self):
@@ -205,6 +236,106 @@ class TestNullOnNestedDataclass:
     def test_null_on_a_dataclass_with_required_fields_still_raises(self):
         with pytest.raises(TypeError):
             from_dict(HasRequired, {"inner": None})
+
+    def test_null_on_a_str_field_yields_the_default(self):
+        obj = from_dict(Inner, {"name": None})
+        assert obj.name == ""
+
+    def test_null_on_an_enum_field_yields_the_default_not_a_value_error(self):
+        obj = from_dict(Inner, {"color": None})
+        assert obj.color == Color.RED
+
+    def test_null_on_a_list_field_yields_the_default(self):
+        obj = from_dict(Outer, {"items": None})
+        assert obj.items == []
+
+    def test_null_on_a_dict_field_yields_the_default(self):
+        obj = from_dict(Container, {"entries": None})
+        assert obj.entries == {}
+
+    def test_null_as_a_list_element_drops_the_whole_field_to_its_default(self):
+        """A `null` inside a collection propagates: the field has no way to
+        hold "some real values, one hole" against its type hint, so it falls
+        back the same way a top-level `null` does, rather than keeping `None`
+        alongside the real entries.
+        """
+        obj = from_dict(Outer, {"items": ["a", None]})
+        assert obj.items == []
+
+    def test_null_on_a_field_with_no_default_still_raises(self):
+        with pytest.raises(TypeError):
+            from_dict(Required, {"name": None})
+
+
+class TestWrongTypedValue:
+    """A value that does not match its hint is restored or omitted, never kept.
+
+    Passing one through leaves it behind a type hint that says otherwise, and
+    the reader that trips over it does so three call frames from the file that
+    caused it — the same defect the null rule closes, for non-null values.
+    """
+
+    @pytest.mark.parametrize(("raw", "expected"), [
+        ("3", 3),
+        (3.0, 3),
+    ], ids=["str-digits", "whole-float"])
+    def test_a_recoverable_int_is_restored(self, raw, expected):
+        assert from_dict(Scalars, {"count": raw}).count == expected
+
+    @pytest.mark.parametrize("raw", ["many", "3.7", 3.7, [], {}], ids=[
+        "word", "fractional-str", "fractional-float", "list", "dict",
+    ])
+    def test_an_unrecoverable_int_falls_back_to_the_default(self, raw):
+        assert from_dict(Scalars, {"count": raw}).count == 0
+
+    def test_an_int_is_restored_for_a_float_hint(self):
+        obj = from_dict(Scalars, {"ratio": 3})
+        assert obj.ratio == 3.0
+        assert isinstance(obj.ratio, float)
+
+    def test_a_number_is_restored_for_a_str_hint(self):
+        assert from_dict(Scalars, {"name": 3}).name == "3"
+
+    def test_a_container_never_becomes_a_str(self):
+        """`str({"a": 1})` succeeds, which is the whole reason to refuse it —
+        it yields a corrupt field wearing a valid type."""
+        assert from_dict(Scalars, {"name": {"a": 1}}).name == ""
+
+    @pytest.mark.parametrize(("fname", "raw"), [
+        ("count", True),
+        ("ratio", True),
+        ("name", True),
+    ], ids=["int", "float", "str"])
+    def test_a_bool_satisfies_no_other_scalar_hint(self, fname, raw):
+        """`isinstance(True, int)` is True and `str(True)` is "True" where JSON
+        wrote "true" — both would record a wrong value as a confident one."""
+        assert getattr(from_dict(Scalars, {fname: raw}), fname) == getattr(Scalars(), fname)
+
+    @pytest.mark.parametrize("raw", ["true", 1, "", 0], ids=["str", "int", "empty-str", "zero"])
+    def test_only_a_real_bool_satisfies_a_bool_hint(self, raw):
+        """`bool("false")` is True, so truthiness is not a recovery."""
+        assert from_dict(Scalars, {"enabled": raw}).enabled is False
+
+    def test_a_real_bool_still_round_trips(self):
+        assert from_dict(Scalars, {"enabled": True}).enabled is True
+
+    @pytest.mark.parametrize(("fname", "raw"), [
+        ("mapping", "x"),
+        ("sequence", "abc"),
+    ], ids=["dict-hint", "list-hint"])
+    def test_a_bare_container_hint_rejects_a_wrong_shape(self, fname, raw):
+        """A str is iterable, so passing one through a bare `list` hint yields
+        a field that loops over characters instead of failing."""
+        assert getattr(from_dict(Bare, {fname: raw}), fname) == getattr(Bare(), fname)
+
+    def test_a_non_dict_for_a_nested_dataclass_falls_back_to_the_default(self):
+        """Otherwise the field holds a bare list and the first attribute access
+        on it raises AttributeError, far from the file that caused it."""
+        assert from_dict(Outer, {"inner": []}).inner == Inner()
+
+    def test_a_wrong_typed_value_with_no_default_still_raises(self):
+        with pytest.raises(TypeError):
+            from_dict(Required, {"name": {"a": 1}})
 
 
 # ── The round-trip guard ─────────────────────────────────────────────────────
@@ -266,3 +397,96 @@ def test_persisted_state_survives_a_json_round_trip(cls):
     restored = from_dict(cls, json.loads(json.dumps(to_dict(original))))
 
     assert restored == original
+
+
+# ── The load guard ───────────────────────────────────────────────────────────
+
+# Every persisted root must survive an unreadable file the same way. Derived
+# from PERSISTED_ROOTS rather than listed, so a new state file inherits this.
+
+
+@pytest.mark.parametrize("cls", PERSISTED_ROOTS, ids=lambda c: c.__name__)
+def test_load_file_returns_none_for_a_truncated_file(cls, tmp_path, capsys):
+    path = tmp_path / "state.json"
+    path.write_text('{"head_sha": "abc"')
+
+    assert load_file(cls, path) is None
+    assert "unreadable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cls", PERSISTED_ROOTS, ids=lambda c: c.__name__)
+def test_load_file_returns_none_for_a_missing_file(cls, tmp_path, capsys):
+    """A first run is not a fault, so a missing file must not warn."""
+    assert load_file(cls, tmp_path / "state.json") is None
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("cls", PERSISTED_ROOTS, ids=lambda c: c.__name__)
+def test_load_file_returns_none_for_a_directory(cls, tmp_path):
+    """A directory where the file belongs is not a usable file."""
+    (tmp_path / "state.json").mkdir()
+
+    assert load_file(cls, tmp_path / "state.json") is None
+
+
+@pytest.mark.parametrize("cls", PERSISTED_ROOTS, ids=lambda c: c.__name__)
+@pytest.mark.parametrize("raw", ["[1, 2, 3]", '"hello"'], ids=["list", "string"])
+def test_load_file_returns_none_for_a_non_dict_top_level_value(cls, raw, tmp_path, capsys):
+    """A top-level JSON value that is valid but not an object used to fall
+    through `from_dict`'s old `if not data: data = {}` guard and reconstruct
+    a silent, fully-defaulted instance instead of being discarded — every
+    field on these roots has a default, so nothing raised. That turns real
+    corruption into a clean-looking empty state instead of a warned discard.
+    """
+    path = tmp_path / "state.json"
+    path.write_text(raw)
+
+    assert load_file(cls, path) is None
+    assert "unreadable" in capsys.readouterr().err
+
+
+def test_load_file_reconstructs_a_dataclass(tmp_path):
+    path = tmp_path / "inner.json"
+    path.write_text(json.dumps({"name": "x", "color": "blue"}))
+
+    assert load_file(Inner, path) == Inner(name="x", color=Color.BLUE)
+
+
+def test_load_file_returns_none_for_an_unknown_enum_value(tmp_path):
+    path = tmp_path / "inner.json"
+    path.write_text(json.dumps({"color": "chartreuse"}))
+
+    assert load_file(Inner, path) is None
+
+
+def test_load_file_recovers_a_null_behind_a_scalar_hint(tmp_path, capsys):
+    """The reported crash: a `null` written for an int-typed field must not
+    smuggle a `None` past the type hint and into a reader that does arithmetic
+    on it — it degrades to the field's default, the same as a missing key,
+    and is not a fault worth warning about."""
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({
+        "identity": {
+            "repo": "owner/repo",
+            "branch": "feat",
+            "pr_number": 42,
+            "head_sha": "abc",
+            "worktree_root": str(tmp_path),
+        },
+        "ci": {"conclusion": "failure", "failure_count": None},
+    }))
+
+    state = load_file(PRState, path)
+
+    assert state is not None
+    assert state.ci.failure_count == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_load_file_returns_none_when_a_required_field_is_absent(tmp_path):
+    """PRState.identity has no default, so serde raises TypeError from
+    cls(**kwargs) — the case the old exception tuple had to be checked for."""
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"created_at": "2026-08-12T00:00:00+00:00"}))
+
+    assert load_file(PRState, path) is None

@@ -19,7 +19,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
-    count_severity, json_summary, parse_review_verdict,
+    FILENAME_POST_SESSION, count_severity, json_summary, parse_review_verdict,
     read_pipeline_status, read_pipeline_warnings, review_file_path,
 )
 import review_gc
@@ -1789,5 +1789,33 @@ def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch
 
     with pytest.raises(SystemExit):
         cr._check_stale_review("owner/repo", "1", review_file, force=False)
+
+
+# ── _submit_pending_review ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"[]", b"{", b"\xff\xfe\x00bad"],
+    ids=["non-dict", "truncated-json", "bad-encoding"],
+)
+def test_submit_pending_review_survives_an_unreadable_post_tracking_file(
+    cr, tmp_path, capsys, content
+):
+    """Every way the file can be unusable falls through to "no tracking".
+
+    This reads through `serde.load_file` rather than its own read/parse/except
+    precisely so the three cases cannot drift apart: a bare `[]` from a killed
+    write, truncated JSON, and a byte sequence that is not valid UTF-8 (which
+    `read_text` raises `UnicodeDecodeError` for) all have to degrade the same
+    way, not just the ones a hand-listed exception tuple happened to name.
+    """
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / FILENAME_POST_SESSION).write_bytes(content)
+
+    cr._submit_pending_review("owner/repo", "1", str(review_dir / "review.md"))
+
+    assert "Could not read review_id" in capsys.readouterr().err
 
 

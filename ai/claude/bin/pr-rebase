@@ -221,6 +221,15 @@ def _detect_rebase_in_progress(cwd: str) -> bool:
     return (git_path / _GIT_REBASE_MERGE_DIR).is_dir() or (git_path / _GIT_REBASE_APPLY_DIR).is_dir()
 
 
+def _status_lines(cwd: str, untracked: bool = True) -> list[str]:
+    """Porcelain status lines for the worktree. Ignored files are excluded."""
+    cmd = ["git", "status", "--porcelain"]
+    if not untracked:
+        cmd.append("--untracked-files=no")
+    status = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    return [line for line in status.stdout.splitlines() if line.strip()]
+
+
 def _detect_conflicts(cwd: str) -> list[str]:
     """Return list of conflicted file paths."""
     r = subprocess.run(
@@ -923,15 +932,20 @@ def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
     return subject if _valid_commit_header(subject) else _FALLBACK_FIX_SUBJECT
 
 
-def _fix_one_file(filepath: str, cwd: str, check_output: str) -> bool:
-    """Fix a single file based on pre-push check errors. Returns True if changed."""
+def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
+    """Prompt the AI to fix a single file based on pre-push check errors.
+
+    The fix is written in place and left unstaged — staging belongs to the
+    caller, which sweeps the whole worktree so that edits the agent makes
+    outside this marker protocol are committed too.
+    """
     full_path = Path(cwd) / filepath
     if not full_path.exists():
-        return False
+        return
     try:
         content = full_path.read_text()
     except OSError:
-        return False
+        return
 
     prompt = (
         "A pre-push check failed after resolving merge conflicts during a "
@@ -951,7 +965,7 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> bool:
     )
     if rc != 0:
         log.error(f"AI fix failed for {filepath} (exit {rc})")
-        return False
+        return
 
     fixed_content, failure_reason = _parse_resolved_content(stdout)
     if fixed_content is None:
@@ -959,26 +973,46 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> bool:
             "fix_push_failures", f"failed to parse fix for {filepath}",
             data={"filepath": filepath, "reason": failure_reason},
         )
-        return False
+        return
 
     if fixed_content == content:
-        return False
+        return
 
     full_path.write_text(fixed_content)
-    if not _git_add(filepath, cwd):
-        return False
     log.ok(f"Fixed: {filepath}")
-    return True
+
+
+def _stage_worktree(cwd: str) -> list[str]:
+    """Stage every uncommitted path and hand back what is now staged.
+
+    ``-A`` rather than ``-u``: the pre-push hooks validate the whole worktree,
+    untracked files included, so staging anything narrower commits something
+    other than what the hooks passed.
+    """
+    if subprocess.run(["git", "add", "-A"], cwd=cwd).returncode != 0:
+        log.error("Failed to stage fixes.")
+        return []
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    return [line for line in r.stdout.splitlines() if line.strip()]
 
 
 def _fix_push_failures(
     cwd: str, error_output: str, resolved_files: list[str],
 ) -> bool:
-    """Attempt to fix resolved files based on pre-push check errors.
+    """Attempt to fix pre-push check errors and commit the result.
 
     Uses AI to interpret the check output and fix formatting, build, or lint
     issues in the resolved files. Language-agnostic — the project's own checks
     serve as the oracle.
+
+    The backend runs with ``acceptEdits`` and ``Bash(*)``, so a fix can land
+    anywhere in the worktree, not only in the file whose content came back
+    between the markers. Committing the whole tree rather than that narrower
+    list is what keeps a direct edit from being validated by the retry's hooks
+    and then left out of the pushed commit.
 
     Returns True if fixes were applied and committed.
     """
@@ -986,12 +1020,15 @@ def _fix_push_failures(
         return False
 
     truncated = error_output[:_FIX_ERROR_MAX_CHARS]
-    fixed = [f for f in resolved_files if _fix_one_file(f, cwd, truncated)]
-    if not fixed:
+    for filepath in resolved_files:
+        _fix_one_file(filepath, cwd, truncated)
+
+    staged = _stage_worktree(cwd)
+    if not staged:
         return False
 
     cr = subprocess.run(
-        ["git", "commit", "-m", _fix_commit_message(cwd, fixed)],
+        ["git", "commit", "-m", _fix_commit_message(cwd, staged)],
         capture_output=True, text=True, cwd=cwd,
     )
     if cr.returncode != 0:
@@ -1001,7 +1038,7 @@ def _fix_push_failures(
     if _trail:
         _trail.info(
             "fix_push_failures", "committed check-failure fixes",
-            data={"files": fixed},
+            data={"files": staged},
         )
     return True
 
@@ -1446,18 +1483,20 @@ _STASH_MSG = "pr-rebase: auto-stash"
 def _auto_stash(cwd: str) -> bool | None:
     """Stash uncommitted changes if the working tree is dirty.
 
+    Untracked files are stashed too (``-u``). A rebase tolerates them, but the
+    pre-push hooks run against the worktree, so anything the user left lying
+    around silently joins what the hooks validate — and the push recovery's
+    whole-tree stage would then commit it. Ignored files stay put; ``-u`` is
+    not ``-a``.
+
     Returns True if stashed, False if tree was clean, None if stash failed.
     """
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if not status.stdout.strip():
+    if not _status_lines(cwd):
         return False
 
     log.info("Stashing uncommitted changes...")
     r = subprocess.run(
-        ["git", "stash", "push", "-m", _STASH_MSG],
+        ["git", "stash", "push", "-u", "-m", _STASH_MSG],
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0:
@@ -1469,7 +1508,13 @@ def _auto_stash(cwd: str) -> bool | None:
 
 
 def _auto_unstash(cwd: str, mode: RunMode) -> None:
-    """Pop stashed changes, resolving conflicts if needed."""
+    """Pop stashed changes, resolving conflicts if needed.
+
+    A pop can fail without leaving conflict markers — most often because the
+    stash holds an untracked file the rebased branch now tracks, which git
+    refuses to overwrite. Nothing is lost either way: a failed pop keeps the
+    stash entry, so the message names it rather than only echoing git.
+    """
     r = subprocess.run(
         ["git", "stash", "pop"],
         capture_output=True, text=True, cwd=cwd,
@@ -1480,7 +1525,10 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
 
     conflicts = _detect_conflicts(cwd)
     if not conflicts:
+        _terr("unstash", "stash pop failed", data={"stderr": r.stderr.strip()})
         log.error(f"git stash pop failed: {r.stderr.strip()}")
+        log.warn(f"Your changes are still stashed as '{_STASH_MSG}' — "
+                 "clear the blocking paths, then `git stash pop`.")
         return
 
     if not mode.resolves_conflicts or not ai_backend.is_available():
@@ -1625,13 +1673,15 @@ def _report_push(r: subprocess.CompletedProcess) -> tuple[int, str]:
 
 def _hook_modified(cwd: str) -> list[str]:
     """Tracked files the pre-push hook left modified in the worktree."""
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if not status.stdout.strip():
-        return []
-    return [line[3:] for line in status.stdout.splitlines() if line.startswith(" M ")]
+    return [
+        line[3:] for line in _status_lines(cwd, untracked=False)
+        if line.startswith(" M ")
+    ]
+
+
+def _uncommitted(cwd: str) -> list[str]:
+    """Every path the worktree holds outside a commit."""
+    return [line[3:] for line in _status_lines(cwd)]
 
 
 def _commit_regenerated(cwd: str) -> bool:
@@ -1659,6 +1709,46 @@ def _commit_regenerated(cwd: str) -> bool:
     return True
 
 
+def _retry_push(cwd: str, step: str) -> tuple[int, str] | None:
+    """Push again after a recovery step, refusing to push an unvalidated tree.
+
+    Pre-push hooks run against the worktree, not against the commits being
+    pushed, so a dirty tree lets them pass on code that is in no commit — a
+    green hook then says nothing about the pushed HEAD. Returns the retry's
+    (exit code, output), or None when the tree was dirty and nothing was pushed.
+    """
+    dirty = _uncommitted(cwd)
+    if dirty:
+        _terr(step, "recovery left the worktree dirty", data={"files": dirty})
+        log.error("Recovery left uncommitted changes — not pushing:")
+        for path in dirty:
+            log.dim(f"  {path}")
+        return None
+
+    log.info("Retrying force-push...")
+    return _report_push(_push(cwd))
+
+
+def _recover_regenerated(cwd: str, rc: int, push_output: str) -> tuple[int, str] | None:
+    """Commit hook-regenerated files and retry. None once the retry has pushed.
+
+    Hands back the failure the next recovery step has to work from: the retry's
+    own error when it ran, the caller's otherwise.
+    """
+    if not _commit_regenerated(cwd):
+        return rc, push_output
+
+    retry = _retry_push(cwd, "force_push")
+    if retry is None:
+        return rc, push_output
+
+    retry_rc, retry_output = retry
+    if retry_rc == 0:
+        return None
+    # Re-read the error: the second run's checks are what step 2 must fix.
+    return retry_rc, retry_output or push_output
+
+
 def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     """Force-push, auto-recovering from pre-push hook failures.
 
@@ -1669,6 +1759,10 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     A hook can both regenerate a file and report a check failure, so step 1
     falls through to step 2 when its retry is still rejected — otherwise the
     AI fix is unreachable on any repo whose hooks regenerate anything.
+
+    Either retry is abandoned when its recovery step left the worktree dirty:
+    the branch stays unpushed and the original failure is returned, rather than
+    pushing a HEAD the hooks never saw.
     """
     r = _push(cwd)
     if r.returncode == 0:
@@ -1677,21 +1771,19 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     rc, push_output = _report_push(r)
 
     # Recovery 1: commit regenerated files (hook modified tracked files)
-    if _commit_regenerated(cwd):
-        log.info("Retrying force-push...")
-        retry = _push(cwd)
-        if retry.returncode == 0:
-            return 0
-        # Re-read the error: the second run's checks are what step 2 must fix.
-        rc, retry_output = _report_push(retry)
-        push_output = retry_output or push_output
+    # A dirty tree abandons this retry but not step 2, whose whole-tree stage is
+    # exactly what sweeps up the untracked leftover `git add -u` cannot reach.
+    recovered = _recover_regenerated(cwd, rc, push_output)
+    if recovered is None:
+        return 0
+    rc, push_output = recovered
 
     # Recovery 2: AI-fix resolved files based on check errors
     if resolved_files and push_output:
         log.info("Attempting to fix pre-push check failures...")
         if _fix_push_failures(cwd, push_output, resolved_files):
-            log.info("Retrying force-push...")
-            return _report_push(_push(cwd))[0]
+            retry = _retry_push(cwd, "fix_push_failures")
+            return rc if retry is None else retry[0]
 
     return rc
 

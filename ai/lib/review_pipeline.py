@@ -245,7 +245,7 @@ def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
     skipped_groups: int = 0,
-) -> str:
+) -> tuple[str, float]:
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == Mode.SELF else TEMPLATE_SYNTHESIS
 
     Path(job.review_file).write_text("")
@@ -289,7 +289,9 @@ def _phase_synthesis(
         )
 
     _write_review_sidecar(job)
-    return synthesis_log
+    # Charged whether the agent produced a review or the mechanical fallback
+    # did: a synthesis that fell back still spent whatever its log records.
+    return synthesis_log, _parse_session_cost(synthesis_log)
 
 
 def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
@@ -508,7 +510,14 @@ def _run_synthesis_or_fallback(
     holistic_content: str, group_count: int,
     merged_content: str, failed_groups: "list[GroupFailure]",
     n_skipped: int, cost_so_far: float, max_cost: float,
-) -> str:
+) -> tuple[str, float]:
+    """The synthesis session log and what synthesis spent.
+
+    Every branch below that reaches the review file without an agent — a clean
+    review, a mechanical fallback, a skip — spends nothing and says so, so the
+    caller's running total means the same thing at the disprove gate as it did
+    here.
+    """
     all_groups_failed = len(failed_groups) == group_count
 
     if not _has_findings(merged_content) and not failed_groups:
@@ -516,7 +525,7 @@ def _run_synthesis_or_fallback(
         _write_clean_review(job, group_count, skipped_groups=n_skipped)
         state.synthesis_done = True
         _write_pipeline_state(job, state)
-        return ""
+        return "", 0.0
 
     if all_groups_failed:
         log.warn("All group agents failed — skipping synthesis")
@@ -529,7 +538,7 @@ def _run_synthesis_or_fallback(
         state.synthesis_done = True
         state.synthesis_failed = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
         _write_pipeline_state(job, state)
-        return ""
+        return "", 0.0
 
     if EFFORT_PRESETS[job.effort].skip_synthesis:
         log.info("Synthesis skipped (effort=low) — using mechanical merge")
@@ -539,7 +548,7 @@ def _run_synthesis_or_fallback(
         state.synthesis_done = True
         _write_pipeline_state(job, state)
         _inject_failures_and_status(job.review_file, state)
-        return ""
+        return "", 0.0
 
     if cost_so_far > max_cost:
         log.warn("Using merged group output as final review (synthesis skipped due to budget)")
@@ -549,9 +558,9 @@ def _run_synthesis_or_fallback(
         state.synthesis_failed = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
         _write_pipeline_state(job, state)
         _inject_failures_and_status(job.review_file, state)
-        return ""
+        return "", 0.0
 
-    synthesis_log = _phase_synthesis(
+    synthesis_log, synthesis_cost = _phase_synthesis(
         job, holistic_content, group_count, merged_content,
         skipped_groups=n_skipped,
     )
@@ -561,7 +570,7 @@ def _run_synthesis_or_fallback(
         state.synthesis_failed = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
     _write_pipeline_state(job, state)
     _inject_failures_and_status(job.review_file, state)
-    return synthesis_log
+    return synthesis_log, synthesis_cost
 
 
 def run_multi_phase(
@@ -657,10 +666,11 @@ def run_multi_phase(
 
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)
-    synthesis_log = _run_synthesis_or_fallback(
+    synthesis_log, synthesis_cost = _run_synthesis_or_fallback(
         job, state, holistic_content, group_count,
         merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
     )
+    cost_so_far += synthesis_cost
 
     # ── Phase 4.5: Disprove-it gate ─────────────────────────────────────────
     disprove_log = ""

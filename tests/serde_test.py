@@ -81,6 +81,22 @@ class HasRequired:
     inner: Required = field(default_factory=lambda: Required(name="x"))
 
 
+@dataclass
+class Scalars:
+    """One field per scalar hint, so a mismatch can be aimed at each."""
+    count: int = 0
+    ratio: float = 0.0
+    name: str = ""
+    enabled: bool = False
+
+
+@dataclass
+class Bare:
+    """Container hints with no element type — shape is all there is to check."""
+    mapping: dict = field(default_factory=dict)
+    sequence: list = field(default_factory=list)
+
+
 class TestToDict:
     def test_simple_dataclass(self):
         d = to_dict(Inner(name="x", color=Color.BLUE))
@@ -249,6 +265,77 @@ class TestNullOnAField:
     def test_null_on_a_field_with_no_default_still_raises(self):
         with pytest.raises(TypeError):
             from_dict(Required, {"name": None})
+
+
+class TestWrongTypedValue:
+    """A value that does not match its hint is restored or omitted, never kept.
+
+    Passing one through leaves it behind a type hint that says otherwise, and
+    the reader that trips over it does so three call frames from the file that
+    caused it — the same defect the null rule closes, for non-null values.
+    """
+
+    @pytest.mark.parametrize(("raw", "expected"), [
+        ("3", 3),
+        (3.0, 3),
+    ], ids=["str-digits", "whole-float"])
+    def test_a_recoverable_int_is_restored(self, raw, expected):
+        assert from_dict(Scalars, {"count": raw}).count == expected
+
+    @pytest.mark.parametrize("raw", ["many", "3.7", 3.7, [], {}], ids=[
+        "word", "fractional-str", "fractional-float", "list", "dict",
+    ])
+    def test_an_unrecoverable_int_falls_back_to_the_default(self, raw):
+        assert from_dict(Scalars, {"count": raw}).count == 0
+
+    def test_an_int_is_restored_for_a_float_hint(self):
+        obj = from_dict(Scalars, {"ratio": 3})
+        assert obj.ratio == 3.0
+        assert isinstance(obj.ratio, float)
+
+    def test_a_number_is_restored_for_a_str_hint(self):
+        assert from_dict(Scalars, {"name": 3}).name == "3"
+
+    def test_a_container_never_becomes_a_str(self):
+        """`str({"a": 1})` succeeds, which is the whole reason to refuse it —
+        it yields a corrupt field wearing a valid type."""
+        assert from_dict(Scalars, {"name": {"a": 1}}).name == ""
+
+    @pytest.mark.parametrize(("fname", "raw"), [
+        ("count", True),
+        ("ratio", True),
+        ("name", True),
+    ], ids=["int", "float", "str"])
+    def test_a_bool_satisfies_no_other_scalar_hint(self, fname, raw):
+        """`isinstance(True, int)` is True and `str(True)` is "True" where JSON
+        wrote "true" — both would record a wrong value as a confident one."""
+        assert getattr(from_dict(Scalars, {fname: raw}), fname) == getattr(Scalars(), fname)
+
+    @pytest.mark.parametrize("raw", ["true", 1, "", 0], ids=["str", "int", "empty-str", "zero"])
+    def test_only_a_real_bool_satisfies_a_bool_hint(self, raw):
+        """`bool("false")` is True, so truthiness is not a recovery."""
+        assert from_dict(Scalars, {"enabled": raw}).enabled is False
+
+    def test_a_real_bool_still_round_trips(self):
+        assert from_dict(Scalars, {"enabled": True}).enabled is True
+
+    @pytest.mark.parametrize(("fname", "raw"), [
+        ("mapping", "x"),
+        ("sequence", "abc"),
+    ], ids=["dict-hint", "list-hint"])
+    def test_a_bare_container_hint_rejects_a_wrong_shape(self, fname, raw):
+        """A str is iterable, so passing one through a bare `list` hint yields
+        a field that loops over characters instead of failing."""
+        assert getattr(from_dict(Bare, {fname: raw}), fname) == getattr(Bare(), fname)
+
+    def test_a_non_dict_for_a_nested_dataclass_falls_back_to_the_default(self):
+        """Otherwise the field holds a bare list and the first attribute access
+        on it raises AttributeError, far from the file that caused it."""
+        assert from_dict(Outer, {"inner": []}).inner == Inner()
+
+    def test_a_wrong_typed_value_with_no_default_still_raises(self):
+        with pytest.raises(TypeError):
+            from_dict(Required, {"name": {"a": 1}})
 
 
 # ── The round-trip guard ─────────────────────────────────────────────────────

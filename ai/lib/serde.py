@@ -15,6 +15,9 @@ from typing import get_args, get_origin, get_type_hints
 import log
 
 
+_SCALARS = (bool, int, float, str)
+
+
 class _Omitted(Exception):
     """Raised by `_coerce` for a value that cannot stand in for its hint.
 
@@ -44,6 +47,11 @@ def from_dict(cls, data: dict):
       field's default. A `null` nested inside a list or dict element propagates
       the same way, dropping the whole field to its default rather than keeping
       a `None` alongside real values
+    - A value whose type does not match its hint is restored where the
+      conversion recovers the written value (`"3"` for an `int`, `3` for a
+      `str`) and treated as a missing key where it would invent one (`"many"`
+      for an `int`, a list for a nested dataclass). `bool` converts to and
+      from nothing
 
     Raises TypeError if the data omits a field that has no default, or if the
     top-level data is not a dict (`None` excepted — that means "nothing
@@ -127,8 +135,9 @@ def _coerce(hint, value):
         # TypeError, rather than smuggling a bare None past the type hint.
         if value is None:
             value = {}
-        if isinstance(value, dict):
-            return from_dict(hint, value)
+        if not isinstance(value, dict):
+            raise _Omitted
+        return from_dict(hint, value)
 
     # Every hint below this line — enum, scalar, list, tuple, dict — has no
     # null form of its own. An explicit `null` written for one means what a
@@ -146,24 +155,66 @@ def _coerce(hint, value):
             return value
         return hint(value)
 
-    # list[X] — coerce elements
-    if origin is list and args:
-        item_type = args[0]
-        if isinstance(value, list):
-            return [_coerce(item_type, v) for v in value]
+    # Scalar — bool, int, float, str. See _coerce_scalar for the rules.
+    if hint in _SCALARS:
+        return _coerce_scalar(hint, value)
 
-    # tuple[X, ...] — reconstruct from list
-    if origin is tuple and args:
-        item_type = args[0]
-        if isinstance(value, (list, tuple)):
-            return tuple(_coerce(item_type, v) for v in value)
+    # A value that cannot be the container its hint names is an omitted field,
+    # not a value to pass through. Returning it verbatim would plant a str
+    # behind a `list[X]` hint for the first loop over it to trip on. A bare
+    # `list`/`tuple`/`dict` hint carries no element type, so shape is all
+    # there is to check.
+    if origin is list or hint is list:
+        if not isinstance(value, list):
+            raise _Omitted
+        return [_coerce(args[0], v) for v in value] if args else value
+
+    if origin is tuple or hint is tuple:
+        if not isinstance(value, (list, tuple)):
+            raise _Omitted
+        return tuple(_coerce(args[0], v) for v in value) if args else tuple(value)
 
     # dict[K, V] — coerce values, and int keys back from the strings JSON made
     # of them. Only int: every other key type survives the trip as itself.
-    if origin is dict and args and len(args) >= 2:
-        key_type, val_type = args[0], args[1]
-        if isinstance(value, dict):
-            coerce_key = int if key_type is int else _identity
-            return {coerce_key(k): _coerce(val_type, v) for k, v in value.items()}
+    if origin is dict or hint is dict:
+        if not isinstance(value, dict):
+            raise _Omitted
+        if len(args) < 2:
+            return value
+        coerce_key = int if args[0] is int else _identity
+        return {coerce_key(k): _coerce(args[1], v) for k, v in value.items()}
 
     return value
+
+
+def _coerce_scalar(hint, value):
+    """A scalar as its hinted type, or `_Omitted` when it cannot become one.
+
+    JSON loses the distinction often enough that a mismatch is worth restoring
+    rather than discarding: a model writes `"3"` for an int field, a hand-edit
+    writes `3` for a str one. Conversion is refused wherever it would invent a
+    value instead of recovering one — the field's default is a better answer
+    than a confidently wrong number.
+    """
+    if hint is bool or isinstance(value, bool):
+        # bool is isolated from every conversion below. `isinstance(True, int)`
+        # is True, `bool("false")` is True, and `str(True)` is "True" where JSON
+        # wrote "true" — each yields a wrong value rather than a restored one.
+        # So only a real bool satisfies a bool hint, and a bool satisfies
+        # nothing else.
+        if hint is bool and isinstance(value, bool):
+            return value
+        raise _Omitted
+    if isinstance(value, hint):
+        return value
+    if not isinstance(value, (int, float, str)):
+        # A list or dict. `str(value)` renders either into a plausible-looking
+        # string, which is a corrupt field wearing a valid type.
+        raise _Omitted
+    if hint is int and isinstance(value, float) and not value.is_integer():
+        # 3.0 is an int that JSON wrote as a float; 3.7 is not an int at all.
+        raise _Omitted
+    try:
+        return hint(value)
+    except (TypeError, ValueError):
+        raise _Omitted from None

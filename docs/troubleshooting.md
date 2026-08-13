@@ -142,7 +142,7 @@ pr gc
 
 `pr status` and the status line stay blank until something rebuilds the file. There is nothing to recover by hand; the file is a cache, not a record.
 
-This recovery only covers a file that will not parse. A file that parses but holds a wrong-typed value — a hand-edit that leaves a string where a number belongs, say — is not detected, and a `pr` command can still traceback on it. If a `pr` command keeps failing after the warning above has cleared, delete `.workbench/` (or run `pr gc`) to force every field to rebuild from scratch.
+A file that parses but holds a wrong-typed value is handled without the warning: a field whose value cannot be read as its recorded type falls back to its default, so a hand-edit that leaves `"many"` where a count belongs costs you that one field rather than the file. The next write restores it.
 
 ## "merge conflict" in `~/.claude/settings.json`
 

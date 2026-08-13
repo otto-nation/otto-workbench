@@ -32,11 +32,11 @@ from pathlib import Path
 import log
 
 
-def _root(env_var: str, xdg_var: str | None, fallback: str) -> Path:
+def _root(env_var: str, xdg_var: str, fallback: str) -> Path:
     override = os.environ.get(env_var)
     if override:
         return Path(override)
-    xdg_home = os.environ.get(xdg_var) if xdg_var else None
+    xdg_home = os.environ.get(xdg_var)
     if xdg_home:
         return Path(xdg_home) / "workbench"
     return Path(os.path.expanduser(fallback))
@@ -65,11 +65,11 @@ def config_dir() -> Path:
 def state_dir() -> Path:
     """Generated, machine-local data: reviews/, logs/, usage/, applied migrations.
 
-    No ``XDG_STATE_HOME`` rung yet, and the fallback is still the legacy config
-    path — see ``lib/constants.sh`` for why. #624 phase 4 adds the rung and
-    flips the fallback alongside the migration that carries the data.
+    The move off the old ``~/.config/workbench`` default is a hard cut: nothing
+    falls back to the legacy path, and ``lib/migrations.sh`` carries the data
+    across once.
     """
-    return _root("WORKBENCH_STATE_DIR", None, "~/.config/workbench")
+    return _root("WORKBENCH_STATE_DIR", "XDG_STATE_HOME", "~/.local/state/workbench")
 
 
 def cache_dir(consumer: str | None = None) -> Path:

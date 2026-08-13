@@ -11,6 +11,9 @@ setup() {
   # Build a minimal fake workbench with ui.sh stubs and constants
   FAKE_ROOT="$TMPDIR/workbench"
   FAKE_STATE="$TMPDIR/state"
+  FAKE_CONFIG="$TMPDIR/config"
+  # Never the real ~/.config/workbench: run_all_migrations empties this path.
+  FAKE_LEGACY="$TMPDIR/legacy"
   mkdir -p "$FAKE_ROOT/lib" "$FAKE_STATE"
 
   cat > "$FAKE_ROOT/lib/ui.sh" <<'STUB'
@@ -31,6 +34,8 @@ STUB
 WORKBENCH_DIR="$FAKE_ROOT"
 LIB_SRC_DIR="$FAKE_ROOT/lib"
 WORKBENCH_STATE_DIR="$FAKE_STATE"
+WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+LEGACY_WORKBENCH_ROOT="$FAKE_LEGACY"
 MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
 CONST
 
@@ -64,6 +69,126 @@ run_migrations_in_fake() {
     . "$FAKE_ROOT/lib/migrations.sh"
     run_all_migrations
   )
+}
+
+# Helper: source the framework and adopt the legacy root only
+adopt_in_fake() {
+  (
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$FAKE_ROOT/lib/constants.sh"
+    . "$FAKE_ROOT/lib/migrations.sh"
+    adopt_legacy_workbench_root
+  )
+}
+
+# ─── Legacy root adoption (#624) ─────────────────────────────────────────────
+
+@test "adoption is a no-op when the legacy root does not exist" {
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "adoption sorts entries between the state and config roots" {
+  mkdir -p "$FAKE_LEGACY/reviews/repo-42" "$FAKE_LEGACY/overrides/ai"
+  echo "applied" > "$FAKE_LEGACY/migrations.applied"
+  echo "ultra" > "$FAKE_LEGACY/reuse-level"
+  echo "review" > "$FAKE_LEGACY/reviews/repo-42/review.md"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "$FAKE_STATE/migrations.applied")" = "applied" ]
+  [ "$(cat "$FAKE_STATE/reviews/repo-42/review.md")" = "review" ]
+  [ "$(cat "$FAKE_CONFIG/reuse-level")" = "ultra" ]
+  [ -d "$FAKE_CONFIG/overrides/ai" ]
+  [ ! -d "$FAKE_LEGACY" ]
+}
+
+@test "adoption is idempotent across repeated runs" {
+  mkdir -p "$FAKE_LEGACY"
+  echo "applied" > "$FAKE_LEGACY/migrations.applied"
+
+  adopt_in_fake
+  run adopt_in_fake
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$FAKE_STATE/migrations.applied")" = "applied" ]
+}
+
+@test "adoption resumes a run that was interrupted partway through a directory" {
+  mkdir -p "$FAKE_LEGACY/reviews/second" "$FAKE_STATE/reviews/first"
+  echo "already there" > "$FAKE_STATE/reviews/first/review.md"
+  echo "left behind" > "$FAKE_LEGACY/reviews/second/review.md"
+  echo "hidden" > "$FAKE_LEGACY/reviews/.index"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "$FAKE_STATE/reviews/first/review.md")" = "already there" ]
+  [ "$(cat "$FAKE_STATE/reviews/second/review.md")" = "left behind" ]
+  [ "$(cat "$FAKE_STATE/reviews/.index")" = "hidden" ]
+  [ ! -d "$FAKE_LEGACY" ]
+}
+
+@test "adoption keeps both copies when a file exists on each side" {
+  mkdir -p "$FAKE_LEGACY" "$FAKE_STATE"
+  echo "old" > "$FAKE_LEGACY/migrations.applied"
+  echo "new" > "$FAKE_STATE/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept the new one"* ]]
+
+  [ "$(cat "$FAKE_STATE/migrations.applied")" = "new" ]
+  [ "$(cat "$FAKE_LEGACY/migrations.applied")" = "old" ]
+}
+
+@test "adoption leaves the legacy root alone when a root still resolves to it" {
+  # A machine that pins WORKBENCH_STATE_DIR to the old path: there is nowhere
+  # to move the state to, and moving a directory into itself would destroy it.
+  cat >> "$FAKE_ROOT/lib/constants.sh" <<CONST
+WORKBENCH_STATE_DIR="$FAKE_LEGACY"
+CONST
+  mkdir -p "$FAKE_LEGACY"
+  echo "applied" > "$FAKE_LEGACY/migrations.applied"
+  echo "ultra" > "$FAKE_LEGACY/reuse-level"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "$FAKE_LEGACY/migrations.applied")" = "applied" ]
+  [ "$(cat "$FAKE_CONFIG/reuse-level")" = "ultra" ]
+}
+
+@test "adoption warns that running shells still source the old docker aliases" {
+  mkdir -p "$FAKE_LEGACY"
+  ln -s "$TMPDIR/colima/aliases.zsh" "$FAKE_LEGACY/docker-aliases.zsh"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"open a new one"* ]]
+  [ -L "$FAKE_STATE/docker-aliases.zsh" ]
+}
+
+@test "adoption runs before the framework reads its own state file" {
+  # migrations.applied is one of the files being moved. If the framework read
+  # the state root first, it would see an empty file and re-run every
+  # historical migration.
+  mkdir -p "$FAKE_ROOT/mycomp/migrations" "$FAKE_LEGACY"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-test.sh" <<EOF
+#!/usr/bin/env bash
+migration_20250101_test() {
+  echo "EXECUTED" >> "$TMPDIR/exec.log"
+}
+EOF
+  echo "mycomp/20250101-test.sh" > "$FAKE_LEGACY/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [ ! -f "$TMPDIR/exec.log" ]
+  grep -qxF "mycomp/20250101-test.sh" "$FAKE_STATE/migrations.applied"
 }
 
 # ─── Component discovery under set -e ────────────────────────────────────────

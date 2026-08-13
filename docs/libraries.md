@@ -31,11 +31,13 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 
 | Constant | Holds | XDG rung | Default |
 |----------|-------|----------|---------|
-| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `install.yml`, `overrides/`, `mcp-tools.json` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
-| `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `logs/`, `usage/`, applied migrations | *(none yet)* | `~/.config/workbench` |
+| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `overrides/`, `mcp-tools.json`, `review.yml`, `reuse-level` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
+| `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `logs/`, `usage/`, `install.yml`, applied migrations | `XDG_STATE_HOME` | `~/.local/state/workbench` |
 | `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: `vertex-quota/` | `XDG_CACHE_HOME` | `~/.cache/workbench` |
 
-The state root has no `XDG_STATE_HOME` rung yet: honouring it would relocate the existing reviews and logs with nothing to carry them. The rung and the `~/.local/state/workbench` default arrive together with that migration.
+`install.yml` sits under state despite the name: `lib/state.sh` owns every write to it, and it is what the old `installed.components` file migrated into. Nobody hand-edits it.
+
+Machines set up before the split keep everything in `~/.config/workbench`. `adopt_legacy_workbench_root` in [`lib/migrations.sh`](../lib/migrations.sh) carries that directory across on the next sync, entry by entry, and runs ahead of the migration framework because `migrations.applied` is one of the files it moves. Nothing falls back to the old path once it has run — the adoption is the entire compatibility story.
 
 Its own module rather than part of `constants.sh` because two other consumers need the roots without the rest: the `otto-ai-tools` tarball ships `roots.sh` alongside its own `ui.sh` facade, and `registries.sh` sources it directly when a caller has not loaded `constants.sh`.
 

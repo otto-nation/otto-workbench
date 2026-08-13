@@ -31,7 +31,7 @@ export TESTCONTAINERS_HOST_OVERRIDE=localhost
 # WORKBENCH_DIR is not known at shell startup, and sourcing would add a file
 # read to every shell. Keep this chain identical to the one in constants.sh —
 # tests/workbench_roots.bats cross-validates them.
-_wb_docker_aliases="${WORKBENCH_STATE_DIR:-$HOME/.config/workbench}/docker-aliases.zsh"
+_wb_docker_aliases="${WORKBENCH_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/workbench}/docker-aliases.zsh"
 [[ -f "$_wb_docker_aliases" ]] && source "$_wb_docker_aliases"
 unset _wb_docker_aliases
 

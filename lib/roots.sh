@@ -16,9 +16,9 @@
 # cross-validates all three.
 
 # _wb_root OVERRIDE XDG_HOME FALLBACK — resolve one root.
-# Pass an empty XDG_HOME for a root that has no XDG rung. An override that is
-# exported but empty counts as unset, matching how the XDG spec reads its own
-# variables — a bare `export WORKBENCH_STATE_DIR=` in a shell profile falls
+# An override that is exported but empty counts as unset, matching how the XDG
+# spec reads its own variables — a bare `export WORKBENCH_STATE_DIR=` in a
+# shell profile falls
 # through to the default rather than resolving every root to the filesystem root.
 _wb_root() {
   local override="$1" xdg_home="$2" fallback="$3"
@@ -39,11 +39,10 @@ WORKBENCH_CONFIG_DIR="$(_wb_root "${WORKBENCH_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:
 # Generated, machine-local data: reviews/, logs/, usage/, applied migrations.
 # Written by setup scripts; read by zsh snippets and sync steps. Never committed.
 #
-# State has no XDG_STATE_HOME rung yet and keeps the legacy ~/.config/workbench
-# default: adding the rung would relocate ~198 MB of reviews and logs on any
-# machine that sets XDG_STATE_HOME, with no migration to carry the data. #624
-# phase 4 fills in the rung and flips the fallback alongside that migration.
-WORKBENCH_STATE_DIR="$(_wb_root "${WORKBENCH_STATE_DIR:-}" "" "$HOME/.config/workbench")"
+# The move off the old ~/.config/workbench default is a hard cut — nothing falls
+# back to the legacy path. What carries the data is the one-time adoption in
+# lib/migrations.sh, which runs before any migration reads its own bookkeeping.
+WORKBENCH_STATE_DIR="$(_wb_root "${WORKBENCH_STATE_DIR:-}" "${XDG_STATE_HOME:-}" "$HOME/.local/state/workbench")"
 
 # Recomputable data, safe to delete at any time: vertex-quota/.
 WORKBENCH_CACHE_DIR="$(_wb_root "${WORKBENCH_CACHE_DIR:-}" "${XDG_CACHE_HOME:-}" "$HOME/.cache/workbench")"

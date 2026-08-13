@@ -230,7 +230,7 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 
 `retro-complete.sh` records the timestamp and cleans up only the review
 directories that were scanned by `retro-scan` (listed in
-`~/.config/workbench/retro-consumed-reviews.txt`).
+`~/.local/state/workbench/retro-consumed-reviews.txt`).
 
 ```bash
 ~/.claude/skills/retro/retro-complete.sh

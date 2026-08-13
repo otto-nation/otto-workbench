@@ -12,9 +12,10 @@
 #   run_all_migrations              # discover and run across all components
 #   run_component_migrations DIR    # run for a single component directory
 
-# Guard: constants must be loaded (provides WORKBENCH_DIR, MIGRATIONS_STATE_FILE, etc.)
-if [[ -z "${WORKBENCH_DIR:-}" ]]; then
-  echo "ERROR: lib/migrations.sh requires WORKBENCH_DIR (source lib/ui.sh first)" >&2
+# Guard: constants must be loaded (provides WORKBENCH_DIR, MIGRATIONS_STATE_FILE,
+# LEGACY_WORKBENCH_ROOT, and the roots the adoption below moves data between)
+if [[ -z "${WORKBENCH_DIR:-}" || -z "${LEGACY_WORKBENCH_ROOT:-}" ]]; then
+  echo "ERROR: lib/migrations.sh requires WORKBENCH_DIR and LEGACY_WORKBENCH_ROOT (source lib/ui.sh first)" >&2
   return 1 2>/dev/null || exit 1
 fi
 
@@ -125,9 +126,131 @@ _prune_stale_migration_state() {
   fi
 }
 
+# ─── Adoption of the pre-split root (#624) ───────────────────────────────────
+#
+# Config, state, and ~200 MB of generated artifacts all used to live in
+# ~/.config/workbench. The roots now split three ways, and this carries what a
+# machine already has on disk across to them.
+#
+# It runs ahead of the framework rather than as a migration of its own because
+# migrations.applied is one of the files it moves. A migration that moved its
+# own bookkeeping would first have to be selected by a framework reading an
+# empty state file — which would re-run every past migration alongside it.
+
+# What stays behind in the config root; everything else the legacy root holds
+# is state. The list that has to be exhaustive is deliberately the short one:
+# the inventory in #624 found four state files that no manifest written in
+# advance had thought to list.
+_LEGACY_CONFIG_ENTRIES=(
+  overrides reuse-level reuse-default review.yml mcp-tools.json
+  config.yml config.schema.json
+)
+
+# _path_exists PATH — true for anything on disk, a broken symlink included.
+_path_exists() {
+  [[ -e "$1" || -L "$1" ]]
+}
+
+# _adopt_entry SRC DST — carry one entry across, resuming a partial run.
+_adopt_entry() {
+  local src="$1" dst="$2"
+
+  if ! _path_exists "$dst"; then
+    mkdir -p "$(dirname "$dst")"
+    if ! mv "$src" "$dst"; then
+      warn "Could not move $src to $dst — left it in place"
+      return 1
+    fi
+    return 0
+  fi
+
+  # A destination that already exists is either a run that was interrupted
+  # partway through 200 MB or a directory the new root already had. Merging
+  # child by child finishes what the first run started; a plain mv would fail
+  # or nest the source inside the destination.
+  if [[ -d "$src" && ! -L "$src" && -d "$dst" && ! -L "$dst" ]]; then
+    _adopt_dir "$src" "$dst"
+    return $?
+  fi
+
+  warn "Both $src and $dst exist — kept the new one; reconcile and remove the old"
+  return 1
+}
+
+# _adopt_dir SRC DST — merge SRC into an existing DST, entry by entry.
+_adopt_dir() {
+  local src="$1" dst="$2" child failed=0
+  # Dotfiles are skipped at the top level, where the only ones that turn up are
+  # the filesystem's own, but a review or a log directory can legitimately hold
+  # one — leaving it behind would strand data and block the rmdir below.
+  local restore_dotglob=false
+  shopt -q dotglob || restore_dotglob=true
+  shopt -s dotglob
+
+  for child in "$src"/*; do
+    _path_exists "$child" || continue
+    if ! _adopt_entry "$child" "$dst/${child##*/}"; then
+      failed=1
+    fi
+  done
+
+  if [[ "$restore_dotglob" == true ]]; then
+    shopt -u dotglob
+  fi
+  # Only an empty directory goes; whatever could not move keeps its home.
+  rmdir "$src" 2>/dev/null || true
+  return "$failed"
+}
+
+# adopt_legacy_workbench_root
+# Move a pre-#624 ~/.config/workbench to whichever roots now own its contents.
+# No-op once the legacy root is gone, or when a root still resolves to it.
+adopt_legacy_workbench_root() {
+  local legacy="$LEGACY_WORKBENCH_ROOT"
+  [[ -d "$legacy" ]] || return 0
+
+  local docker_aliases="$legacy/docker-aliases.zsh" had_docker=false
+  if _path_exists "$docker_aliases"; then
+    had_docker=true
+  fi
+
+  local entry name target moved=0
+  # Dotfiles are left where they are: the only ones that turn up are the
+  # filesystem's own (.DS_Store), and they belong to no root.
+  for entry in "$legacy"/*; do
+    _path_exists "$entry" || continue
+    name="${entry##*/}"
+    target="$WORKBENCH_STATE_DIR"
+    if _array_contains "$name" "${_LEGACY_CONFIG_ENTRIES[@]}"; then
+      target="$WORKBENCH_CONFIG_DIR"
+    fi
+    if [[ "$target" == "$legacy" ]]; then
+      continue
+    fi
+    if _adopt_entry "$entry" "$target/$name"; then
+      moved=$(( moved + 1 ))
+    fi
+  done
+
+  if (( moved == 0 )); then
+    return 0
+  fi
+
+  success "Adopted $moved entries from $legacy into $WORKBENCH_STATE_DIR"
+  if [[ "$had_docker" == true ]] && ! _path_exists "$docker_aliases"; then
+    warn "Shells already running still source the old docker-aliases.zsh — open a new one"
+  fi
+  rmdir "$legacy" 2>/dev/null || true
+  return 0
+}
+
 # run_all_migrations
 # Discovers and runs migrations across all components, then prunes stale state.
 run_all_migrations() {
+  # Before anything reads the state root: carry a pre-split ~/.config/workbench
+  # into the roots that own it now, migrations.applied included.
+  adopt_legacy_workbench_root
+
   # Prune stale state entries before running (handles removed/renamed migrations)
   _prune_stale_migration_state
 

@@ -63,7 +63,7 @@ resolve_zsh_state() {
 
 @test "with nothing set, each root falls back to its built-in default" {
   [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$HOME/.config/workbench" ]
-  [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$HOME/.config/workbench" ]
+  [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$HOME/.local/state/workbench" ]
   [ "$(resolve_shell WORKBENCH_CACHE_DIR)"  = "$HOME/.cache/workbench" ]
 }
 
@@ -81,15 +81,18 @@ resolve_zsh_state() {
   [ "$(resolve_python cache_dir)" = "$TMPDIR/xdg-cache/workbench" ]
 }
 
-@test "XDG_STATE_HOME does not move the state root yet" {
-  # Deliberate: the rung arrives in #624 phase 4, with the migration that
-  # carries ~198 MB of reviews and logs. Adding it earlier would relocate that
-  # data with nothing to move it. If this test starts failing because the rung
-  # landed, the migration must have landed with it.
+@test "XDG_STATE_HOME moves the state root" {
   export XDG_STATE_HOME="$TMPDIR/xdg-state"
-  [ "$(resolve_shell WORKBENCH_STATE_DIR)" = "$HOME/.config/workbench" ]
-  [ "$(resolve_python state_dir)" = "$HOME/.config/workbench" ]
-  [ "$(resolve_zsh_state)" = "$HOME/.config/workbench" ]
+  [ "$(resolve_shell WORKBENCH_STATE_DIR)" = "$TMPDIR/xdg-state/workbench" ]
+  [ "$(resolve_python state_dir)" = "$TMPDIR/xdg-state/workbench" ]
+  [ "$(resolve_zsh_state)" = "$TMPDIR/xdg-state/workbench" ]
+}
+
+@test "the state root no longer shares the config root's default" {
+  # The whole point of the split: generated data that used to sit beside
+  # hand-authored config now has a home of its own.
+  [ "$(resolve_shell WORKBENCH_STATE_DIR)" != "$(resolve_shell WORKBENCH_CONFIG_DIR)" ]
+  [ "$(resolve_python state_dir)" != "$(resolve_python config_dir)" ]
 }
 
 # ─── Override rung ──────────────────────────────────────────────────────────
@@ -115,12 +118,12 @@ resolve_zsh_state() {
   # write the workbench's data to the filesystem root.
   export WORKBENCH_CONFIG_DIR="" WORKBENCH_STATE_DIR="" WORKBENCH_CACHE_DIR=""
   [ "$(resolve_shell WORKBENCH_CONFIG_DIR)" = "$HOME/.config/workbench" ]
-  [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$HOME/.config/workbench" ]
+  [ "$(resolve_shell WORKBENCH_STATE_DIR)"  = "$HOME/.local/state/workbench" ]
   [ "$(resolve_shell WORKBENCH_CACHE_DIR)"  = "$HOME/.cache/workbench" ]
   [ "$(resolve_python config_dir)" = "$HOME/.config/workbench" ]
-  [ "$(resolve_python state_dir)"  = "$HOME/.config/workbench" ]
+  [ "$(resolve_python state_dir)"  = "$HOME/.local/state/workbench" ]
   [ "$(resolve_python cache_dir)"  = "$HOME/.cache/workbench" ]
-  [ "$(resolve_zsh_state)" = "$HOME/.config/workbench" ]
+  [ "$(resolve_zsh_state)" = "$HOME/.local/state/workbench" ]
 }
 
 @test "sourcing roots.sh does not leave its helper defined" {
@@ -156,12 +159,14 @@ assert_agree() {
   fi
 }
 
-# assert_combo_agrees "STATE|XDG_CONFIG|XDG_CACHE" — apply one environment and
-# check every resolver against the shell one.
+# assert_combo_agrees "STATE|XDG_STATE|XDG_CONFIG|XDG_CACHE" — apply one
+# environment and check every resolver against the shell one.
 assert_combo_agrees() {
   local combo="$1" rest
-  rest="${combo#*|}"
   export_or_unset WORKBENCH_STATE_DIR "${combo%%|*}"
+  rest="${combo#*|}"
+  export_or_unset XDG_STATE_HOME "${rest%%|*}"
+  rest="${rest#*|}"
   export_or_unset XDG_CONFIG_HOME "${rest%%|*}"
   export_or_unset XDG_CACHE_HOME "${rest#*|}"
 
@@ -176,19 +181,29 @@ assert_combo_agrees() {
 }
 
 @test "shell, Python, and zsh agree across the set/unset matrix" {
-  # The eight combinations of WORKBENCH_STATE_DIR x XDG_CONFIG_HOME x
-  # XDG_CACHE_HOME, enumerated flat rather than as nested loops so the body
-  # stays inside the repo's nesting limit. An empty field means unset.
+  # The sixteen combinations of WORKBENCH_STATE_DIR x XDG_STATE_HOME x
+  # XDG_CONFIG_HOME x XDG_CACHE_HOME, enumerated flat rather than as nested
+  # loops so the body stays inside the repo's nesting limit. An empty field
+  # means unset. The first two fields are the rungs that must not disagree:
+  # the override has to beat XDG_STATE_HOME in all three languages.
   local combo
   for combo in \
-    "||" \
-    "$TMPDIR/explicit-state||" \
-    "|$TMPDIR/xdg-config|" \
-    "||$TMPDIR/xdg-cache" \
-    "$TMPDIR/explicit-state|$TMPDIR/xdg-config|" \
-    "$TMPDIR/explicit-state||$TMPDIR/xdg-cache" \
-    "|$TMPDIR/xdg-config|$TMPDIR/xdg-cache" \
-    "$TMPDIR/explicit-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache"; do
+    "|||" \
+    "$TMPDIR/explicit-state|||" \
+    "|$TMPDIR/xdg-state||" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-state||" \
+    "||$TMPDIR/xdg-config|" \
+    "$TMPDIR/explicit-state||$TMPDIR/xdg-config|" \
+    "|$TMPDIR/xdg-state|$TMPDIR/xdg-config|" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-state|$TMPDIR/xdg-config|" \
+    "|||$TMPDIR/xdg-cache" \
+    "$TMPDIR/explicit-state|||$TMPDIR/xdg-cache" \
+    "|$TMPDIR/xdg-state||$TMPDIR/xdg-cache" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-state||$TMPDIR/xdg-cache" \
+    "||$TMPDIR/xdg-config|$TMPDIR/xdg-cache" \
+    "$TMPDIR/explicit-state||$TMPDIR/xdg-config|$TMPDIR/xdg-cache" \
+    "|$TMPDIR/xdg-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache" \
+    "$TMPDIR/explicit-state|$TMPDIR/xdg-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache"; do
     assert_combo_agrees "$combo"
   done
 }

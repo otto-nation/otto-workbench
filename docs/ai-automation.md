@@ -281,7 +281,7 @@ either way — they report no usage, so they record nothing.
 ### Usage ledger
 
 Every AI call made through the workbench appends one record to a monthly JSONL
-file under `~/.config/workbench/usage/` — cost, tokens, cache hit rate, and the
+file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and the
 task that made the call. Python entry points record automatically via
 `ai_backend`; the two shell paths that cannot use it (`run-auto-task`, which needs
 slash commands, and `AI_COMMAND`, which is pluggable) go through `ai-usage-log`.
@@ -375,7 +375,7 @@ calls. Without `ANTHROPIC_API_KEY` configured it validates the corpus and stops.
 
 ### Where review artifacts live
 
-Each review owns a directory under `~/.config/workbench/reviews/` — `review.md`
+Each review owns a directory under `~/.local/state/workbench/reviews/` — `review.md`
 plus its session logs, group outputs, and pipeline state. The directory is derived
 from the review file's path, and it is the only place outside the worktree that
 review agents may write to. Granting the shared reviews root instead is how agent

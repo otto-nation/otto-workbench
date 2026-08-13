@@ -3,7 +3,7 @@
 # and removes the pending flag.
 #
 # Writes .last-retro to ~/.claude/ (global, not per-project), deletes
-# review directories from ~/.config/workbench/reviews/ that have been
+# review directories from ~/.local/state/workbench/reviews/ that have been
 # consumed by this retro run, and removes ~/.claude/.retro-pending.
 # Called by the retro skill after Phase 4 completes.
 #

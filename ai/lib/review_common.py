@@ -398,7 +398,7 @@ class Diagnosis:
         """Rebuild a diagnosis from any shape a state file can hold.
 
         `serde` hands the whole field over here rather than assuming a dict,
-        because reviews live in `~/.config/workbench/reviews/` and outlive the
+        because reviews live in `~/.local/state/workbench/reviews/` and outlive the
         code that wrote them. A file written before diagnoses were typed holds
         the rendered reason — recover the kind where the text names one, and
         keep the rest verbatim under `UNKNOWN`, so a `--recover` run against an

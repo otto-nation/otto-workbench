@@ -58,7 +58,7 @@ Migrations handle breaking changes — renamed configs, deprecated symlinks, upd
 **Lifecycle:**
 1. Create the migration file following the naming convention
 2. [`run_all_migrations()`](../lib/migrations.sh) auto-discovers it via glob
-3. On first run: function executes, filename recorded in `$MIGRATIONS_STATE_FILE` (`~/.config/workbench/migrations.applied` by default — see [Libraries — roots.sh](libraries.md#rootssh))
+3. On first run: function executes, filename recorded in `$MIGRATIONS_STATE_FILE` (`~/.local/state/workbench/migrations.applied` by default — see [Libraries — roots.sh](libraries.md#rootssh))
 4. On subsequent runs: skipped (already recorded)
 5. If the migration file is deleted: stale entry auto-pruned from state
 
@@ -101,7 +101,7 @@ Used for AI config (rules, agents, skills) where users can override or disable i
 
 ## State Tracking
 
-Component installation state is recorded in `$INSTALLED_STATE_FILE` — `~/.config/workbench/installed.components` by default (one entry per line, e.g., `ai/claude`, `terminals/ghostty`).
+Component installation state is recorded in `$INSTALLED_STATE_FILE` — `~/.local/state/workbench/installed.components` by default (one entry per line, e.g., `ai/claude`, `terminals/ghostty`).
 
 **Functions** (in [`lib/state.sh`](../lib/state.sh)):
 - `state_record()` — mark a component as installed

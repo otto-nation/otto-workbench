@@ -231,7 +231,7 @@ class TestRecoverRendersTheRightHint:
 class TestRecoverAcrossASchemaChange:
     """A `pipeline.json` written before diagnoses were typed still recovers.
 
-    Reviews live in `~/.config/workbench/reviews/` and outlive the code that
+    Reviews live in `~/.local/state/workbench/reviews/` and outlive the code that
     wrote them, so the first `--recover` after this change reads a state file
     holding rendered strings where it now expects records.
     """

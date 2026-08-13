@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
+
+import workbench_paths  # noqa: E402
 
 VALID_LEVELS = {"lite", "full", "ultra"}
 DEFAULT_LEVEL = "full"
-LEVEL_FILE = Path.home() / ".config" / "workbench" / "reuse-level"
-DEFAULT_FILE = Path.home() / ".config" / "workbench" / "reuse-default"
+# A level the user picks, so it belongs to the config root — not to the state
+# root that happens to share its default path.
+LEVEL_FILE = workbench_paths.config_dir() / "reuse-level"
+DEFAULT_FILE = workbench_paths.config_dir() / "reuse-default"
 
 LEVEL_DESCRIPTIONS = {
     "lite": "Build what's asked, name the lazier alternative in one line. User picks.",

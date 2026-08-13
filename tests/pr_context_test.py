@@ -1,5 +1,6 @@
 """Tests for pr_context library."""
 
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -12,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import pr_context
+import pr_target
 from pr_context import (
     _parse_pr_input, _resolve_branch, default_branch, resolve_bare_repo_worktree,
     find_worktree_for_branch, ResolvedContext, update_to_remote,
@@ -51,6 +53,7 @@ def test_resolved_context_is_frozen():
     ctx = ResolvedContext(
         repo="owner/repo", branch="main", pr_number=1,
         worktree_root=Path("/tmp"), head_sha="abc",
+        target_dir=Path("/tmp/target"),
     )
     with pytest.raises(AttributeError):
         ctx.repo = "other"
@@ -60,6 +63,7 @@ def test_resolved_context_fields():
     ctx = ResolvedContext(
         repo="owner/repo", branch="feat/auth",
         pr_number=None, worktree_root=Path("/wt"), head_sha="def",
+        target_dir=Path("/wt/target"),
     )
     assert ctx.repo == "owner/repo"
     assert ctx.branch == "feat/auth"
@@ -74,6 +78,7 @@ def test_require_worktree_returns_path():
     ctx = ResolvedContext(
         repo="owner/repo", branch="feat/auth",
         pr_number=None, worktree_root=Path("/wt"), head_sha="def",
+        target_dir=Path("/wt/target"),
     )
     assert ctx.require_worktree() == Path("/wt")
 
@@ -82,6 +87,7 @@ def test_require_worktree_exits_with_actionable_message(capsys):
     ctx = ResolvedContext(
         repo="owner/repo", branch="feat/auth",
         pr_number=None, worktree_root=None, head_sha="",
+        target_dir=Path("/tmp/target"),
     )
     with pytest.raises(SystemExit) as exc:
         ctx.require_worktree()
@@ -178,6 +184,7 @@ def _make_ctx(**overrides):
     defaults = dict(
         repo="owner/repo", branch="feat/x",
         pr_number=1, worktree_root=Path("/wt"), head_sha="aaa",
+        target_dir=Path("/wt/target"),
     )
     defaults.update(overrides)
     return ResolvedContext(**defaults)
@@ -528,3 +535,100 @@ def test_create_worktree_for_branch_returns_none_when_wt_fails(mock_run):
 def test_create_worktree_for_branch_survives_malformed_json(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout="{not json}\n")
     assert create_worktree_for_branch("feat/x") is None
+
+
+# ── target_dir / PR head resolution ────────────────────────────────────────
+
+
+def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, capsys):
+    """No borrowing the caller's branch — that is the bug this issue is about."""
+    monkeypatch.setattr(pr_context, "_resolve_worktree",
+                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: (None, ""))
+    monkeypatch.setattr(pr_context, "_current_branch",
+                        lambda cwd=None: pytest.fail("must not read the caller's branch"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context.resolve(pr="2973")
+
+    assert excinfo.value.code == 1
+    assert "2973" in capsys.readouterr().err
+
+
+def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(pr_context, "_resolve_worktree",
+                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
+    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "other")
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/login", "pr-sha"))
+    monkeypatch.setattr(pr_target, "repo_name_from_origin", lambda cwd=None: "widget")
+
+    ctx = pr_context.resolve(pr="2973")
+
+    assert ctx.head_sha == "pr-sha"
+    assert ctx.branch == "feat/login"
+
+
+def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path):
+    """The whole point: two PRs from one CWD get two target dirs."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(pr_context, "_resolve_worktree",
+                        lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
+    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
+    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
+    monkeypatch.setattr(pr_target, "repo_name_from_origin", lambda cwd=None: "widget")
+
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/a", "sha-a"))
+    first = pr_context.resolve(pr="1")
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/b", "sha-b"))
+    second = pr_context.resolve(pr="2")
+
+    assert first.target_dir != second.target_dir
+    assert first.worktree_root == second.worktree_root
+
+
+def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
+    monkeypatch.setattr(pr_context, "_resolve_worktree",
+                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
+    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/a", "sha"))
+    monkeypatch.setattr(pr_target, "repo_name_from_origin", lambda cwd=None: None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context.resolve(pr="1")
+
+    assert excinfo.value.code == 1
+    assert "origin" in capsys.readouterr().err
+
+
+def test_update_to_remote_preserves_the_target_dir(monkeypatch, tmp_path):
+    """dataclasses.replace, so a new field cannot be dropped by hand-retyping."""
+    ctx = pr_context.ResolvedContext(
+        repo="acme/widget", branch="feat/a", pr_number=1,
+        worktree_root=tmp_path, head_sha="old", current_branch="feat/a",
+        target_dir=tmp_path / "target",
+    )
+    monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "feat/a")
+    monkeypatch.setattr(pr_context, "_worktree_is_dirty", lambda cwd: False)
+    monkeypatch.setattr(pr_context, "_unpushed_count", lambda cwd, branch: 0)
+    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "old")
+
+    calls = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        calls["n"] += 1
+        out = "new-sha" if "rev-parse" in cmd else ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+    monkeypatch.setattr(pr_context.subprocess, "run", fake_run)
+    updated = pr_context.update_to_remote(ctx)
+
+    assert updated.head_sha == "new-sha"
+    assert updated.target_dir == ctx.target_dir

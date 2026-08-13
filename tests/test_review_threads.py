@@ -1451,6 +1451,7 @@ class TestFinalizeDeferredCarriesTheReason:
         ctx = pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=worktree, head_sha="abc1234",
+            target_dir=worktree / "target",
         )
         return state, ctx
 
@@ -1511,6 +1512,7 @@ class TestDeferralRequiresAChoice:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=worktree, head_sha="abc1234",
+            target_dir=worktree / "target",
         )
 
     def _run(self, rt, state, ctx, track):
@@ -1627,6 +1629,7 @@ class TestFinishDeferredWork:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=worktree, head_sha="abc1234",
+            target_dir=worktree / "target",
         )
 
     def _save(self, worktree, **fix_kw):
@@ -1776,7 +1779,8 @@ class TestReconcileRunsBeforeTheWrites:
             ]),
         ))
         ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
-                                         worktree_root=worktree, head_sha="aaaaaaa")
+                                         worktree_root=worktree, head_sha="aaaaaaa",
+                                         target_dir=worktree / "target")
         report = PRReport(threads=[ReportThread(
             id="t1", state=ThreadState.NEW, is_resolved=False,
             comments=[{"body": "x"}, {"body": "Applied: one\n\nFixed in `abc1234`."}],
@@ -1799,7 +1803,8 @@ class TestReconcileRunsBeforeTheWrites:
             ]),
         ))
         ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
-                                         worktree_root=worktree, head_sha="aaaaaaa")
+                                         worktree_root=worktree, head_sha="aaaaaaa",
+                                         target_dir=worktree / "target")
         report = PRReport(threads=[ReportThread(
             id="t1", state=ThreadState.RESOLVED, is_resolved=True,
             comments=[{"body": "x"}],
@@ -1833,6 +1838,7 @@ class TestStaleSnapshotIsAnnounced:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=worktree, head_sha="aaaaaaa",
+            target_dir=worktree / "target",
         )
 
     def _warnings(self, rt, worktree, current_sha):
@@ -1931,6 +1937,7 @@ class TestRunReply:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=tmp_path, head_sha="abc1234",
+            target_dir=tmp_path / "target",
         )
 
     def _patches(self, rt, raw, login="reviewer"):
@@ -2966,6 +2973,7 @@ class TestWorktreeGuard:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="isaac/feat/x", pr_number=42,
             worktree_root=None, head_sha="abc1234",
+            target_dir=Path("/target"),
         )
 
     def test_run_threads_exits_before_touching_github(self, rt, capsys):

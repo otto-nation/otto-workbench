@@ -286,7 +286,8 @@ def _make_ctx(**overrides):
     """Build a minimal ResolvedContext for testing."""
     import pr_context
     defaults = dict(repo="owner/repo", branch="feat/test",
-                    pr_number=42, worktree_root=Path("/wt"), head_sha="abc123")
+                    pr_number=42, worktree_root=Path("/wt"), head_sha="abc123",
+                    target_dir=Path("/wt/target"))
     defaults.update(overrides)
     return pr_context.ResolvedContext(**defaults)
 

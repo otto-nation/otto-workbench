@@ -11,10 +11,11 @@ import json
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 
 import log
+import pr_target
 
 _PR_URL_RE = re.compile(r"/pull/(\d+)")
 _PR_NUMBER_RE = re.compile(r"^\d+$")
@@ -47,6 +48,10 @@ class ResolvedContext:
     worktree_root: Path | None
     head_sha: str
     current_branch: str | None = None
+    # Where the run's bookkeeping lives, as opposed to where git runs. Keyword-
+    # only and required: a caller that forgets it would silently get a context
+    # whose state and lock point nowhere.
+    target_dir: Path = field(kw_only=True)
 
     def require_worktree(self) -> Path:
         """The worktree root, or exit 1 naming what to do about its absence.
@@ -97,9 +102,16 @@ def resolve(
 
     if pr:
         pr_number = _parse_pr_input(pr)
-        branch_name = _branch_from_pr(repo, pr_number)
+        branch_name, pr_sha = _pr_head(repo, pr_number)
         if not branch_name:
-            branch_name = _current_branch(cwd) if worktree_root else ""
+            log.error(
+                f"Cannot resolve the head branch of {repo}#{pr_number} — "
+                f"pr keys a run's state and lock on its target branch"
+            )
+            sys.exit(1)
+        # The PR's HEAD, not the caller's: state written for this run belongs to
+        # the PR, and the caller may be sitting on an unrelated branch.
+        head_sha = pr_sha or head_sha
     elif branch:
         branch_name = _resolve_branch(branch, cwd)
         pr_number = _pr_from_branch(repo, branch_name)
@@ -116,7 +128,24 @@ def resolve(
         worktree_root=worktree_root,
         head_sha=head_sha,
         current_branch=current,
+        target_dir=pr_target.target_dir(_target_repo_name(cwd), branch_name),
     )
+
+
+def _target_repo_name(cwd: str | None) -> str:
+    """The repo-name half of the target key, or exit 1.
+
+    Fatal rather than falling back, and affordable because it is: _detect_repo
+    has already exited 1 above if this is not a repo `gh` can name.
+    """
+    name = pr_target.repo_name_from_origin(cwd)
+    if name:
+        return name
+    log.error(
+        "Cannot read the origin remote — pr keys a run's state and lock on "
+        "(origin repo, branch)"
+    )
+    sys.exit(1)
 
 
 def _worktree_is_dirty(cwd: str) -> bool:
@@ -250,14 +279,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         return ctx
 
     log.info(f"Updated worktree to origin/{ctx.branch}")
-    return ResolvedContext(
-        repo=ctx.repo,
-        branch=ctx.branch,
-        pr_number=ctx.pr_number,
-        worktree_root=ctx.worktree_root,
-        head_sha=remote_sha,
-        current_branch=ctx.current_branch,
-    )
+    return dataclass_replace(ctx, head_sha=remote_sha)
 
 
 def _current_branch_quiet(cwd: str | None = None) -> str | None:
@@ -443,15 +465,25 @@ def _pr_from_branch(repo: str, branch: str) -> int | None:
         return None
 
 
-def _branch_from_pr(repo: str, pr_number: int) -> str | None:
+def _pr_head(repo: str, pr_number: int) -> tuple[str | None, str]:
+    """The PR's head branch and head SHA, in one API call.
+
+    Both in one request because the SHA is what a PR target's state must be
+    stamped with — reading it from the caller's HEAD is how #2973's state ended
+    up carrying the repo root's SHA.
+    """
     r = subprocess.run(
         ["gh", "pr", "view", str(pr_number), "--repo", repo,
-         "--json", "headRefName", "-q", ".headRefName"],
+         "--json", "headRefName,headRefOid",
+         "--jq", '.headRefName + " " + .headRefOid'],
         capture_output=True, text=True,
     )
-    if r.returncode == 0 and r.stdout.strip():
-        return r.stdout.strip()
-    return None
+    if r.returncode != 0:
+        return None, ""
+    parts = r.stdout.split()
+    if len(parts) != 2:
+        return None, ""
+    return parts[0], parts[1]
 
 
 # ── Bare-repo helpers ──────────────────────────────────────────────────────

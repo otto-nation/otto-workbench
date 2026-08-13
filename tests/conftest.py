@@ -60,6 +60,30 @@ def _clear_review_env():
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+LIB_DIR = str(REPO_ROOT / "ai" / "lib")
+
+
+@pytest.fixture(autouse=True)
+def _clear_lock_env():
+    """Never inherit a run lock marker across tests, or out of a real run.
+
+    claim_for_process holds its handle until the process exits, which for a
+    test process means the rest of the session — so drop those here too.
+    Autouse for the same reason as _clear_review_env: this is the floor, so
+    the next module that takes a lock does not have to remember.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import run_lock
+
+    saved = os.environ.pop(run_lock.LOCK_ENV, None)
+    yield
+    for handle in run_lock._HELD:
+        handle.close()
+    run_lock._HELD.clear()
+    os.environ.pop(run_lock.LOCK_ENV, None)
+    if saved is not None:
+        os.environ[run_lock.LOCK_ENV] = saved
 
 
 def _repo_config_path():
@@ -176,7 +200,6 @@ def _guard_repo_config():
     _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
 
 
-LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 REVIEW_POST = REPO_ROOT / "ai" / "claude" / "bin" / "review-post"
 REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"

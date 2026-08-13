@@ -126,7 +126,7 @@ Two runs on one worktree corrupt each other — they both read-modify-write the 
 
 `pr status` is read-only and never contends. `pr gc` does take the lock — it deletes the state directory, so it is not safe to run against a live run.
 
-`claude-review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `claude-review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_WORKTREE_LOCK` from it and pass through rather than deadlocking on their own parent's lock.
+`claude-review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `claude-review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_RUN_LOCK` from it and pass through rather than deadlocking on their own parent's lock.
 
 The lock is an advisory `flock` on `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 

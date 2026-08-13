@@ -7,6 +7,7 @@ registry.  Flags pass through to the backing script untouched; run
 """
 
 import argparse
+import contextlib
 import json
 import signal
 import shutil
@@ -29,7 +30,7 @@ import review_gc
 import log
 import review_common
 import workbench_paths
-import worktree_lock
+import run_lock
 from review_common import (
     ReviewType, build_review_summary, find_review_file, json_summary, review_file_path,
 )
@@ -430,7 +431,7 @@ def _clear_state_dir(state_dir: Path) -> None:
     while every process agrees on one inode.
     """
     for entry in state_dir.iterdir():
-        if entry.name == worktree_lock.LOCK_FILE:
+        if entry.name == run_lock.LOCK_FILE:
             continue
         if entry.is_dir():
             shutil.rmtree(entry, ignore_errors=True)
@@ -520,7 +521,7 @@ _NO_UPDATE_COMMANDS = {"status", "gc", "rebase", "create"}
 
 # Read-only commands, safe to run alongside another pr run. Everything
 # else writes state.json and may edit/commit the worktree, so it takes
-# the worktree lock — see worktree_lock.py. 'gc' is absent deliberately:
+# the run lock — see run_lock.py. 'gc' is absent deliberately:
 # it deletes the state directory, which is the opposite of read-only.
 _NO_LOCK_COMMANDS = {"status"}
 
@@ -682,22 +683,23 @@ def main():
     if args.command not in _NO_UPDATE_COMMANDS:
         ctx = pr_context.update_to_remote(ctx)
 
-    # Read-only commands pass None so they never contend for the lock.
-    # Acquired before _dispatch so contention costs no trail artifacts.
-    lock_root = None
-    if ctx.worktree_root and args.command not in _NO_LOCK_COMMANDS:
-        lock_root = ctx.worktree_root
-    try:
-        with worktree_lock.acquire(
-            lock_root,
+    # Read-only commands take no lock at all. Acquired before _dispatch so
+    # contention costs no trail artifacts.
+    lock = (
+        contextlib.nullcontext() if args.command in _NO_LOCK_COMMANDS
+        else run_lock.acquire(
+            ctx.target_dir,
             command=" ".join([SCRIPT] + sys.argv[1:]),
             started=pr_state.now_iso(),
-        ):
+        )
+    )
+    try:
+        with lock:
             sys.exit(_dispatch(args, ctx, extra, global_args,
                                original_pr=original_pr,
                                original_branch=original_branch))
-    except worktree_lock.LockBusy as exc:
-        worktree_lock.report_busy(exc)
+    except run_lock.LockBusy as exc:
+        run_lock.report_busy(exc)
         sys.exit(1)
 
 

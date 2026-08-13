@@ -1,5 +1,6 @@
 """Tests for pr CLI helper functions."""
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -28,20 +29,10 @@ _spec.loader.exec_module(pr_cli)
 sys.modules.setdefault("pr_cli", pr_cli)
 
 import pr_state  # noqa: E402
+import run_lock  # noqa: E402
 import workbench_paths  # noqa: E402
-import worktree_lock  # noqa: E402
 
 from conftest import assert_no_worktree_exit  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _clear_lock_env():
-    """Never inherit a real run's lock marker, or leak one into another test."""
-    saved = os.environ.pop(worktree_lock.LOCK_ENV, None)
-    yield
-    os.environ.pop(worktree_lock.LOCK_ENV, None)
-    if saved is not None:
-        os.environ[worktree_lock.LOCK_ENV] = saved
 
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
@@ -223,9 +214,9 @@ def _run_main(*argv):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_global_flags_after_subcommand(mock_resolve, mock_run):
+def test_global_flags_after_subcommand(mock_resolve, mock_run, tmp_path):
     """Global flags like --repo-dir work after the subcommand name."""
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = _make_ctx(target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("rebase", "--repo-dir", "/some/path")
     mock_resolve.assert_called_once()
@@ -235,9 +226,9 @@ def test_global_flags_after_subcommand(mock_resolve, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_global_flags_before_subcommand(mock_resolve, mock_run):
+def test_global_flags_before_subcommand(mock_resolve, mock_run, tmp_path):
     """Global flags also work before the subcommand name."""
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = _make_ctx(target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--repo-dir", "/some/path", "rebase")
     mock_resolve.assert_called_once()
@@ -247,9 +238,9 @@ def test_global_flags_before_subcommand(mock_resolve, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_global_flags_mixed_with_subcommand_flags(mock_resolve, mock_run):
+def test_global_flags_mixed_with_subcommand_flags(mock_resolve, mock_run, tmp_path):
     """--repo-dir after subcommand doesn't swallow subcommand-specific flags."""
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = _make_ctx(target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("rebase", "--fix", "--repo-dir", "/some/path")
     mock_resolve.assert_called_once()
@@ -588,9 +579,10 @@ def test_run_delegate_omits_branch_when_none(mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_run):
+def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_run, tmp_path):
     """Regression: pr --pr 1927 comments must not pass both --branch and --pr."""
-    mock_resolve.return_value = _make_ctx(branch="feat/derived", pr_number=1927)
+    mock_resolve.return_value = _make_ctx(branch="feat/derived", pr_number=1927,
+                                          target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--pr", "1927", "--repo-dir", "/path", "comments")
     cmd = mock_run.call_args[0][0]
@@ -601,9 +593,9 @@ def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_branch_flag_prefers_resolved_pr(mock_resolve, mock_run):
+def test_main_branch_flag_prefers_resolved_pr(mock_resolve, mock_run, tmp_path):
     """pr --branch feat/foo comments forwards --pr when a PR was resolved."""
-    mock_resolve.return_value = _make_ctx(branch="feat/foo", pr_number=42)
+    mock_resolve.return_value = _make_ctx(branch="feat/foo", pr_number=42, target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--branch", "feat/foo", "--repo-dir", "/path", "comments")
     cmd = mock_run.call_args[0][0]
@@ -614,9 +606,9 @@ def test_main_branch_flag_prefers_resolved_pr(mock_resolve, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_auto_detected_forwards_pr_only(mock_resolve, mock_run):
+def test_main_auto_detected_forwards_pr_only(mock_resolve, mock_run, tmp_path):
     """Bare 'pr comments' (no flags) forwards auto-detected --pr, not --branch."""
-    mock_resolve.return_value = _make_ctx(branch="feat/derived", pr_number=42)
+    mock_resolve.return_value = _make_ctx(branch="feat/derived", pr_number=42, target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--repo-dir", "/path", "comments")
     cmd = mock_run.call_args[0][0]
@@ -849,9 +841,9 @@ def test_cmd_fix_reports_a_failing_describe(mock_load, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run):
+def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run, tmp_path):
     """Regression: 'pr rebase my-branch' must not pass my-branch as a bare positional."""
-    mock_resolve.return_value = _make_ctx(branch="my-branch", pr_number=None)
+    mock_resolve.return_value = _make_ctx(branch="my-branch", pr_number=None, target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("rebase", "my-branch")
     cmd = mock_run.call_args[0][0]
@@ -862,9 +854,9 @@ def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run):
+def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run, tmp_path):
     """Regression: 'pr ci 42' must not pass 42 as a bare positional."""
-    mock_resolve.return_value = _make_ctx(pr_number=42)
+    mock_resolve.return_value = _make_ctx(pr_number=42, target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("ci", "42")
     cmd = mock_run.call_args[0][0]
@@ -878,10 +870,10 @@ def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_installs_sigint_handler(mock_resolve, mock_run):
+def test_main_installs_sigint_handler(mock_resolve, mock_run, tmp_path):
     """main() installs a SIGINT handler so Ctrl+C exits cleanly without a traceback."""
     import signal
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = _make_ctx(target_dir=tmp_path)
     mock_run.return_value = MagicMock(returncode=0)
     original = signal.getsignal(signal.SIGINT)
     try:
@@ -979,11 +971,11 @@ def test_review_state_cache_is_skipped_without_a_worktree():
     save.assert_not_called()
 
 
-# ── worktree lock wiring ────────────────────────────────────────────────────
+# ── run lock wiring ─────────────────────────────────────────────────────────
 
 
-def _lock_file(worktree_root):
-    return _state_dir(worktree_root) / worktree_lock.LOCK_FILE
+def _lock_file(target_dir):
+    return Path(target_dir) / run_lock.LOCK_FILE
 
 
 def _state_dir(worktree_root):
@@ -1006,13 +998,13 @@ def stub_state_dir(worktree, monkeypatch):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_locks_the_worktree_for_a_mutating_command(
+def test_main_locks_the_target_for_a_mutating_command(
         mock_resolve, mock_run, worktree, stub_state_dir):
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=worktree)
     mock_run.return_value = MagicMock(returncode=0)
     seen = {}
     mock_run.side_effect = lambda *a, **k: (
-        seen.update(env=os.environ.get(worktree_lock.LOCK_ENV)),
+        seen.update(env=os.environ.get(run_lock.LOCK_ENV)),
         MagicMock(returncode=0),
     )[1]
     _run_main("--repo-dir", str(worktree), "comments")
@@ -1026,7 +1018,7 @@ def test_main_locks_the_worktree_for_a_mutating_command(
 def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree,
                                        stub_state_dir):
     """status is read-only, so it must never block on a run in flight."""
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=worktree)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--repo-dir", str(worktree), "status")
     assert not _lock_file(worktree).exists()
@@ -1042,7 +1034,7 @@ def test_main_locks_for_gc(mock_resolve, _gc, _prune, worktree):
     `pr_cli.subprocess.run`, so the real `git rev-parse` answers for the
     worktree and the state dir resolves on its own.
     """
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=worktree)
     _run_main("--repo-dir", str(worktree), "gc")
     assert _lock_file(worktree).is_file()
 
@@ -1053,9 +1045,9 @@ def test_main_locks_for_gc(mock_resolve, _gc, _prune, worktree):
 @patch("pr_cli.pr_context.resolve")
 def test_gc_run_does_not_destroy_the_lock_it_is_holding(
         mock_resolve, mock_run, _gc, _prune, worktree, stub_state_dir):
-    """The full dispatch path: gc takes the lock, then clears the very
-    directory the lock file lives in. The lock has to outlive the sweep."""
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
+    """The full dispatch path: gc takes the lock, then clears the state
+    directory. The lock has to outlive the sweep."""
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=worktree)
     mock_run.return_value = MagicMock(returncode=0, stdout="MERGED\n")
     state_dir = _state_dir(worktree)
     state_dir.mkdir(parents=True)
@@ -1073,10 +1065,19 @@ def test_gc_run_does_not_destroy_the_lock_it_is_holding(
 
 @patch("pr_cli.pr_context.resolve")
 def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
-    busy = worktree_lock.LockBusy(
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=worktree)
+    busy = run_lock.LockBusy(
         {"pid": 15461, "command": "pr review --self --fix", "started": "t"}, worktree)
-    with patch("pr_cli.worktree_lock.acquire", side_effect=busy):
+
+    # main() builds the lock context manager before entering its try block, so
+    # the mock has to raise from __enter__ like the real generator does, not
+    # from the call that constructs it.
+    @contextlib.contextmanager
+    def _busy_lock(*_a, **_k):
+        raise busy
+        yield
+
+    with patch("pr_cli.run_lock.acquire", side_effect=_busy_lock):
         code = _run_main("--repo-dir", str(worktree), "comments")
     assert code == 1
     err = capsys.readouterr().err
@@ -1090,13 +1091,13 @@ def test_gc_clears_state_without_deleting_the_live_lock(worktree):
     state_dir = _state_dir(worktree)
     state_dir.mkdir(parents=True)
     (state_dir / pr_state.STATE_FILE).write_text("{}")
-    (state_dir / worktree_lock.LOCK_FILE).write_text('{"pid": 1}')
+    (state_dir / run_lock.LOCK_FILE).write_text('{"pid": 1}')
     (state_dir / "trails").mkdir()
     (state_dir / "trails" / "a.jsonl").write_text("{}")
 
     pr_cli._clear_state_dir(state_dir)
 
-    assert (state_dir / worktree_lock.LOCK_FILE).is_file()
+    assert (state_dir / run_lock.LOCK_FILE).is_file()
     assert not (state_dir / pr_state.STATE_FILE).exists()
     assert not (state_dir / "trails").exists()
 

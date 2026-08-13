@@ -1,19 +1,23 @@
-"""Advisory whole-run lock for worktree-mutating ``pr`` subcommands.
+"""Advisory whole-run lock, scoped to what a run targets.
 
-Two concurrent runs against one worktree corrupt each other: they both
-read-modify-write the worktree's ``state.json``, and with ``--fix`` they
-both edit and commit the same files. This serializes them at the process
-level — a second run refuses to start rather than interleaving.
+Two concurrent runs against one PR corrupt each other: they both
+read-modify-write that target's ``state.json``, and with ``--fix`` they both
+edit and commit the same checkout. This serializes them at the process level —
+a second run refuses to start rather than interleaving.
 
-Uses ``fcntl.flock`` on ``run.lock`` in the worktree's state dir, beside
-the state it guards. The kernel drops the lock when the holder exits for
-any reason, including SIGKILL, so there is no stale-lock state to reap.
+The lock is keyed on the target, not the caller: ``pr review 2973`` from a repo
+root and ``pr review --self`` from inside the PR's own worktree take the same
+lock, while reviews of two different PRs launched from one directory take two.
 
-Delegate scripts (``claude-review``, ``ci-check``, ``review-threads``) are
-entry points in their own right and take the lock themselves, so a direct
-invocation is guarded too. When ``pr`` launched them they inherit
-``WORKBENCH_WORKTREE_LOCK`` from it and pass through as a no-op instead of
-deadlocking against the lock their own parent holds.
+Uses ``fcntl.flock`` on ``<target_dir>/run.lock``. The kernel drops the lock
+when the holder exits for any reason, including SIGKILL, so there is no
+stale-lock state to reap.
+
+Delegate scripts (``claude-review``, ``ci-check``, ``review-threads``) are entry
+points in their own right and take the lock themselves, so a direct invocation
+is guarded too. When ``pr`` launched them they resolve the same target, compute
+the same key, find it in ``WORKBENCH_RUN_LOCK`` and pass through as a no-op
+instead of deadlocking against the lock their own parent holds.
 """
 
 from __future__ import annotations
@@ -26,10 +30,9 @@ import sys
 from pathlib import Path
 
 import log
-import workbench_paths
 
 LOCK_FILE = "run.lock"
-LOCK_ENV = "WORKBENCH_WORKTREE_LOCK"
+LOCK_ENV = "WORKBENCH_RUN_LOCK"
 
 # Handles held for the lifetime of the process by claim_for_process. Kept
 # only so they stay open — the kernel drops their flocks when we exit.
@@ -37,7 +40,7 @@ _HELD: list = []
 
 
 class LockBusy(RuntimeError):
-    """Raised when another process already holds the worktree lock."""
+    """Raised when another process already holds the target's lock."""
 
     def __init__(self, holder: dict, path: Path):
         self.holder = holder
@@ -46,7 +49,7 @@ class LockBusy(RuntimeError):
         command = holder.get("command", "unknown command")
         started = holder.get("started", "unknown time")
         super().__init__(
-            f"another pr run already owns this worktree: "
+            f"another pr run already owns this target: "
             f"{command} (pid {pid}, started {started})"
         )
 
@@ -84,39 +87,28 @@ def _restore_env(previous: str | None) -> None:
     os.environ[LOCK_ENV] = previous
 
 
-def _prepare(worktree_root: Path | None):
-    """Open the lock file for a worktree, or return None if no lock applies."""
-    root = None if worktree_root is None else Path(worktree_root)
-    # A worktree that isn't on disk has no concurrent run to collide with, and
-    # creating the tree here would conjure a directory the caller never had.
-    if root is None or not root.is_dir():
-        return None
-    target = str(root.resolve())
+def _prepare(target_dir: Path):
+    """Open the target's lock file, or return None when it is already ours."""
+    root = Path(target_dir)
+    target = str(root)
     # Already ours: pass through rather than deadlock on our own parent.
     if os.environ.get(LOCK_ENV) == target:
         return None
-    try:
-        state_dir = workbench_paths.worktree_state_dir(root)
-    except workbench_paths.NotAWorktree:
-        # A directory that is not a worktree has no `pr` run to collide with,
-        # for the same reason a missing one does not.
-        return None
-    path = state_dir / LOCK_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / LOCK_FILE
     # "a+" rather than "w": opening must not destroy the current holder's
     # record before we know whether we can take the lock away from them.
     return open(path, "a+"), path, target
 
 
 @contextlib.contextmanager
-def acquire(worktree_root: Path | None, command: str, started: str):
-    """Hold the worktree lock for the duration of the block.
+def acquire(target_dir: Path, command: str, started: str):
+    """Hold the target's lock for the duration of the block.
 
-    No-ops when ``worktree_root`` is None (bare repo, nothing to protect)
-    or when this process tree already holds the lock for the same path.
-    Raises LockBusy if a different process holds it.
+    No-ops only when this process tree already holds the lock for the same
+    target. Raises LockBusy if a different process holds it.
     """
-    prepared = _prepare(worktree_root)
+    prepared = _prepare(target_dir)
     if prepared is None:
         yield
         return
@@ -135,14 +127,14 @@ def acquire(worktree_root: Path | None, command: str, started: str):
         handle.close()
 
 
-def claim_for_process(worktree_root: Path | None, command: str, started: str) -> None:
-    """Take the worktree lock for the rest of this process's life, or exit 1.
+def claim_for_process(target_dir: Path, command: str, started: str) -> None:
+    """Take the target's lock for the rest of this process's life, or exit 1.
 
     For entry points whose entire body is the critical section. The kernel
     releases the flock at exit, so there is nothing to unwind — which spares
     every ``main()`` from wrapping itself in a ``with`` block just to lock.
     """
-    prepared = _prepare(worktree_root)
+    prepared = _prepare(target_dir)
     if prepared is None:
         return
 

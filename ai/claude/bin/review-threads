@@ -31,7 +31,7 @@ import ai_backend
 import pr_comments as pc
 import pr_context
 import pr_state
-import worktree_lock
+import run_lock
 import publishing
 from pr_comments import ThreadState
 import review_common
@@ -2790,11 +2790,11 @@ def main():
     toplevel = ctx.require_worktree()
     head_sha = ctx.head_sha
 
-    # A no-op when pr launched us — we inherit its WORKBENCH_WORKTREE_LOCK.
-    # toplevel came from require_worktree(), so it is never None here.
+    # A no-op when pr launched us — we resolve the same target and find its key
+    # already in WORKBENCH_RUN_LOCK.
     # Acquired before Trail.start so contention costs no trail artifacts.
-    worktree_lock.claim_for_process(
-        toplevel,
+    run_lock.claim_for_process(
+        ctx.target_dir,
         command=" ".join([SCRIPT] + sys.argv[1:]),
         started=pr_state.now_iso(),
     )

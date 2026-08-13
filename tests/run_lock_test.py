@@ -1,4 +1,4 @@
-"""Tests for the worktree run lock."""
+"""Tests for the run lock."""
 
 import json
 import os
@@ -12,11 +12,8 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-import workbench_paths
-import worktree_lock
-from worktree_lock import LOCK_ENV, LOCK_FILE, LockBusy, acquire
-
-from conftest import init_worktree
+import run_lock
+from run_lock import LOCK_ENV, LOCK_FILE, LockBusy, acquire
 
 
 @pytest.fixture(autouse=True)
@@ -28,9 +25,9 @@ def _clear_lock_env():
     """
     saved = os.environ.pop(LOCK_ENV, None)
     yield
-    for handle in worktree_lock._HELD:
+    for handle in run_lock._HELD:
         handle.close()
-    worktree_lock._HELD.clear()
+    run_lock._HELD.clear()
     os.environ.pop(LOCK_ENV, None)
     if saved is not None:
         os.environ[LOCK_ENV] = saved
@@ -53,15 +50,36 @@ def _contend(root, command="pr review --fix"):
         pytest.fail("second acquire should not have entered the block")
 
 
-def test_acquire_is_noop_without_worktree():
-    with acquire(None, command="pr status", started="t"):
-        assert LOCK_ENV not in os.environ
+def test_acquire_creates_the_target_dir(tmp_path):
+    """The directory is ours to create — nothing conjures a caller's worktree."""
+    target = tmp_path / "pr" / "widget-feat-a"
+    with acquire(target, command="pr review", started="t"):
+        assert (target / LOCK_FILE).is_file()
+
+
+def test_two_targets_lock_independently(tmp_path):
+    """Two reviews of different PRs must not exclude each other."""
+    first = tmp_path / "pr" / "widget-feat-a"
+    second = tmp_path / "pr" / "widget-feat-b"
+    with acquire(first, command="pr review 1", started="t"):
+        os.environ.pop(LOCK_ENV, None)
+        with acquire(second, command="pr review 2", started="t"):
+            assert (first / LOCK_FILE).is_file()
+            assert (second / LOCK_FILE).is_file()
+
+
+def test_one_target_excludes_regardless_of_caller(tmp_path):
+    """Same PR, two launch directories, one lock."""
+    target = tmp_path / "pr" / "widget-feat-a"
+    with acquire(target, command="pr review --self", started="t"):
+        with pytest.raises(LockBusy):
+            _contend(target)
 
 
 def test_acquire_creates_lock_file_and_marks_env(worktree):
     with acquire(worktree, command="pr review", started="2026-08-12T00:00:00+00:00"):
         assert os.environ[LOCK_ENV] == str(worktree.resolve())
-        record = json.loads(_lock_path(worktree).read_text())
+        record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["pid"] == os.getpid()
         assert record["command"] == "pr review"
         assert record["started"] == "2026-08-12T00:00:00+00:00"
@@ -78,7 +96,7 @@ def test_lock_is_released_for_the_next_run(worktree):
         pass
     # A sequential second run must not see the first as a live holder.
     with acquire(worktree, command="pr comments", started="t"):
-        record = json.loads(_lock_path(worktree).read_text())
+        record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["command"] == "pr comments"
 
 
@@ -101,37 +119,22 @@ def test_reentrant_acquire_in_same_process_tree(worktree):
     with acquire(worktree, command="pr review", started="t"):
         with acquire(worktree, command="claude-review", started="t"):
             # The child must not overwrite the parent's ownership record.
-            record = json.loads(_lock_path(worktree).read_text())
+            record = json.loads((worktree / LOCK_FILE).read_text())
             assert record["command"] == "pr review"
         # Leaving the inner block must not release the parent's lock.
         assert os.environ[LOCK_ENV] == str(worktree.resolve())
 
 
-def test_reentrancy_is_keyed_on_the_worktree(worktree):
-    """A different worktree is a different lock, not a free pass."""
-    other = init_worktree(worktree / "other")
+def test_reentrancy_is_keyed_on_the_target(worktree):
+    """A different target is a different lock, not a free pass."""
+    other = worktree / "other"
+    other.mkdir()
     with acquire(worktree, command="pr review", started="t"):
         with acquire(other, command="pr review", started="t"):
-            assert _lock_path(other).exists()
+            assert (other / LOCK_FILE).exists()
         # Releasing the inner lock must hand the marker back to the outer one,
-        # not leave it pointing at a worktree we no longer hold.
+        # not leave it pointing at a target we no longer hold.
         assert os.environ[LOCK_ENV] == str(worktree.resolve())
-
-
-def test_acquire_is_noop_when_the_path_is_not_a_directory(tmp_path):
-    """A --repo-dir pointing at a file has no worktree to serialize against."""
-    not_a_dir = tmp_path / "file"
-    not_a_dir.write_text("")
-    with acquire(not_a_dir, command="pr review", started="t"):
-        assert LOCK_ENV not in os.environ
-
-
-def test_acquire_is_noop_outside_a_worktree(tmp_path):
-    """A directory git does not claim has no state dir to put a lock in, and no
-    `pr` run to collide with either."""
-    with acquire(tmp_path, command="pr review", started="t"):
-        assert LOCK_ENV not in os.environ
-    assert list(tmp_path.iterdir()) == []
 
 
 def test_lock_released_when_body_raises(worktree):
@@ -145,7 +148,7 @@ def test_lock_released_when_body_raises(worktree):
 
 def test_report_busy_names_the_holder(tmp_path, capsys):
     exc = LockBusy({"pid": 4242, "command": "pr review", "started": "t"}, tmp_path)
-    worktree_lock.report_busy(exc)
+    run_lock.report_busy(exc)
     err = capsys.readouterr().err
     assert "pr review" in err
     assert "4242" in err
@@ -153,8 +156,7 @@ def test_report_busy_names_the_holder(tmp_path, capsys):
 
 def test_lock_busy_tolerates_an_unreadable_holder_record(worktree):
     """The flock enforces exclusion; a garbled record must still report."""
-    lock_path = _lock_path(worktree)
-    lock_path.parent.mkdir(parents=True)
+    lock_path = worktree / LOCK_FILE
     lock_path.write_text("not json")
     with acquire(worktree, command="pr review", started="t"):
         lock_path.write_text("not json")
@@ -168,9 +170,9 @@ def test_lock_busy_tolerates_an_unreadable_holder_record(worktree):
 
 def test_claim_for_process_holds_without_a_context_manager(worktree):
     """Delegates lock for their whole run; the kernel releases it at exit."""
-    worktree_lock.claim_for_process(worktree, command="ci-check --fix", started="t")
+    run_lock.claim_for_process(worktree, command="ci-check --fix", started="t")
     assert os.environ[LOCK_ENV] == str(worktree.resolve())
-    record = json.loads(_lock_path(worktree).read_text())
+    record = json.loads((worktree / LOCK_FILE).read_text())
     assert record["command"] == "ci-check --fix"
     with pytest.raises(LockBusy):
         _contend(worktree)
@@ -179,21 +181,16 @@ def test_claim_for_process_holds_without_a_context_manager(worktree):
 def test_claim_for_process_passes_through_when_pr_already_holds_it(worktree):
     """Launched by pr, a delegate inherits LOCK_ENV and must not deadlock."""
     with acquire(worktree, command="pr review --fix", started="t"):
-        worktree_lock.claim_for_process(worktree, command="claude-review", started="t")
+        run_lock.claim_for_process(worktree, command="claude-review", started="t")
         # The parent's ownership record has to survive the delegate.
-        record = json.loads(_lock_path(worktree).read_text())
+        record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["command"] == "pr review --fix"
 
 
-def test_claim_for_process_exits_when_another_run_owns_the_worktree(worktree, capsys):
+def test_claim_for_process_exits_when_another_run_owns_the_target(worktree, capsys):
     with acquire(worktree, command="pr review --fix", started="t"):
         os.environ.pop(LOCK_ENV, None)
         with pytest.raises(SystemExit) as excinfo:
-            worktree_lock.claim_for_process(worktree, command="ci-check", started="t")
+            run_lock.claim_for_process(worktree, command="ci-check", started="t")
     assert excinfo.value.code == 1
     assert "pr review --fix" in capsys.readouterr().err
-
-
-def test_claim_for_process_is_noop_without_a_worktree(tmp_path):
-    worktree_lock.claim_for_process(None, command="ci-check", started="t")
-    assert LOCK_ENV not in os.environ

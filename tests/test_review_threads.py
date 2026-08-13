@@ -2471,6 +2471,20 @@ class TestTriageResultFromDict:
         result = triage_result_from_dict({"comment_items": [0]})
         assert result.comment_items == [CommentItem()]
 
+    def test_an_explicit_null_list_degrades_to_no_entries(self):
+        """`d.get(key, [])` only defaults on an absent key, not a null one."""
+        result = triage_result_from_dict({"threads": None, "comment_items": None})
+        assert result.threads == []
+        assert result.comment_items == []
+
+    def test_a_scalar_where_a_list_belongs_degrades_to_no_entries(self):
+        result = triage_result_from_dict({"threads": "t1", "comment_items": 7})
+        assert result.threads == []
+        assert result.comment_items == []
+
+    def test_a_null_stats_value_degrades_to_default_stats(self):
+        assert triage_result_from_dict({"stats": None}).stats == TriageStats()
+
     def test_well_formed_input_is_unaffected(self):
         result = triage_result_from_dict({
             "threads": [{"id": "t1"}],

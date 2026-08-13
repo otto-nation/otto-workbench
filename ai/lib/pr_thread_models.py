@@ -195,9 +195,20 @@ def _lenient_from_dict(cls, raw):
         return cls()
 
 
+def _lenient_list(raw):
+    """The list behind a triage key, or an empty one if it is anything else.
+
+    `d.get(key, [])` only falls back when the key is absent, and the model
+    emits the key with an explicit `null` often enough that iterating the
+    result is its own crash — one the per-entry wrapper below cannot catch,
+    because it never gets called. A scalar is no more iterable than `None`.
+    """
+    return raw if isinstance(raw, list) else []
+
+
 def triage_result_from_dict(d: dict) -> TriageResult:
     """Parse AI triage JSON output into typed structures."""
-    threads = [_lenient_from_dict(CommentItem, t) for t in d.get("threads", [])]
-    items = [_lenient_from_dict(CommentItem, it) for it in d.get("comment_items", [])]
+    threads = [_lenient_from_dict(CommentItem, t) for t in _lenient_list(d.get("threads"))]
+    items = [_lenient_from_dict(CommentItem, it) for it in _lenient_list(d.get("comment_items"))]
     stats = _lenient_from_dict(TriageStats, d.get("stats", {}))
     return TriageResult(threads=threads, comment_items=items, stats=stats)

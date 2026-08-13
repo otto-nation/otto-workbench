@@ -183,6 +183,21 @@ class TestFromRawHook:
         obj = from_dict(Keyed, {"tags": {"1": "legacy", "2": {"value": "typed"}}})
         assert obj.tags == {1: Tagged(value="legacy"), 2: Tagged(value="typed")}
 
+    def test_a_null_direct_field_yields_the_field_default_not_the_hook(self):
+        """`_from_raw` has no null form of its own: `Tagged._from_raw(None)`
+        would happily coerce it to `Tagged(value="None")` via `str(raw)`, a
+        wrong value with no warning. `None` must be routed to the field
+        default before it reaches the hook, exactly like a missing key."""
+        obj = from_dict(Keyed, {"tagged": None})
+        assert obj.tagged == Tagged()
+
+    def test_a_null_under_a_dict_hint_yields_the_field_default_not_the_hook(self):
+        """Same guard, reached through `dict[int, Tagged]` instead of a bare
+        field — a null value must drop the whole field to its default rather
+        than calling the hook on `None`."""
+        obj = from_dict(Keyed, {"tags": {"1": None}})
+        assert obj.tags == {}
+
 
 class TestNullOnAField:
     """`None` on a field means "value omitted", not "field is None".
@@ -325,6 +340,22 @@ def test_load_file_returns_none_for_a_directory(cls, tmp_path):
     (tmp_path / "state.json").mkdir()
 
     assert load_file(cls, tmp_path / "state.json") is None
+
+
+@pytest.mark.parametrize("cls", PERSISTED_ROOTS, ids=lambda c: c.__name__)
+@pytest.mark.parametrize("raw", ["[1, 2, 3]", '"hello"'], ids=["list", "string"])
+def test_load_file_returns_none_for_a_non_dict_top_level_value(cls, raw, tmp_path, capsys):
+    """A top-level JSON value that is valid but not an object used to fall
+    through `from_dict`'s old `if not data: data = {}` guard and reconstruct
+    a silent, fully-defaulted instance instead of being discarded — every
+    field on these roots has a default, so nothing raised. That turns real
+    corruption into a clean-looking empty state instead of a warned discard.
+    """
+    path = tmp_path / "state.json"
+    path.write_text(raw)
+
+    assert load_file(cls, path) is None
+    assert "unreadable" in capsys.readouterr().err
 
 
 def test_load_file_reconstructs_a_dataclass(tmp_path):

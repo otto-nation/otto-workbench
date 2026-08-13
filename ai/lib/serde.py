@@ -45,10 +45,14 @@ def from_dict(cls, data: dict):
       the same way, dropping the whole field to its default rather than keeping
       a `None` alongside real values
 
-    Raises TypeError if the data omits a field that has no default.
+    Raises TypeError if the data omits a field that has no default, or if the
+    top-level data is not a dict (`None` excepted — that means "nothing
+    recorded" and reconstructs as if every field were omitted).
     """
-    if not data:
+    if data is None:
         data = {}
+    if not isinstance(data, dict):
+        raise TypeError(f"{cls.__name__} needs a dict, got {type(data).__name__}")
     hints = get_type_hints(cls)
     fields = dataclasses.fields(cls)
     kwargs = {}
@@ -104,11 +108,19 @@ def _coerce(hint, value):
     # Nested dataclass. A class that can be stored in more than one shape owns
     # its own reconstruction through `_from_raw` — the plain path below only
     # knows how to read a dict.
-    if isinstance(hint, type) and dataclasses.is_dataclass(hint):
-        if hasattr(hint, "_from_raw"):
-            return hint._from_raw(value)
+    is_dataclass_hint = isinstance(hint, type) and dataclasses.is_dataclass(hint)
+    if is_dataclass_hint and hasattr(hint, "_from_raw"):
+        # `_from_raw` owns every shape this type is stored in, but no type
+        # has a null form. Route a null to the same place a missing key
+        # goes rather than into a hook that will mis-handle it: a field
+        # with a default gets that default, one without still raises
+        # TypeError from `cls(**kwargs)`.
+        if value is None:
+            raise _Omitted
+        return hint._from_raw(value)
+    if is_dataclass_hint:
         # An explicit `null` on a nested-dataclass field means "value omitted",
-        # matching from_dict's own `if not data: data = {}` guard one level up.
+        # matching from_dict's own `if data is None: data = {}` guard one level up.
         # A dataclass has no null state of its own — treating None as {} here
         # lets fields with defaults reconstruct as a default instance, and
         # lets a dataclass with required fields (e.g. PRIdentity) still raise

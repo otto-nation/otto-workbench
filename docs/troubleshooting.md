@@ -142,6 +142,8 @@ pr gc
 
 `pr status` and the status line stay blank until something rebuilds the file. There is nothing to recover by hand; the file is a cache, not a record.
 
+This recovery only covers a file that will not parse. A file that parses but holds a wrong-typed value — a hand-edit that leaves a string where a number belongs, say — is not detected, and a `pr` command can still traceback on it. If a `pr` command keeps failing after the warning above has cleared, delete `.workbench/` (or run `pr gc`) to force every field to rebuild from scratch.
+
 ## "merge conflict" in `~/.claude/settings.json`
 
 The AI sync merges `settings.json` rather than overwriting. If you see unexpected values, re-sync:

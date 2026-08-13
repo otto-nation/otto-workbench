@@ -437,7 +437,8 @@ def _clear_state_dir(state_dir: Path) -> None:
 
 
 def _gc_stale_pr_state(worktree_root: Path) -> int:
-    """Remove pr state directory if the PR is merged or closed. Returns 1 if cleaned."""
+    """Remove pr state directory if it is unreadable, or if the PR is merged or
+    closed. Returns 1 if cleaned."""
     state_dir = worktree_root / pr_state.STATE_DIR
     state_file = state_dir / pr_state.STATE_FILE
     if not state_file.is_file():

@@ -28,7 +28,7 @@ from _reuse_levels import read_default, read_level
 
 try:
     import pr_state
-except ImportError:
+except Exception:
     # The status line renders on every turn and has no way to report a fault.
     # A broken ai/lib blanks the PR segment rather than killing the line.
     pr_state = None

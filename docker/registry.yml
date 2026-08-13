@@ -17,7 +17,7 @@ env:
   # override the detection in docker/colima/aliases.zsh. Left blank, it renders
   # as a commented reference line and detection wins.
   - var: COLIMA_ARCH
-    comment: "CPU architecture (x86_64 | aarch64) — auto-detected from uname when unset"
+    comment: "CPU architecture — unset means uname -m decides: arm64/aarch64 → aarch64, anything else → x86_64"
   - var: COLIMA_VM_TYPE
     comment: "Virtualization type (vz | qemu)"
     default: "vz"

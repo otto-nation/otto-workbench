@@ -5,7 +5,7 @@
   "description": "Reports conflicts and stops; does not escalate to AI resolution unasked",
   "prompt": "Rebase this branch onto main, but do not resolve anything yet — just tell me what conflicts.",
   "requires": [["pr", "rebase"]],
-  "forbids": [["--fix"], ["git", "push"]],
+  "forbids": [["--fix"], ["git", "push"], ["pr-rebase"], ["git", "rebase"]],
   "false_positives_max": 0,
   "tags": ["skill", "pr-rebase"]
 }

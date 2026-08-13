@@ -51,6 +51,17 @@ def group_matches(group: list[str], line: str) -> bool:
     return bool(group) and all(token in line for token in group)
 
 
+def _first_match_from(group: list[str], lines: list[str], start: int) -> int:
+    """The index of the first line at or after `start` that `group` matches.
+
+    `-1` when no such line exists, mirroring `str.find`'s failure value.
+    """
+    for i in range(start, len(lines)):
+        if group_matches(group, lines[i]):
+            return i
+    return -1
+
+
 def match_required(groups: list[list[str]], lines: list[str]) -> list[TraceMatch]:
     """Match each group against a later line than the group before it.
 
@@ -60,13 +71,12 @@ def match_required(groups: list[list[str]], lines: list[str]) -> list[TraceMatch
     matches: list[TraceMatch] = []
     start = 0
     for group in groups:
-        found = TraceMatch(pattern=tuple(group))
-        for i in range(start, len(lines)):
-            if group_matches(group, lines[i]):
-                found = TraceMatch(tuple(group), True, lines[i])
-                start = i + 1
-                break
-        matches.append(found)
+        i = _first_match_from(group, lines, start)
+        if i == -1:
+            matches.append(TraceMatch(pattern=tuple(group)))
+            continue
+        matches.append(TraceMatch(tuple(group), True, lines[i]))
+        start = i + 1
     return matches
 
 

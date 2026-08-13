@@ -356,10 +356,14 @@ groups must appear **in order**, `forbids` groups must not appear at all. Any
 violation drops precision to zero — a constraint is not something you get
 partial credit for breaking.
 
-Shims for the CLIs a skill drives are fail-closed: a call matching no rule exits
-`97` loudly, so a fixture gap cannot read as a pass. `git` is passthrough
-instead, because the fixture is a real repo and `git status` should work; only
-the rules that matter are intercepted, and the attempt is still traced.
+Each shim's default policy is fail-closed: a call matching no rule in its
+`responses.json` entry exits `97` loudly, so a fixture gap cannot read as a
+pass. A case opts a binary into `on_no_match: "passthrough"` instead when it
+wants the real one — both `pr-rebase` cases do this for `git`, because the
+fixture is a real repo and `git status` should work there; only the rules that
+matter are intercepted, and the attempt is still traced either way. A binary
+left unstubbed is not intercepted at all: the real one on `PATH` runs, and no
+trace line is ever recorded for it.
 
 The `SKILL.md` is read from `ai/claude/skills/`, never copied into a case, so
 editing a skill changes its eval with no corpus edit. That is the point: before
@@ -368,10 +372,82 @@ better or worse.
 
 Two limits worth naming. The trace cannot see obligations that are text-only,
 such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
-regenerate those files by hand. And each case is a single turn, with the user's
-side of the conversation encoded in the scenario prompt — which covers both
-sides of the `pr-comments` approval gate as two cases, but does not exercise a
-real multi-turn exchange.
+regenerate those files by hand. And each case drives a single *user* turn, with
+the user's side of the conversation encoded in the scenario prompt — which
+covers both sides of the `pr-comments` approval gate as two cases, but does not
+exercise a real multi-turn exchange. Within that one user turn the session can
+still take several tool-call turns of its own: `SKILL_MAX_TURNS` (20) caps how
+many, and `SKILL_MAX_BUDGET` (1.0, in dollars) caps what the run can spend
+before the harness stops it. A case whose scenario needs more of either hits
+the cap silently rather than completing, so keep fixtures resolvable well
+inside both.
+
+#### A `skill` manifest's fields
+
+`manifest.json` adds four fields on top of the `name`/`task`/`description`/`tags`
+every task shares:
+
+| Field | Meaning |
+|---|---|
+| `skill` | Directory name under `ai/claude/skills/` whose `SKILL.md` body is injected as the driving instructions |
+| `prompt` | The user's request — the other half of the prompt, standing in for the human side of the turn |
+| `requires` | Token groups that must each match a trace line, in order — group *i* must land on a strictly later line than group *i − 1* |
+| `forbids` | Token groups that must match no trace line at all; any single hit zeroes precision |
+| `false_positives_max` | The `forbids` budget, same meaning as a `review` manifest's field of the same name — defaults to `0` |
+
+A group matches a trace line when every one of its tokens is a substring of
+that line's space-joined argv — so `["pr", "rebase", "--fix"]` matches
+`pr rebase --fix --branch main`, and a token is free to be a prefix of a
+longer one it needs to stay distinct from (`--fix` also matches inside
+`--no-fix`). Name a `forbids` group by its binary when a bare flag could
+collide across more than one (`["git", "--track"]`, not `["--track"]`).
+
+`responses.json` stubs the CLIs the skill drives, one top-level key per binary
+name:
+
+| Field | Meaning |
+|---|---|
+| `on_no_match` | `"fail"` (the default) exits `97` on an unmatched call; `"passthrough"` execs the real binary instead |
+| `rules` | An ordered list; the first rule whose `match` tokens are all substrings of the call wins |
+| `match` | Required on every rule — an empty list (`[]`) never fires, which is how a binary is stubbed purely to be traced without answering any call |
+| `stdout` / `stderr` | Literal text to emit |
+| `stdout_file` | A path resolved relative to the case directory (not the fixture repo), read and used as `stdout` instead |
+| `exit` | The exit code to return, default `0` |
+
+A binary named as the leading token of any `requires` or `forbids` group needs
+an entry here — with no shim on `PATH` the real binary runs, uncontrolled and
+untraced, and the group can never be satisfied or violated. Every case also
+needs a `src/` directory: `eval-models` copies it into the throwaway git repo
+that becomes the session's `cwd`, and skips any case that has none.
+
+A minimal worked example — a case asserting that a `deploy` skill calls
+`infra apply --yes` and never touches `terraform` directly:
+
+```json
+// manifest.json
+{
+  "name": "deploy-approved",
+  "task": "skill",
+  "skill": "deploy",
+  "prompt": "Deploy this to staging.",
+  "requires": [["infra", "apply", "--yes"]],
+  "forbids": [["terraform"]],
+  "false_positives_max": 0
+}
+```
+
+```json
+// responses.json
+{
+  "infra": {
+    "on_no_match": "fail",
+    "rules": [
+      {"match": ["apply", "--yes"], "stdout": "{\"status\": \"ok\"}", "exit": 0}
+    ]
+  },
+  "terraform": {"on_no_match": "fail", "rules": []}
+}
+```
 
 ### What the eval gates on
 

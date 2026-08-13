@@ -117,3 +117,7 @@ them before re-running.
   (the backing script) — the dispatcher handles context resolution and routing
 - Never run raw `git push --force-with-lease` — `pr rebase` force-pushes by default,
   and with `--no-push` it prints the command for the user rather than issuing it
+- A fresh rebase auto-stashes the worktree, untracked files included, and restores
+  it afterwards; the pre-push hooks then validate the branch alone. A resumed
+  rebase cannot stash (the index is mid-rebase), so uncommitted work is still
+  present while its hooks run

@@ -2277,10 +2277,8 @@ def test_force_push_refuses_to_retry_a_dirty_tree_after_the_ai_fix():
     assert push_count[0] == 1
 
 
-def test_force_push_refuses_to_retry_a_dirty_tree_after_regeneration():
-    """Step 1's retry is gated too — `git add -u` cannot sweep an untracked file."""
-    push_count = [0]
-
+def _regeneration_leaves_untracked(push_count):
+    """subprocess stub: the hook regenerates a file and leaves an untracked one."""
     def fake_run(cmd, **kwargs):
         if cmd[:2] == ["git", "push"]:
             push_count[0] += 1
@@ -2292,12 +2290,35 @@ def test_force_push_refuses_to_retry_a_dirty_tree_after_regeneration():
                    else "?? docs/new-page.md\n")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+    return fake_run
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+
+def test_force_push_refuses_to_retry_a_dirty_tree_after_regeneration():
+    """Step 1's retry is gated too — `git add -u` cannot sweep an untracked file."""
+    push_count = [0]
+
+    with mock.patch("subprocess.run", side_effect=_regeneration_leaves_untracked(push_count)):
         rc = pr_rebase_cli._force_push("/fake")
 
     assert rc == 1
     assert push_count[0] == 1
+
+
+def test_force_push_dirty_after_regeneration_still_reaches_the_ai_fix():
+    """Gating step 1's retry must not dead-end the run.
+
+    Step 2 stages the whole tree, which is exactly what clears the untracked
+    leftover that blocked step 1 — so dirtiness abandons the retry, not the
+    recovery.
+    """
+    push_count = [0]
+
+    with mock.patch("subprocess.run", side_effect=_regeneration_leaves_untracked(push_count)), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
+        pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
+
+    mock_fix.assert_called_once()
+    assert mock_fix.call_args[0][1] == "rejected"
 
 
 def test_force_push_regenerated_files_fall_through_to_ai_fix():
@@ -2680,6 +2701,35 @@ def test_force_push_no_resolved_files_skips_ai_fix():
 
     assert rc == 1
     mock_fix.assert_not_called()
+
+
+# ── _auto_stash ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("status_out,expected", [
+    (" M ai/lib/review_phases.py\n", True),
+    ("?? scratch.txt\n", True),
+    ("", False),
+])
+def test_auto_stash_covers_untracked_files(status_out, expected):
+    """Untracked files are dirt too — they reach the hooks and the fix commit.
+
+    Left in place they join what the pre-push hooks validate, and the recovery's
+    whole-tree stage would then force-push a scratch file (#663).
+    """
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        out = status_out if cmd[:2] == ["git", "status"] else ""
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        assert pr_rebase_cli._auto_stash("/fake") is expected
+
+    stash_calls = [c for c in calls if c[:2] == ["git", "stash"]]
+    assert bool(stash_calls) is expected
+    assert all("-u" in c for c in stash_calls)
 
 
 # ── cmd_start ──────────────────────────────────────────────────────────────

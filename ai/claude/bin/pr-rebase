@@ -221,6 +221,15 @@ def _detect_rebase_in_progress(cwd: str) -> bool:
     return (git_path / _GIT_REBASE_MERGE_DIR).is_dir() or (git_path / _GIT_REBASE_APPLY_DIR).is_dir()
 
 
+def _status_lines(cwd: str, untracked: bool = True) -> list[str]:
+    """Porcelain status lines for the worktree. Ignored files are excluded."""
+    cmd = ["git", "status", "--porcelain"]
+    if not untracked:
+        cmd.append("--untracked-files=no")
+    status = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    return [line for line in status.stdout.splitlines() if line.strip()]
+
+
 def _detect_conflicts(cwd: str) -> list[str]:
     """Return list of conflicted file paths."""
     r = subprocess.run(
@@ -1474,18 +1483,20 @@ _STASH_MSG = "pr-rebase: auto-stash"
 def _auto_stash(cwd: str) -> bool | None:
     """Stash uncommitted changes if the working tree is dirty.
 
+    Untracked files are stashed too (``-u``). A rebase tolerates them, but the
+    pre-push hooks run against the worktree, so anything the user left lying
+    around silently joins what the hooks validate — and the push recovery's
+    whole-tree stage would then commit it. Ignored files stay put; ``-u`` is
+    not ``-a``.
+
     Returns True if stashed, False if tree was clean, None if stash failed.
     """
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if not status.stdout.strip():
+    if not _status_lines(cwd):
         return False
 
     log.info("Stashing uncommitted changes...")
     r = subprocess.run(
-        ["git", "stash", "push", "-m", _STASH_MSG],
+        ["git", "stash", "push", "-u", "-m", _STASH_MSG],
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0:
@@ -1651,15 +1662,6 @@ def _report_push(r: subprocess.CompletedProcess) -> tuple[int, str]:
     return r.returncode, output
 
 
-def _status_lines(cwd: str, untracked: bool = True) -> list[str]:
-    """Porcelain status lines for the worktree. Ignored files are excluded."""
-    cmd = ["git", "status", "--porcelain"]
-    if not untracked:
-        cmd.append("--untracked-files=no")
-    status = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
-    return [line for line in status.stdout.splitlines() if line.strip()]
-
-
 def _hook_modified(cwd: str) -> list[str]:
     """Tracked files the pre-push hook left modified in the worktree."""
     return [
@@ -1718,6 +1720,26 @@ def _retry_push(cwd: str, step: str) -> tuple[int, str] | None:
     return _report_push(_push(cwd))
 
 
+def _recover_regenerated(cwd: str, rc: int, push_output: str) -> tuple[int, str] | None:
+    """Commit hook-regenerated files and retry. None once the retry has pushed.
+
+    Hands back the failure the next recovery step has to work from: the retry's
+    own error when it ran, the caller's otherwise.
+    """
+    if not _commit_regenerated(cwd):
+        return rc, push_output
+
+    retry = _retry_push(cwd, "force_push")
+    if retry is None:
+        return rc, push_output
+
+    retry_rc, retry_output = retry
+    if retry_rc == 0:
+        return None
+    # Re-read the error: the second run's checks are what step 2 must fix.
+    return retry_rc, retry_output or push_output
+
+
 def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     """Force-push, auto-recovering from pre-push hook failures.
 
@@ -1740,16 +1762,12 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     rc, push_output = _report_push(r)
 
     # Recovery 1: commit regenerated files (hook modified tracked files)
-    if _commit_regenerated(cwd):
-        retry = _retry_push(cwd, "force_push")
-        if retry is None:
-            return rc
-        # Re-read the error: the second run's checks are what step 2 must fix.
-        retry_rc, retry_output = retry
-        if retry_rc == 0:
-            return 0
-        rc = retry_rc
-        push_output = retry_output or push_output
+    # A dirty tree abandons this retry but not step 2, whose whole-tree stage is
+    # exactly what sweeps up the untracked leftover `git add -u` cannot reach.
+    recovered = _recover_regenerated(cwd, rc, push_output)
+    if recovered is None:
+        return 0
+    rc, push_output = recovered
 
     # Recovery 2: AI-fix resolved files based on check errors
     if resolved_files and push_output:

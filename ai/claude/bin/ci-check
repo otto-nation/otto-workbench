@@ -2,7 +2,8 @@
 """Fetch CI run data, classify failures, and output status.
 
 Renders a human-readable dashboard to stderr and structured JSON to stdout.
-Manages local state in <state_dir()>/pr/<repo>-<branch>/state.json.
+Manages local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
+on the run's target rather than on the checkout it was invoked from.
 
 Usage:
   ci-check                      # latest run for current branch

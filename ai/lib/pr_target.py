@@ -6,11 +6,14 @@ different readers agree on one directory: the ``pr`` CLI resolving a PR it is
 about to review, ``workbench-statusline`` rendering a prompt, and ui-code's
 server watching a repo it has never checked out.
 
-The repo key is owner-qualified — ``acme-widget``, not ``widget``. A bare repo
-name is not unique: ``acme/api`` and ``other-org/api`` would share a directory,
-so one repo's run would overwrite the other's ``state.json`` and hold its
-``run.lock``, serializing PRs that have nothing to do with each other. Forks and
-ordinary names (``api``, ``docs``, ``site``) make that collision routine.
+The repo key is the origin URL's whole path below the host, flattened —
+``acme-widget``, not ``widget``, and ``group-subgroup-widget`` for a nested
+GitLab project. A bare repo name is not unique: ``acme/api`` and
+``other-org/api`` would share a directory, so one repo's run would overwrite the
+other's ``state.json`` and hold its ``run.lock``, serializing PRs that have
+nothing to do with each other. Forks and ordinary names (``api``, ``docs``,
+``site``) make that collision routine, and keeping only the last namespace
+segment would leave the same collision in place one level up.
 
 There is deliberately no second key format. An alternate PR-number key would be
 a second source of truth for one target, and a transient ``gh`` failure could
@@ -18,7 +21,7 @@ move a live target between the two mid-flight.
 
 The layout is a published interface — ui-code reimplements it in TypeScript::
 
-    <state_dir()>/pr/<owner>-<repo>-<branch-slug>/
+    <state_dir()>/pr/<repo-key>-<branch-slug>/
         state.json
         run.lock
 
@@ -41,16 +44,19 @@ TARGETS_DIR = "pr"
 # exactly; tests/pr_target_test.py::SLUG_VECTORS is the shared fixture.
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
-# Trailing ".git", and everything up to the last "/" or ":" — the latter is what
-# separates host from path in scp-style remotes (git@github.com:owner/repo.git).
+# Everything up to the last "/" or ":", used only for remotes that name no host.
 _REPO_TAIL_RE = re.compile(r"[/:]")
 
 # A remote names a host two ways: an explicit scheme (https://, ssh://, git://)
-# or scp-style user@host:path. Everything else is a filesystem path
-# (/srv/git/widget.git, ../widget) — no host means no owner to qualify the key
+# followed by a non-empty authority, or scp-style host:path. Everything else is a
+# filesystem path (/srv/git/widget.git, ../widget, and file:///srv/git/widget.git,
+# which is one wearing a scheme) — no host means no namespace to qualify the key
 # with, so such a remote keeps its single trailing segment.
 _SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
-_SCP_RE = re.compile(r"^[^/]+@[^/:]+:")
+# No "user@" requirement: git reads any colon before the first slash as the
+# host/path separator, so an ~/.ssh/config alias (gitbox:acme/widget.git) is
+# scp-style too, and dropping it here would collide every repo behind that alias.
+_SCP_RE = re.compile(r"^[^/:]+:")
 
 
 def slug(branch: str) -> str:
@@ -62,32 +68,40 @@ def slug(branch: str) -> str:
     return _SLUG_RE.sub("-", branch).strip("-")
 
 
-def _remote_path(url: str) -> str:
-    """The path a hosted remote points at, or "" when the remote has no host."""
+def _hosted_path(url: str) -> str:
+    """A hosted remote's whole path below the host, or "" when it has no host."""
     scheme = _SCHEME_RE.match(url)
     if scheme:
-        after_scheme = url[scheme.end():].split("/", 1)
-        return after_scheme[1] if len(after_scheme) > 1 else ""
+        authority, _, path = url[scheme.end():].partition("/")
+        # An empty authority is the file:// case: no host was named, so the URL
+        # is a filesystem path and has to key the same as the bare path does.
+        return path if authority else ""
     scp = _SCP_RE.match(url)
     return url[scp.end():] if scp else ""
 
 
-def _repo_key(url: str) -> str | None:
-    """An origin URL as one owner-qualified path component, or None.
+def _drop_git_suffix(path: str) -> str:
+    return path[: -len(".git")] if path.endswith(".git") else path
 
-    ``acme-widget`` for both ``git@github.com:acme/widget.git`` and
-    ``https://github.com/acme/widget``. Composed through ``slug`` so the
+
+def _repo_key(url: str) -> str | None:
+    """An origin URL as one path component naming the repo, or None.
+
+    The whole path below the host, not its last segment or two:
+    ``git@github.com:acme/widget.git`` and ``https://github.com/acme/widget``
+    both give ``acme-widget``, and ``gitlab.com/group/subgroup/widget`` gives
+    ``group-subgroup-widget`` — truncating to a fixed depth would let two nested
+    projects sharing a leaf namespace collide. Composed through ``slug`` so the
     separator rules stay in one place.
     """
     url = url.rstrip("/")
-    tail = _REPO_TAIL_RE.split(url)[-1]
-    if tail.endswith(".git"):
-        tail = tail[: -len(".git")]
-    if not tail:
-        return None
-    parts = [p for p in _remote_path(url).split("/") if p]
-    owner = parts[-2] if len(parts) >= 2 else ""
-    return slug(f"{owner}-{tail}" if owner else tail)
+    hosted = _drop_git_suffix(_hosted_path(url).strip("/"))
+    if hosted:
+        return slug(hosted) or None
+    # No host to namespace under, so there is nothing above the repo directory
+    # that means anything: /srv/git/widget.git and ../widget are both "widget".
+    tail = _drop_git_suffix(_REPO_TAIL_RE.split(url)[-1])
+    return slug(tail) or None
 
 
 def repo_key_from_origin(cwd: str | None = None) -> str | None:

@@ -251,15 +251,24 @@ def test_trail_start_outside_a_repo_writes_no_gitignore(tmp_path, monkeypatch):
 def test_trail_start_ignores_a_rev_parse_that_answers_nothing(tmp_path, monkeypatch):
     """returncode 0 with empty stdout is not a repo root, and must not be used."""
     monkeypatch.chdir(tmp_path)
+    artifact_dir = tmp_path / "art"
     real_run = subprocess.run
+    # trail_module.subprocess is the one shared subprocess module, so this patch
+    # is live process-wide for the duration of the test. It therefore stands in
+    # for exactly the argv _ensure_gitignored issues and delegates everything
+    # else — matching on "rev-parse" alone would hand a synthetic empty success
+    # to any other caller that happened to run one.
+    stood_in_for = [
+        "git", "-C", str(artifact_dir), "rev-parse", "--show-toplevel", "--show-prefix",
+    ]
 
     def fake_run(cmd, *args, **kwargs):
-        if "rev-parse" in cmd:
+        if isinstance(cmd, (list, tuple)) and list(cmd) == stood_in_for:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return real_run(cmd, *args, **kwargs)
 
     monkeypatch.setattr(trail_module.subprocess, "run", fake_run)
-    Trail.start(script="pr", artifact_dir=str(tmp_path / "art"), context={})
+    Trail.start(script="pr", artifact_dir=str(artifact_dir), context={})
     assert not (tmp_path / ".gitignore").exists()
 
 

@@ -4,8 +4,8 @@ Provides a summary envelope over per-domain state files (CI failures,
 PR comments, review artifacts). Each ``pr`` subcommand updates its own
 section; ``pr status`` reads the whole thing without network calls.
 
-State file: ``<state_dir()>/pr/<repo>-<branch>/state.json`` — see
-``pr_target.target_dir``, which owns that path.
+State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
+run's target — see ``pr_target.target_dir``, which owns that path.
 """
 
 from __future__ import annotations
@@ -470,11 +470,14 @@ def update_identity(
     can come from different worktrees, and consumers read this field to find the
     checkout a fix was committed in.
 
-    Overwritten only when the incoming value is non-empty. A run from a bare
-    repo has no worktree to name, and blanking the field would strand those
-    consumers on a path an earlier run had recorded correctly.
+    Both it and ``head_sha`` are overwritten only when the incoming value is
+    non-empty. A run from a bare repo has neither a worktree to name nor a
+    checked-out HEAD to read, and a run with nothing to say must not erase what
+    an earlier run knew: the fix summary falls back to ``identity.head_sha`` when
+    it has no commit of its own, and would otherwise post an empty SHA.
     """
-    state.identity.head_sha = head_sha
+    if head_sha:
+        state.identity.head_sha = head_sha
     if pr_number is not None:
         state.identity.pr_number = pr_number
     if worktree_root:

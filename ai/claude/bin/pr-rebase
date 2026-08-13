@@ -4,7 +4,8 @@
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
 With --fix, automatically resolves merge conflicts using AI.
 Outputs structured JSON on stdout and status messages on stderr.
-Updates PR state in the run target's own git dir (see workbench_paths).
+Updates PR state in the run target's own git dir (see workbench_paths), keyed on
+the run's target rather than on the checkout it was invoked from.
 
 Exit codes:
   0  Success (clean rebase or operation completed)

@@ -56,23 +56,54 @@ def test_target_dir_follows_a_moved_state_root(tmp_path, monkeypatch):
     assert after.parent.parent == tmp_path / "new"
 
 
-@pytest.mark.parametrize("url,expected", [
-    ("https://github.com/otto-nation/otto-workbench.git", "otto-nation-otto-workbench"),
-    ("https://github.com/otto-nation/otto-workbench", "otto-nation-otto-workbench"),
-    ("git@github.com:otto-nation/otto-workbench.git", "otto-nation-otto-workbench"),
-    ("ssh://git@github.com/otto-nation/otto-workbench.git", "otto-nation-otto-workbench"),
-    ("git@github.com:otto-workbench.git", "otto-workbench"),
+# The URL-to-key contract, one row per form git accepts as an origin. These are
+# the assertions, not illustrations of them: a changed row is a changed state
+# directory, and any run already holding the old one keeps holding it.
+REPO_KEY_VECTORS = [
+    ("git@github.com:acme/widget.git", "acme-widget"),
+    ("https://github.com/acme/widget.git", "acme-widget"),
+    ("https://github.com/acme/widget", "acme-widget"),
+    ("https://github.com/acme/widget/", "acme-widget"),
+    ("ssh://git@github.com/acme/widget.git", "acme-widget"),
+    ("ssh://git@host:2222/acme/widget.git", "acme-widget"),
+    ("git://host/acme/widget.git", "acme-widget"),
+    ("https://user:token@host/acme/widget", "acme-widget"),
+    # file:// carries a scheme but an empty authority, so it names no host: it is
+    # a filesystem path and keys as one.
+    ("file:///srv/git/widget.git", "widget"),
+    # An ~/.ssh/config Host alias. Scp-style with no "user@", which git accepts
+    # and which therefore has to be qualified like any other hosted remote.
+    ("gitbox:acme/widget.git", "acme-widget"),
+    ("git@host:widget.git", "widget"),
+    # The whole path below the host, not its last two segments — group-a/platform/api
+    # and group-b/platform/api are different repos.
+    ("https://gitlab.com/group/subgroup/widget.git", "group-subgroup-widget"),
+    ("/srv/git/widget.git", "widget"),
     ("/srv/mirrors/otto-workbench/", "otto-workbench"),
-    ("../otto-workbench", "otto-workbench"),
-])
-def test_repo_key_parsing(url, expected):
+    ("../widget", "widget"),
+]
+
+
+@pytest.mark.parametrize("url,expected", REPO_KEY_VECTORS)
+def test_repo_key_vectors(url, expected):
     assert pr_target._repo_key(url) == expected
 
 
-def test_the_owner_is_what_keeps_same_named_repos_apart():
+@pytest.mark.parametrize("a,b", [
+    ("git@github.com:acme/api.git", "git@github.com:other-org/api.git"),
+    ("gitbox:acme/api.git", "gitbox:other-org/api.git"),
+    ("https://gitlab.com/group-a/platform/api.git",
+     "https://gitlab.com/group-b/platform/api.git"),
+])
+def test_the_namespace_is_what_keeps_same_named_repos_apart(a, b):
     """The whole point of qualifying the key — one shared dir is one shared lock."""
-    assert pr_target._repo_key("git@github.com:acme/api.git") != \
-        pr_target._repo_key("git@github.com:other-org/api.git")
+    assert pr_target._repo_key(a) != pr_target._repo_key(b)
+
+
+def test_a_file_url_keys_the_same_as_the_path_it_names():
+    """One remote spelled two ways is still one target, so still one run.lock."""
+    assert pr_target._repo_key("file:///srv/git/widget.git") == \
+        pr_target._repo_key("/srv/git/widget.git")
 
 
 def _git_repo(path: Path, origin: str, branch: str = "main") -> Path:
@@ -87,6 +118,9 @@ def _git_repo(path: Path, origin: str, branch: str = "main") -> Path:
     ("https://github.com/acme/widget.git", "acme-widget"),
     ("https://github.com/acme/widget", "acme-widget"),
     ("https://github.com/acme/widget/", "acme-widget"),
+    ("gitbox:acme/widget.git", "acme-widget"),
+    ("file:///srv/git/widget.git", "widget"),
+    ("https://gitlab.com/group/subgroup/widget.git", "group-subgroup-widget"),
     ("/srv/git/widget.git", "widget"),
 ])
 def test_repo_key_from_origin_reads_the_remote(tmp_path, origin, expected):

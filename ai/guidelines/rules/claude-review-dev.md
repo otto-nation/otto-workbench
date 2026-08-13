@@ -80,7 +80,7 @@ messages on stderr.
 
 ### State management
 
-- State file: `<state_dir()>/pr/<owner>-<repo>-<branch-slug>/state.json` — keyed on
+- State file: `<state_dir()>/pr/<repo-key>-<branch-slug>/state.json` — keyed on
   the run's target, not on the checkout it was invoked from. Resolve it once via
   `pr_context.resolve()` and read `ctx.target_dir`; never rebuild the path
 - Lib module: `ai/lib/pr_state.py`

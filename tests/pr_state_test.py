@@ -379,6 +379,21 @@ def test_load_or_init_keeps_a_known_worktree_when_a_bare_run_has_none(tmp_path):
     assert state.identity.worktree_root == "/checkouts/feat-a"
 
 
+def test_load_or_init_keeps_a_known_head_sha_when_a_bare_run_has_none(tmp_path):
+    """A bare-repo resolve() yields head_sha "", and that must not overwrite.
+
+    review-threads posts `fix.commit_sha or state.identity.head_sha` in the fix
+    summary body, so a blanked identity puts an empty SHA in a public comment.
+    """
+    save_state(tmp_path, load_or_init(
+        target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+        pr_number=1, head_sha="abc1234", worktree_root="/checkouts/feat-a"))
+
+    state = load_or_init(target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+                         pr_number=1, head_sha="", worktree_root="")
+    assert state.identity.head_sha == "abc1234"
+
+
 def _write_raw_state(root: Path, payload) -> Path:
     """Write a state file's bytes directly, bypassing save_state."""
     path = root / "state.json"

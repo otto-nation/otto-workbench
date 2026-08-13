@@ -5,7 +5,7 @@
       {
         "match": ["comments", "--fix"],
         "stdout_file": "fix-report.json",
-        "stderr": "DRAFT (not published) reply to T-1: fixed in a1b2c3d\n",
+        "stderr": "DRAFT (not published) reply to T-1 (alice): fixed in a1b2c3d\nDRAFT (not published) reply to T-3 (alice): deferred; will file on the tracking issue if approved\n",
         "exit": 0
       }
     ]
@@ -14,7 +14,7 @@
   "wt": {
     "on_no_match": "fail",
     "rules": [
-      {"match": ["switch", "main"], "stdout": "{\"path\": \"/tmp/eval-main\"}", "exit": 0}
+      {"match": ["switch", "main"], "stdout": "{\"path\": \".\"}", "exit": 0}
     ]
   },
   "git": {"on_no_match": "passthrough", "rules": [

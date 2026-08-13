@@ -455,6 +455,45 @@ class TestSkillCasesAreNotVacuous:
             assert group[0] in responses, (
                 f"forbids {group} names {group[0]!r}, which no shim records")
 
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_responses_stub_every_binary_a_required_group_names(self, manifest_path):
+        """An unstubbed `requires` binary is worse than an unstubbed `forbids` one.
+
+        No shim on PATH means the real binary runs — real GitHub, real
+        credentials, since `clean_env` only strips git vars — and no trace
+        line is ever recorded for the group, so it can never be satisfied.
+        Same skip as the forbids check: a group leading with a bare flag
+        constrains whatever the case already stubs and names no binary of
+        its own.
+        """
+        manifest = json.loads(manifest_path.read_text())
+        responses = json.loads((manifest_path.parent / "responses.json").read_text())
+        named = [g for g in manifest.get("requires", []) if not g[0].startswith("-")]
+        for group in named:
+            assert group[0] in responses, (
+                f"requires {group} names {group[0]!r}, which no shim records")
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_tokens_appear_in_the_live_skill_text(self, manifest_path):
+        """A token the skill never mentions cannot be something the skill drives.
+
+        Catches a case naming a flag the skill doesn't have, or a skill edit
+        that drops one out from under a shipped case — the kind of drift the
+        self-consistency checks above cannot see, since they never compare
+        against the skill body at all. Restricted to each group's leading
+        binary plus flag-shaped tokens (`--foo`): fixture-derived tokens like
+        a thread id (`T-3`) have no reason to appear in the skill's prose.
+        """
+        manifest = json.loads(manifest_path.read_text())
+        body = ess.skill_body(manifest["skill"])
+        groups = manifest["requires"] + manifest.get("forbids", [])
+        for group in groups:
+            tokens = {group[0]} | {t for t in group if t.startswith("--")}
+            for token in tokens:
+                assert token in body, (
+                    f"{token!r} from {group} does not appear in "
+                    f"{manifest['skill']}'s SKILL.md")
+
 
 class TestRunWiring:
     """No corpus case ever calls run() end to end (Tasks 5-6 only exercise

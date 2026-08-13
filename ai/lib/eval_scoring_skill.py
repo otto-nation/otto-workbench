@@ -66,6 +66,29 @@ def match_tokens(argv: list[str]) -> set[str]:
     return tokens
 
 
+def check_group(label: str, group: object) -> None:
+    """Reject a token group that is not a list of strings.
+
+    A group written one level too shallow — `["--post"]` where `[["--post"]]`
+    was meant — is not a type error to any code downstream: matching iterates
+    the string `"--post"` character by character, so each "group" is a
+    one-character string whose own iteration yields characters that are never
+    argv elements. The rule can then never fire. Nothing else reports it — a
+    `requires` typo at least surfaces as recall 0.0, but a `forbids` typo
+    surfaces as a gate that was silently never armed.
+    """
+    if not isinstance(group, list) or not all(isinstance(t, str) for t in group):
+        raise ValueError(f"{label} must be a list of strings, got {group!r}")
+
+
+def check_groups(label: str, groups: object) -> None:
+    """Reject a `requires`/`forbids` value that is not a list of valid groups."""
+    if not isinstance(groups, list):
+        raise ValueError(f"{label} must be a list of token groups, got {groups!r}")
+    for group in groups:
+        check_group(f"{label} group", group)
+
+
 def group_matches(group: list[str], argv: list[str]) -> bool:
     """True when every token in `group` matches one of `argv`'s elements.
 
@@ -212,12 +235,16 @@ def _resolve_rules(name: str, rules: list[dict], case_dir: Path) -> list[dict]:
     """Inline every `stdout_file` so the shim never reads the case directory.
 
     A rule with no `match` key is a malformed fixture, not a catch-all — a
-    default of `[]` here would silently make the rule fire on every call.
+    default of `[]` here would silently make the rule fire on every call. A
+    `match` that is not a list of strings is the same class of fixture bug in
+    the other direction: `"push"` explodes to `['p','u','s','h']`, a rule that
+    can never fire.
     """
     resolved = []
     for rule in rules:
         if "match" not in rule:
             raise ValueError(f"{name}: rule missing 'match': {rule!r}")
+        check_group(f"{name}: rule 'match'", rule["match"])
         out = dict(rule)
         source = out.pop("stdout_file", "")
         if source:
@@ -296,6 +323,11 @@ class SkillTask:
             raise ValueError(f"{case_dir}: manifest missing 'skill'")
         if "prompt" not in manifest:
             raise ValueError(f"{case_dir}: manifest missing 'prompt'")
+        # Checked here rather than where they are matched: a malformed group
+        # costs a whole paid run before it reports anything at match time, and
+        # a malformed `forbids` group reports nothing even then.
+        check_groups(f"{case_dir}: requires", manifest.get("requires", []))
+        check_groups(f"{case_dir}: forbids", manifest.get("forbids", []))
         # Resolved before either temp dir exists: a bad skill name or a
         # malformed responses.json below would otherwise leak a git repo and a
         # work dir on every raise, since the runner's cleanup only covers the

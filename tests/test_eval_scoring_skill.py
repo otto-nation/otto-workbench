@@ -164,6 +164,39 @@ class TestMatchForbidden:
         assert fired == ["--post", "gh api"]
 
 
+class TestGroupShapeIsValidated:
+    """A group written one level too shallow is inert, and nothing else says so.
+
+    `match_forbidden(["--post"], ...)` iterates the string, so each "group" is
+    a one-character string whose characters are never argv elements — a forbid
+    that can never fire. Recall would at least drop for the same typo in
+    `requires`; a dead `forbids` group costs nothing visible at all.
+    """
+
+    def test_a_correctly_nested_group_list_is_accepted(self):
+        ess.check_groups("requires", [["pr", "comments", "--fix"], ["--post"]])
+
+    def test_an_empty_group_list_is_accepted(self):
+        """A case with no forbids at all is legitimate."""
+        ess.check_groups("forbids", [])
+
+    def test_a_single_nested_group_list_is_rejected(self):
+        with pytest.raises(ValueError, match=re.escape("'--post'")):
+            ess.check_groups("forbids", ["--post"])
+
+    def test_a_group_list_that_is_not_a_list_is_rejected(self):
+        with pytest.raises(ValueError, match="list of token groups"):
+            ess.check_groups("forbids", {"pr": "--post"})
+
+    def test_a_group_holding_a_non_string_is_rejected(self):
+        with pytest.raises(ValueError, match=re.escape("['pr', 42]")):
+            ess.check_groups("requires", [["pr", 42]])
+
+    def test_the_error_names_the_offending_group(self):
+        with pytest.raises(ValueError, match="forbids group"):
+            ess.check_groups("forbids", [["pr", "--track"], "--post"])
+
+
 class TestLoadTrace:
     def test_each_record_becomes_one_argv_list(self, tmp_path):
         """Joining first would erase the element boundaries matching needs."""
@@ -350,6 +383,16 @@ class TestWriteShims:
                 bin_dir, case, tmp_path / "t.jsonl",
             )
 
+    def test_a_string_match_raises_instead_of_exploding_into_characters(self, tmp_path):
+        """`"push"` would resolve to `['p','u','s','h']` — a rule that never fires."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        with pytest.raises(ValueError, match=re.escape("'push'")):
+            ess.write_shims(
+                {"git": {"rules": [{"match": "push", "exit": 1}]}},
+                bin_dir, case, tmp_path / "t.jsonl",
+            )
+
 
 class TestSkillBody:
     def test_frontmatter_is_stripped(self):
@@ -466,6 +509,14 @@ class TestRunValidatesManifest:
         with pytest.raises(ValueError, match=re.escape(str(case_dir))):
             ess.SkillTask().run(case_dir, RunOptions())
 
+    @pytest.mark.parametrize("field", ["requires", "forbids"])
+    def test_a_single_nested_group_fails_the_case_at_load(self, tmp_path, field):
+        """Before a paid run, not after one graded against a dead group."""
+        case_dir = _skill_case(
+            tmp_path, skill="pr-rebase", prompt="go", **{field: ["--post"]})
+        with pytest.raises(ValueError, match=re.escape(str(case_dir))):
+            ess.SkillTask().run(case_dir, RunOptions())
+
 
 class TestRunCleansUpOnFailure:
     def test_a_malformed_responses_file_leaves_no_temp_dirs(self, monkeypatch, tmp_path):
@@ -532,6 +583,13 @@ class TestSkillCasesAreNotVacuous:
         manifest = json.loads(manifest_path.read_text())
         assert manifest.get("requires"), "requires is empty — nothing to satisfy"
         assert manifest.get("prompt"), "prompt is empty — nothing to drive"
+
+    @pytest.mark.parametrize("manifest_path", _skill_cases())
+    def test_every_group_is_shaped_like_a_group(self, manifest_path):
+        """run() rejects these too, but only once someone pays for the run."""
+        manifest = json.loads(manifest_path.read_text())
+        ess.check_groups("requires", manifest["requires"])
+        ess.check_groups("forbids", manifest.get("forbids", []))
 
     @pytest.mark.parametrize("manifest_path", _skill_cases())
     def test_a_satisfying_trace_scores_one(self, manifest_path):

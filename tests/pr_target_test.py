@@ -68,9 +68,11 @@ REPO_KEY_VECTORS = [
     ("ssh://git@host:2222/acme/widget.git", "acme-widget"),
     ("git://host/acme/widget.git", "acme-widget"),
     ("https://user:token@host/acme/widget", "acme-widget"),
-    # file:// carries a scheme but an empty authority, so it names no host: it is
-    # a filesystem path and keys as one.
+    # file:// names no host whatever authority it carries: git ignores a file
+    # URL's authority and clones the path, so all three of these are one target.
     ("file:///srv/git/widget.git", "widget"),
+    ("file://localhost/srv/git/widget.git", "widget"),
+    ("file://bogushost/srv/git/widget.git", "widget"),
     # An ~/.ssh/config Host alias. Scp-style with no "user@", which git accepts
     # and which therefore has to be qualified like any other hosted remote.
     ("gitbox:acme/widget.git", "acme-widget"),
@@ -81,6 +83,20 @@ REPO_KEY_VECTORS = [
     ("/srv/git/widget.git", "widget"),
     ("/srv/mirrors/otto-workbench/", "otto-workbench"),
     ("../widget", "widget"),
+    # A hosted URL with no path names no repo. Unreachable from a real remote,
+    # but keying the userinfo and host would give every such URL one directory.
+    ("ssh://git@github.com/", None),
+    ("https://github.com", None),
+    # The repo key folds to lowercase: GitHub and GitLab treat a repo path
+    # case-insensitively, so two differently-cased remotes are one repo.
+    ("https://github.com/Acme/Widget.git", "acme-widget"),
+    # A segment with no sluggable character keeps the repo named by standing in
+    # the first 8 hex of its SHA-256; without it the segment vanishes and every
+    # such repo under acme/ shares one key.
+    ("https://github.com/acme/文档.git", "acme-2687ccdb"),
+    ("https://github.com/acme/日本語.git", "acme-77710aed"),
+    # The rule is "the slug came out empty", not "the segment was non-ASCII".
+    ("https://github.com/acme/@@@.git", "acme-2ec847d8"),
 ]
 
 
@@ -104,6 +120,45 @@ def test_a_file_url_keys_the_same_as_the_path_it_names():
     """One remote spelled two ways is still one target, so still one run.lock."""
     assert pr_target._repo_key("file:///srv/git/widget.git") == \
         pr_target._repo_key("/srv/git/widget.git")
+
+
+@pytest.mark.parametrize("authority", ["", "localhost", "bogushost"])
+def test_a_file_url_ignores_its_authority_exactly_as_git_does(authority):
+    """`git clone file://bogushost/srv/git/w.git` clones /srv/git/w.git.
+
+    The authority is recorded verbatim in remote.origin.url, so keying on it
+    would give one clone as many state dirs as it has spellings.
+    """
+    assert pr_target._repo_key(f"file://{authority}/srv/git/widget.git") == "widget"
+
+
+def test_segments_that_slug_away_stay_distinct():
+    """Two unrelated repos, or one state.json and one run.lock shared silently."""
+    assert pr_target._repo_key("https://github.com/acme/文档.git") != \
+        pr_target._repo_key("https://github.com/acme/日本語.git")
+
+
+def test_the_stand_in_digest_is_stable_across_calls():
+    """A key that moves between calls is a run that loses track of its own state.
+
+    The literal is the assertion: recomputing the hash here would only prove the
+    test can call hashlib.
+    """
+    key = pr_target._repo_key("https://github.com/acme/文档.git")
+    assert key == "acme-2687ccdb"
+    assert pr_target._repo_key("https://github.com/acme/文档.git") == key
+
+
+def test_the_repo_key_folds_case_but_the_branch_slug_does_not():
+    """The asymmetry is deliberate: repo paths are case-insensitive, refs are not.
+
+    `feat/A` and `feat/a` are two branches on every git host, so folding the
+    branch slug would point two live runs at one lock.
+    """
+    assert pr_target._repo_key("https://github.com/Acme/Widget.git") == \
+        pr_target._repo_key("https://github.com/acme/widget.git")
+    assert pr_target.target_dir("acme-widget", "feat/A") != \
+        pr_target.target_dir("acme-widget", "feat/a")
 
 
 def _git_repo(path: Path, origin: str, branch: str = "main") -> Path:

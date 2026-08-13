@@ -10,6 +10,8 @@ from pathlib import Path
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
+import pytest
+
 import trail as trail_module
 from trail import (
     SCHEMA_VERSION,
@@ -248,8 +250,15 @@ def test_trail_start_outside_a_repo_writes_no_gitignore(tmp_path, monkeypatch):
     assert not (tmp_path / ".gitignore").exists()
 
 
-def test_trail_start_ignores_a_rev_parse_that_answers_nothing(tmp_path, monkeypatch):
-    """returncode 0 with empty stdout is not a repo root, and must not be used."""
+@pytest.mark.parametrize("stdout", [
+    # Nothing at all.
+    "",
+    # A prefix with no toplevel above it: Path("") is Path("."), so an unguarded
+    # toplevel lands .gitignore in whatever directory the process stands in.
+    "\nart/",
+])
+def test_trail_start_ignores_a_rev_parse_that_answers_nothing(tmp_path, monkeypatch, stdout):
+    """returncode 0 without a toplevel is not a repo root, and must not be used."""
     monkeypatch.chdir(tmp_path)
     artifact_dir = tmp_path / "art"
     real_run = subprocess.run
@@ -262,13 +271,20 @@ def test_trail_start_ignores_a_rev_parse_that_answers_nothing(tmp_path, monkeypa
         "git", "-C", str(artifact_dir), "rev-parse", "--show-toplevel", "--show-prefix",
     ]
 
+    stood_in_calls = []
+
     def fake_run(cmd, *args, **kwargs):
         if isinstance(cmd, (list, tuple)) and list(cmd) == stood_in_for:
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            stood_in_calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
         return real_run(cmd, *args, **kwargs)
 
     monkeypatch.setattr(trail_module.subprocess, "run", fake_run)
     Trail.start(script="pr", artifact_dir=str(artifact_dir), context={})
+    # tmp_path is not a repo, so a real rev-parse also writes no .gitignore: if
+    # _ensure_gitignored's argv changes shape the stand-in stops matching and the
+    # assertion below passes without the branch under test ever running.
+    assert stood_in_calls, "the stand-in never matched; _ensure_gitignored's argv changed"
     assert not (tmp_path / ".gitignore").exists()
 
 

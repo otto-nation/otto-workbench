@@ -1508,7 +1508,13 @@ def _auto_stash(cwd: str) -> bool | None:
 
 
 def _auto_unstash(cwd: str, mode: RunMode) -> None:
-    """Pop stashed changes, resolving conflicts if needed."""
+    """Pop stashed changes, resolving conflicts if needed.
+
+    A pop can fail without leaving conflict markers — most often because the
+    stash holds an untracked file the rebased branch now tracks, which git
+    refuses to overwrite. Nothing is lost either way: a failed pop keeps the
+    stash entry, so the message names it rather than only echoing git.
+    """
     r = subprocess.run(
         ["git", "stash", "pop"],
         capture_output=True, text=True, cwd=cwd,
@@ -1519,7 +1525,10 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
 
     conflicts = _detect_conflicts(cwd)
     if not conflicts:
+        _terr("unstash", "stash pop failed", data={"stderr": r.stderr.strip()})
         log.error(f"git stash pop failed: {r.stderr.strip()}")
+        log.warn(f"Your changes are still stashed as '{_STASH_MSG}' — "
+                 "clear the blocking paths, then `git stash pop`.")
         return
 
     if not mode.resolves_conflicts or not ai_backend.is_available():

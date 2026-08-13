@@ -2732,6 +2732,31 @@ def test_auto_stash_covers_untracked_files(status_out, expected):
     assert all("-u" in c for c in stash_calls)
 
 
+# ── _auto_unstash ──────────────────────────────────────────────────────────
+
+
+def test_auto_unstash_pop_failure_without_conflicts_names_the_stash():
+    """A pop that fails with no conflict markers must say the work is still stashed.
+
+    Stashing untracked files (-u) makes git's "would be overwritten by merge"
+    refusal reachable, and that failure produces no markers to resolve.
+    """
+    warnings = []
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=1, stdout="",
+            stderr="error: untracked working tree files would be overwritten by merge",
+        )
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_detect_conflicts", return_value=[]), \
+         mock.patch.object(pr_rebase_cli.log, "warn", side_effect=warnings.append):
+        pr_rebase_cli._auto_unstash("/fake", pr_rebase_cli.RunMode.PUSH)
+
+    assert any(pr_rebase_cli._STASH_MSG in w for w in warnings)
+
+
 # ── cmd_start ──────────────────────────────────────────────────────────────
 
 

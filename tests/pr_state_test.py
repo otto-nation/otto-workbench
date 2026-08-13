@@ -325,6 +325,81 @@ def test_load_state_missing_file():
     assert result is None
 
 
+def _write_raw_state(root: Path, payload) -> Path:
+    """Write a state file's bytes directly, bypassing save_state."""
+    path = root / STATE_DIR / STATE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload if isinstance(payload, str) else json.dumps(payload))
+    return path
+
+
+def _state_with_one_run(root: Path) -> dict:
+    """A saved state carrying a full CI run, read back as raw JSON."""
+    state = new_state("owner/repo", "feat", pr_number=1, head_sha="abc",
+                      worktree_root=str(root))
+    state.ci.runs[1] = RunState(
+        run_id=1, run_number=1, head_sha="abc", status="completed",
+        conclusion="failure", fetched_at="2026-08-12T00:00:00+00:00",
+        failures={"build": FailureGroup(
+            job="build", kind=FailureKind.BUILD,
+            items=(FailureItem(
+                id="x", annotation="err", file=None, line=None,
+                diagnosis=None, fix_sha=None, outcome=None,
+            ),),
+        )},
+    )
+    save_state(root, state)
+    return json.loads((root / STATE_DIR / STATE_FILE).read_text())
+
+
+def test_load_state_returns_none_for_truncated_json(tmp_path, capsys):
+    _write_raw_state(tmp_path, '{"identity": {"repo": "owner/repo"')
+
+    assert load_state(tmp_path) is None
+    assert "unreadable" in capsys.readouterr().err
+
+
+def test_load_state_returns_none_without_identity(tmp_path):
+    """identity has no dataclass default, so serde raises TypeError."""
+    _write_raw_state(tmp_path, {"created_at": "2026-08-12T00:00:00+00:00"})
+
+    assert load_state(tmp_path) is None
+
+
+def test_load_state_returns_none_for_an_unknown_failure_kind(tmp_path):
+    d = _state_with_one_run(tmp_path)
+    d["ci"]["runs"]["1"]["failures"]["build"]["kind"] = "not-a-kind"
+    _write_raw_state(tmp_path, d)
+
+    assert load_state(tmp_path) is None
+
+
+def test_load_state_returns_none_for_a_non_numeric_run_key(tmp_path):
+    """runs is dict[int, RunState]; serde restores the int keys, so a key that
+    is not a number is a corrupt file rather than a coercible one."""
+    d = _state_with_one_run(tmp_path)
+    d["ci"]["runs"] = {"not-a-run-id": d["ci"]["runs"]["1"]}
+    _write_raw_state(tmp_path, d)
+
+    assert load_state(tmp_path) is None
+
+
+def test_a_corrupt_file_is_rebuilt_by_the_next_write(tmp_path):
+    """The recovery a user never has to know about: any writing command loads
+    or inits, then saves over the bad file."""
+    _write_raw_state(tmp_path, "{ this is not json")
+
+    state = load_or_init(
+        worktree_root=tmp_path, repo="owner/repo", branch="feat",
+        pr_number=7, head_sha="abc1234",
+    )
+    save_state(tmp_path, state)
+
+    reloaded = load_state(tmp_path)
+    assert reloaded is not None
+    assert reloaded.identity.pr_number == 7
+
+
 def test_save_and_load_roundtrip():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

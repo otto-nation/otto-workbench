@@ -469,51 +469,49 @@ print(result)
   echo '{"type": "result", "total_cost_usd": 0.75}' > "$TMPDIR/group-1.jsonl"
   echo '{"type": "result", "total_cost_usd": 0.50}' > "$TMPDIR/group-2.jsonl"
 
-  result=$(_py "
-import io, contextlib
-with contextlib.redirect_stdout(io.StringIO()):
-    state = mod.PipelineState(
-        head_sha='abc',
-        group_names=['a', 'b', 'c'],
-        holistic_done=True,
-        groups_done=[1, 2],
-    )
-    job = mod.ReviewJob(
-        repo='org/repo', pr_number='1',
-        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
-            additions=1, deletions=0, changed_files=1, files=[]),
-        ctx=mod.PRContext(), wt_path='/tmp/wt',
-        review_file='$TMPDIR/review.md',
-        session_log='/tmp/s.jsonl',
-    )
-    cost = mod._sum_existing_costs(job, state)
-print(f'{cost:.2f}')
-")
+  result=$(_sum_costs "group_names=['a', 'b', 'c'], holistic_done=True, groups_done=[1, 2]")
   [ "$result" = "2.75" ]
 }
 
 @test "_sum_existing_costs: missing log files return 0" {
-  result=$(_py "
-import io, contextlib
-with contextlib.redirect_stdout(io.StringIO()):
-    state = mod.PipelineState(
-        head_sha='abc',
-        group_names=['a', 'b'],
-        holistic_done=True,
-        groups_done=[1],
-    )
-    job = mod.ReviewJob(
-        repo='org/repo', pr_number='1',
-        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
-            additions=1, deletions=0, changed_files=1, files=[]),
-        ctx=mod.PRContext(), wt_path='/tmp/wt',
-        review_file='$TMPDIR/review.md',
-        session_log='/tmp/s.jsonl',
-    )
-    cost = mod._sum_existing_costs(job, state)
-print(f'{cost:.2f}')
-")
+  result=$(_sum_costs "group_names=['a', 'b'], holistic_done=True, groups_done=[1]")
   [ "$result" = "0.00" ]
+}
+
+@test "_sum_existing_costs: counts the scout log when phase 1 scouted" {
+  # holistic_done means "phase 1 finished" — the scout branch sets it too, and
+  # writes scout.jsonl rather than holistic.jsonl.
+  echo '{"type": "result", "total_cost_usd": 1.25}' > "$TMPDIR/scout.jsonl"
+
+  result=$(_sum_costs "group_names=['a'], holistic_done=True")
+  [ "$result" = "1.25" ]
+}
+
+@test "_sum_existing_costs: counts both phase-1 logs when effort changed" {
+  # Resume only validates the head SHA and the group names, so a run that
+  # holisticked and resumed at an effort that scouts leaves both logs behind.
+  echo '{"type": "result", "total_cost_usd": 1.50}' > "$TMPDIR/holistic.jsonl"
+  echo '{"type": "result", "total_cost_usd": 1.25}' > "$TMPDIR/scout.jsonl"
+
+  result=$(_sum_costs "group_names=['a'], holistic_done=True")
+  [ "$result" = "2.75" ]
+}
+
+@test "_sum_existing_costs: counts a group that crashed before it was marked done" {
+  echo '{"type": "result", "total_cost_usd": 0.75}' > "$TMPDIR/group-2.jsonl"
+
+  result=$(_sum_costs "group_names=['a', 'b'], groups_done=[1]")
+  [ "$result" = "0.75" ]
+}
+
+@test "_sum_existing_costs: counts the synthesis and disprove logs" {
+  # Recovery from a synthesis failure sums costs before clearing the flag, so a
+  # costly synthesis attempt has to survive into the resumed run's budget.
+  echo '{"type": "result", "total_cost_usd": 2.00}' > "$TMPDIR/synthesis.jsonl"
+  echo '{"type": "result", "total_cost_usd": 0.50}' > "$TMPDIR/disprove.jsonl"
+
+  result=$(_sum_costs "group_names=['a']")
+  [ "$result" = "2.50" ]
 }
 
 @test "FILENAME_PIPELINE_STATE constant exists" {

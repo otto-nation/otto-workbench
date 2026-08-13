@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -79,6 +80,42 @@ class TrailEvent:
         return json.dumps(d, separators=(",", ":"))
 
 
+def _ensure_gitignored(artifact_path: Path) -> None:
+    """Add the artifact directory to .gitignore when it sits inside a repo.
+
+    The trail is the only thing that creates this directory now that state is
+    user-scoped, so keeping it out of the consumer repo's diff lands here.
+    Silently skips when the directory is not inside a git repository — review
+    artifact dirs live under state_dir(), where there is nothing to ignore.
+    """
+    try:
+        toplevel = subprocess.run(
+            ["git", "-C", str(artifact_path.parent), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True,
+        )
+        if toplevel.returncode != 0:
+            return
+    except FileNotFoundError:
+        return
+
+    name = artifact_path.name
+    ignored = subprocess.run(
+        ["git", "-C", str(artifact_path.parent), "check-ignore", "-q", name],
+        capture_output=True,
+    )
+    if ignored.returncode == 0:
+        return
+
+    gitignore = Path(toplevel.stdout.strip()) / ".gitignore"
+    needs_newline = False
+    if gitignore.exists():
+        content = gitignore.read_text()
+        needs_newline = bool(content) and not content.endswith("\n")
+    prefix = "\n" if needs_newline else ""
+    with open(gitignore, "a") as f:
+        f.write(f"{prefix}\n# Worktree-local run artifacts (pr CLI)\n{name}/\n")
+
+
 # ── Trail ─────────────────────────────────────────────────────────────────
 
 _print_lock = threading.Lock()
@@ -112,7 +149,10 @@ class Trail:
     ) -> Trail:
         debug = debug or os.environ.get("WORKBENCH_DEBUG", "") == "1"
         artifact_path = Path(artifact_dir)
+        created = not artifact_path.exists()
         artifact_path.mkdir(parents=True, exist_ok=True)
+        if created:
+            _ensure_gitignored(artifact_path)
         invocation = uuid4().hex[:8]
         return cls(
             script=script,

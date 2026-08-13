@@ -1633,7 +1633,7 @@ class TestFinishDeferredWork:
         )
 
     def _save(self, worktree, **fix_kw):
-        pr_state.save_state(worktree, PRState(
+        pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(
                 repo="owner/repo", branch="b", pr_number=42,
                 head_sha="abc1234", worktree_root=str(worktree),
@@ -1664,7 +1664,7 @@ class TestFinishDeferredWork:
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(self._ctx(worktree), PRReport())
-        assert pr_state.load_state(worktree).fix.commit_status == "pushed"
+        assert pr_state.load_state(worktree / "target").fix.commit_status == "pushed"
 
     def test_it_reads_state_from_disk_not_from_the_caller(self, rt, worktree):
         """The fix pass writes its outcomes there; a stale copy would miss them."""
@@ -1770,7 +1770,7 @@ class TestReconcileRunsBeforeTheWrites:
     """Within one invocation the two must not disagree about the same thread."""
 
     def test_reconciled_thread_never_reaches_the_tracking_issue(self, rt, worktree):
-        pr_state.save_state(worktree, PRState(
+        pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
                                 head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(head_sha="aaaaaaa", threads=[
@@ -1795,7 +1795,7 @@ class TestReconcileRunsBeforeTheWrites:
 
     def test_the_flip_is_persisted(self, rt, worktree):
         """Otherwise the next --finish re-derives it from the same stale row."""
-        pr_state.save_state(worktree, PRState(
+        pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
                                 head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(head_sha="aaaaaaa", threads=[
@@ -1812,7 +1812,7 @@ class TestReconcileRunsBeforeTheWrites:
         with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(ctx, report)
-        on_disk = pr_state.load_state(worktree)
+        on_disk = pr_state.load_state(worktree / "target")
         assert on_disk.fix.threads[0].action == ThreadAction.FIXED
 
 
@@ -1831,7 +1831,7 @@ class TestStaleSnapshotIsAnnounced:
                                        reason="agent could not auto-fix")],
             ),
         )
-        pr_state.save_state(worktree, state)
+        pr_state.save_state(worktree / "target", state)
         return state
 
     def _ctx(self, worktree):
@@ -1864,7 +1864,7 @@ class TestStaleSnapshotIsAnnounced:
         """Legacy state predates the field; it cannot be vouched for."""
         state = self._state(worktree, "aaaaaaa")
         state.fix.head_sha = ""
-        pr_state.save_state(worktree, state)
+        pr_state.save_state(worktree / "target", state)
         assert any("(unrecorded)" in w for w in self._warnings(rt, worktree, "aaaaaaa"))
 
     def test_an_empty_snapshot_has_nothing_to_be_stale_about(self, rt, worktree):

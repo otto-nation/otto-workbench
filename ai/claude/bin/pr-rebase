@@ -4,7 +4,7 @@
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
 With --fix, automatically resolves merge conflicts using AI.
 Outputs structured JSON on stdout and status messages on stderr.
-Updates PR state in the worktree's own git dir (see workbench_paths).
+Updates PR state in the run target's own git dir (see workbench_paths).
 
 Exit codes:
   0  Success (clean rebase or operation completed)
@@ -1606,11 +1606,12 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     """Load existing state or create a fresh one from resolved context."""
     return pr_state.load_or_init(
-        worktree_root=ctx.require_worktree(),
+        target_dir=ctx.target_dir,
         repo=ctx.repo,
         branch=ctx.branch,
         pr_number=ctx.pr_number,
         head_sha=ctx.head_sha,
+        worktree_root=str(ctx.require_worktree()),
     )
 
 
@@ -1636,7 +1637,7 @@ class RebaseOutcome:
             force_pushed=self.force_pushed is True,
             updated_at=pr_state.now_iso(),
         ))
-        pr_state.save_state(ctx.require_worktree(), state)
+        pr_state.save_state(ctx.target_dir, state)
 
     def emit(self) -> None:
         report: dict = {

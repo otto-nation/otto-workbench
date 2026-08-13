@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -198,6 +199,31 @@ class TestTrailDebugMode:
             trail.finish()
             captured = capsys.readouterr()
             assert "[trail]" in captured.err
+
+
+def test_trail_start_gitignores_a_new_artifact_dir(tmp_path, monkeypatch):
+    """Creating .workbench/ inside a repo is now the trail's job, not state's.
+
+    Global/system git config is disabled for this test's subprocess calls: a
+    developer machine's own excludesfile may already ignore .workbench/ (this
+    very repo's setup does, via git's default $XDG_CONFIG_HOME/git/ignore),
+    which would make check-ignore report "already ignored" and mask the
+    behavior this test exists to prove.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    artifact_dir = tmp_path / ".workbench"
+    Trail.start(script="pr", artifact_dir=str(artifact_dir), context={})
+    assert ".workbench/" in (tmp_path / ".gitignore").read_text()
+
+
+def test_trail_start_outside_a_repo_writes_no_gitignore(tmp_path):
+    """Review artifact dirs live under state_dir(), where there is no repo."""
+    artifact_dir = tmp_path / "reviews" / "widget-1"
+    Trail.start(script="claude-review", artifact_dir=str(artifact_dir), context={})
+    assert not (tmp_path / ".gitignore").exists()
 
 
 class TestAddTrailArgs:

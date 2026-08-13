@@ -980,17 +980,30 @@ def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
                             [], _make_ctx(worktree_root=None))
 
 
-def test_load_or_init_without_a_worktree_exits_with_guidance(capsys):
-    assert_no_worktree_exit(capsys, "feat/test", pr_cli._load_or_init,
-                            _make_ctx(worktree_root=None))
+def test_review_state_lands_with_the_pr_not_the_caller(tmp_path):
+    """A team review from a repo root must not clobber that root's own state."""
+    import pr_context
+    caller = tmp_path / "repo-root"
+    caller.mkdir()
+    target = tmp_path / "pr" / "widget-feat-login"
+    ctx = pr_context.ResolvedContext(
+        repo="acme/widget", branch="feat/login", pr_number=2973,
+        worktree_root=caller, head_sha="pr-sha", current_branch="main",
+        target_dir=target,
+    )
 
+    pr_cli._update_review_state(
+        {"review_file": "r.md", "verdict": "approve", "head_sha": "pr-sha",
+         "findings": {"total": 0}},
+        ctx,
+    )
 
-def test_review_state_cache_is_skipped_without_a_worktree():
-    """A review that worked must not fail over a snapshot nobody asked for."""
-    ctx = _make_ctx(worktree_root=None)
-    with patch("pr_cli.pr_state.save_state") as save:
-        pr_cli._update_review_state({"findings": {"M": 1}}, ctx)
-    save.assert_not_called()
+    assert (target / pr_state.STATE_FILE).is_file()
+    assert not (caller / pr_state.STATE_DIR / pr_state.STATE_FILE).exists()
+    written = pr_state.load_state(target)
+    assert written.identity.pr_number == 2973
+    assert written.identity.head_sha == "pr-sha"
+    assert written.identity.worktree_root == str(caller)
 
 
 # ── run lock wiring ─────────────────────────────────────────────────────────
@@ -1087,16 +1100,15 @@ def test_main_locks_for_gc(mock_resolve, _gc, _prune, worktree):
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
 def test_gc_run_does_not_destroy_the_lock_it_is_holding(
-        mock_resolve, mock_run, _gc, _prune, worktree, stub_state_dir):
-    """The full dispatch path: gc takes the lock, then clears the worktree's
-    state directory. The lock — in target_dir, not worktree_root — has to
-    outlive the sweep regardless."""
+        mock_resolve, mock_run, _gc, _prune, worktree):
+    """The full dispatch path: gc takes the lock, then clears the target's
+    state. state.json and run.lock are siblings in target_dir now, so the
+    sweep must skip the lock by name rather than clearing everything."""
     target = worktree / "target"
+    target.mkdir(parents=True)
     mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
     mock_run.return_value = MagicMock(returncode=0, stdout="MERGED\n")
-    state_dir = _state_dir(worktree)
-    state_dir.mkdir(parents=True)
-    (state_dir / pr_state.STATE_FILE).write_text("{}")
+    (target / pr_state.STATE_FILE).write_text("{}")
     state = MagicMock()
     state.identity.pr_number = 42
     state.identity.repo = "owner/repo"
@@ -1104,7 +1116,7 @@ def test_gc_run_does_not_destroy_the_lock_it_is_holding(
     with patch("pr_cli.pr_state.load_state", return_value=state):
         _run_main("--repo-dir", str(worktree), "gc")
 
-    assert not (state_dir / pr_state.STATE_FILE).exists()
+    assert not (target / pr_state.STATE_FILE).exists()
     assert _lock_file(target).is_file()
     assert not _lock_file(worktree).exists()
 
@@ -1145,12 +1157,12 @@ def test_gc_removes_an_unreadable_state_file(worktree):
     """load_state folds corrupt into missing, but gc stats the file first, so
     it is the one caller that can still tell them apart — and the one command
     whose job is deleting the state dir."""
-    state_dir = _state_dir(worktree)
-    state_dir.mkdir(parents=True)
-    (state_dir / pr_state.STATE_FILE).write_text("{ not json")
+    target = worktree / "target"
+    target.mkdir()
+    (target / pr_state.STATE_FILE).write_text("{ not json")
 
-    assert pr_cli._gc_stale_pr_state(worktree) == 1
-    assert not (state_dir / pr_state.STATE_FILE).exists()
+    assert pr_cli._gc_stale_pr_state(target) == 1
+    assert not (target / pr_state.STATE_FILE).exists()
 
 
 def test_gc_leaves_a_readable_state_file_with_no_pr(worktree):
@@ -1159,4 +1171,4 @@ def test_gc_leaves_a_readable_state_file_with_no_pr(worktree):
     pr_state.save_state(worktree, state)
 
     assert pr_cli._gc_stale_pr_state(worktree) == 0
-    assert (_state_dir(worktree) / pr_state.STATE_FILE).is_file()
+    assert (worktree / pr_state.STATE_FILE).is_file()

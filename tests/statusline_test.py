@@ -73,7 +73,7 @@ def test_pr_piece_is_blank_for_a_corrupt_state_file(worktree, capsys):
     """The status line renders or it does not. It never tracebacks, and it
     never leaks load_state's warning into the terminal."""
     path = state_path(worktree)
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{ not json")
 
     with _at(worktree):
@@ -87,7 +87,7 @@ def test_pr_piece_survives_null_behind_a_scalar_field(worktree):
     `_pr_details` — `failure_count > 0` on a `None`, `by_state.get()` on a
     `None`. serde now degrades a `null` there to the field's default."""
     path = state_path(worktree)
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "identity": {
             "repo": "owner/repo",
@@ -111,7 +111,7 @@ def test_pr_piece_survives_a_wrong_typed_scalar_field(worktree):
     TypeError on `failure_count > 0`, which killed the whole line rather than
     the segment. serde now degrades an unrecoverable value to the default."""
     path = state_path(worktree)
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "identity": {
             "repo": "owner/repo",

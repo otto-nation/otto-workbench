@@ -2,7 +2,7 @@
 """Fetch CI run data, classify failures, and output status.
 
 Renders a human-readable dashboard to stderr and structured JSON to stdout.
-Manages local state in the worktree's own git dir (see workbench_paths).
+Manages local state in <state_dir()>/pr/<repo>-<branch>/state.json.
 
 Usage:
   ci-check                      # latest run for current branch
@@ -511,8 +511,9 @@ def _run_ci(trail, args, ctx) -> dict:
     # Load unified PR state (or init fresh)
     if toplevel:
         state = pr_state.load_or_init(
-            worktree_root=toplevel, repo=repo, branch=branch,
+            target_dir=ctx.target_dir, repo=repo, branch=branch,
             pr_number=pr_number, head_sha=run_state.head_sha,
+            worktree_root=str(toplevel),
         )
         ci_domain = state.ci
     else:
@@ -591,7 +592,7 @@ def _run_ci(trail, args, ctx) -> dict:
         ci_domain.last_run_number = run_state.run_number
         ci_domain.updated_at = pr_state.now_iso()
         try:
-            pr_state.save_state(toplevel, state)
+            pr_state.save_state(ctx.target_dir, state)
         except Exception as exc:
             trail.error("state_update", f"state update failed: {exc}")
             log.error(f"{SCRIPT}: state update failed: {exc}")
@@ -924,8 +925,9 @@ def _run_ci_wait(trail, args, ctx) -> dict:
 
     if toplevel:
         state = pr_state.load_or_init(
-            worktree_root=toplevel, repo=repo, branch=branch,
+            target_dir=ctx.target_dir, repo=repo, branch=branch,
             pr_number=pr_number, head_sha=run_state.head_sha,
+            worktree_root=str(toplevel),
         )
         ci_domain = state.ci
     else:
@@ -984,7 +986,7 @@ def _run_ci_wait(trail, args, ctx) -> dict:
         ci_domain.last_run_number = run_state.run_number
         ci_domain.updated_at = pr_state.now_iso()
         try:
-            pr_state.save_state(toplevel, state)
+            pr_state.save_state(ctx.target_dir, state)
         except Exception as exc:
             trail.error("state_update", f"state update failed: {exc}")
             log.error(f"{SCRIPT}: state update failed: {exc}")

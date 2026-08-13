@@ -98,11 +98,12 @@ def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     """Load existing state or create a fresh one from resolved context."""
     return pr_state.load_or_init(
-        worktree_root=ctx.require_worktree(),
+        target_dir=ctx.target_dir,
         repo=ctx.repo,
         branch=ctx.branch,
         pr_number=ctx.pr_number,
         head_sha=ctx.head_sha,
+        worktree_root=str(ctx.worktree_root) if ctx.worktree_root else "",
     )
 
 
@@ -123,12 +124,8 @@ def _update_review_state(summary_data: dict,
     """Update pr_state from a parsed review summary dict.
 
     Best-effort: the caller has already done the real work (a review, a repair),
-    and the review file it produced is user-scoped and survives. A bare repo with
-    no worktree has nowhere to cache the `pr status` snapshot, which is not worth
-    failing a review that worked — so this opts out rather than requiring one.
+    and the review file it produced is user-scoped and survives.
     """
-    if ctx.worktree_root is None:
-        return
     findings = summary_data.get("findings", {})
     finding_counts = {
         k: v for k, v in findings.items()
@@ -149,7 +146,7 @@ def _update_review_state(summary_data: dict,
         cost_usd=summary_data.get("cost_usd", 0.0),
         updated_at=pr_state.now_iso(),
     ))
-    pr_state.save_state(ctx.require_worktree(), state)
+    pr_state.save_state(ctx.target_dir, state)
 
 
 def _update_review_state_from_output(output: str,
@@ -176,7 +173,7 @@ def _is_pr_target(target: str | None) -> bool:
 def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Render unified status dashboard from cached state."""
     wt = ctx.require_worktree()
-    state = pr_state.load_state(wt)
+    state = pr_state.load_state(ctx.target_dir)
 
     pr_label = f"#{state.identity.pr_number}" if state and state.identity.pr_number else "(no PR)"
     branch = state.identity.branch if state else ctx.branch
@@ -363,7 +360,7 @@ def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Run fix passes for CI, review, and comments."""
     wt = ctx.require_worktree()
-    state = pr_state.load_state(wt)
+    state = pr_state.load_state(ctx.target_dir)
     if not state:
         log.error("No state yet. Run pr ci, pr review, or pr comments first.")
         return 1
@@ -425,12 +422,10 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
 def _clear_state_dir(state_dir: Path) -> None:
     """Empty the state directory, skipping the lock file by name.
 
-    Currently a no-op: the lock lives in ctx.target_dir now, not state_dir,
-    so run_lock.LOCK_FILE never actually turns up in this iteration. It
-    starts to matter once state.json moves into target_dir alongside the
-    lock — at that point, unlinking run.lock here would drop the inode this
-    very run holds its flock on, handing the next contender an uncontended
-    lock on a fresh file while we are still working.
+    state.json and run.lock are siblings in target_dir now, and this call runs
+    while gc still holds that lock — an rmtree of the whole directory would
+    unlink the inode this run has flocked, handing the next contender an
+    uncontended lock on a fresh file while gc is still working.
     """
     for entry in state_dir.iterdir():
         if entry.name == run_lock.LOCK_FILE:
@@ -441,24 +436,18 @@ def _clear_state_dir(state_dir: Path) -> None:
         entry.unlink(missing_ok=True)
 
 
-def _gc_stale_pr_state(worktree_root: Path) -> int:
-    """Remove pr state directory if it is unreadable, or if the PR is merged or
+def _gc_stale_pr_state(target_dir: Path) -> int:
+    """Remove pr state if it is unreadable, or if the PR is merged or
     closed. Returns 1 if cleaned."""
-    try:
-        state_dir = workbench_paths.worktree_state_dir(worktree_root)
-    except workbench_paths.NotAWorktree:
-        # A directory that is not a worktree has no pr state to collide with,
-        # same as every other worktree_state_dir call site in this file.
-        return 0
-    state_file = state_dir / pr_state.STATE_FILE
+    state_file = target_dir / pr_state.STATE_FILE
     if not state_file.is_file():
         return 0
-    state = pr_state.load_state(worktree_root)
+    state = pr_state.load_state(target_dir)
     if state is None:
         # The file exists — checked above — so this is a corrupt one, not an
         # absent one. gc is the command that owns deleting the state dir, and
         # nothing in it is authoritative, so clearing it is a clean recovery.
-        _clear_state_dir(state_dir)
+        _clear_state_dir(target_dir)
         log.info("GC: removed unreadable pr state")
         return 1
     if not state.identity.pr_number:
@@ -475,7 +464,7 @@ def _gc_stale_pr_state(worktree_root: Path) -> int:
         pr_st = ""
     if pr_st not in ("MERGED", "CLOSED"):
         return 0
-    _clear_state_dir(state_dir)
+    _clear_state_dir(target_dir)
     log.info(f"GC: removed stale pr state ({pr_st})")
     return 1
 
@@ -493,11 +482,8 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
-    # Review artifacts are user-scoped and prune fine from a bare repo; only
-    # the per-worktree state directory needs somewhere to look.
     total = review_gc.gc_reviews() + review_gc.prune_merged_reviews()
-    if ctx.worktree_root:
-        total += _gc_stale_pr_state(ctx.worktree_root)
+    total += _gc_stale_pr_state(ctx.target_dir)
 
     if total > 0:
         log.info(f"GC: cleaned {total} item(s) total")

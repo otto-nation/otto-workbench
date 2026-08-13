@@ -177,9 +177,27 @@ class CommentFixResult:
 # ── Deserialization helpers ───────────────────────────────────────────────
 
 
+def _lenient_from_dict(cls, raw):
+    """`serde.from_dict`, but a wrong-shaped raw value defaults instead of raising.
+
+    This reads AI-generated triage JSON, which is malformed occasionally by
+    nature — a thread entry that comes back as a bare string, `stats` as an
+    empty list. `serde.from_dict` rejects a non-dict top level with
+    `TypeError` so a state file can be discarded; here there is no file to
+    discard, only one entry in a batch, and the caller — a single triage
+    pass — should not crash for the whole PR over one malformed field.
+    Neither `CommentItem` nor `TriageStats` has a required field, so the only
+    way this raises is the non-dict case, not a missing-field one.
+    """
+    try:
+        return serde.from_dict(cls, raw)
+    except TypeError:
+        return cls()
+
+
 def triage_result_from_dict(d: dict) -> TriageResult:
     """Parse AI triage JSON output into typed structures."""
-    threads = [serde.from_dict(CommentItem, t) for t in d.get("threads", [])]
-    items = [serde.from_dict(CommentItem, it) for it in d.get("comment_items", [])]
-    stats = serde.from_dict(TriageStats, d.get("stats", {}))
+    threads = [_lenient_from_dict(CommentItem, t) for t in d.get("threads", [])]
+    items = [_lenient_from_dict(CommentItem, it) for it in d.get("comment_items", [])]
+    stats = _lenient_from_dict(TriageStats, d.get("stats", {}))
     return TriageResult(threads=threads, comment_items=items, stats=stats)

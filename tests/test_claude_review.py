@@ -19,7 +19,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
-    count_severity, json_summary, parse_review_verdict,
+    FILENAME_POST_SESSION, count_severity, json_summary, parse_review_verdict,
     read_pipeline_status, read_pipeline_warnings, review_file_path,
 )
 import review_gc
@@ -1789,5 +1789,25 @@ def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch
 
     with pytest.raises(SystemExit):
         cr._check_stale_review("owner/repo", "1", review_file, force=False)
+
+
+# ── _submit_pending_review ───────────────────────────────────────────────
+
+
+def test_submit_pending_review_survives_a_non_dict_post_tracking_file(cr, tmp_path, capsys):
+    """A post-tracking file that parses as JSON but isn't an object — e.g.
+    truncated by a killed write down to a bare `[]` — used to raise
+    `TypeError` out of `serde.from_dict`'s non-dict guard, uncaught by this
+    function's `except (json.JSONDecodeError, OSError)`. It must fall
+    through to "no tracking" the same way a JSON decode error already does,
+    rather than crashing the submit.
+    """
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    (review_dir / FILENAME_POST_SESSION).write_text("[]")
+
+    cr._submit_pending_review("owner/repo", "1", str(review_dir / "review.md"))
+
+    assert "Could not read review_id" in capsys.readouterr().err
 
 

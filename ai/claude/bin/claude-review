@@ -600,7 +600,11 @@ def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
 
     try:
         tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, TypeError):
+        # TypeError covers a post-tracking file that parses as JSON but whose
+        # top level isn't a dict (serde.from_dict rejects that shape) — a
+        # corrupted tracking file falls through to "unreadable" below rather
+        # than crashing the submit.
         tracking = None
 
     if not tracking or not tracking.review_id:

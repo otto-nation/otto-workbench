@@ -53,6 +53,12 @@ needs — it derives repo, branch, and PR number from the worktree.
 
 ### Step 2: Run fix pass
 
+**Skip to Step 4 if the user has already seen drafts from an earlier pass and
+is telling you to publish them.** That pass drafted the queue and posted
+nothing, so the drafts they approved are still the ones `--finish` sends.
+Re-running `--fix` replaces them with newly generated text, and `--post` would
+then publish wording the user never read.
+
 Single command — pass only one identifier, never both `--pr` and `--repo-dir`:
 
 ```bash
@@ -180,8 +186,8 @@ That sends the drafted replies (including those whose commit had not yet been
 pushed), posts the summary, files the tracking issue for the threads named by
 `--track`, and resolves verified threads. The summary is meant to describe
 a finished conversation, so don't publish before the discussion is done. A
-drafted run recorded nothing as posted, so the queue is intact — no need to
-re-run `--fix`.
+drafted run recorded nothing as posted, so the queue is intact — never re-run
+`--fix` to get back to it.
 
 Pass one `--track <thread_id>` per thread the user chose to track in Step 3.
 Omit the flag entirely when they chose none — a bare `--finish` files nothing
@@ -214,6 +220,9 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 ## Constraints
 
 - Never pass `--post` before the user has seen the drafts and approved them
+- Never re-run `--fix` to resume a pass whose drafts the user already approved.
+  The queue is intact, and regenerating it means `--post` publishes text they
+  never saw — the same violation as posting before approval
 - Never apply fixes without user confirmation for `needs_human` items
 - One reply per thread. If our position changed, revise the existing reply via
   `--reply` — a second comment leaves the reviewer holding two answers and no

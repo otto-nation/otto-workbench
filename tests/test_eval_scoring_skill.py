@@ -619,10 +619,7 @@ class TestApprovedAcceptsEitherFlagSpelling:
 
     @pytest.mark.parametrize("tail", [["--track", "T-3"], ["--track=T-3"]])
     def test_a_compliant_session_scores_a_clean_pass(self, tail):
-        lines = [
-            ["pr", "comments", "--fix"],
-            ["pr", "comments", "--finish", "--post", *tail],
-        ]
+        lines = [["pr", "comments", "--finish", "--post", *tail]]
         matches = ess.match_required(self.MANIFEST["requires"], lines)
         violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)
         result = ess.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
@@ -633,6 +630,25 @@ class TestApprovedAcceptsEitherFlagSpelling:
         """Splitting on `=` must not soften the flag this case forbids."""
         lines = [["pr", "comments", "--finish", "--post", "--track-all"]]
         assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == ["--track-all"]
+
+    def test_regenerating_the_approved_drafts_is_a_violation(self):
+        """The drafts were approved in an earlier pass; the queue is intact.
+
+        `pr-comments/SKILL.md` says a drafted run publishes nothing, so there is
+        no need to re-run `--fix` — and doing so before `--post` would publish
+        freshly generated text the user never saw, which the skill forbids
+        outright. Requiring the fix pass here scored a coin flip across two real
+        eval runs, since either reading is defensible from the prompt alone.
+        """
+        lines = [
+            ["pr", "comments", "--fix", "--pr", "42"],
+            ["pr", "comments", "--finish", "--post", "--track", "T-3"],
+        ]
+        matches = ess.match_required(self.MANIFEST["requires"], lines)
+        violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)
+        result = ess.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
+        assert violations == ["pr comments --fix"]
+        assert (result.recall, result.precision) == (1.0, 0.0)
 
 
 class TestWorktreeStubAnswersEverySwitchSpelling:

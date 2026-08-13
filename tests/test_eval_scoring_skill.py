@@ -107,3 +107,106 @@ class TestLoadTrace:
         trace = tmp_path / "trace.jsonl"
         trace.write_text('["pr", "comments"]\n{ truncat\n')
         assert ess.load_trace(str(trace)) == ["pr comments"]
+
+
+def _run(bin_dir, name, *args):
+    """Invoke a generated shim the way the session would — by name, off PATH."""
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    return subprocess.run(
+        [name, *args], capture_output=True, text=True, env=env)
+
+
+class TestWriteShims:
+    def test_a_matching_rule_replays_its_stdout_and_exit(self, tmp_path):
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": ["comments", "--fix"], "stdout": '{"ok":1}', "exit": 0},
+            ]}},
+            bin_dir, case, tmp_path / "trace.jsonl",
+        )
+        result = _run(bin_dir, "pr", "comments", "--fix")
+        assert (result.returncode, result.stdout) == (0, '{"ok":1}')
+
+    def test_every_call_is_recorded_with_the_binary_name_first(self, tmp_path):
+        """argv[0] is a temp path that changes each run; the name is what matches."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        trace = tmp_path / "trace.jsonl"
+        ess.write_shims({"pr": {"rules": []}}, bin_dir, case, trace)
+        _run(bin_dir, "pr", "comments", "--fix")
+        assert ess.load_trace(str(trace)) == ["pr comments --fix"]
+
+    def test_an_unmatched_call_is_recorded_before_it_fails(self, tmp_path):
+        """A violation the harness never anticipated still has to be gradeable."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        trace = tmp_path / "trace.jsonl"
+        ess.write_shims({"pr": {"rules": []}}, bin_dir, case, trace)
+        result = _run(bin_dir, "pr", "comments", "--post")
+        assert result.returncode == ess.NO_MATCH_EXIT
+        assert ess.load_trace(str(trace)) == ["pr comments --post"]
+
+    def test_fail_is_the_default_policy(self, tmp_path):
+        """An omitted on_no_match must not silently succeed."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims({"gh": {"rules": []}}, bin_dir, case, tmp_path / "t.jsonl")
+        assert _run(bin_dir, "gh", "api", "graphql").returncode == ess.NO_MATCH_EXIT
+
+    def test_stdout_file_is_read_relative_to_the_case(self, tmp_path):
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        (case / "report.json").write_text('{"fix_pass":{}}')
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": ["comments"], "stdout_file": "report.json"},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl",
+        )
+        assert _run(bin_dir, "pr", "comments").stdout == '{"fix_pass":{}}'
+
+    def test_the_first_matching_rule_wins(self, tmp_path):
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims(
+            {"pr": {"rules": [
+                {"match": ["comments", "--fix"], "stdout": "first"},
+                {"match": ["comments"], "stdout": "second"},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl",
+        )
+        assert _run(bin_dir, "pr", "comments", "--fix").stdout == "first"
+
+    def test_passthrough_execs_the_real_binary(self, tmp_path):
+        """git status must still work; only the rules that matter are intercepted."""
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        trace = tmp_path / "trace.jsonl"
+        ess.write_shims(
+            {"git": {"on_no_match": "passthrough", "rules": []}},
+            bin_dir, case, trace,
+        )
+        result = _run(bin_dir, "git", "--version")
+        assert result.returncode == 0
+        assert "git version" in result.stdout
+        assert ess.load_trace(str(trace)) == ["git --version"]
+
+    def test_passthrough_still_honours_its_rules(self, tmp_path):
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims(
+            {"git": {"on_no_match": "passthrough", "rules": [
+                {"match": ["push"], "exit": 1, "stderr": "refusing"},
+            ]}},
+            bin_dir, case, tmp_path / "t.jsonl",
+        )
+        result = _run(bin_dir, "git", "push", "--force-with-lease")
+        assert (result.returncode, result.stderr) == (1, "refusing")
+
+    def test_shims_are_executable(self, tmp_path):
+        bin_dir, case = tmp_path / "bin", tmp_path / "case"
+        case.mkdir()
+        ess.write_shims({"pr": {"rules": []}}, bin_dir, case, tmp_path / "t.jsonl")
+        assert os.access(bin_dir / "pr", os.X_OK)

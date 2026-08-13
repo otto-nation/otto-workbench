@@ -95,3 +95,78 @@ def load_trace(trace_file: str) -> list[str]:
         if isinstance(argv, list):
             lines.append(" ".join(str(part) for part in argv))
     return lines
+
+
+# A distinctive code, not 1: an unanticipated call is a fixture gap, and it
+# should not read like the stubbed command reporting an ordinary failure.
+NO_MATCH_EXIT = 97
+
+# The trace path and the rules are baked in rather than passed through the
+# environment, so nothing in the driven session can retarget the recorder.
+_SHIM = '''#!/usr/bin/env python3
+"""Generated eval shim. Records the call, then replays a canned response."""
+import json
+import os
+import sys
+
+NAME = {name!r}
+TRACE = {trace!r}
+RULES = {rules!r}
+ON_NO_MATCH = {policy!r}
+NO_MATCH_EXIT = {no_match_exit!r}
+
+argv = [NAME, *sys.argv[1:]]
+with open(TRACE, "a") as fh:
+    fh.write(json.dumps(argv) + "\\n")
+
+line = " ".join(argv)
+for rule in RULES:
+    if all(token in line for token in rule["match"]):
+        sys.stdout.write(rule.get("stdout", ""))
+        sys.stderr.write(rule.get("stderr", ""))
+        sys.exit(rule.get("exit", 0))
+
+if ON_NO_MATCH == "passthrough":
+    here = os.path.dirname(os.path.abspath(__file__))
+    os.environ["PATH"] = os.pathsep.join(
+        p for p in os.environ.get("PATH", "").split(os.pathsep) if p != here
+    )
+    os.execvp(NAME, argv)
+
+sys.stderr.write("eval shim: no rule for: " + line + "\\n")
+sys.exit(NO_MATCH_EXIT)
+'''
+
+
+def _resolve_rules(rules: list[dict], case_dir: Path) -> list[dict]:
+    """Inline every `stdout_file` so the shim never reads the case directory."""
+    resolved = []
+    for rule in rules:
+        out = dict(rule)
+        source = out.pop("stdout_file", "")
+        if source:
+            out["stdout"] = (case_dir / source).read_text()
+        out["match"] = list(out.get("match", []))
+        resolved.append(out)
+    return resolved
+
+
+def write_shims(
+    responses: dict, bin_dir: Path, case_dir: Path, trace_file: Path,
+) -> None:
+    """Write one recording shim per named binary into `bin_dir`.
+
+    `fail` is the default policy on purpose. A stubbed CLI that quietly exits 0
+    on a call nobody anticipated turns a fixture gap into a passing run.
+    """
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for name, spec in responses.items():
+        shim = bin_dir / name
+        shim.write_text(_SHIM.format(
+            name=name,
+            trace=str(trace_file),
+            rules=_resolve_rules(spec.get("rules", []), case_dir),
+            policy=spec.get("on_no_match", "fail"),
+            no_match_exit=NO_MATCH_EXIT,
+        ))
+        shim.chmod(0o755)

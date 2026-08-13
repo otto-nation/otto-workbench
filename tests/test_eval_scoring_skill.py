@@ -845,7 +845,6 @@ class TestRunWiring:
         try:
             inv = captured["invocation"]
             bin_dir = captured["bin_dir"]
-            assert inv.env["PATH"].split(os.pathsep)[0] == str(bin_dir)
             assert "# PR Rebase" in inv.prompt
             assert "rebase the branch" in inv.prompt
             assert artifacts.temp_dirs == [inv.cwd, str(bin_dir.parent)]

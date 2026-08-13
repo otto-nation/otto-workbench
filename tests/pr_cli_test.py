@@ -1,6 +1,7 @@
 """Tests for pr CLI helper functions."""
 
 import importlib.util
+import itertools
 import json
 import os
 import subprocess
@@ -273,21 +274,34 @@ def test_help_short_flag_skips_context_resolution(mock_resolve, mock_run):
 # ── _run_delegate ─────────────────────────────────────────────────────────
 
 
+# One temp root for every _make_ctx() default target_dir in this module, not
+# tmp_path-scoped since _make_ctx is a plain factory most callers invoke
+# without a tmp_path fixture at all. A single TemporaryDirectory's finalizer
+# removes the whole tree at interpreter exit; handing out a numbered subpath
+# per call keeps the ~50 callers that never touch target_dir from colliding
+# with each other or with the lock-wiring tests that override it anyway.
+_CTX_TARGET_ROOT = tempfile.TemporaryDirectory(prefix="pr-cli-test-target-")
+_ctx_target_seq = itertools.count()
+
+
 def _make_ctx(**overrides):
     """Build a minimal ResolvedContext for testing.
 
-    target_dir defaults to a fresh temp dir per call, not a fixed placeholder:
-    run_lock.acquire unconditionally mkdir(parents=True)s it now, so a shared,
-    non-writable default like the old Path("/wt/target") would fail the moment
-    any test drives main() through a mutating command without overriding it.
+    target_dir defaults to a fresh, unique subpath under _CTX_TARGET_ROOT, not
+    a fixed placeholder: run_lock.acquire unconditionally mkdir(parents=True)s
+    it now, so a shared, non-writable default like the old Path("/wt/target")
+    would fail the moment any test drives main() through a mutating command
+    without overriding it. The subpath itself is never created here — acquire
+    creates it on demand, same as a real run would.
     worktree_root keeps its symbolic Path("/wt") default — nothing in these
     tests writes to it directly, it only ever appears in string comparisons
     (e.g. --repo-dir) and mocked subprocess calls.
     """
     import pr_context
+    target_dir = Path(_CTX_TARGET_ROOT.name) / f"target-{next(_ctx_target_seq)}"
     defaults = dict(repo="owner/repo", branch="feat/test",
                     pr_number=42, worktree_root=Path("/wt"), head_sha="abc123",
-                    target_dir=Path(tempfile.mkdtemp(prefix="pr-cli-test-target-")))
+                    target_dir=target_dir)
     defaults.update(overrides)
     return pr_context.ResolvedContext(**defaults)
 

@@ -12,9 +12,12 @@ env:
   - var: COLIMA_PROFILE
     comment: "VM profile name"
     default: "default"
+  # Deliberately no default: an entry with one is rendered into ~/.env.local as a
+  # live `export`, which would pin every machine to a single architecture and
+  # override the detection in docker/colima/aliases.zsh. Left blank, it renders
+  # as a commented reference line and detection wins.
   - var: COLIMA_ARCH
-    comment: "CPU architecture (x86_64 | aarch64)"
-    default: "x86_64"
+    comment: "CPU architecture — unset means uname -m decides: arm64/aarch64 → aarch64, anything else → x86_64"
   - var: COLIMA_VM_TYPE
     comment: "Virtualization type (vz | qemu)"
     default: "vz"

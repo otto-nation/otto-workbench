@@ -6,11 +6,22 @@
 # Override any of these in ~/.env.local before this file is sourced.
 
 : "${COLIMA_PROFILE:=default}"
-: "${COLIMA_ARCH:=x86_64}"
 : "${COLIMA_VM_TYPE:=vz}"
 : "${COLIMA_ROSETTA:=true}"
 : "${COLIMA_CPU:=4}"
 : "${COLIMA_MEMORY:=8}"
+
+# Architecture is detected, not defaulted. docker/registry.yml deliberately
+# gives COLIMA_ARCH no default: a registry default is rendered into ~/.env.local
+# as a live `export`, which would pin every machine to one architecture and win
+# over anything set here. Colima wants aarch64/x86_64; uname reports arm64 on
+# Apple Silicon. Override in ~/.env.local (below ENV-END) to force a value.
+if [[ -z "${COLIMA_ARCH:-}" ]]; then
+  case "$(uname -m)" in
+    arm64 | aarch64) COLIMA_ARCH=aarch64 ;;
+    *) COLIMA_ARCH=x86_64 ;;
+  esac
+fi
 
 # Lazy colima start — only spins up Colima when a docker command is first used.
 # Overrides the bare 'docker' command; all other docker aliases call this wrapper.

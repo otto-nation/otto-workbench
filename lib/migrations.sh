@@ -151,6 +151,47 @@ _path_exists() {
   [[ -e "$1" || -L "$1" ]]
 }
 
+# _is_append_only_ledger SRC DST — true for a pair of files that can be
+# concatenated rather than kept side by side.
+#
+# trail.py and ai_usage.py are the only writers of these, both open them in
+# append mode, and otto-log sorts every record by `ts` after loading — so the
+# two halves reassemble in any order. Matched by name rather than by the
+# .jsonl extension on purpose: the review artifacts (session.jsonl,
+# post.jsonl, *.holistic.jsonl) are whole-file writes whose convention is
+# prior-content-first, and splicing two runs together would misreport both.
+_is_append_only_ledger() {
+  local src="$1" dst="$2" parent
+  if [[ ! -f "$src" || -L "$src" || ! -f "$dst" || -L "$dst" ]]; then
+    return 1
+  fi
+  if [[ "${src##*/}" == "trail.jsonl" ]]; then
+    return 0
+  fi
+  parent="${src%/*}"
+  if [[ "${parent##*/}" == "usage" && "$src" == *.jsonl ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# _append_ledger SRC DST — fold an append-only ledger into its successor.
+_append_ledger() {
+  local src="$1" dst="$2"
+  # A destination that does not end in a newline would fuse its last record
+  # with the first one appended after it, and the reader silently drops lines
+  # it cannot parse.
+  if [[ -s "$dst" && -n "$(tail -c 1 "$dst")" ]]; then
+    printf '\n' >> "$dst"
+  fi
+  if ! cat "$src" >> "$dst"; then
+    warn "Could not append $src to $dst — left it in place"
+    return 1
+  fi
+  rm -f "$src"
+  return 0
+}
+
 # _adopt_entry SRC DST — carry one entry across, resuming a partial run.
 # Hand-rolled rather than `rsync -a --remove-source-files`: rsync is not a
 # workbench dependency, and this runs on a machine mid-sync that may not have it.
@@ -172,6 +213,13 @@ _adopt_entry() {
   # or nest the source inside the destination.
   if [[ -d "$src" && ! -L "$src" && -d "$dst" && ! -L "$dst" ]]; then
     _adopt_dir "$src" "$dst"
+    return $?
+  fi
+
+  # A ledger both roots hold is not a conflict — it is one history in two
+  # files, and keeping both would hide the older one from every reader.
+  if _is_append_only_ledger "$src" "$dst"; then
+    _append_ledger "$src" "$dst"
     return $?
   fi
 
@@ -211,12 +259,7 @@ adopt_legacy_workbench_root() {
   local legacy="$LEGACY_WORKBENCH_ROOT"
   [[ -d "$legacy" ]] || return 0
 
-  local docker_aliases="$legacy/docker-aliases.zsh" had_docker=false
-  if _path_exists "$docker_aliases"; then
-    had_docker=true
-  fi
-
-  local entry name target moved=0
+  local entry name target moved=0 stayed=0
   # Dotfiles are left where they are: the only ones that turn up are the
   # filesystem's own (.DS_Store), and they belong to no root.
   for entry in "$legacy"/*; do
@@ -231,18 +274,21 @@ adopt_legacy_workbench_root() {
     fi
     if _adopt_entry "$entry" "$target/$name"; then
       moved=$(( moved + 1 ))
+    else
+      stayed=$(( stayed + 1 ))
     fi
   done
 
-  if (( moved == 0 )); then
-    return 0
+  if (( moved > 0 )); then
+    # No destination named: config entries and state entries went to different
+    # roots, and on an overridden machine both of those moved.
+    success "Adopted $moved entries from $legacy"
   fi
-
-  # No destination named: config entries and state entries went to different
-  # roots, and on an overridden machine both of those moved.
-  success "Adopted $moved entries from $legacy"
-  if [[ "$had_docker" == true ]] && ! _path_exists "$docker_aliases"; then
-    warn "Shells already running still source the old docker-aliases.zsh — open a new one"
+  # The sync that runs this is usually the unattended one from the maintenance
+  # agent, whose output goes to a log file. A partial adoption has to state
+  # itself rather than be inferred from the warnings scattered above it.
+  if (( stayed > 0 )); then
+    warn "$stayed entries could not be adopted — $legacy still holds them"
   fi
   rmdir "$legacy" 2>/dev/null || true
   return 0

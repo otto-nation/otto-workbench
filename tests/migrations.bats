@@ -171,6 +171,71 @@ adopt_in_fake() {
   [ "$(cat "$FAKE_LEGACY/migrations.applied")" = "old" ]
 }
 
+@test "adoption reports the entries that stayed behind" {
+  mkdir -p "$FAKE_LEGACY" "$FAKE_STATE"
+  echo "old" > "$FAKE_LEGACY/migrations.applied"
+  echo "new" > "$FAKE_STATE/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not be adopted"* ]]
+}
+
+@test "adoption merges a trail both roots hold rather than keeping both" {
+  # One history in two files: keeping both would hide the older from otto-log,
+  # which globs for the exact name.
+  mkdir -p "$FAKE_LEGACY/logs/dream-scan" "$FAKE_STATE/logs/dream-scan"
+  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
+  printf '{"ts":"2026-08-01T00:00:00Z","n":2}\n' > "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"kept the new one"* ]]
+
+  [ "$(wc -l < "$FAKE_STATE/logs/dream-scan/trail.jsonl")" -eq 2 ]
+  grep -q '"n":1' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  grep -q '"n":2' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  [ ! -d "$FAKE_LEGACY" ]
+}
+
+@test "merging a trail onto a file with no trailing newline keeps both records whole" {
+  mkdir -p "$FAKE_LEGACY/logs/dream-scan" "$FAKE_STATE/logs/dream-scan"
+  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
+  printf '{"ts":"2026-08-01T00:00:00Z","n":2}' > "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  [ "$(wc -l < "$FAKE_STATE/logs/dream-scan/trail.jsonl")" -eq 2 ]
+  grep -qx '{"ts":"2026-08-01T00:00:00Z","n":2}' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  grep -qx '{"ts":"2026-01-01T00:00:00Z","n":1}' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+}
+
+@test "adoption merges a monthly usage ledger" {
+  mkdir -p "$FAKE_LEGACY/usage" "$FAKE_STATE/usage"
+  printf '{"ts":"2026-08-01T00:00:00Z"}\n' > "$FAKE_LEGACY/usage/2026-08.jsonl"
+  printf '{"ts":"2026-08-02T00:00:00Z"}\n' > "$FAKE_STATE/usage/2026-08.jsonl"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$FAKE_STATE/usage/2026-08.jsonl")" -eq 2 ]
+}
+
+@test "adoption keeps both review session logs rather than splicing two runs" {
+  # session.jsonl is a whole-file write whose convention is prior-content-first
+  # (review_common.restore_preserved) — concatenating would misreport both runs.
+  mkdir -p "$FAKE_LEGACY/reviews/run" "$FAKE_STATE/reviews/run"
+  echo "old" > "$FAKE_LEGACY/reviews/run/session.jsonl"
+  echo "new" > "$FAKE_STATE/reviews/run/session.jsonl"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept the new one"* ]]
+
+  [ "$(cat "$FAKE_STATE/reviews/run/session.jsonl")" = "new" ]
+  [ "$(cat "$FAKE_LEGACY/reviews/run/session.jsonl")" = "old" ]
+}
+
 @test "adoption leaves the legacy root alone when a root still resolves to it" {
   # A machine that pins WORKBENCH_STATE_DIR to the old path: there is nowhere
   # to move the state to, and moving a directory into itself would destroy it.
@@ -188,14 +253,18 @@ CONST
   [ "$(cat "$FAKE_CONFIG/reuse-level")" = "ultra" ]
 }
 
-@test "adoption warns that running shells still source the old docker aliases" {
+@test "adoption moves the docker aliases symlink without following it" {
+  # The target is deliberately absent: the symlink is written before the
+  # runtime's aliases file exists on a fresh machine, and a mover that tested
+  # only -e would leave it behind.
   mkdir -p "$FAKE_LEGACY"
   ln -s "$TMPDIR/colima/aliases.zsh" "$FAKE_LEGACY/docker-aliases.zsh"
 
   run adopt_in_fake
   [ "$status" -eq 0 ]
-  [[ "$output" == *"open a new one"* ]]
+
   [ -L "$FAKE_STATE/docker-aliases.zsh" ]
+  [ "$(readlink "$FAKE_STATE/docker-aliases.zsh")" = "$TMPDIR/colima/aliases.zsh" ]
 }
 
 @test "adoption runs before the framework reads its own state file" {

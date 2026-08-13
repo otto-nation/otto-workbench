@@ -8,6 +8,9 @@ setup() {
   common_setup
   TMPDIR="$(mktemp -d)"
   PROMOTE_SCAN="$REPO_ROOT/ai/claude/bin/promote-scan"
+  # The run's trail resolves through the state root — without this it appends
+  # to the real one.
+  export WORKBENCH_STATE_DIR="$TMPDIR/state"
 }
 
 teardown() {

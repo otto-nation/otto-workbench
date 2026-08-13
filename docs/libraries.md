@@ -39,6 +39,8 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 
 Machines set up before the split keep everything in `~/.config/workbench`. `adopt_legacy_workbench_root` in [`lib/migrations.sh`](../lib/migrations.sh) carries that directory across on the next sync, entry by entry, and runs ahead of the migration framework because `migrations.applied` is one of the files it moves. Nothing falls back to the old path once it has run — the adoption is the entire compatibility story.
 
+A file the new root already holds is normally kept on both sides and warned about rather than clobbered. The exception is the append-only ledgers — `trail.jsonl` and `usage/*.jsonl` — which are concatenated instead: their only writers open them in append mode, and `otto-log` sorts every record by `ts` after loading, so one history split across two files reassembles either way. The rule is keyed on those names, not on the `.jsonl` extension, because the review artifacts (`session.jsonl`, `post.jsonl`, `*.holistic.jsonl`) are whole-file writes whose convention is prior-content-first.
+
 Its own module rather than part of `constants.sh` because two other consumers need the roots without the rest: the `otto-ai-tools` tarball ships `roots.sh` alongside its own `ui.sh` facade, and `registries.sh` sources it directly when a caller has not loaded `constants.sh`.
 
 Two definitions outside `lib/` express the same chain, and `tests/workbench_roots.bats` cross-validates all three:

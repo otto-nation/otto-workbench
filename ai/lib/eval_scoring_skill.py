@@ -14,8 +14,15 @@ against a skill that no longer says what the copy says.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+import ai_backend
+import ai_usage
+from eval_scoring import ScoringResult
+from eval_task import RunArtifacts, RunOptions, clean_env, create_temp_repo
 
 
 @dataclass(frozen=True)
@@ -178,3 +185,121 @@ def write_shims(
             no_match_exit=NO_MATCH_EXIT,
         ))
         shim.chmod(0o755)
+
+
+SKILL_MAX_TURNS = 20
+SKILL_MAX_BUDGET = 1.0
+
+_SKILLS_DIR = Path(__file__).resolve().parent.parent / "claude" / "skills"
+
+_PROMPT = """You are working in a Claude Code session. The repository is at {repo_dir}.
+
+The following skill has been invoked for this request. Follow it exactly.
+
+--- BEGIN SKILL ---
+{skill}
+--- END SKILL ---
+
+User request: {request}"""
+
+
+def skill_body(name: str) -> str:
+    """The SKILL.md body for `name`, with its YAML frontmatter stripped.
+
+    Read live from ai/claude/skills/ rather than copied into a case: the file is
+    the single source of truth, and a copy would let a case keep passing against
+    a skill that no longer says what the copy says.
+
+    The frontmatter is routing metadata — trigger, skip, invocation — that a real
+    session uses to decide whether to load the skill, not instructions it follows
+    once loaded. Including it would grade the model on text it never sees.
+    """
+    path = _SKILLS_DIR / name / "SKILL.md"
+    if not path.is_file():
+        raise FileNotFoundError(f"no SKILL.md for skill {name!r}: {path}")
+    text = path.read_text()
+    if not text.startswith("---"):
+        return text
+    parts = text.split("---", 2)
+    return parts[2].strip() if len(parts) >= 3 else text
+
+
+class SkillTask:
+    """Drive a SKILL.md against a fixture and grade the commands it issued."""
+
+    name = "skill"
+
+    def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:
+        manifest = json.loads((case_dir / "manifest.json").read_text())
+        repo_dir = create_temp_repo(str(case_dir / "src"), prefix="eval-skill-")
+        work_dir = Path(tempfile.mkdtemp(prefix="eval-skill-work-"))
+        trace_file = work_dir / "trace.jsonl"
+        session_log = str(work_dir / "session.jsonl")
+        bin_dir = work_dir / "bin"
+
+        responses_path = case_dir / "responses.json"
+        responses = json.loads(responses_path.read_text()) if responses_path.is_file() else {}
+        write_shims(responses, bin_dir, case_dir, trace_file)
+
+        env = clean_env()
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+
+        rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
+            prompt=_PROMPT.format(
+                repo_dir=repo_dir,
+                skill=skill_body(manifest["skill"]),
+                request=manifest["prompt"],
+            ),
+            cwd=repo_dir,
+            session_log=session_log,
+            add_dirs=[repo_dir],
+            max_turns=SKILL_MAX_TURNS,
+            max_budget=SKILL_MAX_BUDGET,
+            model=opts.model or "",
+            env=env,
+            task="eval-skill",
+            repo="eval/corpus",
+        ))
+
+        lines = load_trace(str(trace_file))
+        matches = match_required(manifest.get("requires", []), lines)
+        violations = match_forbidden(manifest.get("forbids", []), lines)
+        satisfied = sum(1 for m in matches if m.matched)
+
+        return RunArtifacts(
+            exit_code=rc,
+            usage=ai_usage.parse_session_log(session_log),
+            temp_dirs=[repo_dir, str(work_dir)],
+            data={
+                "matches": matches,
+                "violations": violations,
+                "summary": (
+                    f"{satisfied}/{len(matches)} required, "
+                    f"{len(violations)} forbidden"
+                ),
+            },
+        )
+
+    def score(self, artifacts: RunArtifacts, manifest: dict) -> ScoringResult:
+        matches = artifacts.data.get("matches", [])
+        violations = artifacts.data.get("violations", [])
+        satisfied = sum(1 for m in matches if m.matched)
+        usage = artifacts.usage
+        return ScoringResult(
+            entry_name="", model="", run_index=0,
+            matches=matches,
+            false_positive_ids=violations,
+            recall=satisfied / len(matches) if matches else 0.0,
+            # Binary on purpose: a run that broke a constraint does not get
+            # graded on how few it broke. severity_accuracy stays at its zero
+            # default — it has no meaning for this task.
+            precision=0.0 if violations else 1.0,
+            false_positive_count=len(violations),
+            false_positive_ok=len(violations) <= manifest.get("false_positives_max", 0),
+            cost_usd=usage.cost,
+            duration_ms=usage.duration_ms,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            billed_input=usage.billed_input,
+            cache_read_ratio=usage.cache_read_ratio,
+        )

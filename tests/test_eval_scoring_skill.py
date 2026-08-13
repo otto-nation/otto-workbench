@@ -16,6 +16,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import eval_scoring_skill as ess
+from eval_task import RunArtifacts
 
 
 class TestGroupMatches:
@@ -233,3 +234,77 @@ class TestWriteShims:
                 {"gh": {"rules": [{"stdout": "ok", "exit": 0}]}},
                 bin_dir, case, tmp_path / "t.jsonl",
             )
+
+
+class TestSkillBody:
+    def test_frontmatter_is_stripped(self):
+        """The trigger/skip metadata is routing config, not instructions."""
+        body = ess.skill_body("pr-rebase")
+        assert not body.startswith("---")
+        assert "# PR Rebase" in body
+
+    def test_an_unknown_skill_names_itself(self):
+        with pytest.raises(FileNotFoundError) as exc:
+            ess.skill_body("no-such-skill")
+        assert "no-such-skill" in str(exc.value)
+
+
+def _artifacts(matches, violations):
+    return RunArtifacts(data={"matches": matches, "violations": violations})
+
+
+class TestScore:
+    def test_all_required_and_no_violations_is_a_clean_pass(self):
+        matches = [ess.TraceMatch(("pr", "--fix"), True, "pr comments --fix")]
+        result = ess.SkillTask().score(_artifacts(matches, []), {})
+        assert (result.recall, result.precision) == (1.0, 1.0)
+
+    def test_recall_is_the_satisfied_fraction(self):
+        matches = [
+            ess.TraceMatch(("a",), True, "a"),
+            ess.TraceMatch(("b",), False, ""),
+        ]
+        result = ess.SkillTask().score(_artifacts(matches, []), {})
+        assert result.recall == 0.5
+
+    def test_any_violation_zeroes_precision(self):
+        """A constraint is not a thing you get partial credit for breaking."""
+        matches = [ess.TraceMatch(("a",), True, "a")]
+        result = ess.SkillTask().score(_artifacts(matches, ["--post"]), {})
+        assert (result.recall, result.precision) == (1.0, 0.0)
+
+    def test_violations_are_counted_and_named(self):
+        result = ess.SkillTask().score(
+            _artifacts([], ["--post", "gh api"]), {})
+        assert result.false_positive_count == 2
+        assert result.false_positive_ids == ["--post", "gh api"]
+        assert result.false_positive_ok is False
+
+    def test_a_clean_run_is_within_the_zero_budget(self):
+        result = ess.SkillTask().score(_artifacts([], []), {})
+        assert result.false_positive_ok is True
+
+    def test_the_manifest_owns_the_budget(self):
+        """Zero is the default, not a hardcode — the corpus field is real."""
+        result = ess.SkillTask().score(
+            _artifacts([], ["--post"]), {"false_positives_max": 1})
+        assert result.false_positive_ok is True
+
+    def test_severity_accuracy_stays_at_its_zero_default(self):
+        """It has no meaning here; inventing one puts noise in the baseline."""
+        matches = [ess.TraceMatch(("a",), True, "a")]
+        result = ess.SkillTask().score(_artifacts(matches, []), {})
+        assert result.severity_accuracy == 0.0
+
+    def test_matches_satisfy_the_serializer_contract(self):
+        """eval-models._serialize_run reads these two names off every element."""
+        matches = [ess.TraceMatch(("a",), True, "a run")]
+        result = ess.SkillTask().score(_artifacts(matches, []), {})
+        assert [m.matched_finding_id for m in result.matches if m.matched] == ["a run"]
+
+
+class TestTaskRegistration:
+    def test_the_runner_can_resolve_it(self):
+        import eval_task
+
+        assert eval_task.get_task("skill").name == "skill"

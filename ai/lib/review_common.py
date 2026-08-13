@@ -567,6 +567,8 @@ def phase_artifacts(review_dir: Path) -> list[Path]:
     enum is found here for free. review.md is the deliverable and names no
     phase, so it is never matched.
     """
+    # Only GROUP's stem carries a "{}" placeholder (see Phase._stem); the
+    # format call is a no-op for every other phase's plain filename.
     patterns = [
         name.format("*")
         for p in Phase

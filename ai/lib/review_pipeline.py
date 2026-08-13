@@ -58,7 +58,7 @@ from review_prompt import (
 from review_scout import format_leads_block, parse_scout_output
 from review_agent import _parse_session_cost
 from review_phases import (
-    PhaseRunner,
+    PhaseResult, PhaseRunner,
     _phase_disprove, _phase_group_reviews, _phase_holistic,
     _phase_merge, _phase_scout, _should_disprove, _synthesis_max_turns, _touch,
 )
@@ -245,7 +245,7 @@ def _phase_synthesis(
     job: ReviewJob, holistic_content: str,
     group_count: int, merged_content: str,
     skipped_groups: int = 0,
-) -> tuple[str, float]:
+) -> PhaseResult:
     synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == Mode.SELF else TEMPLATE_SYNTHESIS
 
     Path(job.review_file).write_text("")
@@ -291,7 +291,7 @@ def _phase_synthesis(
     _write_review_sidecar(job)
     # Charged whether the agent produced a review or the mechanical fallback
     # did: a synthesis that fell back still spent whatever its log records.
-    return synthesis_log, _parse_session_cost(synthesis_log)
+    return PhaseResult.of(synthesis_log)
 
 
 def _group_log_paths(job: ReviewJob, group_count: int) -> list[str]:
@@ -442,16 +442,20 @@ def _run_holistic_phase(
     job: ReviewJob, group_count: int, state: PipelineState,
     skip_holistic: bool, resume_exists: bool, incremental: bool,
     skip_scout: bool = False,
-) -> tuple[str, str, str, float]:
-    _empty = ("", "", "", 0.0)
+) -> tuple[str, str, PhaseResult]:
+    """Phase 1's content and output path, plus the log it wrote and its spend.
 
+    A branch that reuses a prior attempt's scan reports the log at no cost:
+    `_resolve_recovery` already charged the resumed run for it, so pricing it
+    again here would bill that scan twice.
+    """
     reason = _holistic_skip_reason(skip_holistic, incremental, group_count, effort=job.effort)
     if reason:
         log.info(f"Holistic/scout phase skipped ({reason})")
         if not state.holistic_done:
             state.holistic_done = True
             _write_pipeline_state(job, state)
-        return _empty
+        return "", "", PhaseResult()
 
     use_scout = _use_scout(job, skip_scout)
 
@@ -463,25 +467,26 @@ def _run_holistic_phase(
             leads, no_scrutiny = parse_scout_output(raw)
             content = format_leads_block(leads, no_scrutiny)
             log.info("Phase 1: Scout scan skipped (exists)")
-            return content, scout_output, scout_log, 0.0
+            return content, scout_output, PhaseResult(log=scout_log, cost=0.0)
 
         content, output, log_path = _phase_scout(job, group_count)
-        cost = _parse_session_cost(log_path) if log_path else 0.0
         state.holistic_done = True
         _write_pipeline_state(job, state)
-        return content, output, log_path, cost
+        return content, output, PhaseResult.of(log_path)
 
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
     holistic_log = phase_log_path(job.review_file, Phase.HOLISTIC)
     if resume_exists and _has_output(holistic_output):
         log.info("Phase 1: Holistic scan skipped (exists)")
-        return Path(holistic_output).read_text(), holistic_output, holistic_log, 0.0
+        return (
+            Path(holistic_output).read_text(), holistic_output,
+            PhaseResult(log=holistic_log, cost=0.0),
+        )
 
     content, holistic_output, holistic_log = _phase_holistic(job, group_count)
-    cost = _parse_session_cost(holistic_log) if holistic_log else 0.0
     state.holistic_done = True
     _write_pipeline_state(job, state)
-    return content, holistic_output, holistic_log, cost
+    return content, holistic_output, PhaseResult.of(holistic_log)
 
 
 def _run_group_phase(
@@ -510,7 +515,7 @@ def _run_synthesis_or_fallback(
     holistic_content: str, group_count: int,
     merged_content: str, failed_groups: "list[GroupFailure]",
     n_skipped: int, cost_so_far: float, max_cost: float,
-) -> tuple[str, float]:
+) -> PhaseResult:
     """The synthesis session log and what synthesis spent.
 
     Every branch below that reaches the review file without an agent — a clean
@@ -525,7 +530,7 @@ def _run_synthesis_or_fallback(
         _write_clean_review(job, group_count, skipped_groups=n_skipped)
         state.synthesis_done = True
         _write_pipeline_state(job, state)
-        return "", 0.0
+        return PhaseResult()
 
     if all_groups_failed:
         log.warn("All group agents failed — skipping synthesis")
@@ -538,7 +543,7 @@ def _run_synthesis_or_fallback(
         state.synthesis_done = True
         state.synthesis_failed = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
         _write_pipeline_state(job, state)
-        return "", 0.0
+        return PhaseResult()
 
     if EFFORT_PRESETS[job.effort].skip_synthesis:
         log.info("Synthesis skipped (effort=low) — using mechanical merge")
@@ -548,7 +553,7 @@ def _run_synthesis_or_fallback(
         state.synthesis_done = True
         _write_pipeline_state(job, state)
         _inject_failures_and_status(job.review_file, state)
-        return "", 0.0
+        return PhaseResult()
 
     if cost_so_far > max_cost:
         log.warn("Using merged group output as final review (synthesis skipped due to budget)")
@@ -558,9 +563,9 @@ def _run_synthesis_or_fallback(
         state.synthesis_failed = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
         _write_pipeline_state(job, state)
         _inject_failures_and_status(job.review_file, state)
-        return "", 0.0
+        return PhaseResult()
 
-    synthesis_log, synthesis_cost = _phase_synthesis(
+    result = _phase_synthesis(
         job, holistic_content, group_count, merged_content,
         skipped_groups=n_skipped,
     )
@@ -570,7 +575,7 @@ def _run_synthesis_or_fallback(
         state.synthesis_failed = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
     _write_pipeline_state(job, state)
     _inject_failures_and_status(job.review_file, state)
-    return synthesis_log, synthesis_cost
+    return result
 
 
 def run_multi_phase(
@@ -638,11 +643,11 @@ def run_multi_phase(
         skip_groups = skip_groups | incremental_skips
 
     # ── Phase 1: Scout/Holistic ─────────────────────────────────────────────
-    holistic_content, holistic_output, holistic_log, holistic_cost = _run_holistic_phase(
+    holistic_content, holistic_output, holistic = _run_holistic_phase(
         job, group_count, state, skip_holistic, skip_holistic_phase, incremental,
         skip_scout=skip_scout,
     )
-    cost_so_far += holistic_cost
+    cost_so_far += holistic.cost
 
     # ── Phase 2: Groups ───────────────────────────────────────────────────────
     if cost_so_far > max_cost:
@@ -666,29 +671,32 @@ def run_multi_phase(
 
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)
-    synthesis_log, synthesis_cost = _run_synthesis_or_fallback(
+    synthesis = _run_synthesis_or_fallback(
         job, state, holistic_content, group_count,
         merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
     )
-    cost_so_far += synthesis_cost
+    cost_so_far += synthesis.cost
 
     # ── Phase 4.5: Disprove-it gate ─────────────────────────────────────────
-    disprove_log = ""
+    disprove_result = PhaseResult()
     if _should_disprove(job, disprove) and cost_so_far <= max_cost:
         review_path = Path(job.review_file)
         ms_count = count_severity(review_path, "M") + count_severity(review_path, "S")
         if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
-            disprove_log, disprove_cost = _phase_disprove(job)
-            cost_so_far += disprove_cost
+            disprove_result = _phase_disprove(job)
+            cost_so_far += disprove_result.cost
         else:
             log.info(f"Skipping disprove — only {ms_count} M/S findings (threshold: {DISPROVE_MIN_FINDINGS})")
 
     # ── Cleanup ──────────────────────────────────────────────────────────────
-    _consolidate_logs(job, holistic_log, group_count, synthesis_log, disprove_log=disprove_log)
+    _consolidate_logs(
+        job, holistic.log, group_count, synthesis.log,
+        disprove_log=disprove_result.log,
+    )
 
     if not failed_groups:
         _cleanup_intermediates(
-            job, holistic_output, holistic_log, group_outputs, group_count, synthesis_log,
+            job, holistic_output, holistic.log, group_outputs, group_count, synthesis.log,
         )
 
 

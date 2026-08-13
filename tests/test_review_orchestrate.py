@@ -1883,9 +1883,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
 
-        _, cost = ro._phase_synthesis(job, "", 3, "merged content")
-
-        assert cost == 2.5
+        assert ro._phase_synthesis(job, "", 3, "merged content").cost == 2.5
 
     def test_a_fallen_back_synthesis_is_still_charged(self, ro, tmp_path, monkeypatch):
         """The agent ran and spent; the review file just came from the merge."""
@@ -1903,10 +1901,10 @@ class TestPhaseSynthesis:
         )
 
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        _, cost = ro._phase_synthesis(job, "", 3, merged)
+        result = ro._phase_synthesis(job, "", 3, merged)
 
         assert ro.FALLBACK_SUMMARY in Path(job.review_file).read_text()
-        assert cost == 2.5
+        assert result.cost == 2.5
 
     def test_agent_fails_no_output(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
@@ -2068,7 +2066,7 @@ class TestRunSynthesisOrFallback:
                 job, count, merged, skipped_groups=skipped_groups,
             )
             Path(job.review_file).write_text(fallback)
-            return str(tmp_path / "synthesis.jsonl"), 0.0
+            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
 
         monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
@@ -2089,16 +2087,16 @@ class TestRunSynthesisOrFallback:
             from pathlib import Path
             Path(job.review_file).write_text(
                 "# Review\n\n## Summary\nok\n\n## Verdict\nApprove\n")
-            return str(tmp_path / "synthesis.jsonl"), 1.25
+            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"), 1.25)
 
         monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
         merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
-        _, cost = ro._run_synthesis_or_fallback(
+        result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
-        assert cost == 1.25
+        assert result.cost == 1.25
 
     def test_a_clean_review_spends_nothing(self, ro, tmp_path, monkeypatch):
         import review_pipeline
@@ -2107,10 +2105,10 @@ class TestRunSynthesisOrFallback:
         state = self._make_state(ro)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
-        log_path, cost = ro._run_synthesis_or_fallback(
+        result = ro._run_synthesis_or_fallback(
             job, state, "", 1, "No findings.\n", [], 0, 0.0, 20.0,
         )
-        assert (log_path, cost) == ("", 0.0)
+        assert result == review_pipeline.PhaseResult()
 
     def test_a_synthesis_skipped_on_budget_spends_nothing(self, ro, tmp_path, monkeypatch):
         import review_pipeline
@@ -2120,10 +2118,10 @@ class TestRunSynthesisOrFallback:
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
         merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
-        log_path, cost = ro._run_synthesis_or_fallback(
+        result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 25.0, 20.0,
         )
-        assert (log_path, cost) == ("", 0.0)
+        assert result == review_pipeline.PhaseResult()
 
 
 class TestIsRetryable:

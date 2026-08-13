@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import review_phases
 import review_pipeline
 from review_common import AgentKind, Effort, Thinking
+from review_phases import PhaseResult
 from review_preflight import PipelineState, PRContext, PRMetadata, ReviewJob
 
 
@@ -172,7 +173,7 @@ class TestHolisticPhaseStateUpdate:
             job, group_count=1, state=state,
             skip_holistic=False, resume_exists=False, incremental=True,
         )
-        assert result == ("", "", "", 0.0)
+        assert result == ("", "", PhaseResult())
         assert state.holistic_done is True
         mock_write.assert_called_once_with(job, state)
 

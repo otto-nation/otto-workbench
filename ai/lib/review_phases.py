@@ -234,6 +234,31 @@ class PhaseRunner:
         )
 
 
+@dataclass(frozen=True)
+class PhaseResult:
+    """A phase's session log, and what that log says the phase spent.
+
+    The two travel together everywhere: the log is what the run consolidates
+    and cleans up, the cost is what the budget gates read, and the second is
+    only ever derived from the first. Naming the pair keeps that derivation in
+    one place instead of at each call site, and gives a phase that never
+    invoked an agent something to return — the default is the honest report
+    that nothing ran and nothing was spent.
+    """
+
+    log: str = ""
+    cost: float = 0.0
+
+    @classmethod
+    def of(cls, log: str) -> "PhaseResult":
+        """Priced from the log the phase just wrote.
+
+        A phase that wrote no log reads as free: `_parse_session_cost` takes a
+        missing file as zero.
+        """
+        return cls(log, _parse_session_cost(log))
+
+
 def _touch(path: str) -> None:
     """Pre-create an empty output file without truncating existing content."""
     Path(path).touch(exist_ok=True)
@@ -382,13 +407,13 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
     return "", scout_output, scout_log
 
 
-def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
+def _phase_disprove(job: ReviewJob) -> PhaseResult:
     review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
     counts = _count_findings(review_content)
     ms_count = counts.get("M", 0) + counts.get("S", 0)
     if ms_count == 0:
         log.info("Disprove gate skipped — no must-fix or should-fix findings")
-        return "", 0.0
+        return PhaseResult()
 
     disprove_output = _derive_path(job.review_file, FILENAME_DISPROVE)
 
@@ -413,7 +438,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
         label="Disprove gate", max_turns=max_turns,
     )
 
-    cost = _parse_session_cost(disprove_log) if disprove_log else 0.0
+    result = PhaseResult.of(disprove_log)
 
     if _has_output(disprove_output):
         raw = Path(disprove_output).read_text()
@@ -432,7 +457,7 @@ def _phase_disprove(job: ReviewJob) -> tuple[str, float]:
             "— keeping all findings"
         )
 
-    return disprove_log, cost
+    return result
 
 
 def _log_disprove_falsified(summary: dict) -> None:

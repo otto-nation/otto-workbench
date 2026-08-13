@@ -152,6 +152,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     _post_process_review(job)
     _write_review_sidecar(job)
+    _cleanup_intermediates(job)
 
 
 def _build_meta_header(
@@ -337,9 +338,13 @@ def _cleanup_intermediates(job: ReviewJob):
 
     What to remove is read off the directory rather than named by the caller,
     so a phase the run happened to take — disprove, or one added later — is
-    cleaned without the call site listing it. This also sweeps fix.jsonl: a
-    prior `--fix` pass's log is diagnostic, not a finding, so it is swept the
-    same as any other phase log rather than surviving a re-review.
+    cleaned without the call site listing it. That also lets both pipelines
+    share the pass: single-agent runs reach the same disprove gate, and the
+    multi-phase caller no longer has a list only it could supply.
+
+    This also sweeps fix.jsonl: a prior `--fix` pass's log is diagnostic, not a
+    finding, so it is swept the same as any other phase log rather than
+    surviving a re-review.
     """
     review_dir = Path(job.review_file).parent
     cleanup = phase_artifacts(review_dir)

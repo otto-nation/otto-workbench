@@ -58,12 +58,12 @@ def _subdir(base: Path, name: str | None) -> Path:
 
 
 def config_dir() -> Path:
-    """Hand-authored settings: install.yml, overrides/, mcp-tools.json."""
+    """Hand-authored settings: overrides/, mcp-tools.json, review.yml, reuse-level."""
     return _root("WORKBENCH_CONFIG_DIR", "XDG_CONFIG_HOME", "~/.config/workbench")
 
 
 def state_dir() -> Path:
-    """Generated, machine-local data: reviews/, logs/, usage/, applied migrations.
+    """Generated, machine-local data: reviews/, logs/, usage/, install.yml.
 
     The move off the old ``~/.config/workbench`` default is a hard cut: nothing
     falls back to the legacy path, and ``lib/migrations.sh`` carries the data

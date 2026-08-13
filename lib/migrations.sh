@@ -141,7 +141,7 @@ _prune_stale_migration_state() {
 # is state. The list that has to be exhaustive is deliberately the short one:
 # the inventory in #624 found four state files that no manifest written in
 # advance had thought to list.
-_LEGACY_CONFIG_ENTRIES=(
+readonly _LEGACY_CONFIG_ENTRIES=(
   overrides reuse-level reuse-default review.yml mcp-tools.json
   config.yml config.schema.json
 )
@@ -152,6 +152,8 @@ _path_exists() {
 }
 
 # _adopt_entry SRC DST — carry one entry across, resuming a partial run.
+# Hand-rolled rather than `rsync -a --remove-source-files`: rsync is not a
+# workbench dependency, and this runs on a machine mid-sync that may not have it.
 _adopt_entry() {
   local src="$1" dst="$2"
 
@@ -236,7 +238,9 @@ adopt_legacy_workbench_root() {
     return 0
   fi
 
-  success "Adopted $moved entries from $legacy into $WORKBENCH_STATE_DIR"
+  # No destination named: config entries and state entries went to different
+  # roots, and on an overridden machine both of those moved.
+  success "Adopted $moved entries from $legacy"
   if [[ "$had_docker" == true ]] && ! _path_exists "$docker_aliases"; then
     warn "Shells already running still source the old docker-aliases.zsh — open a new one"
   fi

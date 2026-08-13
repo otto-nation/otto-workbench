@@ -162,13 +162,21 @@ assert_agree() {
 # assert_combo_agrees "STATE|XDG_STATE|XDG_CONFIG|XDG_CACHE" — apply one
 # environment and check every resolver against the shell one.
 assert_combo_agrees() {
-  local combo="$1" rest
-  export_or_unset WORKBENCH_STATE_DIR "${combo%%|*}"
-  rest="${combo#*|}"
-  export_or_unset XDG_STATE_HOME "${rest%%|*}"
-  rest="${rest#*|}"
-  export_or_unset XDG_CONFIG_HOME "${rest%%|*}"
-  export_or_unset XDG_CACHE_HOME "${rest#*|}"
+  local combo="$1"
+  local -a fields
+  # The trailing `|` keeps a combo whose last field is empty from arriving as
+  # three fields — `read -ra` drops trailing empties.
+  IFS='|' read -ra fields <<< "$combo|"
+  # The field count is load-bearing: a stray `|` would shift an XDG_STATE_HOME
+  # value into XDG_CONFIG_HOME and the assertions below would still pass.
+  if [[ ${#fields[@]} -ne 4 ]]; then
+    echo "combo needs 4 |-separated fields, got ${#fields[@]}: '$combo'" >&2
+    return 1
+  fi
+  export_or_unset WORKBENCH_STATE_DIR "${fields[0]}"
+  export_or_unset XDG_STATE_HOME "${fields[1]}"
+  export_or_unset XDG_CONFIG_HOME "${fields[2]}"
+  export_or_unset XDG_CACHE_HOME "${fields[3]}"
 
   local sh_state
   sh_state="$(resolve_shell WORKBENCH_STATE_DIR)"

@@ -17,9 +17,9 @@
 
 # _wb_root OVERRIDE XDG_HOME FALLBACK — resolve one root.
 # An override that is exported but empty counts as unset, matching how the XDG
-# spec reads its own variables — a bare `export WORKBENCH_STATE_DIR=` in a
-# shell profile falls
-# through to the default rather than resolving every root to the filesystem root.
+# spec reads its own variables — a bare `export WORKBENCH_STATE_DIR=` in a shell
+# profile falls through to the default rather than resolving every root to the
+# filesystem root.
 _wb_root() {
   local override="$1" xdg_home="$2" fallback="$3"
   if [[ -n "$override" ]]; then

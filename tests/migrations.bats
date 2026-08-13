@@ -105,6 +105,32 @@ adopt_in_fake() {
   [ ! -d "$FAKE_LEGACY" ]
 }
 
+@test "adoption sends every name in _LEGACY_CONFIG_ENTRIES to the config root" {
+  # The list is the whole classification: anything dropped from it silently
+  # becomes state, so each entry needs its own evidence.
+  local names entry
+  names=$(
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$FAKE_ROOT/lib/constants.sh"
+    . "$FAKE_ROOT/lib/migrations.sh"
+    printf '%s\n' "${_LEGACY_CONFIG_ENTRIES[@]}"
+  )
+  [ -n "$names" ]
+
+  mkdir -p "$FAKE_LEGACY"
+  while IFS= read -r entry; do
+    echo "$entry" > "$FAKE_LEGACY/$entry"
+  done <<< "$names"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  while IFS= read -r entry; do
+    [ "$(cat "$FAKE_CONFIG/$entry")" = "$entry" ]
+    [ ! -e "$FAKE_STATE/$entry" ]
+  done <<< "$names"
+}
+
 @test "adoption is idempotent across repeated runs" {
   mkdir -p "$FAKE_LEGACY"
   echo "applied" > "$FAKE_LEGACY/migrations.applied"

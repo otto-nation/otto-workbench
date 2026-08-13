@@ -35,7 +35,7 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 | `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `logs/`, `usage/`, `install.yml`, applied migrations | `XDG_STATE_HOME` | `~/.local/state/workbench` |
 | `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: `vertex-quota/` | `XDG_CACHE_HOME` | `~/.cache/workbench` |
 
-`install.yml` sits under state despite the name: `lib/state.sh` owns every write to it, and it is what the old `installed.components` file migrated into. Nobody hand-edits it.
+`install.yml` sits under state despite the name: `lib/state.sh` owns every write to it, and it is what the old `installed.components` file migrated into. It records what a sync found or installed, not anything a user chose to type.
 
 Machines set up before the split keep everything in `~/.config/workbench`. `adopt_legacy_workbench_root` in [`lib/migrations.sh`](../lib/migrations.sh) carries that directory across on the next sync, entry by entry, and runs ahead of the migration framework because `migrations.applied` is one of the files it moves. Nothing falls back to the old path once it has run — the adoption is the entire compatibility story.
 
@@ -131,7 +131,7 @@ Component installation state tracking.
 | `state_prune_orphans` | Remove entries for deleted components |
 | `state_detect_installed` | Heuristic-based detection for bootstrapping |
 
-State file: `$INSTALLED_STATE_FILE` — `installed.components` under the [state root](#rootssh). Loaded via `ui.sh`.
+State file: `$INSTALL_YML_FILE` — `install.yml` under the [state root](#rootssh). The flat `installed.components` it replaced survives only as the second half of `state_file_exists`. Loaded via `ui.sh`.
 
 ### migrations.sh
 

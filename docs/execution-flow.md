@@ -101,7 +101,7 @@ Used for AI config (rules, agents, skills) where users can override or disable i
 
 ## State Tracking
 
-Component installation state is recorded in `$INSTALLED_STATE_FILE` — `~/.local/state/workbench/installed.components` by default (one entry per line, e.g., `ai/claude`, `terminals/ghostty`).
+Component installation state is recorded in `$INSTALL_YML_FILE` — `~/.local/state/workbench/install.yml` by default, a YAML map of components to the sub-tools installed under them. `$INSTALLED_STATE_FILE` (`installed.components`) is the flat file it replaced; only `state_file_exists` still looks at it.
 
 **Functions** (in [`lib/state.sh`](../lib/state.sh)):
 - `state_record()` — mark a component as installed

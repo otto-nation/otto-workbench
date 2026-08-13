@@ -51,13 +51,21 @@ class PRIdentity:
     worktree_root: str
 
 
+@dataclass
 class Domain:
     """A section of PRState that one subcommand owns and writes as a unit.
 
     Subclassing is the registration. ``_domains`` derives the registry from
     PRState's own annotations, so a new domain is one field there and nothing
     else — no updater, no table entry, no deserializer.
+
+    Every domain records when it was last written, so the field lives here
+    rather than being restated by each one.  It is not stamped automatically:
+    a default-constructed domain would then claim a write that never happened,
+    and the writer is the only code that knows whether one occurred.
     """
+
+    updated_at: str = ""
 
     def merge_into(self, prior: "Domain") -> "Domain":
         """Combine this update with what is already stored.
@@ -84,7 +92,6 @@ class CIDomain(Domain):
     failure_kinds: dict[str, int] = field(default_factory=dict)
     last_run_id: int | None = None
     last_run_number: int | None = None
-    updated_at: str = ""
     # Detailed run tracking (formerly in CIState)
     # Keyed by run_id. JSON stringifies every key on the way out; serde
     # restores the ints on the way back in.
@@ -162,7 +169,6 @@ class ReviewSummary(Domain):
     failure_detail: str = ""
     cost_usd: float = 0.0
     total_tokens: int = 0
-    updated_at: str = ""
 
 
 @dataclass
@@ -174,7 +180,6 @@ class CommentsSummary(Domain):
     has_approvals: bool = False
     seen_issue_comment_ids: list[int] = field(default_factory=list)
     seen_review_body_comment_ids: list[int] = field(default_factory=list)
-    updated_at: str = ""
 
 
 @dataclass
@@ -186,7 +191,6 @@ class TriageSummary(Domain):
     questions: int = 0
     comment_items_total: int = 0
     comment_items_actionable: int = 0
-    updated_at: str = ""
 
 
 @dataclass
@@ -199,7 +203,6 @@ class RebaseSummary(Domain):
     files_resolved: list[str] = field(default_factory=list)
     files_stale: list[str] = field(default_factory=list)
     force_pushed: bool = False
-    updated_at: str = ""
 
 
 @dataclass
@@ -213,7 +216,6 @@ class DescribeSummary(Domain):
     head_sha: str = ""
     template_path: str = ""
     changed: bool = False
-    updated_at: str = ""
 
 
 class ThreadAction(StrEnum):
@@ -304,7 +306,6 @@ class FixSummary(Domain):
     deferred_issue_id: str = ""
     deferred_issue_url: str = ""
     has_comment_items: bool = False
-    updated_at: str = ""
 
     def merge_into(self, prior: "FixSummary") -> "FixSummary":
         """Merge this fix pass into the accumulated summary.

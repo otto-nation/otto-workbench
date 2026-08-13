@@ -87,7 +87,7 @@ def test_repo_without_a_template_falls_back(tmp_path):
 def test_unchanged_head_skips_the_ai_call(tmp_path):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(tmp_path))
-    pr_state.update_describe(state, pr_state.DescribeSummary(head_sha="aaaa111"))
+    pr_state.apply(state, pr_state.DescribeSummary(head_sha="aaaa111"))
     pr_state.save_state(tmp_path, state)
 
     rc, edits, prompt = _run(_ctx(tmp_path))
@@ -99,7 +99,7 @@ def test_unchanged_head_skips_the_ai_call(tmp_path):
 def test_moved_head_earns_a_fresh_pass(tmp_path):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(tmp_path))
-    pr_state.update_describe(state, pr_state.DescribeSummary(head_sha="old0000"))
+    pr_state.apply(state, pr_state.DescribeSummary(head_sha="old0000"))
     pr_state.save_state(tmp_path, state)
 
     rc, edits, prompt = _run(_ctx(tmp_path))
@@ -111,7 +111,7 @@ def test_moved_head_earns_a_fresh_pass(tmp_path):
 def test_force_overrides_the_head_check(tmp_path):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(tmp_path))
-    pr_state.update_describe(state, pr_state.DescribeSummary(head_sha="aaaa111"))
+    pr_state.apply(state, pr_state.DescribeSummary(head_sha="aaaa111"))
     pr_state.save_state(tmp_path, state)
 
     rc, edits, prompt = _run(_ctx(tmp_path), force=True)

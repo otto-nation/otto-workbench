@@ -13,11 +13,12 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
+from functools import cache
 from pathlib import Path
+from typing import get_type_hints
 
 # get_type_hints(CIDomain) resolves its `runs` annotation at runtime, so
 # RunState must be bound in this module's namespace; ci_failures keeps its
@@ -50,8 +51,27 @@ class PRIdentity:
     worktree_root: str
 
 
+class Domain:
+    """A section of PRState that one subcommand owns and writes as a unit.
+
+    Subclassing is the registration. ``_domains`` derives the registry from
+    PRState's own annotations, so a new domain is one field there and nothing
+    else — no updater, no table entry, no deserializer.
+    """
+
+    def merge_into(self, prior: "Domain") -> "Domain":
+        """Combine this update with what is already stored.
+
+        A write replaces what came before, which is what every domain wants
+        except the ones that accumulate across rounds. Those override this and
+        fold ``prior`` in themselves, so the policy lives with the shape it
+        applies to rather than in the code that happens to call the write.
+        """
+        return self
+
+
 @dataclass
-class CIDomain:
+class CIDomain(Domain):
     """Full CI domain — summary fields plus detailed run history.
 
     Merges the former CISummary (summary snapshot) with run-history tracking
@@ -131,7 +151,7 @@ class PostTracking:
 
 
 @dataclass
-class ReviewSummary:
+class ReviewSummary(Domain):
     """Snapshot written by ``pr review``."""
     review_file: str = ""
     review_type: str = ""
@@ -146,7 +166,7 @@ class ReviewSummary:
 
 
 @dataclass
-class CommentsSummary:
+class CommentsSummary(Domain):
     """Snapshot written by ``pr comments``."""
     total_threads: int = 0
     by_state: dict[str, int] = field(default_factory=dict)
@@ -158,7 +178,7 @@ class CommentsSummary:
 
 
 @dataclass
-class TriageSummary:
+class TriageSummary(Domain):
     """Snapshot written by ``pr triage``."""
     total: int = 0
     actionable: int = 0
@@ -170,7 +190,7 @@ class TriageSummary:
 
 
 @dataclass
-class RebaseSummary:
+class RebaseSummary(Domain):
     """Snapshot written by ``pr rebase``."""
     status: str = ""
     target_base: str = ""
@@ -183,7 +203,7 @@ class RebaseSummary:
 
 
 @dataclass
-class DescribeSummary:
+class DescribeSummary(Domain):
     """Snapshot written by ``pr describe``.
 
     ``head_sha`` is what makes the pass commit-aware: a description already
@@ -215,7 +235,7 @@ class ThreadOutcome:
     action: ThreadAction = ThreadAction.FIXED
     reason: str = ""
     # The commit that landed this thread's fix. Per-outcome rather than
-    # per-pass: update_fix accumulates outcomes across rounds, so one envelope
+    # per-pass: FixSummary accumulates outcomes across rounds, so one envelope
     # SHA would relabel every earlier round's work with the latest round's
     # commit — or, when the latest round commits nothing, with none at all.
     commit_sha: str = ""
@@ -265,7 +285,7 @@ class ThreadOutcome:
 
 
 @dataclass
-class FixSummary:
+class FixSummary(Domain):
     """Snapshot written by comment fix pass."""
     threads: list[ThreadOutcome] = field(default_factory=list)
     commit_sha: str = ""
@@ -285,6 +305,41 @@ class FixSummary:
     deferred_issue_url: str = ""
     has_comment_items: bool = False
     updated_at: str = ""
+
+    def merge_into(self, prior: "FixSummary") -> "FixSummary":
+        """Merge this fix pass into the accumulated summary.
+
+        Thread outcomes accumulate across rounds, keyed by thread id — a later
+        pass supersedes an earlier outcome for the same thread, but never drops
+        threads it did not touch.  A review cycle spans several rounds and the
+        summary comment must account for all of them, not just the most recent
+        pass.
+
+        The deferred tracking issue is likewise cycle-scoped: it is created once
+        and updated on later rounds.  A fix pass builds its FixSummary before
+        knowing about it, so an empty id/url means "not set this round", not
+        "cleared" — dropping it would make the next deferred round open a
+        duplicate issue.  Every other field is per-round and comes from this pass.
+        """
+        merged = {t.id: t for t in prior.threads if t.id}
+        no_id: list[ThreadOutcome] = [t for t in prior.threads if not t.id]
+        for outcome in self.threads:
+            if outcome.id:
+                merged[outcome.id] = outcome
+            else:
+                # Entries without an id cannot be de-duplicated; append rather than
+                # colliding every one onto the "" key and losing all but the last.
+                # ceiling: this list only grows across rounds. No-id outcomes are
+                # rare and a cycle's rounds are bounded, so the growth is bounded in
+                # practice — de-dup on content if a cycle ever accumulates enough to
+                # bloat the state file or the summary comment.
+                no_id.append(outcome)
+        return dataclass_replace(
+            self,
+            threads=list(merged.values()) + no_id,
+            deferred_issue_id=self.deferred_issue_id or prior.deferred_issue_id,
+            deferred_issue_url=self.deferred_issue_url or prior.deferred_issue_url,
+        )
 
 
 @dataclass
@@ -437,69 +492,45 @@ def update_identity(state: PRState, head_sha: str, pr_number: int | None = None)
         state.identity.pr_number = pr_number
 
 
-def update_ci_domain(state: PRState, domain: CIDomain) -> None:
-    """Replace CI domain (summary + run history)."""
-    state.ci = domain
+@cache
+def _domains() -> dict[str, type[Domain]]:
+    """Domain field name → type, derived from PRState's own annotations.
 
-
-def update_review(state: PRState, summary: ReviewSummary) -> None:
-    """Replace review summary."""
-    state.review = summary
-
-
-def update_comments(state: PRState, summary: CommentsSummary) -> None:
-    """Replace comments summary."""
-    state.comments = summary
-
-
-def update_triage(state: PRState, summary: TriageSummary) -> None:
-    """Replace triage summary."""
-    state.triage = summary
-
-
-def update_rebase(state: PRState, summary: RebaseSummary) -> None:
-    """Replace rebase summary."""
-    state.rebase = summary
-
-
-def update_describe(state: PRState, summary: DescribeSummary) -> None:
-    """Replace describe summary."""
-    state.describe = summary
-
-
-def update_fix(state: PRState, summary: FixSummary) -> None:
-    """Merge a fix pass into the accumulated fix summary.
-
-    Thread outcomes accumulate across rounds, keyed by thread id — a later pass
-    supersedes an earlier outcome for the same thread, but never drops threads
-    it did not touch.  A review cycle spans several rounds and the summary
-    comment must account for all of them, not just the most recent pass.
-
-    The deferred tracking issue is likewise cycle-scoped: it is created once and
-    updated on later rounds.  A fix pass builds its FixSummary before knowing
-    about it, so an empty id/url means "not set this round", not "cleared" —
-    dropping it would make the next deferred round open a duplicate issue.
-    Every other field is per-round and taken from the incoming summary.
+    Cached because the answer cannot change after import: PRState's fields are
+    fixed at class creation.
     """
-    merged = {t.id: t for t in state.fix.threads if t.id}
-    no_id: list[ThreadOutcome] = [t for t in state.fix.threads if not t.id]
-    for outcome in summary.threads:
-        if outcome.id:
-            merged[outcome.id] = outcome
-        else:
-            # Entries without an id cannot be de-duplicated; append rather than
-            # colliding every one onto the "" key and losing all but the last.
-            # ceiling: this list only grows across rounds. No-id outcomes are
-            # rare and a cycle's rounds are bounded, so the growth is bounded in
-            # practice — de-dup on content if a cycle ever accumulates enough to
-            # bloat the state file or the summary comment.
-            no_id.append(outcome)
-    state.fix = dataclass_replace(
-        summary,
-        threads=list(merged.values()) + no_id,
-        deferred_issue_id=summary.deferred_issue_id or state.fix.deferred_issue_id,
-        deferred_issue_url=summary.deferred_issue_url or state.fix.deferred_issue_url,
-    )
+    return {
+        name: hint
+        for name, hint in get_type_hints(PRState).items()
+        if isinstance(hint, type) and issubclass(hint, Domain)
+    }
+
+
+@cache
+def _domain_names() -> dict[type[Domain], str]:
+    """The inverse of `_domains`, for routing an update by its type.
+
+    A domain class held by two PRState fields has no single home to write to,
+    so it fails here at first use rather than silently writing to whichever
+    field happened to be annotated last.
+    """
+    names: dict[type[Domain], str] = {}
+    for name, cls in _domains().items():
+        if cls in names:
+            raise TypeError(
+                f"{cls.__name__} is the type of both PRState.{names[cls]} and "
+                f"PRState.{name}; a domain needs exactly one field to own it"
+            )
+        names[cls] = name
+    return names
+
+
+def apply(state: PRState, domain: Domain) -> None:
+    """Write a domain update into the field that owns it, honoring its merge policy."""
+    name = _domain_names().get(type(domain))
+    if name is None:
+        raise ValueError(f"{type(domain).__name__} is not a PRState domain")
+    setattr(state, name, domain.merge_into(getattr(state, name)))
 
 
 def add_pending_comment(state: PRState, comment: PendingComment) -> None:
@@ -548,17 +579,6 @@ def load_or_init(
     )
 
 
-_DOMAIN_UPDATERS: dict[str, tuple[type, Callable]] = {
-    "ci": (CIDomain, update_ci_domain),
-    "review": (ReviewSummary, update_review),
-    "comments": (CommentsSummary, update_comments),
-    "triage": (TriageSummary, update_triage),
-    "rebase": (RebaseSummary, update_rebase),
-    "describe": (DescribeSummary, update_describe),
-    "fix": (FixSummary, update_fix),
-}
-
-
 def apply_state_update(
     *,
     worktree_root: Path,
@@ -570,9 +590,9 @@ def apply_state_update(
     data: dict,
 ) -> None:
     """Load-or-init state, apply a domain update from a dict, and save."""
-    if domain not in _DOMAIN_UPDATERS:
+    domain_cls = _domains().get(domain)
+    if domain_cls is None:
         raise ValueError(f"Unknown state domain: {domain!r}")
-    domain_cls, updater = _DOMAIN_UPDATERS[domain]
     state = load_or_init(
         worktree_root=worktree_root,
         repo=repo,
@@ -580,5 +600,5 @@ def apply_state_update(
         pr_number=pr_number,
         head_sha=head_sha,
     )
-    updater(state, _serde_from_dict(domain_cls, data))
+    apply(state, _serde_from_dict(domain_cls, data))
     save_state(worktree_root, state)

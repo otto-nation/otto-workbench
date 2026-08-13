@@ -17,8 +17,8 @@ from pr_state import (
     PRIdentity, CIDomain, ReviewSummary, ReviewVerdict, ReviewStatus,
     CommentsSummary, TriageSummary, RebaseSummary,
     ThreadAction, ThreadOutcome, FixSummary,
-    PRState, load_state, save_state, new_state, update_identity, update_ci_domain,
-    update_review, update_comments, update_triage, update_rebase, update_fix,
+    PendingComment, PRState, load_state, save_state, new_state, update_identity,
+    apply, _domains,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
     STATE_DIR, STATE_FILE, STATE_VERSION,
@@ -150,19 +150,19 @@ def test_state_from_dict_null_ci_defaults_empty():
 
 def test_state_roundtrip_with_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_ci_domain(state, CIDomain(
+    apply(state, CIDomain(
         last_run_id=999, last_run_number=7,
         conclusion="failure", failure_count=3,
         failure_kinds={"lint": 2, "test": 1},
         updated_at="2026-06-20T00:00:00+00:00",
     ))
-    update_review(state, ReviewSummary(
+    apply(state, ReviewSummary(
         review_file="/tmp/review.md", review_type="self",
         head_sha="def", finding_counts={"M": 1, "S": 2},
         verdict=ReviewVerdict.CHANGES_REQUESTED.value, cost_usd=1.50, total_tokens=54321,
         updated_at="2026-06-20T00:00:00+00:00",
     ))
-    update_comments(state, CommentsSummary(
+    apply(state, CommentsSummary(
         total_threads=5, by_state={"new": 2, "addressed": 3},
         blocking_reviewers=["alice"], has_approvals=True,
         updated_at="2026-06-20T00:00:00+00:00",
@@ -190,7 +190,7 @@ def test_state_roundtrip_with_data():
 
 def test_state_roundtrip_with_seen_issue_comment_ids():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_comments(state, CommentsSummary(
+    apply(state, CommentsSummary(
         total_threads=3, by_state={"new": 1, "addressed": 2},
         seen_issue_comment_ids=[111, 222, 333],
         updated_at="2026-07-02T00:00:00+00:00",
@@ -202,7 +202,7 @@ def test_state_roundtrip_with_seen_issue_comment_ids():
 
 def test_state_roundtrip_with_seen_review_body_comment_ids():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_comments(state, CommentsSummary(
+    apply(state, CommentsSummary(
         total_threads=3, by_state={"new": 1, "addressed": 2},
         seen_review_body_comment_ids=[444, 555, 666],
         updated_at="2026-07-13T00:00:00+00:00",
@@ -214,7 +214,7 @@ def test_state_roundtrip_with_seen_review_body_comment_ids():
 
 def test_state_roundtrip_with_triage_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_triage(state, TriageSummary(
+    apply(state, TriageSummary(
         total=10, actionable=4, valid=3, questions=2,
         updated_at="2026-06-20T00:00:00+00:00",
     ))
@@ -350,7 +350,7 @@ def test_save_preserves_ci_data():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        update_ci_domain(state, CIDomain(
+        apply(state, CIDomain(
             last_run_id=100, conclusion="failure", failure_count=2,
             failure_kinds={"lint": 2}, updated_at="2026-06-20T00:00:00+00:00",
         ))
@@ -406,7 +406,7 @@ def test_save_preserves_triage_data():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        update_triage(state, TriageSummary(
+        apply(state, TriageSummary(
             total=8, actionable=3, valid=2, questions=1,
             updated_at="2026-06-20T00:00:00+00:00",
         ))
@@ -485,18 +485,41 @@ def test_update_identity_preserves_pr_when_none():
     assert state.identity.pr_number == 7
 
 
-def test_update_ci_domain_replaces():
+@pytest.mark.parametrize("name,cls", sorted(_domains().items()))
+def test_apply_routes_every_domain_to_its_own_field(name, cls):
+    """A domain update reaches the PRState field annotated with its type, and no other.
+
+    Parametrized off the derived registry, so a new domain is covered here the
+    day its field lands on PRState. Routing by type is the whole job of the
+    registry, and misrouting is silent — the write succeeds, just into the
+    wrong field.
+    """
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_ci_domain(state, CIDomain(conclusion="success", updated_at="t1"))
+
+    apply(state, cls(updated_at="marker"))
+
+    assert getattr(state, name).updated_at == "marker"
+    assert [n for n in _domains() if getattr(state, n).updated_at] == [name]
+
+
+def test_apply_rejects_a_type_no_field_holds():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    with pytest.raises(ValueError, match="not a PRState domain"):
+        apply(state, PendingComment())
+
+
+def test_apply_replaces_ci_domain():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, CIDomain(conclusion="success", updated_at="t1"))
     assert state.ci.conclusion == "success"
-    update_ci_domain(state, CIDomain(conclusion="failure", failure_count=1, updated_at="t2"))
+    apply(state, CIDomain(conclusion="failure", failure_count=1, updated_at="t2"))
     assert state.ci.conclusion == "failure"
     assert state.ci.failure_count == 1
 
 
-def test_update_review_replaces():
+def test_apply_replaces_review():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_review(state, ReviewSummary(verdict=ReviewVerdict.APPROVE.value, updated_at="t1"))
+    apply(state, ReviewSummary(verdict=ReviewVerdict.APPROVE.value, updated_at="t1"))
     assert state.review.verdict == ReviewVerdict.APPROVE.value
 
 
@@ -507,7 +530,7 @@ def test_review_summary_status_default():
 
 def test_review_summary_status_roundtrip():
     state = new_state("repo", "branch", pr_number=1, head_sha="abc", worktree_root="/wt")
-    update_review(state, ReviewSummary(
+    apply(state, ReviewSummary(
         verdict=ReviewVerdict.APPROVE.value, status=ReviewStatus.ERROR.value, updated_at="t1",
     ))
     d = state_to_dict(state)
@@ -517,7 +540,7 @@ def test_review_summary_status_roundtrip():
 
 def test_review_summary_status_completed_roundtrip():
     state = new_state("repo", "branch", pr_number=1, head_sha="abc", worktree_root="/wt")
-    update_review(state, ReviewSummary(
+    apply(state, ReviewSummary(
         verdict=ReviewVerdict.APPROVE.value, status=ReviewStatus.COMPLETED.value, updated_at="t1",
     ))
     d = state_to_dict(state)
@@ -527,7 +550,7 @@ def test_review_summary_status_completed_roundtrip():
 
 def test_review_summary_verdict_disapprove_roundtrip():
     state = new_state("repo", "branch", pr_number=1, head_sha="abc", worktree_root="/wt")
-    update_review(state, ReviewSummary(
+    apply(state, ReviewSummary(
         verdict=ReviewVerdict.DISAPPROVE.value, updated_at="t1",
     ))
     d = state_to_dict(state)
@@ -535,29 +558,29 @@ def test_review_summary_verdict_disapprove_roundtrip():
     assert restored.review.verdict == ReviewVerdict.DISAPPROVE.value
 
 
-def test_update_comments_replaces():
+def test_apply_replaces_comments():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_comments(state, CommentsSummary(total_threads=3, updated_at="t1"))
+    apply(state, CommentsSummary(total_threads=3, updated_at="t1"))
     assert state.comments.total_threads == 3
 
 
-def test_update_comments_with_seen_ids():
+def test_apply_comments_with_seen_ids():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_comments(state, CommentsSummary(
+    apply(state, CommentsSummary(
         total_threads=2, seen_issue_comment_ids=[100, 200], updated_at="t1",
     ))
     assert state.comments.seen_issue_comment_ids == [100, 200]
-    update_comments(state, CommentsSummary(
+    apply(state, CommentsSummary(
         total_threads=3, seen_issue_comment_ids=[100, 200, 300], updated_at="t2",
     ))
     assert state.comments.seen_issue_comment_ids == [100, 200, 300]
 
 
-def test_update_triage_replaces():
+def test_apply_replaces_triage():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_triage(state, TriageSummary(total=5, actionable=2, updated_at="t1"))
+    apply(state, TriageSummary(total=5, actionable=2, updated_at="t1"))
     assert state.triage.total == 5
-    update_triage(state, TriageSummary(total=10, actionable=4, valid=3, updated_at="t2"))
+    apply(state, TriageSummary(total=10, actionable=4, valid=3, updated_at="t2"))
     assert state.triage.total == 10
     assert state.triage.actionable == 4
     assert state.triage.valid == 3
@@ -584,9 +607,9 @@ def test_pr_state_has_rebase_field():
     assert state.rebase.force_pushed is False
 
 
-def test_update_rebase_replaces():
+def test_apply_replaces_rebase():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_rebase(state, RebaseSummary(
+    apply(state, RebaseSummary(
         target_base="origin/main", commits_replayed=3,
         conflicts_resolved=2, files_resolved=["a.py", "b.py"],
         force_pushed=True, updated_at="t1",
@@ -600,7 +623,7 @@ def test_update_rebase_replaces():
 
 def test_state_roundtrip_with_rebase_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_rebase(state, RebaseSummary(
+    apply(state, RebaseSummary(
         target_base="origin/main", commits_replayed=5,
         conflicts_resolved=2, files_resolved=["x.py"],
         force_pushed=True, updated_at="2026-06-20T00:00:00+00:00",
@@ -616,7 +639,7 @@ def test_state_roundtrip_with_rebase_data():
 
 def test_state_roundtrip_with_stale_files():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_rebase(state, RebaseSummary(
+    apply(state, RebaseSummary(
         target_base="origin/main", commits_replayed=1,
         conflicts_resolved=1, files_resolved=["pnpm-lock.yaml"],
         files_stale=["pnpm-lock.yaml"],
@@ -629,7 +652,7 @@ def test_state_roundtrip_with_stale_files():
 def test_state_from_dict_without_files_stale():
     """State files written before files_stale existed still load."""
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_rebase(state, RebaseSummary(
+    apply(state, RebaseSummary(
         target_base="origin/main", commits_replayed=1,
         conflicts_resolved=1, files_resolved=["x.py"],
         force_pushed=False, updated_at="2026-06-20T00:00:00+00:00",
@@ -643,7 +666,7 @@ def test_save_preserves_rebase_data():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        update_rebase(state, RebaseSummary(
+        apply(state, RebaseSummary(
             target_base="origin/main", commits_replayed=3,
             conflicts_resolved=1, files_resolved=["f.py"],
             force_pushed=False, updated_at="2026-06-20T00:00:00+00:00",
@@ -660,7 +683,7 @@ def test_save_preserves_seen_issue_comment_ids():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        update_comments(state, CommentsSummary(
+        apply(state, CommentsSummary(
             total_threads=2, seen_issue_comment_ids=[111, 222],
             updated_at="2026-07-02T00:00:00+00:00",
         ))
@@ -719,7 +742,7 @@ def test_load_or_init_loads_existing_and_updates_identity():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=1, head_sha="old", worktree_root=tmp)
-        update_ci_domain(state, CIDomain(conclusion="failure", failure_count=3, updated_at="t"))
+        apply(state, CIDomain(conclusion="failure", failure_count=3, updated_at="t"))
         save_state(root, state)
 
         loaded = load_or_init(
@@ -905,12 +928,12 @@ def test_the_thread_id_rename_does_not_mutate_the_caller():
 def test_accumulated_outcomes_keep_their_own_shas():
     """The whole point: round two must not relabel round one's commit."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         commit_sha="1111111",
         threads=[ThreadOutcome(id="t1", commit_sha="1111111",
                                action=ThreadAction.FIXED)],
     ))
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         commit_sha="2222222",
         threads=[ThreadOutcome(id="t2", commit_sha="2222222",
                                action=ThreadAction.FIXED)],
@@ -942,9 +965,9 @@ def test_pr_state_has_fix_field():
     assert state.fix.commit_sha == ""
 
 
-def test_update_fix_replaces_scalar_fields():
+def test_apply_fix_replaces_scalar_fields():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
         commit_sha="abc", commit_status="pushed",
         updated_at="t1",
@@ -952,7 +975,7 @@ def test_update_fix_replaces_scalar_fields():
     assert state.fix.commit_sha == "abc"
     assert len(state.fix.threads) == 1
     assert state.fix.threads[0].action == ThreadAction.FIXED
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[], commit_sha="", commit_status="no_changes",
         updated_at="t2",
     ))
@@ -961,17 +984,17 @@ def test_update_fix_replaces_scalar_fields():
     assert state.fix.updated_at == "t2"
 
 
-def test_update_fix_accumulates_threads_across_rounds():
+def test_apply_fix_accumulates_threads_across_rounds():
     """A later pass must not drop threads processed in an earlier one."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[
             ThreadOutcome(id="t1", action=ThreadAction.FIXED),
             ThreadOutcome(id="t2", action=ThreadAction.DISMISSED),
         ],
         commit_sha="abc", commit_status="pushed", updated_at="t1",
     ))
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[ThreadOutcome(id="t3", action=ThreadAction.ALREADY_ADDRESSED)],
         commit_status="no_changes", updated_at="t2",
     ))
@@ -979,14 +1002,14 @@ def test_update_fix_accumulates_threads_across_rounds():
     assert state.fix.threads[2].action == ThreadAction.ALREADY_ADDRESSED
 
 
-def test_update_fix_supersedes_same_thread():
+def test_apply_fix_supersedes_same_thread():
     """Re-processing a thread replaces its earlier outcome rather than duplicating it."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[ThreadOutcome(id="t1", action=ThreadAction.DEFERRED, reason="too complex")],
         updated_at="t1",
     ))
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
         commit_sha="abc", commit_status="pushed", updated_at="t2",
     ))
@@ -995,19 +1018,19 @@ def test_update_fix_supersedes_same_thread():
     assert state.fix.threads[0].reason == ""
 
 
-def test_update_fix_does_not_mutate_caller_summary():
+def test_apply_fix_does_not_mutate_caller_summary():
     """The merged list is a new object — the caller's FixSummary stays untouched."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_fix(state, FixSummary(threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)]))
+    apply(state, FixSummary(threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)]))
     incoming = FixSummary(threads=[ThreadOutcome(id="t2", action=ThreadAction.DISMISSED)])
-    update_fix(state, incoming)
+    apply(state, incoming)
     assert [t.id for t in incoming.threads] == ["t2"]
     assert [t.id for t in state.fix.threads] == ["t1", "t2"]
 
 
 def test_state_roundtrip_with_fix_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[
             ThreadOutcome(
                 id="t1", file="src/foo.go", line=10,
@@ -1054,7 +1077,7 @@ def test_save_preserves_fix_data():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        update_fix(state, FixSummary(
+        apply(state, FixSummary(
             threads=[
                 ThreadOutcome(id="t1", file="a.go", action=ThreadAction.FIXED),
                 ThreadOutcome(id="t2", file="b.go", action=ThreadAction.DISMISSED, reason="invalid"),
@@ -1076,7 +1099,7 @@ def test_already_addressed_action_roundtrips():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        update_fix(state, FixSummary(
+        apply(state, FixSummary(
             threads=[ThreadOutcome(
                 id="t1", file="a.go", action=ThreadAction.ALREADY_ADDRESSED,
                 reason="the constructor already injects the logger",
@@ -1127,16 +1150,16 @@ def test_apply_state_update_fix():
         assert loaded.fix.threads[0].action == ThreadAction.FIXED
 
 
-def test_update_fix_preserves_deferred_issue_across_rounds():
+def test_apply_fix_preserves_deferred_issue_across_rounds():
     """A later round must not clear the tracking issue, or it opens a duplicate."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[ThreadOutcome(id="t1", action=ThreadAction.DEFERRED)],
         deferred_issue_id="ENG-456",
         deferred_issue_url="https://linear.app/team/issue/ENG-456",
         updated_at="t1",
     ))
-    update_fix(state, FixSummary(
+    apply(state, FixSummary(
         threads=[ThreadOutcome(id="t2", action=ThreadAction.FIXED)],
         commit_sha="abc", commit_status="pushed", updated_at="t2",
     ))
@@ -1144,9 +1167,9 @@ def test_update_fix_preserves_deferred_issue_across_rounds():
     assert state.fix.deferred_issue_url == "https://linear.app/team/issue/ENG-456"
 
 
-def test_update_fix_replaces_deferred_issue_when_supplied():
+def test_apply_fix_replaces_deferred_issue_when_supplied():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    update_fix(state, FixSummary(deferred_issue_id="ENG-1", deferred_issue_url="u1"))
-    update_fix(state, FixSummary(deferred_issue_id="ENG-2", deferred_issue_url="u2"))
+    apply(state, FixSummary(deferred_issue_id="ENG-1", deferred_issue_url="u1"))
+    apply(state, FixSummary(deferred_issue_id="ENG-2", deferred_issue_url="u2"))
     assert state.fix.deferred_issue_id == "ENG-2"
     assert state.fix.deferred_issue_url == "u2"

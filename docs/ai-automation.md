@@ -399,9 +399,10 @@ A group matches a trace line when every one of its tokens is a substring of
 that line's space-joined argv — so `["pr", "rebase", "--fix"]` matches
 `pr rebase --fix --branch main`, and this cuts both ways. A short flag matches
 inside a longer one that starts with it: `"--track" in "--track-all"` is
-`True`, which is why `pr-comments-draft-only` can forbid the broad `["--track"]`
-and catch every tracking form, while `pr-comments-approved` has to forbid the
-narrower `["--track-all"]` by name — the broad token can't tell the two apart.
+`True`, which is why `pr-comments-draft-only`'s `["pr", "--track"]` catches
+every tracking form at once, while `pr-comments-approved` — which requires
+`--track` — has to forbid the narrower `["--track-all"]` by name, since the
+broad token can't tell the two apart.
 And a group's tokens don't need to land in separate argv elements: `all(t in
 "pr-rebase --branch eval" for t in ["pr", "rebase"])` is `True`, because both
 substrings are sitting inside the one word `pr-rebase`. That's not a

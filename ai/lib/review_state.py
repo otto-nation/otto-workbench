@@ -52,12 +52,22 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
 
 
 def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
-    total = 0.0
-    if state.holistic_done:
-        total += _parse_session_cost(phase_log_path(job.review_file, Phase.HOLISTIC))
-    for idx in state.groups_done:
-        total += _parse_session_cost(phase_log_path(job.review_file, Phase.GROUP, idx))
-    return total
+    """What the prior attempt spent, read from the session logs it left behind.
+
+    Derived from the logs rather than from the state flags, because a flag can
+    disagree with them in both directions. `holistic_done` means "phase 1 is
+    finished" — the scout branch sets it too, and then there is no
+    `holistic.jsonl` to find — while a phase that crashed mid-flight spent what
+    its log records and set no flag at all. A phase that never ran leaves no
+    log, and `_parse_session_cost` reads a missing file as zero, so listing
+    every log the run could have written needs no guard.
+    """
+    logs = [(Phase.HOLISTIC, None), (Phase.SCOUT, None)]
+    logs += [(Phase.GROUP, idx) for idx in range(1, state.group_count + 1)]
+    return sum(
+        _parse_session_cost(phase_log_path(job.review_file, phase, idx))
+        for phase, idx in logs
+    )
 
 
 def _validate_resume_state(

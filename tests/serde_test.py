@@ -15,7 +15,7 @@ sys.path.insert(0, str(LIB_DIR))
 
 from pr_state import PRState
 from review_preflight import PipelineState
-from serde import from_dict, to_dict
+from serde import from_dict, load_file, to_dict
 
 
 class Color(str, Enum):
@@ -266,3 +266,56 @@ def test_persisted_state_survives_a_json_round_trip(cls):
     restored = from_dict(cls, json.loads(json.dumps(to_dict(original))))
 
     assert restored == original
+
+
+# ── The load guard ───────────────────────────────────────────────────────────
+
+# Every persisted root must survive an unreadable file the same way. Derived
+# from PERSISTED_ROOTS rather than listed, so a new state file inherits this.
+
+
+@pytest.mark.parametrize("cls", PERSISTED_ROOTS, ids=lambda c: c.__name__)
+def test_load_file_returns_none_for_a_truncated_file(cls, tmp_path, capsys):
+    path = tmp_path / "state.json"
+    path.write_text('{"head_sha": "abc"')
+
+    assert load_file(cls, path) is None
+    assert "unreadable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cls", PERSISTED_ROOTS, ids=lambda c: c.__name__)
+def test_load_file_returns_none_for_a_missing_file(cls, tmp_path, capsys):
+    """A first run is not a fault, so a missing file must not warn."""
+    assert load_file(cls, tmp_path / "state.json") is None
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("cls", PERSISTED_ROOTS, ids=lambda c: c.__name__)
+def test_load_file_returns_none_for_a_directory(cls, tmp_path):
+    """A directory where the file belongs is not a usable file."""
+    (tmp_path / "state.json").mkdir()
+
+    assert load_file(cls, tmp_path / "state.json") is None
+
+
+def test_load_file_reconstructs_a_dataclass(tmp_path):
+    path = tmp_path / "inner.json"
+    path.write_text(json.dumps({"name": "x", "color": "blue"}))
+
+    assert load_file(Inner, path) == Inner(name="x", color=Color.BLUE)
+
+
+def test_load_file_returns_none_for_an_unknown_enum_value(tmp_path):
+    path = tmp_path / "inner.json"
+    path.write_text(json.dumps({"color": "chartreuse"}))
+
+    assert load_file(Inner, path) is None
+
+
+def test_load_file_returns_none_when_a_required_field_is_absent(tmp_path):
+    """PRState.identity has no default, so serde raises TypeError from
+    cls(**kwargs) — the case the old exception tuple had to be checked for."""
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"created_at": "2026-08-12T00:00:00+00:00"}))
+
+    assert load_file(PRState, path) is None

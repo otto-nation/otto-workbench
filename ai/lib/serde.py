@@ -7,8 +7,12 @@ for serialization and type-hint-driven reconstruction for deserialization.
 from __future__ import annotations
 
 import dataclasses
+import json
 from enum import Enum
+from pathlib import Path
 from typing import get_args, get_origin, get_type_hints
+
+import log
 
 
 def to_dict(obj) -> dict:
@@ -42,6 +46,27 @@ def from_dict(cls, data: dict):
         raw = data[f.name]
         kwargs[f.name] = _coerce(hints[f.name], raw)
     return cls(**kwargs)
+
+
+def load_file(cls, path: Path):
+    """Reconstruct a dataclass from a JSON file, or None if there isn't a usable one.
+
+    A missing file and an unreadable one both come back as None. Every caller
+    owns a regenerable cache — nothing in these files is authoritative — so
+    discarding one that will not parse is always a correct recovery, and the
+    warning is what keeps that from being silent.
+
+    ValueError covers JSONDecodeError and UnicodeDecodeError, which subclass it,
+    along with an unknown enum value and a non-numeric key under a dict[int, V].
+    TypeError covers a field with no dataclass default that the file omits.
+    """
+    if not path.is_file():
+        return None
+    try:
+        return from_dict(cls, json.loads(path.read_text()))
+    except (OSError, TypeError, ValueError):
+        log.warn(f"{path} is unreadable — discarding it")
+        return None
 
 
 def _identity(value):

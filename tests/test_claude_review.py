@@ -1465,6 +1465,29 @@ def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
     assert (d / "meta.json").exists()
 
 
+def test_gc_clean_intermediates_collects_every_phase_artifact(cr, tmp_path):
+    # Regression for #661: the pattern list was hand-copied and never grew
+    # scout.md or disprove.md. Derived from Phase, a new phase's artifact is
+    # collected without editing review_gc.
+    d = tmp_path / "review-dir"
+    d.mkdir()
+    stale = ("holistic.md", "scout.md", "group-1.md", "disprove.md")
+    for name in stale:
+        f = d / name
+        f.write_text("findings")
+        os.utime(str(f), (1622505600, 1622505600))
+    keep = d / "review.md"
+    keep.write_text("review")
+    os.utime(str(keep), (1622505600, 1622505600))
+
+    count = review_gc._clean_intermediates(d)
+
+    assert count == len(stale)
+    for name in stale:
+        assert not (d / name).exists(), f"{name} was not collected"
+    assert keep.exists(), "review.md is the deliverable, not an intermediate"
+
+
 def test_gc_clean_intermediates_preserves_recent(cr, tmp_path):
     d = tmp_path / "review-dir"
     d.mkdir()

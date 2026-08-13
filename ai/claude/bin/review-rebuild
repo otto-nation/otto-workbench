@@ -18,9 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import log
 from trail import Trail, add_trail_args
 from review_common import (
-    FILENAME_GROUP,
     META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
-    Mode, ReviewType,
+    Mode, Phase, ReviewType,
 )
 from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,
@@ -33,7 +32,7 @@ def _discover_group_files(review_dir: Path) -> list[str]:
     groups = []
     i = 1
     while True:
-        path = review_dir / FILENAME_GROUP.format(i)
+        path = review_dir / Phase.GROUP.output_filename.format(i)
         if not path.exists():
             break
         groups.append(str(path))

@@ -328,8 +328,8 @@ def _build_ci_failure_items(ci, pr: PRMetadata) -> list[str]:
     latest_run_id = ci.latest_run_id or ci.last_run_id
     if not latest_run_id or not ci.runs:
         return []
-    run = ci.runs.get(str(latest_run_id))
-    if not run or not hasattr(run, "failures"):
+    run = ci.runs.get(latest_run_id)
+    if not run:
         return []
 
     pr_files = {f["path"] for f in pr.files}

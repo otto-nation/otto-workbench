@@ -436,7 +436,7 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     try:
         stats = triage_result.stats
         st = pr_state.load_or_init(**ctx_args)
-        pr_state.update_triage(st, pr_state.TriageSummary(
+        pr_state.apply(st, pr_state.TriageSummary(
             total=stats.total,
             actionable=stats.actionable,
             valid=stats.valid,
@@ -1377,7 +1377,7 @@ def _reconcile_fix_snapshot(
 ) -> int:
     """Flip snapshot deferrals that GitHub contradicts. Returns the flip count.
 
-    The snapshot records what one fix pass concluded, and `pr_state.update_fix`
+    The snapshot records what one fix pass concluded, and `FixSummary.merge_into`
     accumulates it across rounds without ever expiring an outcome. Work done by
     hand in between never passes through it, so a thread fixed outside the tool
     stays DEFERRED forever. Publishing that is a false claim about someone's
@@ -2104,7 +2104,7 @@ def _persist_fix_state(
             worktree_root=wt_path, repo=ctx.repo, branch=ctx.branch,
             pr_number=ctx.pr_number, head_sha=ctx.head_sha,
         )
-        pr_state.update_fix(st, fix_summary)
+        pr_state.apply(st, fix_summary)
         pr_state.save_state(wt_path, st)
     except Exception as exc:
         if trail:
@@ -2563,7 +2563,7 @@ def _run_threads(trail, args, ctx) -> None:
         current_review_ids = [c["id"] for c in review_body_comments]
         for c in review_body_comments:
             c["seen"] = c["id"] in prior_seen_review_ids
-        pr_state.update_comments(st, pr_state.CommentsSummary(
+        pr_state.apply(st, pr_state.CommentsSummary(
             total_threads=len(report.threads),
             by_state=thread_states,
             blocking_reviewers=blocking,

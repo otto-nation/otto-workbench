@@ -151,6 +151,18 @@ def test_pr_state_structure():
     assert schema["properties"]["rebase"]["type"] == "object"
 
 
+def test_pr_state_runs_schema_describes_run_history():
+    """`pr --tool-schema` publishes PRState as the pr CLI's output contract.
+    A bare `dict` hint on CIDomain.runs made this an empty object, so the
+    contract said nothing at all about run history."""
+    from pr_state import PRState
+
+    runs = dataclass_to_schema(PRState)["properties"]["ci"]["properties"]["runs"]
+    run = runs["additionalProperties"]
+    assert run["properties"]["run_id"] == {"type": "integer"}
+    assert "failures" in run["properties"]
+
+
 def test_bare_dict():
     @dataclass
     class WithBareDict:

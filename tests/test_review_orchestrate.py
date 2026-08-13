@@ -1876,7 +1876,6 @@ class TestPhaseSynthesis:
         review_content = "# Review\n\n## Summary\nLooks good.\n\n## Verdict\nApprove.\n"
 
         def mock_invoke(inv, **kwargs):
-            from pathlib import Path
             Path(job.review_file).write_text(review_content)
             Path(inv.session_log).write_text(
                 '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
@@ -1893,7 +1892,6 @@ class TestPhaseSynthesis:
         job = self._make_job(ro, tmp_path)
 
         def mock_invoke(inv, **kwargs):
-            from pathlib import Path
             Path(inv.session_log).write_text(
                 '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
             return 1
@@ -1907,7 +1905,6 @@ class TestPhaseSynthesis:
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
         _, cost = ro._phase_synthesis(job, "", 3, merged)
 
-        from pathlib import Path
         assert ro.FALLBACK_SUMMARY in Path(job.review_file).read_text()
         assert cost == 2.5
 

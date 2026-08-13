@@ -443,7 +443,14 @@ def _gc_stale_pr_state(worktree_root: Path) -> int:
     if not state_file.is_file():
         return 0
     state = pr_state.load_state(worktree_root)
-    if not state or not state.identity.pr_number:
+    if state is None:
+        # The file exists — checked above — so this is a corrupt one, not an
+        # absent one. gc is the command that owns deleting the state dir, and
+        # nothing in it is authoritative, so clearing it is a clean recovery.
+        _clear_state_dir(state_dir)
+        log.info("GC: removed unreadable pr state")
+        return 1
+    if not state.identity.pr_number:
         return 0
     try:
         r = subprocess.run(

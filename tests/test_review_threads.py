@@ -1868,7 +1868,7 @@ class TestStaleSnapshotIsAnnounced:
         assert any("(unrecorded)" in w for w in self._warnings(rt, worktree, "aaaaaaa"))
 
     def test_an_empty_snapshot_has_nothing_to_be_stale_about(self, rt, worktree):
-        pr_state.save_state(worktree, PRState(
+        pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
                                 head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(),

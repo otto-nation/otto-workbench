@@ -582,7 +582,7 @@ def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "other")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/login", "pr-sha"))
-    monkeypatch.setattr(pr_target, "repo_name_from_origin", lambda cwd=None: "widget")
+    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
 
     ctx = pr_context.resolve(pr="2973")
 
@@ -598,7 +598,7 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
     monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
-    monkeypatch.setattr(pr_target, "repo_name_from_origin", lambda cwd=None: "widget")
+    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
 
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/a", "sha-a"))
     first = pr_context.resolve(pr="1")
@@ -623,7 +623,7 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
     monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "feat/login")
-    monkeypatch.setattr(pr_target, "repo_name_from_origin", lambda cwd=None: "widget")
+    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
     monkeypatch.setattr(pr_context, "_resolve_branch", lambda hint, cwd=None: hint)
     monkeypatch.setattr(pr_context, "_pr_from_branch", lambda repo, branch: 2973)
 
@@ -651,7 +651,7 @@ def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/a", "sha"))
-    monkeypatch.setattr(pr_target, "repo_name_from_origin", lambda cwd=None: None)
+    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: None)
 
     with pytest.raises(SystemExit) as excinfo:
         pr_context.resolve(pr="1")

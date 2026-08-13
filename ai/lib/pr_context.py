@@ -130,19 +130,19 @@ def resolve(
         worktree_root=worktree_root,
         head_sha=head_sha,
         current_branch=current,
-        target_dir=pr_target.target_dir(_target_repo_name(cwd), branch_name),
+        target_dir=pr_target.target_dir(_target_repo_key(cwd), branch_name),
     )
 
 
-def _target_repo_name(cwd: str | None) -> str:
-    """The repo-name half of the target key, or exit 1.
+def _target_repo_key(cwd: str | None) -> str:
+    """The repo half of the target key, or exit 1.
 
     Fatal rather than falling back, and affordable because it is: _detect_repo
     has already exited 1 above if this is not a repo `gh` can name.
     """
-    name = pr_target.repo_name_from_origin(cwd)
-    if name:
-        return name
+    key = pr_target.repo_key_from_origin(cwd)
+    if key:
+        return key
     log.error(
         "Cannot read the origin remote — pr keys a run's state and lock on "
         "(origin repo, branch)"

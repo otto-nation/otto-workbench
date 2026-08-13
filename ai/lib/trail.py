@@ -20,6 +20,8 @@ from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
+import log
+
 
 # ── Enums ─────────────────────────────────────────────────────────────────
 
@@ -84,36 +86,53 @@ def _ensure_gitignored(artifact_path: Path) -> None:
     """Add the artifact directory to .gitignore when it sits inside a repo.
 
     The trail is the only thing that creates this directory now that state is
-    user-scoped, so keeping it out of the consumer repo's diff lands here.
-    Silently skips when the directory is not inside a git repository — review
-    artifact dirs live under state_dir(), where there is nothing to ignore.
+    user-scoped, so keeping it out of the consumer repo's diff lands here. Every
+    trail passes through, not only `.workbench` inside a consumer repo, so
+    whether the directory is inside a repo is checked rather than assumed: a
+    review artifact dir under state_dir() usually is not, but a machine whose
+    ~/.config is itself a git repo puts one there.
+
+    The rule written is the directory's path relative to the repo root, anchored
+    with a leading slash — a bare name would ignore every directory called that
+    anywhere in the tree, and this function only ever means the one directory it
+    just created.
     """
     try:
-        toplevel = subprocess.run(
-            ["git", "-C", str(artifact_path.parent), "rev-parse", "--show-toplevel"],
+        r = subprocess.run(
+            ["git", "-C", str(artifact_path),
+             "rev-parse", "--show-toplevel", "--show-prefix"],
             capture_output=True, text=True,
         )
-        if toplevel.returncode != 0:
-            return
     except FileNotFoundError:
         return
 
-    name = artifact_path.name
+    lines = r.stdout.splitlines()
+    toplevel = lines[0].strip() if lines else ""
+    # --show-prefix is empty when the artifact dir *is* the repo root, which is
+    # not a directory anyone can ignore.
+    rel = lines[1].strip().strip("/") if len(lines) > 1 else ""
+    # Emptiness is checked alongside the exit code because Path("") is Path("."):
+    # a rev-parse that somehow succeeds saying nothing would write .gitignore
+    # into whatever directory the process happens to be standing in.
+    if r.returncode != 0 or not toplevel or not rel:
+        return
+
     ignored = subprocess.run(
-        ["git", "-C", str(artifact_path.parent), "check-ignore", "-q", name],
+        ["git", "-C", toplevel, "check-ignore", "-q", rel],
         capture_output=True,
     )
     if ignored.returncode == 0:
         return
 
-    gitignore = Path(toplevel.stdout.strip()) / ".gitignore"
+    gitignore = Path(toplevel) / ".gitignore"
     needs_newline = False
     if gitignore.exists():
         content = gitignore.read_text()
         needs_newline = bool(content) and not content.endswith("\n")
-    prefix = "\n" if needs_newline else ""
+    lead = "\n" if needs_newline else ""
     with open(gitignore, "a") as f:
-        f.write(f"{prefix}\n# Worktree-local run artifacts (pr CLI)\n{name}/\n")
+        f.write(f"{lead}\n# Run artifacts (otto-workbench AI scripts)\n/{rel}/\n")
+    log.info(f"trail: added /{rel}/ to {gitignore}")
 
 
 # ── Trail ─────────────────────────────────────────────────────────────────

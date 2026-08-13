@@ -1,10 +1,16 @@
 """Where a run's bookkeeping lives, keyed by what the run targets.
 
-A run's target is ``(origin repo name, target branch)``. Both components are
+A run's target is ``(origin repo key, target branch)``. Both components are
 readable from a checkout with no network call, which is what lets three
 different readers agree on one directory: the ``pr`` CLI resolving a PR it is
 about to review, ``workbench-statusline`` rendering a prompt, and ui-code's
 server watching a repo it has never checked out.
+
+The repo key is owner-qualified — ``acme-widget``, not ``widget``. A bare repo
+name is not unique: ``acme/api`` and ``other-org/api`` would share a directory,
+so one repo's run would overwrite the other's ``state.json`` and hold its
+``run.lock``, serializing PRs that have nothing to do with each other. Forks and
+ordinary names (``api``, ``docs``, ``site``) make that collision routine.
 
 There is deliberately no second key format. An alternate PR-number key would be
 a second source of truth for one target, and a transient ``gh`` failure could
@@ -12,7 +18,7 @@ move a live target between the two mid-flight.
 
 The layout is a published interface — ui-code reimplements it in TypeScript::
 
-    <state_dir()>/pr/<repo-name>-<branch-slug>/
+    <state_dir()>/pr/<owner>-<repo>-<branch-slug>/
         state.json
         run.lock
 
@@ -39,6 +45,13 @@ _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 # separates host from path in scp-style remotes (git@github.com:owner/repo.git).
 _REPO_TAIL_RE = re.compile(r"[/:]")
 
+# A remote names a host two ways: an explicit scheme (https://, ssh://, git://)
+# or scp-style user@host:path. Everything else is a filesystem path
+# (/srv/git/widget.git, ../widget) — no host means no owner to qualify the key
+# with, so such a remote keeps its single trailing segment.
+_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_SCP_RE = re.compile(r"^[^/]+@[^/:]+:")
+
 
 def slug(branch: str) -> str:
     """A branch name as a single path component.
@@ -49,15 +62,36 @@ def slug(branch: str) -> str:
     return _SLUG_RE.sub("-", branch).strip("-")
 
 
-def _repo_name(url: str) -> str | None:
-    tail = _REPO_TAIL_RE.split(url.rstrip("/"))[-1]
+def _remote_path(url: str) -> str:
+    """The path a hosted remote points at, or "" when the remote has no host."""
+    scheme = _SCHEME_RE.match(url)
+    if scheme:
+        after_scheme = url[scheme.end():].split("/", 1)
+        return after_scheme[1] if len(after_scheme) > 1 else ""
+    scp = _SCP_RE.match(url)
+    return url[scp.end():] if scp else ""
+
+
+def _repo_key(url: str) -> str | None:
+    """An origin URL as one owner-qualified path component, or None.
+
+    ``acme-widget`` for both ``git@github.com:acme/widget.git`` and
+    ``https://github.com/acme/widget``. Composed through ``slug`` so the
+    separator rules stay in one place.
+    """
+    url = url.rstrip("/")
+    tail = _REPO_TAIL_RE.split(url)[-1]
     if tail.endswith(".git"):
         tail = tail[: -len(".git")]
-    return tail or None
+    if not tail:
+        return None
+    parts = [p for p in _remote_path(url).split("/") if p]
+    owner = parts[-2] if len(parts) >= 2 else ""
+    return slug(f"{owner}-{tail}" if owner else tail)
 
 
-def repo_name_from_origin(cwd: str | None = None) -> str | None:
-    """The repo's short name per its ``origin`` remote, or None if it has none.
+def repo_key_from_origin(cwd: str | None = None) -> str | None:
+    """The repo's key per its ``origin`` remote, or None if it has none.
 
     Not ``gh repo view``: the key must be derivable without the network, and two
     sources for one component is how the two derivations below drift apart.
@@ -68,12 +102,12 @@ def repo_name_from_origin(cwd: str | None = None) -> str | None:
     )
     if r.returncode != 0 or not r.stdout.strip():
         return None
-    return _repo_name(r.stdout.strip())
+    return _repo_key(r.stdout.strip())
 
 
-def target_dir(repo_name: str, branch: str) -> Path:
+def target_dir(repo_key: str, branch: str) -> Path:
     """Where a run's state and lock live, keyed by what the run targets."""
-    return workbench_paths.state_dir() / TARGETS_DIR / f"{repo_name}-{slug(branch)}"
+    return workbench_paths.state_dir() / TARGETS_DIR / f"{repo_key}-{slug(branch)}"
 
 
 def target_dir_for_checkout(path: Path) -> Path | None:
@@ -83,8 +117,8 @@ def target_dir_for_checkout(path: Path) -> Path | None:
     a repo without an ``origin`` — callers render that as "no state" rather than
     guessing a key.
     """
-    repo_name = repo_name_from_origin(str(path))
-    if not repo_name:
+    repo_key = repo_key_from_origin(str(path))
+    if not repo_key:
         return None
     # Not `rev-parse --abbrev-ref`: that needs HEAD to resolve to a commit, so
     # it fails on a freshly-init'd branch with nothing committed yet.
@@ -97,4 +131,4 @@ def target_dir_for_checkout(path: Path) -> Path | None:
     branch = r.stdout.strip()
     if r.returncode != 0 or not branch:
         return None
-    return target_dir(repo_name, branch)
+    return target_dir(repo_key, branch)

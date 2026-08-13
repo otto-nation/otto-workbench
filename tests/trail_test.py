@@ -10,6 +10,7 @@ from pathlib import Path
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
+import trail as trail_module
 from trail import (
     SCHEMA_VERSION,
     TRAIL_FILENAME,
@@ -219,10 +220,46 @@ def test_trail_start_gitignores_a_new_artifact_dir(tmp_path, monkeypatch):
     assert ".workbench/" in (tmp_path / ".gitignore").read_text()
 
 
-def test_trail_start_outside_a_repo_writes_no_gitignore(tmp_path):
-    """Review artifact dirs live under state_dir(), where there is no repo."""
+def test_trail_start_gitignores_a_nested_artifact_dir_by_its_path(tmp_path, monkeypatch):
+    """A bare name would ignore every directory called that, anywhere in the tree.
+
+    This is the `~/.config` case: a dotfiles repo whose first `dream-scan` run
+    creates `workbench/logs/dream-scan/`. Ignoring precisely that path is right;
+    ignoring `dream-scan/` repo-wide is not the trail's call to make.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    artifact_dir = tmp_path / "workbench" / "logs" / "dream-scan"
+    Trail.start(script="dream-scan", artifact_dir=str(artifact_dir), context={})
+    assert "/workbench/logs/dream-scan/" in (tmp_path / ".gitignore").read_text()
+
+
+def test_trail_start_outside_a_repo_writes_no_gitignore(tmp_path, monkeypatch):
+    """Review artifact dirs live under state_dir(), where there is no repo.
+
+    Run from inside tmp_path so an unguarded empty toplevel — Path("") is
+    Path(".") — would land its .gitignore right where this asserts there is none.
+    """
+    monkeypatch.chdir(tmp_path)
     artifact_dir = tmp_path / "reviews" / "widget-1"
     Trail.start(script="claude-review", artifact_dir=str(artifact_dir), context={})
+    assert not (tmp_path / ".gitignore").exists()
+
+
+def test_trail_start_ignores_a_rev_parse_that_answers_nothing(tmp_path, monkeypatch):
+    """returncode 0 with empty stdout is not a repo root, and must not be used."""
+    monkeypatch.chdir(tmp_path)
+    real_run = subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if "rev-parse" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(trail_module.subprocess, "run", fake_run)
+    Trail.start(script="pr", artifact_dir=str(tmp_path / "art"), context={})
     assert not (tmp_path / ".gitignore").exists()
 
 

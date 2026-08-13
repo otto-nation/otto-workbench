@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
@@ -458,11 +457,28 @@ def new_state(
     )
 
 
-def update_identity(state: PRState, head_sha: str, pr_number: int | None = None) -> None:
-    """Refresh identity fields that change across invocations."""
+def update_identity(
+    state: PRState,
+    head_sha: str,
+    pr_number: int | None = None,
+    worktree_root: str = "",
+) -> None:
+    """Refresh identity fields that change across invocations.
+
+    ``worktree_root`` is one of them now that the file is keyed on the target
+    rather than stored inside the checkout: consecutive runs against one target
+    can come from different worktrees, and consumers read this field to find the
+    checkout a fix was committed in.
+
+    Overwritten only when the incoming value is non-empty. A run from a bare
+    repo has no worktree to name, and blanking the field would strand those
+    consumers on a path an earlier run had recorded correctly.
+    """
     state.identity.head_sha = head_sha
     if pr_number is not None:
         state.identity.pr_number = pr_number
+    if worktree_root:
+        state.identity.worktree_root = worktree_root
 
 
 @cache
@@ -546,7 +562,7 @@ def load_or_init(
     """
     state = load_state(target_dir)
     if state is not None:
-        update_identity(state, head_sha, pr_number)
+        update_identity(state, head_sha, pr_number, worktree_root)
         return state
     return new_state(
         repo=repo,

@@ -5,6 +5,7 @@ against the same table. Changing a row changes where live runs look for their
 own state, in a repo whose tests cannot see this one.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,10 @@ import pytest
 import pr_target
 
 
+# Cross-repo fixture. ui-code reimplements slug() in TypeScript and asserts
+# against this same table; nothing in this repo's CI can see that side, so a row
+# edited here drifts silently until a live run looks for state in a directory the
+# other implementation never writes. Change a row only together with ui-code.
 SLUG_VECTORS = [
     ("main", "main"),
     ("isaac/fix/target_scoped_run_lock", "isaac-fix-target_scoped_run_lock"),
@@ -52,14 +57,22 @@ def test_target_dir_follows_a_moved_state_root(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("url,expected", [
-    ("https://github.com/otto-nation/otto-workbench.git", "otto-workbench"),
-    ("https://github.com/otto-nation/otto-workbench", "otto-workbench"),
-    ("git@github.com:otto-nation/otto-workbench.git", "otto-workbench"),
+    ("https://github.com/otto-nation/otto-workbench.git", "otto-nation-otto-workbench"),
+    ("https://github.com/otto-nation/otto-workbench", "otto-nation-otto-workbench"),
+    ("git@github.com:otto-nation/otto-workbench.git", "otto-nation-otto-workbench"),
+    ("ssh://git@github.com/otto-nation/otto-workbench.git", "otto-nation-otto-workbench"),
     ("git@github.com:otto-workbench.git", "otto-workbench"),
     ("/srv/mirrors/otto-workbench/", "otto-workbench"),
+    ("../otto-workbench", "otto-workbench"),
 ])
-def test_repo_name_parsing(url, expected):
-    assert pr_target._repo_name(url) == expected
+def test_repo_key_parsing(url, expected):
+    assert pr_target._repo_key(url) == expected
+
+
+def test_the_owner_is_what_keeps_same_named_repos_apart():
+    """The whole point of qualifying the key — one shared dir is one shared lock."""
+    assert pr_target._repo_key("git@github.com:acme/api.git") != \
+        pr_target._repo_key("git@github.com:other-org/api.git")
 
 
 def _git_repo(path: Path, origin: str, branch: str = "main") -> Path:
@@ -69,11 +82,30 @@ def _git_repo(path: Path, origin: str, branch: str = "main") -> Path:
     return path
 
 
+@pytest.mark.parametrize("origin,expected", [
+    ("git@github.com:acme/widget.git", "acme-widget"),
+    ("https://github.com/acme/widget.git", "acme-widget"),
+    ("https://github.com/acme/widget", "acme-widget"),
+    ("https://github.com/acme/widget/", "acme-widget"),
+    ("/srv/git/widget.git", "widget"),
+])
+def test_repo_key_from_origin_reads_the_remote(tmp_path, origin, expected):
+    assert pr_target.repo_key_from_origin(str(_git_repo(tmp_path / "wt", origin))) == expected
+
+
+def test_repo_key_from_origin_is_none_without_an_origin(tmp_path):
+    path = tmp_path / "wt"
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    assert pr_target.repo_key_from_origin(str(path)) is None
+
+
 def test_target_dir_for_checkout_matches_target_dir(tmp_path, monkeypatch):
     """The two derivations of one identity, asserted equal rather than assumed."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = _git_repo(tmp_path / "wt", "git@github.com:acme/widget.git", "feat/login")
-    assert pr_target.target_dir_for_checkout(wt) == pr_target.target_dir("widget", "feat/login")
+    assert pr_target.target_dir_for_checkout(wt) == pr_target.target_dir(
+        "acme-widget", "feat/login")
 
 
 def test_target_dir_for_checkout_prefers_origin_over_any_api_name(tmp_path, monkeypatch):
@@ -85,7 +117,7 @@ def test_target_dir_for_checkout_prefers_origin_over_any_api_name(tmp_path, monk
     """
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = _git_repo(tmp_path / "wt", "https://github.com/acme/renamed-clone.git", "main")
-    assert pr_target.target_dir_for_checkout(wt).name == "renamed-clone-main"
+    assert pr_target.target_dir_for_checkout(wt).name == "acme-renamed-clone-main"
 
 
 def test_target_dir_for_checkout_is_none_without_an_origin(tmp_path, monkeypatch):
@@ -99,9 +131,11 @@ def test_target_dir_for_checkout_is_none_without_an_origin(tmp_path, monkeypatch
 def test_target_dir_for_checkout_is_none_on_detached_head(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = _git_repo(tmp_path / "wt", "git@github.com:acme/widget.git")
+    # Layered onto os.environ, not substituted for it: a replacement env has to
+    # guess PATH, and git is not under /usr/bin on a Homebrew install.
     subprocess.run(["git", "-C", str(wt), "commit", "-q", "--allow-empty", "-m", "x"],
-                   check=True, env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-                                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
-                                    "PATH": "/usr/bin:/bin"})
+                   check=True, env={**os.environ,
+                                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
     subprocess.run(["git", "-C", str(wt), "checkout", "-q", "--detach", "HEAD"], check=True)
     assert pr_target.target_dir_for_checkout(wt) is None

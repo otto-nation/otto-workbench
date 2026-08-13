@@ -352,6 +352,33 @@ def test_load_or_init_records_the_worktree_it_ran_from(tmp_path):
     assert state.identity.worktree_root == "/checkouts/feat-a"
 
 
+def test_load_or_init_repoints_the_worktree_a_later_run_ran_from(tmp_path):
+    """The file outlives the checkout that wrote it, so the field has to move.
+
+    A bare-repo run stores "", and review-threads reads exactly this field to
+    decide whether a fix commit was pushed. Left stale it reports "Push still
+    pending" forever; left pointing at worktree A it inspects the wrong tree.
+    """
+    save_state(tmp_path, load_or_init(
+        target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+        pr_number=1, head_sha="sha", worktree_root=""))
+
+    state = load_or_init(target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+                         pr_number=1, head_sha="sha2", worktree_root="/checkouts/feat-a")
+    assert state.identity.worktree_root == "/checkouts/feat-a"
+
+
+def test_load_or_init_keeps_a_known_worktree_when_a_bare_run_has_none(tmp_path):
+    """A run with nothing to say must not erase what an earlier run knew."""
+    save_state(tmp_path, load_or_init(
+        target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+        pr_number=1, head_sha="sha", worktree_root="/checkouts/feat-a"))
+
+    state = load_or_init(target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+                         pr_number=1, head_sha="sha2", worktree_root="")
+    assert state.identity.worktree_root == "/checkouts/feat-a"
+
+
 def _write_raw_state(root: Path, payload) -> Path:
     """Write a state file's bytes directly, bypassing save_state."""
     path = root / "state.json"

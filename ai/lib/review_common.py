@@ -126,9 +126,9 @@ class Phase(StrEnum):
 
     @property
     def _stem(self) -> str:
-        """The filename stem this phase's artifacts share.
+        """The filename stem this phase's artifacts share: the phase's own name.
 
-        ``group`` is the one fan-out phase, so its name carries the index.
+        ``group`` is the one fan-out phase, so its stem carries the index.
         """
         return f"{self}-{{}}" if self is Phase.GROUP else str(self)
 

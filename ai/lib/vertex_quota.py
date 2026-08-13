@@ -131,20 +131,19 @@ def _get_access_token() -> str | None:
     return None
 
 
-def _cache_dir() -> Path:
-    """Where quota lookups are cached, under the workbench cache root.
+_CACHE_CONSUMER = "vertex-quota"
+
+
+def _cache_key(project: str, region: str) -> Path:
+    """Where one project/region lookup is cached.
 
     Resolved per call rather than frozen into a module constant, matching how
     ``workbench_paths`` resolves the roots themselves — the environment is
     routinely set after import, by tests and by callers that re-point a root.
     """
-    return workbench_paths.cache_dir() / "vertex-quota"
-
-
-def _cache_key(project: str, region: str) -> Path:
     raw = f"{project}:{region}"
     h = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    return _cache_dir() / f"{h}.json"
+    return workbench_paths.cache_dir(_CACHE_CONSUMER) / f"{h}.json"
 
 
 def _check_cache(project: str, region: str) -> dict[str, str] | None:

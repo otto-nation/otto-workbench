@@ -102,6 +102,13 @@ This resumes the in-progress rebase with AI conflict resolution and force-pushes
 
 **Exit 1 — error.** Report the error from stderr.
 
+When the failure is `Recovery left uncommitted changes — not pushing`, the rebase
+itself succeeded but a push-recovery step left edits outside any commit, so the
+branch was deliberately left unpushed (`force_pushed` is `false`). Pre-push hooks
+validate the worktree rather than the commits, so pushing there would green-light
+a HEAD no hook saw. Report the listed paths and let the user commit or discard
+them before re-running.
+
 ---
 
 ## Constraints

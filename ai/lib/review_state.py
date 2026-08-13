@@ -60,10 +60,17 @@ def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
     `holistic.jsonl` to find — while a phase that crashed mid-flight spent what
     its log records and set no flag at all. A phase that never ran leaves no
     log, and `_parse_session_cost` reads a missing file as zero, so listing
-    every log the run could have written needs no guard.
+    every log a pipeline run can write needs no guard.
+
+    Every such log is listed. Both phase-1 scans appear because a run resumed at
+    a different effort can leave one of each, and a re-run overwrites its own
+    log, so nothing here is counted twice. `Phase.SINGLE` names no log and
+    `Phase.FIX` belongs to a separate `--fix` pass, so neither is a pipeline
+    cost.
     """
     logs = [(Phase.HOLISTIC, None), (Phase.SCOUT, None)]
     logs += [(Phase.GROUP, idx) for idx in range(1, state.group_count + 1)]
+    logs += [(Phase.SYNTHESIS, None), (Phase.DISPROVE, None)]
     return sum(
         _parse_session_cost(phase_log_path(job.review_file, phase, idx))
         for phase, idx in logs

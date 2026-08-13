@@ -504,6 +504,16 @@ print(result)
   [ "$result" = "0.75" ]
 }
 
+@test "_sum_existing_costs: counts the synthesis and disprove logs" {
+  # Recovery from a synthesis failure sums costs before clearing the flag, so a
+  # costly synthesis attempt has to survive into the resumed run's budget.
+  echo '{"type": "result", "total_cost_usd": 2.00}' > "$TMPDIR/synthesis.jsonl"
+  echo '{"type": "result", "total_cost_usd": 0.50}' > "$TMPDIR/disprove.jsonl"
+
+  result=$(_sum_costs "group_names=['a']")
+  [ "$result" = "2.50" ]
+}
+
 @test "FILENAME_PIPELINE_STATE constant exists" {
   result=$(_py "print(mod.FILENAME_PIPELINE_STATE)")
   [ "$result" = "pipeline.json" ]

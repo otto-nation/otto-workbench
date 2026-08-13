@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,7 +18,8 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import eval_scoring_skill as ess
-from eval_task import RunArtifacts
+from ai_usage import SessionUsage
+from eval_task import RunArtifacts, RunOptions
 
 
 class TestGroupMatches:
@@ -302,9 +305,128 @@ class TestScore:
         result = ess.SkillTask().score(_artifacts(matches, []), {})
         assert [m.matched_finding_id for m in result.matches if m.matched] == ["a run"]
 
+    def test_usage_fields_pass_through_without_transposition(self):
+        """A transposed field (e.g. input_tokens=usage.output_tokens) must fail this."""
+        usage = SessionUsage(
+            cost=1.5, input_tokens=10, output_tokens=20,
+            cache_read_tokens=30, cache_write_tokens=40, duration_ms=5000,
+        )
+        artifacts = RunArtifacts(usage=usage, data={"matches": [], "violations": []})
+        result = ess.SkillTask().score(artifacts, {})
+        assert result.cost_usd == 1.5
+        assert result.duration_ms == 5000
+        assert result.input_tokens == 10
+        assert result.output_tokens == 20
+        assert result.billed_input == usage.billed_input
+        assert result.cache_read_ratio == usage.cache_read_ratio
+
 
 class TestTaskRegistration:
     def test_the_runner_can_resolve_it(self):
         import eval_task
 
         assert eval_task.get_task("skill").name == "skill"
+
+
+def _skill_case(tmp_path, **manifest_fields):
+    """A minimal on-disk case: a one-file src/ tree plus a manifest.json.
+
+    create_temp_repo commits src/'s contents as "add buggy code"; an empty
+    tree leaves nothing to commit and git exits non-zero.
+    """
+    case_dir = tmp_path / "case"
+    (case_dir / "src").mkdir(parents=True)
+    (case_dir / "src" / "placeholder.txt").write_text("fixture\n")
+    (case_dir / "manifest.json").write_text(json.dumps(manifest_fields))
+    return case_dir
+
+
+class TestRunValidatesManifest:
+    """A hand-written case missing a required field must name itself, not crash blind."""
+
+    def test_a_missing_skill_field_names_the_case(self, tmp_path):
+        case_dir = _skill_case(tmp_path, prompt="go")
+        with pytest.raises(ValueError, match=re.escape(str(case_dir))):
+            ess.SkillTask().run(case_dir, RunOptions())
+
+    def test_a_missing_prompt_field_names_the_case(self, tmp_path):
+        case_dir = _skill_case(tmp_path, skill="pr-rebase")
+        with pytest.raises(ValueError, match=re.escape(str(case_dir))):
+            ess.SkillTask().run(case_dir, RunOptions())
+
+
+class TestRunCleansUpOnFailure:
+    def test_a_malformed_responses_file_leaves_no_temp_dirs(self, monkeypatch, tmp_path):
+        """A raise after the temp repo and work dir exist must not leak either."""
+        case_dir = _skill_case(tmp_path, skill="pr-rebase", prompt="go")
+        (case_dir / "responses.json").write_text(json.dumps(
+            {"gh": {"rules": [{"stdout": "ok"}]}}  # missing "match"
+        ))
+
+        created = []
+        real_mkdtemp = ess.tempfile.mkdtemp
+
+        def recording_mkdtemp(*args, **kwargs):
+            path = real_mkdtemp(*args, **kwargs)
+            created.append(path)
+            return path
+
+        real_create_temp_repo = ess.create_temp_repo
+
+        def recording_create_temp_repo(*args, **kwargs):
+            path = real_create_temp_repo(*args, **kwargs)
+            created.append(path)
+            return path
+
+        monkeypatch.setattr(ess.tempfile, "mkdtemp", recording_mkdtemp)
+        monkeypatch.setattr(ess, "create_temp_repo", recording_create_temp_repo)
+
+        with pytest.raises(ValueError, match="gh"):
+            ess.SkillTask().run(case_dir, RunOptions())
+
+        assert created, "the fixture repo and work dir must have been created"
+        assert not any(Path(p).exists() for p in created)
+
+
+class TestRunWiring:
+    """No corpus case ever calls run() end to end (Tasks 5-6 only exercise
+    score() against synthetic traces), so this stubs the one seam that would
+    otherwise only be checked by hand: the AgentInvocation this method builds.
+    """
+
+    def test_env_prompt_and_temp_dirs_are_wired_correctly(self, monkeypatch, tmp_path):
+        case_dir = _skill_case(
+            tmp_path,
+            skill="pr-rebase",
+            prompt="rebase the branch",
+            requires=[["git", "rebase"]],
+            forbids=[["push", "--force"]],
+        )
+
+        captured = {}
+
+        def stub_invoke_fix(inv):
+            captured["invocation"] = inv
+            # The trace path is baked into the shims at bin_dir's sibling,
+            # per write_shims's own layout (work_dir/bin, work_dir/trace.jsonl).
+            bin_dir = Path(inv.env["PATH"].split(os.pathsep)[0])
+            captured["bin_dir"] = bin_dir
+            trace_file = bin_dir.parent / "trace.jsonl"
+            trace_file.write_text(json.dumps(["git", "rebase", "origin/main"]) + "\n")
+            return 0
+
+        monkeypatch.setattr(ess.ai_backend, "invoke_fix", stub_invoke_fix)
+
+        artifacts = ess.SkillTask().run(case_dir, RunOptions())
+        try:
+            inv = captured["invocation"]
+            bin_dir = captured["bin_dir"]
+            assert inv.env["PATH"].split(os.pathsep)[0] == str(bin_dir)
+            assert "# PR Rebase" in inv.prompt
+            assert "rebase the branch" in inv.prompt
+            assert artifacts.temp_dirs == [inv.cwd, str(bin_dir.parent)]
+            assert [m.matched for m in artifacts.data["matches"]] == [True]
+            assert artifacts.data["violations"] == []
+        finally:
+            for path in artifacts.temp_dirs:
+                shutil.rmtree(path, ignore_errors=True)

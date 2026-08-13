@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -231,40 +232,59 @@ class SkillTask:
 
     def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:
         manifest = json.loads((case_dir / "manifest.json").read_text())
+        if "skill" not in manifest:
+            raise ValueError(f"{case_dir}: manifest missing 'skill'")
+        if "prompt" not in manifest:
+            raise ValueError(f"{case_dir}: manifest missing 'prompt'")
+        # Resolved before either temp dir exists: a bad skill name or a
+        # malformed responses.json below would otherwise leak a git repo and a
+        # work dir on every raise, since the runner's cleanup only covers the
+        # code after run() returns (ai/claude/bin/eval-models:221-232).
+        skill = skill_body(manifest["skill"])
+        prompt = manifest["prompt"]
+
         repo_dir = create_temp_repo(str(case_dir / "src"), prefix="eval-skill-")
         work_dir = Path(tempfile.mkdtemp(prefix="eval-skill-work-"))
-        trace_file = work_dir / "trace.jsonl"
-        session_log = str(work_dir / "session.jsonl")
-        bin_dir = work_dir / "bin"
+        try:
+            trace_file = work_dir / "trace.jsonl"
+            session_log = str(work_dir / "session.jsonl")
+            bin_dir = work_dir / "bin"
 
-        responses_path = case_dir / "responses.json"
-        responses = json.loads(responses_path.read_text()) if responses_path.is_file() else {}
-        write_shims(responses, bin_dir, case_dir, trace_file)
+            responses_path = case_dir / "responses.json"
+            responses = (
+                json.loads(responses_path.read_text()) if responses_path.is_file() else {}
+            )
+            write_shims(responses, bin_dir, case_dir, trace_file)
 
-        env = clean_env()
-        env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+            env = clean_env()
+            env["PATH"] = os.pathsep.join(
+                p for p in (str(bin_dir), env.get("PATH", "")) if p
+            )
 
-        rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
-            prompt=_PROMPT.format(
-                repo_dir=repo_dir,
-                skill=skill_body(manifest["skill"]),
-                request=manifest["prompt"],
-            ),
-            cwd=repo_dir,
-            session_log=session_log,
-            add_dirs=[repo_dir],
-            max_turns=SKILL_MAX_TURNS,
-            max_budget=SKILL_MAX_BUDGET,
-            model=opts.model or "",
-            env=env,
-            task="eval-skill",
-            repo="eval/corpus",
-        ))
+            rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
+                prompt=_PROMPT.format(repo_dir=repo_dir, skill=skill, request=prompt),
+                cwd=repo_dir,
+                session_log=session_log,
+                add_dirs=[repo_dir],
+                max_turns=SKILL_MAX_TURNS,
+                max_budget=SKILL_MAX_BUDGET,
+                model=opts.model or "",
+                env=env,
+                task="eval-skill",
+                repo="eval/corpus",
+            ))
 
-        lines = load_trace(str(trace_file))
-        matches = match_required(manifest.get("requires", []), lines)
-        violations = match_forbidden(manifest.get("forbids", []), lines)
-        satisfied = sum(1 for m in matches if m.matched)
+            lines = load_trace(str(trace_file))
+            matches = match_required(manifest.get("requires", []), lines)
+            violations = match_forbidden(manifest.get("forbids", []), lines)
+            satisfied = sum(1 for m in matches if m.matched)
+        except Exception:
+            # A raise past this point leaves both temp dirs behind: the
+            # runner's own cleanup only runs once run() has already returned
+            # artifacts naming them (ai/claude/bin/eval-models:221-232).
+            shutil.rmtree(repo_dir, ignore_errors=True)
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise
 
         return RunArtifacts(
             exit_code=rc,
@@ -289,6 +309,9 @@ class SkillTask:
             entry_name="", model="", run_index=0,
             matches=matches,
             false_positive_ids=violations,
+            # 0.0 is a floor for a manifest the corpus rejects, not a score any
+            # shipped case can earn: Task 5's corpus guard asserts `requires`
+            # is non-empty, so `matches` is never empty for a real case.
             recall=satisfied / len(matches) if matches else 0.0,
             # Binary on purpose: a run that broke a constraint does not get
             # graded on how few it broke. severity_accuracy stays at its zero

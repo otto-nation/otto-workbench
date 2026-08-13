@@ -11,6 +11,10 @@ The agent is faked at `invoke_agent`, the single seam every phase reaches
 through `PhaseRunner.invoke`. A test scripts a run by naming the phases that
 produce no output, then runs the pipeline again over the same directory the
 way `pr review --recover` does.
+
+That harness is also the only one that drives every phase of a single run in
+order, so the running cost total each phase feeds — the other thing no unit
+test sees whole — is pinned here too.
 """
 
 import contextlib
@@ -44,6 +48,13 @@ _REVIEW_BODY = (
     "## Summary\nSynthesized.\n\n"
     "## Verdict\nApprove\n"
 )
+_REVIEW_WITH_FINDING = (
+    "# Review: org/repo#1 — t\n"
+    "<!-- generator: test -->\n"
+    "## Summary\nSynthesized.\n\n"
+    "## Must fix\n- **[M1]** `a/one.py:1` — bug\n\n"
+    "## Verdict\nRequest changes\n"
+)
 
 _FILES = ("a/one.py", "a/two.py", "b/three.py", "b/four.py")
 _RECOVER_HINT = "Run `pr review --recover`"
@@ -54,16 +65,22 @@ class _Agent:
 
     `fails` and `denied` name the phases that produce no output, keyed on the
     session log's stem (`group-2`, `holistic`, `synthesis`) — the only handle
-    an `AgentInvocation` carries back to the phase that built it.
+    an `AgentInvocation` carries back to the phase that built it. `costs` is
+    keyed the same way and prices a phase's spend into its result record; a
+    phase absent from it spends nothing.
     """
 
     def __init__(
         self, review_file: str,
         fails: "set[str] | None" = None, denied: "set[str] | None" = None,
+        costs: "dict[str, float] | None" = None,
+        review_body: str = _REVIEW_BODY,
     ):
         self.review_file = review_file
         self.fails = fails or set()
         self.denied = denied or set()
+        self.costs = costs or {}
+        self.review_body = review_body
         self.phases: list[str] = []
 
     def __call__(self, invocation, throttle=None) -> int:
@@ -78,12 +95,21 @@ class _Agent:
             self._append(log_path, _MAX_TURNS_RECORD)
             return 1
 
-        self._append(log_path, _OK_RECORD)
+        self._append(log_path, self._ok_record(phase))
         if phase == "synthesis":
-            Path(self.review_file).write_text(_REVIEW_BODY)
+            Path(self.review_file).write_text(self.review_body)
         else:
             log_path.with_suffix(".md").write_text(_GROUP_FINDING)
         return 0
+
+    def _ok_record(self, phase: str) -> str:
+        cost = self.costs.get(phase)
+        if cost is None:
+            return _OK_RECORD
+        return json.dumps({
+            "type": "result", "subtype": "success", "num_turns": 3,
+            "total_cost_usd": cost,
+        })
 
     @staticmethod
     def _append(log_path: Path, record: str):
@@ -122,11 +148,17 @@ def run(monkeypatch):
     monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
     monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
 
-    def _run(job, fails=None, denied=None) -> _Agent:
-        agent = _Agent(job.review_file, fails=fails, denied=denied)
+    def _run(
+        job, fails=None, denied=None, costs=None,
+        review_body=_REVIEW_BODY, **pipeline_kwargs,
+    ) -> _Agent:
+        agent = _Agent(
+            job.review_file, fails=fails, denied=denied, costs=costs,
+            review_body=review_body,
+        )
         monkeypatch.setattr(review_phases, "invoke_agent", agent)
         with contextlib.redirect_stdout(io.StringIO()):
-            review_pipeline.run_multi_phase(job)
+            review_pipeline.run_multi_phase(job, **pipeline_kwargs)
         return agent
 
     return _run
@@ -233,6 +265,32 @@ class TestRecoverAcrossASchemaChange:
         )
 
         assert "| group-2: b | agent error: model not available | failed |" in _review(job)
+
+
+class TestTheRunningTotalChargesEveryPhase:
+    """`cost_so_far` at the disprove gate means everything spent before it.
+
+    The gate is the only reader downstream of synthesis, so it is what a
+    synthesis charged to nobody shows up in: a run priced past its budget by
+    synthesis alone would still be waved through.
+    """
+
+    def test_synthesis_spend_closes_the_disprove_gate(self, job, run):
+        agent = run(
+            job, costs={"synthesis": 5.0}, review_body=_REVIEW_WITH_FINDING,
+            max_cost=1.0, disprove=True,
+        )
+
+        assert "synthesis" in agent.phases
+        assert "disprove" not in agent.phases
+
+    def test_a_synthesis_within_budget_leaves_the_gate_open(self, job, run):
+        agent = run(
+            job, costs={"synthesis": 0.1}, review_body=_REVIEW_WITH_FINDING,
+            max_cost=1.0, disprove=True,
+        )
+
+        assert "disprove" in agent.phases
 
 
 class TestRecoverDeclinesTheWorkItShould:

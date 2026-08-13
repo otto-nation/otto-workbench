@@ -168,15 +168,24 @@ the reviewer's premise was factually wrong.
 
 ### Step 4: Present drafts and get approval
 
-The fix pass drafts its per-thread replies and summary to stderr, prefixed
-`DRAFT (not published)`. Show them to the user — grouped by thread, with the
-reviewer and the claim each reply makes — and ask whether to publish.
+Two paths reach this step, and they satisfy its approval gate differently.
+
+**From Step 3:** the fix pass drafted its per-thread replies and summary to
+stderr, prefixed `DRAFT (not published)`. Show them to the user — grouped by
+thread, with the reviewer and the claim each reply makes — and ask whether to
+publish.
+
+**From Step 2's resume path:** the user read those drafts in an earlier pass
+and is telling you to publish them, so the approval this step gates on has
+already happened, as has that pass's Step 3. There is nothing left to show;
+go straight to the publish command below.
 
 Every factual claim in a reply must hold against the current code. Check the
 ones that assert absence ("nothing calls X", "this is unused") before showing
 them; an incorrect claim posted to a reviewer has to be retracted publicly.
 
-Only after the user approves, and only once Step 3 is complete:
+Only once the user has approved the drafts and Step 3 is complete for the pass
+that produced them:
 
 ```bash
 pr comments --finish --post [--track <thread_id> ...] [--repo-dir <PATH>]
@@ -189,12 +198,14 @@ a finished conversation, so don't publish before the discussion is done. A
 drafted run recorded nothing as posted, so the queue is intact — never re-run
 `--fix` to get back to it.
 
-Pass one `--track <thread_id>` per thread the user chose to track in Step 3.
-Omit the flag entirely when they chose none — a bare `--finish` files nothing
-and lists the unfiled ids. Use `--track-all` only when the user has reviewed the
-whole deferred set and asked for all of it. Never infer `--track` from the fact
-that a thread was deferred: the reply it posts says a reviewer's finding was
-triaged and postponed, under the PR author's name.
+Pass one `--track <thread_id>` per thread the user chose to track — in Step 3,
+or, on the resume path, in the earlier pass or in the request that sent you
+here. Omit the flag entirely when they chose none, or when you cannot see what
+they chose — a bare `--finish` files nothing and lists the unfiled ids. Use
+`--track-all` only when the user has reviewed the whole deferred set and asked
+for all of it. Never infer `--track` from the fact that a thread was deferred:
+the reply it posts says a reviewer's finding was triaged and postponed, under
+the PR author's name.
 
 If the user wants changes to a reply first, edit and post it manually (below),
 then run `--finish --post` for the rest.

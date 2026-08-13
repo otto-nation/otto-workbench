@@ -76,6 +76,19 @@ class TestGroupMatches:
         arg = "--filter=a=b"
         assert ess.match_tokens([arg]) == {arg, "--filter", "a=b"}
 
+    def test_an_empty_half_contributes_no_token(self):
+        """The harness issues `-c core.fsmonitor=` at startup.
+
+        An empty token in the set would make a malformed group like
+        `["git", ""]` fire on that line instead of never firing.
+        """
+        assert ess.match_tokens(["core.fsmonitor="]) == {
+            "core.fsmonitor=", "core.fsmonitor"}
+        assert ess.match_tokens(["=value"]) == {"=value", "value"}
+        assert not ess.group_matches(
+            ["git", ""],
+            ["git", "-c", "core.fsmonitor=", "remote", "get-url", "origin"])
+
     def test_splitting_on_equals_cannot_resurrect_the_push_collision(self):
         """The harness startup lines carry `=` args and `--push` on one line."""
         assert not ess.group_matches(

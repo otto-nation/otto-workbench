@@ -52,12 +52,17 @@ def match_tokens(argv: list[str]) -> set[str]:
 
     The split cannot resurrect either failure exact matching fixes: neither
     `--push` nor `pr-rebase` contains an `=`, so neither gains a token here.
+
+    An empty half is dropped. The harness issues `-c core.fsmonitor=` at
+    startup, and an empty token in the set would make a malformed group like
+    `["git", ""]` fire on that line — turning a manifest typo into a forbid
+    that always matches instead of one that never does.
     """
     tokens = set(argv)
     for element in argv:
         head, sep, tail = element.partition("=")
         if sep:
-            tokens.update((head, tail))
+            tokens.update(half for half in (head, tail) if half)
     return tokens
 
 
@@ -178,7 +183,7 @@ TOKENS = set(argv)
 for element in argv:
     head, sep, tail = element.partition("=")
     if sep:
-        TOKENS.update((head, tail))
+        TOKENS.update(half for half in (head, tail) if half)
 
 for rule in RULES:
     # Whole tokens, not substrings. A substring rule fired on flags that merely

@@ -581,13 +581,19 @@ print(f'session={session_exists},holistic={holistic_exists},group={group_exists}
   [ "$result" = "session=True,holistic=True,group=True,hlog=True" ]
 }
 
-@test "_cleanup_intermediates: removes intermediate files and pipeline state" {
+@test "_cleanup_intermediates: removes every phase artifact and pipeline state" {
+  # Regression for #675: disprove.md and disprove.jsonl outlived the pass
+  # because the call site enumerated what to remove and never named them.
+  echo "scout" > "$TMPDIR/scout.md"
+  echo "slog" > "$TMPDIR/scout.jsonl"
   echo "holistic" > "$TMPDIR/holistic.md"
   echo "log" > "$TMPDIR/holistic.jsonl"
   echo "group" > "$TMPDIR/group-1.md"
   echo "glog" > "$TMPDIR/group-1.jsonl"
   echo "glog2" > "$TMPDIR/group-2.jsonl"
   echo "synth" > "$TMPDIR/synthesis.jsonl"
+  echo "disprove" > "$TMPDIR/disprove.md"
+  echo "dlog" > "$TMPDIR/disprove.jsonl"
   echo '{}' > "$TMPDIR/pipeline.json"
 
   result=$(_py "
@@ -601,23 +607,67 @@ with contextlib.redirect_stdout(io.StringIO()):
         review_file='$TMPDIR/review.md',
         session_log='$TMPDIR/session.jsonl',
     )
-    mod._cleanup_intermediates(
-        job,
-        holistic_output='$TMPDIR/holistic.md',
-        holistic_log='$TMPDIR/holistic.jsonl',
-        group_outputs=['$TMPDIR/group-1.md'],
-        group_count=2,
-        synthesis_log='$TMPDIR/synthesis.jsonl',
-    )
+    mod._cleanup_intermediates(job)
 remaining = []
-for f in ['holistic.md', 'holistic.jsonl', 'group-1.md',
-          'group-1.jsonl', 'synthesis.jsonl', 'pipeline.json']:
+for f in ['scout.md', 'scout.jsonl', 'holistic.md', 'holistic.jsonl',
+          'group-1.md', 'group-1.jsonl', 'group-2.jsonl', 'synthesis.jsonl',
+          'disprove.md', 'disprove.jsonl', 'pipeline.json']:
     if os.path.exists('$TMPDIR/' + f):
         remaining.append(f)
 print(f'remaining={remaining}')
 ")
   echo "$result"
   [ "$result" = "remaining=[]" ]
+}
+
+@test "_cleanup_intermediates: sweeps a prior --fix pass's log too" {
+  # fix.jsonl is diagnostic, not a finding, so a re-review's cleanup sweeps
+  # it the same as any other phase log rather than letting it survive.
+  echo "review" > "$TMPDIR/review.md"
+  echo "flog" > "$TMPDIR/fix.jsonl"
+
+  result=$(_py "
+import io, contextlib, os
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='$TMPDIR/session.jsonl',
+    )
+    mod._cleanup_intermediates(job)
+print(f'fix_exists={os.path.exists(\"$TMPDIR/fix.jsonl\")}')
+")
+  [ "$result" = "fix_exists=False" ]
+}
+
+@test "_cleanup_intermediates: preserves the deliverable and its sidecars" {
+  echo "review" > "$TMPDIR/review.md"
+  echo '{"type":"result"}' > "$TMPDIR/session.jsonl"
+  echo '{}' > "$TMPDIR/meta.json"
+  echo "prior" > "$TMPDIR/prior.md"
+  echo "holistic" > "$TMPDIR/holistic.md"
+
+  result=$(_py "
+import io, contextlib, os
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=1, deletions=0, changed_files=1, files=[]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='$TMPDIR/session.jsonl',
+    )
+    mod._cleanup_intermediates(job)
+kept = [f for f in ['review.md', 'session.jsonl', 'meta.json', 'prior.md']
+        if os.path.exists('$TMPDIR/' + f)]
+print(f'kept={kept},holistic={os.path.exists(\"$TMPDIR/holistic.md\")}')
+")
+  echo "$result"
+  [ "$result" = "kept=['review.md', 'session.jsonl', 'meta.json', 'prior.md'],holistic=False" ]
 }
 
 @test "_cleanup_intermediates: preserves prompt-stats.json" {
@@ -635,12 +685,7 @@ with contextlib.redirect_stdout(io.StringIO()):
         review_file='$TMPDIR/review.md',
         session_log='$TMPDIR/session.jsonl',
     )
-    mod._cleanup_intermediates(
-        job,
-        holistic_output='', holistic_log='',
-        group_outputs=[], group_count=0,
-        synthesis_log='',
-    )
+    mod._cleanup_intermediates(job)
 stats_exists = os.path.exists('$TMPDIR/prompt-stats.json')
 prompt_exists = os.path.exists('$TMPDIR/prompt-self-review.md')
 print(f'stats={stats_exists},prompt={prompt_exists}')

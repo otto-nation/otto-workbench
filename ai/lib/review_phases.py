@@ -236,27 +236,33 @@ class PhaseRunner:
 
 @dataclass(frozen=True)
 class PhaseResult:
-    """A phase's session log, and what that log says the phase spent.
+    """What a phase reports back: its session log, its spend, and its scan.
 
-    The two travel together everywhere: the log is what the run consolidates
-    and cleans up, the cost is what the budget gates read, and the second is
-    only ever derived from the first. Naming the pair keeps that derivation in
-    one place instead of at each call site, and gives a phase that never
-    invoked an agent something to return — the default is the honest report
-    that nothing ran and nothing was spent.
+    The log and the cost travel together everywhere: the log is what the run
+    consolidates and cleans up, the cost is what the budget gates read, and the
+    second is only ever derived from the first. Naming the pair keeps that
+    derivation in one place instead of at each call site, and gives a phase
+    that never invoked an agent something to return — the default is the honest
+    report that nothing ran and nothing was spent.
+
+    `content` and `output` carry a scan the phases after it read. Phase 1 is
+    the only phase that writes for its successors rather than into the review
+    file, so it is the only one that fills them.
     """
 
     log: str = ""
     cost: float = 0.0
+    content: str = ""
+    output: str = ""
 
     @classmethod
-    def of(cls, log: str) -> "PhaseResult":
+    def of(cls, log: str, content: str = "", output: str = "") -> "PhaseResult":
         """Priced from the log the phase just wrote.
 
         A phase that wrote no log reads as free: `_parse_session_cost` takes a
         missing file as zero.
         """
-        return cls(log, _parse_session_cost(log))
+        return cls(log, _parse_session_cost(log), content, output)
 
 
 def _touch(path: str) -> None:
@@ -339,7 +345,7 @@ def _review_group(
     return (i, group_output, failed)
 
 
-def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
+def _phase_holistic(job: ReviewJob, group_count: int) -> PhaseResult:
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
 
     _touch(holistic_output)
@@ -371,10 +377,10 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
             "— continuing without it"
         )
 
-    return holistic_content, holistic_output, holistic_log
+    return PhaseResult.of(holistic_log, holistic_content, holistic_output)
 
 
-def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
+def _phase_scout(job: ReviewJob, group_count: int) -> PhaseResult:
     scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
 
     _touch(scout_output)
@@ -401,10 +407,12 @@ def _phase_scout(job: ReviewJob, group_count: int) -> tuple[str, str, str]:
         raw = Path(scout_output).read_text()
         leads, no_scrutiny = parse_scout_output(raw)
         log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
-        return format_leads_block(leads, no_scrutiny), scout_output, scout_log
+        return PhaseResult.of(
+            scout_log, format_leads_block(leads, no_scrutiny), scout_output,
+        )
 
     log.warn(f"Scout produced no output ({_render_reason(diagnosis)}) — continuing without leads")
-    return "", scout_output, scout_log
+    return PhaseResult.of(scout_log, output=scout_output)
 
 
 def _phase_disprove(job: ReviewJob) -> PhaseResult:

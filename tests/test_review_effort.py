@@ -173,7 +173,7 @@ class TestHolisticPhaseStateUpdate:
             job, group_count=1, state=state,
             skip_holistic=False, resume_exists=False, incremental=True,
         )
-        assert result == ("", "", PhaseResult())
+        assert result == PhaseResult()
         assert state.holistic_done is True
         mock_write.assert_called_once_with(job, state)
 

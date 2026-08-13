@@ -442,8 +442,8 @@ def _run_holistic_phase(
     job: ReviewJob, group_count: int, state: PipelineState,
     skip_holistic: bool, resume_exists: bool, incremental: bool,
     skip_scout: bool = False,
-) -> tuple[str, str, PhaseResult]:
-    """Phase 1's content and output path, plus the log it wrote and its spend.
+) -> PhaseResult:
+    """Phase 1's scan, the log it wrote, and what that scan spent.
 
     A branch that reuses a prior attempt's scan reports the log at no cost:
     `_resolve_recovery` already charged the resumed run for it, so pricing it
@@ -455,38 +455,38 @@ def _run_holistic_phase(
         if not state.holistic_done:
             state.holistic_done = True
             _write_pipeline_state(job, state)
-        return "", "", PhaseResult()
+        return PhaseResult()
 
     use_scout = _use_scout(job, skip_scout)
 
     if use_scout:
         scout_output = _derive_path(job.review_file, FILENAME_SCOUT)
-        scout_log = phase_log_path(job.review_file, Phase.SCOUT)
         if resume_exists and _has_output(scout_output):
             raw = Path(scout_output).read_text()
             leads, no_scrutiny = parse_scout_output(raw)
-            content = format_leads_block(leads, no_scrutiny)
             log.info("Phase 1: Scout scan skipped (exists)")
-            return content, scout_output, PhaseResult(log=scout_log, cost=0.0)
+            return PhaseResult(
+                log=phase_log_path(job.review_file, Phase.SCOUT),
+                content=format_leads_block(leads, no_scrutiny), output=scout_output,
+            )
 
-        content, output, log_path = _phase_scout(job, group_count)
+        result = _phase_scout(job, group_count)
         state.holistic_done = True
         _write_pipeline_state(job, state)
-        return content, output, PhaseResult.of(log_path)
+        return result
 
     holistic_output = _derive_path(job.review_file, FILENAME_HOLISTIC)
-    holistic_log = phase_log_path(job.review_file, Phase.HOLISTIC)
     if resume_exists and _has_output(holistic_output):
         log.info("Phase 1: Holistic scan skipped (exists)")
-        return (
-            Path(holistic_output).read_text(), holistic_output,
-            PhaseResult(log=holistic_log, cost=0.0),
+        return PhaseResult(
+            log=phase_log_path(job.review_file, Phase.HOLISTIC),
+            content=Path(holistic_output).read_text(), output=holistic_output,
         )
 
-    content, holistic_output, holistic_log = _phase_holistic(job, group_count)
+    result = _phase_holistic(job, group_count)
     state.holistic_done = True
     _write_pipeline_state(job, state)
-    return content, holistic_output, PhaseResult.of(holistic_log)
+    return result
 
 
 def _run_group_phase(
@@ -643,7 +643,7 @@ def run_multi_phase(
         skip_groups = skip_groups | incremental_skips
 
     # ── Phase 1: Scout/Holistic ─────────────────────────────────────────────
-    holistic_content, holistic_output, holistic = _run_holistic_phase(
+    holistic = _run_holistic_phase(
         job, group_count, state, skip_holistic, skip_holistic_phase, incremental,
         skip_scout=skip_scout,
     )
@@ -658,7 +658,7 @@ def run_multi_phase(
         ]
     else:
         group_outputs, failed_groups, groups_cost = _run_group_phase(
-            job, groups, group_count, holistic_content, max_parallel,
+            job, groups, group_count, holistic.content, max_parallel,
             skip_groups, state,
         )
         cost_so_far += groups_cost
@@ -672,7 +672,7 @@ def run_multi_phase(
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)
     synthesis = _run_synthesis_or_fallback(
-        job, state, holistic_content, group_count,
+        job, state, holistic.content, group_count,
         merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
     )
     cost_so_far += synthesis.cost
@@ -696,7 +696,7 @@ def run_multi_phase(
 
     if not failed_groups:
         _cleanup_intermediates(
-            job, holistic_output, holistic.log, group_outputs, group_count, synthesis.log,
+            job, holistic.output, holistic.log, group_outputs, group_count, synthesis.log,
         )
 
 

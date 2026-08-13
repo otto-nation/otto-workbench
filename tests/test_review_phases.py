@@ -172,6 +172,83 @@ class TestPhaseLogPath:
             review_common.phase_log_path(str(tmp_path / "review.md"), Phase.SCOUT, 3)
 
 
+class TestPhaseOutputNames:
+    """Each phase's findings artifact is named after the phase.
+
+    Mirrors TestPhaseLogNames: assert the convention over the enum rather
+    than a hand-written list, with one pinning test proving the convention
+    renamed nothing.
+    """
+
+    def test_preserves_current_filenames(self):
+        expected = {
+            Phase.SINGLE: "",
+            Phase.HOLISTIC: "holistic.md",
+            Phase.SCOUT: "scout.md",
+            Phase.GROUP: "group-{}.md",
+            Phase.SYNTHESIS: "",
+            Phase.DISPROVE: "disprove.md",
+            Phase.FIX: "",
+        }
+        assert {p: p.output_filename for p in Phase} == expected
+
+    def test_phases_that_write_the_review_file_name_no_artifact(self):
+        # single and synthesis produce review.md; fix edits it in place.
+        empty = {p for p in Phase if not p.output_filename}
+        assert empty == {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX}
+
+    def test_every_artifact_name_is_distinct(self):
+        names = [p.output_filename for p in Phase if p.output_filename]
+        assert len(set(names)) == len(names)
+
+    def test_group_is_the_only_indexed_phase(self):
+        indexed = {p for p in Phase if "{}" in p.output_filename}
+        assert indexed == {Phase.GROUP}
+
+    def test_stem_is_shared_with_the_log(self):
+        # The two properties differ only by extension. Sharing the stem is
+        # what stops them drifting the way the constants drifted from the
+        # logs — a phase renamed for one is renamed for both.
+        both = [p for p in Phase if p.log_filename and p.output_filename]
+        assert both == [Phase.HOLISTIC, Phase.SCOUT, Phase.GROUP, Phase.DISPROVE]
+        for phase in both:
+            assert phase.log_filename.removesuffix(".jsonl") == (
+                phase.output_filename.removesuffix(".md")
+            )
+
+
+class TestPhaseOutputPath:
+    def test_derives_into_the_review_directory(self, tmp_path):
+        review_file = str(tmp_path / "review.md")
+        assert review_common.phase_output_path(review_file, Phase.HOLISTIC) == str(
+            tmp_path / "holistic.md"
+        )
+
+    def test_group_carries_its_index(self, tmp_path):
+        review_file = str(tmp_path / "review.md")
+        assert review_common.phase_output_path(review_file, Phase.GROUP, 2) == str(
+            tmp_path / "group-2.md"
+        )
+
+    def test_group_without_an_index_raises(self, tmp_path):
+        with pytest.raises(ValueError):
+            review_common.phase_output_path(str(tmp_path / "review.md"), Phase.GROUP)
+
+    def test_non_indexed_phase_with_an_index_raises(self, tmp_path):
+        with pytest.raises(ValueError):
+            review_common.phase_output_path(
+                str(tmp_path / "review.md"), Phase.DISPROVE, 3
+            )
+
+    def test_a_phase_with_no_artifact_raises(self, tmp_path):
+        # Unlike phase_log_path there is no caller-side fallback, and an
+        # empty name would derive to the review *directory* — a wrong path
+        # that reads as a real one.
+        for phase in (Phase.SYNTHESIS, Phase.SINGLE, Phase.FIX):
+            with pytest.raises(ValueError):
+                review_common.phase_output_path(str(tmp_path / "review.md"), phase)
+
+
 def _job(tmp_path, effort=Effort.MEDIUM):
     from review_preflight import PRContext, PRMetadata, ReviewJob
 

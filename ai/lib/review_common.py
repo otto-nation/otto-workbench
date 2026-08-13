@@ -125,18 +125,38 @@ class Phase(StrEnum):
         return f"{REVIEW_ENV_PREFIX}{self.upper()}_THINKING"
 
     @property
+    def _stem(self) -> str:
+        """The filename stem this phase's artifacts share.
+
+        ``group`` is the one fan-out phase, so its name carries the index.
+        """
+        return f"{self}-{{}}" if self is Phase.GROUP else str(self)
+
+    @property
     def log_filename(self) -> str:
         """The session log this phase writes, named after the phase.
 
         ``single`` names no file of its own: it writes to the job's session
         log, which ``review-orchestrate --session-log`` may point outside the
-        review directory. ``group`` is the one fan-out phase, so its name
-        carries the index.
+        review directory.
         """
-        if self is Phase.SINGLE:
-            return ""
-        suffix = "-{}" if self is Phase.GROUP else ""
-        return f"{self}{suffix}.jsonl"
+        return "" if self is Phase.SINGLE else f"{self._stem}.jsonl"
+
+    @property
+    def output_filename(self) -> str:
+        """The findings artifact this phase writes, named after the phase.
+
+        Empty for a phase that writes into the review document rather than an
+        artifact of its own: ``single`` and ``synthesis`` produce ``review.md``
+        and ``fix`` edits it in place.
+        """
+        return "" if self in _WRITES_REVIEW_FILE else f"{self._stem}.md"
+
+
+# The phases whose output is the review document itself. Lives below the class
+# because it names members; read at call time, so the forward reference in
+# `output_filename` resolves.
+_WRITES_REVIEW_FILE = frozenset({Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX})
 
 
 # ── Agent tuning ─────────────────────────────────────────────────────────────
@@ -540,6 +560,23 @@ def phase_log_path(review_file: str, phase: Phase, index: int | None = None) -> 
         return ""
     if "{}" in name and index is None:
         raise ValueError(f"{phase} writes one log per index — pass an index")
+    return _derive_path(review_file, name.format(index))
+
+
+def phase_output_path(review_file: str, phase: Phase, index: int | None = None) -> str:
+    """Where ``phase`` writes its findings artifact for the review at ``review_file``.
+
+    Raises for a phase that writes the review document itself. Unlike a
+    missing log there is nothing to fall back to, and an empty name would
+    derive to the review directory — a wrong path that reads as a real one.
+    """
+    name = phase.output_filename
+    if not name:
+        raise ValueError(f"{phase} writes the review file, not an artifact of its own")
+    if index is not None and "{}" not in name:
+        raise ValueError(f"{phase} writes a single artifact — do not pass an index")
+    if "{}" in name and index is None:
+        raise ValueError(f"{phase} writes one artifact per index — pass an index")
     return _derive_path(review_file, name.format(index))
 
 

@@ -40,14 +40,15 @@ class SeverityConfig:
     section: str
     posting: str
     body_group: str
+    json_key: str
     aliases: tuple[str, ...] = ()
 
 
 SEVERITIES = [
-    SeverityConfig(SEVERITY_MUST,    "must-fix",  "Must fix",  posting="inline", body_group="by_severity"),
-    SeverityConfig(SEVERITY_SHOULD,  "should-fix", "Should fix", posting="inline", body_group="by_severity"),
-    SeverityConfig(SEVERITY_NIT,     "nit",       "Nit",        posting="body",   body_group="by_file", aliases=("Nits",)),
-    SeverityConfig(SEVERITY_IDIOMS,  "idiom",     "Idioms",     posting="body",   body_group="by_file"),
+    SeverityConfig(SEVERITY_MUST,    "must-fix",  "Must fix",  posting="inline", body_group="by_severity", json_key="must_fix"),
+    SeverityConfig(SEVERITY_SHOULD,  "should-fix", "Should fix", posting="inline", body_group="by_severity", json_key="should_fix"),
+    SeverityConfig(SEVERITY_NIT,     "nit",       "Nit",        posting="body",   body_group="by_file", json_key="nit", aliases=("Nits",)),
+    SeverityConfig(SEVERITY_IDIOMS,  "idiom",     "Idioms",     posting="body",   body_group="by_file", json_key="idiom"),
 ]
 
 _SEVERITY_BY_KEY = {s.key: s for s in SEVERITIES}
@@ -554,8 +555,7 @@ REVIEW_EXT = ".md"
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"
 
-SEVERITY_PREFIXES = ["M", "S", "N", "I"]
-SEVERITY_JSON_KEYS = ["must_fix", "should_fix", "nit", "idiom"]
+
 SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 
@@ -779,16 +779,26 @@ def read_review_meta(review_dir: Path) -> ReviewMeta:
         return ReviewMeta()
 
 
-def count_severity(file: Path, prefix: str) -> int:
-    """Count findings of a given severity prefix in a review file."""
-    if not file.is_file():
-        return 0
+def count_severities(file: Path | None) -> dict[str, int]:
+    """Count findings of every severity, keyed by severity key.
+
+    Counts all four in one read: every caller wants more than one of them, and
+    a per-severity helper re-read the file once per count. Always returns a
+    complete dict, zeroed when the file is missing or unreadable.
+    """
+    zeroed = {s.key: 0 for s in SEVERITIES}
+    if not file or not file.is_file():
+        return zeroed
     try:
         text = file.read_text()
     except OSError:
-        return 0
-    pattern = SEVERITY_COUNT_RE_FMT.format(re.escape(prefix))
-    return len(re.findall(pattern, text, re.MULTILINE))
+        return zeroed
+    return {
+        s.key: len(re.findall(
+            SEVERITY_COUNT_RE_FMT.format(re.escape(s.key)), text, re.MULTILINE,
+        ))
+        for s in SEVERITIES
+    }
 
 
 def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
@@ -877,7 +887,10 @@ def parse_review_verdict(review_path: Path | None) -> ReviewVerdict | None:
 
 
 def resolve_review_verdict(
-    review_path: Path | None, *, self_review: bool = False,
+    review_path: Path | None,
+    *,
+    counts: dict[str, int] | None = None,
+    self_review: bool = False,
 ) -> ReviewVerdict | None:
     """The verdict to record and report for a finished review.
 
@@ -887,6 +900,9 @@ def resolve_review_verdict(
     under-report findings that block, and the counts can never quietly discard
     a stronger call the agent made. Disapprove is unranked and always stands —
     no count implies it and none refutes it.
+
+    Pass `counts` from `count_severities` when the caller already has them, to
+    save re-reading the review file.
     """
     if not review_path or not review_path.is_file():
         return None
@@ -897,27 +913,27 @@ def resolve_review_verdict(
     # is the exception above: it judges the approach, which holds without a PR.
     if self_review:
         return None
+    if counts is None:
+        counts = count_severities(review_path)
     derived = ReviewVerdict.from_counts(
-        count_severity(review_path, SEVERITY_MUST),
-        count_severity(review_path, SEVERITY_SHOULD),
+        counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
     )
     return stated if stated and stated.outranks(derived) else derived
 
 
 def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
     """Build a review summary dict for a review."""
-    counts = {}
-    total = 0
     review_path = Path(review_file) if review_file else None
-    for prefix, key in zip(SEVERITY_PREFIXES, SEVERITY_JSON_KEYS):
-        c = count_severity(review_path, prefix) if review_path else 0
-        counts[key] = c
-        total += c
+    by_key = count_severities(review_path)
+    counts = {s.json_key: by_key[s.key] for s in SEVERITIES}
+    total = sum(by_key.values())
 
     review_dir = Path(review_file).parent if review_file else None
     meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
 
-    resolved = resolve_review_verdict(review_path, self_review=meta.mode is Mode.SELF)
+    resolved = resolve_review_verdict(
+        review_path, counts=by_key, self_review=meta.mode is Mode.SELF,
+    )
     verdict = resolved.value if resolved else ""
 
     usage = aggregate_session_usage(review_dir)
@@ -963,6 +979,13 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
 # ── Status rendering ─────────────────────────────────────────────────────
 
 
+def _verdict_display(verdict: str) -> str:
+    try:
+        return ReviewVerdict(verdict).prose
+    except ValueError:
+        return verdict
+
+
 def render_status(rev: ReviewSummary) -> list[str]:
     """Render review state as status lines for the pr dashboard."""
     if not rev.updated_at:
@@ -977,7 +1000,10 @@ def render_status(rev: ReviewSummary) -> list[str]:
     if rev.verdict == ReviewVerdict.DISAPPROVE.value:
         suffixes.append("[DISAPPROVED]")
     suffix = " " + " ".join(suffixes) if suffixes else ""
-    verdict_part = f": {rev.verdict}" if rev.verdict else ""
+    # The dashboard shows the verdict the way the review states it, not the way
+    # state serializes it. An unrecognised value is shown as stored rather than
+    # dropped, so state written by an older version still reads.
+    verdict_part = f": {_verdict_display(rev.verdict)}" if rev.verdict else ""
     lines = [f"**Review** ({rev.review_type}){verdict_part}{suffix}"]
     if rev.finding_counts:
         parts = [f"{sev}: {count}" for sev, count in sorted(rev.finding_counts.items())]

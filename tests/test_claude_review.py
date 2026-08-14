@@ -20,7 +20,7 @@ if LIB_DIR not in sys.path:
 import workbench_paths
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
-    FILENAME_POST_SESSION, count_severity, json_summary, parse_review_verdict,
+    FILENAME_POST_SESSION, count_severities, json_summary, parse_review_verdict,
     read_pipeline_status, read_pipeline_warnings, review_file_path,
 )
 import review_gc
@@ -268,10 +268,10 @@ def test_format_usage_model_usage_tokens(cr, tmp_path):
     assert "(1k cached)" in result
 
 
-# ── count_severity ────────────────────────────────────────────────────────────
+# ── count_severities ──────────────────────────────────────────────────────────
 
 
-def test_count_severity_must_fix(cr, tmp_path):
+def test_count_severities_counts_every_severity(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n"
@@ -280,37 +280,39 @@ def test_count_severity_must_fix(cr, tmp_path):
         "## Should fix\n"
         "- **[S1]** path:3 — description\n"
     )
-    assert count_severity(review, "M") == 2
+    assert count_severities(review) == {"M": 2, "S": 1, "N": 0, "I": 0}
 
 
-def test_count_severity_excludes_strikethrough(cr, tmp_path):
+def test_count_severities_excludes_strikethrough(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n"
         "- **[M1]** path:1 — active\n"
         "- ~~**[M2]** path:2 — resolved~~\n"
     )
-    assert count_severity(review, "M") == 1
+    assert count_severities(review)["M"] == 1
 
 
-def test_count_severity_checkbox_findings(cr, tmp_path):
+def test_count_severities_checkbox_findings(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n"
         "- [ ] **[M1]** path:1 — with checkbox\n"
         "- **[M2]** path:2 — without checkbox\n"
     )
-    assert count_severity(review, "M") == 2
+    assert count_severities(review)["M"] == 2
 
 
-def test_count_severity_missing_file(cr, tmp_path):
-    assert count_severity(tmp_path / "nonexistent.md", "M") == 0
+def test_count_severities_missing_file_is_zeroed_not_empty(cr, tmp_path):
+    """Callers index the result directly, so every key must be present."""
+    assert count_severities(tmp_path / "nonexistent.md") == {"M": 0, "S": 0, "N": 0, "I": 0}
+    assert count_severities(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
 
 
-def test_count_severity_empty_file(cr, tmp_path):
+def test_count_severities_empty_file(cr, tmp_path):
     review = tmp_path / "empty.md"
     review.write_text("")
-    assert count_severity(review, "M") == 0
+    assert count_severities(review) == {"M": 0, "S": 0, "N": 0, "I": 0}
 
 
 # ── json_summary ──────────────────────────────────────────────────────────────
@@ -1629,8 +1631,7 @@ def test_constants_match_expected(cr):
     assert cr.DEFAULT_MAX_PARALLEL == 1
     assert review_gc.GC_STALE_DAYS == 7
     assert review_gc.PRUNE_MAX_FILES == 10
-    assert len(cr.SEVERITY_PREFIXES) == 4
-    assert len(cr.SEVERITY_JSON_KEYS) == 4
+    assert len(cr.SEVERITIES) == 4
 
 
 # ── _resolve_recover_sha ──────────────────────────────────────────────────────

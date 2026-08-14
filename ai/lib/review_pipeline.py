@@ -21,11 +21,12 @@ from pathlib import Path
 
 import log
 from review_common import (
-    count_severity,
+    count_severities,
     FILENAME_META,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
+    SEVERITY_MUST, SEVERITY_SHOULD,
     Diagnosis, DiagnosisKind, Effort, GroupSkip, Mode, Phase, ReviewType,
     EFFORT_PRESETS,
     PRIOR_DATE_RE,
@@ -666,7 +667,8 @@ def run_multi_phase(
     disprove_result = PhaseResult()
     if _should_disprove(job, disprove) and cost_so_far <= max_cost:
         review_path = Path(job.review_file)
-        ms_count = count_severity(review_path, "M") + count_severity(review_path, "S")
+        counts = count_severities(review_path)
+        ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
         if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
             disprove_result = _phase_disprove(job)
             cost_so_far += disprove_result.cost

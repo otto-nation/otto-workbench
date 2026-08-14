@@ -7,6 +7,9 @@ Usage:
 Scans for deliberate simplification markers (// ceiling:, # ceiling:, etc.)
 across comment styles. Groups by file, flags missing upgrade triggers.
 
+Work is bounded per file and per line: MAX_FILE_BYTES caps size, BINARY_SNIFF_BYTES
+sniffs for NUL, and MAX_LINE_LEN skips minified and generated lines.
+
 Exit code is always 0 (informational).
 """
 
@@ -37,6 +40,19 @@ SKIP_EXTENSIONS = {
     ".pyc", ".class", ".o",
 }
 
+# SKIP_EXTENSIONS only catches binaries that announce themselves in the filename.
+# Compiled artifacts with no extension (svc-onboarding/bin/server) and multi-megabyte
+# data dumps do not, so bound the work by size and sniff for NUL bytes as well.
+MAX_FILE_BYTES = 2 * 1024 * 1024
+BINARY_SNIFF_BYTES = 8192
+
+# Both regexes below backtrack quadratically in line length, so a single minified
+# or generated line can cost seconds. Real markers live on hand-written source
+# lines; anything longer than this is generated output and is skipped.
+MAX_LINE_LEN = 2000
+
+CEILING_TOKEN = "ceiling:"
+
 CEILING_FULL_RE = re.compile(
     r"^\s*(?:#|//|--|/\*)\s*ceiling:\s*(.+?)(?:\s*\*/)?$",
     re.IGNORECASE,
@@ -56,6 +72,24 @@ def _should_skip_file(path: Path) -> bool:
     return path.suffix.lower() in SKIP_EXTENSIONS
 
 
+def _read_text(fpath: Path) -> str | None:
+    """Return the file's text, or None if it is oversized, binary, or unreadable."""
+    try:
+        if fpath.stat().st_size > MAX_FILE_BYTES:
+            return None
+        data = fpath.read_bytes()
+    except (OSError, PermissionError):
+        return None
+    if b"\0" in data[:BINARY_SNIFF_BYTES]:
+        return None
+    return data.decode("utf-8", errors="replace")
+
+
+def _is_candidate(line: str) -> bool:
+    """Cheap linear gate so only plausible lines reach the quadratic regexes."""
+    return len(line) <= MAX_LINE_LEN and CEILING_TOKEN in line.lower()
+
+
 def _parse_marker(text: str) -> tuple[str, str | None]:
     parts = text.split(",", 1)
     ceiling = parts[0].strip()
@@ -64,12 +98,13 @@ def _parse_marker(text: str) -> tuple[str, str | None]:
 
 
 def _scan_file(fpath: Path, rel: str) -> list[dict]:
-    try:
-        lines = fpath.read_text(errors="replace").splitlines()
-    except (OSError, PermissionError):
+    text = _read_text(fpath)
+    if text is None:
         return []
     markers: list[dict] = []
-    for lineno, line in enumerate(lines, 1):
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if not _is_candidate(line):
+            continue
         m = CEILING_FULL_RE.match(line) or CEILING_INLINE_RE.search(line)
         if not m:
             continue
@@ -129,7 +164,7 @@ def marker_counts(markers: list[dict]) -> dict:
     return {"total": len(markers), "no_trigger": no_trigger}
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Scan for ceiling: markers and produce a debt ledger.",
     )
@@ -151,21 +186,16 @@ def main() -> None:
         help="Output counts as JSON: {\"total\": N, \"no_trigger\": M}",
     )
     parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Exit 0 if markers found, 1 if none (for gating scripts)",
-    )
-    parser.add_argument(
         "--output",
         metavar="PATH",
-        help="Write ledger to file instead of stdout",
+        help="Write ledger to file instead of stdout; removes the file when no markers remain",
     )
     parser.add_argument(
         "-V", "--version",
         action="version",
         version=_version_string(SCRIPT),
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     root = Path(args.directory).resolve()
     if not root.is_dir():
@@ -173,9 +203,6 @@ def main() -> None:
         sys.exit(0)
 
     markers = scan_directory(root)
-
-    if args.check:
-        sys.exit(0 if markers else 1)
 
     if args.json_output:
         print(json.dumps(marker_counts(markers)))
@@ -185,14 +212,19 @@ def main() -> None:
         print(format_summary(markers))
         return
 
-    ledger = format_ledger(markers)
+    if not args.output:
+        print(format_ledger(markers))
+        return
 
-    if args.output:
-        out = Path(args.output)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(ledger)
-    else:
-        print(ledger)
+    # A repo with no markers gets no ledger, and one whose last marker was removed
+    # loses the stale file. This replaces the should-ceiling-scan.sh gate, which
+    # cost a second full scan of the repo on every session stop.
+    out = Path(args.output)
+    if not markers:
+        out.unlink(missing_ok=True)
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(format_ledger(markers))
 
 
 if __name__ == "__main__":

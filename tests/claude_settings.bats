@@ -274,6 +274,51 @@ _get_pr_create_hook() {
   [ "$status" -eq 0 ]
 }
 
+# ── system binary absolute paths ────────────────────────────────────────────
+# The allow list keys on the bare command name, so `Bash(cat:*)` never matches
+# `/bin/cat` — the absolute form prompts on every call.
+
+_get_sysbin_hook() {
+  _get_bash_hook "its absolute path"
+}
+
+@test "sysbin hook: blocks /bin/cat and names the bare command" {
+  local hook
+  hook=$(_get_sysbin_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"/bin/cat /tmp/x/review.diff"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'cat'"* ]]
+}
+
+@test "sysbin hook: blocks /usr/bin after a statement separator" {
+  local hook
+  hook=$(_get_sysbin_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"ls -la; /usr/bin/grep -n foo f"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'grep'"* ]]
+}
+
+@test "sysbin hook: allows the bare command name" {
+  local hook
+  hook=$(_get_sysbin_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"cat /tmp/x/review.diff"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "sysbin hook: allows a /bin path inside a sed expression" {
+  local hook
+  hook=$(_get_sysbin_hook)
+  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"sed -e 's|/bin/cat|x|' f\"}}"
+  [ "$status" -eq 0 ]
+}
+
+@test "sysbin hook: allows absolute paths outside /bin and /usr/bin" {
+  local hook
+  hook=$(_get_sysbin_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"bash /Users/me/.local/bin/thing"}}'
+  [ "$status" -eq 0 ]
+}
+
 # ── statement-anchored Bash guardrails ──────────────────────────────────────
 # These checks match at the start of any statement, not just the start of the
 # command — a leading no-op token must not be a way around them. They scope to

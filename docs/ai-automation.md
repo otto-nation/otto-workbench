@@ -638,7 +638,7 @@ deferral issue has to be closed. Reading the drafts first costs one command:
 
 ```bash
 pr comments --fix              # triage, fix, commit — drafts the push and replies
-pr comments --resolve --post   # publish once the drafts read correctly
+pr comments --finish --post    # publish once the drafts read correctly
 ```
 
 A draft run leaves state untouched, so nothing is recorded as posted and a later

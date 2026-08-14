@@ -117,12 +117,17 @@ def _delegate_value_flags(entry: dict) -> frozenset[str]:
             [str(BIN_DIR / script), VALUE_FLAGS_FLAG],
             capture_output=True, text=True, timeout=VALUE_FLAGS_TIMEOUT,
         )
-    except (OSError, subprocess.SubprocessError):
+    except subprocess.TimeoutExpired:
         # Arity is an improvement on the historical arity-blind scan, not a
         # precondition for it: a delegate that is missing, crashes, or hangs
         # must not take down the command the user actually asked for. Every
         # failure degrades to "no option takes a value", which is exactly the
-        # pre-arity behaviour.
+        # pre-arity behaviour — but a hung delegate is worth surfacing since
+        # it's as diagnosable as the non-zero-exit case below.
+        log.warn(f"{script} {VALUE_FLAGS_FLAG}: timed out after {VALUE_FLAGS_TIMEOUT}s")
+        return frozenset()
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warn(f"{script} {VALUE_FLAGS_FLAG}: {exc}")
         return frozenset()
     if probe.returncode != 0:
         # Same degradation as above, but this failure is the delegate's own

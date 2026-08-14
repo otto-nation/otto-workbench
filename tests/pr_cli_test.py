@@ -37,6 +37,11 @@ import workbench_paths  # noqa: E402
 
 from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
 
+# Shared fixture values for the positional-vs-flag-value tests below.
+_TEST_PR = "3057"
+_TEST_REPLY_ID = "3777767789"
+_TEST_REPLY_BODY_FILE = "/tmp/reply.md"
+
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
 
@@ -896,11 +901,11 @@ def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_run):
     """Regression #685: --reply's value is its argument, not the PR number."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     _probe_real_delegates(mock_run)
-    _run_main("comments", "--reply", "3777767789",
-              "--body-file", "/tmp/reply.md", "--repo-dir", "/path")
+    _run_main("comments", "--reply", _TEST_REPLY_ID,
+              "--body-file", _TEST_REPLY_BODY_FILE, "--repo-dir", "/path")
     cmd = _delegate_cmd(mock_run)
-    assert cmd[cmd.index("--reply") + 1] == "3777767789"
-    assert cmd[cmd.index("--body-file") + 1] == "/tmp/reply.md"
+    assert cmd[cmd.index("--reply") + 1] == _TEST_REPLY_ID
+    assert cmd[cmd.index("--body-file") + 1] == _TEST_REPLY_BODY_FILE
     assert "--pr" not in cmd
     assert mock_resolve.call_args[1]["pr"] is None
     assert mock_resolve.call_args[1]["branch"] is None
@@ -912,10 +917,10 @@ def test_body_file_path_is_not_eaten_after_an_inline_reply(mock_resolve, mock_ru
     """Regression #685: --reply=ID self-contained, so --body-file's path survives too."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     _probe_real_delegates(mock_run)
-    _run_main("comments", "--reply=3777767789", "--body-file=/tmp/reply.md")
+    _run_main("comments", f"--reply={_TEST_REPLY_ID}", f"--body-file={_TEST_REPLY_BODY_FILE}")
     cmd = _delegate_cmd(mock_run)
-    assert "--reply=3777767789" in cmd
-    assert "--body-file=/tmp/reply.md" in cmd
+    assert f"--reply={_TEST_REPLY_ID}" in cmd
+    assert f"--body-file={_TEST_REPLY_BODY_FILE}" in cmd
     assert mock_resolve.call_args[1]["branch"] is None
 
 
@@ -938,13 +943,13 @@ def test_reply_value_survives_an_explicit_branch(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_target_after_a_boolean_flag_is_still_the_target(mock_resolve, mock_run, flag):
     """A boolean flag consumes nothing, so the token after it is the PR number."""
-    mock_resolve.return_value = make_ctx(pr_number=3057)
+    mock_resolve.return_value = make_ctx(pr_number=int(_TEST_PR))
     _probe_real_delegates(mock_run)
-    _run_main("comments", flag, "3057")
+    _run_main("comments", flag, _TEST_PR)
     cmd = _delegate_cmd(mock_run)
-    assert cmd[cmd.index("--pr") + 1] == "3057"
+    assert cmd[cmd.index("--pr") + 1] == _TEST_PR
     assert flag in cmd
-    assert cmd.count("3057") == 1, f"PR number appeared twice: {cmd}"
+    assert cmd.count(_TEST_PR) == 1, f"PR number appeared twice: {cmd}"
     assert _probe_scripts(mock_run) == ["review-threads"]
 
 
@@ -953,10 +958,10 @@ def test_target_after_a_boolean_flag_is_still_the_target(mock_resolve, mock_run,
 def test_review_takes_a_bare_pr_number(mock_resolve, mock_run):
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     _probe_real_delegates(mock_run)
-    _run_main("review", "3057")
+    _run_main("review", _TEST_PR)
     cmd = _delegate_cmd(mock_run)
     assert cmd[0].endswith("/claude-review")
-    assert cmd[cmd.index("--pr") + 1] == "3057"
+    assert cmd[cmd.index("--pr") + 1] == _TEST_PR
     assert "--self" not in cmd
     assert _probe_scripts(mock_run) == ["claude-review"]
 
@@ -987,11 +992,11 @@ def test_status_needs_no_delegate_to_classify(mock_resolve, mock_run, worktree,
 def test_internal_command_still_classifies_a_positional(mock_resolve, mock_run,
                                                         worktree, stub_state_dir):
     """`pr fix 3057` has no delegate to ask, but 3057 is still the target."""
-    mock_resolve.return_value = make_ctx(worktree_root=worktree, pr_number=3057)
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, pr_number=int(_TEST_PR))
     _probe_real_delegates(mock_run)
     with patch("pr_cli.pr_state.load_state", return_value=None):
-        _run_main("--repo-dir", str(worktree), "fix", "3057")
-    assert mock_resolve.call_args[1]["pr"] == "3057"
+        _run_main("--repo-dir", str(worktree), "fix", _TEST_PR)
+    assert mock_resolve.call_args[1]["pr"] == _TEST_PR
     assert _probe_scripts(mock_run) == []
 
 
@@ -999,30 +1004,30 @@ def test_internal_command_still_classifies_a_positional(mock_resolve, mock_run,
 
 
 def test_positional_index_skips_a_flag_value():
-    extra = ["--reply", "3777767789", "--body-file", "/tmp/reply.md"]
+    extra = ["--reply", _TEST_REPLY_ID, "--body-file", _TEST_REPLY_BODY_FILE]
     assert pr_cli._positional_index(extra, frozenset({"--reply", "--body-file"})) == -1
 
 
 def test_positional_index_finds_a_target_after_a_boolean_flag():
-    assert pr_cli._positional_index(["--triage", "3057"], frozenset({"--reply"})) == 1
+    assert pr_cli._positional_index(["--triage", _TEST_PR], frozenset({"--reply"})) == 1
 
 
 def test_positional_index_treats_inline_values_as_self_contained():
-    extra = ["--reply=1", "3057"]
+    extra = ["--reply=1", _TEST_PR]
     assert pr_cli._positional_index(extra, frozenset({"--reply"})) == 1
 
 
 def test_positional_index_removes_the_token_it_identified():
     """Index, not value: a target that repeats a flag's value must not misfire."""
-    extra = ["--reply", "3057", "--triage", "3057"]
+    extra = ["--reply", _TEST_PR, "--triage", _TEST_PR]
     idx = pr_cli._positional_index(extra, frozenset({"--reply"}))
     assert idx == 3
     extra.pop(idx)
-    assert extra == ["--reply", "3057", "--triage"]
+    assert extra == ["--reply", _TEST_PR, "--triage"]
 
 
 def test_positional_index_without_arity_matches_the_historical_scan():
-    assert pr_cli._positional_index(["--reply", "3057"], frozenset()) == 1
+    assert pr_cli._positional_index(["--reply", _TEST_PR], frozenset()) == 1
 
 
 # ── _delegate_value_flags ──────────────────────────────────────────────────
@@ -1098,10 +1103,10 @@ def test_every_delegate_answers_the_probe(command):
 @patch("pr_cli.pr_context.resolve")
 def test_a_failed_probe_still_dispatches_the_command(mock_resolve, mock_run):
     """Introspection is best-effort: a broken probe must not fail the run."""
-    mock_resolve.return_value = make_ctx(pr_number=3057)
+    mock_resolve.return_value = make_ctx(pr_number=int(_TEST_PR))
     mock_run.return_value = MagicMock(returncode=0, stdout="")
     with patch("pr_cli._delegate_value_flags", return_value=frozenset()):
-        assert _run_main("comments", "--triage", "3057") == 0
+        assert _run_main("comments", "--triage", _TEST_PR) == 0
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-threads")
     assert "--triage" in cmd

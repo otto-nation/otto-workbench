@@ -18,7 +18,8 @@ import pr_state
 from pr_comments import ThreadState
 from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
 from pr_thread_models import (
-    CommentItem, PRReport, ReportThread, TriageStats, triage_result_from_dict,
+    CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
+    TriageStats, triage_result_from_dict,
 )
 from review_common import SECTION_PRIOR_FINDINGS, Diagnosis, DiagnosisKind
 from review_preflight import (
@@ -1374,6 +1375,16 @@ class TestPushHeldCommit:
              patch.object(rt.subprocess, "run", return_value=_make_completed(1, stderr="rejected\n")):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "push_failed"
+
+    def test_a_failed_push_reaches_the_trail(self, rt, publishing_on):
+        """Same as the two sibling push paths — a failure here is not silent."""
+        trail = MagicMock()
+        state = self._state()
+        with patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", return_value=_make_completed(1, stderr="rejected\n")):
+            rt._push_held_commit(state, Path("/fake"), trail)
+        trail.error.assert_called_once()
+        assert "rejected" in trail.error.call_args.kwargs["data"]["error"]
 
     def test_a_commit_already_on_the_remote_is_just_marked(self, rt, publishing_on):
         """Someone pushed by hand between the two runs."""
@@ -2885,6 +2896,96 @@ class TestHoldWhileContested:
         trail.decision.assert_called_once()
         data = trail.decision.call_args.kwargs["data"]
         assert data["reasons"] == ["needs_discussion", "question"]
+
+
+class TestFixPassHoldsWhenContested:
+    """The whole point of #703, asserted through `_run_comment_fix` itself.
+
+    `TestHoldWhileContested` and `TestCommitAndPush` each cover one half. Neither
+    catches a reorder that puts the commit before the hold, which is precisely
+    how the bug worked — so this drives the real entry point with one contested
+    thread and one fixable one, and asserts nothing was pushed.
+    """
+
+    @staticmethod
+    def _item(id, verification, **kw):
+        return CommentItem(
+            id=id, file="f.go", line=10, reviewer="kgn", summary=f"{id} summary",
+            classification="actionable_suggestion", verification=verification,
+            complexity="low", state=ThreadState.NEW, **kw,
+        )
+
+    def _run(self, rt, tmp_path, *, contested, publishing_on_):
+        threads = [self._item("t1", "valid")]
+        if contested:
+            threads.append(self._item("t2", "needs_discussion"))
+
+        # Real comment IDs, so the reply path can actually fire — without them
+        # `_post_fix_replies` finds nothing to reply to and returns 0 whether or
+        # not the gate is shut, which would make the reply assertion vacuous.
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[
+                ReportThread(id=t.id, file=t.file, line=t.line,
+                             comments=[{"databaseId": 100 + n}])
+                for n, t in enumerate(threads)
+            ],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        pushes = []
+
+        def mock_run(cmd, **kwargs):
+            if "push" in cmd:
+                pushes.append(cmd)
+            return _make_completed(0, stdout="abc1234\n")
+
+        batch = rt.FixBatchResult(
+            tracking=TrackingResult(fixed=[threads[0]]),
+            unproductive=False, max_turns=10, max_budget=1.0,
+        )
+        with patch.object(rt, "_run_fix_batch", return_value=batch), \
+             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt, "_persist_fix_state"), \
+             patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
+             patch.object(rt.subprocess, "run", side_effect=mock_run), \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.post_issue_comment", return_value="u"), \
+             patch("pr_comments.resolve_thread", return_value=True):
+            result = rt._run_comment_fix(
+                TriageResult(threads=threads), report, tmp_path, ctx,
+            )
+        return result, pushes
+
+    def test_a_contested_thread_stops_the_push(self, rt, tmp_path, publishing_on):
+        result, pushes = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert result.commit_status == "push_held"
+        assert pushes == []
+
+    def test_the_commit_is_still_made(self, rt, tmp_path, publishing_on):
+        """Holding must not cost the work — only its publication."""
+        result, _ = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert result.commit_sha == "abc1234"
+
+    def test_no_fixed_replies_go_out_while_held(self, rt, tmp_path, publishing_on):
+        result, _ = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert result.replies_posted == 0
+        assert result.summary_url is None
+        assert result.summary_deferred is True
+
+    def test_an_uncontested_pass_still_pushes(self, rt, tmp_path, publishing_on):
+        """The gate must not have closed on the common case."""
+        result, pushes = self._run(rt, tmp_path, contested=False, publishing_on_=True)
+        assert result.commit_status == "pushed"
+        assert pushes
+
+    def test_an_uncontested_pass_still_replies(self, rt, tmp_path, publishing_on):
+        """Pairs with the held case: proves that assertion is not vacuous."""
+        result, _ = self._run(rt, tmp_path, contested=False, publishing_on_=True)
+        assert result.replies_posted == 1
 
 
 class TestTriagePromptVerificationValues:

@@ -870,6 +870,22 @@ def _hold_push(wt_path: Path, sha: str | None) -> CommitPushResult:
     return CommitPushResult(sha, "push_held", "")
 
 
+def _report_diverged_push(
+    wt_path: Path, sha: str | None, err: str, trail: Trail | None,
+) -> None:
+    """Say a push was rejected, the same way from every path that pushes.
+
+    The recovery is a force-push, which this deliberately prints rather than
+    runs — a force-push is the user's call, not the pass's.
+    """
+    log.error(
+        f"push failed — branch has diverged. Run:\n"
+        f"  git -C '{wt_path}' push --force-with-lease"
+    )
+    if trail:
+        trail.error("push", "push failed", data={"sha": sha, "error": err[:500]})
+
+
 def _commit_regen_and_retry_push(
     wt_path: Path, trail: Trail | None,
 ) -> CommitPushResult | None:
@@ -971,12 +987,7 @@ def _commit_and_push(
         return retried
 
     err = push.stderr.strip()
-    log.error(
-        f"push failed — branch has diverged. Run:\n"
-        f"  git -C '{wt_path}' push --force-with-lease"
-    )
-    if trail:
-        trail.error("push", "push failed", data={"sha": sha, "error": err[:500]})
+    _report_diverged_push(wt_path, sha, err, trail)
     return CommitPushResult(sha, "push_failed", err)
 
 
@@ -1456,7 +1467,7 @@ def _finish_deferred_work(
     if state is None:
         return
     threads_by_id = {t.id: t for t in report.threads}
-    _push_held_commit(state, wt_path)
+    _push_held_commit(state, wt_path, trail)
     _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
     _warn_if_snapshot_stale(state, wt_path)
     _reconcile_fix_snapshot(state, threads_by_id)
@@ -1468,7 +1479,9 @@ def _finish_deferred_work(
     pr_state.save_state(ctx.target_dir, state)
 
 
-def _push_held_commit(state: pr_state.PRState, wt_path: Path) -> None:
+def _push_held_commit(
+    state: pr_state.PRState, wt_path: Path, trail: Trail | None = None,
+) -> None:
     """Send the commit the fix pass kept local, now that a run says publish.
 
     The fix pass holds the push whenever a thread is still awaiting discussion,
@@ -1495,10 +1508,7 @@ def _push_held_commit(state: pr_state.PRState, wt_path: Path) -> None:
         capture_output=True, text=True,
     )
     if push.returncode != 0:
-        log.error(
-            f"push failed — branch has diverged. Run:\n"
-            f"  git -C '{wt_path}' push --force-with-lease"
-        )
+        _report_diverged_push(wt_path, fix.commit_sha, push.stderr.strip(), trail)
         fix.commit_status = "push_failed"
         return
 

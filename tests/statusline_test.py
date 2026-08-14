@@ -64,11 +64,19 @@ def test_statusline_reads_the_target_dir_for_the_checkout(tmp_path, monkeypatch)
 
 
 def test_statusline_is_silent_without_an_origin(tmp_path, monkeypatch):
+    """No origin means no derivable target. Seed a state file exactly where
+    the pre-target-dir implementation used to look — the checkout root
+    itself — so a regression that reverts to guessing from cwd would find
+    it and light up the segment; the correct implementation must still stay
+    silent because it never derives a target without an origin remote."""
     wt = tmp_path / "wt"
     wt.mkdir()
     subprocess.run(["git", "init", "-q", str(wt)], check=True)
     monkeypatch.chdir(wt)
+    _save(wt)
+
     assert statusline._pr_piece() == ""
+    assert pr_target.target_dir_for_checkout(wt) is None
 
 
 def test_pr_piece_renders_ci_failures(tmp_path):

@@ -1617,7 +1617,7 @@ def test_build_orchestrate_args_passes_recover_sha(cr, tmp_path):
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
         issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
-        model=None, recover_sha="abc1234",
+        model=None, recover_sha="abc1234", target_dir=tmp_path / "state",
     )
     assert args[args.index("--recover-sha") + 1] == "abc1234"
 
@@ -1627,9 +1627,21 @@ def test_build_orchestrate_args_omits_empty_recover_sha(cr, tmp_path):
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
         issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
-        model=None,
+        model=None, target_dir=tmp_path / "state",
     )
     assert "--recover-sha" not in args
+
+
+def test_build_orchestrate_args_passes_target_dir(cr, tmp_path):
+    """The run's state directory must reach review-orchestrate unmodified."""
+    target = tmp_path / "state" / "pr" / "acme-widget-abcd1234-feat-a"
+    args = cr._build_orchestrate_args(
+        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
+        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
+        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        model=None, target_dir=target,
+    )
+    assert args[args.index("--target-dir") + 1] == str(target)
 
 
 # ── --recover with --self ─────────────────────────────────────────────────────
@@ -1688,7 +1700,7 @@ def test_self_review_body_validates_recover(cr, tmp_path):
             "owner/repo", "", str(tmp_path), "", 1,
             False, None, None, False, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
-            recover=True, head_sha="abc1234",
+            recover=True, head_sha="abc1234", target_dir=tmp_path / "state",
         )
     assert exc.value.code == 1
 
@@ -1720,7 +1732,7 @@ def test_self_review_body_runs_recover_in_pinned_worktree(cr, tmp_path, monkeypa
             "owner/repo", "", str(tmp_path), "", 1,
             False, None, None, False, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
-            recover=True, head_sha="def5678",
+            recover=True, head_sha="def5678", target_dir=tmp_path / "state",
         )
 
     orchestrate_args = run.call_args[0][0]
@@ -1739,7 +1751,7 @@ def test_self_review_body_rejects_fix_on_drifted_recover(cr, tmp_path, monkeypat
             "owner/repo", "", str(tmp_path), "", 1,
             False, None, None, True, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
-            recover=True, head_sha="def5678",
+            recover=True, head_sha="def5678", target_dir=tmp_path / "state",
         )
     assert exc.value.code == 1
 
@@ -1766,7 +1778,7 @@ def test_self_review_body_allows_fix_when_recover_has_not_drifted(cr, tmp_path, 
             "owner/repo", "", str(tmp_path), "", 1,
             False, None, None, True, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
-            recover=True, head_sha="abc1234",
+            recover=True, head_sha="abc1234", target_dir=tmp_path / "state",
         )
 
     orchestrate_args = run.call_args[0][0]

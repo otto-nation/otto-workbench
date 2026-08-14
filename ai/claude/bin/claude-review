@@ -723,7 +723,7 @@ def _build_orchestrate_args(
     max_groups: int | None = None,
     no_scout: bool = False, disprove: bool | None = None,
     generated: bool = False, recover_sha: str = "",
-    target_dir: Path | str = "",
+    target_dir: Path,
 ) -> list[str]:
     args = [
         str(BIN_DIR / "review-orchestrate"),
@@ -776,7 +776,7 @@ def _run_review_body(
     max_parallel, no_holistic, max_cost, model, no_post, auto_post,
     auto_submit, pr_url, effort="medium", max_groups=None,
     no_scout=False, disprove=None, generated=False, recover_sha="",
-    target_dir="",
+    *, target_dir,
 ) -> None:
     orchestrate_args = _build_orchestrate_args(
         pr_number=pr_number, repo=repo, review_file=review_file,
@@ -1017,7 +1017,7 @@ def _run_self_review_body(
     no_holistic, max_cost, model, fix_pass, args,
     self_review_dir, branch_name, effort="medium", max_groups=None,
     no_scout=False, disprove=None, generated=False,
-    recover=False, head_sha="", target_dir="",
+    recover=False, head_sha="", *, target_dir,
 ) -> None:
     review_file = self_review_dir / f"review{REVIEW_EXT}"
     session_log = str(self_review_dir / FILENAME_SESSION)

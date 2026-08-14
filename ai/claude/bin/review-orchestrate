@@ -10,7 +10,7 @@ archive management, and interactive prompts.
 
 Usage:
   review-orchestrate --pr NUMBER --review-file PATH \
-    --repo-dir PATH [--session-log PATH] \
+    --repo-dir PATH [--target-dir PATH] [--session-log PATH] \
     [--prior-review PATH] [--issue URL] [--issue-context JSON]
 """
 

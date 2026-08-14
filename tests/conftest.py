@@ -1,10 +1,12 @@
 import difflib
 import importlib.machinery
 import importlib.util
+import itertools
 import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -348,6 +350,45 @@ def cc():
     spec.loader.exec_module(mod)
     yield mod
     del sys.modules["ci_check"]
+
+
+# One temp root for every make_ctx() default target_dir, not a tmp_path-scoped
+# one: make_ctx is a plain factory most callers invoke without a tmp_path
+# fixture at all. A single TemporaryDirectory's finalizer removes the whole tree
+# at interpreter exit; handing out a numbered subpath per call keeps the callers
+# that never touch target_dir from colliding with each other or with the
+# lock-wiring tests that override it anyway.
+_CTX_TARGET_ROOT = tempfile.TemporaryDirectory(prefix="workbench-test-target-")
+_ctx_target_seq = itertools.count()
+
+
+def make_ctx(**overrides):
+    """Build a minimal ResolvedContext, for any test that needs one to call with.
+
+    Shared rather than per-module so that the next required field on
+    ResolvedContext lands in one place instead of once per test file.
+
+    target_dir defaults to a fresh, unique subpath under _CTX_TARGET_ROOT, not a
+    fixed placeholder: run_lock.acquire unconditionally mkdir(parents=True)s it,
+    so a shared, non-writable default like Path("/target") would fail the moment
+    a test drives an entry point through a mutating command without overriding
+    it. The subpath itself is never created here — acquire creates it on demand,
+    same as a real run would.
+    worktree_root keeps a symbolic Path("/wt") default: tests that read or write
+    a real checkout pass their own, and for the rest it only ever appears in
+    string comparisons (e.g. --repo-dir) and mocked subprocess calls.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import pr_context
+
+    defaults = dict(
+        repo="owner/repo", branch="feat/test", pr_number=42,
+        worktree_root=Path("/wt"), head_sha="abc123",
+        target_dir=Path(_CTX_TARGET_ROOT.name) / f"target-{next(_ctx_target_seq)}",
+    )
+    defaults.update(overrides)
+    return pr_context.ResolvedContext(**defaults)
 
 
 def assert_no_worktree_exit(capsys, branch, fn, *args, **kwargs):

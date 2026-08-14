@@ -13,8 +13,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from conftest import assert_no_worktree_exit, write_thrash_log
-import pr_context
+from conftest import assert_no_worktree_exit, make_ctx, write_thrash_log
 import pr_state
 from pr_comments import ThreadState
 from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
@@ -1472,11 +1471,8 @@ class TestFinalizeDeferredCarriesTheReason:
             ]),
         )
         pr_state.save_state(worktree, state)
-        ctx = pr_context.ResolvedContext(
-            repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=worktree, head_sha="abc1234",
-            target_dir=worktree / "target",
-        )
+        ctx = make_ctx(branch="b", worktree_root=worktree, head_sha="abc1234",
+                       target_dir=worktree / "target")
         return state, ctx
 
     def _run(self, rt, state, ctx):
@@ -1533,11 +1529,8 @@ class TestDeferralRequiresAChoice:
         return state
 
     def _ctx(self, worktree):
-        return pr_context.ResolvedContext(
-            repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=worktree, head_sha="abc1234",
-            target_dir=worktree / "target",
-        )
+        return make_ctx(branch="b", worktree_root=worktree, head_sha="abc1234",
+                        target_dir=worktree / "target")
 
     def _run(self, rt, state, ctx, track):
         captured = []
@@ -1650,11 +1643,8 @@ class TestFinishDeferredWork:
     """The close-out phase: push-deferred replies, tracking issue, summary."""
 
     def _ctx(self, worktree):
-        return pr_context.ResolvedContext(
-            repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=worktree, head_sha="abc1234",
-            target_dir=worktree / "target",
-        )
+        return make_ctx(branch="b", worktree_root=worktree, head_sha="abc1234",
+                        target_dir=worktree / "target")
 
     def _save(self, worktree, **fix_kw):
         pr_state.save_state(worktree / "target", PRState(
@@ -1802,9 +1792,8 @@ class TestReconcileRunsBeforeTheWrites:
                               summary="one", action=ThreadAction.DEFERRED),
             ]),
         ))
-        ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
-                                         worktree_root=worktree, head_sha="aaaaaaa",
-                                         target_dir=worktree / "target")
+        ctx = make_ctx(branch="b", worktree_root=worktree, head_sha="aaaaaaa",
+                       target_dir=worktree / "target")
         report = PRReport(threads=[ReportThread(
             id="t1", state=ThreadState.NEW, is_resolved=False,
             comments=[{"body": "x"}, {"body": "Applied: one\n\nFixed in `abc1234`."}],
@@ -1826,9 +1815,8 @@ class TestReconcileRunsBeforeTheWrites:
                 ThreadOutcome(id="t1", action=ThreadAction.DEFERRED),
             ]),
         ))
-        ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
-                                         worktree_root=worktree, head_sha="aaaaaaa",
-                                         target_dir=worktree / "target")
+        ctx = make_ctx(branch="b", worktree_root=worktree, head_sha="aaaaaaa",
+                       target_dir=worktree / "target")
         report = PRReport(threads=[ReportThread(
             id="t1", state=ThreadState.RESOLVED, is_resolved=True,
             comments=[{"body": "x"}],
@@ -1859,11 +1847,8 @@ class TestStaleSnapshotIsAnnounced:
         return state
 
     def _ctx(self, worktree):
-        return pr_context.ResolvedContext(
-            repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=worktree, head_sha="aaaaaaa",
-            target_dir=worktree / "target",
-        )
+        return make_ctx(branch="b", worktree_root=worktree, head_sha="aaaaaaa",
+                        target_dir=worktree / "target")
 
     def _warnings(self, rt, worktree, current_sha):
         seen = []
@@ -1958,11 +1943,8 @@ class TestFindReplyTarget:
 class TestRunReply:
 
     def _ctx(self, tmp_path):
-        return pr_context.ResolvedContext(
-            repo="owner/repo", branch="b", pr_number=42,
-            worktree_root=tmp_path, head_sha="abc1234",
-            target_dir=tmp_path / "target",
-        )
+        return make_ctx(branch="b", worktree_root=tmp_path, head_sha="abc1234",
+                        target_dir=tmp_path / "target")
 
     def _patches(self, rt, raw, login="reviewer"):
         return (
@@ -2983,11 +2965,8 @@ class TestWorktreeGuard:
     """Both entry points fail the same actionable way with no worktree."""
 
     def _ctx(self):
-        return pr_context.ResolvedContext(
-            repo="owner/repo", branch="isaac/feat/x", pr_number=42,
-            worktree_root=None, head_sha="abc1234",
-            target_dir=Path("/target"),
-        )
+        return make_ctx(branch="isaac/feat/x", worktree_root=None,
+                        head_sha="abc1234")
 
     def test_run_threads_exits_before_touching_github(self, rt, capsys):
         assert_no_worktree_exit(capsys, "isaac/feat/x",

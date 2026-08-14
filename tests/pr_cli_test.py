@@ -1,13 +1,10 @@
 """Tests for pr CLI helper functions."""
 
 import importlib.util
-import itertools
 import json
 import os
 import subprocess
 import sys
-import tempfile
-import types
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -33,7 +30,7 @@ import pr_state  # noqa: E402
 import run_lock  # noqa: E402
 import workbench_paths  # noqa: E402
 
-from conftest import assert_no_worktree_exit  # noqa: E402
+from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
 
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
@@ -217,7 +214,7 @@ def _run_main(*argv):
 @patch("pr_cli.pr_context.resolve")
 def test_global_flags_after_subcommand(mock_resolve, mock_run):
     """Global flags like --repo-dir work after the subcommand name."""
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = make_ctx()
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("rebase", "--repo-dir", "/some/path")
     mock_resolve.assert_called_once()
@@ -229,7 +226,7 @@ def test_global_flags_after_subcommand(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_global_flags_before_subcommand(mock_resolve, mock_run):
     """Global flags also work before the subcommand name."""
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = make_ctx()
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--repo-dir", "/some/path", "rebase")
     mock_resolve.assert_called_once()
@@ -241,7 +238,7 @@ def test_global_flags_before_subcommand(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_global_flags_mixed_with_subcommand_flags(mock_resolve, mock_run):
     """--repo-dir after subcommand doesn't swallow subcommand-specific flags."""
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = make_ctx()
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("rebase", "--fix", "--repo-dir", "/some/path")
     mock_resolve.assert_called_once()
@@ -274,42 +271,10 @@ def test_help_short_flag_skips_context_resolution(mock_resolve, mock_run):
 # ── _run_delegate ─────────────────────────────────────────────────────────
 
 
-# One temp root for every _make_ctx() default target_dir in this module, not
-# tmp_path-scoped since _make_ctx is a plain factory most callers invoke
-# without a tmp_path fixture at all. A single TemporaryDirectory's finalizer
-# removes the whole tree at interpreter exit; handing out a numbered subpath
-# per call keeps the ~50 callers that never touch target_dir from colliding
-# with each other or with the lock-wiring tests that override it anyway.
-_CTX_TARGET_ROOT = tempfile.TemporaryDirectory(prefix="pr-cli-test-target-")
-_ctx_target_seq = itertools.count()
-
-
-def _make_ctx(**overrides):
-    """Build a minimal ResolvedContext for testing.
-
-    target_dir defaults to a fresh, unique subpath under _CTX_TARGET_ROOT, not
-    a fixed placeholder: run_lock.acquire unconditionally mkdir(parents=True)s
-    it now, so a shared, non-writable default like the old Path("/wt/target")
-    would fail the moment any test drives main() through a mutating command
-    without overriding it. The subpath itself is never created here — acquire
-    creates it on demand, same as a real run would.
-    worktree_root keeps its symbolic Path("/wt") default — nothing in these
-    tests writes to it directly, it only ever appears in string comparisons
-    (e.g. --repo-dir) and mocked subprocess calls.
-    """
-    import pr_context
-    target_dir = Path(_CTX_TARGET_ROOT.name) / f"target-{next(_ctx_target_seq)}"
-    defaults = dict(repo="owner/repo", branch="feat/test",
-                    pr_number=42, worktree_root=Path("/wt"), head_sha="abc123",
-                    target_dir=target_dir)
-    defaults.update(overrides)
-    return pr_context.ResolvedContext(**defaults)
-
-
 @patch("pr_cli.subprocess.run")
 def test_run_delegate_builds_command(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     entry = {"script": "ci-check", "help": "x"}
     pr_cli._run_delegate(entry, ["--run", "99"], ctx)
     cmd = mock_run.call_args[0][0]
@@ -323,7 +288,7 @@ def test_run_delegate_builds_command(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_run_delegate_includes_prefix(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     entry = {"script": "claude-review", "prefix": ["gc"], "help": "x"}
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
@@ -334,7 +299,7 @@ def test_run_delegate_includes_prefix(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_run_delegate_passes_argv_through(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     entry = {"script": "pr-rebase", "help": "x"}
     pr_cli._run_delegate(entry, ["--fix", "--push", "--unknown-future-flag"], ctx)
     cmd = mock_run.call_args[0][0]
@@ -346,7 +311,7 @@ def test_run_delegate_passes_argv_through(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_run_delegate_returns_exit_code(mock_run):
     mock_run.return_value = MagicMock(returncode=3)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     entry = {"script": "pr-rebase", "help": "x"}
     rc = pr_cli._run_delegate(entry, [], ctx)
     assert rc == 3
@@ -358,7 +323,7 @@ def test_run_delegate_returns_exit_code(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_review_injects_self_when_no_target(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(pr_number=None)
+    ctx = make_ctx(pr_number=None)
     pr_cli.cmd_review([], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--self" in cmd
@@ -367,7 +332,7 @@ def test_cmd_review_injects_self_when_no_target(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_review_no_self_when_pr_number(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     pr_cli.cmd_review(["123"], ctx)
     cmd = mock_run.call_args[0][0]
     self_count = cmd.count("--self")
@@ -377,7 +342,7 @@ def test_cmd_review_no_self_when_pr_number(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_review_no_self_when_pr_url(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     pr_cli.cmd_review(["https://github.com/owner/repo/pull/99"], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--self" not in cmd
@@ -387,7 +352,7 @@ def test_cmd_review_no_self_when_pr_url(mock_run):
 def test_cmd_review_no_self_when_original_pr(mock_run):
     """--pr consumed by global parser still prevents --self injection."""
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     pr_cli.cmd_review([], ctx, original_pr="1206")
     cmd = mock_run.call_args[0][0]
     assert "--self" not in cmd
@@ -397,7 +362,7 @@ def test_cmd_review_no_self_when_original_pr(mock_run):
 def test_cmd_review_no_self_when_ctx_has_pr(mock_run):
     """Auto-detected PR number in context prevents --self injection."""
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(pr_number=99)
+    ctx = make_ctx(pr_number=99)
     pr_cli.cmd_review([], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--self" not in cmd
@@ -406,7 +371,7 @@ def test_cmd_review_no_self_when_ctx_has_pr(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_review_no_double_self(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     pr_cli.cmd_review(["--self"], ctx)
     cmd = mock_run.call_args[0][0]
     assert cmd.count("--self") == 1
@@ -416,7 +381,7 @@ def test_cmd_review_no_double_self(mock_run):
 def test_cmd_review_no_self_when_branch_positional(mock_run):
     """A branch name positional should not trigger --self injection."""
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(pr_number=None)
+    ctx = make_ctx(pr_number=None)
     pr_cli.cmd_review(["kgn/go-update"], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--self" not in cmd
@@ -426,7 +391,7 @@ def test_cmd_review_no_self_when_branch_positional(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_review_passes_flags_through(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     pr_cli.cmd_review(["--self", "--fix", "--no-post"], ctx)
     cmd = mock_run.call_args[0][0]
     assert "--fix" in cmd
@@ -438,14 +403,14 @@ def test_cmd_review_passes_flags_through(mock_run):
 
 def test_review_recover_mutually_exclusive_with_post():
     """--recover and --post are mutually exclusive."""
-    ctx = _make_ctx()
+    ctx = make_ctx()
     rc = pr_cli.cmd_review(["--recover", "--post"], ctx)
     assert rc == 1
 
 
 def test_review_recover_passes_through_to_delegate():
     """--recover alone is forwarded to claude-review."""
-    ctx = _make_ctx()
+    ctx = make_ctx()
     with patch("pr_cli.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
         pr_cli.cmd_review(["--recover", "42"], ctx)
@@ -465,7 +430,7 @@ def test_cmd_review_post_delegates_to_review_post(mock_run, tmp_path):
     review_dir.mkdir(parents=True)
     (review_dir / "review.md").write_text("# Review")
     with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = _make_ctx(pr_number=42)
+        ctx = make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--post"], ctx)
     assert rc == 0
     cmd = mock_run.call_args[0][0]
@@ -483,7 +448,7 @@ def test_cmd_review_post_passes_submit(mock_run, tmp_path):
     review_dir.mkdir(parents=True)
     (review_dir / "review.md").write_text("# Review")
     with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = _make_ctx(pr_number=42)
+        ctx = make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--post", "--submit"], ctx)
     assert rc == 0
     cmd = mock_run.call_args[0][0]
@@ -495,7 +460,7 @@ def test_cmd_review_post_fails_without_review_file(tmp_path):
     reviews_dir = tmp_path / "reviews"
     reviews_dir.mkdir()
     with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = _make_ctx(pr_number=42)
+        ctx = make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--post"], ctx)
     assert rc == 1
 
@@ -513,7 +478,7 @@ def test_cmd_review_post_finds_review_via_meta(mock_run, tmp_path):
         "repo": "owner/repo", "pr_number": "42",
     }))
     with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = _make_ctx(pr_number=42)
+        ctx = make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--post"], ctx)
     assert rc == 0
     cmd = mock_run.call_args[0][0]
@@ -528,7 +493,7 @@ def test_cmd_review_post_finds_review_via_meta(mock_run, tmp_path):
 def test_run_delegate_forwards_only_original_pr(mock_run):
     """When the user provided --pr, only --pr is forwarded (not --branch)."""
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
+    ctx = make_ctx(branch="feat/my-feature", pr_number=99)
     entry = {"script": "review-threads", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx, original_pr="99")
     cmd = mock_run.call_args[0][0]
@@ -541,7 +506,7 @@ def test_run_delegate_forwards_only_original_pr(mock_run):
 def test_run_delegate_prefers_pr_over_original_branch(mock_run):
     """When the user provided --branch but a PR was resolved, forward --pr."""
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
+    ctx = make_ctx(branch="feat/my-feature", pr_number=99)
     entry = {"script": "review-threads", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
     cmd = mock_run.call_args[0][0]
@@ -554,7 +519,7 @@ def test_run_delegate_prefers_pr_over_original_branch(mock_run):
 def test_run_delegate_falls_back_to_original_branch_without_pr(mock_run):
     """When the user provided --branch and no PR was resolved, forward --branch."""
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(branch="feat/my-feature", pr_number=None)
+    ctx = make_ctx(branch="feat/my-feature", pr_number=None)
     entry = {"script": "review-threads", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx, original_branch="feat/my-feature")
     cmd = mock_run.call_args[0][0]
@@ -567,7 +532,7 @@ def test_run_delegate_falls_back_to_original_branch_without_pr(mock_run):
 def test_run_delegate_auto_detected_forwards_pr(mock_run):
     """When neither flag was given and ctx has a PR, forward --pr (not --branch)."""
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(branch="feat/my-feature", pr_number=99)
+    ctx = make_ctx(branch="feat/my-feature", pr_number=99)
     entry = {"script": "review-threads", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
@@ -580,7 +545,7 @@ def test_run_delegate_auto_detected_forwards_pr(mock_run):
 def test_run_delegate_auto_detected_no_pr_forwards_branch(mock_run):
     """When neither flag was given and ctx has no PR, forward --branch."""
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(branch="feat/my-feature", pr_number=None)
+    ctx = make_ctx(branch="feat/my-feature", pr_number=None)
     entry = {"script": "review-threads", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
@@ -592,7 +557,7 @@ def test_run_delegate_auto_detected_no_pr_forwards_branch(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_run_delegate_omits_branch_when_none(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx(branch="", pr_number=None)
+    ctx = make_ctx(branch="", pr_number=None)
     entry = {"script": "ci-check", "help": "x"}
     pr_cli._run_delegate(entry, [], ctx)
     cmd = mock_run.call_args[0][0]
@@ -604,7 +569,7 @@ def test_run_delegate_omits_branch_when_none(mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_run):
     """Regression: pr --pr 1927 comments must not pass both --branch and --pr."""
-    mock_resolve.return_value = _make_ctx(branch="feat/derived", pr_number=1927)
+    mock_resolve.return_value = make_ctx(branch="feat/derived", pr_number=1927)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--pr", "1927", "--repo-dir", "/path", "comments")
     cmd = mock_run.call_args[0][0]
@@ -617,7 +582,7 @@ def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_main_branch_flag_prefers_resolved_pr(mock_resolve, mock_run):
     """pr --branch feat/foo comments forwards --pr when a PR was resolved."""
-    mock_resolve.return_value = _make_ctx(branch="feat/foo", pr_number=42)
+    mock_resolve.return_value = make_ctx(branch="feat/foo", pr_number=42)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--branch", "feat/foo", "--repo-dir", "/path", "comments")
     cmd = mock_run.call_args[0][0]
@@ -630,7 +595,7 @@ def test_main_branch_flag_prefers_resolved_pr(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_main_auto_detected_forwards_pr_only(mock_resolve, mock_run):
     """Bare 'pr comments' (no flags) forwards auto-detected --pr, not --branch."""
-    mock_resolve.return_value = _make_ctx(branch="feat/derived", pr_number=42)
+    mock_resolve.return_value = make_ctx(branch="feat/derived", pr_number=42)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--repo-dir", "/path", "comments")
     cmd = mock_run.call_args[0][0]
@@ -645,7 +610,7 @@ def test_main_auto_detected_forwards_pr_only(mock_resolve, mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_comments_plain_delegates_to_review_threads(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     pr_cli.cmd_comments([], ctx)
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-threads")
@@ -656,7 +621,7 @@ def test_cmd_comments_plain_delegates_to_review_threads(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_comments_triage_passes_flag(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     pr_cli.cmd_comments(["--triage"], ctx)
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-threads")
@@ -666,7 +631,7 @@ def test_cmd_comments_triage_passes_flag(mock_run):
 @patch("pr_cli.subprocess.run")
 def test_cmd_comments_resolve_passes_flag(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     pr_cli.cmd_comments(["--resolve"], ctx)
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-threads")
@@ -684,7 +649,7 @@ def test_cmd_review_repair_succeeds_with_review_file(mock_update, tmp_path):
     review_dir.mkdir(parents=True)
     (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
     with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = _make_ctx(pr_number=42)
+        ctx = make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--repair"], ctx)
     assert rc == 0
     mock_update.assert_called_once()
@@ -698,7 +663,7 @@ def test_cmd_review_repair_falls_back_to_rebuild(mock_run, tmp_path):
     review_dir.mkdir(parents=True)
     mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
     with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = _make_ctx(pr_number=42)
+        ctx = make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--repair"], ctx)
     assert rc == 0
     cmd = mock_run.call_args[0][0]
@@ -706,7 +671,7 @@ def test_cmd_review_repair_falls_back_to_rebuild(mock_run, tmp_path):
 
 
 def test_cmd_review_repair_no_pr_fails():
-    ctx = _make_ctx(pr_number=None)
+    ctx = make_ctx(pr_number=None)
     rc = pr_cli.cmd_review(["--repair"], ctx)
     assert rc == 1
 
@@ -721,7 +686,7 @@ def test_cmd_review_summary_outputs_json(tmp_path, capsys):
     review_dir.mkdir(parents=True)
     (review_dir / "review.md").write_text("## Must fix\n- **[M1]** path:1 — bug\n")
     with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = _make_ctx(pr_number=42)
+        ctx = make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--summary"], ctx)
     assert rc == 0
     out = capsys.readouterr().out
@@ -735,7 +700,7 @@ def test_cmd_review_summary_fails_without_review(tmp_path):
     reviews_dir = tmp_path / "reviews"
     reviews_dir.mkdir()
     with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = _make_ctx(pr_number=42)
+        ctx = make_ctx(pr_number=42)
         rc = pr_cli.cmd_review(["--summary"], ctx)
     assert rc == 1
 
@@ -744,13 +709,13 @@ def test_cmd_review_summary_fails_without_review(tmp_path):
 
 
 def test_cmd_review_mutual_exclusivity():
-    ctx = _make_ctx()
+    ctx = make_ctx()
     rc = pr_cli.cmd_review(["--post", "--repair"], ctx)
     assert rc == 1
 
 
 def test_cmd_review_mutual_exclusivity_three():
-    ctx = _make_ctx()
+    ctx = make_ctx()
     rc = pr_cli.cmd_review(["--post", "--repair", "--summary"], ctx)
     assert rc == 1
 
@@ -761,7 +726,7 @@ def test_cmd_review_mutual_exclusivity_three():
 @patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_no_state_returns_error(mock_load):
     mock_load.return_value = None
-    ctx = _make_ctx()
+    ctx = make_ctx()
     rc = pr_cli.cmd_fix([], ctx)
     assert rc == 1
 
@@ -776,7 +741,7 @@ def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_run):
     ))
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     rc = pr_cli.cmd_fix([], ctx)
     assert rc == 0
     cmd = _first_call_containing(mock_run, "claude-review")
@@ -794,7 +759,7 @@ def test_cmd_fix_skips_review_when_no_findings(mock_load, mock_run):
     ))
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=0)
-    ctx = _make_ctx()
+    ctx = make_ctx()
     rc = pr_cli.cmd_fix([], ctx)
     assert rc == 0
     assert not _calls_containing(mock_run, "claude-review")
@@ -830,7 +795,7 @@ def test_cmd_fix_describes_last(mock_load, mock_run):
     ))
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=0)
-    pr_cli.cmd_fix([], ctx=_make_ctx())
+    pr_cli.cmd_fix([], ctx=make_ctx())
     scripts = [Path(call[0][0][0]).name for call in mock_run.call_args_list]
     assert scripts[-1] == "pr-describe"
 
@@ -843,7 +808,7 @@ def test_cmd_fix_does_not_forward_argv_to_describe(mock_load, mock_run):
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=0)
-    pr_cli.cmd_fix(["--verbose"], ctx=_make_ctx())
+    pr_cli.cmd_fix(["--verbose"], ctx=make_ctx())
     cmd = _first_call_containing(mock_run, "pr-describe")
     assert "--verbose" not in cmd
 
@@ -855,7 +820,7 @@ def test_cmd_fix_reports_a_failing_describe(mock_load, mock_run):
     state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
     mock_load.return_value = state
     mock_run.return_value = MagicMock(returncode=1)
-    assert pr_cli.cmd_fix([], ctx=_make_ctx()) == 1
+    assert pr_cli.cmd_fix([], ctx=make_ctx()) == 1
 
 
 # ── positional target forwarding ────────────────────────────────────────────
@@ -865,7 +830,7 @@ def test_cmd_fix_reports_a_failing_describe(mock_load, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run):
     """Regression: 'pr rebase my-branch' must not pass my-branch as a bare positional."""
-    mock_resolve.return_value = _make_ctx(branch="my-branch", pr_number=None)
+    mock_resolve.return_value = make_ctx(branch="my-branch", pr_number=None)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("rebase", "my-branch")
     cmd = mock_run.call_args[0][0]
@@ -878,7 +843,7 @@ def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run):
     """Regression: 'pr ci 42' must not pass 42 as a bare positional."""
-    mock_resolve.return_value = _make_ctx(pr_number=42)
+    mock_resolve.return_value = make_ctx(pr_number=42)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("ci", "42")
     cmd = mock_run.call_args[0][0]
@@ -895,7 +860,7 @@ def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run
 def test_main_installs_sigint_handler(mock_resolve, mock_run):
     """main() installs a SIGINT handler so Ctrl+C exits cleanly without a traceback."""
     import signal
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = make_ctx()
     mock_run.return_value = MagicMock(returncode=0)
     original = signal.getsignal(signal.SIGINT)
     try:
@@ -916,20 +881,10 @@ def test_main_installs_sigint_handler(mock_resolve, mock_run):
 class TestCmdCreate:
     """Tests for pr create subcommand."""
 
-    def _make_ctx(self, worktree_root="/tmp/test-repo"):
-        import pr_context
-        ctx = MagicMock(spec=pr_context.ResolvedContext)
-        ctx.worktree_root = Path(worktree_root)
-        ctx.repo = "owner/repo"
-        ctx.branch = "feat/test"
-        ctx.pr_number = None
-        ctx.head_sha = "abc123"
-        return ctx
-
     @patch("pr_cli.subprocess.run")
     def test_create_delegates_to_task(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
-        ctx = self._make_ctx()
+        ctx = make_ctx(pr_number=None)
         rc = pr_cli.cmd_create(["--no-issue", "--draft"], ctx)
         assert rc == 0
         cmd = mock_run.call_args[0][0]
@@ -944,7 +899,7 @@ class TestCmdCreate:
     @patch("pr_cli.subprocess.run")
     def test_create_passes_repo_dir(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
-        ctx = self._make_ctx("/tmp/my-worktree")
+        ctx = make_ctx(worktree_root=Path("/tmp/my-worktree"), pr_number=None)
         pr_cli.cmd_create([], ctx)
         cmd = mock_run.call_args[0][0]
         assert "REPO_DIR=/tmp/my-worktree" in cmd
@@ -952,14 +907,14 @@ class TestCmdCreate:
     @patch("pr_cli.subprocess.run")
     def test_create_returns_nonzero_on_failure(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1)
-        ctx = self._make_ctx()
+        ctx = make_ctx(pr_number=None)
         rc = pr_cli.cmd_create([], ctx)
         assert rc == 1
 
     @patch("pr_cli.subprocess.run")
     def test_create_no_args_still_delegates(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
-        ctx = self._make_ctx()
+        ctx = make_ctx(pr_number=None)
         rc = pr_cli.cmd_create([], ctx)
         assert rc == 0
         cmd = mock_run.call_args[0][0]
@@ -972,12 +927,12 @@ class TestCmdCreate:
 
 def test_cmd_status_without_a_worktree_exits_with_guidance(capsys):
     assert_no_worktree_exit(capsys, "feat/test", pr_cli.cmd_status,
-                            [], _make_ctx(worktree_root=None))
+                            [], make_ctx(worktree_root=None))
 
 
 def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
     assert_no_worktree_exit(capsys, "feat/test", pr_cli.cmd_fix,
-                            [], _make_ctx(worktree_root=None))
+                            [], make_ctx(worktree_root=None))
 
 
 def test_review_state_lands_with_the_pr_not_the_caller(tmp_path):
@@ -1037,7 +992,7 @@ def test_main_locks_the_target_for_a_mutating_command(
     a lock keyed on worktree_root (the old bug) would land in the worktree, not
     in the target."""
     target = worktree / "target"
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
     mock_run.return_value = MagicMock(returncode=0)
     seen = {}
     mock_run.side_effect = lambda *a, **k: (
@@ -1058,7 +1013,7 @@ def test_main_locks_a_bare_repo_run(mock_resolve, mock_run, tmp_path):
     entirely via the old `if ctx.worktree_root:` guard. target_dir is never
     None, so a bare-repo run now takes a real lock like any other."""
     target = tmp_path / "target"
-    mock_resolve.return_value = _make_ctx(worktree_root=None, target_dir=target)
+    mock_resolve.return_value = make_ctx(worktree_root=None, target_dir=target)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--repo-dir", "/nonexistent", "comments")
     assert _lock_file(target).is_file()
@@ -1070,7 +1025,7 @@ def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree,
                                        stub_state_dir):
     """status is read-only, so it must never block on a run in flight."""
     target = worktree / "target"
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--repo-dir", str(worktree), "status")
     assert not _lock_file(target).exists()
@@ -1088,7 +1043,7 @@ def test_main_locks_for_gc(mock_resolve, _gc, _prune, _prune_targets, worktree):
     worktree and the state dir resolves on its own.
     """
     target = worktree / "target"
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
     _run_main("--repo-dir", str(worktree), "gc")
     assert _lock_file(target).is_file()
     assert not _lock_file(worktree).exists()
@@ -1103,7 +1058,7 @@ def test_gc_skips_own_target_when_pruning(
     """cmd_gc must pass its own target as `skip` — gc holds that lock, so a
     prune that tried it would either deadlock or delete live state."""
     target = worktree / "target"
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
     _run_main("--repo-dir", str(worktree), "gc")
     assert mock_prune_targets.call_args.kwargs["skip"] == target
 
@@ -1117,7 +1072,7 @@ def test_gc_skips_legacy_sweep_from_a_bare_repo(
     """A bare repo has a target but no worktree_root — there is no worktree
     to sweep legacy artifacts out of."""
     target = tmp_path / "target"
-    mock_resolve.return_value = _make_ctx(worktree_root=None, target_dir=target)
+    mock_resolve.return_value = make_ctx(worktree_root=None, target_dir=target)
     with patch("pr_cli._sweep_legacy_state") as mock_sweep:
         _run_main("--repo-dir", "/nonexistent", "gc")
     mock_sweep.assert_not_called()
@@ -1126,7 +1081,7 @@ def test_gc_skips_legacy_sweep_from_a_bare_repo(
 @patch("pr_cli.pr_context.resolve")
 def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
     target = worktree / "target"
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
     busy = run_lock.LockBusy(
         {"pid": 15461, "command": "pr review --self --fix", "started": "t"}, target)
 

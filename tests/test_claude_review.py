@@ -24,6 +24,8 @@ from review_common import (
 )
 import review_gc
 
+from conftest import make_ctx
+
 
 @pytest.fixture(scope="session")
 def cr():
@@ -1920,11 +1922,9 @@ def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     monkeypatch.setattr(cr.pr_context, "resolve", _refuse)
     monkeypatch.chdir(caller)
 
-    ctx = cr.pr_context.ResolvedContext(
-        repo="acme/widget", branch="feat/x", pr_number=2973,
-        worktree_root=caller, head_sha="deadbee",
-        target_dir=prs_target,
-    )
+    ctx = make_ctx(repo="acme/widget", branch="feat/x", pr_number=2973,
+                   worktree_root=caller, head_sha="deadbee",
+                   target_dir=prs_target)
     cr._update_pr_state(ctx, str(review_file), cr.Mode.PR, trail=MagicMock())
 
     state = ps.load_state(prs_target)
@@ -1948,11 +1948,9 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
 
     monkeypatch.setattr(cr.pr_state, "apply_state_update", _boom)
     trail = MagicMock()
-    ctx = cr.pr_context.ResolvedContext(
-        repo="acme/widget", branch="feat/x", pr_number=1,
-        worktree_root=None, head_sha="deadbee",
-        target_dir=tmp_path / "target",
-    )
+    ctx = make_ctx(repo="acme/widget", branch="feat/x", pr_number=1,
+                   worktree_root=None, head_sha="deadbee",
+                   target_dir=tmp_path / "target")
 
     cr._update_pr_state(ctx, str(review_file), cr.Mode.PR, trail=trail)
 

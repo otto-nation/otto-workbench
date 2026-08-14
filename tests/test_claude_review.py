@@ -1667,7 +1667,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(
     """Checking out the target moves HEAD — the recover sha must come from the new worktree."""
     ctx = SimpleNamespace(
         repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
-        target_dir=Path("/state/pr/owner-repo-x-feat-x"),
+        target_dir=tmp_path / "pr" / "owner-repo-x-feat-x",
     )
     monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
     monkeypatch.setattr(cr, "_resolve_branch_input", lambda pr_input, repo_dir: pr_input)
@@ -1961,3 +1961,69 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
     assert "read-only file system" in trail.error.call_args[0][1]
     assert "read-only file system" in capsys.readouterr().err
 
+
+# ── the run lock on the --self path ──────────────────────────────────────────
+
+
+def _self_review_args(**overrides):
+    base = dict(
+        positional=[], issue=None, max_parallel=1, skip_user_verification=True,
+        force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
+        model=None, repo_dir="", fix=True, effort="medium", max_groups=None,
+        generated=False, recover=False, debug=False,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _stub_self_review(cr, monkeypatch, target, reviews_dir):
+    """Drive _run_self_review far enough to reach the lock, and no further."""
+    ctx = SimpleNamespace(
+        repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
+        target_dir=target,
+    )
+    monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(cr, "_cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_run_self_review_body", MagicMock())
+    return ctx
+
+
+def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
+    """`claude-review --self --fix` twice must not give two committers on a branch.
+
+    The lock is what stops that, and this branch's docs claim it covers a direct
+    `--self` invocation — so a second, unrelated run has to be refused.
+    """
+    import run_lock
+
+    target = tmp_path / "pr" / "acme-widget-b9d71e86-feat-x"
+    _stub_self_review(cr, monkeypatch, target, reviews_dir)
+
+    cr._run_self_review(_self_review_args())
+
+    record = json.loads((target / run_lock.LOCK_FILE).read_text())
+    assert record["command"].startswith("claude-review")
+    assert record["started"]
+
+    # A fresh run, with none of our env inherited, must be turned away.
+    monkeypatch.delenv(run_lock.LOCK_ENV, raising=False)
+    with pytest.raises(SystemExit) as exc:
+        run_lock.claim_for_process(target, command="claude-review --self", started="t")
+    assert exc.value.code == 1
+
+
+def test_self_review_passes_through_the_lock_pr_already_holds(
+    cr, tmp_path, reviews_dir, monkeypatch,
+):
+    """Launched by `pr`, a --self run inherits WORKBENCH_RUN_LOCK, not a deadlock."""
+    import run_lock
+
+    target = tmp_path / "pr" / "acme-widget-b9d71e86-feat-x"
+    _stub_self_review(cr, monkeypatch, target, reviews_dir)
+
+    with run_lock.acquire(target, command="pr review --self --fix", started="t"):
+        cr._run_self_review(_self_review_args())
+        # Passed through: the parent's ownership record is untouched.
+        record = json.loads((target / run_lock.LOCK_FILE).read_text())
+        assert record["command"] == "pr review --self --fix"

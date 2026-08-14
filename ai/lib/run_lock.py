@@ -13,11 +13,15 @@ Uses ``fcntl.flock`` on ``<target_dir>/run.lock``. The kernel drops the lock
 when the holder exits for any reason, including SIGKILL, so there is no
 stale-lock state to reap.
 
-Delegate scripts (``claude-review``, ``ci-check``, ``review-threads``) are entry
-points in their own right and take the lock themselves, so a direct invocation
-is guarded too. When ``pr`` launched them they resolve the same target, compute
-the same key, find it in ``WORKBENCH_RUN_LOCK`` and pass through as a no-op
-instead of deadlocking against the lock their own parent holds.
+``claude-review`` (both its PR and its ``--self`` paths), ``ci-check`` and
+``review-threads`` take the lock themselves, so invoking those three directly is
+guarded too. When ``pr`` launched them they resolve the same target, compute the
+same key, find it in ``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead
+of deadlocking against the lock their own parent holds.
+
+That list is exhaustive, not an example: ``pr-rebase`` and ``pr-describe`` are
+delegates that take no lock of their own, so running either directly is
+unguarded and only ``pr rebase`` / ``pr describe`` serialize them.
 """
 
 from __future__ import annotations

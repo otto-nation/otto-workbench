@@ -1173,6 +1173,16 @@ def _run_self_review(args) -> None:
     repo = ctx.repo
     pr_number = str(ctx.pr_number) if ctx.pr_number else ""
 
+    # Before the checkout is switched or a --fix pass edits it: two `--self`
+    # runs on one branch are two processes committing to it. A no-op when `pr`
+    # launched us — we resolve the same target and find its key already in
+    # WORKBENCH_RUN_LOCK.
+    run_lock.claim_for_process(
+        ctx.target_dir,
+        command=" ".join(["claude-review"] + sys.argv[1:]),
+        started=pr_state.now_iso(),
+    )
+
     wt_cleanup: review_worktree.WorktreeResult | None = None
 
     if is_pr:

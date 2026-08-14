@@ -12,6 +12,7 @@ the PR being gone — and all of them read what a review directory holds from
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from contextlib import contextmanager
@@ -24,6 +25,7 @@ import pr_target
 import run_lock
 import workbench_paths
 from pr_state import ReviewStatus
+from trail import Trail
 from review_common import (
     FILENAME_META,
     FILENAME_PIPELINE_STATE,
@@ -214,7 +216,7 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
         if not _dir_is_all_stale(review_dir, stale_days):
             continue
 
-        state = _pr_close_state(meta.repo, meta.pr_number)
+        state, _ = _pr_close_state(meta.repo, meta.pr_number)
         if state:
             shutil.rmtree(review_dir, ignore_errors=True)
             log.info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
@@ -223,24 +225,32 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
     return pruned
 
 
-def _pr_close_state(repo: str, pr_number: int) -> str:
-    """Return "MERGED", "CLOSED", or "" — open, or a question we could not ask.
+def _pr_close_state(repo: str, pr_number: int) -> tuple[str, str]:
+    """Return ("MERGED"|"CLOSED"|"", ended_at) — open, or a question we could not ask.
 
     Collapsing "open" and "could not ask" is deliberate: both mean keep the
     artifacts. gc that deletes on a network blip is worse than gc that runs
     again tomorrow. Returns the state rather than a bool so callers can name it
     in their log line.
+
+    `mergedAt` and `closedAt` ride along on a call we are making anyway, and
+    they are the only record of when the PR actually ended — gc's own clock
+    says when we noticed, which can be a week later.
     """
     try:
         r = subprocess.run(
             ["gh", "pr", "view", str(pr_number), "--repo", repo,
-             "--json", "state", "--jq", ".state"],
+             "--json", "state,mergedAt,closedAt"],
             capture_output=True, text=True,
         )
+        fields = json.loads(r.stdout or "{}")
     except Exception:
-        return ""
-    state = r.stdout.strip()
-    return state if state in ("MERGED", "CLOSED") else ""
+        return "", ""
+    state = fields.get("state") or ""
+    if state not in ("MERGED", "CLOSED"):
+        return "", ""
+    ended_at = fields.get("mergedAt") if state == "MERGED" else fields.get("closedAt")
+    return state, ended_at or ""
 
 
 def _remove_target(target: Path) -> None:
@@ -316,7 +326,9 @@ def _prune_and_count(target: Path, message: str) -> int:
 
 def prune_merged_targets(targets_dir: Path | None = None,
                          max_files: int = PRUNE_MAX_FILES,
-                         skip: Path | None = None) -> int:
+                         skip: Path | None = None,
+                         *,
+                         trail: Trail) -> int:
     """Remove target directories for merged/closed PRs. Returns count pruned.
 
     Replaces the free cleanup a worktree-local state file used to get from
@@ -331,6 +343,10 @@ def prune_merged_targets(targets_dir: Path | None = None,
     targets it can recover. A corrupt state file is dropped for free, without
     touching the budget, because deleting it costs no network call — the
     budget exists to bound `gh` questions, not local unlinks.
+
+    `trail` is required rather than optional: this sweep is the only code that
+    learns a PR has ended, and it is about to delete the state that answers how
+    it went. An optional trail is a summary that silently never fires.
     """
     targets_dir = targets_dir or pr_target.targets_root()
     if not targets_dir.is_dir():
@@ -358,10 +374,25 @@ def prune_merged_targets(targets_dir: Path | None = None,
         if not state.identity.pr_number or not state.identity.repo:
             continue
         checked += 1
-        close_state = _pr_close_state(state.identity.repo, state.identity.pr_number)
+        close_state, ended_at = _pr_close_state(
+            state.identity.repo, state.identity.pr_number)
         if not close_state:
             continue
-        pruned += _prune_and_count(
+        removed = _prune_and_count(
             target, f"Pruned {state.identity.repo}#{state.identity.pr_number} ({close_state})")
+        pruned += removed
+        # After the prune, not before: a target that would not unlink is still
+        # live, and its outcome is not history yet.
+        if removed:
+            trail.summary(
+                pr_state.TERMINAL_SUMMARY_ACTION,
+                f"{state.identity.repo}#{state.identity.pr_number} {close_state.lower()}",
+                data=pr_state.terminal_summary(state, close_state, ended_at),
+                context={
+                    "repo": state.identity.repo,
+                    "pr": state.identity.pr_number,
+                    "branch": state.identity.branch,
+                },
+            )
 
     return pruned

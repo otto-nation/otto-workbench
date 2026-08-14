@@ -314,7 +314,8 @@ def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> st
 
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_pr: str | None = None,
-               original_branch: str | None = None) -> int:
+               original_branch: str | None = None,
+               **_kw) -> int:
     """Delegate to claude-review, or handle --post/--repair/--summary/--recover locally."""
     flags = set(argv)
     mode_flags = flags & {"--post", "--repair", "--summary", "--recover"}
@@ -477,7 +478,8 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                  original_pr: str | None = None,
-                 original_branch: str | None = None) -> int:
+                 original_branch: str | None = None,
+                 **_kw) -> int:
     """Delegate to review-threads, routing --triage, --fix and --finish flags."""
     return _run_delegate(_COMMANDS["comments"], list(argv), ctx,
                          original_pr=original_pr,
@@ -521,14 +523,14 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return subprocess.run(cmd).returncode
 
 
-def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
     # Everything but the legacy sweep is user-scoped and works from a bare repo.
     # Our own target is skipped: we are holding its lock right now.
     total = (
         review_gc.gc_reviews()
         + review_gc.prune_merged_reviews()
-        + review_gc.prune_merged_targets(skip=ctx.target_dir)
+        + review_gc.prune_merged_targets(skip=ctx.target_dir, trail=trail)
     )
     if ctx.worktree_root:
         total += _sweep_legacy_state(ctx.worktree_root)
@@ -627,6 +629,7 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
         handler = _CUSTOM.get(args.command)
         if handler:
             return handler(extra, ctx,
+                           trail=trail,
                            original_pr=original_pr,
                            original_branch=original_branch)
         assert "script" in _COMMANDS[args.command], \

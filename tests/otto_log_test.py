@@ -281,3 +281,27 @@ class TestStatsCommand:
         out = capsys.readouterr().out
         assert "fresh" in out
         assert "stale" not in out
+
+
+class TestSummaryIsNotAlwaysFinish:
+    def test_show_reports_the_runs_duration(self, capsys):
+        trail = Trail.start(script="pr", context={"repo": "org/repo"})
+        trail.info("act", "did")
+        trail.finish()
+        otto_log.cmd_show(argparse.Namespace(invocation=trail.invocation, json=False))
+        assert "s\n" in capsys.readouterr().out
+
+    def test_show_survives_a_summary_with_no_duration(self, capsys):
+        """A terminal `pr_outcome` event carries no duration and must not raise."""
+        trail = Trail.start(script="pr", context={"repo": "org/repo"})
+        trail.summary("pr_outcome", "org/repo#7 merged", data={"outcome": "MERGED"})
+        otto_log.cmd_show(argparse.Namespace(invocation=trail.invocation, json=False))
+        assert "pr_outcome" in capsys.readouterr().out
+
+    def test_list_survives_a_summary_with_no_duration(self, capsys):
+        trail = Trail.start(script="pr", context={"repo": "org/repo"})
+        trail.summary("pr_outcome", "org/repo#7 merged")
+        otto_log.cmd_list(argparse.Namespace(
+            script=None, since=None, repo=None, json=True))
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert rows[0]["duration_ms"] is None

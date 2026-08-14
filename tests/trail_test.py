@@ -272,6 +272,34 @@ class TestTrailDebugMode:
         assert "[trail]" in capsys.readouterr().err
 
 
+class TestTrailSummary:
+    def test_summary_writes_a_second_kind_of_summary_event(self):
+        trail = Trail.start(script="pr", context={"repo": "org/repo", "pr": 1})
+        trail.summary("pr_outcome", "org/repo#7 merged", data={"outcome": "MERGED"})
+        trail.finish()
+        summaries = [e for e in _read_events() if e["event_type"] == "summary"]
+        actions = {e["action"] for e in summaries}
+        assert actions == {"pr_outcome", FINISH_ACTION}
+        outcome = next(e for e in summaries if e["action"] == "pr_outcome")
+        assert outcome["data"] == {"outcome": "MERGED"}
+        assert "duration_ms" not in outcome
+
+    def test_per_event_context_overrides_the_runs(self):
+        """`pr gc` prunes other PRs than its own; the record must name theirs."""
+        trail = Trail.start(script="pr", context={"repo": "org/repo", "pr": 1})
+        trail.summary("pr_outcome", "", context={"pr": 7, "branch": "feat/x"})
+        trail.finish()
+        outcome = next(e for e in _read_events() if e["action"] == "pr_outcome")
+        assert outcome["context"] == {"repo": "org/repo", "pr": 7, "branch": "feat/x"}
+
+    def test_the_runs_context_is_not_mutated(self):
+        trail = Trail.start(script="pr", context={"repo": "org/repo", "pr": 1})
+        trail.summary("pr_outcome", "", context={"pr": 7})
+        trail.info("after", "")
+        after = next(e for e in _read_events() if e["action"] == "after")
+        assert after["context"] == {"repo": "org/repo", "pr": 1}
+
+
 class TestAddTrailArgs:
     def test_adds_debug_flag(self):
         import argparse

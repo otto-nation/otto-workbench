@@ -159,6 +159,7 @@ class Trail:
         span: str | None = None,
         duration_ms: int | None = None,
         data: dict | None = None,
+        context: dict | None = None,
     ) -> TrailEvent:
         return TrailEvent(
             ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -169,7 +170,9 @@ class Trail:
             event_type=event_type,
             action=action,
             detail=detail,
-            context=self._context,
+            # Merged into a new dict rather than updated in place: the run's own
+            # context has to survive an event that names a different subject.
+            context={**self._context, **context} if context else self._context,
             reason=reason,
             span=span,
             duration_ms=duration_ms,
@@ -200,6 +203,17 @@ class Trail:
         finally:
             elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
             self._emit(self._make_event(Level.INFO, EventType.SPAN_END, name, "", span=name, duration_ms=elapsed_ms))
+
+    def summary(self, action: str, detail: str, *, data: dict | None = None,
+                context: dict | None = None) -> None:
+        """A terminal record about something other than this run's own duration.
+
+        `context` names the event's subject when it is not the run's — `pr gc`
+        writes one of these per pruned PR, and `otto-log query --pr N` has to
+        find the record for N rather than for the gc run.
+        """
+        self._emit(self._make_event(
+            Level.INFO, EventType.SUMMARY, action, detail, data=data, context=context))
 
     def finish(self) -> None:
         elapsed_ms = (time.monotonic_ns() - self._start_ns) // 1_000_000

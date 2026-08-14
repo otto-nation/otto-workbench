@@ -457,6 +457,32 @@ class PRState:
     updated_at: str = ""
 
 
+# The action on the trail's terminal event. `pr_state` owns it because it owns
+# the payload's shape; `review_gc` owns the emit.
+TERMINAL_SUMMARY_ACTION = "pr_outcome"
+
+
+def terminal_summary(state: PRState, outcome: str, ended_at: str) -> dict:
+    """How a review cycle ended, for the trail's terminal event.
+
+    Read straight off the domains rather than recomputed: this is the last
+    reading of state that is about to be deleted, not a fresh measurement.
+
+    ``ended_at`` comes from GitHub rather than from the clock — gc runs whenever
+    someone types it, so the event's own ``ts`` says when we noticed, which can
+    be a week after the merge.
+    """
+    return {
+        "outcome": outcome,
+        "ended_at": ended_at,
+        "cost_usd": state.review.cost_usd,
+        "total_tokens": state.review.total_tokens,
+        "verdict": state.review.verdict,
+        "finding_counts": dict(state.review.finding_counts),
+        "rebase_conflicts": state.rebase.conflicts_resolved,
+    }
+
+
 # ── Serialization ───────────────────────────────────────────────────────────
 
 

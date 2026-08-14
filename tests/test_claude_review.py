@@ -1300,7 +1300,7 @@ def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
         m = MagicMock()
         if "gh" in cmd[0] and "pr" in cmd:
             m.returncode = 0
-            m.stdout = "MERGED\n"
+            m.stdout = json.dumps({"state": "MERGED", "mergedAt": "2026-08-01T00:00:00Z"})
         else:
             m.returncode = 0
             m.stdout = ""
@@ -1329,7 +1329,7 @@ def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
         m = MagicMock()
         if "gh" in cmd[0] and "pr" in cmd:
             m.returncode = 0
-            m.stdout = "OPEN\n"
+            m.stdout = json.dumps({"state": "OPEN"})
         else:
             m.returncode = 0
             m.stdout = ""
@@ -1373,7 +1373,8 @@ def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
     for f in d.iterdir():
         os.utime(f, (old_time, old_time))
 
-    mock_run.side_effect = lambda cmd, **kw: MagicMock(returncode=0, stdout="MERGED\n")
+    mock_run.side_effect = lambda cmd, **kw: MagicMock(
+        returncode=0, stdout=json.dumps({"state": "MERGED", "mergedAt": "2026-08-01T00:00:00Z"}))
     review_gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "failed review within 30-day window should be retained"
@@ -1395,7 +1396,8 @@ def test_prune_removes_old_failed_review(mock_run, cr, reviews_dir):
     for f in d.iterdir():
         os.utime(f, (old_time, old_time))
 
-    mock_run.side_effect = lambda cmd, **kw: MagicMock(returncode=0, stdout="MERGED\n")
+    mock_run.side_effect = lambda cmd, **kw: MagicMock(
+        returncode=0, stdout=json.dumps({"state": "MERGED", "mergedAt": "2026-08-01T00:00:00Z"}))
     review_gc.prune_merged_reviews(reviews_dir)
 
     assert not d.exists(), "failed review older than 30 days should be pruned"

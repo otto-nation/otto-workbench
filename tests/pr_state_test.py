@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
+import pr_state
 from pr_state import (
     PRIdentity, CIDomain, ReviewSummary, ReviewVerdict, ReviewStatus,
     CommentsSummary, TriageSummary, RebaseSummary,
@@ -1332,3 +1333,38 @@ def test_review_verdict_disapprove_is_outside_the_ranking():
     assert not ReviewVerdict.DISAPPROVE.outranks(ReviewVerdict.APPROVE)
     assert not ReviewVerdict.CHANGES_REQUESTED.outranks(ReviewVerdict.DISAPPROVE)
     assert not ReviewVerdict.APPROVE.outranks(None)
+
+
+class TestTerminalSummary:
+    def _state(self) -> pr_state.PRState:
+        state = pr_state.PRState(identity=pr_state.PRIdentity(
+            repo="org/repo", branch="feat/x", pr_number=7,
+            head_sha="abc1234", worktree_root="/tmp/wt",
+        ))
+        state.review.cost_usd = 4.25
+        state.review.total_tokens = 91_000
+        state.review.verdict = ReviewVerdict.CHANGES_REQUESTED.prose
+        state.review.finding_counts = {"must-fix": 2, "nit": 5}
+        state.rebase.conflicts_resolved = 3
+        return state
+
+    def test_carries_every_field_the_prune_is_about_to_delete(self):
+        payload = pr_state.terminal_summary(self._state(), "MERGED", "2026-08-13T09:00:00Z")
+        assert payload == {
+            "outcome": "MERGED",
+            "ended_at": "2026-08-13T09:00:00Z",
+            "cost_usd": 4.25,
+            "total_tokens": 91_000,
+            "verdict": "Request changes",
+            "finding_counts": {"must-fix": 2, "nit": 5},
+            "rebase_conflicts": 3,
+        }
+
+    def test_finding_counts_are_copied_not_aliased(self):
+        state = self._state()
+        payload = pr_state.terminal_summary(state, "CLOSED", "")
+        state.review.finding_counts["must-fix"] = 99
+        assert payload["finding_counts"]["must-fix"] == 2
+
+    def test_the_action_name_is_published(self):
+        assert pr_state.TERMINAL_SUMMARY_ACTION == "pr_outcome"

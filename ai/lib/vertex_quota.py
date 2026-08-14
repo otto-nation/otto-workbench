@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import stat
 import subprocess
 import tempfile
 import time
@@ -26,6 +25,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import log
+import workbench_paths
 from review_common import Phase
 
 try:
@@ -38,7 +38,6 @@ except ImportError:
     _HAS_GOOGLE_AUTH = False
 
 _CACHE_TTL_SECS = 300
-_CACHE_DIR = Path(tempfile.gettempdir()) / f"vertex-quota-{os.getuid()}"
 
 _REGIONAL_METRIC = (
     "aiplatform.googleapis.com"
@@ -132,37 +131,24 @@ def _get_access_token() -> str | None:
     return None
 
 
+_CACHE_CONSUMER = "vertex-quota"
+
+
 def _cache_key(project: str, region: str) -> Path:
+    """Where one project/region lookup is cached.
+
+    Resolved per call rather than frozen into a module constant, matching how
+    ``workbench_paths`` resolves the roots themselves — the environment is
+    routinely set after import, by tests and by callers that re-point a root.
+    """
     raw = f"{project}:{region}"
     h = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    return _CACHE_DIR / f"vertex-quota-{h}.json"
-
-
-def _cache_dir_ready() -> bool:
-    """Whether the cache dir is a real, private directory we own.
-
-    The path lives under a world-writable tmpdir on Linux, so another user can
-    pre-plant it as a symlink into a directory of their choosing. Anything that
-    is not a plain self-owned directory is refused outright — the cache is an
-    optimisation, and skipping it just means one more API call.
-    """
-    try:
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-        st = os.lstat(_CACHE_DIR)
-    except OSError:
-        return False
-    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
-        return False
-    if st.st_mode & 0o077:
-        os.chmod(_CACHE_DIR, 0o700)
-    return True
+    return workbench_paths.cache_dir(_CACHE_CONSUMER) / f"{h}.json"
 
 
 def _check_cache(project: str, region: str) -> dict[str, str] | None:
-    if not _cache_dir_ready():
-        return None
     path = _cache_key(project, region)
-    if not path.is_file() or path.is_symlink():
+    if not path.is_file():
         return None
     try:
         data = json.loads(path.read_text())
@@ -174,7 +160,7 @@ def _check_cache(project: str, region: str) -> dict[str, str] | None:
 
 
 def _atomic_write(path: Path, payload: str) -> None:
-    fd, tmp_path = tempfile.mkstemp(dir=_CACHE_DIR, prefix=".tmp-")
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
     try:
         with os.fdopen(fd, "w") as f:
             f.write(payload)
@@ -185,13 +171,10 @@ def _atomic_write(path: Path, payload: str) -> None:
 
 
 def _write_cache(project: str, region: str, models: dict[str, str]) -> None:
-    if not _cache_dir_ready():
-        return
+    path = _cache_key(project, region)
     try:
-        _atomic_write(
-            _cache_key(project, region),
-            json.dumps({"ts": time.time(), "models": models}),
-        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(path, json.dumps({"ts": time.time(), "models": models}))
     except OSError:
         pass
 

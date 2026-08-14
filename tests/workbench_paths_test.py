@@ -147,6 +147,27 @@ class TestLogsDir:
             workbench_paths.logs_dir(tool)
 
 
+class TestCacheConsumer:
+    def test_bare_cache_dir_is_the_root_itself(self, clean_env):
+        assert workbench_paths.cache_dir() == clean_env / ".cache/workbench"
+
+    def test_a_named_consumer_nests_under_it(self, clean_env):
+        assert (workbench_paths.cache_dir("vertex-quota")
+                == clean_env / ".cache/workbench/vertex-quota")
+
+    def test_a_consumer_subtree_follows_the_cache_root(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path / "cache"))
+        assert workbench_paths.cache_dir("vertex-quota") == tmp_path / "cache/vertex-quota"
+
+    @pytest.mark.parametrize("consumer", ["/etc", "../escaped", "nested/name", ".."])
+    def test_a_path_like_consumer_name_is_rejected(self, consumer):
+        # The same guard logs_dir enforces: a cache subtree outside the cache
+        # root would survive a wipe of the root, which is the one thing a cache
+        # must not do.
+        with pytest.raises(ValueError):
+            workbench_paths.cache_dir(consumer)
+
+
 class TestConsumers:
     def test_reviews_dir_sits_under_the_state_root(self, monkeypatch, tmp_path):
         """Loaded fresh: REVIEWS_DIR is resolved at import, before this test ran."""

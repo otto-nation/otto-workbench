@@ -11,6 +11,9 @@ from datetime import datetime
 from pathlib import Path
 
 import log
+import pr_target
+import run_lock
+import workbench_paths
 from pr_state import ReviewStatus
 from review_common import (
     FILENAME_META,
@@ -138,19 +141,103 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
         if not _dir_is_all_stale(review_dir, stale_days):
             continue
 
-        try:
-            r = subprocess.run(
-                ["gh", "pr", "view", str(meta.pr_number), "--repo", meta.repo,
-                 "--json", "state", "--jq", ".state"],
-                capture_output=True, text=True,
-            )
-            state = r.stdout.strip()
-        except Exception:
-            state = ""
-
-        if state in ("MERGED", "CLOSED"):
+        state = _pr_close_state(meta.repo, meta.pr_number)
+        if state:
             shutil.rmtree(review_dir, ignore_errors=True)
             log.info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
             pruned += 1
+
+    return pruned
+
+
+def _pr_close_state(repo: str, pr_number: int) -> str:
+    """"MERGED", "CLOSED", or "" for an open PR or a question we could not ask.
+
+    Collapsing "open" and "could not ask" is deliberate: both mean keep the
+    artifacts. gc that deletes on a network blip is worse than gc that runs
+    again tomorrow. Returns the state rather than a bool so callers can name it
+    in their log line.
+    """
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--repo", repo,
+             "--json", "state", "--jq", ".state"],
+            capture_output=True, text=True,
+        )
+    except Exception:
+        return ""
+    state = r.stdout.strip()
+    return state if state in ("MERGED", "CLOSED") else ""
+
+
+def _prune_one_target(target: Path) -> bool:
+    """Remove a target directory, unless a live run holds it.
+
+    rmtree unlinks run.lock, and a flock only excludes processes that agree on
+    one inode — deleting it out from under a running review would let the next
+    contender create a fresh file and take an uncontended lock while the first
+    is still working. Taking the lock first is how we learn nobody is there.
+    """
+    try:
+        with run_lock.acquire(target, command="pr gc", started=""):
+            shutil.rmtree(target, ignore_errors=True)
+    except run_lock.LockBusy:
+        return False
+    return True
+
+
+def _prune_and_count(target: Path, message: str) -> int:
+    """Prune *target*, logging *message* first. Returns 1 if it happened.
+
+    Factored out of prune_merged_targets's loop body so neither of its two
+    call sites nests a second `if` inside the loop's `if`.
+    """
+    if not _prune_one_target(target):
+        return 0
+    log.info(message)
+    return 1
+
+
+def prune_merged_targets(targets_dir: Path | None = None,
+                         max_files: int = PRUNE_MAX_FILES,
+                         skip: Path | None = None) -> int:
+    """Remove target directories for merged/closed PRs. Returns count pruned.
+
+    Replaces the free cleanup a worktree-local state file used to get from
+    `wt remove` — target state outlives any single checkout by design, so
+    nothing else deletes it.
+
+    `skip` is the caller's own target. It cannot be detected by trying the lock:
+    the caller already holds it, so LOCK_ENV would pass us straight through into
+    deleting live state.
+    """
+    import pr_state
+
+    targets_dir = targets_dir or (workbench_paths.state_dir() / pr_target.TARGETS_DIR)
+    if not targets_dir.is_dir():
+        return 0
+
+    pruned = 0
+    checked = 0
+    for state_file in sorted(targets_dir.glob(f"*/{pr_state.STATE_FILE}")):
+        if checked >= max_files:
+            break
+        target = state_file.parent
+        if skip is not None and target == skip:
+            continue
+        state = pr_state.load_state(target)
+        if state is None:
+            # The glob found the file, so this is corrupt rather than absent.
+            # Nothing here is authoritative, so dropping it is a clean recovery.
+            pruned += _prune_and_count(target, f"Pruned unreadable target state at {target.name}")
+            continue
+        if not state.identity.pr_number or not state.identity.repo:
+            continue
+        checked += 1
+        close_state = _pr_close_state(state.identity.repo, state.identity.pr_number)
+        if not close_state:
+            continue
+        pruned += _prune_and_count(
+            target, f"Pruned {state.identity.repo}#{state.identity.pr_number} ({close_state})")
 
     return pruned

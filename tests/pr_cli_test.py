@@ -1078,10 +1078,11 @@ def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree,
     assert not _lock_file(target).exists()
 
 
+@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
 @patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
 @patch("pr_cli.review_gc.gc_reviews", return_value=0)
 @patch("pr_cli.pr_context.resolve")
-def test_main_locks_for_gc(mock_resolve, _gc, _prune, worktree):
+def test_main_locks_for_gc(mock_resolve, _gc, _prune, _prune_targets, worktree):
     """gc deletes the state directory, so it is not safe to run unlocked.
 
     Takes no stub_state_dir, unlike its neighbours: nothing here mocks
@@ -1095,30 +1096,33 @@ def test_main_locks_for_gc(mock_resolve, _gc, _prune, worktree):
     assert not _lock_file(worktree).exists()
 
 
+@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
 @patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
 @patch("pr_cli.review_gc.gc_reviews", return_value=0)
-@patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_gc_run_does_not_destroy_the_lock_it_is_holding(
-        mock_resolve, mock_run, _gc, _prune, worktree):
-    """The full dispatch path: gc takes the lock, then clears the target's
-    state. state.json and run.lock are siblings in target_dir now, so the
-    sweep must skip the lock by name rather than clearing everything."""
+def test_gc_skips_own_target_when_pruning(
+        mock_resolve, _gc, _prune, mock_prune_targets, worktree):
+    """cmd_gc must pass its own target as `skip` — gc holds that lock, so a
+    prune that tried it would either deadlock or delete live state."""
     target = worktree / "target"
-    target.mkdir(parents=True)
     mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
-    mock_run.return_value = MagicMock(returncode=0, stdout="MERGED\n")
-    (target / pr_state.STATE_FILE).write_text("{}")
-    state = MagicMock()
-    state.identity.pr_number = 42
-    state.identity.repo = "owner/repo"
+    _run_main("--repo-dir", str(worktree), "gc")
+    assert mock_prune_targets.call_args.kwargs["skip"] == target
 
-    with patch("pr_cli.pr_state.load_state", return_value=state):
-        _run_main("--repo-dir", str(worktree), "gc")
 
-    assert not (target / pr_state.STATE_FILE).exists()
-    assert _lock_file(target).is_file()
-    assert not _lock_file(worktree).exists()
+@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
+@patch("pr_cli.review_gc.gc_reviews", return_value=0)
+@patch("pr_cli.pr_context.resolve")
+def test_gc_skips_legacy_sweep_from_a_bare_repo(
+        mock_resolve, _gc, _prune, _prune_targets, tmp_path):
+    """A bare repo has a target but no worktree_root — there is no worktree
+    to sweep legacy artifacts out of."""
+    target = tmp_path / "target"
+    mock_resolve.return_value = _make_ctx(worktree_root=None, target_dir=target)
+    with patch("pr_cli._sweep_legacy_state") as mock_sweep:
+        _run_main("--repo-dir", "/nonexistent", "gc")
+    mock_sweep.assert_not_called()
 
 
 @patch("pr_cli.pr_context.resolve")
@@ -1136,39 +1140,21 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
     assert "15461" in err
 
 
-def test_gc_clears_state_without_deleting_the_live_lock(worktree):
-    """Regression: rmtree of the state dir took run.lock with it, handing the
-    next run an uncontended lock on a fresh inode while gc was still going."""
-    state_dir = _state_dir(worktree)
-    state_dir.mkdir(parents=True)
-    (state_dir / pr_state.STATE_FILE).write_text("{}")
-    (state_dir / run_lock.LOCK_FILE).write_text('{"pid": 1}')
-    (state_dir / "trails").mkdir()
-    (state_dir / "trails" / "a.jsonl").write_text("{}")
+def test_gc_sweeps_legacy_worktree_artifacts_but_keeps_the_trail(tmp_path):
+    legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
+    legacy.mkdir()
+    (legacy / pr_state.STATE_FILE).write_text("{}")
+    (legacy / run_lock.LOCK_FILE).write_text("{}")
+    (legacy / "trail.jsonl").write_text('{"event":"x"}\n')
 
-    pr_cli._clear_state_dir(state_dir)
+    assert pr_cli._sweep_legacy_state(tmp_path) == 1
 
-    assert (state_dir / run_lock.LOCK_FILE).is_file()
-    assert not (state_dir / pr_state.STATE_FILE).exists()
-    assert not (state_dir / "trails").exists()
+    assert not (legacy / pr_state.STATE_FILE).exists()
+    assert not (legacy / "run.lock").exists()
+    assert (legacy / "trail.jsonl").is_file()
 
 
-def test_gc_removes_an_unreadable_state_file(worktree):
-    """load_state folds corrupt into missing, but gc stats the file first, so
-    it is the one caller that can still tell them apart — and the one command
-    whose job is deleting the state dir."""
-    target = worktree / "target"
-    target.mkdir()
-    (target / pr_state.STATE_FILE).write_text("{ not json")
-
-    assert pr_cli._gc_stale_pr_state(target) == 1
-    assert not (target / pr_state.STATE_FILE).exists()
-
-
-def test_gc_leaves_a_readable_state_file_with_no_pr(worktree):
-    state = pr_state.new_state("owner/repo", "feat", pr_number=None,
-                               head_sha="abc", worktree_root=str(worktree))
-    pr_state.save_state(worktree, state)
-
-    assert pr_cli._gc_stale_pr_state(worktree) == 0
-    assert (worktree / pr_state.STATE_FILE).is_file()
+def test_gc_legacy_sweep_is_idempotent(tmp_path):
+    legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
+    legacy.mkdir()
+    assert pr_cli._sweep_legacy_state(tmp_path) == 0

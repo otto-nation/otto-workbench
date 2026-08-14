@@ -10,7 +10,6 @@ import argparse
 import contextlib
 import json
 import signal
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -419,54 +418,24 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
-def _clear_state_dir(state_dir: Path) -> None:
-    """Empty the state directory, skipping the lock file by name.
+def _sweep_legacy_state(worktree_root: Path) -> int:
+    """Remove state and lock files the pre-target layout left in a worktree.
 
-    state.json and run.lock are siblings in target_dir now, and this call runs
-    while gc still holds that lock — an rmtree of the whole directory would
-    unlink the inode this run has flocked, handing the next contender an
-    uncontended lock on a fresh file while gc is still working.
+    Returns 1 if anything was removed. No migration carries these: they are
+    gitignored, worktree-local, and rebuilt by the next command that writes
+    them. `trail.jsonl` and the directory itself stay — the trail still lives
+    there.
     """
-    for entry in state_dir.iterdir():
-        if entry.name == run_lock.LOCK_FILE:
-            continue
-        if entry.is_dir():
-            shutil.rmtree(entry, ignore_errors=True)
-            continue
-        entry.unlink(missing_ok=True)
-
-
-def _gc_stale_pr_state(target_dir: Path) -> int:
-    """Remove pr state if it is unreadable, or if the PR is merged or
-    closed. Returns 1 if cleaned."""
-    state_file = target_dir / pr_state.STATE_FILE
-    if not state_file.is_file():
-        return 0
-    state = pr_state.load_state(target_dir)
-    if state is None:
-        # The file exists — checked above — so this is a corrupt one, not an
-        # absent one. gc is the command that owns deleting the state dir, and
-        # nothing in it is authoritative, so clearing it is a clean recovery.
-        _clear_state_dir(target_dir)
-        log.info("GC: removed unreadable pr state")
-        return 1
-    if not state.identity.pr_number:
-        return 0
-    try:
-        r = subprocess.run(
-            ["gh", "pr", "view", str(state.identity.pr_number),
-             "--repo", state.identity.repo,
-             "--json", "state", "--jq", ".state"],
-            capture_output=True, text=True,
-        )
-        pr_st = r.stdout.strip()
-    except Exception:
-        pr_st = ""
-    if pr_st not in ("MERGED", "CLOSED"):
-        return 0
-    _clear_state_dir(target_dir)
-    log.info(f"GC: removed stale pr state ({pr_st})")
-    return 1
+    legacy = worktree_root / pr_state.STATE_DIR
+    removed = 0
+    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE):
+        path = legacy / name
+        if path.is_file():
+            path.unlink(missing_ok=True)
+            removed = 1
+    if removed:
+        log.info(f"GC: removed legacy worktree state in {legacy}")
+    return removed
 
 
 def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -482,8 +451,15 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
-    total = review_gc.gc_reviews() + review_gc.prune_merged_reviews()
-    total += _gc_stale_pr_state(ctx.target_dir)
+    # Everything but the legacy sweep is user-scoped and works from a bare repo.
+    # Our own target is skipped: we are holding its lock right now.
+    total = (
+        review_gc.gc_reviews()
+        + review_gc.prune_merged_reviews()
+        + review_gc.prune_merged_targets(skip=ctx.target_dir)
+    )
+    if ctx.worktree_root:
+        total += _sweep_legacy_state(ctx.worktree_root)
 
     if total > 0:
         log.info(f"GC: cleaned {total} item(s) total")

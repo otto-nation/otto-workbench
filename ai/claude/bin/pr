@@ -523,7 +523,7 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return subprocess.run(cmd).returncode
 
 
-def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail, **_kw) -> int:
+def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail: Trail, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
     # Everything but the legacy sweep is user-scoped and works from a bare repo.
     # Our own target is skipped: we are holding its lock right now.

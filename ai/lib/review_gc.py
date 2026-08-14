@@ -25,7 +25,6 @@ import pr_target
 import run_lock
 import workbench_paths
 from pr_state import ReviewStatus
-from trail import Trail
 from review_common import (
     FILENAME_META,
     FILENAME_PIPELINE_STATE,
@@ -35,6 +34,7 @@ from review_common import (
     read_pipeline_status,
     read_review_meta,
 )
+from trail import Trail
 
 GC_STALE_DAYS = 7
 GC_FAILED_STALE_DAYS = 30
@@ -243,8 +243,16 @@ def _pr_close_state(repo: str, pr_number: int) -> tuple[str, str]:
              "--json", "state,mergedAt,closedAt"],
             capture_output=True, text=True,
         )
-        fields = json.loads(r.stdout or "{}")
     except Exception:
+        return "", ""
+    try:
+        fields = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        # Surfaced rather than swallowed: "gh said OPEN" and "gh's response was
+        # unparseable" both keep the artifacts, and a bare except here would make
+        # the second look exactly like the first — a response-format change would
+        # then silently stop every future prune from asking a real question.
+        log.warn(f"GC: could not parse gh's response for {repo}#{pr_number} — leaving it in place")
         return "", ""
     state = fields.get("state") or ""
     if state not in ("MERGED", "CLOSED"):
@@ -324,6 +332,33 @@ def _prune_and_count(target: Path, message: str) -> int:
     return 1
 
 
+def _emit_terminal_summary(
+    trail: Trail, state: pr_state.PRState, close_state: str, ended_at: str,
+) -> None:
+    """Record a pruned target's outcome. Reported, not raised, on failure.
+
+    Factored out of `prune_merged_targets`'s loop body so the try/except does
+    not add a third level of nesting there — the target is already gone by the
+    time this runs, so losing this one record must not also cost every
+    remaining target its own prune, the same tradeoff `_prune_one_target` makes.
+    """
+    try:
+        trail.summary(
+            pr_state.TERMINAL_SUMMARY_ACTION,
+            f"{state.identity.repo}#{state.identity.pr_number} {close_state.lower()}",
+            data=pr_state.terminal_summary(state, close_state, ended_at),
+            context={
+                "repo": state.identity.repo,
+                "pr": state.identity.pr_number,
+                "branch": state.identity.branch,
+            },
+        )
+    except OSError as exc:
+        log.warn(
+            f"GC: could not record {state.identity.repo}#{state.identity.pr_number}'s "
+            f"outcome ({exc}) — continuing the sweep")
+
+
 def prune_merged_targets(targets_dir: Path | None = None,
                          max_files: int = PRUNE_MAX_FILES,
                          skip: Path | None = None,
@@ -384,15 +419,6 @@ def prune_merged_targets(targets_dir: Path | None = None,
         # After the prune, not before: a target that would not unlink is still
         # live, and its outcome is not history yet.
         if removed:
-            trail.summary(
-                pr_state.TERMINAL_SUMMARY_ACTION,
-                f"{state.identity.repo}#{state.identity.pr_number} {close_state.lower()}",
-                data=pr_state.terminal_summary(state, close_state, ended_at),
-                context={
-                    "repo": state.identity.repo,
-                    "pr": state.identity.pr_number,
-                    "branch": state.identity.branch,
-                },
-            )
+            _emit_terminal_summary(trail, state, close_state, ended_at)
 
     return pruned

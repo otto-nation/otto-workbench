@@ -1,9 +1,10 @@
 """Tests for review and target-state garbage collection."""
 
+import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -13,17 +14,28 @@ if str(LIB_DIR) not in sys.path:
 import pr_state
 import review_gc
 import run_lock
+import workbench_paths
+from trail import Trail
 
 
 class _RecordingTrail:
-    """Stands in for a Trail, recording what the prune would have written."""
+    """Stands in for a Trail, recording what the prune would have written.
 
-    def __init__(self):
+    Mirrors `Trail._make_event`'s context merge — a per-event `context`
+    overrides the run's own rather than replacing it — so a test can tell an
+    override from a run with no context to override in the first place.
+    """
+
+    def __init__(self, context=None):
+        self._context = context or {}
         self.summaries = []
 
     def summary(self, action, detail, *, data=None, context=None):
         self.summaries.append({
-            "action": action, "detail": detail, "data": data, "context": context,
+            "action": action,
+            "detail": detail,
+            "data": data,
+            "context": {**self._context, **context} if context else self._context,
         })
 
 
@@ -39,6 +51,30 @@ def _seed_target(base, name="widget-feat-a", **overrides):
         worktree_root=overrides.pop("worktree_root", "/wt"),
     ))
     return target
+
+
+def test_pr_close_state_reports_merged_with_its_timestamp(monkeypatch):
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        stdout=json.dumps({
+            "state": "MERGED", "mergedAt": "2026-08-01T12:00:00Z", "closedAt": None,
+        })))
+    assert review_gc._pr_close_state("acme/widget", 7) == ("MERGED", "2026-08-01T12:00:00Z")
+
+
+def test_pr_close_state_reports_closed_with_its_timestamp(monkeypatch):
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        stdout=json.dumps({
+            "state": "CLOSED", "mergedAt": None, "closedAt": "2026-08-02T08:00:00Z",
+        })))
+    assert review_gc._pr_close_state("acme/widget", 7) == ("CLOSED", "2026-08-02T08:00:00Z")
+
+
+def test_pr_close_state_treats_a_null_mergedat_as_no_timestamp(monkeypatch):
+    """gh's `mergedAt` can still be null in the window right after a merge lands;
+    a PR noticed as MERGED then must report an empty string, not the word "None"."""
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        stdout=json.dumps({"state": "MERGED", "mergedAt": None, "closedAt": None})))
+    assert review_gc._pr_close_state("acme/widget", 7) == ("MERGED", "")
 
 
 def test_prune_merged_targets_removes_a_merged_prs_dir(tmp_path, monkeypatch):
@@ -182,16 +218,17 @@ def test_merged_target_emits_one_terminal_summary(tmp_path, monkeypatch):
 
 
 def test_terminal_summary_names_the_pruned_pr_not_the_gc_run(tmp_path, monkeypatch):
-    """`otto-log query --pr N` has to find the record that says how N ended."""
+    """`otto-log query --pr N` has to find the record that says how N ended,
+    not the repo/pr/branch of the `pr gc` invocation that happened to prune it."""
     _seed_target(tmp_path, "repo-feat-x")
     monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("CLOSED", ""))
-    trail = _RecordingTrail()
+    trail = _RecordingTrail(context={"repo": "org/gc-runner", "pr": 999, "branch": "chore/gc"})
 
     review_gc.prune_merged_targets(tmp_path, trail=trail)
 
     ctx = trail.summaries[0]["context"]
     assert set(ctx) == {"repo", "pr", "branch"}
-    assert ctx["pr"]
+    assert ctx == {"repo": "acme/widget", "pr": 1, "branch": "feat/a"}
 
 
 def test_open_target_emits_nothing(tmp_path, monkeypatch):
@@ -211,3 +248,25 @@ def test_a_target_that_fails_to_prune_emits_nothing(tmp_path, monkeypatch):
 
     assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 0
     assert trail.summaries == []
+
+
+def test_terminal_summary_survives_a_real_trail(tmp_path, monkeypatch):
+    """`_RecordingTrail` never serializes the payload it captures, so nothing
+    else proves `terminal_summary()`'s dict survives `json.dumps` — a field
+    that stopped being a plain str/int/dict (an Enum, a Path) would break
+    `pr gc` in production against a suite that stayed green everywhere else."""
+    _seed_target(tmp_path, "repo-feat-x")
+    monkeypatch.setattr(
+        review_gc, "_pr_close_state", lambda repo, n: ("MERGED", "2026-08-13T09:00:00Z"))
+    trail = Trail.start(script="pr", context={"repo": "acme/other", "pr": 99, "branch": "main"})
+
+    assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 1
+    trail.finish()
+
+    events = []
+    for path in sorted(workbench_paths.trail_dir().glob("*.jsonl")):
+        events += [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    outcome = next(e for e in events if e["action"] == pr_state.TERMINAL_SUMMARY_ACTION)
+    assert outcome["data"]["outcome"] == "MERGED"
+    assert outcome["data"]["ended_at"] == "2026-08-13T09:00:00Z"
+    assert outcome["context"] == {"repo": "acme/widget", "pr": 1, "branch": "feat/a"}

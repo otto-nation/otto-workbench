@@ -500,6 +500,7 @@ unify_in_fake() {
 
   [ ! -f "$FAKE_CONFIG/reuse-level" ]
   [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
+  [ -f "$FAKE_CONFIG/reuse-default.migrated" ]
   [ -f "$FAKE_CONFIG/review.yml.migrated" ]
 }
 
@@ -513,7 +514,7 @@ unify_in_fake() {
   [ "$(yq -r '.reuse.default // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
 }
 
-@test "unification is idempotent once config.yml exists" {
+@test "unification leaves a key config.yml already holds" {
   mkdir -p "$FAKE_CONFIG"
   printf 'reuse:\n  level: lite\n' > "$FAKE_CONFIG/config.yml"
   echo "ultra" > "$FAKE_CONFIG/reuse-level"
@@ -521,5 +522,39 @@ unify_in_fake() {
   run unify_in_fake
   [ "$status" -eq 0 ]
   [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "lite" ]
-  [ -f "$FAKE_CONFIG/reuse-level" ]
+  [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
+}
+
+@test "unification still folds keys an existing config.yml lacks" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'reuse:\n  level: lite\n' > "$FAKE_CONFIG/config.yml"
+  echo "full" > "$FAKE_CONFIG/reuse-default"
+  printf 'issue_tracker:\n  provider: jira\n' > "$FAKE_CONFIG/review.yml"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "lite" ]
+  [ "$(yq -r '.reuse.default' "$FAKE_CONFIG/config.yml")" = "full" ]
+  [ "$(yq -r '.review.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "jira" ]
+}
+
+@test "unification renames a review.yml with nothing to carry" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'unrelated: true\n' > "$FAKE_CONFIG/review.yml"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ -f "$FAKE_CONFIG/review.yml.migrated" ]
+  [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "unification re-run after a fold is a no-op" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
 }

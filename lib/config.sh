@@ -28,8 +28,14 @@ _wb_config_project_file() {
 }
 
 # _wb_config_read FILE KEY — one key from one file, or nothing.
-# A malformed file reads as absent: a bash caller wants its default, not a yq
-# parse error on stdout. The typed loader is where a bad file is reported.
+# A malformed file — and a missing yq — read as absent: a bash caller wants its
+# default, not a yq parse error or a "command not found" on stdout. The typed
+# loader (ai/lib/workbench_config.py) is where a bad file is reported, and every
+# script that sources this already needs yq for lib/state.sh, so a missing
+# binary surfaces there rather than here.
+# A value of the literal string "null" is indistinguishable from an absent key.
+# Nothing this reads is a string that spells null, and treating yq's null output
+# as absent is what makes the fallback work.
 _wb_config_read() {
   local file="$1" key="$2" value
   [[ -f "$file" ]] || return 0
@@ -38,8 +44,16 @@ _wb_config_read() {
 }
 
 # wb_config_get KEY [DEFAULT] — a dotted config key, project scope first.
+# KEY is interpolated into a yq expression, so it must be a literal path — the
+# guard below rejects anything else rather than letting a built-up key become
+# an expression.
 wb_config_get() {
   local key="$1" fallback="${2:-}" value project
+
+  if [[ ! "$key" =~ ^[A-Za-z0-9_][A-Za-z0-9_.]*$ ]]; then
+    echo "ERROR: wb_config_get: invalid config key: $key" >&2
+    return 1
+  fi
 
   project="$(_wb_config_project_file)"
   if [[ -n "$project" ]]; then

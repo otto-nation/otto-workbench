@@ -119,6 +119,13 @@ def schema_json() -> str:
     Here rather than in the generator script so the write and the ``--check``
     comparison render through one code path, and so the schema's wrapper
     metadata sits beside the dataclass it describes.
+
+    Nothing sets ``additionalProperties: false``, so an editor validating
+    against this will not flag a misspelled key. That is deliberate: the schema
+    is committed at one version while the config on disk may have been written
+    by a newer workbench, and a closed schema would turn every new key into an
+    error in the editor of anyone who has not pulled yet. ``serde`` drops keys
+    it does not know, so an unrecognised key is inert either way.
     """
     import schema_gen
 
@@ -154,7 +161,10 @@ def read_yaml(path: Path) -> dict:
         return {}
     try:
         raw = _parse_yaml(path)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        # SubprocessError covers a yq that hangs past the timeout: every way
+        # this module can fail to read a file has to arrive as ConfigError, or
+        # load_config_or_default's fallback does not cover it.
         raise ConfigError(f"{path} is not readable YAML: {exc}") from exc
     if raw is None:
         return {}
@@ -186,10 +196,13 @@ def yaml_dump(data: dict) -> str:
         return yaml.safe_dump(data, sort_keys=False)
     if not shutil.which("yq"):
         raise ConfigError("neither PyYAML nor yq is available to write YAML")
-    result = subprocess.run(
-        ["yq", "-P", "."], input=json.dumps(data),
-        capture_output=True, text=True, timeout=_YQ_TIMEOUT,
-    )
+    try:
+        result = subprocess.run(
+            ["yq", "-P", "."], input=json.dumps(data),
+            capture_output=True, text=True, timeout=_YQ_TIMEOUT,
+        )
+    except subprocess.SubprocessError as exc:
+        raise ConfigError(f"could not render YAML: {exc}") from exc
     if result.returncode != 0:
         raise ConfigError(f"could not render YAML: {result.stderr.strip()}")
     return result.stdout
@@ -257,6 +270,13 @@ def set_value(key: str, value: str) -> None:
     Through ``yq -i`` so the write preserves the comments and ordering of a
     file the user hand-authored. PyYAML is the fallback and does not preserve
     them, which is why it is second rather than first.
+
+    Raises ``ConfigError`` when the write cannot happen — a caller running in a
+    Claude hook has one exception type to catch, whichever writer ran.
+
+    ``key`` is not checked against the dataclasses: a typo writes a stray field
+    that ``serde`` then ignores on the way back in. Every call site today passes
+    a literal; a call site that builds a key wants a check here first.
     """
     path = global_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -264,10 +284,13 @@ def set_value(key: str, value: str) -> None:
         path.write_text("")
     if shutil.which("yq"):
         env = dict(os.environ, WB_CONFIG_VALUE=value)
-        subprocess.run(
-            ["yq", "-i", f".{key} = strenv(WB_CONFIG_VALUE)", str(path)],
-            check=True, timeout=_YQ_TIMEOUT, env=env,
-        )
+        try:
+            subprocess.run(
+                ["yq", "-i", f".{key} = strenv(WB_CONFIG_VALUE)", str(path)],
+                check=True, timeout=_YQ_TIMEOUT, env=env,
+            )
+        except subprocess.SubprocessError as exc:
+            raise ConfigError(f"could not write {key} to {path}: {exc}") from exc
         return
     _set_value_with_pyyaml(path, key, value)
 

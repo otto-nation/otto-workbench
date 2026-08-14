@@ -6,6 +6,7 @@ file contents, permissions, and organizing files into review groups.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import log
 import serde
+import workbench_config
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from pr_state import ReviewStatus
 from review_common import (
@@ -120,6 +122,17 @@ class ReviewJob:
     pr_state_data: "PRState | None" = None
     viewer_role: str = ""
     throttle: "QuotaThrottle | None" = None
+
+    @functools.cached_property
+    def config(self) -> workbench_config.WorkbenchConfig:
+        """The merged workbench config for this job's worktree, read once.
+
+        A review builds a ``PhaseRunner`` per phase and, in the group phase, one
+        per group — every one of them resolving model, thinking and provider
+        from the same two files. Cached on the job so the read happens once per
+        review rather than once per runner.
+        """
+        return workbench_config.load_config_or_default(self.wt_path)
 
     @property
     def artifact_dir(self) -> str:

@@ -37,6 +37,10 @@ def main(argv: list[str]) -> int:
         print(__doc__.strip())
         return 0
 
+    if argv and argv[0] not in ("--check",):
+        print(f"Unknown argument: {argv[0]}\n\n{__doc__.strip()}", file=sys.stderr)
+        return 2
+
     generated = workbench_config.schema_json() + "\n"
 
     if argv and argv[0] == "--check":

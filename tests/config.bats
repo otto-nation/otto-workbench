@@ -12,6 +12,13 @@ setup() {
 
   export WORKBENCH_CONFIG_FILE="$FAKE_CONFIG/config.yml"
 
+  # Project scope resolves through `git rev-parse --show-toplevel`, so a test
+  # left standing in the real checkout would read this repo's own
+  # .workbench.yml the day one lands. Run from the sandbox instead, and cap the
+  # upward walk there so no ancestor repo can stand in for the project either.
+  export GIT_CEILING_DIRECTORIES="$TMPDIR"
+  cd "$TMPDIR" || return 1
+
   # shellcheck source=../lib/config.sh
   . "$REPO_ROOT/lib/config.sh"
 }
@@ -27,7 +34,7 @@ teardown() {
 _make_project() {
   mkdir -p "$TMPDIR/project"
   printf '%s' "$1" > "$TMPDIR/project/.workbench.yml"
-  GIT_CEILING_DIRECTORIES="$TMPDIR" git -C "$TMPDIR/project" init --quiet
+  git -C "$TMPDIR/project" init --quiet
   cd "$TMPDIR/project" || return 1
 }
 
@@ -75,6 +82,13 @@ _make_project() {
   run wb_config_get "review.effort"
   [ "$status" -eq 0 ]
   [ "$output" = "high" ]
+}
+
+@test "wb_config_get rejects a key that is not a literal path" {
+  printf 'reuse:\n  level: ultra\n' > "$WORKBENCH_CONFIG_FILE"
+  run wb_config_get 'reuse.level | ("x")'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid config key"* ]]
 }
 
 @test "wb_config_get survives a malformed config file" {

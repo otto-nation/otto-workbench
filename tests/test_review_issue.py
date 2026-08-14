@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review_issue import (
-    IssueContext, IssueProvider, CreatedIssue,
+    IssueContext, IssueProviderInfo, CreatedIssue,
     load_issue_provider, extract_issue_id,
     fetch_issue_context, create_issue, update_issue,
 )

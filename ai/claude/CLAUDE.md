@@ -42,8 +42,9 @@ start — it controls how aggressively the reuse ladder (in `general.md`) is enf
 | **full** | Enforce the reuse ladder. Stdlib and native first. Shortest diff (default) |
 | **ultra** | Challenge the requirement. Deletion before addition. Ship the one-liner |
 
-Default is `reuse.default`, or `full` when that is unset too. Change with
-`/reuse lite|full|ultra`.
+When `reuse.level` is unset, the level is the value of `reuse.default` in the
+same file, and `full` when that is unset too. Change either with
+`/reuse lite|full|ultra` or `/reuse default lite|full|ultra`.
 
 ## Ceiling Debt
 

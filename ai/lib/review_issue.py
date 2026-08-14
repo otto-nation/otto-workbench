@@ -27,7 +27,13 @@ _LEGACY_CONFIG_FILE = "review.yml"
 
 
 @dataclass(frozen=True)
-class IssueProvider:
+class IssueProviderInfo:
+    """The resolved tracker: which provider, plus its settings as strings.
+
+    Named apart from ``workbench_config.IssueProvider``, the enum of provider
+    names this carries in ``name`` — the two are in scope together here.
+    """
+
     name: str = str(workbench_config.IssueProvider.LINEAR)
     options: dict = field(default_factory=dict)
 
@@ -83,7 +89,7 @@ def adopt_project_review_yml(wt_path: str) -> bool:
     return True
 
 
-def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
+def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     """The issue tracker for this scope, project config first.
 
     A repo still holding the pre-#626 ``.claude/review.yml`` is converted on
@@ -93,9 +99,10 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
         adopt_project_review_yml(wt_path)
     config = workbench_config.load_config_or_default(wt_path)
     tracker = config.review.issue_tracker
-    options = {k: v for k, v in dataclasses.asdict(tracker).items() if v}
-    options["provider"] = str(tracker.provider)
-    return IssueProvider(name=str(tracker.provider), options=options)
+    # str() per value: asdict leaves an enum member as the member, and every
+    # consumer of options reads it as a string.
+    options = {k: str(v) for k, v in dataclasses.asdict(tracker).items() if v}
+    return IssueProviderInfo(name=str(tracker.provider), options=options)
 
 
 def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:

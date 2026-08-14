@@ -15,7 +15,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import workbench_config  # noqa: E402
-from workbench_config import ReuseLevel  # noqa: E402
+from workbench_config import ConfigError, ReuseLevel  # noqa: E402
+
+# Re-exported: the writers below raise it, so a hook catching it should not
+# have to reach past this module for the type.
+__all__ = [
+    "ConfigError", "DEFAULT_LEVEL", "LEVEL_DESCRIPTIONS", "VALID_LEVELS",
+    "read_default", "read_level", "write_default", "write_level",
+]
 
 VALID_LEVELS = {str(level) for level in ReuseLevel}
 DEFAULT_LEVEL = str(ReuseLevel.FULL)
@@ -42,8 +49,10 @@ def read_level() -> str:
 
 
 def write_level(level: str) -> None:
+    """Persist the active level. Raises ``ConfigError`` when the write fails."""
     workbench_config.set_value("reuse.level", level)
 
 
 def write_default(level: str) -> None:
+    """Persist the default level. Raises ``ConfigError`` when the write fails."""
     workbench_config.set_value("reuse.default", level)

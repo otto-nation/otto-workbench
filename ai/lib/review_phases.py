@@ -238,9 +238,9 @@ class PhaseRunner:
     def __init__(self, job: ReviewJob, phase: Phase, index: int | None = None):
         spec = PHASES[phase]
         preset = EFFORT_PRESETS[job.effort]
-        # Loaded once for the three values below rather than once each: the
-        # config is read from disk, and a runner is built per phase per review.
-        cfg = workbench_config.load_config_or_default(job.wt_path)
+        # Cached on the job rather than loaded here: the group phase builds one
+        # runner per group, and all of them want the same file.
+        cfg = job.config
         self.job = job
         # A phase that names no log of its own logs to the job's — that is
         # where the single-agent path already sends every record, and the

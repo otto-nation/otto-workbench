@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _reuse_levels import (  # noqa: E402
     LEVEL_DESCRIPTIONS,
     VALID_LEVELS,
+    ConfigError,
     read_default,
     read_level,
     write_default,
@@ -38,7 +39,13 @@ def _handle_default(args: str) -> None:
         print(f"Unknown reuse level: {level}. Valid: lite, full, ultra")
         return
 
-    write_default(level)
+    try:
+        write_default(level)
+    except ConfigError as exc:
+        # This runs on UserPromptSubmit: an unwritable config must report itself
+        # and let the prompt through, not abort the user's turn with a traceback.
+        print(f"Could not save the default reuse level: {exc}")
+        return
     print(f"Default reuse level set to: {level} — {LEVEL_DESCRIPTIONS[level]}")
 
 
@@ -67,7 +74,11 @@ def main() -> None:
         print(f"Unknown reuse level: {level}. Valid: lite, full, ultra, default <level>")
         return
 
-    write_level(level)
+    try:
+        write_level(level)
+    except ConfigError as exc:
+        print(f"Could not save the reuse level: {exc}")
+        return
     print(f"Reuse level set to: {level} — {LEVEL_DESCRIPTIONS[level]}")
 
 

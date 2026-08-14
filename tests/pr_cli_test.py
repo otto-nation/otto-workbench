@@ -894,7 +894,7 @@ def _probe_scripts(mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_run):
     """Regression #685: --reply's value is its argument, not the PR number."""
-    mock_resolve.return_value = _make_ctx(pr_number=None, branch=None)
+    mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     _probe_real_delegates(mock_run)
     _run_main("comments", "--reply", "3777767789",
               "--body-file", "/tmp/reply.md", "--repo-dir", "/path")
@@ -910,7 +910,7 @@ def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_body_file_path_is_not_eaten_after_an_inline_reply(mock_resolve, mock_run):
     """Regression #685: --reply=ID self-contained, so --body-file's path survives too."""
-    mock_resolve.return_value = _make_ctx(pr_number=None, branch=None)
+    mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     _probe_real_delegates(mock_run)
     _run_main("comments", "--reply=3777767789", "--body-file=/tmp/reply.md")
     cmd = _delegate_cmd(mock_run)
@@ -923,7 +923,7 @@ def test_body_file_path_is_not_eaten_after_an_inline_reply(mock_resolve, mock_ru
 @patch("pr_cli.pr_context.resolve")
 def test_reply_value_survives_an_explicit_branch(mock_resolve, mock_run):
     """An explicit --branch skips classification entirely; extra stays intact."""
-    mock_resolve.return_value = _make_ctx(branch="some/branch", pr_number=None)
+    mock_resolve.return_value = make_ctx(branch="some/branch", pr_number=None)
     _probe_real_delegates(mock_run)
     _run_main("comments", "--branch", "some/branch",
               "--reply", "123", "--body-file", "/tmp/x.md")
@@ -938,7 +938,7 @@ def test_reply_value_survives_an_explicit_branch(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_target_after_a_boolean_flag_is_still_the_target(mock_resolve, mock_run, flag):
     """A boolean flag consumes nothing, so the token after it is the PR number."""
-    mock_resolve.return_value = _make_ctx(pr_number=3057)
+    mock_resolve.return_value = make_ctx(pr_number=3057)
     _probe_real_delegates(mock_run)
     _run_main("comments", flag, "3057")
     cmd = _delegate_cmd(mock_run)
@@ -951,7 +951,7 @@ def test_target_after_a_boolean_flag_is_still_the_target(mock_resolve, mock_run,
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
 def test_review_takes_a_bare_pr_number(mock_resolve, mock_run):
-    mock_resolve.return_value = _make_ctx(pr_number=None, branch=None)
+    mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     _probe_real_delegates(mock_run)
     _run_main("review", "3057")
     cmd = _delegate_cmd(mock_run)
@@ -965,7 +965,7 @@ def test_review_takes_a_bare_pr_number(mock_resolve, mock_run):
 @patch("pr_cli.pr_context.resolve")
 def test_no_positional_candidate_skips_the_probe(mock_resolve, mock_run):
     """The common case must not pay for a delegate spawn."""
-    mock_resolve.return_value = _make_ctx()
+    mock_resolve.return_value = make_ctx()
     _probe_real_delegates(mock_run)
     _run_main("comments", "--triage")
     assert _probe_scripts(mock_run) == []
@@ -976,7 +976,7 @@ def test_no_positional_candidate_skips_the_probe(mock_resolve, mock_run):
 def test_status_needs_no_delegate_to_classify(mock_resolve, mock_run, worktree,
                                               stub_state_dir):
     """`pr status` is internal, has no delegate, and takes no positional."""
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
+    mock_resolve.return_value = make_ctx(worktree_root=worktree)
     _probe_real_delegates(mock_run)
     assert _run_main("--repo-dir", str(worktree), "status") == 0
     assert _probe_scripts(mock_run) == []
@@ -987,7 +987,7 @@ def test_status_needs_no_delegate_to_classify(mock_resolve, mock_run, worktree,
 def test_internal_command_still_classifies_a_positional(mock_resolve, mock_run,
                                                         worktree, stub_state_dir):
     """`pr fix 3057` has no delegate to ask, but 3057 is still the target."""
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree, pr_number=3057)
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, pr_number=3057)
     _probe_real_delegates(mock_run)
     with patch("pr_cli.pr_state.load_state", return_value=None):
         _run_main("--repo-dir", str(worktree), "fix", "3057")
@@ -1098,7 +1098,7 @@ def test_every_delegate_answers_the_probe(command):
 @patch("pr_cli.pr_context.resolve")
 def test_a_failed_probe_still_dispatches_the_command(mock_resolve, mock_run):
     """Introspection is best-effort: a broken probe must not fail the run."""
-    mock_resolve.return_value = _make_ctx(pr_number=3057)
+    mock_resolve.return_value = make_ctx(pr_number=3057)
     mock_run.return_value = MagicMock(returncode=0, stdout="")
     with patch("pr_cli._delegate_value_flags", return_value=frozenset()):
         assert _run_main("comments", "--triage", "3057") == 0

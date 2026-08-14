@@ -423,6 +423,9 @@ def _build_group_skips(
 
     Recovery wins where the two overlap: that group's output is already on
     disk, so reusing it beats re-deriving its findings from the prior review.
+    No path produces that overlap today — a carried group never runs, so it
+    never reaches `state.groups_done` — but the precedence is stated rather
+    than assumed, because a dict merge silently picks one either way.
     """
     skips: dict[int, GroupSkip] = {i: GroupSkip.CARRIED for i in incremental_skips}
     skips.update({i: GroupSkip.RECOVERY for i in recovery_skips or ()})

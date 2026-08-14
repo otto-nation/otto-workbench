@@ -505,7 +505,11 @@ class TestWriteJson:
         """A `MagicMock` satisfies `os.PathLike`, so a `Path(path)` here would
         turn a test's stubbed state directory into real directories under the
         working directory — `ci_check` reaches this through a mocked context and
-        swallows the failure, so the only symptom was junk in the repo."""
+        swallows the failure, so the only symptom was junk in the repo.
+
+        Which exception a stub fails with is not the contract — where the mock's
+        `__fspath__` lands decides that. The empty working directory is.
+        """
         monkeypatch.chdir(tmp_path)
 
         with pytest.raises(Exception):
@@ -549,6 +553,9 @@ class TestWriteJson:
         write_json(path, {"generation": 1})
         seen = []
 
+        # The hook lands because `indent` sends `json.dump` down the pure-Python
+        # encoder, which asks a dict subclass for `items()`. The C encoder walks
+        # the hash table directly and would never call this.
         class Peeking(dict):
             def items(self):
                 seen.append(json.loads(path.read_text()))

@@ -5,6 +5,9 @@
 # and descriptions extracted from source comments. Claude reads this on-demand
 # to decide which files to open, reducing unnecessary token usage.
 #
+# Repos larger than MAX_FILES get per-file tables up to the budget plus a
+# Directory Index covering everything past it, so no area goes unlisted.
+#
 # Usage: generate-anatomy.sh [PROJECT_ROOT]
 #        Defaults to git repo root of the current directory.
 #
@@ -18,7 +21,18 @@ set -e
 
 TOKENS_PER_LINE=4
 MAX_FILE_LINES=10000
+
+# Budget for per-file tables. Directories past it still appear in the Directory
+# Index, so the cap costs detail, not coverage.
 MAX_FILES=2000
+
+# Written by extract_description and label_from_filename. They assign to a global
+# instead of printing so the per-file loop does not pay a subshell fork each time.
+DESC=""
+
+# Written by dir_totals.
+DIR_LINES=0
+DIR_FILES_N=0
 
 # Files to skip even if tracked (locks, generated, vendored)
 SKIP_PATTERNS=(
@@ -57,8 +71,7 @@ is_binary_ext() {
 
 # matches_skip FILE — returns 0 if file matches a skip pattern
 matches_skip() {
-  local file="$1" base pattern
-  base="$(basename "$file")"
+  local base="${1##*/}" pattern
   for pattern in "${SKIP_PATTERNS[@]}"; do
     # shellcheck disable=SC2254
     case "$base" in $pattern) return 0 ;; esac
@@ -66,7 +79,9 @@ matches_skip() {
   return 1
 }
 
-# extract_description FILE — prints the first meaningful comment from lines 1-10
+# extract_description FILE — sets DESC to the first meaningful comment from lines 1-15.
+# Assigns to a global rather than printing: the caller runs this once per file, and
+# a command substitution there costs a subshell fork per file.
 extract_description() {
   local file="$1" line desc=""
   local count=0 in_frontmatter=false
@@ -127,17 +142,17 @@ extract_description() {
     desc="${desc:0:57}..."
   fi
 
-  printf '%s' "$desc"
+  DESC="$desc"
 }
 
-# label_from_filename FILE — derives a human-readable label from the filename
+# label_from_filename FILE — sets DESC to a human-readable label from the filename
 label_from_filename() {
   local base="${1##*/}"
   base="${base%.*}"                 # strip extension
   base="${base//_/ }"               # underscores to spaces
   base="${base//-/ }"               # hyphens to spaces
   # Capitalize first letter
-  printf '%s' "${base^}"
+  DESC="${base^}"
 }
 
 # _find_primary_worktree — for bare repos, prints the primary worktree path.
@@ -235,6 +250,50 @@ generate_ansible_section() {
   } >> "$out"
 }
 
+# ── Directory index ──────────────────────────────────────────────────────────
+
+# dir_totals DIR — sets DIR_FILES_N and DIR_LINES for the files in DIR. Reads
+# dir_files and line_counts from the caller.
+#
+# Unlike the per-file tables this counts files over MAX_FILE_LINES too: that cap
+# exists to keep a giant file from getting its own row, but an aggregate row that
+# omitted it would just misreport the directory's size.
+dir_totals() {
+  local dir="$1" entry
+  DIR_LINES=0
+  DIR_FILES_N=0
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    DIR_LINES=$((DIR_LINES + ${line_counts[$entry]:-0}))
+    DIR_FILES_N=$((DIR_FILES_N + 1))
+  done <<< "${dir_files[$dir]}"
+}
+
+# generate_directory_index OUTPUT_FILE — appends one row per directory that did
+# not get a per-file table. Reads index_dirs, dir_files, and line_counts from the
+# caller, and adds those directories' estimates to total_tokens.
+generate_directory_index() {
+  local out="$1" dir
+  [[ ${#index_dirs[@]} -eq 0 ]] && return 0
+
+  {
+    printf '## Directory Index\n\n'
+    printf '%d directories beyond the per-file detail budget. Listed here only.\n\n' \
+      "${#index_dirs[@]}"
+    printf '| Directory | Files | Lines | ~Tokens |\n'
+    printf '|-----------|------:|------:|--------:|\n'
+
+    for dir in "${index_dirs[@]}"; do
+      dir_totals "$dir"
+      total_tokens=$((total_tokens + DIR_LINES * TOKENS_PER_LINE))
+      printf '| %s/ | %d | %d | %d |\n' \
+        "$dir" "$DIR_FILES_N" "$DIR_LINES" "$((DIR_LINES * TOKENS_PER_LINE))"
+    done
+
+    printf '\n'
+  } >> "$out"
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
@@ -294,22 +353,14 @@ main() {
     exit 0
   fi
 
-  # ── Large repo fallback ────────────────────────────────────────────────
-  # TODO: directory-level summary for repos over MAX_FILES
-  # For now, truncate to MAX_FILES
-  if [[ $file_count -gt $MAX_FILES ]]; then
-    files=("${files[@]:0:$MAX_FILES}")
-    file_count=$MAX_FILES
-  fi
-
   # ── Count lines (batched) ─────────────────────────────────────────────
+  # Covers every file, not just the ones that get a per-file table: the directory
+  # index needs totals for the directories that only appear there. Reading all of
+  # them costs ~2s on a 13k-file repo.
   local -A line_counts=()
-  local wc_line
-  while IFS= read -r wc_line; do
-    # wc -l output: "   123 path/to/file"
-    local count path
-    count="$(echo "$wc_line" | awk '{print $1}')"
-    path="$(echo "$wc_line" | awk '{$1=""; print substr($0,2)}')"
+  local count path
+  while read -r count path; do
+    # wc -l output: "   123 path/to/file" — read strips the leading padding
     [[ -n "$path" ]] && line_counts["$path"]="$count"
   done < <(printf '%s\n' "${files[@]}" | xargs wc -l 2>/dev/null | grep -v ' total$')
 
@@ -318,12 +369,12 @@ main() {
   tmp_file="$(mktemp)"
 
   # Group files by directory
-  local -A dir_files=()
+  local -A dir_files=() dir_counts=()
   for file in "${files[@]}"; do
-    local dir
-    dir="$(dirname "$file")"
-    [[ "$dir" == "." ]] && dir="(root)"
+    local dir="(root)"
+    [[ "$file" == */* ]] && dir="${file%/*}"
     dir_files["$dir"]+="${file}"$'\n'
+    dir_counts["$dir"]=$(( ${dir_counts["$dir"]:-0} + 1 ))
   done
 
   # Sort directories
@@ -332,19 +383,40 @@ main() {
     sorted_dirs+=("$dir")
   done < <(printf '%s\n' "${!dir_files[@]}" | sort)
 
+  # ── Split directories into detailed and indexed ────────────────────────
+  # Per-file tables are capped at MAX_FILES so anatomy.md stays small enough to
+  # read. The cut lands on a directory boundary, and every directory past it is
+  # still listed in the Directory Index below — a repo over the cap loses
+  # per-file detail, never whole areas.
+  local -a detail_dirs=() index_dirs=()
+  local detailed=0
+  for dir in "${sorted_dirs[@]}"; do
+    if [[ $detailed -lt $MAX_FILES ]]; then
+      detail_dirs+=("$dir")
+      detailed=$((detailed + dir_counts["$dir"]))
+    else
+      index_dirs+=("$dir")
+    fi
+  done
+
   # Write header (placeholder — we'll update total tokens after)
   {
     printf '# Project Anatomy\n'
-    printf '<!-- Generated by project-anatomy | git: %s | files: %d | est. tokens: ~PLACEHOLDER -->\n' \
-      "$current_hash" "$file_count"
+    printf '<!-- Generated by project-anatomy | git: %s | files: %d | detailed: %d in %d dirs | indexed: %d dirs | est. tokens: ~PLACEHOLDER -->\n' \
+      "$current_hash" "$file_count" "$detailed" "${#detail_dirs[@]}" "${#index_dirs[@]}"
     printf '<!-- Read this file to understand the project layout before exploring. -->\n\n'
   } > "$tmp_file"
 
   # Write Ansible service stack section (no-op if not an Ansible repo)
   generate_ansible_section "$tmp_file"
 
+  # Write the directory index first — on a repo over MAX_FILES this is the only
+  # place the remaining areas appear, so it has to be visible before the reader
+  # gets buried in per-file tables.
+  generate_directory_index "$tmp_file"
+
   # Write directory sections
-  for dir in "${sorted_dirs[@]}"; do
+  for dir in "${detail_dirs[@]}"; do
     local dir_display="$dir"
     [[ "$dir" == "(root)" ]] && dir_display="."
 
@@ -370,11 +442,10 @@ main() {
           && display_name="$entry" \
           || display_name="${entry#"$dir"/}"
 
-        local desc
-        desc="$(extract_description "$entry")"
-        [[ -z "$desc" ]] && desc="$(label_from_filename "$entry")"
+        extract_description "$entry"
+        [[ -z "$DESC" ]] && label_from_filename "$entry"
 
-        printf '| %s | %d | %d | %s |\n' "$display_name" "$lines" "$tokens" "$desc"
+        printf '| %s | %d | %d | %s |\n' "$display_name" "$lines" "$tokens" "$DESC"
       done <<< "${dir_files[$dir]}"
 
       printf '\n'

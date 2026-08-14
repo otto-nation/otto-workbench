@@ -180,11 +180,14 @@ _is_append_only_ledger() {
 # failure partway through never leaves DST with a partial, unrepeatable
 # append — a retry sees the original DST and SRC untouched.
 _append_ledger() {
-  local src="$1" dst="$2" tmp
+  local src="$1" dst="$2" tmp mode
   tmp="$(mktemp "${dst}.XXXXXX")" || {
     warn "Could not create a temp file to merge $src into $dst"
     return 1
   }
+  # mktemp defaults to 0600; every other _adopt_entry path preserves the
+  # original file's mode via a plain mv, so this one should too.
+  mode=$(file_mode "$dst") && chmod "$mode" "$tmp"
   if ! cat "$dst" > "$tmp"; then
     warn "Could not read $dst — left $src in place"
     rm -f "$tmp"
@@ -213,6 +216,9 @@ _append_ledger() {
 # _adopt_entry SRC DST — carry one entry across, resuming a partial run.
 # Hand-rolled rather than `rsync -a --remove-source-files`: rsync is not a
 # workbench dependency, and this runs on a machine mid-sync that may not have it.
+# Tallies _ADOPT_MOVED/_ADOPT_STAYED at each leaf decision (rather than letting
+# the caller count by top-level entry) so a directory merge with some children
+# moved and one failed is not misreported as a single entry that stayed.
 _adopt_entry() {
   local src="$1" dst="$2"
 
@@ -220,8 +226,10 @@ _adopt_entry() {
     mkdir -p "$(dirname "$dst")"
     if ! mv "$src" "$dst"; then
       warn "Could not move $src to $dst — left it in place"
+      _ADOPT_STAYED=$(( _ADOPT_STAYED + 1 ))
       return 1
     fi
+    _ADOPT_MOVED=$(( _ADOPT_MOVED + 1 ))
     return 0
   fi
 
@@ -237,11 +245,16 @@ _adopt_entry() {
   # A ledger both roots hold is not a conflict — it is one history in two
   # files, and keeping both would hide the older one from every reader.
   if _is_append_only_ledger "$src" "$dst"; then
-    _append_ledger "$src" "$dst"
-    return $?
+    if _append_ledger "$src" "$dst"; then
+      _ADOPT_MOVED=$(( _ADOPT_MOVED + 1 ))
+      return 0
+    fi
+    _ADOPT_STAYED=$(( _ADOPT_STAYED + 1 ))
+    return 1
   fi
 
   warn "Both $src and $dst exist — kept the new one; reconcile and remove the old"
+  _ADOPT_STAYED=$(( _ADOPT_STAYED + 1 ))
   return 1
 }
 
@@ -277,7 +290,12 @@ adopt_legacy_workbench_root() {
   local legacy="$LEGACY_WORKBENCH_ROOT"
   [[ -d "$legacy" ]] || return 0
 
-  local entry name target moved=0 stayed=0
+  local entry name target
+  # _adopt_entry tallies these itself, down to the leaf, so a partial
+  # directory merge is reflected in the counts instead of collapsing to one
+  # failed top-level entry.
+  _ADOPT_MOVED=0
+  _ADOPT_STAYED=0
   # Dotfiles are left where they are: the only ones that turn up are the
   # filesystem's own (.DS_Store), and they belong to no root.
   for entry in "$legacy"/*; do
@@ -290,23 +308,19 @@ adopt_legacy_workbench_root() {
     if [[ "$target" == "$legacy" ]]; then
       continue
     fi
-    if _adopt_entry "$entry" "$target/$name"; then
-      moved=$(( moved + 1 ))
-    else
-      stayed=$(( stayed + 1 ))
-    fi
+    _adopt_entry "$entry" "$target/$name"
   done
 
-  if (( moved > 0 )); then
+  if (( _ADOPT_MOVED > 0 )); then
     # No destination named: config entries and state entries went to different
     # roots, and on an overridden machine both of those moved.
-    success "Adopted $moved entries from $legacy"
+    success "Adopted $_ADOPT_MOVED entries from $legacy"
   fi
   # The sync that runs this is usually the unattended one from the maintenance
   # agent, whose output goes to a log file. A partial adoption has to state
   # itself rather than be inferred from the warnings scattered above it.
-  if (( stayed > 0 )); then
-    warn "$stayed entries could not be adopted — $legacy still holds them"
+  if (( _ADOPT_STAYED > 0 )); then
+    warn "$_ADOPT_STAYED entries could not be adopted — $legacy still holds them"
   fi
   rmdir "$legacy" 2>/dev/null || true
   return 0

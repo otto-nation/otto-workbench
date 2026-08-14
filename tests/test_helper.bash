@@ -30,6 +30,13 @@ common_teardown() {
   :
 }
 
+# sandbox_state_dir — points the state root at $TMPDIR/state.
+# Call after TMPDIR is set. Tools that write a trail through the state root
+# (dream-scan, promote-scan, retro-scan) need this or they append to the real one.
+sandbox_state_dir() {
+  export WORKBENCH_STATE_DIR="$TMPDIR/state"
+}
+
 # source_lib — loads all lib/ai/*.sh files into the current test context.
 source_lib() {
   local f

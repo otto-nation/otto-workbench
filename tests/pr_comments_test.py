@@ -549,16 +549,20 @@ def test_find_marker_comment_accepts_flat_listing():
     assert found == _found(12, f"{MARKER}\nonly")
 
 
-def test_find_marker_comment_reports_lookup_failure():
+@pytest.mark.parametrize("payload", [
+    (1, ""),
+    (0, "not json"),
+    (0, '{"message": "Not Found"}'),
+])
+def test_find_marker_comment_reports_lookup_failure(payload):
     """A failed listing must be distinguishable from an empty one.
 
     A caller reconciling against the published body reads an empty `body` as
     "the comment said nothing", so `found` has to carry the difference.
     """
-    for payload in ((1, ""), (0, "not json"), (0, '{"message": "Not Found"}')):
-        with patch.object(pr_comments, "_paginated_json", return_value=payload):
-            assert pr_comments.find_marker_comment("owner/repo", 1, MARKER) == \
-                pr_comments.MarkerComment(found=False)
+    with patch.object(pr_comments, "_paginated_json", return_value=payload):
+        assert pr_comments.find_marker_comment("owner/repo", 1, MARKER) == \
+            pr_comments.MarkerComment(found=False)
 
 
 def test_find_marker_comment_reports_empty_listing():

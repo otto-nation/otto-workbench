@@ -702,6 +702,11 @@ rounds nobody can recover. So the published body is read first, matched row by
 row on the thread permalink, and anything unaccounted for is re-emitted
 verbatim, counted as `N carried over`, and warned about on the run.
 
+The table therefore only grows. A row no later round reproduces is carried for
+the life of the PR, so a thread that legitimately stops appearing keeps its last
+rendered state rather than vanishing. That is the trade being made on purpose: a
+stale row a reviewer can still read beats a round nobody can recover.
+
 ### Running from a different directory
 
 All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:

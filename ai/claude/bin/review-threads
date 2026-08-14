@@ -1720,13 +1720,25 @@ def _thread_permalink(
     return _comment_item_permalink(entry, repo, pr_number)
 
 
+def _escape_cell(text: str) -> str:
+    """Escape a literal pipe so free-form text cannot break out of its cell.
+
+    Summaries and reasons are prose written per round, and nothing constrains
+    them to avoid a pipe. One unescaped pipe shifts every later cell in the row,
+    which breaks the rendered table and corrupts the key that carry-over reads
+    back out of the published comment — a row whose key never matches itself
+    looks new every round.
+    """
+    return text.replace("|", "\\|")
+
+
 def _summary_cell(
     entry: CommentItem | pr_state.ThreadOutcome,
     threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str:
     """Thread summary as a markdown link if a permalink is available, plain text otherwise."""
-    summary = entry.summary or "—"
+    summary = _escape_cell(entry.summary or "—")
     url = _thread_permalink(entry, threads_by_id, repo, pr_number)
     if url:
         return f"[{summary}]({url})"
@@ -1754,7 +1766,7 @@ def _build_row(
         file_loc = f"`{entry.file}`"
     else:
         file_loc = "—"
-    return f"| {summary} | {reviewer} | {file_loc} | {status} |"
+    return f"| {summary} | {reviewer} | {file_loc} | {_escape_cell(status)} |"
 
 
 def _summarize_comment_body(body: str, max_len: int = 120) -> str:
@@ -1929,10 +1941,12 @@ def _format_issue_comment_items(comments: list[dict]) -> list[str]:
 # is pinned to whichever SHA that round rendered against.
 _ROW_ANCHOR_RE = re.compile(r"#(?:discussion_r|issuecomment-|pullrequestreview-)\d+")
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 
 
 def _row_cells(row: str) -> list[str]:
-    return [cell.strip() for cell in row.strip().strip("|").split("|")]
+    """Split a rendered row into cells, honouring the escape `_escape_cell` writes."""
+    return [cell.strip() for cell in _CELL_SPLIT_RE.split(row.strip().strip("|"))]
 
 
 def _summary_row_key(row: str) -> str:
@@ -1979,7 +1993,10 @@ def _carried_over_rows(published: str, fresh: str) -> list[str]:
     nobody can recover from the comment.
 
     So the published comment is read as the record it is. Anything in it this
-    render cannot account for is kept verbatim rather than overwritten.
+    render cannot account for is kept verbatim rather than overwritten. The
+    table therefore only ever grows: a row no later render reproduces is carried
+    forward for the life of the PR. That is the intended trade — a stale row a
+    reader can see beats a round nobody can recover.
     """
     if not published:
         return []
@@ -1999,6 +2016,12 @@ def _publish_summary(
     second time when the published comment holds rows that render did not
     cover, because the carried rows have to reach the reader through the same
     body — the counts line and the table are one artifact, not two.
+
+    A lookup that fails outright carries nothing: `MarkerComment.body` is empty,
+    so this cannot tell a comment it could not read from one that says nothing.
+    `post_issue_comment` then posts rather than patching, on the standing trade
+    that a duplicate comment beats a lost update — the earlier rounds stay
+    readable in the comment this run could not reach.
     """
     existing = pc.find_marker_comment(repo, pr_number, _SUMMARY_MARKER)
     body = build_body(carried_over=[])

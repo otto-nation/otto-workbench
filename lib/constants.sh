@@ -83,6 +83,11 @@ INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 # into. The hand-authored settings are overrides/ under the config root.
 INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 
+# Hand-authored settings, one file per scope: this one and <repo>/.workbench.yml.
+# lib/config.sh reads it; ai/lib/workbench_config.py is the typed owner and the
+# source config.schema.json is generated from.
+WORKBENCH_CONFIG_FILE="$WORKBENCH_CONFIG_DIR/config.yml"
+
 # ─── Review state ─────────────────────────────────────────────────────────────
 # The shell half of two joins the Python side also spells out — this file for
 # bash, ai/lib/workbench_paths.py's reviews_dir() and retro-scan's

@@ -101,6 +101,20 @@ def _is_pushback(body: str) -> bool:
     return False
 
 
+def last_comment_is_mine(comments: list[dict], my_login: str) -> bool:
+    """Whether our own comment is the last one on the thread.
+
+    The authorship half of ADDRESSED, on its own. `compute_thread_state`
+    answers RESOLVED before it ever looks at who spoke last, so a caller that
+    needs "nobody has answered us yet" — the reply upsert — has to ask this
+    rather than read a lifecycle state that folds resolution into the answer.
+    """
+    if not comments or not my_login:
+        return False
+    last_author = (comments[-1].get("author") or {}).get("login", "") or ""
+    return last_author.lower() == my_login.lower()
+
+
 def compute_thread_state(
     comments: list[dict],
     is_resolved: bool,
@@ -118,7 +132,6 @@ def compute_thread_state(
 
     my_login_lower = my_login.lower()
     last_comment = comments[-1]
-    last_author = (last_comment.get("author") or {}).get("login", "").lower()
 
     has_my_reply = any(
         (c.get("author") or {}).get("login", "").lower() == my_login_lower
@@ -128,7 +141,7 @@ def compute_thread_state(
     if not has_my_reply:
         return STATE_NEW
 
-    if last_author == my_login_lower:
+    if last_comment_is_mine(comments, my_login):
         return STATE_ADDRESSED
 
     # Reviewer replied after me — classify the reply

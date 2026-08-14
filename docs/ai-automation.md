@@ -596,6 +596,9 @@ summary, thread resolutions, and deferral tracking issues are all printed to
 stderr as drafts instead, prefixed `DRAFT (not published)`. Code fixes, commits,
 and pushes are unaffected — the gate covers only what other people can see.
 
+A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
+drafts the body and reports the draft, and only `--post` sends it.
+
 The default is draft because a review reply is public the moment it lands: an
 incorrect claim has to be retracted in front of the reviewer, and a wrong
 deferral issue has to be closed. Reading the drafts first costs one command:

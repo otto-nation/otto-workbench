@@ -210,19 +210,24 @@ the PR author's name.
 If the user wants changes to a reply first, edit and post it manually (below),
 then run `--finish --post` for the rest.
 
-For manual replies to `needs_human` threads, write the body to a file and post it
-with `--reply`:
+For manual replies to `needs_human` threads, write the body to a file, show it to
+the user, and publish it with `--reply --post`:
 
 ```bash
-pr comments --reply <thread_or_comment_id> --body-file <PATH> [--repo-dir <PATH>]
+pr comments --reply <thread_or_comment_id> --body-file <PATH> --post [--repo-dir <PATH>]
 ```
+
+`--reply` is a write like every other one here, so it needs `--post`. Without it
+the run prints the body under `DRAFT (not published)` and sends nothing — which
+is the command to use when the user should read the reply before it lands.
 
 `--reply` takes the thread's node ID, any comment `databaseId` in it, or a
 `...#discussion_r<id>` URL. It edits our standing reply when that reply is still
-the last comment on the thread, and posts a new one only once a reviewer has
-answered — so a revised position replaces the old one instead of stacking under
-it. Do **not** call `gh api .../replies` directly: that path has no dedup, and it
-is what leaves a thread holding several of our comments that disagree.
+the last comment on the thread — resolved or not — and posts a new one only once
+a reviewer has answered, so a revised position replaces the old one instead of
+stacking under it. Do **not** call `gh api .../replies` directly: that path has
+no dedup, and it is what leaves a thread holding several of our comments that
+disagree.
 
 Print summary: fixes applied, replies posted, threads resolved, threads still open.
 

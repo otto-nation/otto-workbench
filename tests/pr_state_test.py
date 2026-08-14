@@ -22,7 +22,6 @@ from pr_state import (
     load_or_init, apply_state_update,
     STATE_VERSION,
 )
-import workbench_paths
 from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
 
 
@@ -478,8 +477,8 @@ def test_save_and_load_roundtrip(worktree):
 
 
 def test_save_creates_the_state_directory(worktree):
-    """A fresh worktree's git dir holds no `workbench/` until the first write."""
-    assert not workbench_paths.worktree_state_dir(worktree).exists()
+    """A fresh target dir holds no state.json until the first write."""
+    assert not (worktree / "state.json").exists()
     state = new_state("repo", "branch", pr_number=None, head_sha="",
                       worktree_root=str(worktree))
     save_state(worktree, state)

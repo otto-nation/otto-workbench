@@ -1015,10 +1015,6 @@ def _lock_file(target_dir):
     return Path(target_dir) / run_lock.LOCK_FILE
 
 
-def _state_dir(worktree_root):
-    return workbench_paths.worktree_state_dir(worktree_root)
-
-
 @pytest.fixture
 def stub_state_dir(worktree, monkeypatch):
     """Resolve the worktree's state dir without asking git.

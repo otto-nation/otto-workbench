@@ -228,20 +228,6 @@ def worktree(tmp_path) -> Path:
     return init_worktree(tmp_path)
 
 
-def state_path(worktree_root) -> Path:
-    """The `pr` state file of *worktree_root*, resolved the way `pr` resolves it.
-
-    Imported inside the call because this file puts ai/lib on sys.path from
-    within its fixtures, so a module-level import would run too early.
-    """
-    if LIB_DIR not in sys.path:
-        sys.path.insert(0, LIB_DIR)
-    import pr_state
-    import workbench_paths
-
-    return workbench_paths.worktree_state_dir(worktree_root) / pr_state.STATE_FILE
-
-
 def write_thrash_log(path) -> str:
     """Write the session log of a clean completion that never wrote anything.
 

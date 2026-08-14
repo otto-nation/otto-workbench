@@ -125,13 +125,16 @@ def _ensure_gitignored(artifact_path: Path) -> None:
         return
 
     gitignore = Path(toplevel) / ".gitignore"
-    needs_newline = False
-    if gitignore.exists():
-        content = gitignore.read_text()
+    try:
+        content = gitignore.read_text() if gitignore.exists() else ""
         needs_newline = bool(content) and not content.endswith("\n")
-    lead = "\n" if needs_newline else ""
-    with open(gitignore, "a") as f:
-        f.write(f"{lead}\n# Run artifacts (otto-workbench AI scripts)\n/{rel}/\n")
+        lead = "\n" if needs_newline else ""
+        separator = "\n" if content else ""
+        with open(gitignore, "a") as f:
+            f.write(f"{lead}{separator}# Run artifacts (otto-workbench AI scripts)\n/{rel}/\n")
+    except OSError as e:
+        log.warn(f"trail: could not update {gitignore}: {e}")
+        return
     log.info(f"trail: added /{rel}/ to {gitignore}")
 
 
@@ -168,8 +171,14 @@ class Trail:
     ) -> Trail:
         debug = debug or os.environ.get("WORKBENCH_DEBUG", "") == "1"
         artifact_path = Path(artifact_dir)
-        created = not artifact_path.exists()
-        artifact_path.mkdir(parents=True, exist_ok=True)
+        # mkdir's own FileExistsError, not a preceding exists() check, decides who
+        # created the directory: two processes racing to start a trail at the same
+        # target must not both see "created" and both append to .gitignore.
+        try:
+            artifact_path.mkdir(parents=True)
+            created = True
+        except FileExistsError:
+            created = False
         if created:
             _ensure_gitignored(artifact_path)
         invocation = uuid4().hex[:8]

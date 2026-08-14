@@ -320,3 +320,54 @@ def test_effort_falls_back_from_config_to_the_built_in(roots):
     assert review_phases.resolve_effort(None, wc.load_config(project)) is Effort.HIGH
     assert review_phases.resolve_effort(Effort.LOW, wc.load_config(project)) is Effort.LOW
     assert review_phases.resolve_effort(None, wc.WorkbenchConfig()) is Effort.MEDIUM
+
+
+# ── Per-repo adoption of .claude/review.yml ─────────────────────────────────
+
+
+def test_adopt_converts_a_project_review_yml(roots):
+    import review_issue
+
+    _, project = roots
+    (project / ".claude").mkdir()
+    _write(
+        project / ".claude" / "review.yml",
+        "issue_tracker:\n  provider: github\n  team: ENG\n",
+    )
+
+    assert review_issue.adopt_project_review_yml(str(project)) is True
+
+    cfg = wc.load_config(project)
+    assert cfg.review.issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert cfg.review.issue_tracker.team == "ENG"
+
+
+def test_adopt_leaves_the_old_file_in_place(roots):
+    import review_issue
+
+    _, project = roots
+    (project / ".claude").mkdir()
+    _write(project / ".claude" / "review.yml", "issue_tracker:\n  provider: github\n")
+
+    review_issue.adopt_project_review_yml(str(project))
+    assert (project / ".claude" / "review.yml").is_file()
+
+
+def test_adopt_is_a_no_op_when_workbench_yml_exists(roots):
+    import review_issue
+
+    _, project = roots
+    (project / ".claude").mkdir()
+    _write(project / ".claude" / "review.yml", "issue_tracker:\n  provider: github\n")
+    _write(project / ".workbench.yml", "review:\n  issue_tracker:\n    provider: jira\n")
+
+    assert review_issue.adopt_project_review_yml(str(project)) is False
+    assert wc.load_config(project).review.issue_tracker.provider is wc.IssueProvider.JIRA
+
+
+def test_adopt_is_a_no_op_without_an_old_file(roots):
+    import review_issue
+
+    _, project = roots
+    assert review_issue.adopt_project_review_yml(str(project)) is False
+    assert not (project / ".workbench.yml").exists()

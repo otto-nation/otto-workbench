@@ -1,10 +1,12 @@
 """Tests for pr CLI helper functions."""
 
 import importlib.util
+import itertools
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import types
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -28,20 +30,10 @@ _spec.loader.exec_module(pr_cli)
 sys.modules.setdefault("pr_cli", pr_cli)
 
 import pr_state  # noqa: E402
+import run_lock  # noqa: E402
 import workbench_paths  # noqa: E402
-import worktree_lock  # noqa: E402
 
 from conftest import assert_no_worktree_exit  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _clear_lock_env():
-    """Never inherit a real run's lock marker, or leak one into another test."""
-    saved = os.environ.pop(worktree_lock.LOCK_ENV, None)
-    yield
-    os.environ.pop(worktree_lock.LOCK_ENV, None)
-    if saved is not None:
-        os.environ[worktree_lock.LOCK_ENV] = saved
 
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
@@ -282,11 +274,34 @@ def test_help_short_flag_skips_context_resolution(mock_resolve, mock_run):
 # ── _run_delegate ─────────────────────────────────────────────────────────
 
 
+# One temp root for every _make_ctx() default target_dir in this module, not
+# tmp_path-scoped since _make_ctx is a plain factory most callers invoke
+# without a tmp_path fixture at all. A single TemporaryDirectory's finalizer
+# removes the whole tree at interpreter exit; handing out a numbered subpath
+# per call keeps the ~50 callers that never touch target_dir from colliding
+# with each other or with the lock-wiring tests that override it anyway.
+_CTX_TARGET_ROOT = tempfile.TemporaryDirectory(prefix="pr-cli-test-target-")
+_ctx_target_seq = itertools.count()
+
+
 def _make_ctx(**overrides):
-    """Build a minimal ResolvedContext for testing."""
+    """Build a minimal ResolvedContext for testing.
+
+    target_dir defaults to a fresh, unique subpath under _CTX_TARGET_ROOT, not
+    a fixed placeholder: run_lock.acquire unconditionally mkdir(parents=True)s
+    it now, so a shared, non-writable default like the old Path("/wt/target")
+    would fail the moment any test drives main() through a mutating command
+    without overriding it. The subpath itself is never created here — acquire
+    creates it on demand, same as a real run would.
+    worktree_root keeps its symbolic Path("/wt") default — nothing in these
+    tests writes to it directly, it only ever appears in string comparisons
+    (e.g. --repo-dir) and mocked subprocess calls.
+    """
     import pr_context
+    target_dir = Path(_CTX_TARGET_ROOT.name) / f"target-{next(_ctx_target_seq)}"
     defaults = dict(repo="owner/repo", branch="feat/test",
-                    pr_number=42, worktree_root=Path("/wt"), head_sha="abc123")
+                    pr_number=42, worktree_root=Path("/wt"), head_sha="abc123",
+                    target_dir=target_dir)
     defaults.update(overrides)
     return pr_context.ResolvedContext(**defaults)
 
@@ -965,28 +980,39 @@ def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
                             [], _make_ctx(worktree_root=None))
 
 
-def test_load_or_init_without_a_worktree_exits_with_guidance(capsys):
-    assert_no_worktree_exit(capsys, "feat/test", pr_cli._load_or_init,
-                            _make_ctx(worktree_root=None))
+def test_review_state_lands_with_the_pr_not_the_caller(tmp_path):
+    """A team review from a repo root must not clobber that root's own state."""
+    import pr_context
+    caller = tmp_path / "repo-root"
+    caller.mkdir()
+    target = tmp_path / "pr" / "widget-feat-login"
+    ctx = pr_context.ResolvedContext(
+        repo="acme/widget", branch="feat/login", pr_number=2973,
+        worktree_root=caller, head_sha="pr-sha", current_branch="main",
+        target_dir=target,
+    )
+
+    pr_cli._update_review_state(
+        {"review_file": "r.md", "verdict": "approve", "head_sha": "pr-sha",
+         "findings": {"total": 0}},
+        ctx,
+    )
+
+    assert (target / pr_state.STATE_FILE).is_file()
+    # Nothing at all under the caller's checkout: state is keyed on the run's
+    # target now, so the caller's tree should not gain a state file anywhere.
+    assert not list(caller.rglob(pr_state.STATE_FILE))
+    written = pr_state.load_state(target)
+    assert written.identity.pr_number == 2973
+    assert written.identity.head_sha == "pr-sha"
+    assert written.identity.worktree_root == str(caller)
 
 
-def test_review_state_cache_is_skipped_without_a_worktree():
-    """A review that worked must not fail over a snapshot nobody asked for."""
-    ctx = _make_ctx(worktree_root=None)
-    with patch("pr_cli.pr_state.save_state") as save:
-        pr_cli._update_review_state({"findings": {"M": 1}}, ctx)
-    save.assert_not_called()
+# ── run lock wiring ─────────────────────────────────────────────────────────
 
 
-# ── worktree lock wiring ────────────────────────────────────────────────────
-
-
-def _lock_file(worktree_root):
-    return _state_dir(worktree_root) / worktree_lock.LOCK_FILE
-
-
-def _state_dir(worktree_root):
-    return workbench_paths.worktree_state_dir(worktree_root)
+def _lock_file(target_dir):
+    return Path(target_dir) / run_lock.LOCK_FILE
 
 
 @pytest.fixture
@@ -1005,19 +1031,37 @@ def stub_state_dir(worktree, monkeypatch):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_locks_the_worktree_for_a_mutating_command(
+def test_main_locks_the_target_for_a_mutating_command(
         mock_resolve, mock_run, worktree, stub_state_dir):
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
+    """worktree_root and target_dir are different directories here on purpose:
+    a lock keyed on worktree_root (the old bug) would land in the worktree, not
+    in the target."""
+    target = worktree / "target"
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
     mock_run.return_value = MagicMock(returncode=0)
     seen = {}
     mock_run.side_effect = lambda *a, **k: (
-        seen.update(env=os.environ.get(worktree_lock.LOCK_ENV)),
+        seen.update(env=os.environ.get(run_lock.LOCK_ENV)),
         MagicMock(returncode=0),
     )[1]
     _run_main("--repo-dir", str(worktree), "comments")
-    assert _lock_file(worktree).is_file()
+    assert _lock_file(target).is_file()
+    assert not _lock_file(worktree).exists()
     # The delegate has to inherit the marker, or it would deadlock on us.
-    assert seen["env"] == str(worktree.resolve())
+    assert seen["env"] == str(target)
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_main_locks_a_bare_repo_run(mock_resolve, mock_run, tmp_path):
+    """Regression: a bare repo (no worktree_root) used to skip the lock
+    entirely via the old `if ctx.worktree_root:` guard. target_dir is never
+    None, so a bare-repo run now takes a real lock like any other."""
+    target = tmp_path / "target"
+    mock_resolve.return_value = _make_ctx(worktree_root=None, target_dir=target)
+    mock_run.return_value = MagicMock(returncode=0)
+    _run_main("--repo-dir", "/nonexistent", "comments")
+    assert _lock_file(target).is_file()
 
 
 @patch("pr_cli.subprocess.run")
@@ -1025,57 +1069,68 @@ def test_main_locks_the_worktree_for_a_mutating_command(
 def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree,
                                        stub_state_dir):
     """status is read-only, so it must never block on a run in flight."""
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
+    target = worktree / "target"
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("--repo-dir", str(worktree), "status")
-    assert not _lock_file(worktree).exists()
+    assert not _lock_file(target).exists()
 
 
+@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
 @patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
 @patch("pr_cli.review_gc.gc_reviews", return_value=0)
 @patch("pr_cli.pr_context.resolve")
-def test_main_locks_for_gc(mock_resolve, _gc, _prune, worktree):
+def test_main_locks_for_gc(mock_resolve, _gc, _prune, _prune_targets, worktree):
     """gc deletes the state directory, so it is not safe to run unlocked.
 
     Takes no stub_state_dir, unlike its neighbours: nothing here mocks
     `pr_cli.subprocess.run`, so the real `git rev-parse` answers for the
     worktree and the state dir resolves on its own.
     """
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
+    target = worktree / "target"
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
     _run_main("--repo-dir", str(worktree), "gc")
-    assert _lock_file(worktree).is_file()
+    assert _lock_file(target).is_file()
+    assert not _lock_file(worktree).exists()
 
 
+@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
 @patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
 @patch("pr_cli.review_gc.gc_reviews", return_value=0)
-@patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_gc_run_does_not_destroy_the_lock_it_is_holding(
-        mock_resolve, mock_run, _gc, _prune, worktree, stub_state_dir):
-    """The full dispatch path: gc takes the lock, then clears the very
-    directory the lock file lives in. The lock has to outlive the sweep."""
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
-    mock_run.return_value = MagicMock(returncode=0, stdout="MERGED\n")
-    state_dir = _state_dir(worktree)
-    state_dir.mkdir(parents=True)
-    (state_dir / pr_state.STATE_FILE).write_text("{}")
-    state = MagicMock()
-    state.identity.pr_number = 42
-    state.identity.repo = "owner/repo"
+def test_gc_skips_own_target_when_pruning(
+        mock_resolve, _gc, _prune, mock_prune_targets, worktree):
+    """cmd_gc must pass its own target as `skip` — gc holds that lock, so a
+    prune that tried it would either deadlock or delete live state."""
+    target = worktree / "target"
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
+    _run_main("--repo-dir", str(worktree), "gc")
+    assert mock_prune_targets.call_args.kwargs["skip"] == target
 
-    with patch("pr_cli.pr_state.load_state", return_value=state):
-        _run_main("--repo-dir", str(worktree), "gc")
 
-    assert not (state_dir / pr_state.STATE_FILE).exists()
-    assert _lock_file(worktree).is_file()
+@patch("pr_cli.review_gc.prune_merged_targets", return_value=0)
+@patch("pr_cli.review_gc.prune_merged_reviews", return_value=0)
+@patch("pr_cli.review_gc.gc_reviews", return_value=0)
+@patch("pr_cli.pr_context.resolve")
+def test_gc_skips_legacy_sweep_from_a_bare_repo(
+        mock_resolve, _gc, _prune, _prune_targets, tmp_path):
+    """A bare repo has a target but no worktree_root — there is no worktree
+    to sweep legacy artifacts out of."""
+    target = tmp_path / "target"
+    mock_resolve.return_value = _make_ctx(worktree_root=None, target_dir=target)
+    with patch("pr_cli._sweep_legacy_state") as mock_sweep:
+        _run_main("--repo-dir", "/nonexistent", "gc")
+    mock_sweep.assert_not_called()
 
 
 @patch("pr_cli.pr_context.resolve")
 def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
-    mock_resolve.return_value = _make_ctx(worktree_root=worktree)
-    busy = worktree_lock.LockBusy(
-        {"pid": 15461, "command": "pr review --self --fix", "started": "t"}, worktree)
-    with patch("pr_cli.worktree_lock.acquire", side_effect=busy):
+    target = worktree / "target"
+    mock_resolve.return_value = _make_ctx(worktree_root=worktree, target_dir=target)
+    busy = run_lock.LockBusy(
+        {"pid": 15461, "command": "pr review --self --fix", "started": "t"}, target)
+
+    with patch("pr_cli.run_lock.acquire", side_effect=busy):
         code = _run_main("--repo-dir", str(worktree), "comments")
     assert code == 1
     err = capsys.readouterr().err
@@ -1083,39 +1138,21 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
     assert "15461" in err
 
 
-def test_gc_clears_state_without_deleting_the_live_lock(worktree):
-    """Regression: rmtree of the state dir took run.lock with it, handing the
-    next run an uncontended lock on a fresh inode while gc was still going."""
-    state_dir = _state_dir(worktree)
-    state_dir.mkdir(parents=True)
-    (state_dir / pr_state.STATE_FILE).write_text("{}")
-    (state_dir / worktree_lock.LOCK_FILE).write_text('{"pid": 1}')
-    (state_dir / "trails").mkdir()
-    (state_dir / "trails" / "a.jsonl").write_text("{}")
+def test_gc_sweeps_legacy_worktree_artifacts_but_keeps_the_trail(tmp_path):
+    legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
+    legacy.mkdir()
+    (legacy / pr_state.STATE_FILE).write_text("{}")
+    (legacy / run_lock.LOCK_FILE).write_text("{}")
+    (legacy / "trail.jsonl").write_text('{"event":"x"}\n')
 
-    pr_cli._clear_state_dir(state_dir)
+    assert pr_cli._sweep_legacy_state(tmp_path) == 1
 
-    assert (state_dir / worktree_lock.LOCK_FILE).is_file()
-    assert not (state_dir / pr_state.STATE_FILE).exists()
-    assert not (state_dir / "trails").exists()
+    assert not (legacy / pr_state.STATE_FILE).exists()
+    assert not (legacy / "run.lock").exists()
+    assert (legacy / "trail.jsonl").is_file()
 
 
-def test_gc_removes_an_unreadable_state_file(worktree):
-    """load_state folds corrupt into missing, but gc stats the file first, so
-    it is the one caller that can still tell them apart — and the one command
-    whose job is deleting the state dir."""
-    state_dir = _state_dir(worktree)
-    state_dir.mkdir(parents=True)
-    (state_dir / pr_state.STATE_FILE).write_text("{ not json")
-
-    assert pr_cli._gc_stale_pr_state(worktree) == 1
-    assert not (state_dir / pr_state.STATE_FILE).exists()
-
-
-def test_gc_leaves_a_readable_state_file_with_no_pr(worktree):
-    state = pr_state.new_state("owner/repo", "feat", pr_number=None,
-                               head_sha="abc", worktree_root=str(worktree))
-    pr_state.save_state(worktree, state)
-
-    assert pr_cli._gc_stale_pr_state(worktree) == 0
-    assert (_state_dir(worktree) / pr_state.STATE_FILE).is_file()
+def test_gc_legacy_sweep_is_idempotent(tmp_path):
+    legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
+    legacy.mkdir()
+    assert pr_cli._sweep_legacy_state(tmp_path) == 0

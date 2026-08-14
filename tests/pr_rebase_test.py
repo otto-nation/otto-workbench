@@ -2917,6 +2917,7 @@ def test_main_without_a_worktree_exits_with_guidance(capsys):
     ctx = pr_context.ResolvedContext(
         repo="owner/repo", branch="isaac/feat/x", pr_number=42,
         worktree_root=None, head_sha="abc1234",
+        target_dir=Path("/target"),
     )
     with mock.patch("sys.argv", ["pr-rebase"]), \
          mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=ctx), \

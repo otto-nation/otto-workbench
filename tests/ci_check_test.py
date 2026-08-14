@@ -755,6 +755,7 @@ def test_rebase_if_behind_without_a_worktree_exits_with_guidance(capsys):
     ctx = pr_context.ResolvedContext(
         repo="owner/repo", branch="feat/auth", pr_number=42,
         worktree_root=None, head_sha="abc1234",
+        target_dir=Path("/target"),
     )
     assert_no_worktree_exit(capsys, "feat/auth", ci_check._rebase_if_behind,
                             MagicMock(), {"behind_main": 3}, ctx)

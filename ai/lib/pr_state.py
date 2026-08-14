@@ -4,15 +4,14 @@ Provides a summary envelope over per-domain state files (CI failures,
 PR comments, review artifacts). Each ``pr`` subcommand updates its own
 section; ``pr status`` reads the whole thing without network calls.
 
-State file: ``<git-dir>/workbench/state.json`` — see
-``workbench_paths.worktree_state_dir``, which owns that path.
+State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
+run's target — see ``pr_target.target_dir``, which owns that path.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import sys
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
@@ -24,12 +23,13 @@ from typing import get_type_hints
 # RunState must be bound in this module's namespace; ci_failures keeps its
 # own pr_state import under TYPE_CHECKING, which is what keeps this acyclic.
 from ci_failures import RunState
-import workbench_paths
+
 from serde import (
     from_dict as _serde_from_dict,
     load_file as _serde_load_file,
     to_dict as _serde_to_dict,
 )
+
 
 
 STATE_FILE = "state.json"
@@ -389,7 +389,7 @@ def state_from_dict(d: dict) -> PRState:
 # ── I/O ─────────────────────────────────────────────────────────────────────
 
 
-def load_state(worktree_root: Path) -> PRState | None:
+def load_state(target_dir: Path) -> PRState | None:
     """Load unified PR state, or None if there is no usable file.
 
     A missing file and an unreadable one both come back as None. Nothing stored
@@ -404,14 +404,10 @@ def load_state(worktree_root: Path) -> PRState | None:
     No caller needs to tell corrupt from missing; the warning serde emits is
     what supplies the part "no state yet" leaves out.
     """
-    try:
-        state_dir = workbench_paths.worktree_state_dir(worktree_root)
-    except workbench_paths.NotAWorktree:
-        return None
-    return _serde_load_file(PRState, state_dir / STATE_FILE)
+    return _serde_load_file(PRState, target_dir / STATE_FILE)
 
 
-def save_state(worktree_root: Path, state: PRState) -> None:
+def save_state(target_dir: Path, state: PRState) -> None:
     """Save unified PR state, creating directories as needed.
 
     Writes to a per-process temp file and renames it over the target.
@@ -419,12 +415,12 @@ def save_state(worktree_root: Path, state: PRState) -> None:
     observe a zero-byte file and fail with a JSONDecodeError; os.replace
     is atomic, so readers see either the old state or the new one.
     """
-    path = workbench_paths.worktree_state_dir(worktree_root) / STATE_FILE
+    path = target_dir / STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     state.updated_at = datetime.now(timezone.utc).isoformat()
     # Per-process, not per-call: two threads in one process saving at once
     # would share this name. Nothing here saves off the main thread, and the
-    # worktree lock already keeps other processes out.
+    # run lock already keeps other processes out.
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         with open(tmp, "w") as f:
@@ -461,11 +457,31 @@ def new_state(
     )
 
 
-def update_identity(state: PRState, head_sha: str, pr_number: int | None = None) -> None:
-    """Refresh identity fields that change across invocations."""
-    state.identity.head_sha = head_sha
+def update_identity(
+    state: PRState,
+    head_sha: str,
+    pr_number: int | None = None,
+    worktree_root: str = "",
+) -> None:
+    """Refresh identity fields that change across invocations.
+
+    ``worktree_root`` is one of them now that the file is keyed on the target
+    rather than stored inside the checkout: consecutive runs against one target
+    can come from different worktrees, and consumers read this field to find the
+    checkout a fix was committed in.
+
+    Both it and ``head_sha`` are overwritten only when the incoming value is
+    non-empty. A run from a bare repo has neither a worktree to name nor a
+    checked-out HEAD to read, and a run with nothing to say must not erase what
+    an earlier run knew: the fix summary falls back to ``identity.head_sha`` when
+    it has no commit of its own, and would otherwise post an empty SHA.
+    """
+    if head_sha:
+        state.identity.head_sha = head_sha
     if pr_number is not None:
         state.identity.pr_number = pr_number
+    if worktree_root:
+        state.identity.worktree_root = worktree_root
 
 
 @cache
@@ -535,33 +551,39 @@ def pop_pending_comments(
 
 def load_or_init(
     *,
-    worktree_root: Path,
+    target_dir: Path,
     repo: str,
     branch: str,
     pr_number: int | None = None,
     head_sha: str,
+    worktree_root: str = "",
 ) -> PRState:
-    """Load existing state or create a fresh one, updating identity."""
-    state = load_state(worktree_root)
+    """Load existing state or create a fresh one, updating identity.
+
+    ``target_dir`` is where the file lives; ``worktree_root`` is the checkout the
+    write ran from, recorded in identity for consumers that want to find it.
+    """
+    state = load_state(target_dir)
     if state is not None:
-        update_identity(state, head_sha, pr_number)
+        update_identity(state, head_sha, pr_number, worktree_root)
         return state
     return new_state(
         repo=repo,
         branch=branch,
         pr_number=pr_number,
         head_sha=head_sha,
-        worktree_root=str(worktree_root),
+        worktree_root=worktree_root,
     )
 
 
 def apply_state_update(
     *,
-    worktree_root: Path,
+    target_dir: Path,
     repo: str,
     branch: str,
     pr_number: int | None = None,
     head_sha: str,
+    worktree_root: str = "",
     domain: str,
     data: dict,
 ) -> None:
@@ -570,11 +592,12 @@ def apply_state_update(
     if domain_cls is None:
         raise ValueError(f"Unknown state domain: {domain!r}")
     state = load_or_init(
-        worktree_root=worktree_root,
+        target_dir=target_dir,
         repo=repo,
         branch=branch,
         pr_number=pr_number,
         head_sha=head_sha,
+        worktree_root=worktree_root,
     )
     apply(state, _serde_from_dict(domain_cls, data))
-    save_state(worktree_root, state)
+    save_state(target_dir, state)

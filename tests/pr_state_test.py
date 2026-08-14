@@ -22,10 +22,7 @@ from pr_state import (
     load_or_init, apply_state_update,
     STATE_VERSION,
 )
-import workbench_paths
 from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
-
-from conftest import state_path
 
 
 # ── Dataclass construction ──────────────────────────────────────────────────
@@ -327,9 +324,76 @@ def test_load_state_missing_file():
     assert result is None
 
 
+def test_state_file_sits_directly_in_the_target_dir(tmp_path):
+    """No .workbench/ nesting — the target dir is already ours alone."""
+    state = new_state(repo="acme/widget", branch="feat/a", pr_number=1,
+                      head_sha="sha", worktree_root="/wt")
+    save_state(tmp_path, state)
+    assert (tmp_path / "state.json").is_file()
+
+
+def test_save_state_does_not_touch_gitignore(tmp_path):
+    """State left the repo, so it has no business editing the repo's files."""
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text("node_modules\n")
+    state = new_state(repo="acme/widget", branch="feat/a", pr_number=1,
+                      head_sha="sha", worktree_root=str(tmp_path))
+    save_state(tmp_path, state)
+    assert gitignore.read_text() == "node_modules\n"
+
+
+def test_load_or_init_records_the_worktree_it_ran_from(tmp_path):
+    """Identity keeps naming the checkout — ui-code reads that field."""
+    state = load_or_init(target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+                         pr_number=1, head_sha="sha", worktree_root="/checkouts/feat-a")
+    assert state.identity.worktree_root == "/checkouts/feat-a"
+
+
+def test_load_or_init_repoints_the_worktree_a_later_run_ran_from(tmp_path):
+    """The file outlives the checkout that wrote it, so the field has to move.
+
+    A bare-repo run stores "", and review-threads reads exactly this field to
+    decide whether a fix commit was pushed. Left stale it reports "Push still
+    pending" forever; left pointing at worktree A it inspects the wrong tree.
+    """
+    save_state(tmp_path, load_or_init(
+        target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+        pr_number=1, head_sha="sha", worktree_root=""))
+
+    state = load_or_init(target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+                         pr_number=1, head_sha="sha2", worktree_root="/checkouts/feat-a")
+    assert state.identity.worktree_root == "/checkouts/feat-a"
+
+
+def test_load_or_init_keeps_a_known_worktree_when_a_bare_run_has_none(tmp_path):
+    """A run with nothing to say must not erase what an earlier run knew."""
+    save_state(tmp_path, load_or_init(
+        target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+        pr_number=1, head_sha="sha", worktree_root="/checkouts/feat-a"))
+
+    state = load_or_init(target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+                         pr_number=1, head_sha="sha2", worktree_root="")
+    assert state.identity.worktree_root == "/checkouts/feat-a"
+
+
+def test_load_or_init_keeps_a_known_head_sha_when_a_bare_run_has_none(tmp_path):
+    """A bare-repo resolve() yields head_sha "", and that must not overwrite.
+
+    review-threads posts `fix.commit_sha or state.identity.head_sha` in the fix
+    summary body, so a blanked identity puts an empty SHA in a public comment.
+    """
+    save_state(tmp_path, load_or_init(
+        target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+        pr_number=1, head_sha="abc1234", worktree_root="/checkouts/feat-a"))
+
+    state = load_or_init(target_dir=tmp_path, repo="acme/widget", branch="feat/a",
+                         pr_number=1, head_sha="", worktree_root="")
+    assert state.identity.head_sha == "abc1234"
+
+
 def _write_raw_state(root: Path, payload) -> Path:
     """Write a state file's bytes directly, bypassing save_state."""
-    path = state_path(root)
+    path = root / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload if isinstance(payload, str) else json.dumps(payload))
     return path
@@ -351,7 +415,7 @@ def _state_with_one_run(root: Path) -> dict:
         )},
     )
     save_state(root, state)
-    return json.loads(state_path(root).read_text())
+    return json.loads((root / "state.json").read_text())
 
 
 def test_load_state_returns_none_for_truncated_json(worktree, capsys):
@@ -392,7 +456,7 @@ def test_a_corrupt_file_is_rebuilt_by_the_next_write(worktree):
     _write_raw_state(worktree, "{ this is not json")
 
     state = load_or_init(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=7, head_sha="abc1234",
     )
     save_state(worktree, state)
@@ -413,8 +477,8 @@ def test_save_and_load_roundtrip(worktree):
 
 
 def test_save_creates_the_state_directory(worktree):
-    """A fresh worktree's git dir holds no `workbench/` until the first write."""
-    assert not workbench_paths.worktree_state_dir(worktree).exists()
+    """A fresh target dir holds no state.json until the first write."""
+    assert not (worktree / "state.json").exists()
     state = new_state("repo", "branch", pr_number=None, head_sha="",
                       worktree_root=str(worktree))
     save_state(worktree, state)
@@ -466,7 +530,7 @@ def test_run_keys_load_back_as_ints(worktree):
     state.ci.latest_run_id = 999
     save_state(worktree, state)
 
-    raw = json.loads(state_path(worktree).read_text())
+    raw = json.loads((worktree / "state.json").read_text())
     assert list(raw["ci"]["runs"]) == ["999"]
 
     loaded = load_state(worktree)
@@ -517,7 +581,7 @@ def test_save_leaves_no_temp_files_behind(worktree):
                       worktree_root=str(worktree))
     save_state(worktree, state)
     save_state(worktree, state)
-    leftovers = list(workbench_paths.worktree_state_dir(worktree).glob("*.tmp"))
+    leftovers = list(worktree.glob("*.tmp"))
     assert leftovers == []
 
 
@@ -535,7 +599,7 @@ def test_save_discards_the_temp_file_when_the_write_fails(worktree, monkeypatch)
     with pytest.raises(OSError):
         save_state(worktree, state)
 
-    assert list(workbench_paths.worktree_state_dir(worktree).glob("*.tmp")) == []
+    assert list(worktree.glob("*.tmp")) == []
 
 
 # ── Updaters ────────────────────────────────────────────────────────────────
@@ -762,7 +826,7 @@ def test_load_state_without_seen_ids_defaults_empty(worktree):
     """Old state files without seen_issue_comment_ids should deserialize with []."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     save_state(worktree, state)
-    path = state_path(worktree)
+    path = worktree / "state.json"
     data = json.loads(path.read_text())
     del data["comments"]["seen_issue_comment_ids"]
     path.write_text(json.dumps(data))
@@ -775,7 +839,7 @@ def test_load_state_without_seen_review_body_comment_ids_defaults_empty(worktree
     """Old state files without seen_review_body_comment_ids should deserialize with []."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     save_state(worktree, state)
-    path = state_path(worktree)
+    path = worktree / "state.json"
     data = json.loads(path.read_text())
     del data["comments"]["seen_review_body_comment_ids"]
     path.write_text(json.dumps(data))
@@ -789,7 +853,7 @@ def test_load_state_without_seen_review_body_comment_ids_defaults_empty(worktree
 
 def test_load_or_init_creates_new_state(worktree):
     state = load_or_init(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=42, head_sha="abc123",
     )
     assert state.identity.repo == "owner/repo"
@@ -803,7 +867,7 @@ def test_load_or_init_loads_existing_and_updates_identity(worktree):
     save_state(worktree, state)
 
     loaded = load_or_init(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=2, head_sha="new",
     )
     assert loaded.identity.head_sha == "new"
@@ -816,7 +880,7 @@ def test_load_or_init_loads_existing_and_updates_identity(worktree):
 
 def test_apply_state_update_ci(worktree):
     apply_state_update(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=1, head_sha="abc", domain="ci",
         data={"conclusion": "failure", "failure_count": 2, "failure_kinds": {"lint": 2}, "updated_at": "t"},
     )
@@ -828,7 +892,7 @@ def test_apply_state_update_ci(worktree):
 
 def test_apply_state_update_review(worktree):
     apply_state_update(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=1, head_sha="abc", domain="review",
         data={"verdict": ReviewVerdict.APPROVE.value, "finding_counts": {"S": 1}, "cost_usd": 0.5, "updated_at": "t"},
     )
@@ -840,7 +904,7 @@ def test_apply_state_update_review(worktree):
 
 def test_apply_state_update_triage(worktree):
     apply_state_update(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=1, head_sha="abc", domain="triage",
         data={"total": 5, "actionable": 2, "valid": 1, "questions": 1, "updated_at": "t"},
     )
@@ -853,7 +917,7 @@ def test_apply_state_update_triage(worktree):
 def test_apply_state_update_unknown_domain(worktree):
     with pytest.raises(ValueError, match="Unknown state domain"):
         apply_state_update(
-            worktree_root=worktree, repo="r", branch="b",
+            target_dir=worktree, repo="r", branch="b",
             head_sha="a", domain="bogus", data={},
         )
 
@@ -922,7 +986,7 @@ def test_fix_summary_head_sha_defaults_empty_on_legacy_state(worktree):
         fix=FixSummary(head_sha="abc1234"),
     )
     save_state(worktree, state)
-    path = state_path(worktree)
+    path = worktree / "state.json"
     raw = json.loads(path.read_text())
     del raw["fix"]["head_sha"]
     path.write_text(json.dumps(raw))
@@ -947,7 +1011,7 @@ def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(worktree):
         fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
     )
     save_state(worktree, state)
-    path = state_path(worktree)
+    path = worktree / "state.json"
     raw = json.loads(path.read_text())
     del raw["fix"]["threads"][0]["commit_sha"]
     path.write_text(json.dumps(raw))
@@ -1162,7 +1226,7 @@ def test_load_state_without_fix_defaults_empty(worktree):
     """Old state files without fix key should deserialize with empty FixSummary."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
     save_state(worktree, state)
-    path = state_path(worktree)
+    path = worktree / "state.json"
     data = json.loads(path.read_text())
     del data["fix"]
     path.write_text(json.dumps(data))
@@ -1174,7 +1238,7 @@ def test_load_state_without_fix_defaults_empty(worktree):
 
 def test_apply_state_update_fix(worktree):
     apply_state_update(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=1, head_sha="abc", domain="fix",
         data={
             "threads": [

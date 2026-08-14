@@ -1617,7 +1617,7 @@ def test_build_orchestrate_args_passes_recover_sha(cr, tmp_path):
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
         issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
-        model=None, recover_sha="abc1234",
+        model=None, recover_sha="abc1234", target_dir=tmp_path / "state",
     )
     assert args[args.index("--recover-sha") + 1] == "abc1234"
 
@@ -1627,9 +1627,21 @@ def test_build_orchestrate_args_omits_empty_recover_sha(cr, tmp_path):
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
         issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
-        model=None,
+        model=None, target_dir=tmp_path / "state",
     )
     assert "--recover-sha" not in args
+
+
+def test_build_orchestrate_args_passes_target_dir(cr, tmp_path):
+    """The run's state directory must reach review-orchestrate unmodified."""
+    target = tmp_path / "state" / "pr" / "acme-widget-abcd1234-feat-a"
+    args = cr._build_orchestrate_args(
+        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
+        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
+        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        model=None, target_dir=target,
+    )
+    assert args[args.index("--target-dir") + 1] == str(target)
 
 
 # ── --recover with --self ─────────────────────────────────────────────────────
@@ -1649,10 +1661,13 @@ def test_self_review_accepts_recover(cr, reviews_dir, monkeypatch):
     assert run_self.call_args[0][0].recover is True
 
 
-def test_self_review_recover_reads_head_after_worktree_switch(cr, reviews_dir, monkeypatch):
+def test_self_review_recover_reads_head_after_worktree_switch(
+    cr, tmp_path, reviews_dir, monkeypatch,
+):
     """Checking out the target moves HEAD — the recover sha must come from the new worktree."""
     ctx = SimpleNamespace(
         repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
+        target_dir=tmp_path / "pr" / "owner-repo-x-feat-x",
     )
     monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
     monkeypatch.setattr(cr, "_resolve_branch_input", lambda pr_input, repo_dir: pr_input)
@@ -1680,6 +1695,14 @@ def test_self_review_recover_reads_head_after_worktree_switch(cr, reviews_dir, m
     assert body.call_args.kwargs["head_sha"] == "fresh11"
 
 
+def _self_ctx(tmp_path, branch="feat/x"):
+    """The identity a --self run resolves once and threads down."""
+    return SimpleNamespace(
+        repo="owner/repo", pr_number=None, branch=branch, head_sha="abc1234",
+        worktree_root=tmp_path, target_dir=tmp_path / "state",
+    )
+
+
 def test_self_review_body_validates_recover(cr, tmp_path):
     """recover=True reaches _resolve_recover_sha — no pipeline state aborts the run."""
     with pytest.raises(SystemExit) as exc:
@@ -1688,6 +1711,7 @@ def test_self_review_body_validates_recover(cr, tmp_path):
             False, None, None, False, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
             recover=True, head_sha="abc1234",
+            ctx=_self_ctx(tmp_path), trail=MagicMock(),
         )
     assert exc.value.code == 1
 
@@ -1720,6 +1744,7 @@ def test_self_review_body_runs_recover_in_pinned_worktree(cr, tmp_path, monkeypa
             False, None, None, False, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
             recover=True, head_sha="def5678",
+            ctx=_self_ctx(tmp_path), trail=MagicMock(),
         )
 
     orchestrate_args = run.call_args[0][0]
@@ -1739,6 +1764,7 @@ def test_self_review_body_rejects_fix_on_drifted_recover(cr, tmp_path, monkeypat
             False, None, None, True, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
             recover=True, head_sha="def5678",
+            ctx=_self_ctx(tmp_path), trail=MagicMock(),
         )
     assert exc.value.code == 1
 
@@ -1766,6 +1792,7 @@ def test_self_review_body_allows_fix_when_recover_has_not_drifted(cr, tmp_path, 
             False, None, None, True, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
             recover=True, head_sha="abc1234",
+            ctx=_self_ctx(tmp_path), trail=MagicMock(),
         )
 
     orchestrate_args = run.call_args[0][0]
@@ -1842,3 +1869,159 @@ def test_submit_pending_review_survives_an_unreadable_post_tracking_file(
     assert "Could not read review_id" in capsys.readouterr().err
 
 
+# ── _update_pr_state ─────────────────────────────────────────────────────────
+
+
+def _caller_checkout(path: Path, branch: str = "main") -> Path:
+    """A real checkout with an origin and a commit, standing in for the caller."""
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "remote", "add", "origin",
+                    "git@github.com:acme/widget.git"], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-q", "--allow-empty", "-m", "x"],
+        check=True,
+        env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+    )
+    return path
+
+
+def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
+    cr, tmp_path, monkeypatch,
+):
+    """#680(c): the summary belongs to the PR reviewed, not to where we stood.
+
+    `pr review <N>` is routinely run from a checkout sitting on some other
+    branch. The run's identity is resolved once at entry and threaded down; a
+    second resolution here reads the caller's branch instead, which is how the
+    verdict for one PR used to overwrite another's state.
+
+    Both targets are built through `pr_target` — the repo key is opaque and no
+    test may reconstruct one.
+    """
+    import pr_state as ps
+    import pr_target
+
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    caller = _caller_checkout(tmp_path / "caller", branch="main")
+    repo_key = pr_target.repo_key_from_origin(str(caller))
+    callers_target = pr_target.target_dir(repo_key, "main")
+    prs_target = pr_target.target_dir(repo_key, "feat/x")
+
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    review_file = review_dir / "review.md"
+    review_file.write_text("## Findings\n- **[M1]** boom\n")
+
+    def _refuse(**kwargs):
+        raise AssertionError("the run's identity is resolved once, at entry")
+
+    monkeypatch.setattr(cr.pr_context, "resolve", _refuse)
+    monkeypatch.chdir(caller)
+
+    ctx = cr.pr_context.ResolvedContext(
+        repo="acme/widget", branch="feat/x", pr_number=2973,
+        worktree_root=caller, head_sha="deadbee",
+        target_dir=prs_target,
+    )
+    cr._update_pr_state(ctx, str(review_file), cr.Mode.PR, trail=MagicMock())
+
+    state = ps.load_state(prs_target)
+    assert state is not None, "summary did not land with the PR under review"
+    assert state.review.finding_counts == {"must_fix": 1}
+    assert state.review.verdict == ReviewVerdict.CHANGES_REQUESTED.value
+    assert state.identity.pr_number == 2973
+    assert state.identity.branch == "feat/x"
+    assert not (callers_target / ps.STATE_FILE).exists()
+
+
+def test_update_pr_state_reports_a_failed_write_on_both_channels(
+    cr, tmp_path, monkeypatch, capsys,
+):
+    """A lost summary is a cache miss, not a failed review — but never silent."""
+    review_file = tmp_path / "review.md"
+    review_file.write_text("## Findings\n")
+
+    def _boom(**kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(cr.pr_state, "apply_state_update", _boom)
+    trail = MagicMock()
+    ctx = cr.pr_context.ResolvedContext(
+        repo="acme/widget", branch="feat/x", pr_number=1,
+        worktree_root=None, head_sha="deadbee",
+        target_dir=tmp_path / "target",
+    )
+
+    cr._update_pr_state(ctx, str(review_file), cr.Mode.PR, trail=trail)
+
+    assert "read-only file system" in trail.error.call_args[0][1]
+    assert "read-only file system" in capsys.readouterr().err
+
+
+# ── the run lock on the --self path ──────────────────────────────────────────
+
+
+def _self_review_args(**overrides):
+    base = dict(
+        positional=[], issue=None, max_parallel=1, skip_user_verification=True,
+        force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
+        model=None, repo_dir="", fix=True, effort="medium", max_groups=None,
+        generated=False, recover=False, debug=False,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _stub_self_review(cr, monkeypatch, target, reviews_dir):
+    """Drive _run_self_review far enough to reach the lock, and no further."""
+    ctx = SimpleNamespace(
+        repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
+        target_dir=target,
+    )
+    monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(cr, "_cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(cr, "_run_self_review_body", MagicMock())
+    return ctx
+
+
+def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
+    """`claude-review --self --fix` twice must not give two committers on a branch.
+
+    The lock is what stops that, and this branch's docs claim it covers a direct
+    `--self` invocation — so a second, unrelated run has to be refused.
+    """
+    import run_lock
+
+    target = tmp_path / "pr" / "target"
+    _stub_self_review(cr, monkeypatch, target, reviews_dir)
+
+    cr._run_self_review(_self_review_args())
+
+    record = json.loads((target / run_lock.LOCK_FILE).read_text())
+    assert record["command"].startswith("claude-review")
+    assert record["started"]
+
+    # A fresh run, with none of our env inherited, must be turned away.
+    monkeypatch.delenv(run_lock.LOCK_ENV, raising=False)
+    with pytest.raises(SystemExit) as exc:
+        run_lock.claim_for_process(target, command="claude-review --self", started="t")
+    assert exc.value.code == 1
+
+
+def test_self_review_passes_through_the_lock_pr_already_holds(
+    cr, tmp_path, reviews_dir, monkeypatch,
+):
+    """Launched by `pr`, a --self run inherits WORKBENCH_RUN_LOCK, not a deadlock."""
+    import run_lock
+
+    target = tmp_path / "pr" / "target"
+    _stub_self_review(cr, monkeypatch, target, reviews_dir)
+
+    with run_lock.acquire(target, command="pr review --self --fix", started="t"):
+        cr._run_self_review(_self_review_args())
+        # Passed through: the parent's ownership record is untouched.
+        record = json.loads((target / run_lock.LOCK_FILE).read_text())
+        assert record["command"] == "pr review --self --fix"

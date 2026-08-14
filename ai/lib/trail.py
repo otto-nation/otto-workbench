@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -18,6 +19,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from uuid import uuid4
+
+import log
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────
@@ -79,6 +82,62 @@ class TrailEvent:
         return json.dumps(d, separators=(",", ":"))
 
 
+def _ensure_gitignored(artifact_path: Path) -> None:
+    """Add the artifact directory to .gitignore when it sits inside a repo.
+
+    The trail is the only thing that creates this directory now that state is
+    user-scoped, so keeping it out of the consumer repo's diff lands here. Every
+    trail passes through, not only `.workbench` inside a consumer repo, so
+    whether the directory is inside a repo is checked rather than assumed: a
+    review artifact dir under state_dir() usually is not, but a machine whose
+    ~/.config is itself a git repo puts one there.
+
+    The rule written is the directory's path relative to the repo root, anchored
+    with a leading slash — a bare name would ignore every directory called that
+    anywhere in the tree, and this function only ever means the one directory it
+    just created.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(artifact_path),
+             "rev-parse", "--show-toplevel", "--show-prefix"],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return
+
+    lines = r.stdout.splitlines()
+    toplevel = lines[0].strip() if lines else ""
+    # --show-prefix is empty when the artifact dir *is* the repo root, which is
+    # not a directory anyone can ignore.
+    rel = lines[1].strip().strip("/") if len(lines) > 1 else ""
+    # Emptiness is checked alongside the exit code because Path("") is Path("."):
+    # a rev-parse that somehow succeeds saying nothing would write .gitignore
+    # into whatever directory the process happens to be standing in.
+    if r.returncode != 0 or not toplevel or not rel:
+        return
+
+    ignored = subprocess.run(
+        ["git", "-C", toplevel, "check-ignore", "-q", rel],
+        capture_output=True,
+    )
+    if ignored.returncode == 0:
+        return
+
+    gitignore = Path(toplevel) / ".gitignore"
+    try:
+        content = gitignore.read_text() if gitignore.exists() else ""
+        needs_newline = bool(content) and not content.endswith("\n")
+        lead = "\n" if needs_newline else ""
+        separator = "\n" if content else ""
+        with open(gitignore, "a") as f:
+            f.write(f"{lead}{separator}# Run artifacts (otto-workbench AI scripts)\n/{rel}/\n")
+    except OSError as e:
+        log.warn(f"trail: could not update {gitignore}: {e}")
+        return
+    log.info(f"trail: added /{rel}/ to {gitignore}")
+
+
 # ── Trail ─────────────────────────────────────────────────────────────────
 
 _print_lock = threading.Lock()
@@ -112,7 +171,16 @@ class Trail:
     ) -> Trail:
         debug = debug or os.environ.get("WORKBENCH_DEBUG", "") == "1"
         artifact_path = Path(artifact_dir)
-        artifact_path.mkdir(parents=True, exist_ok=True)
+        # mkdir's own FileExistsError, not a preceding exists() check, decides who
+        # created the directory: two processes racing to start a trail at the same
+        # target must not both see "created" and both append to .gitignore.
+        try:
+            artifact_path.mkdir(parents=True)
+            created = True
+        except FileExistsError:
+            created = False
+        if created:
+            _ensure_gitignored(artifact_path)
         invocation = uuid4().hex[:8]
         return cls(
             script=script,

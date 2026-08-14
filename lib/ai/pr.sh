@@ -6,6 +6,7 @@
 #   load_pr [ARGS]                          → sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH
 #   push_branch BRANCH                      → pushes branch if needed
 #   generate_pr_content BRANCH DEFAULT      → sets PR_TITLE, PR_DESCRIPTION
+#   create_pr GH_ARGS...                    → runs gh pr create, reports the PR URL
 #
 # State set by functions: BRANCH, DEFAULT_BRANCH, SKIP_ISSUE, PR_BASE,
 #                         PR_ISSUE, PR_TEMPLATE, PR_HAS_TEMPLATE, PR_TITLE, PR_DESCRIPTION
@@ -50,6 +51,36 @@ push_branch() {
     echo "→ Fix with: git pull --rebase or git reset"
     return 1
   fi
+}
+
+# Matches only a GitHub pull request URL. Anchored to the /pull/<number> path so
+# that non-PR URLs in gh's own output — such as the https://githubstatus.com link
+# in its connectivity error — are never mistaken for a created PR.
+PR_URL_PATTERN='https://github\.com/[^[:space:]]+/pull/[0-9]+'
+
+# create_pr GH_ARGS...
+# Runs `gh pr create` with the given arguments and reports the resulting PR URL.
+# gh's exit code is the authoritative success signal; a zero exit with no parsable
+# pull request URL is still treated as a failure. Returns 1 on any failure.
+create_pr() {
+  local output url status=0
+  output=$(gh pr create "$@" 2>&1) || status=$?
+
+  if [[ "$status" -ne 0 ]]; then
+    echo "✗ PR creation failed (gh exited $status)"
+    echo "$output"
+    return 1
+  fi
+
+  url=$(printf '%s\n' "$output" | grep -oE "$PR_URL_PATTERN" | head -1 || true)
+  if [[ -z "$url" ]]; then
+    echo "✗ PR creation failed — gh reported success but printed no pull request URL"
+    echo "$output"
+    return 1
+  fi
+
+  echo "✓ Pull request created"
+  echo "$url"
 }
 
 # _ensure_gh_repo_access

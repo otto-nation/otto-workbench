@@ -1366,6 +1366,48 @@ class TestPendingFixReplies:
         assert mock_reply.call_count == 1
         assert fix.replies_pending is False
 
+    def test_counts_the_replies_it_drained(self, rt, publishing_on):
+        """The drafted pass recorded 0 sent; the run that sends them owns the count."""
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
+                ThreadOutcome(id="t2", summary="and this", file="y.py", line=2, action=ThreadAction.FIXED),
+            ],
+            commit_sha="abc1234",
+            commit_status="pushed",
+            replies_pending=True,
+            replies_posted=0,
+        )
+        state = _make_state(fix)
+        threads_by_id = {
+            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
+            "t2": ReportThread(id="t2", is_resolved=False, comments=[{"databaseId": 200}]),
+        }
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert fix.replies_posted == 2
+
+    def test_draft_drain_counts_nothing(self, rt):
+        """A draft sends nothing, so the counter must not move on its way past."""
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
+            ],
+            commit_sha="abc1234",
+            commit_status="pushed",
+            replies_pending=True,
+            replies_posted=0,
+        )
+        state = _make_state(fix)
+        threads_by_id = {
+            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
+        }
+        with patch.object(rt, "_is_pushed", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert fix.replies_posted == 0
+
     def test_noop_once_the_replies_have_gone_out(self, rt, publishing_on):
         fix = FixSummary(
             threads=[

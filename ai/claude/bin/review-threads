@@ -1899,7 +1899,12 @@ def _post_pending_fix_replies(
                         reviewer=t.reviewer, summary=t.summary)
             for t in fixed_threads
         ]
-        _post_fix_replies(items, threads_by_id, repo, pr_number, fix.commit_sha)
+        # Accumulate rather than assign: these are the same round's replies
+        # finally going out, and the fix pass already counted any it sent
+        # itself. A draft returns 0 here, so a drafted drain adds nothing.
+        fix.replies_posted += _post_fix_replies(
+            items, threads_by_id, repo, pr_number, fix.commit_sha,
+        )
         _resolve_fixed_threads(items, threads_by_id)
 
     # A draft delivered nothing, so the queue has to survive for the next run.

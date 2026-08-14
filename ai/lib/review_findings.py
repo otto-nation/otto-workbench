@@ -631,7 +631,7 @@ def _find_mismatch(norm_frag: str, norm_file: str) -> dict:
 def _check_fragments(evidence: str, file_content: str) -> dict:
     """Match each evidence fragment against the file it was quoted from.
 
-    The two sides are normalised the same way — `_strip_comments` then
+    The two sides are normalized the same way — `_strip_comments` then
     `_normalize_code` — because the comparison is a substring test. Stripping
     only the quote leaves the file holding text the quote no longer has, and a
     verbatim quote then fails to match itself.

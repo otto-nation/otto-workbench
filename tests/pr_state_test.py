@@ -2,7 +2,6 @@
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,9 +20,12 @@ from pr_state import (
     apply, _domains,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
-    STATE_DIR, STATE_FILE, STATE_VERSION,
+    STATE_VERSION,
 )
+import workbench_paths
 from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
+
+from conftest import state_path
 
 
 # ── Dataclass construction ──────────────────────────────────────────────────
@@ -327,7 +329,7 @@ def test_load_state_missing_file():
 
 def _write_raw_state(root: Path, payload) -> Path:
     """Write a state file's bytes directly, bypassing save_state."""
-    path = root / STATE_DIR / STATE_FILE
+    path = state_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload if isinstance(payload, str) else json.dumps(payload))
     return path
@@ -349,161 +351,153 @@ def _state_with_one_run(root: Path) -> dict:
         )},
     )
     save_state(root, state)
-    return json.loads((root / STATE_DIR / STATE_FILE).read_text())
+    return json.loads(state_path(root).read_text())
 
 
-def test_load_state_returns_none_for_truncated_json(tmp_path, capsys):
-    _write_raw_state(tmp_path, '{"identity": {"repo": "owner/repo"')
+def test_load_state_returns_none_for_truncated_json(worktree, capsys):
+    _write_raw_state(worktree, '{"identity": {"repo": "owner/repo"')
 
-    assert load_state(tmp_path) is None
+    assert load_state(worktree) is None
     assert "unreadable" in capsys.readouterr().err
 
 
-def test_load_state_returns_none_without_identity(tmp_path):
+def test_load_state_returns_none_without_identity(worktree):
     """identity has no dataclass default, so serde raises TypeError."""
-    _write_raw_state(tmp_path, {"created_at": "2026-08-12T00:00:00+00:00"})
+    _write_raw_state(worktree, {"created_at": "2026-08-12T00:00:00+00:00"})
 
-    assert load_state(tmp_path) is None
+    assert load_state(worktree) is None
 
 
-def test_load_state_returns_none_for_an_unknown_failure_kind(tmp_path):
-    d = _state_with_one_run(tmp_path)
+def test_load_state_returns_none_for_an_unknown_failure_kind(worktree):
+    d = _state_with_one_run(worktree)
     d["ci"]["runs"]["1"]["failures"]["build"]["kind"] = "not-a-kind"
-    _write_raw_state(tmp_path, d)
+    _write_raw_state(worktree, d)
 
-    assert load_state(tmp_path) is None
+    assert load_state(worktree) is None
 
 
-def test_load_state_returns_none_for_a_non_numeric_run_key(tmp_path):
+def test_load_state_returns_none_for_a_non_numeric_run_key(worktree):
     """runs is dict[int, RunState]; serde restores the int keys, so a key that
     is not a number is a corrupt file rather than a coercible one."""
-    d = _state_with_one_run(tmp_path)
+    d = _state_with_one_run(worktree)
     d["ci"]["runs"] = {"not-a-run-id": d["ci"]["runs"]["1"]}
-    _write_raw_state(tmp_path, d)
+    _write_raw_state(worktree, d)
 
-    assert load_state(tmp_path) is None
+    assert load_state(worktree) is None
 
 
-def test_a_corrupt_file_is_rebuilt_by_the_next_write(tmp_path):
+def test_a_corrupt_file_is_rebuilt_by_the_next_write(worktree):
     """The recovery a user never has to know about: any writing command loads
     or inits, then saves over the bad file."""
-    _write_raw_state(tmp_path, "{ this is not json")
+    _write_raw_state(worktree, "{ this is not json")
 
     state = load_or_init(
-        worktree_root=tmp_path, repo="owner/repo", branch="feat",
+        worktree_root=worktree, repo="owner/repo", branch="feat",
         pr_number=7, head_sha="abc1234",
     )
-    save_state(tmp_path, state)
+    save_state(worktree, state)
 
-    reloaded = load_state(tmp_path)
+    reloaded = load_state(worktree)
     assert reloaded is not None
     assert reloaded.identity.pr_number == 7
 
 
-def test_save_and_load_roundtrip():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "main", pr_number=1, head_sha="abc", worktree_root=tmp)
-        save_state(root, state)
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.identity.repo == "owner/repo"
-        assert loaded.identity.pr_number == 1
-        assert loaded.updated_at != ""
+def test_save_and_load_roundtrip(worktree):
+    state = new_state("owner/repo", "main", pr_number=1, head_sha="abc", worktree_root=str(worktree))
+    save_state(worktree, state)
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.identity.repo == "owner/repo"
+    assert loaded.identity.pr_number == 1
+    assert loaded.updated_at != ""
 
 
-def test_save_creates_parent_directories():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp) / "nested" / "worktree"
-        state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root=str(root))
-        save_state(root, state)
-        loaded = load_state(root)
-        assert loaded is not None
+def test_save_creates_the_state_directory(worktree):
+    """A fresh worktree's git dir holds no `workbench/` until the first write."""
+    assert not workbench_paths.worktree_state_dir(worktree).exists()
+    state = new_state("repo", "branch", pr_number=None, head_sha="",
+                      worktree_root=str(worktree))
+    save_state(worktree, state)
+    assert load_state(worktree) is not None
 
 
-def test_save_preserves_ci_data():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        apply(state, CIDomain(
-            last_run_id=100, conclusion="failure", failure_count=2,
-            failure_kinds={"lint": 2}, updated_at="2026-06-20T00:00:00+00:00",
-        ))
-        save_state(root, state)
+def test_save_preserves_ci_data(worktree):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    apply(state, CIDomain(
+        last_run_id=100, conclusion="failure", failure_count=2,
+        failure_kinds={"lint": 2}, updated_at="2026-06-20T00:00:00+00:00",
+    ))
+    save_state(worktree, state)
 
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.ci.last_run_id == 100
-        assert loaded.ci.failure_count == 2
-        assert loaded.ci.failure_kinds == {"lint": 2}
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.ci.last_run_id == 100
+    assert loaded.ci.failure_count == 2
+    assert loaded.ci.failure_kinds == {"lint": 2}
 
 
-def test_save_preserves_ci_runs():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        run = RunState(
-            run_id=200, run_number=3, head_sha="ghi",
-            status="completed", conclusion="failure",
-            fetched_at="2026-06-18T14:30:00+00:00", failures={},
-        )
-        state.ci.runs[200] = run
-        state.ci.latest_run_id = 200
-        save_state(root, state)
+def test_save_preserves_ci_runs(worktree):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    run = RunState(
+        run_id=200, run_number=3, head_sha="ghi",
+        status="completed", conclusion="failure",
+        fetched_at="2026-06-18T14:30:00+00:00", failures={},
+    )
+    state.ci.runs[200] = run
+    state.ci.latest_run_id = 200
+    save_state(worktree, state)
 
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.ci.latest_run_id == 200
-        assert 200 in loaded.ci.runs
-        assert loaded.ci.runs[200].run_number == 3
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.ci.latest_run_id == 200
+    assert 200 in loaded.ci.runs
+    assert loaded.ci.runs[200].run_number == 3
 
 
-def test_run_keys_load_back_as_ints(tmp_path):
+def test_run_keys_load_back_as_ints(worktree):
     """JSON has no int keys. serde restores them, so a lookup by
     `latest_run_id` — which is an int — finds its run without a conversion."""
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
-                      worktree_root=str(tmp_path))
+                      worktree_root=str(worktree))
     state.ci.runs[999] = RunState(
         run_id=999, run_number=1, head_sha="abc", status="completed",
         conclusion="failure", fetched_at="2026-08-12T00:00:00+00:00", failures={},
     )
     state.ci.latest_run_id = 999
-    save_state(tmp_path, state)
+    save_state(worktree, state)
 
-    raw = json.loads((tmp_path / STATE_DIR / STATE_FILE).read_text())
+    raw = json.loads(state_path(worktree).read_text())
     assert list(raw["ci"]["runs"]) == ["999"]
 
-    loaded = load_state(tmp_path)
+    loaded = load_state(worktree)
     assert loaded.ci.runs[loaded.ci.latest_run_id].run_number == 1
 
 
-def test_save_preserves_triage_data():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        apply(state, TriageSummary(
-            total=8, actionable=3, valid=2, questions=1,
-            updated_at="2026-06-20T00:00:00+00:00",
-        ))
-        save_state(root, state)
+def test_save_preserves_triage_data(worktree):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    apply(state, TriageSummary(
+        total=8, actionable=3, valid=2, questions=1,
+        updated_at="2026-06-20T00:00:00+00:00",
+    ))
+    save_state(worktree, state)
 
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.triage.total == 8
-        assert loaded.triage.actionable == 3
-        assert loaded.triage.valid == 2
-        assert loaded.triage.questions == 1
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.triage.total == 8
+    assert loaded.triage.actionable == 3
+    assert loaded.triage.valid == 2
+    assert loaded.triage.questions == 1
 
 
-def test_save_never_exposes_a_truncated_file(tmp_path, monkeypatch):
+def test_save_never_exposes_a_truncated_file(worktree, monkeypatch):
     """Regression: save_state used to truncate the target in place, so a
     concurrent reader could load a zero-byte file and die on JSONDecodeError.
     A failed write must leave the previous state readable."""
     import pr_state as pr_state_module
 
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
-                      worktree_root=str(tmp_path))
-    save_state(tmp_path, state)
+                      worktree_root=str(worktree))
+    save_state(worktree, state)
 
     def _explode(obj, fp, **kwargs):
         fp.write('{"partial":')
@@ -511,37 +505,37 @@ def test_save_never_exposes_a_truncated_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pr_state_module.json, "dump", _explode)
     with pytest.raises(OSError):
-        save_state(tmp_path, state)
+        save_state(worktree, state)
 
-    reloaded = load_state(tmp_path)
+    reloaded = load_state(worktree)
     assert reloaded is not None
     assert reloaded.identity.repo == "owner/repo"
 
 
-def test_save_leaves_no_temp_files_behind(tmp_path):
+def test_save_leaves_no_temp_files_behind(worktree):
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
-                      worktree_root=str(tmp_path))
-    save_state(tmp_path, state)
-    save_state(tmp_path, state)
-    leftovers = list((tmp_path / STATE_DIR).glob("*.tmp"))
+                      worktree_root=str(worktree))
+    save_state(worktree, state)
+    save_state(worktree, state)
+    leftovers = list(workbench_paths.worktree_state_dir(worktree).glob("*.tmp"))
     assert leftovers == []
 
 
-def test_save_discards_the_temp_file_when_the_write_fails(tmp_path, monkeypatch):
+def test_save_discards_the_temp_file_when_the_write_fails(worktree, monkeypatch):
     import pr_state as pr_state_module
 
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
-                      worktree_root=str(tmp_path))
-    save_state(tmp_path, state)
+                      worktree_root=str(worktree))
+    save_state(worktree, state)
 
     def _explode(obj, fp, **kwargs):
         raise OSError("disk full")
 
     monkeypatch.setattr(pr_state_module.json, "dump", _explode)
     with pytest.raises(OSError):
-        save_state(tmp_path, state)
+        save_state(worktree, state)
 
-    assert list((tmp_path / STATE_DIR).glob("*.tmp")) == []
+    assert list(workbench_paths.worktree_state_dir(worktree).glob("*.tmp")) == []
 
 
 # ── Updaters ────────────────────────────────────────────────────────────────
@@ -737,151 +731,131 @@ def test_state_from_dict_without_files_stale():
     assert state_from_dict(d).rebase.files_stale == []
 
 
-def test_save_preserves_rebase_data():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        apply(state, RebaseSummary(
-            target_base="origin/main", commits_replayed=3,
-            conflicts_resolved=1, files_resolved=["f.py"],
-            force_pushed=False, updated_at="2026-06-20T00:00:00+00:00",
-        ))
-        save_state(root, state)
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.rebase.target_base == "origin/main"
-        assert loaded.rebase.commits_replayed == 3
-        assert loaded.rebase.files_resolved == ["f.py"]
+def test_save_preserves_rebase_data(worktree):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    apply(state, RebaseSummary(
+        target_base="origin/main", commits_replayed=3,
+        conflicts_resolved=1, files_resolved=["f.py"],
+        force_pushed=False, updated_at="2026-06-20T00:00:00+00:00",
+    ))
+    save_state(worktree, state)
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.rebase.target_base == "origin/main"
+    assert loaded.rebase.commits_replayed == 3
+    assert loaded.rebase.files_resolved == ["f.py"]
 
 
-def test_save_preserves_seen_issue_comment_ids():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        apply(state, CommentsSummary(
-            total_threads=2, seen_issue_comment_ids=[111, 222],
-            updated_at="2026-07-02T00:00:00+00:00",
-        ))
-        save_state(root, state)
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.comments.seen_issue_comment_ids == [111, 222]
+def test_save_preserves_seen_issue_comment_ids(worktree):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    apply(state, CommentsSummary(
+        total_threads=2, seen_issue_comment_ids=[111, 222],
+        updated_at="2026-07-02T00:00:00+00:00",
+    ))
+    save_state(worktree, state)
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.comments.seen_issue_comment_ids == [111, 222]
 
 
-def test_load_state_without_seen_ids_defaults_empty():
+def test_load_state_without_seen_ids_defaults_empty(worktree):
     """Old state files without seen_issue_comment_ids should deserialize with []."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        save_state(root, state)
-        path = root / ".workbench" / "state.json"
-        data = json.loads(path.read_text())
-        del data["comments"]["seen_issue_comment_ids"]
-        path.write_text(json.dumps(data))
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.comments.seen_issue_comment_ids == []
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    save_state(worktree, state)
+    path = state_path(worktree)
+    data = json.loads(path.read_text())
+    del data["comments"]["seen_issue_comment_ids"]
+    path.write_text(json.dumps(data))
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.comments.seen_issue_comment_ids == []
 
 
-def test_load_state_without_seen_review_body_comment_ids_defaults_empty():
+def test_load_state_without_seen_review_body_comment_ids_defaults_empty(worktree):
     """Old state files without seen_review_body_comment_ids should deserialize with []."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        save_state(root, state)
-        path = root / ".workbench" / "state.json"
-        data = json.loads(path.read_text())
-        del data["comments"]["seen_review_body_comment_ids"]
-        path.write_text(json.dumps(data))
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.comments.seen_review_body_comment_ids == []
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    save_state(worktree, state)
+    path = state_path(worktree)
+    data = json.loads(path.read_text())
+    del data["comments"]["seen_review_body_comment_ids"]
+    path.write_text(json.dumps(data))
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.comments.seen_review_body_comment_ids == []
 
 
 # ── load_or_init ───────────────────────────────────────────────────────────
 
 
-def test_load_or_init_creates_new_state():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = load_or_init(
-            worktree_root=root, repo="owner/repo", branch="feat",
-            pr_number=42, head_sha="abc123",
-        )
-        assert state.identity.repo == "owner/repo"
-        assert state.identity.pr_number == 42
-        assert state.identity.head_sha == "abc123"
+def test_load_or_init_creates_new_state(worktree):
+    state = load_or_init(
+        worktree_root=worktree, repo="owner/repo", branch="feat",
+        pr_number=42, head_sha="abc123",
+    )
+    assert state.identity.repo == "owner/repo"
+    assert state.identity.pr_number == 42
+    assert state.identity.head_sha == "abc123"
 
 
-def test_load_or_init_loads_existing_and_updates_identity():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=1, head_sha="old", worktree_root=tmp)
-        apply(state, CIDomain(conclusion="failure", failure_count=3, updated_at="t"))
-        save_state(root, state)
+def test_load_or_init_loads_existing_and_updates_identity(worktree):
+    state = new_state("owner/repo", "feat", pr_number=1, head_sha="old", worktree_root=str(worktree))
+    apply(state, CIDomain(conclusion="failure", failure_count=3, updated_at="t"))
+    save_state(worktree, state)
 
-        loaded = load_or_init(
-            worktree_root=root, repo="owner/repo", branch="feat",
-            pr_number=2, head_sha="new",
-        )
-        assert loaded.identity.head_sha == "new"
-        assert loaded.identity.pr_number == 2
-        assert loaded.ci.failure_count == 3
+    loaded = load_or_init(
+        worktree_root=worktree, repo="owner/repo", branch="feat",
+        pr_number=2, head_sha="new",
+    )
+    assert loaded.identity.head_sha == "new"
+    assert loaded.identity.pr_number == 2
+    assert loaded.ci.failure_count == 3
 
 
 # ── apply_state_update ─────────────────────────────────────────────────────
 
 
-def test_apply_state_update_ci():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
+def test_apply_state_update_ci(worktree):
+    apply_state_update(
+        worktree_root=worktree, repo="owner/repo", branch="feat",
+        pr_number=1, head_sha="abc", domain="ci",
+        data={"conclusion": "failure", "failure_count": 2, "failure_kinds": {"lint": 2}, "updated_at": "t"},
+    )
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.ci.conclusion == "failure"
+    assert loaded.ci.failure_count == 2
+
+
+def test_apply_state_update_review(worktree):
+    apply_state_update(
+        worktree_root=worktree, repo="owner/repo", branch="feat",
+        pr_number=1, head_sha="abc", domain="review",
+        data={"verdict": ReviewVerdict.APPROVE.value, "finding_counts": {"S": 1}, "cost_usd": 0.5, "updated_at": "t"},
+    )
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.review.verdict == ReviewVerdict.APPROVE.value
+    assert loaded.review.cost_usd == 0.5
+
+
+def test_apply_state_update_triage(worktree):
+    apply_state_update(
+        worktree_root=worktree, repo="owner/repo", branch="feat",
+        pr_number=1, head_sha="abc", domain="triage",
+        data={"total": 5, "actionable": 2, "valid": 1, "questions": 1, "updated_at": "t"},
+    )
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.triage.total == 5
+    assert loaded.triage.actionable == 2
+
+
+def test_apply_state_update_unknown_domain(worktree):
+    with pytest.raises(ValueError, match="Unknown state domain"):
         apply_state_update(
-            worktree_root=root, repo="owner/repo", branch="feat",
-            pr_number=1, head_sha="abc", domain="ci",
-            data={"conclusion": "failure", "failure_count": 2, "failure_kinds": {"lint": 2}, "updated_at": "t"},
+            worktree_root=worktree, repo="r", branch="b",
+            head_sha="a", domain="bogus", data={},
         )
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.ci.conclusion == "failure"
-        assert loaded.ci.failure_count == 2
-
-
-def test_apply_state_update_review():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        apply_state_update(
-            worktree_root=root, repo="owner/repo", branch="feat",
-            pr_number=1, head_sha="abc", domain="review",
-            data={"verdict": ReviewVerdict.APPROVE.value, "finding_counts": {"S": 1}, "cost_usd": 0.5, "updated_at": "t"},
-        )
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.review.verdict == ReviewVerdict.APPROVE.value
-        assert loaded.review.cost_usd == 0.5
-
-
-def test_apply_state_update_triage():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        apply_state_update(
-            worktree_root=root, repo="owner/repo", branch="feat",
-            pr_number=1, head_sha="abc", domain="triage",
-            data={"total": 5, "actionable": 2, "valid": 1, "questions": 1, "updated_at": "t"},
-        )
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.triage.total == 5
-        assert loaded.triage.actionable == 2
-
-
-def test_apply_state_update_unknown_domain():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        with pytest.raises(ValueError, match="Unknown state domain"):
-            apply_state_update(
-                worktree_root=root, repo="r", branch="b",
-                head_sha="a", domain="bogus", data={},
-            )
 
 
 # ── FixSummary ─────────────────────────────────────────────────────────────
@@ -930,54 +904,54 @@ def test_fix_summary_defaults():
     assert f.updated_at == ""
 
 
-def test_fix_summary_round_trips_head_sha(tmp_path):
+def test_fix_summary_round_trips_head_sha(worktree):
     state = PRState(
         identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
-                            head_sha="abc1234", worktree_root=str(tmp_path)),
+                            head_sha="abc1234", worktree_root=str(worktree)),
         fix=FixSummary(head_sha="abc1234"),
     )
-    save_state(tmp_path, state)
-    assert load_state(tmp_path).fix.head_sha == "abc1234"
+    save_state(worktree, state)
+    assert load_state(worktree).fix.head_sha == "abc1234"
 
 
-def test_fix_summary_head_sha_defaults_empty_on_legacy_state(tmp_path):
+def test_fix_summary_head_sha_defaults_empty_on_legacy_state(worktree):
     """State written before this field must still load."""
     state = PRState(
         identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
-                            head_sha="abc1234", worktree_root=str(tmp_path)),
+                            head_sha="abc1234", worktree_root=str(worktree)),
         fix=FixSummary(head_sha="abc1234"),
     )
-    save_state(tmp_path, state)
-    state_path = tmp_path / STATE_DIR / STATE_FILE
-    raw = json.loads(state_path.read_text())
+    save_state(worktree, state)
+    path = state_path(worktree)
+    raw = json.loads(path.read_text())
     del raw["fix"]["head_sha"]
-    state_path.write_text(json.dumps(raw))
-    assert load_state(tmp_path).fix.head_sha == ""
+    path.write_text(json.dumps(raw))
+    assert load_state(worktree).fix.head_sha == ""
 
 
-def test_thread_outcome_round_trips_commit_sha(tmp_path):
+def test_thread_outcome_round_trips_commit_sha(worktree):
     state = PRState(
         identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
-                            head_sha="abc1234", worktree_root=str(tmp_path)),
+                            head_sha="abc1234", worktree_root=str(worktree)),
         fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
     )
-    save_state(tmp_path, state)
-    assert load_state(tmp_path).fix.threads[0].commit_sha == "deadbee"
+    save_state(worktree, state)
+    assert load_state(worktree).fix.threads[0].commit_sha == "deadbee"
 
 
-def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(tmp_path):
+def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(worktree):
     """State written before this field must still load."""
     state = PRState(
         identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
-                            head_sha="abc1234", worktree_root=str(tmp_path)),
+                            head_sha="abc1234", worktree_root=str(worktree)),
         fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
     )
-    save_state(tmp_path, state)
-    state_path = tmp_path / STATE_DIR / STATE_FILE
-    raw = json.loads(state_path.read_text())
+    save_state(worktree, state)
+    path = state_path(worktree)
+    raw = json.loads(path.read_text())
     del raw["fix"]["threads"][0]["commit_sha"]
-    state_path.write_text(json.dumps(raw))
-    assert load_state(tmp_path).fix.threads[0].commit_sha == ""
+    path.write_text(json.dumps(raw))
+    assert load_state(worktree).fix.threads[0].commit_sha == ""
 
 
 def test_legacy_thread_id_key_loads_as_id():
@@ -1148,81 +1122,73 @@ def test_state_roundtrip_with_fix_data():
     assert restored.fix.deferred_issue_url == "https://linear.app/team/issue/ENG-456/slug"
 
 
-def test_save_preserves_fix_data():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        apply(state, FixSummary(
-            threads=[
-                ThreadOutcome(id="t1", file="a.go", action=ThreadAction.FIXED),
-                ThreadOutcome(id="t2", file="b.go", action=ThreadAction.DISMISSED, reason="invalid"),
-            ],
-            commit_sha="def456", commit_status="pushed",
-            replies_posted=1,
-            updated_at="2026-07-14T00:00:00+00:00",
-        ))
-        save_state(root, state)
-        loaded = load_state(root)
-        assert loaded is not None
-        assert len(loaded.fix.threads) == 2
-        assert loaded.fix.threads[0].action == ThreadAction.FIXED
-        assert loaded.fix.threads[1].reason == "invalid"
-        assert loaded.fix.commit_sha == "def456"
+def test_save_preserves_fix_data(worktree):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    apply(state, FixSummary(
+        threads=[
+            ThreadOutcome(id="t1", file="a.go", action=ThreadAction.FIXED),
+            ThreadOutcome(id="t2", file="b.go", action=ThreadAction.DISMISSED, reason="invalid"),
+        ],
+        commit_sha="def456", commit_status="pushed",
+        replies_posted=1,
+        updated_at="2026-07-14T00:00:00+00:00",
+    ))
+    save_state(worktree, state)
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert len(loaded.fix.threads) == 2
+    assert loaded.fix.threads[0].action == ThreadAction.FIXED
+    assert loaded.fix.threads[1].reason == "invalid"
+    assert loaded.fix.commit_sha == "def456"
 
 
-def test_already_addressed_action_roundtrips():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        apply(state, FixSummary(
-            threads=[ThreadOutcome(
-                id="t1", file="a.go", action=ThreadAction.ALREADY_ADDRESSED,
-                reason="the constructor already injects the logger",
-            )],
-            commit_status="no_changes",
-            updated_at="2026-07-14T00:00:00+00:00",
-        ))
-        save_state(root, state)
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.fix.threads[0].action == ThreadAction.ALREADY_ADDRESSED
+def test_already_addressed_action_roundtrips(worktree):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    apply(state, FixSummary(
+        threads=[ThreadOutcome(
+            id="t1", file="a.go", action=ThreadAction.ALREADY_ADDRESSED,
+            reason="the constructor already injects the logger",
+        )],
+        commit_status="no_changes",
+        updated_at="2026-07-14T00:00:00+00:00",
+    ))
+    save_state(worktree, state)
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.fix.threads[0].action == ThreadAction.ALREADY_ADDRESSED
 
 
-def test_load_state_without_fix_defaults_empty():
+def test_load_state_without_fix_defaults_empty(worktree):
     """Old state files without fix key should deserialize with empty FixSummary."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=tmp)
-        save_state(root, state)
-        path = root / ".workbench" / "state.json"
-        data = json.loads(path.read_text())
-        del data["fix"]
-        path.write_text(json.dumps(data))
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.fix.threads == []
-        assert loaded.fix.commit_sha == ""
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
+    save_state(worktree, state)
+    path = state_path(worktree)
+    data = json.loads(path.read_text())
+    del data["fix"]
+    path.write_text(json.dumps(data))
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.fix.threads == []
+    assert loaded.fix.commit_sha == ""
 
 
-def test_apply_state_update_fix():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        apply_state_update(
-            worktree_root=root, repo="owner/repo", branch="feat",
-            pr_number=1, head_sha="abc", domain="fix",
-            data={
-                "threads": [
-                    {"thread_id": "t1", "file": "f.go", "action": "fixed"},
-                ],
-                "commit_sha": "xyz", "commit_status": "pushed",
-                "updated_at": "t",
-            },
-        )
-        loaded = load_state(root)
-        assert loaded is not None
-        assert loaded.fix.commit_sha == "xyz"
-        assert len(loaded.fix.threads) == 1
-        assert loaded.fix.threads[0].action == ThreadAction.FIXED
+def test_apply_state_update_fix(worktree):
+    apply_state_update(
+        worktree_root=worktree, repo="owner/repo", branch="feat",
+        pr_number=1, head_sha="abc", domain="fix",
+        data={
+            "threads": [
+                {"thread_id": "t1", "file": "f.go", "action": "fixed"},
+            ],
+            "commit_sha": "xyz", "commit_status": "pushed",
+            "updated_at": "t",
+        },
+    )
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.fix.commit_sha == "xyz"
+    assert len(loaded.fix.threads) == 1
+    assert loaded.fix.threads[0].action == ThreadAction.FIXED
 
 
 def test_apply_fix_preserves_deferred_issue_across_rounds():

@@ -4,7 +4,7 @@
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
 With --fix, automatically resolves merge conflicts using AI.
 Outputs structured JSON on stdout and status messages on stderr.
-Updates PR state in <worktree>/.workbench/state.json.
+Updates PR state in the worktree's own git dir (see workbench_paths).
 
 Exit codes:
   0  Success (clean rebase or operation completed)
@@ -41,9 +41,12 @@ import ai_backend
 import log
 import pr_context
 import pr_state
+import workbench_paths
 from pr_state import RebaseStatus, RebaseSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
+
+SCRIPT = Path(__file__).name
 
 
 # Module-level trail instance — set in main() after context is resolved.
@@ -1996,7 +1999,7 @@ def _select_mode(args) -> tuple[RunMode, str]:
 
 def main():
     parser = ToolParser(
-        prog="pr-rebase",
+        prog=SCRIPT,
         description="Rebase onto origin/main with conflict detection and force-push",
         output_schema=RebaseSummary,
         ok_exit_codes=[3],
@@ -2026,8 +2029,8 @@ def main():
 
     global _trail
     _trail = Trail.start(
-        script="pr-rebase",
-        artifact_dir=str(Path(cwd) / pr_state.STATE_DIR),
+        script=SCRIPT,
+        artifact_dir=str(workbench_paths.trail_dir(cwd, SCRIPT)),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=args.debug,
     )

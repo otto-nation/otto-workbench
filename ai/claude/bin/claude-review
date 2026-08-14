@@ -46,6 +46,7 @@ from pr_state import PostTracking
 from serde import load_file as serde_load_file, to_dict as serde_to_dict
 
 BIN_DIR = Path(__file__).resolve().parent
+SCRIPT = Path(__file__).name
 LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude"))) / "reviews"
 
 FILENAME_PRIOR = f"prior{REVIEW_EXT}"
@@ -589,7 +590,7 @@ def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: boo
 
 def _generator_version() -> str:
     try:
-        ver = version_string("claude-review")
+        ver = version_string(SCRIPT)
         return ver.splitlines()[-1] if ver else "unknown"
     except Exception:
         return "unknown"
@@ -977,7 +978,7 @@ def _run_review(args) -> None:
     review_dir.mkdir(parents=True, exist_ok=True)
 
     trail = Trail.start(
-        script="claude-review",
+        script=SCRIPT,
         artifact_dir=str(review_dir),
         context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "pr"},
         debug=getattr(args, "debug", False),
@@ -1185,7 +1186,7 @@ def _run_self_review(args) -> None:
     self_review_dir.mkdir(parents=True, exist_ok=True)
 
     trail = Trail.start(
-        script="claude-review",
+        script=SCRIPT,
         artifact_dir=str(self_review_dir),
         context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "self"},
         debug=getattr(args, "debug", False),
@@ -1218,7 +1219,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: (log.blank(), log.info("Interrupted"), sys.exit(130)))
 
     parser = argparse.ArgumentParser(
-        prog="claude-review",
+        prog=SCRIPT,
         description="Run Claude's reviewer agent on a PR",
         add_help=True,
     )
@@ -1257,7 +1258,7 @@ def main() -> None:
         parsed.disprove = None
 
     if parsed.version:
-        print(version_string("claude-review"))
+        print(version_string(SCRIPT))
         sys.exit(0)
 
     # JSON summary: save real stdout, redirect stdout to stderr
@@ -1320,7 +1321,7 @@ def main() -> None:
     if ctx.worktree_root:
         worktree_lock.claim_for_process(
             ctx.worktree_root,
-            command=" ".join(["claude-review"] + sys.argv[1:]),
+            command=" ".join([SCRIPT] + sys.argv[1:]),
             started=pr_state.now_iso(),
         )
     _run_review(parsed)

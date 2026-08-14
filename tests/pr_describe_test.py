@@ -26,12 +26,12 @@ import pr_state  # noqa: E402
 from conftest import assert_no_worktree_exit  # noqa: E402
 
 
-def _ctx(tmp_path, head_sha="aaaa111", pr_number=7):
+def _ctx(worktree, head_sha="aaaa111", pr_number=7):
     return pr_context.ResolvedContext(
         repo="owner/repo",
         branch="isaac/feat/x",
         pr_number=pr_number,
-        worktree_root=tmp_path,
+        worktree_root=worktree,
         head_sha=head_sha,
     )
 
@@ -58,25 +58,25 @@ def _run(ctx, *, body="", ai=(_wrapped("NEW BODY"), 0), **kw):
 # ── template discovery ──────────────────────────────────────────────────────
 
 
-def test_checked_in_template_wins_over_the_fallback(tmp_path):
-    (tmp_path / ".github").mkdir()
-    (tmp_path / ".github" / "pull_request_template.md").write_text("## Why\n")
-    template, rel = pr_describe_cli._load_template(tmp_path)
+def test_checked_in_template_wins_over_the_fallback(worktree):
+    (worktree / ".github").mkdir()
+    (worktree / ".github" / "pull_request_template.md").write_text("## Why\n")
+    template, rel = pr_describe_cli._load_template(worktree)
     assert template == "## Why\n"
     assert rel == ".github/pull_request_template.md"
 
 
-def test_first_recognised_path_wins(tmp_path):
-    (tmp_path / ".github").mkdir()
-    (tmp_path / ".github" / "pull_request_template.md").write_text("first")
-    (tmp_path / "PULL_REQUEST_TEMPLATE.md").write_text("last")
-    template, rel = pr_describe_cli._load_template(tmp_path)
+def test_first_recognised_path_wins(worktree):
+    (worktree / ".github").mkdir()
+    (worktree / ".github" / "pull_request_template.md").write_text("first")
+    (worktree / "PULL_REQUEST_TEMPLATE.md").write_text("last")
+    template, rel = pr_describe_cli._load_template(worktree)
     assert template == "first"
     assert rel == ".github/pull_request_template.md"
 
 
-def test_repo_without_a_template_falls_back(tmp_path):
-    template, rel = pr_describe_cli._load_template(tmp_path)
+def test_repo_without_a_template_falls_back(worktree):
+    template, rel = pr_describe_cli._load_template(worktree)
     assert "## Summary" in template
     assert rel == ""
 
@@ -84,49 +84,49 @@ def test_repo_without_a_template_falls_back(tmp_path):
 # ── commit awareness ────────────────────────────────────────────────────────
 
 
-def test_unchanged_head_skips_the_ai_call(tmp_path):
+def test_unchanged_head_skips_the_ai_call(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
-                               worktree_root=str(tmp_path))
+                               worktree_root=str(worktree))
     pr_state.apply(state, pr_state.DescribeSummary(head_sha="aaaa111"))
-    pr_state.save_state(tmp_path, state)
+    pr_state.save_state(worktree, state)
 
-    rc, edits, prompt = _run(_ctx(tmp_path))
+    rc, edits, prompt = _run(_ctx(worktree))
     assert rc == 0
     assert not prompt.called
     assert edits == []
 
 
-def test_moved_head_earns_a_fresh_pass(tmp_path):
+def test_moved_head_earns_a_fresh_pass(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
-                               worktree_root=str(tmp_path))
+                               worktree_root=str(worktree))
     pr_state.apply(state, pr_state.DescribeSummary(head_sha="old0000"))
-    pr_state.save_state(tmp_path, state)
+    pr_state.save_state(worktree, state)
 
-    rc, edits, prompt = _run(_ctx(tmp_path))
+    rc, edits, prompt = _run(_ctx(worktree))
     assert rc == 0
     assert prompt.called
     assert edits == ["NEW BODY"]
 
 
-def test_force_overrides_the_head_check(tmp_path):
+def test_force_overrides_the_head_check(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
-                               worktree_root=str(tmp_path))
+                               worktree_root=str(worktree))
     pr_state.apply(state, pr_state.DescribeSummary(head_sha="aaaa111"))
-    pr_state.save_state(tmp_path, state)
+    pr_state.save_state(worktree, state)
 
-    rc, edits, prompt = _run(_ctx(tmp_path), force=True)
+    rc, edits, prompt = _run(_ctx(worktree), force=True)
     assert rc == 0
     assert prompt.called
 
 
-def test_a_branch_never_described_runs(tmp_path):
-    rc, edits, prompt = _run(_ctx(tmp_path))
+def test_a_branch_never_described_runs(worktree):
+    rc, edits, prompt = _run(_ctx(worktree))
     assert rc == 0
     assert prompt.called
 
 
-def test_no_pr_is_a_no_op(tmp_path):
-    rc, edits, prompt = _run(_ctx(tmp_path, pr_number=None))
+def test_no_pr_is_a_no_op(worktree):
+    rc, edits, prompt = _run(_ctx(worktree, pr_number=None))
     assert rc == 0
     assert not prompt.called
 
@@ -134,107 +134,107 @@ def test_no_pr_is_a_no_op(tmp_path):
 # ── revision outcomes ───────────────────────────────────────────────────────
 
 
-def test_conforming_body_is_left_alone_but_still_recorded(tmp_path):
-    rc, edits, _ = _run(_ctx(tmp_path), ai=(pr_describe_cli._NO_CHANGE, 0))
+def test_conforming_body_is_left_alone_but_still_recorded(worktree):
+    rc, edits, _ = _run(_ctx(worktree), ai=(pr_describe_cli._NO_CHANGE, 0))
     assert rc == 0
     assert edits == []
-    state = pr_state.load_state(tmp_path)
+    state = pr_state.load_state(worktree)
     # The SHA is recorded either way — a body confirmed current at this HEAD
     # does not need confirming twice.
     assert state.describe.head_sha == "aaaa111"
     assert state.describe.changed is False
 
 
-def test_revision_is_applied_and_recorded(tmp_path):
-    (tmp_path / ".github").mkdir()
-    (tmp_path / ".github" / "pull_request_template.md").write_text("## Why\n")
-    rc, edits, _ = _run(_ctx(tmp_path), ai=(_wrapped("## Why\n\nBecause."), 0))
+def test_revision_is_applied_and_recorded(worktree):
+    (worktree / ".github").mkdir()
+    (worktree / ".github" / "pull_request_template.md").write_text("## Why\n")
+    rc, edits, _ = _run(_ctx(worktree), ai=(_wrapped("## Why\n\nBecause."), 0))
     assert rc == 0
     assert edits == ["## Why\n\nBecause."]
-    state = pr_state.load_state(tmp_path)
+    state = pr_state.load_state(worktree)
     assert state.describe.changed is True
     assert state.describe.template_path == ".github/pull_request_template.md"
 
 
-def test_dry_run_prints_without_applying_or_recording(tmp_path, capsys):
-    rc, edits, _ = _run(_ctx(tmp_path), dry_run=True)
+def test_dry_run_prints_without_applying_or_recording(worktree, capsys):
+    rc, edits, _ = _run(_ctx(worktree), dry_run=True)
     assert rc == 0
     assert edits == []
     assert "NEW BODY" in capsys.readouterr().out
-    assert pr_state.load_state(tmp_path) is None
+    assert pr_state.load_state(worktree) is None
 
 
-def test_blank_ai_answer_would_wipe_the_body_so_it_fails(tmp_path):
-    rc, edits, _ = _run(_ctx(tmp_path), ai=("   ", 0))
+def test_blank_ai_answer_would_wipe_the_body_so_it_fails(worktree):
+    rc, edits, _ = _run(_ctx(worktree), ai=("   ", 0))
     assert rc == 1
     assert edits == []
-    assert pr_state.load_state(tmp_path) is None
+    assert pr_state.load_state(worktree) is None
 
 
-def test_an_unmarked_answer_is_never_posted(tmp_path):
+def test_an_unmarked_answer_is_never_posted(worktree):
     """A preamble-and-fences reply must not reach `gh pr edit` verbatim.
 
     The prompt asks for markers, but nothing stops a model from replying
     conversationally; without extraction that text became the PR body.
     """
     chatty = "Sure, here's the revised description:\n```markdown\n## Summary\n```"
-    rc, edits, prompt = _run(_ctx(tmp_path), ai=(chatty, 0))
+    rc, edits, prompt = _run(_ctx(worktree), ai=(chatty, 0))
     assert rc == 1
     assert edits == []
     # Unusable, so it burns the one retry the thrash guard allows.
     assert prompt.call_count == 2
-    assert pr_state.load_state(tmp_path) is None
+    assert pr_state.load_state(worktree) is None
 
 
-def test_only_the_marked_span_is_posted(tmp_path):
+def test_only_the_marked_span_is_posted(worktree):
     """Text outside the markers is commentary, not description."""
     answer = (
         "Here you go!\n"
         f"{pr_describe_cli._DESCRIBE_BEGIN}\n## Why\n\nBecause.\n"
         f"{pr_describe_cli._DESCRIBE_END}\nHope that helps."
     )
-    rc, edits, _ = _run(_ctx(tmp_path), ai=(answer, 0))
+    rc, edits, _ = _run(_ctx(worktree), ai=(answer, 0))
     assert rc == 0
     assert edits == ["## Why\n\nBecause."]
 
 
-def test_failed_ai_call_is_not_recorded(tmp_path):
-    rc, edits, _ = _run(_ctx(tmp_path), ai=("", 1))
+def test_failed_ai_call_is_not_recorded(worktree):
+    rc, edits, _ = _run(_ctx(worktree), ai=("", 1))
     assert rc == 1
     assert edits == []
-    assert pr_state.load_state(tmp_path) is None
+    assert pr_state.load_state(worktree) is None
 
 
-def test_unreachable_pr_stops_before_the_ai_call(tmp_path):
+def test_unreachable_pr_stops_before_the_ai_call(worktree):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=None), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt") as prompt:
-        rc = pr_describe_cli.run_describe(_ctx(tmp_path))
+        rc = pr_describe_cli.run_describe(_ctx(worktree))
     assert rc == 1
     assert not prompt.called
 
 
-def test_a_rejected_edit_is_not_recorded(tmp_path):
+def test_a_rejected_edit_is_not_recorded(worktree):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt",
                            return_value=(_wrapped("B"), 0)), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=False):
-        rc = pr_describe_cli.run_describe(_ctx(tmp_path))
+        rc = pr_describe_cli.run_describe(_ctx(worktree))
     assert rc == 1
-    assert pr_state.load_state(tmp_path) is None
+    assert pr_state.load_state(worktree) is None
 
 
 # ── thrash guard ────────────────────────────────────────────────────────────
 
 
-def test_a_blank_first_answer_earns_one_retry(tmp_path):
+def test_a_blank_first_answer_earns_one_retry(worktree):
     answers = [("", 0), (_wrapped("SECOND"), 0)]
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt",
                            side_effect=answers) as prompt:
-        rc = pr_describe_cli.run_describe(_ctx(tmp_path))
+        rc = pr_describe_cli.run_describe(_ctx(worktree))
     assert rc == 0
     assert prompt.call_count == 2
 
@@ -242,16 +242,16 @@ def test_a_blank_first_answer_earns_one_retry(tmp_path):
 # ── prompt content ──────────────────────────────────────────────────────────
 
 
-def test_prompt_carries_the_template_and_the_branch_contents(tmp_path):
-    (tmp_path / ".github").mkdir()
-    (tmp_path / ".github" / "pull_request_template.md").write_text("## Why\n")
+def test_prompt_carries_the_template_and_the_branch_contents(worktree):
+    (worktree / ".github").mkdir()
+    (worktree / ".github" / "pull_request_template.md").write_text("## Why\n")
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body",
                            return_value=("feat: x", "old body")), \
          mock.patch.object(pr_describe_cli, "_git", return_value="deadbee fix: y"), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt",
                            return_value=(_wrapped("B"), 0)) as prompt:
-        pr_describe_cli.run_describe(_ctx(tmp_path))
+        pr_describe_cli.run_describe(_ctx(worktree))
     text = prompt.call_args[0][0]
     assert "## Why" in text
     assert "feat: x" in text
@@ -260,13 +260,13 @@ def test_prompt_carries_the_template_and_the_branch_contents(tmp_path):
     assert "checked-in PR template" in text
 
 
-def test_prompt_says_so_when_the_repo_ships_no_template(tmp_path):
+def test_prompt_says_so_when_the_repo_ships_no_template(worktree):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
          mock.patch.object(pr_describe_cli.ai_backend, "prompt",
                            return_value=(_wrapped("B"), 0)) as prompt:
-        pr_describe_cli.run_describe(_ctx(tmp_path))
+        pr_describe_cli.run_describe(_ctx(worktree))
     assert "this repo ships none" in prompt.call_args[0][0]
 
 

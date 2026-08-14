@@ -4,14 +4,14 @@ Provides a summary envelope over per-domain state files (CI failures,
 PR comments, review artifacts). Each ``pr`` subcommand updates its own
 section; ``pr status`` reads the whole thing without network calls.
 
-State file: ``<worktree>/.workbench/state.json``
+State file: ``<git-dir>/workbench/state.json`` — see
+``workbench_paths.worktree_state_dir``, which owns that path.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
@@ -24,7 +24,7 @@ from typing import get_type_hints
 # RunState must be bound in this module's namespace; ci_failures keeps its
 # own pr_state import under TYPE_CHECKING, which is what keeps this acyclic.
 from ci_failures import RunState
-import log
+import workbench_paths
 from serde import (
     from_dict as _serde_from_dict,
     load_file as _serde_load_file,
@@ -32,7 +32,6 @@ from serde import (
 )
 
 
-STATE_DIR = ".workbench"
 STATE_FILE = "state.json"
 STATE_VERSION = 1
 
@@ -398,44 +397,18 @@ def load_state(worktree_root: Path) -> PRState | None:
     so discarding a file that will not parse is always a correct recovery, and
     the next write replaces it. `pr gc` clears one on demand.
 
+    A path outside a git worktree reads as "no state yet" for the same reason:
+    the status line runs wherever the user's shell is, and a directory that
+    cannot hold state has none.
+
     No caller needs to tell corrupt from missing; the warning serde emits is
     what supplies the part "no state yet" leaves out.
     """
-    return _serde_load_file(PRState, worktree_root / STATE_DIR / STATE_FILE)
-
-
-def _ensure_gitignored(worktree_root: Path) -> None:
-    """Append .workbench/ to the repo's .gitignore if not already ignored.
-
-    Skips silently when worktree_root is not inside a git repository.
-    """
     try:
-        toplevel = subprocess.run(
-            ["git", "-C", str(worktree_root), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
-        )
-        if toplevel.returncode != 0:
-            return
-    except FileNotFoundError:
-        return
-
-    result = subprocess.run(
-        ["git", "-C", str(worktree_root), "check-ignore", "-q", STATE_DIR],
-        capture_output=True,
-    )
-    if result.returncode == 0:
-        return
-
-    repo_root = Path(toplevel.stdout.strip())
-    gitignore = repo_root / ".gitignore"
-    needs_newline = False
-    if gitignore.exists():
-        content = gitignore.read_text()
-        needs_newline = content and not content.endswith("\n")
-    prefix = "\n" if needs_newline else ""
-    with open(gitignore, "a") as f:
-        f.write(f"{prefix}\n# Worktree-local state (pr CLI)\n{STATE_DIR}/\n")
-    log.info(f"pr_state: added {STATE_DIR}/ to .gitignore")
+        state_dir = workbench_paths.worktree_state_dir(worktree_root)
+    except workbench_paths.NotAWorktree:
+        return None
+    return _serde_load_file(PRState, state_dir / STATE_FILE)
 
 
 def save_state(worktree_root: Path, state: PRState) -> None:
@@ -446,11 +419,8 @@ def save_state(worktree_root: Path, state: PRState) -> None:
     observe a zero-byte file and fail with a JSONDecodeError; os.replace
     is atomic, so readers see either the old state or the new one.
     """
-    path = worktree_root / STATE_DIR / STATE_FILE
-    created = not path.parent.exists()
+    path = workbench_paths.worktree_state_dir(worktree_root) / STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    if created:
-        _ensure_gitignored(worktree_root)
     state.updated_at = datetime.now(timezone.utc).isoformat()
     # Per-process, not per-call: two threads in one process saving at once
     # would share this name. Nothing here saves off the main thread, and the

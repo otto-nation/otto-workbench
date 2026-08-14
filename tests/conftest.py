@@ -3,6 +3,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -181,6 +182,41 @@ REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"
 CI_CHECK = REPO_ROOT / "ai" / "claude" / "bin" / "ci-check"
 EVAL_MODELS = REPO_ROOT / "ai" / "claude" / "bin" / "eval-models"
+
+
+def init_worktree(path) -> Path:
+    """Make *path* a git worktree and return it.
+
+    Per-worktree state lives in the worktree's own git dir, so a bare tmp_path
+    is no longer a stand-in for a worktree — `git rev-parse` has to answer for
+    it. No identity is configured: a test that commits sets its own, and the
+    repo-config guard exists to catch the one that forgets.
+    """
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-b", "main", "-q", str(path)],
+                   check=True, capture_output=True)
+    return path
+
+
+@pytest.fixture
+def worktree(tmp_path) -> Path:
+    """tmp_path as a git worktree, for tests that pass it as a worktree root."""
+    return init_worktree(tmp_path)
+
+
+def state_path(worktree_root) -> Path:
+    """The `pr` state file of *worktree_root*, resolved the way `pr` resolves it.
+
+    Imported inside the call because this file puts ai/lib on sys.path from
+    within its fixtures, so a module-level import would run too early.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import pr_state
+    import workbench_paths
+
+    return workbench_paths.worktree_state_dir(worktree_root) / pr_state.STATE_FILE
 
 
 def write_thrash_log(path) -> str:

@@ -26,6 +26,7 @@ from trail import Trail, add_trail_args  # noqa: E402
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+SCRIPT = Path(__file__).name
 FRONTMATTER_DELIMITER = "---"
 MEMORY_INDEX = "MEMORY.md"
 LAST_PROMOTE_FILE = ".last-promote"
@@ -400,14 +401,14 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.version:
-        print(_version_string("promote-scan"))
+        print(_version_string(SCRIPT))
         raise SystemExit(0)
 
     home = Path(os.path.expanduser(args.home))
     workbench = _resolve_workbench(args.workbench)
-    log_dir = str(workbench_paths.logs_dir("promote-scan"))
+    log_dir = str(workbench_paths.logs_dir(SCRIPT))
     trail = Trail.start(
-        script="promote-scan",
+        script=SCRIPT,
         artifact_dir=log_dir,
         context={"workbench": args.workbench},
         debug=args.debug,

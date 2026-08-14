@@ -373,7 +373,7 @@ main() {
     status)    cmd_status ;;
     open)      shift; cmd_open "$@" ;;
     project)   shift; cmd_project "$@" ;;
-    -V|--version) print_version "claude-rules"; exit 0 ;;
+    -V|--version) print_version "${0##*/}"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
     *)
       usage >&2

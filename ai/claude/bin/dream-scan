@@ -27,6 +27,7 @@ from trail import Trail, add_trail_args  # noqa: E402
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+SCRIPT = Path(__file__).name
 MAX_TEXT_LENGTH = 500
 TEXT_PREVIEW_LENGTH = 200
 MIN_TEXT_LENGTH = 10
@@ -329,7 +330,7 @@ def _format_signals_section(signals: list[dict]) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Scan session transcripts and memory state for dream consolidation.",
-        usage="dream-scan [--days N] [--home DIR]",
+        usage=f"{SCRIPT} [--days N] [--home DIR]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help=f"scan sessions from last N days (default: {DEFAULT_DAYS})")
@@ -338,13 +339,13 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.version:
-        print(_version_string("dream-scan"))
+        print(_version_string(SCRIPT))
         raise SystemExit(0)
 
     home = Path(args.home)
-    log_dir = str(workbench_paths.logs_dir("dream-scan"))
+    log_dir = str(workbench_paths.logs_dir(SCRIPT))
     trail = Trail.start(
-        script="dream-scan",
+        script=SCRIPT,
         artifact_dir=log_dir,
         context={"days": args.days},
         debug=args.debug,

@@ -629,6 +629,29 @@ class TestPublishingGate:
         assert len(calls) == 1
 
 
+class TestPublishingHold:
+    """A hold outranks --post, and nothing reopens it."""
+
+    def test_hold_shuts_a_gate_post_had_opened(self, no_subprocess):
+        publishing.enable()
+        publishing.hold("discussion open")
+        assert publishing.enabled() is False
+        assert pr_comments.post_thread_reply("o/r", 1, 99, "body") is False
+
+    def test_enable_after_a_hold_does_not_reopen(self, no_subprocess):
+        publishing.hold("discussion open")
+        publishing.enable()
+        assert publishing.enabled() is False
+
+    def test_the_first_reason_is_the_one_kept(self):
+        publishing.hold("discussion open")
+        publishing.hold("something else")
+        assert publishing.held() == "discussion open"
+
+    def test_no_hold_by_default(self):
+        assert publishing.held() == ""
+
+
 class TestIssueTrackerGate:
     """A tracking issue is as public as a reply — same gate.
 

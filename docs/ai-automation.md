@@ -592,9 +592,10 @@ Trails stay worktree-local at `<worktree>/.workbench/trail.jsonl`.
 ### Drafts, and what it takes to publish
 
 `pr comments` writes nothing outward unless you pass `--post`. Replies, the fix
-summary, thread resolutions, and deferral tracking issues are all printed to
-stderr as drafts instead, prefixed `DRAFT (not published)`. Code fixes, commits,
-and pushes are unaffected — the gate covers only what other people can see.
+summary, thread resolutions, deferral tracking issues, and the push are all
+printed to stderr as drafts instead, prefixed `DRAFT (not published)`. Code fixes
+and the commit are unaffected: they are local and undoable, and they are what
+makes the work reviewable at all. The gate covers what leaves the machine.
 
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.
@@ -604,12 +605,44 @@ incorrect claim has to be retracted in front of the reviewer, and a wrong
 deferral issue has to be closed. Reading the drafts first costs one command:
 
 ```bash
-pr comments --fix          # triage, fix, commit, push — drafts the replies
+pr comments --fix              # triage, fix, commit — drafts the push and replies
 pr comments --resolve --post   # publish once the drafts read correctly
 ```
 
 A draft run leaves state untouched, so nothing is recorded as posted and a later
 `--post` run picks up the same queue.
+
+### When a contested thread holds the gate shut
+
+`--post` is a request, not a guarantee. If triage routes any thread to
+`needs_human` — contested, conflicting, a question, or too complex to
+auto-fix — the fix pass *holds* publishing for the rest of the process, and the
+hold outranks `--post`. Nothing reopens it.
+
+The fixes still get applied and still get committed. What waits is everything
+that asserts the work is done: the push, the `Fixed in <sha>` replies, the thread
+resolutions, and the summary. The commit sits locally with status `push_held`,
+and `--finish --post` is what sends it:
+
+```bash
+pr comments --fix --post   # commits; holds the push, one thread is contested
+# read the thread, answer the reviewer
+pr comments --finish --post   # pushes, then drains the replies and the summary
+```
+
+This exists because threads are triaged independently. A reviewer saying "the
+root cause you describe does not exist" removes that one thread from the fixable
+set and leaves the pass free to fix, push, and report success on everything else
+— which is exactly [#703](https://github.com/otto-nation/otto-workbench/issues/703),
+where 8 individually-real fixes were pushed to a branch that had already been
+superseded.
+
+The halt is deliberately blunt: any open thread, not just a premise-invalidating
+one. Telling those apart is the hard classification problem, and the cost of
+being wrong is asymmetric — a needless hold costs one extra command, while a
+missed one costs a pushed commit and a reply claiming work is done. Running
+`--fix` and `--finish` in the same invocation does not defeat it: the discussion
+is still open at both points, so the hold applies to both.
 
 ### Running from a different directory
 

@@ -849,8 +849,25 @@ def _parse_tracking_results(
 @dataclass
 class CommitPushResult:
     sha: str | None
-    status: str  # "pushed", "no_changes", "commit_failed", "push_failed"
+    status: str  # see _UNPUSHED_STATUSES; also "pushed", "no_changes", "commit_failed"
     error: str
+
+
+# A real commit the remote does not have. `push_failed` is git refusing;
+# `push_held` is us refusing, because the gate was shut when the pass ran.
+# Either way the SHA is local-only, so nothing may cite it outward yet — the
+# commit link would 404 for the reviewer reading it.
+_UNPUSHED_STATUSES = frozenset({"push_failed", "push_held"})
+
+
+def _commit_unpushed(status: str) -> bool:
+    return status in _UNPUSHED_STATUSES
+
+
+def _hold_push(wt_path: Path, sha: str | None) -> CommitPushResult:
+    """Keep a commit local because the gate is shut."""
+    publishing.draft("push", f"git -C '{wt_path}' push")
+    return CommitPushResult(sha, "push_held", "")
 
 
 def _commit_regen_and_retry_push(
@@ -932,6 +949,12 @@ def _commit_and_push(
     sha = _get_head_sha(wt_path)
 
     log.info(f"Committed fixes ({fixed} fixed, {deferred} deferred)")
+
+    # The commit is ungated on purpose: it is local, undoable, and it is what
+    # makes the work reviewable at all. The push is the outward act, so it waits
+    # for the same permission every reply and comment waits for.
+    if not publishing.enabled():
+        return _hold_push(wt_path, sha)
 
     push = subprocess.run(
         ["git", "-C", str(wt_path), "push"],
@@ -1433,6 +1456,7 @@ def _finish_deferred_work(
     if state is None:
         return
     threads_by_id = {t.id: t for t in report.threads}
+    _push_held_commit(state, wt_path)
     _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
     _warn_if_snapshot_stale(state, wt_path)
     _reconcile_fix_snapshot(state, threads_by_id)
@@ -1442,6 +1466,44 @@ def _finish_deferred_work(
         state, report, ctx.repo, ctx.pr_number, threads_by_id,
     )
     pr_state.save_state(ctx.target_dir, state)
+
+
+def _push_held_commit(state: pr_state.PRState, wt_path: Path) -> None:
+    """Send the commit the fix pass kept local, now that a run says publish.
+
+    The fix pass holds the push whenever a thread is still awaiting discussion,
+    so `--fix --post` alone can never land those fixes on the remote. Clearing
+    that takes a second, deliberate `--finish --post` — a human having read the
+    open thread and said go. Everything downstream in --finish cites the commit,
+    so this runs first: the replies and the summary are only allowed out once
+    the SHA they link to is somewhere the reviewer can follow it.
+    """
+    fix = state.fix
+    if not fix.commit_sha or not _commit_unpushed(fix.commit_status):
+        return
+
+    if _is_pushed(wt_path, fix.commit_sha):
+        fix.commit_status = "pushed"
+        return
+
+    if not publishing.enabled():
+        publishing.draft("push", f"git -C '{wt_path}' push")
+        return
+
+    push = subprocess.run(
+        ["git", "-C", str(wt_path), "push"],
+        capture_output=True, text=True,
+    )
+    if push.returncode != 0:
+        log.error(
+            f"push failed — branch has diverged. Run:\n"
+            f"  git -C '{wt_path}' push --force-with-lease"
+        )
+        fix.commit_status = "push_failed"
+        return
+
+    log.info(f"Pushed held fixes ({fix.commit_sha})")
+    fix.commit_status = "pushed"
 
 
 def _resolve_fixed_threads(
@@ -1874,15 +1936,16 @@ def _post_pending_fix_replies(
 ) -> None:
     """Send the fix replies the fix pass produced but did not deliver.
 
-    Two ways a reply ends up here: the push failed, so there was no commit for
-    the reply to cite, or the run was a draft. Called during --finish, which is
-    the second chance for both. A reply may not go out until its commit is
+    Three ways a reply ends up here: the push failed, the push was held because
+    discussion was open, or the run was a draft — in each case there was no
+    commit on the remote for the reply to cite. Called during --finish, which is
+    the second chance for all three. A reply may not go out until its commit is
     actually on the remote.
     """
     fix = state.fix
     if not fix.commit_sha:
         return
-    if fix.commit_status != "push_failed" and not fix.replies_pending:
+    if not _commit_unpushed(fix.commit_status) and not fix.replies_pending:
         return
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
@@ -1931,13 +1994,13 @@ def _render_deferred_summary(
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
 
     status = fix.commit_status
-    if fix.commit_status == "push_failed" and fix.commit_sha:
+    if _commit_unpushed(fix.commit_status) and fix.commit_sha:
         if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
             log.info("Push still pending — keeping summary deferred")
             return
         status = "pushed"
         # Same reason as the deferred-reply queue: only a run that actually
-        # publishes may retire push_failed, or the queue is lost silently.
+        # publishes may retire an unpushed status, or the queue is lost silently.
         if publishing.enabled():
             fix.commit_status = status
 
@@ -1991,7 +2054,7 @@ def _summary_still_owed(
     """
     if deferred or needs_human or has_unaccounted:
         return True
-    if commit_status == "push_failed":
+    if _commit_unpushed(commit_status):
         return True
     return not publishing.enabled() and bool(fixed or dismissed)
 
@@ -2016,8 +2079,8 @@ def _post_or_defer_summary(
     Returns the comment URL if posted, None if deferred or nothing to post.
     When deferred, the summary is re-rendered from FixSummary during --finish.
     """
-    if cp.status == "push_failed":
-        log.info("Deferred fix summary — push failed, will post after push lands")
+    if _commit_unpushed(cp.status):
+        log.info("Deferred fix summary — commit not on the remote, will post after push lands")
         return None
 
     if not needs_human and not deferred:
@@ -2061,6 +2124,9 @@ def _recover_agent_commit(
 
     if _is_pushed(wt_path, head_after):
         return CommitPushResult(head_after, "pushed", "")
+
+    if not publishing.enabled():
+        return _hold_push(wt_path, head_after)
 
     push = subprocess.run(
         ["git", "-C", str(wt_path), "push"],
@@ -2255,6 +2321,36 @@ def _retry_fix_pass(
     return result
 
 
+def _hold_while_contested(
+    needs_human: list[CommentItem], trail: Trail | None = None,
+) -> None:
+    """Stop the pass asserting progress while a thread is still being argued.
+
+    Threads are bucketed independently, so a finding that says "your root cause
+    does not exist" only removes itself from `fixable` — the pass goes on to fix
+    everything else, commit it, push it, and reply that it is done. Every one of
+    those findings can be individually real and the branch still not worth
+    landing, which is how #703 ended up with 8 pushed fixes to superseded code.
+
+    Telling a premise-invalidating question from a bikeshed is the hard problem,
+    and getting it wrong in the permissive direction is what this exists to
+    prevent. So the halt is deliberately blunt — any open thread — and cheap:
+    the fixes are still applied and still committed locally, and only the
+    outward acts wait. A wrong call costs a local commit, not a pushed one. The
+    human clears it by answering and re-running `--finish --post`.
+    """
+    if not needs_human:
+        return
+    publishing.hold(f"{len(needs_human)} thread(s) awaiting discussion")
+    if trail:
+        trail.decision(
+            "publishing_hold",
+            f"held publishing — {len(needs_human)} thread(s) awaiting discussion",
+            reason="a contested thread can invalidate the premise of every other fix",
+            data={"reasons": sorted({t.reason for t in needs_human if t.reason})},
+        )
+
+
 def _run_comment_fix(
     triage_result: TriageResult,
     report: PRReport,
@@ -2281,6 +2377,8 @@ def _run_comment_fix(
     all_needs_human = needs_human + items_needs_human
     all_dismissed = dismissed + items_dismissed
     all_addressed = thread_cls.already_addressed + items_already_addressed
+
+    _hold_while_contested(all_needs_human, trail)
 
     non_resolved_ids = {t.id for t in report.threads if t.state != ThreadState.RESOLVED}
     accounted_ids = _accounted_thread_ids(

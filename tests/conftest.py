@@ -306,12 +306,15 @@ def _drafts_only(monkeypatch):
     """Close the publishing gate for every test.
 
     The gate is a single process-global flag, so one test that opens it would
-    otherwise leave the next one free to write to GitHub for real.
+    otherwise leave the next one free to write to GitHub for real. The hold is
+    cleared for the opposite reason: it never reopens within a process, so one
+    test that sets it would close the gate for every test after it.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
     import publishing
     monkeypatch.setattr(publishing, "_enabled", False)
+    monkeypatch.setattr(publishing, "_held", "")
 
 
 @pytest.fixture

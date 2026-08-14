@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -604,7 +604,7 @@ class TestCommitAndPush:
         assert result.status == "no_changes"
         assert result.sha is None
 
-    def test_untracked_only_changes_still_commit(self, rt):
+    def test_untracked_only_changes_still_commit(self, rt, publishing_on):
         """A fix that only adds files leaves the tracked diff empty — still commit."""
         calls = []
 
@@ -630,7 +630,7 @@ class TestCommitAndPush:
         assert result.sha is None
         assert "hook failed" in result.error
 
-    def test_push_failed(self, rt):
+    def test_push_failed(self, rt, publishing_on):
         """git push returns non-zero → push_failed with SHA preserved."""
         def mock_run(cmd, **kwargs):
             if "rev-parse" in cmd:
@@ -644,7 +644,7 @@ class TestCommitAndPush:
         assert result.sha == "abc1234"
         assert "rejected" in result.error
 
-    def test_success(self, rt):
+    def test_success(self, rt, publishing_on):
         """git push returns 0 → pushed with SHA."""
         def mock_run(cmd, **kwargs):
             if "rev-parse" in cmd:
@@ -655,6 +655,22 @@ class TestCommitAndPush:
         assert result.status == "pushed"
         assert result.sha == "abc1234"
         assert result.error == ""
+
+    def test_draft_commits_but_holds_the_push(self, rt):
+        """The commit is local and undoable; the push is the outward act."""
+        calls = []
+
+        def mock_run(cmd, **kwargs):
+            calls.append(cmd)
+            if "rev-parse" in cmd:
+                return _make_completed(0, stdout="abc1234\n")
+            return _make_completed(0)
+
+        result = self._commit(rt, mock_run)
+        assert result.status == "push_held"
+        assert result.sha == "abc1234"
+        assert not any("push" in cmd for cmd in calls)
+        assert any("commit" in cmd for cmd in calls)
 
 
 # ── _get_head_sha ────────────────────────────────────────────────────────────
@@ -705,7 +721,7 @@ class TestRecoverAgentCommit:
         assert result.status == "pushed"
         assert result.sha == "def5678"
 
-    def test_push_success(self, rt):
+    def test_push_success(self, rt, publishing_on):
         """head changed, not yet on remote, push succeeds → pushed."""
         with patch.object(rt, "_get_head_sha", return_value="def5678"), \
              patch.object(rt, "_is_pushed", return_value=False), \
@@ -714,7 +730,7 @@ class TestRecoverAgentCommit:
         assert result.status == "pushed"
         assert result.sha == "def5678"
 
-    def test_push_failure(self, rt):
+    def test_push_failure(self, rt, publishing_on):
         """head changed, not yet on remote, push fails → push_failed with error."""
         with patch.object(rt, "_get_head_sha", return_value="def5678"), \
              patch.object(rt, "_is_pushed", return_value=False), \
@@ -723,6 +739,18 @@ class TestRecoverAgentCommit:
         assert result.status == "push_failed"
         assert result.sha == "def5678"
         assert "rejected" in result.error
+
+    def test_draft_holds_the_agent_commit_too(self, rt):
+        """The agent committing directly is not a way around the gate."""
+        def boom(*a, **kw):
+            raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
+
+        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+             patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", boom):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "push_held"
+        assert result.sha == "def5678"
 
 
 # ── _fixed_status_text ──────────────────────────────────────────────────────
@@ -1167,6 +1195,23 @@ class TestRenderDeferredSummary:
         assert "def5678" in body
         assert "push failed" not in body
 
+    def test_held_commit_keeps_the_summary_deferred(self, rt, publishing_on):
+        """The commit link would 404 — same hazard as a failed push."""
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
+            ],
+            commit_sha="def5678",
+            commit_status="push_held",
+            summary_deferred=True,
+        )
+        state = _make_state(fix)
+        with patch("pr_comments.post_issue_comment") as mock_post:
+            with patch.object(rt, "_is_pushed", return_value=False):
+                rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        mock_post.assert_not_called()
+        assert fix.summary_deferred is True
+
     def test_draft_run_leaves_the_deferred_queue_intact(self, rt):
         """Retiring push_failed without publishing would strand the replies."""
         fix = FixSummary(
@@ -1272,11 +1317,92 @@ class TestSummaryStillOwed:
     def test_unpushed_commit_defers(self, rt, publishing_on):
         assert self._owed(rt, fixed=["t1"], commit_status="push_failed") is True
 
+    def test_held_commit_defers(self, rt, publishing_on):
+        """A held push leaves the same gap as a failed one: no remote commit."""
+        assert self._owed(rt, fixed=["t1"], commit_status="push_held") is True
+
     def test_draft_leaves_the_summary_owed(self, rt):
         assert self._owed(rt, fixed=["t1"]) is True
 
     def test_draft_with_nothing_to_say_owes_nothing(self, rt):
         assert self._owed(rt) is False
+
+
+class TestPushHeldCommit:
+    """--finish --post is the human saying the held work may land."""
+
+    @staticmethod
+    def _state(status="push_held", sha="abc1234"):
+        return _make_state(FixSummary(commit_sha=sha, commit_status=status))
+
+    def test_pushes_and_marks_it_pushed(self, rt, publishing_on):
+        state = self._state()
+        with patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", return_value=_make_completed(0)) as run:
+            rt._push_held_commit(state, Path("/fake"))
+        assert state.fix.commit_status == "pushed"
+        assert "push" in run.call_args[0][0]
+
+    def test_a_draft_finish_still_holds_it(self, rt):
+        """--finish without --post is not the human saying go."""
+        def boom(*a, **kw):
+            raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
+
+        state = self._state()
+        with patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", boom):
+            rt._push_held_commit(state, Path("/fake"))
+        assert state.fix.commit_status == "push_held"
+
+    def test_a_hold_placed_this_run_outranks_post(self, rt, publishing_on):
+        """--fix --finish --post in one run: the discussion is still open."""
+        import publishing
+        publishing.hold("discussion open")
+
+        def boom(*a, **kw):
+            raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
+
+        state = self._state()
+        with patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", boom):
+            rt._push_held_commit(state, Path("/fake"))
+        assert state.fix.commit_status == "push_held"
+
+    def test_a_failed_push_is_recorded_as_such(self, rt, publishing_on):
+        state = self._state()
+        with patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.subprocess, "run", return_value=_make_completed(1, stderr="rejected\n")):
+            rt._push_held_commit(state, Path("/fake"))
+        assert state.fix.commit_status == "push_failed"
+
+    def test_a_commit_already_on_the_remote_is_just_marked(self, rt, publishing_on):
+        """Someone pushed by hand between the two runs."""
+        def boom(*a, **kw):
+            raise AssertionError(f"pushed a commit the remote already had: {a}")
+
+        state = self._state()
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch.object(rt.subprocess, "run", boom):
+            rt._push_held_commit(state, Path("/fake"))
+        assert state.fix.commit_status == "pushed"
+
+    def test_noop_when_the_commit_already_went_out(self, rt, publishing_on):
+        def boom(*a, **kw):
+            raise AssertionError(f"pushed an already-pushed commit: {a}")
+
+        state = self._state(status="pushed")
+        with patch.object(rt.subprocess, "run", boom):
+            rt._push_held_commit(state, Path("/fake"))
+        assert state.fix.commit_status == "pushed"
+
+    def test_noop_when_the_pass_made_no_commit(self, rt, publishing_on):
+        def boom(*a, **kw):
+            raise AssertionError(f"pushed with no commit to push: {a}")
+
+        state = self._state(status="no_changes", sha="")
+        with patch.object(rt.subprocess, "run", boom):
+            rt._push_held_commit(state, Path("/fake"))
+        assert state.fix.commit_status == "no_changes"
 
 
 class TestPendingFixReplies:
@@ -1346,7 +1472,11 @@ class TestPendingFixReplies:
         assert fix.commit_status == "push_failed"
 
     def test_drains_the_queue_a_drafted_fix_pass_left_behind(self, rt, publishing_on):
-        """A drafted --fix pushes its commit but sends nothing; --post must catch up."""
+        """A drafted --fix commits and sends nothing; --post must catch up.
+
+        The `pushed` status here is a run whose push landed before the gate
+        applied to it — the queue survives on `replies_pending` alone.
+        """
         fix, threads_by_id = self._queue(commit_status="pushed", replies_pending=True)
         state = _make_state(fix)
         with patch.object(rt, "_is_pushed", return_value=True), \
@@ -2713,6 +2843,48 @@ class TestClassifyAlreadyAddressed:
             [self._entry("valid")], [], [], [], commit_sha="",
         )
         assert outcomes[0].commit_sha == ""
+
+
+class TestHoldWhileContested:
+    """#703: 8 real fixes pushed to a branch a reviewer had said should not land."""
+
+    @staticmethod
+    def _entry(reason, id="t1"):
+        return CommentItem(id=id, file="f.go", line=10, reviewer="kgn",
+                           summary="the root cause does not exist", reason=reason)
+
+    def test_an_open_thread_shuts_the_gate(self, rt, publishing_on):
+        import publishing
+        rt._hold_while_contested([self._entry("needs_discussion")])
+        assert publishing.enabled() is False
+        assert "1 thread(s)" in publishing.held()
+
+    def test_nothing_contested_leaves_the_gate_alone(self, rt, publishing_on):
+        import publishing
+        rt._hold_while_contested([])
+        assert publishing.enabled() is True
+        assert publishing.held() == ""
+
+    def test_every_needs_human_reason_holds(self, rt, publishing_on):
+        """Contested, conflicting, question, complex — all route to needs_human.
+
+        The halt is on the bucket, not the reason: distinguishing a
+        premise-invalidating question from a bikeshed is the problem this
+        deliberately does not try to solve.
+        """
+        import publishing
+        rt._hold_while_contested([self._entry("complex")])
+        assert publishing.enabled() is False
+
+    def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
+        trail = MagicMock()
+        rt._hold_while_contested(
+            [self._entry("needs_discussion"), self._entry("question", id="t2")],
+            trail,
+        )
+        trail.decision.assert_called_once()
+        data = trail.decision.call_args.kwargs["data"]
+        assert data["reasons"] == ["needs_discussion", "question"]
 
 
 class TestTriagePromptVerificationValues:

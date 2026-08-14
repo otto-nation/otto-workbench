@@ -176,16 +176,34 @@ _is_append_only_ledger() {
 }
 
 # _append_ledger SRC DST — fold an append-only ledger into its successor.
+# Builds the merged result in a temp file and swaps it in with `mv` so a
+# failure partway through never leaves DST with a partial, unrepeatable
+# append — a retry sees the original DST and SRC untouched.
 _append_ledger() {
-  local src="$1" dst="$2"
+  local src="$1" dst="$2" tmp
+  tmp="$(mktemp "${dst}.XXXXXX")" || {
+    warn "Could not create a temp file to merge $src into $dst"
+    return 1
+  }
+  if ! cat "$dst" > "$tmp"; then
+    warn "Could not read $dst — left $src in place"
+    rm -f "$tmp"
+    return 1
+  fi
   # A destination that does not end in a newline would fuse its last record
   # with the first one appended after it, and the reader silently drops lines
   # it cannot parse.
-  if [[ -s "$dst" && -n "$(tail -c 1 "$dst")" ]]; then
-    printf '\n' >> "$dst"
+  if [[ -s "$tmp" && -n "$(tail -c 1 "$tmp")" ]]; then
+    printf '\n' >> "$tmp"
   fi
-  if ! cat "$src" >> "$dst"; then
+  if ! cat "$src" >> "$tmp"; then
     warn "Could not append $src to $dst — left it in place"
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv "$tmp" "$dst"; then
+    warn "Could not replace $dst with the merged ledger — left $src in place"
+    rm -f "$tmp"
     return 1
   fi
   rm -f "$src"

@@ -108,6 +108,10 @@ adopt_in_fake() {
 @test "adoption sends every name in _LEGACY_CONFIG_ENTRIES to the config root" {
   # The list is the whole classification: anything dropped from it silently
   # becomes state, so each entry needs its own evidence.
+  # Every entry is written as a plain file here, including `overrides`
+  # (a directory in real usage) — this test only exercises the name-based
+  # classification, not the directory-merge path, which "adoption sorts
+  # entries between the state and config roots" above covers.
   local names entry
   names=$(
     . "$FAKE_ROOT/lib/ui.sh"
@@ -158,7 +162,7 @@ adopt_in_fake() {
   [ ! -d "$FAKE_LEGACY" ]
 }
 
-@test "adoption keeps both copies when a file exists on each side" {
+@test "adoption keeps both copies when a file exists on each side and reports the leftover" {
   mkdir -p "$FAKE_LEGACY" "$FAKE_STATE"
   echo "old" > "$FAKE_LEGACY/migrations.applied"
   echo "new" > "$FAKE_STATE/migrations.applied"
@@ -166,19 +170,10 @@ adopt_in_fake() {
   run adopt_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" == *"kept the new one"* ]]
+  [[ "$output" == *"could not be adopted"* ]]
 
   [ "$(cat "$FAKE_STATE/migrations.applied")" = "new" ]
   [ "$(cat "$FAKE_LEGACY/migrations.applied")" = "old" ]
-}
-
-@test "adoption reports the entries that stayed behind" {
-  mkdir -p "$FAKE_LEGACY" "$FAKE_STATE"
-  echo "old" > "$FAKE_LEGACY/migrations.applied"
-  echo "new" > "$FAKE_STATE/migrations.applied"
-
-  run adopt_in_fake
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"could not be adopted"* ]]
 }
 
 @test "adoption merges a trail both roots hold rather than keeping both" {

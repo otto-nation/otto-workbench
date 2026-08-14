@@ -17,7 +17,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 ### constants.sh
 
-Path and filename constants auto-derived from the workbench root. Single source of truth for `WORKBENCH_DIR`, `LOCAL_BIN_DIR`, `ZSH_CONFIG_DIR`, `CLAUDE_DIR`, `MIGRATIONS_STATE_FILE`, `INSTALLED_STATE_FILE`, `MAINTENANCE_LAST_FILE`, and all other shared paths.
+Path and filename constants auto-derived from the workbench root. Single source of truth for `WORKBENCH_DIR`, `LOCAL_BIN_DIR`, `ZSH_CONFIG_DIR`, `CLAUDE_DIR`, `MIGRATIONS_STATE_FILE`, `INSTALL_YML_FILE`, `INSTALLED_STATE_FILE`, `MAINTENANCE_LAST_FILE`, and all other shared paths.
 
 No functions — constants only. Sources `roots.sh`. Loaded via `ui.sh`.
 

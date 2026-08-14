@@ -4365,7 +4365,8 @@ class TestCleanupScope:
             "mode": ro.Mode.PR, "effort": ro.Effort.MEDIUM,
             "prior_review": "", "issue": "", "issue_context": "",
             "generator_version": "", "model": "", "recover_sha": "",
-            "max_parallel": 2, "max_cost": 20.0, "max_groups": None,
+            "target_dir": str(repo_dir), "max_parallel": 2,
+            "max_cost": 20.0, "max_groups": None,
             "no_holistic": False, "no_scout": False, "disprove": False,
             "generated": False, "fix": False,
         }

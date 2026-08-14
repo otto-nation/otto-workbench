@@ -1449,10 +1449,10 @@ def test_gc_dir_empty(cr, tmp_path):
     assert review_gc._dir_is_all_stale(d) is True
 
 
-# ── _clean_intermediates ─────────────────────────────────────────────────────
+# ── _clean_stale_intermediates ───────────────────────────────────────────────
 
 
-def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
+def test_gc_clean_stale_intermediates_removes_stale(cr, tmp_path):
     d = tmp_path / "review-dir"
     d.mkdir()
     for name in ("group-1.md", "group-1.jsonl", "synthesis.jsonl"):
@@ -1461,13 +1461,13 @@ def test_gc_clean_intermediates_removes_stale(cr, tmp_path):
         os.utime(str(f), (1622505600, 1622505600))
     (d / "meta.json").write_text("{}")
 
-    count = review_gc._clean_intermediates(d)
+    count = review_gc._clean_stale_intermediates(d)
     assert count == 3
     assert not (d / "group-1.md").exists()
     assert (d / "meta.json").exists()
 
 
-def test_gc_clean_intermediates_collects_every_phase_artifact(cr, tmp_path):
+def test_gc_clean_stale_intermediates_collects_every_phase_artifact(cr, tmp_path):
     # Regression for #661: the pattern list was hand-copied and never grew
     # scout.md or disprove.md. Derived from Phase, a new phase's artifact is
     # collected without editing review_gc.
@@ -1482,7 +1482,7 @@ def test_gc_clean_intermediates_collects_every_phase_artifact(cr, tmp_path):
     keep.write_text("review")
     os.utime(str(keep), (1622505600, 1622505600))
 
-    count = review_gc._clean_intermediates(d)
+    count = review_gc._clean_stale_intermediates(d)
 
     assert count == len(stale)
     for name in stale:
@@ -1490,15 +1490,97 @@ def test_gc_clean_intermediates_collects_every_phase_artifact(cr, tmp_path):
     assert keep.exists(), "review.md is the deliverable, not an intermediate"
 
 
-def test_gc_clean_intermediates_preserves_recent(cr, tmp_path):
+def test_gc_clean_stale_intermediates_preserves_recent(cr, tmp_path):
     d = tmp_path / "review-dir"
     d.mkdir()
     for name in ("group-1.md", "holistic.jsonl"):
         (d / name).write_text("{}")
 
-    count = review_gc._clean_intermediates(d)
+    count = review_gc._clean_stale_intermediates(d)
     assert count == 0
     assert (d / "group-1.md").exists()
+
+
+# ── cleaned_on_success ───────────────────────────────────────────────────────
+
+
+def _finished_review(tmp_path):
+    """A review directory as a run that just finished leaves it."""
+    d = tmp_path / "review-dir"
+    d.mkdir()
+    (d / "review.md").write_text("review")
+    (d / "disprove.md").write_text("findings")
+    (d / "fix.jsonl").write_text("{}")
+    (d / "prompt-single.md").write_text("PROMPT")
+    return d
+
+
+def test_cleaned_on_success_sweeps_after_the_last_phase(cr, tmp_path):
+    d = _finished_review(tmp_path)
+
+    with review_gc.cleaned_on_success(d):
+        pass
+
+    assert sorted(p.name for p in d.iterdir()) == ["review.md"]
+
+
+def test_cleaned_on_success_keeps_everything_after_an_exception(cr, tmp_path):
+    d = _finished_review(tmp_path)
+
+    with pytest.raises(RuntimeError):
+        with review_gc.cleaned_on_success(d):
+            raise RuntimeError("phase blew up")
+
+    assert (d / "disprove.md").exists()
+    assert (d / "fix.jsonl").exists()
+
+
+def test_cleaned_on_success_propagates_a_non_zero_exit(cr, tmp_path):
+    """`sys.exit(1)` is how a phase reports it produced no review."""
+    d = _finished_review(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        with review_gc.cleaned_on_success(d):
+            sys.exit(1)
+
+    assert exc.value.code == 1
+    assert (d / "disprove.md").exists()
+
+
+def test_cleaned_on_success_keeps_a_partial_run_for_recover(cr, tmp_path):
+    d = _finished_review(tmp_path)
+    (d / "pipeline.json").write_text(json.dumps({
+        "head_sha": "abc123", "group_names": ["a", "b"],
+        "groups_done": [1], "groups_failed": {"2": "agent hit max turns (20)"},
+        "synthesis_done": True,
+    }))
+
+    with review_gc.cleaned_on_success(d):
+        pass
+
+    assert (d / "pipeline.json").exists()
+    assert (d / "disprove.md").exists()
+
+
+def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, capsys, monkeypatch):
+    """A tidy-up failure must not take the run's outcome down with it.
+
+    The orchestrator prints the JSON its caller parses after this scope closes,
+    so an OSError escaping here would discard a review that succeeded.
+    """
+    d = _finished_review(tmp_path)
+
+    def _explode(review_dir):
+        raise OSError(30, "Read-only file system", str(review_dir / "disprove.md"))
+
+    monkeypatch.setattr(review_gc, "cleanup_intermediates", _explode)
+
+    with review_gc.cleaned_on_success(d):
+        pass
+
+    err = capsys.readouterr().err
+    assert "could not sweep" in err
+    assert "disprove.md" in err
 
 
 # ── _generator_version ────────────────────────────────────────────────────────

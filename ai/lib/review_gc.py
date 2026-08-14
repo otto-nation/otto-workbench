@@ -1,12 +1,20 @@
-"""Garbage collection for review artifacts.
+"""Removal of review artifacts, at every lifecycle that removes one.
 
-Used by pr gc for explicit cleanup of stale and merged reviews.
+Three sweeps, one module, so that nothing else in the review system deletes a
+review's files: the sweep at the end of a successful run (`cleaned_on_success`),
+the stale-intermediate sweep and orphan collection `pr gc` runs, and the prune
+of reviews whose PR has been merged or closed.
+
+They differ only in what makes a file collectable — the run being over, age, or
+the PR being gone — and all of them read what a review directory holds from
+`review_common.phase_artifacts` rather than naming files themselves.
 """
 
 from __future__ import annotations
 
 import shutil
 import subprocess
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +26,7 @@ from pr_state import ReviewStatus
 from review_common import (
     FILENAME_META,
     FILENAME_PIPELINE_STATE,
+    FILENAME_PROMPT_STATS,
     REVIEW_EXT,
     REVIEWS_DIR,
     phase_artifacts,
@@ -28,6 +37,65 @@ from review_common import (
 GC_STALE_DAYS = 7
 GC_FAILED_STALE_DAYS = 30
 PRUNE_MAX_FILES = 10
+
+
+def cleanup_intermediates(review_dir: Path) -> None:
+    """Leave a finished review directory holding only its deliverable.
+
+    What to remove is read off the directory rather than named by the caller,
+    so a phase the run happened to take — disprove, or one added later — is
+    cleaned without the call site listing it.
+
+    This also sweeps fix.jsonl: a `--fix` pass's log is diagnostic, not a
+    finding, so it goes the same way as any other phase log rather than
+    surviving the run that wrote it.
+
+    When this runs is not this function's decision — a review run sweeps
+    through `cleaned_on_success`, which is what knows the run is over.
+    """
+    cleanup = phase_artifacts(review_dir)
+    cleanup.append(review_dir / FILENAME_PIPELINE_STATE)
+    cleanup.extend(
+        p for p in review_dir.glob("prompt-*") if p.name != FILENAME_PROMPT_STATS
+    )
+
+    for path in cleanup:
+        path.unlink(missing_ok=True)
+
+
+@contextmanager
+def cleaned_on_success(review_dir: Path):
+    """Every phase of a review run, swept once all of them have succeeded.
+
+    The sweep is scoped rather than tacked onto the last phase because which
+    phase is last keeps changing. The pipeline used to clean up as it returned,
+    and then the `--fix` pass — which the orchestrator runs after it — wrote
+    fix.jsonl into a directory that had already been swept. A phase added
+    inside this `with` is cleaned for free; one added after it leaks.
+
+    A run that did not finish keeps everything, because its phase artifacts and
+    session logs are the only record of what went wrong. Leaving the scope
+    through an exception skips the sweep and does not swallow it — `sys.exit`
+    included, which is how a phase reports that it produced no review — and so
+    does a pipeline whose state records a failure, since `pr review --recover`
+    resumes from exactly those artifacts.
+
+    Failing to tidy up, on the other hand, does not undo a run that worked. The
+    sweep is best-effort for that reason — see the comment on its guard.
+    """
+    yield
+    if read_pipeline_status(review_dir) != ReviewStatus.COMPLETED.value:
+        return
+    # Best-effort: the deliverable is already written, and the orchestrator
+    # prints the result JSON its caller parses only after this scope closes. An
+    # OSError here — `unlink(missing_ok=True)` still raises on a permissions or
+    # read-only-filesystem failure — would otherwise throw away a review that
+    # succeeded to report leftover files nobody asked about. The warning is what
+    # keeps that from being silent; the leftovers are the next `pr gc`'s work.
+    try:
+        cleanup_intermediates(review_dir)
+    except OSError as exc:
+        log.warn(f"could not sweep {review_dir} ({exc}) — leaving its intermediates in place")
 
 
 def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
@@ -42,8 +110,13 @@ def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
     return all((now - f.stat().st_mtime) / 86400 > stale_days for f in files)
 
 
-def _clean_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
-    """Remove stale intermediate files from a completed review directory."""
+def _clean_stale_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
+    """Remove stale intermediate files from a completed review directory.
+
+    The age filter is what separates this from `cleanup_intermediates`: this
+    sweep runs over directories no run owns any more, where a recent file may
+    still belong to a review in flight.
+    """
     count = 0
     now = datetime.now().timestamp()
     for f in phase_artifacts(review_dir):
@@ -108,7 +181,7 @@ def gc_reviews(reviews_dir: Path | None = None) -> int:
 
         has_pipeline = (review_dir / FILENAME_PIPELINE_STATE).is_file()
         if has_review and not has_pipeline:
-            cleaned += _clean_intermediates(review_dir)
+            cleaned += _clean_stale_intermediates(review_dir)
 
     return cleaned
 

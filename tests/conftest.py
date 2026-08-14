@@ -230,6 +230,31 @@ def worktree(tmp_path) -> Path:
     return init_worktree(tmp_path)
 
 
+def synthetic_review(
+    meta: str = "generator: test",
+    summary: str = "Synthesized.",
+    findings: str = "",
+    verdict: str = "Approve",
+) -> str:
+    """The smallest review document a finished run can leave behind.
+
+    Every suite that only needs "a review file exists here" writes the same
+    shape — title, one meta comment, a summary, an optional findings section,
+    a verdict — so it lives here instead of once per module. The parameters are
+    the parts callers have actually needed to differ on; anything else being
+    identical is the point, since these bodies stand in for the deliverable
+    rather than exercising the parser.
+    """
+    findings_block = f"{findings}\n" if findings else ""
+    return (
+        "# Review: org/repo#1 — t\n"
+        f"<!-- {meta} -->\n"
+        f"## Summary\n{summary}\n\n"
+        f"{findings_block}"
+        f"## Verdict\n{verdict}\n"
+    )
+
+
 def write_thrash_log(path) -> str:
     """Write the session log of a clean completion that never wrote anything.
 

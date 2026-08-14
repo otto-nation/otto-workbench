@@ -581,7 +581,7 @@ print(f'session={session_exists},holistic={holistic_exists},group={group_exists}
   [ "$result" = "session=True,holistic=True,group=True,hlog=True" ]
 }
 
-@test "_cleanup_intermediates: removes every phase artifact and pipeline state" {
+@test "cleanup_intermediates: removes every phase artifact and pipeline state" {
   # Regression for #675: disprove.md and disprove.jsonl outlived the pass
   # because the call site enumerated what to remove and never named them.
   echo "scout" > "$TMPDIR/scout.md"
@@ -597,17 +597,8 @@ print(f'session={session_exists},holistic={holistic_exists},group={group_exists}
   echo '{}' > "$TMPDIR/pipeline.json"
 
   result=$(_py "
-import io, contextlib, os
-with contextlib.redirect_stdout(io.StringIO()):
-    job = mod.ReviewJob(
-        repo='org/repo', pr_number='1',
-        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
-            additions=1, deletions=0, changed_files=1, files=[]),
-        ctx=mod.PRContext(), wt_path='/tmp/wt',
-        review_file='$TMPDIR/review.md',
-        session_log='$TMPDIR/session.jsonl',
-    )
-    mod._cleanup_intermediates(job)
+import os, pathlib
+mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
 remaining = []
 for f in ['scout.md', 'scout.jsonl', 'holistic.md', 'holistic.jsonl',
           'group-1.md', 'group-1.jsonl', 'group-2.jsonl', 'synthesis.jsonl',
@@ -620,30 +611,21 @@ print(f'remaining={remaining}')
   [ "$result" = "remaining=[]" ]
 }
 
-@test "_cleanup_intermediates: sweeps a prior --fix pass's log too" {
-  # fix.jsonl is diagnostic, not a finding, so a re-review's cleanup sweeps
-  # it the same as any other phase log rather than letting it survive.
+@test "cleanup_intermediates: sweeps the --fix pass's log too" {
+  # fix.jsonl is diagnostic, not a finding, so the sweep takes it the same as
+  # any other phase log rather than letting it survive the run.
   echo "review" > "$TMPDIR/review.md"
   echo "flog" > "$TMPDIR/fix.jsonl"
 
   result=$(_py "
-import io, contextlib, os
-with contextlib.redirect_stdout(io.StringIO()):
-    job = mod.ReviewJob(
-        repo='org/repo', pr_number='1',
-        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
-            additions=1, deletions=0, changed_files=1, files=[]),
-        ctx=mod.PRContext(), wt_path='/tmp/wt',
-        review_file='$TMPDIR/review.md',
-        session_log='$TMPDIR/session.jsonl',
-    )
-    mod._cleanup_intermediates(job)
+import os, pathlib
+mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
 print(f'fix_exists={os.path.exists(\"$TMPDIR/fix.jsonl\")}')
 ")
   [ "$result" = "fix_exists=False" ]
 }
 
-@test "_cleanup_intermediates: preserves the deliverable and its sidecars" {
+@test "cleanup_intermediates: preserves the deliverable and its sidecars" {
   echo "review" > "$TMPDIR/review.md"
   echo '{"type":"result"}' > "$TMPDIR/session.jsonl"
   echo '{}' > "$TMPDIR/meta.json"
@@ -651,17 +633,8 @@ print(f'fix_exists={os.path.exists(\"$TMPDIR/fix.jsonl\")}')
   echo "holistic" > "$TMPDIR/holistic.md"
 
   result=$(_py "
-import io, contextlib, os
-with contextlib.redirect_stdout(io.StringIO()):
-    job = mod.ReviewJob(
-        repo='org/repo', pr_number='1',
-        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
-            additions=1, deletions=0, changed_files=1, files=[]),
-        ctx=mod.PRContext(), wt_path='/tmp/wt',
-        review_file='$TMPDIR/review.md',
-        session_log='$TMPDIR/session.jsonl',
-    )
-    mod._cleanup_intermediates(job)
+import os, pathlib
+mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
 kept = [f for f in ['review.md', 'session.jsonl', 'meta.json', 'prior.md']
         if os.path.exists('$TMPDIR/' + f)]
 print(f'kept={kept},holistic={os.path.exists(\"$TMPDIR/holistic.md\")}')
@@ -670,22 +643,13 @@ print(f'kept={kept},holistic={os.path.exists(\"$TMPDIR/holistic.md\")}')
   [ "$result" = "kept=['review.md', 'session.jsonl', 'meta.json', 'prior.md'],holistic=False" ]
 }
 
-@test "_cleanup_intermediates: preserves prompt-stats.json" {
+@test "cleanup_intermediates: preserves prompt-stats.json" {
   echo '[]' > "$TMPDIR/prompt-stats.json"
   echo "prompt" > "$TMPDIR/prompt-self-review.md"
 
   result=$(_py "
-import io, contextlib, os
-with contextlib.redirect_stdout(io.StringIO()):
-    job = mod.ReviewJob(
-        repo='org/repo', pr_number='1',
-        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
-            additions=1, deletions=0, changed_files=1, files=[]),
-        ctx=mod.PRContext(), wt_path='/tmp/wt',
-        review_file='$TMPDIR/review.md',
-        session_log='$TMPDIR/session.jsonl',
-    )
-    mod._cleanup_intermediates(job)
+import os, pathlib
+mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
 stats_exists = os.path.exists('$TMPDIR/prompt-stats.json')
 prompt_exists = os.path.exists('$TMPDIR/prompt-self-review.md')
 print(f'stats={stats_exists},prompt={prompt_exists}')

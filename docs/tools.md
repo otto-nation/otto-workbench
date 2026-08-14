@@ -326,7 +326,7 @@ pr [global flags] <command> [flags]
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
 | `ci [--fix]` | Fetch and classify CI failures; `--fix` attempts automated repair |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
-| `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
+| `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort]` | Rebase onto `origin/main` |
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |

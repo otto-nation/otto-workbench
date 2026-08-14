@@ -21,6 +21,7 @@ from pathlib import Path
 
 import agent_retry
 import log
+import workbench_config
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD,
     AgentInvocation, _parse_session_cost, _resolve_model,
@@ -46,6 +47,7 @@ from review_retry import (
 )
 from review_scout import format_leads_block, parse_scout_output
 from review_state import _update_group_done, _update_group_failed
+from workbench_config import WorkbenchConfig
 
 RETRY_MAX_TURNS_GROUP = agent_retry.RETRY_MAX_TURNS
 
@@ -123,13 +125,39 @@ PHASES: dict[Phase, PhaseSpec] = {
 # ── Phase model resolution ───────────────────────────────────────────────────
 
 
-def phase_model(phase: Phase, explicit: str | None) -> str:
-    """Resolve the model for a pipeline phase (explicit > env > default)."""
+def _config(config: WorkbenchConfig | None) -> WorkbenchConfig:
+    """The caller's config, or the one on disk.
+
+    Callers resolving several values in a row pass the config they already
+    loaded; the default is for the ones resolving a single value.
+    """
+    return config if config is not None else workbench_config.load_config_or_default()
+
+
+def _config_model(phase: Phase, config: WorkbenchConfig) -> str | None:
+    """The model this phase's config asks for: its own entry, else the section."""
+    override = config.review.phases.get(phase)
+    if override is not None and override.model:
+        return override.model
+    return config.review.model
+
+
+def phase_model(
+    phase: Phase, explicit: str | None, config: WorkbenchConfig | None = None,
+) -> str:
+    """Resolve the model for a pipeline phase.
+
+    Precedence, highest first: the explicit argument, the phase env key, the
+    global env key, the config file (phase entry then section), the phase's
+    built-in default. The env layers live in ``_resolve_model``; the config and
+    built-in layers collapse into the default handed to it.
+    """
     phase = Phase(phase)
+    cfg = _config(config)
     return _resolve_model(
         explicit,
         phase.model_env_key,
-        PHASES[phase].model,
+        _config_model(phase, cfg) or PHASES[phase].model,
     )
 
 
@@ -140,15 +168,38 @@ def collect_phase_models(explicit: str | None) -> dict[str, list[Phase]]:
     the env keys worth changing when one of them is unusable.
     """
     models: dict[str, list[Phase]] = {}
+    cfg = workbench_config.load_config_or_default()
     for phase in PHASES:
-        models.setdefault(phase_model(phase, explicit), []).append(phase)
+        models.setdefault(phase_model(phase, explicit, cfg), []).append(phase)
     return models
 
 
-def _phase_thinking(effort: Effort, phase: Phase) -> Thinking | None:
-    """The effort override if the preset sets one, else the phase's own default."""
-    override = EFFORT_PRESETS[effort].thinking
-    return override if override is not None else PHASES[phase].thinking
+def phase_thinking_default(
+    phase: Phase, effort: Effort, config: WorkbenchConfig | None = None,
+) -> Thinking | None:
+    """The thinking level below the env layers: config, effort preset, spec.
+
+    A phase entry beats the section, and both beat the effort preset — a level
+    written for one phase is more specific than one the preset flattens
+    everything to.
+    """
+    cfg = _config(config)
+    override = cfg.review.phases.get(phase)
+    if override is not None and override.thinking is not None:
+        return override.thinking
+    if cfg.review.thinking is not None:
+        return cfg.review.thinking
+    preset = EFFORT_PRESETS[effort].thinking
+    return preset if preset is not None else PHASES[phase].thinking
+
+
+def resolve_effort(
+    explicit: Effort | None, config: WorkbenchConfig | None = None,
+) -> Effort:
+    """The effort preset: the flag, the config, then medium."""
+    if explicit is not None:
+        return explicit
+    return _config(config).review.effort or Effort.MEDIUM
 
 
 # ── Phase turn budgets ───────────────────────────────────────────────────────
@@ -187,16 +238,19 @@ class PhaseRunner:
     def __init__(self, job: ReviewJob, phase: Phase, index: int | None = None):
         spec = PHASES[phase]
         preset = EFFORT_PRESETS[job.effort]
+        # Loaded once for the three values below rather than once each: the
+        # config is read from disk, and a runner is built per phase per review.
+        cfg = workbench_config.load_config_or_default(job.wt_path)
         self.job = job
         # A phase that names no log of its own logs to the job's — that is
         # where the single-agent path already sends every record, and the
         # caller may have pointed it outside the review directory.
         self.session_log = phase_log_path(job.review_file, phase, index) or job.session_log
-        self.model = phase_model(phase, job.model)
+        self.model = phase_model(phase, job.model, cfg)
         self.thinking = _resolve_thinking_level(
-            None, phase.thinking_env_key, _phase_thinking(job.effort, phase),
+            None, phase.thinking_env_key, phase_thinking_default(phase, job.effort, cfg),
         )
-        self.provider = _resolve_provider()
+        self.provider = _resolve_provider() or cfg.review.provider
         self.budget = preset.agent_budget
         self.agent = None if spec.edits else (
             spec.agent if spec.agent is not None else preset.agent

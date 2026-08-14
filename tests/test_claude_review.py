@@ -1766,6 +1766,28 @@ def test_build_orchestrate_args_passes_target_dir(cr, tmp_path):
     assert args[args.index("--target-dir") + 1] == str(target)
 
 
+def test_build_orchestrate_args_omits_an_unset_effort(cr, tmp_path):
+    """No flag means review-orchestrate gets to consult review.effort itself."""
+    args = cr._build_orchestrate_args(
+        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
+        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
+        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        model=None, target_dir=tmp_path / "state",
+    )
+    assert "--effort" not in args
+
+
+def test_build_orchestrate_args_forwards_an_explicit_medium(cr, tmp_path):
+    """Explicit beats config, so medium has to travel like any other value."""
+    args = cr._build_orchestrate_args(
+        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
+        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
+        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        model=None, effort="medium", target_dir=tmp_path / "state",
+    )
+    assert args[args.index("--effort") + 1] == "medium"
+
+
 # ── --recover with --self ─────────────────────────────────────────────────────
 
 

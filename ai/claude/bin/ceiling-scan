@@ -22,6 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _version import version_string as _version_string  # noqa: E402
 
+SCRIPT = Path(__file__).name
+
 SKIP_DIRS = {
     ".git", "node_modules", "vendor", "build", "dist", "out",
     "__pycache__", "ignore",
@@ -161,7 +163,7 @@ def main() -> None:
     parser.add_argument(
         "-V", "--version",
         action="version",
-        version=_version_string("ceiling-scan"),
+        version=_version_string(SCRIPT),
     )
     args = parser.parse_args()
 

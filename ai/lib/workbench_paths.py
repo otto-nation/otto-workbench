@@ -200,8 +200,9 @@ def trail_dir(worktree_root: Path | str, tool: str) -> Path:
     A directory git does not claim has no state dir to sit beside, and a run
     still has a trail to write, so it falls back to the tool's own logs — the
     other place ``otto-log`` looks. Callers with no worktree at all call
-    ``logs_dir`` directly; the field is optional, and the test that says so
-    belongs where a reader can see it.
+    ``logs_dir`` directly; ``validate-worktree-guards`` wants that branch
+    written out at the call site rather than hidden behind an optional
+    parameter here.
     """
     try:
         return worktree_state_dir(worktree_root)

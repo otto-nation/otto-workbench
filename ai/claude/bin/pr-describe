@@ -34,6 +34,8 @@ from pr_state import DescribeSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 
+SCRIPT = Path(__file__).name
+
 # GitHub's recognised template locations, in the order GitHub itself resolves
 # them. Mirrors _pr_load_template in lib/ai/pr.sh, which serves `task pr:create`
 # from bash — keep the two lists in step.
@@ -218,7 +220,7 @@ def run_describe(
         template, bool(template_path), title, body, commits, changed_files,
     )
     stdout, rc = agent_retry.retry_blank_response(
-        lambda text: ai_backend.prompt(text, cwd=str(wt_path), task="pr-describe"),
+        lambda text: ai_backend.prompt(text, cwd=str(wt_path), task=SCRIPT),
         prompt, label="Describe", usable=_usable_revision,
     )
     if rc != 0 or not _usable_revision(stdout):
@@ -266,7 +268,7 @@ def run_describe(
 
 def main():
     parser = ToolParser(
-        prog="pr-describe",
+        prog=SCRIPT,
         description="Revise the PR description against the repo's PR template",
         output_schema=DescribeSummary,
     )
@@ -286,11 +288,11 @@ def main():
         repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
     )
     # No worktree means no state to sit beside; the trail still gets written.
-    trail_root = workbench_paths.logs_dir("pr-describe")
+    trail_root = workbench_paths.logs_dir(SCRIPT)
     if ctx.worktree_root:
-        trail_root = workbench_paths.trail_dir(ctx.worktree_root, "pr-describe")
+        trail_root = workbench_paths.trail_dir(ctx.worktree_root, SCRIPT)
     trail = Trail.start(
-        script="pr-describe",
+        script=SCRIPT,
         artifact_dir=str(trail_root),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=args.debug,

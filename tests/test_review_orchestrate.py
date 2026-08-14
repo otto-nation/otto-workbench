@@ -673,6 +673,28 @@ class TestRenumberSection:
         result, count = ro.renumber_section("M", text, 0)
         assert count == 1
 
+    def test_offset_carries_references(self, ro):
+        # The offset is what keeps two groups' IDs apart. A reference left behind
+        # would name whatever the earlier group happened to put at that number.
+        text = "- **[S1]** first\n- **[S2]** second, see S1 above and [S1] again"
+        result, _ = ro.renumber_section("S", text, 2)
+        assert "see S3 above and [S3] again" in result
+
+    def test_offset_shifts_ids_it_did_not_expect(self, ro):
+        # IDs arrive however the agent wrote them; gaps are closed later, not here.
+        result, highest = ro.renumber_section("S", "- **[S1]** first\n- **[S7]** second", 2)
+        assert "[S3]" in result
+        assert "[S9]" in result
+        # What the next group has to clear, not how many findings this one had.
+        assert highest == 7
+
+    def test_a_reference_this_group_cannot_resolve_is_left_alone(self, ro):
+        # Only the merge-wide pass can tell a dangling reference from one whose
+        # finding lives in another group.
+        text = "- **[S1]** first, see S4 elsewhere"
+        result, _ = ro.renumber_section("S", text, 2)
+        assert "see S4 elsewhere" in result
+
     def test_empty_text(self, ro):
         result, count = ro.renumber_section("M", "", 0)
         assert result == ""
@@ -682,29 +704,82 @@ class TestRenumberSection:
 # ── 4. _renumber_prefix ─────────────────────────────────────────────────────
 
 
+def _decl(prefix: str, num: int, body: str = "finding") -> str:
+    """A finding declaring its own ID — the only thing renumbering numbers."""
+    return f"- **[{prefix}{num}]** **`file.go:{num}`** — {body}"
+
+
 class TestRenumberPrefix:
     def test_sequential_already(self, ro):
-        text = "[S1] first\n[S2] second"
+        text = f"{_decl('S', 1, 'first')}\n{_decl('S', 2, 'second')}"
         assert ro._renumber_prefix(text, "S") == text
 
     def test_with_gaps(self, ro):
-        text = "[S1] first\n[S3] third"
+        text = f"{_decl('S', 1, 'first')}\n{_decl('S', 3, 'third')}"
         result = ro._renumber_prefix(text, "S")
         assert "[S1]" in result
         assert "[S2]" in result
         assert "[S3]" not in result
 
     def test_repeated_ids(self, ro):
-        text = "[S3] first\n[S1] second\n[S3] repeat"
+        text = "\n".join([
+            _decl("S", 3, "first"), _decl("S", 1, "second"), _decl("S", 3, "repeat"),
+        ])
         result = ro._renumber_prefix(text, "S")
         assert result.count("[S1]") == 2  # S3 appears first -> becomes S1
         assert "[S2]" in result  # S1 appears second -> becomes S2
 
     def test_unbracketed_cross_refs(self, ro):
-        text = "[S3] finding\nsee S3 above"
+        text = f"{_decl('S', 3)}\nsee S3 above"
         result = ro._renumber_prefix(text, "S")
-        assert "S1" in result
+        assert "see S1 above" in result
         assert "S3" not in result
+
+    def test_reference_to_a_dropped_finding_points_nowhere(self, ro):
+        # S1 was dropped by verification, so only its reference is left. Closing
+        # the gap on S2 frees up the number 1, and the reference must not take it.
+        text = f"{_decl('S', 2, 'real problem')}\nblocked on [S1]"
+        result = ro._renumber_prefix(text, "S")
+        assert "- **[S1]** **`file.go:2`** — real problem" in result
+        assert "blocked on [removed]" in result
+
+    def test_bare_reference_to_a_dropped_finding_points_nowhere(self, ro):
+        text = f"{_decl('S', 2, 'real problem')}\nblocked on S1"
+        assert "blocked on [removed]" in ro._renumber_prefix(text, "S")
+
+    def test_prose_that_merely_looks_like_an_id_is_left_alone(self, ro):
+        # S3 the object store, M1 the laptop. Nothing cites them, so nothing
+        # may rewrite them — and a review of storage code says "S3" constantly.
+        text = "\n".join([
+            _decl("S", 3, "uploads to an S3 bucket on every M1 build"),
+            _decl("S", 5, "second"),
+        ])
+        result = ro._renumber_prefix(text, "S")
+        assert "uploads to an S3 bucket on every M1 build" in result
+        assert "- **[S1]**" in result
+        assert "- **[S2]**" in result
+
+    def test_a_cited_bare_reference_is_still_rewritten(self, ro):
+        text = f"{_decl('S', 3, 'first')}\n{_decl('S', 5, 'second, duplicate of S3')}"
+        assert "duplicate of S1" in ro._renumber_prefix(text, "S")
+
+    def test_references_survive_a_second_pass(self, ro):
+        text = f"{_decl('S', 2, 'real problem')}\nblocked on [S1]"
+        once = ro._renumber_prefix(text, "S")
+        assert ro._renumber_prefix(once, "S") == once
+
+    def test_text_that_declares_nothing_is_left_alone(self, ro):
+        # A section can mention IDs it does not own — the triage list, a prior
+        # review's ledger. With no declaration there is no map to rewrite through.
+        text = "carried over from [S4] and [S7]"
+        assert ro._renumber_prefix(text, "S") == text
+
+    def test_checklist_findings_declare_their_ids(self, ro):
+        # Self-review writes findings as checkboxes; they are declarations too.
+        text = "- [ ] **[S3]** `file.go:1` — finding\nsee [S3]"
+        result = ro._renumber_prefix(text, "S")
+        assert "- [ ] **[S1]** `file.go:1` — finding" in result
+        assert "see [S1]" in result
 
     def test_empty_text(self, ro):
         assert ro._renumber_prefix("", "S") == ""
@@ -715,7 +790,10 @@ class TestRenumberPrefix:
 
 class TestRenumberFindings:
     def test_renumbers_gaps(self, ro):
-        text = "[M1] first\n[M3] third\n[S1] s1\n[S5] s5\n"
+        text = "\n".join([
+            _decl("M", 1, "first"), _decl("M", 3, "third"),
+            _decl("S", 1, "s1"), _decl("S", 5, "s5"), "",
+        ])
         result = ro.renumber_findings(text)
         assert "[M1]" in result
         assert "[M2]" in result
@@ -723,6 +801,17 @@ class TestRenumberFindings:
         assert "[S1]" in result
         assert "[S2]" in result
         assert "[S5]" not in result
+
+    def test_each_severity_is_renumbered_independently(self, ro):
+        # A Nit citing a dropped Must-fix loses the citation; its own ID does not
+        # move, because the M pass never looks at N numbers.
+        text = "\n".join([
+            _decl("M", 2, "kept"),
+            "- **[N1]** **`file.go:9`** — revisit once [M1] lands",
+        ])
+        result = ro.renumber_findings(text)
+        assert "- **[M1]** **`file.go:2`** — kept" in result
+        assert "revisit once [removed] lands" in result
 
     def test_empty_text(self, ro):
         assert ro.renumber_findings("") == ""
@@ -818,6 +907,57 @@ class TestMergeReviews:
         result = ro.merge_reviews([str(g1), str(g2)])
         assert "[S1]" in result
         assert "[S2]" in result
+
+    def test_merge_keeps_each_groups_references_inside_that_group(self, ro, tmp_path):
+        # Both groups number from S1, so the second group's IDs get offset past
+        # the first's. A reference that did not move with them would name the
+        # first group's finding — a different file, a different problem.
+        g1 = tmp_path / "g1.md"
+        g1.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            "## Should fix\n"
+            "- **[S1]** **`a.go:1`** — issue a\n"
+            "- **[S2]** **`a.go:2`** — issue b, related to [S1]\n"
+            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        g2 = tmp_path / "g2.md"
+        g2.write_text(
+            "## File Triage\n- `b.go` — reviewed\n"
+            "## Should fix\n"
+            "- **[S1]** **`b.go:1`** — issue c\n"
+            "- **[S2]** **`b.go:2`** — issue d, see S1 above\n"
+            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        result = ro.merge_reviews([str(g1), str(g2)])
+
+        assert "- **[S2]** **`a.go:2`** — issue b, related to [S1]" in result
+        assert "- **[S4]** **`b.go:2`** — issue d, see S3 above" in result
+
+    def test_merge_clears_a_gap_the_first_group_left(self, ro, tmp_path):
+        # Nothing closes a group's gaps before the merge, so offsetting by the
+        # number of findings would drop the second group's S1 onto the first
+        # group's S3 — two findings, one ID, and dedup keeps both.
+        g1 = tmp_path / "g1.md"
+        g1.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            "## Should fix\n"
+            "- **[S1]** **`a.go:1`** — issue a\n"
+            "- **[S3]** **`a.go:3`** — issue b\n"
+            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        g2 = tmp_path / "g2.md"
+        g2.write_text(
+            "## File Triage\n- `b.go` — reviewed\n"
+            "## Should fix\n- **[S1]** **`b.go:1`** — issue c\n"
+            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        result = ro.merge_reviews([str(g1), str(g2)])
+
+        # Offsetting by the count would put issue c on S3, where issue b already
+        # sits; the gaps close afterwards, so all three come out distinct.
+        assert "- **[S1]** **`a.go:1`** — issue a" in result
+        assert "- **[S2]** **`a.go:3`** — issue b" in result
+        assert "- **[S3]** **`b.go:1`** — issue c" in result
 
     def test_merge_unions_prior_findings_ledgers(self, ro, tmp_path):
         g1 = tmp_path / "g1.md"
@@ -978,6 +1118,17 @@ class TestDedupFindings:
         result = ro._dedup_findings(text, "M")
         assert result.count("same issue") == 1
         assert "another continuation" not in result
+
+    def test_references_follow_the_surviving_copy(self, ro):
+        # M2 is the same finding as M1, so a reference to it is not dangling —
+        # it belongs on the copy that stayed.
+        text = (
+            "- **[M1]** **`file.go:1`** — same issue\n"
+            "- **[M2]** **`file.go:1`** — same issue\n"
+            "- **[M3]** **`other.go:2`** — see [M2] for context\n"
+        )
+        result = ro._dedup_findings(text, "M")
+        assert "- **[M2]** **`other.go:2`** — see [M1] for context" in result
 
 
 # ── 12. _parse_numstat ──────────────────────────────────────────────────────
@@ -2737,6 +2888,31 @@ class TestPostProcessFindings:
         assert "bar.py" not in result
         # Renumbering sees only the findings this review actually reports.
         assert f"[{prefix}1]" in result
+
+    def test_a_dropped_findings_citation_does_not_survive_it(self, ro, tmp_path):
+        # The whole chain: verification drops M1, renumbering pulls M2 into its
+        # place, and the Nit that cited M1 must not end up citing the survivor.
+        src = tmp_path / "handler.go"
+        src.write_text("package main\n\nfunc foo() {\n\tx := 1\n}\n")
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- **[M1]** **`handler.go:42`** — evidence no longer in the file\n"
+            "  > ```go\n"
+            "  > result := db.Query(q)\n"
+            "  > ```\n"
+            "- **[M2]** **`handler.go:4`** — real problem\n"
+            "  > ```go\n"
+            "  > \tx := 1\n"
+            "  > ```\n"
+            "## Nit\n"
+            "- **[N1]** **`handler.go:1`** — revisit once [M1] lands\n"
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "- **[M1]** **`handler.go:4`** — real problem" in result
+        assert "revisit once [removed] lands" in result
 
     def test_ledger_suppresses_the_unaccounted_warning(self, ro, tmp_path, capsys):
         review = tmp_path / "review.md"

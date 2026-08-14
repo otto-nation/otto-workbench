@@ -115,6 +115,12 @@ def _git_dir(worktree_root: Path) -> Path:
     write, and a worktree does not move out from under a run. Failures are not
     cached — ``lru_cache`` does not remember a raise — so a path that becomes a
     worktree later still resolves.
+
+    The cache never expires for the life of the process, so it would go stale
+    if a worktree were removed and a new, unrelated directory created at the
+    same path within one process's lifetime. A non-issue for the short-lived
+    CLI processes this targets; worth revisiting before reusing this in a
+    long-running process.
     """
     try:
         result = subprocess.run(
@@ -161,6 +167,9 @@ def _adopt(legacy: Path, target: Path) -> None:
         # os.rename refuses; shutil.move falls back to a copy.
         shutil.move(str(legacy), str(target))
     except (OSError, shutil.Error) as exc:
+        # A concurrent adopt winning the race was already ruled out by the
+        # target.exists() check above, so anything reaching here is a real
+        # I/O failure (permissions, disk full) rather than the expected race.
         log.warn(f"could not move {legacy} to {target} ({exc}) — starting fresh")
 
 

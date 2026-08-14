@@ -280,9 +280,17 @@ def _print_summary(
 
 
 def _update_pr_state(
-    repo: str, pr_number: str, review_file: str, repo_dir: str, mode: Mode,
+    ctx: pr_context.ResolvedContext, review_file: str, mode: Mode, *, trail: Trail,
 ) -> None:
-    if not repo_dir or not review_file or not os.path.isfile(review_file):
+    """Record the review's outcome in the state of the target *ctx* names.
+
+    ``ctx`` is the identity the entry point resolved for this run, threaded down
+    rather than derived a second time here. Re-deriving read the *caller's*
+    checkout, which on the ``--pr`` path is routinely a different branch than
+    the PR's — so the verdict, finding counts, and cost landed with whatever the
+    caller happened to be standing on. One identity per run, derived once.
+    """
+    if not review_file or not os.path.isfile(review_file):
         return
 
     review_path = Path(review_file)
@@ -325,11 +333,6 @@ def _update_pr_state(
     )
 
     try:
-        ctx = pr_context.resolve(repo_dir=repo_dir)
-    except SystemExit:
-        return
-
-    try:
         pr_state.apply_state_update(
             target_dir=ctx.target_dir,
             repo=ctx.repo,
@@ -340,8 +343,12 @@ def _update_pr_state(
             domain="review",
             data=_serde_to_dict(summary),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        # state.json is a cache and the review itself succeeded, so a failed
+        # write must not abort the run — but it must not vanish either, which
+        # is why both channels report it, as ci-check and review-threads do.
+        trail.error("state_update", f"state update failed: {exc}")
+        log.error(f"claude-review: state update failed: {exc}")
 
 
 def _archive_review(review_file: Path, session_log: str) -> str:
@@ -943,8 +950,14 @@ def _run_review_pr(
         review_worktree.cleanup_worktree(wt_result, repo_root)
 
 
-def _run_review(args) -> None:
-    pr_input = args.positional[0] if args.positional else ""
+def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
+    """Review the PR *ctx* names.
+
+    ``ctx`` comes from ``main()``, which resolved it to take the run lock.
+    Resolving it again from the same inputs cost a ``gh`` round trip per review
+    and left two independently derived copies of the one value this branch
+    exists to derive once.
+    """
     no_post = args.no_post
     auto_post = args.post
     auto_submit = args.submit
@@ -965,8 +978,6 @@ def _run_review(args) -> None:
     if no_post or auto_post:
         force = True
 
-    pr_arg, branch_arg = pr_context.classify_target(pr_input) if pr_input else (None, None)
-    ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=repo_dir or None)
     pr_number = str(ctx.pr_number)
     repo = ctx.repo
 
@@ -990,6 +1001,8 @@ def _run_review(args) -> None:
             no_scout=no_scout, disprove=disprove, generated=generated,
             recover=recover,
         )
+        # Inside the trail's scope, so a failed write has somewhere to report.
+        _update_pr_state(ctx, str(review_file), Mode.PR, trail=trail)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise
@@ -1017,7 +1030,7 @@ def _run_self_review_body(
     no_holistic, max_cost, model, fix_pass, args,
     self_review_dir, branch_name, effort="medium", max_groups=None,
     no_scout=False, disprove=None, generated=False,
-    recover=False, head_sha="", *, target_dir,
+    recover=False, head_sha="", *, ctx: pr_context.ResolvedContext, trail: Trail,
 ) -> None:
     review_file = self_review_dir / f"review{REVIEW_EXT}"
     session_log = str(self_review_dir / FILENAME_SESSION)
@@ -1061,7 +1074,7 @@ def _run_self_review_body(
         no_holistic=no_holistic, max_cost=max_cost, model=model,
         mode="self", fix_pass=fix_pass, effort=effort, max_groups=max_groups,
         no_scout=no_scout, disprove=disprove, generated=generated,
-        recover_sha=recover_sha, target_dir=target_dir,
+        recover_sha=recover_sha, target_dir=ctx.target_dir,
     )
 
     wall_start = time.monotonic()
@@ -1081,7 +1094,7 @@ def _run_self_review_body(
     pr_url = f"{GITHUB_BASE_URL}/{repo}/pull/{pr_number}" if pr_number else ""
     _print_summary(str(review_file), session_log, pr_url, "", branch_name, wall_clock_ms=wall_ms)
 
-    _update_pr_state(repo, pr_number, str(review_file), wt_path, Mode.SELF)
+    _update_pr_state(ctx, str(review_file), Mode.SELF, trail=trail)
 
     json_stdout = getattr(args, "_json_stdout", None)
     if json_stdout is not None:
@@ -1200,7 +1213,7 @@ def _run_self_review(args) -> None:
             effort=effort, max_groups=max_groups,
             no_scout=no_scout, disprove=disprove, generated=generated,
             recover=recover, head_sha=recover_head_sha,
-            target_dir=ctx.target_dir,
+            ctx=ctx, trail=trail,
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
@@ -1320,8 +1333,7 @@ def main() -> None:
         command=" ".join([SCRIPT] + sys.argv[1:]),
         started=pr_state.now_iso(),
     )
-    _run_review(parsed)
-    _update_pr_state(ctx.repo, pr_num, str(review_file), parsed.repo_dir or "", Mode.PR)
+    _run_review(parsed, ctx)
     if _json_stdout_fd is not None:
         summary = json_summary(ctx.repo, pr_num, str(review_file))
         os.write(_json_stdout_fd, (summary + "\n").encode())

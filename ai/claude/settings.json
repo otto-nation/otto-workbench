@@ -224,6 +224,7 @@
       "Bash(mise:*)",
       "Bash(mkdir:*)",
       "Bash(mv:*)",
+      "Bash(node:*)",
       "Bash(otto-log:*)",
       "Bash(otto-workbench:*)",
       "Bash(pip3:*)",

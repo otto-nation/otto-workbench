@@ -17,6 +17,11 @@ Nothing reaches GitHub until the user approves it. Replies, the summary comment,
 thread resolutions, and deferral issues are drafted to stderr; `--post` is what
 publishes them, and it is only ever passed after the user has read the drafts.
 
+`--post` is a gate, not a step. The phase flags — `--fix`, `--finish`,
+`--reply` — choose which work the run does; `--post` decides whether that work
+leaves the machine. Neither implies the other, so `--finish --post` is not
+saying "publish" twice.
+
 Run with `/pr-comments`, `/pr-comments <pr_number>`, or `/pr-comments <branch_name>`.
 
 ---

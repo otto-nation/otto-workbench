@@ -5,8 +5,11 @@
 # matches a shape that triggers a permission prompt no allow-list rule can
 # suppress. Exits 0 otherwise.
 #
-# Every rule here has a matching section in ai/guidelines/rules/bash-tool.md —
-# add both, or Claude gets blocked without being told what to do instead.
+# Every block message names the alternative, then cites the rules section that
+# holds the rest: `See <file>.md § <Section>`. The citation is the contract —
+# a rule whose section is missing blocks Claude without telling it what to do
+# instead. tests/claude_settings.bats enforces that every block call carries one
+# and that every cited section exists.
 #
 # Usage: claude-bash-guard        (stdin: {"tool_input":{"command":"..."}})
 
@@ -44,16 +47,11 @@ cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 # broad one.
 
 if [[ "$cmd" == *"gh pr create"* ]]; then
-  block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template.'
-fi
-
-re_binlocal='^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
-if [[ "$cmd" =~ $re_binlocal ]]; then
-  block "Use relative path '${BASH_REMATCH[1]}' instead of absolute path. Absolute paths to bin/local/ scripts trigger a new permission prompt in every worktree."
+  block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
 fi
 
 if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
-  block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead.'
+  block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead. See bash-tool.md § Avoid find -exec.'
 fi
 
 # ── Statement-anchored rules ─────────────────────────────────────────────────
@@ -77,29 +75,52 @@ stripped=$(printf '%s' "$first_line" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
 
 re_func='(^|[;&|][[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\(\)|function[[:space:]])'
 if [[ "$stripped" =~ $re_func ]]; then
-  block 'A shell function definition makes the whole command unanalyzable (Contains function_definition) — the allow list is skipped entirely, so it prompts every time. Write the command directly with absolute paths. See bash-tool.md.'
+  block 'A shell function definition makes the whole command too complex to analyze ("Contains function_definition"), skipping the allow list entirely. Write the command directly with absolute paths. See bash-tool.md § Avoid Shell Function Definitions.'
 fi
 
 re_var='(^|[;&|][[:space:]]*)[A-Z_][A-Z0-9_]*='
 if [[ "$stripped" =~ $re_var ]]; then
-  block 'VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See bash-tool.md.'
+  block 'A VAR=value prefix is read as the command name and prompts every time. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ...). See bash-tool.md § Avoid Env-Var Prefix Syntax.'
 fi
 
 re_cd='(^|[;&|][[:space:]]*)cd[[:space:]]'
 if [[ "$stripped" =~ $re_cd ]] && [[ "$stripped" == *'&&'* || "$stripped" == *';'* ]]; then
-  block 'Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or gh --repo instead. See bash-tool.md.'
+  block 'Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or a bare cd <dir> as its own call. See bash-tool.md § Avoid Compound cd Commands.'
+fi
+
+# ceiling: flags carrying a separate argument are not skipped, so `env -u FOO -C
+# /x` slips through. Upgrade to a real option parser if that form shows up.
+re_env='(^|[;&|][[:space:]]*)env([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(-[A-Za-z0-9]*C|--chdir)([[:space:]/=]|$)'
+if [[ "$stripped" =~ $re_env ]]; then
+  block 'env -C cannot be statically analyzed, and it is not an escape hatch from the compound-cd rule — it is a second unsuppressible prompt. Run a bare cd <dir> as its own call first. See bash-tool.md § Avoid env -C.'
 fi
 
 re_brace='\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\}'
 if [[ "$stripped" =~ $re_brace ]]; then
-  block 'Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md.'
+  block 'Brace expansion triggers an unsuppressible permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md § Avoid Brace Expansion.'
 fi
 
-# The allow list keys on the bare command name, so Bash(cat:*) never matches
-# /bin/cat — the absolute form prompts on every call.
-re_sysbin='(^|[;&|][[:space:]])/(usr/)?bin/([A-Za-z0-9_.-]+)'
+# Ahead of the /bin rule below: a repo path ending in bin/local/ is the narrower
+# match, and the two would otherwise both fire on a repo rooted at /bin.
+re_binlocal='(^|[;&|][[:space:]]*)/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
+if [[ "$stripped" =~ $re_binlocal ]]; then
+  # The leading .*/ is greedy, so it swallows a `git/` segment and leaves the
+  # capture naming a path that does not resolve. Put it back from the whole
+  # match — `git/bin/local/x` is real, `bin/local/x` alone would not run.
+  #
+  # ceiling: a repo whose own directory is named `git` is indistinguishable from
+  # the git/ component here, and gets the `git/` prefix it does not need. That
+  # costs one wrong suggestion. Upgrade to resolving the repo root if it bites.
+  rel="${BASH_REMATCH[2]}"
+  if [[ "${BASH_REMATCH[0]}" == */git/bin/local/* ]]; then
+    rel="git/$rel"
+  fi
+  block "Use relative path '$rel' instead of the absolute path — an absolute path prompts again in every worktree. See bash.md § Script Invocation."
+fi
+
+re_sysbin='(^|[;&|][[:space:]]*)/(usr/)?bin/([A-Za-z0-9_.-]+)'
 if [[ "$stripped" =~ $re_sysbin ]]; then
-  block "Use '${BASH_REMATCH[3]}' instead of its absolute path. The allow list keys on the bare command name, so /bin and /usr/bin prefixes never match it and prompt every time. See bash-tool.md."
+  block "Use '${BASH_REMATCH[3]}' instead of its absolute path — the allow list keys on the bare command name, so /bin and /usr/bin paths prompt every time. See bash-tool.md § Avoid Absolute Paths to System Binaries."
 fi
 
 # ── Catch-all ────────────────────────────────────────────────────────────────
@@ -108,7 +129,7 @@ fi
 
 # shellcheck disable=SC2016  # the literal $( is the pattern being matched
 if [[ "$cmd" == *'$('* ]]; then
-  block 'Command substitution $(...) triggers an unsuppressible permission prompt. Run the inner command first, then use the result in the next call. See bash-tool.md.'
+  block 'Command substitution cannot be statically analyzed. Run the inner command first, then use the result in the next call. See bash-tool.md § Avoid Command Substitution in Arguments.'
 fi
 
 exit 0

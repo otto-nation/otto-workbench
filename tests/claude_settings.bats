@@ -276,6 +276,34 @@ _init_test_repo() {
 # same quote-stripped first line as the four guardrails below, so a `/bin/...`
 # path inside a quoted argument is not mistaken for an invocation.
 
+@test "binlocal hook: blocks an absolute path to a bin/local script" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/bin/local/validate-all"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"bin/local/validate-all"* ]]
+}
+
+@test "binlocal hook: blocks an absolute path after a statement separator" {
+  run _run_guard '{"tool_input":{"command":"ls -la; /Users/me/git/repo/bin/local/validate-all"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"bin/local/validate-all"* ]]
+}
+
+@test "binlocal hook: names the git/ prefixed path" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/git/bin/local/generate-git-rules"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'git/bin/local/generate-git-rules'"* ]]
+}
+
+@test "binlocal hook: allows the relative form" {
+  run _run_guard '{"tool_input":{"command":"bin/local/validate-all"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "binlocal hook: allows an absolute path inside a quoted argument" {
+  run _run_guard '{"tool_input":{"command":"git commit -m \"drop; /Users/me/repo/bin/local/old\""}}'
+  [ "$status" -eq 0 ]
+}
+
 @test "sysbin hook: blocks /bin/cat and names the bare command" {
   run _run_guard '{"tool_input":{"command":"/bin/cat /tmp/x/review.diff"}}'
   [ "$status" -eq 2 ]
@@ -286,6 +314,12 @@ _init_test_repo() {
   run _run_guard '{"tool_input":{"command":"ls -la; /usr/bin/grep -n foo f"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'grep'"* ]]
+}
+
+@test "sysbin hook: blocks /bin with no space after the separator" {
+  run _run_guard '{"tool_input":{"command":"ls -la;/bin/cat f"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'cat'"* ]]
 }
 
 @test "sysbin hook: allows the bare command name" {
@@ -356,6 +390,79 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+@test "env hook: blocks env -C" {
+  run _run_guard '{"tool_input":{"command":"env -C /tmp/wt pytest tests/foo_test.py -q"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "env hook: blocks env --chdir" {
+  run _run_guard '{"tool_input":{"command":"env --chdir=/tmp/wt bats tests/"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "env hook: blocks env -C after a pipe" {
+  run _run_guard '{"tool_input":{"command":"echo hi | env -C /tmp/wt cat"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "env hook: allows env without a directory flag" {
+  run _run_guard '{"tool_input":{"command":"env | grep PATH"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "env hook: blocks env -C behind another flag" {
+  run _run_guard '{"tool_input":{"command":"env -i -C /tmp/wt pytest tests/"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "env hook: blocks env -C with an attached directory" {
+  run _run_guard '{"tool_input":{"command":"env -C/tmp/wt ls"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "env hook: allows an env var assignment passed to env" {
+  run _run_guard '{"tool_input":{"command":"env FOO=bar printenv FOO"}}'
+  [ "$status" -eq 0 ]
+}
+
+# ── Guard ↔ rules contract ───────────────────────────────────────────────────
+# A block message must name the alternative and cite the rules section holding
+# the rest. A rule blocking Claude with no documented alternative is worse than
+# the prompt it prevents, so both halves of the citation are tested: that every
+# block call carries one, and that every one it carries resolves to a heading.
+
+@test "guard: every block call cites a rules section" {
+  local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+  local uncited
+  uncited=$(grep -n '^  block ' "$guard" | grep -v 'See [a-z-]*\.md §' || true)
+  [ -z "$uncited" ] || {
+    echo "block call(s) with no 'See <doc>.md § <Section>' citation:"
+    echo "$uncited"
+    return 1
+  }
+}
+
+@test "guard: every cited rules section exists" {
+  local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+  local doc section
+  # Headings are compared with backticks stripped: the guard's messages are
+  # plain text, so `## Avoid \`env -C\`` is cited as `§ Avoid env -C`.
+  while IFS='|' read -r doc section; do
+    [ -f "$REPO_ROOT/ai/guidelines/rules/$doc" ] || {
+      echo "guard cites a rules file that does not exist: $doc"
+      return 1
+    }
+    sed 's/`//g' "$REPO_ROOT/ai/guidelines/rules/$doc" | grep -qxF "## $section" || {
+      echo "guard cites '$doc § $section', which has no matching heading"
+      return 1
+    }
+  done < <(grep -oE 'See [a-z-]+\.md § [^.]+\.' "$guard" |
+    sed -E 's/^See ([a-z-]+\.md) § (.*)\.$/\1|\2/' | sort -u)
+}
+
 # The bodies below each put the pattern after a statement separator, which is
 # what the whole-command form matched on — a body line starting with the pattern
 # was never a false positive, since the regex only anchors to start-of-string.
@@ -370,6 +477,11 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+@test "binlocal hook: allows an absolute bin/local path inside a heredoc body" {
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\ntrue; /Users/me/repo/bin/local/validate-all\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
 @test "cd hook: allows a compound cd inside a heredoc body" {
   run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\nmkdir -p /tmp/y; cd /tmp/y && ls\nEOF"}}'
   [ "$status" -eq 0 ]
@@ -378,17 +490,6 @@ _init_test_repo() {
 # ── whole-command Bash guardrails ───────────────────────────────────────────
 # These scan the entire command rather than the quote-stripped first line: the
 # analyzer flags them wherever they appear, including inside a quoted argument.
-
-@test "binlocal hook: blocks an absolute path to a bin/local script" {
-  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/bin/local/validate-all"}}'
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"bin/local/validate-all"* ]]
-}
-
-@test "binlocal hook: allows the relative form" {
-  run _run_guard '{"tool_input":{"command":"bin/local/validate-all"}}'
-  [ "$status" -eq 0 ]
-}
 
 @test "exec hook: blocks find -exec" {
   run _run_guard '{"tool_input":{"command":"find . -name x -exec grep foo {} ;"}}'
@@ -399,7 +500,7 @@ _init_test_repo() {
 @test "subst hook: blocks command substitution" {
   run _run_guard '{"tool_input":{"command":"ls $(git rev-parse --show-toplevel)"}}'
   [ "$status" -eq 2 ]
-  [[ "$output" == *"Command substitution"* ]]
+  [[ "$output" == *"Run the inner command first"* ]]
 }
 
 # ── sync-settings.jq integrity ───────────────────────────────────────────────

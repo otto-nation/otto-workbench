@@ -2,7 +2,7 @@
 
 Patterns that trigger unsuppressible permission prompts in Claude Code's static analyzer. These apply to Bash tool usage, not to writing shell scripts.
 
-`ai/claude/bin/claude-bash-guard`, the PreToolUse hook for the Bash tool, enforces the patterns below that can be matched mechanically — every guard rule has a section here, but not every section has a guard rule. When adding a guard rule, add its section here too, or Claude gets blocked without being told what to do instead.
+`ai/claude/bin/claude-bash-guard`, the PreToolUse hook for the Bash tool, enforces the patterns below that can be matched mechanically — every guard rule points at a section here (or in another rules file) via a `# doc:` marker, but not every section has a guard rule. When adding a guard rule, add its section too, or Claude gets blocked without being told what to do instead. `tests/claude_settings.bats` fails the build if a rule has no section.
 
 ## Avoid Command Substitution in Arguments
 
@@ -15,17 +15,12 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 - Never use `cd <path> && <command>` — compound commands containing `cd` trigger an unsuppressible security prompt in Claude Code. This applies wherever a statement begins, not just at the start of the command: `mkdir -p x; cd x && ls` counts. Use these alternatives instead:
   - `git -C <path> ...` for git commands
   - `gh --repo <owner/repo> ...` or `gh api repos/<owner>/<repo>/...` for GitHub CLI (no directory needed for API calls)
-  - Run the command directly with absolute paths when possible
-  - A bare `cd <path>` as its own command, with the real command in the next call — see § Avoid `env -C`
+  - Run the command directly with absolute paths when possible — `pytest /abs/path/tests/foo_test.py`, `bats /abs/path/tests/foo.bats` (both derive their root from the file paths, so they need no cwd change)
+  - A bare `cd <dir>` on its own — no `&&`, no `;`, nothing after it — as its own call. The Bash tool keeps that working directory for later calls. This is the only reliable way to run a whole suite (`bats tests/`, `bin/local/validate-all`) that resolves paths from the repo root
 
 ## Avoid `env -C`
 
-- Never run a command through `env -C <dir> ...` (or `env --chdir=<dir> ...`) — the analyzer reports "env with -C flag cannot be statically analyzed", which no permission rule can suppress. `env -C` is not an escape hatch from the compound-`cd` rule, it is a second unsuppressible prompt
-- A bare `cd <dir>` on its own — no `&&`, no `;`, nothing after it — is allowed and the Bash tool keeps that working directory for later calls. Run it as its own command, then run the real command in a second call. This is the general answer when a tool has no directory flag, and the only reliable way to run a whole suite (`bats tests/`, `bin/local/validate-all`) that resolves paths relative to the repo root
-- When the tool does have a directory flag or takes paths, prefer that over changing directory at all:
-  - `git -C <path> ...`, `mise -C <path> run ...`, `go -C <path> test ./...`
-  - `pytest /abs/path/tests/foo_test.py /abs/path/tests/bar_test.py -q` — pytest derives rootdir and conftest from the file paths, so it needs no cwd change
-  - `bats /abs/path/tests/foo.bats` — same for bats
+- Never run a command through `env -C <dir> ...` (or `env --chdir=<dir> ...`) — the analyzer reports "env with -C flag cannot be statically analyzed", which no permission rule can suppress. `env -C` is not an escape hatch from the compound-`cd` rule, it is a second unsuppressible prompt. Use a bare `cd <dir>` first, per § Avoid Compound `cd` Commands
 
 ## Avoid Shell Function Definitions
 

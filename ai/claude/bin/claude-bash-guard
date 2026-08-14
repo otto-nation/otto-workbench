@@ -5,8 +5,10 @@
 # matches a shape that triggers a permission prompt no allow-list rule can
 # suppress. Exits 0 otherwise.
 #
-# Every rule here has a matching section in ai/guidelines/rules/bash-tool.md —
-# add both, or Claude gets blocked without being told what to do instead.
+# Every rule here carries a `# doc: <file> § <heading>` marker naming the
+# section of ai/guidelines/rules/ that says what to do instead — add both, or
+# Claude gets blocked without being told the alternative. Enforced by
+# tests/claude_settings.bats.
 #
 # Usage: claude-bash-guard        (stdin: {"tool_input":{"command":"..."}})
 
@@ -43,15 +45,18 @@ cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 # match is the message Claude sees, so a narrow rule earns its place above a
 # broad one.
 
+# doc: git-operations.md § PR Creation
 if [[ "$cmd" == *"gh pr create"* ]]; then
   block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template.'
 fi
 
+# doc: bash.md § Script Invocation
 re_binlocal='^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
 if [[ "$cmd" =~ $re_binlocal ]]; then
   block "Use relative path '${BASH_REMATCH[1]}' instead of absolute path. Absolute paths to bin/local/ scripts trigger a new permission prompt in every worktree."
 fi
 
+# doc: bash-tool.md § Avoid `find -exec`
 if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
   block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead.'
 fi
@@ -75,26 +80,31 @@ fi
 first_line=$(printf '%s\n' "$cmd" | head -1)
 stripped=$(printf '%s' "$first_line" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
 
+# doc: bash-tool.md § Avoid Shell Function Definitions
 re_func='(^|[;&|][[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\(\)|function[[:space:]])'
 if [[ "$stripped" =~ $re_func ]]; then
   block 'A shell function definition makes the whole command unanalyzable (Contains function_definition) — the allow list is skipped entirely, so it prompts every time. Write the command directly with absolute paths. See bash-tool.md.'
 fi
 
+# doc: bash-tool.md § Avoid Env-Var Prefix Syntax
 re_var='(^|[;&|][[:space:]]*)[A-Z_][A-Z0-9_]*='
 if [[ "$stripped" =~ $re_var ]]; then
   block 'VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See bash-tool.md.'
 fi
 
+# doc: bash-tool.md § Avoid Compound `cd` Commands
 re_cd='(^|[;&|][[:space:]]*)cd[[:space:]]'
 if [[ "$stripped" =~ $re_cd ]] && [[ "$stripped" == *'&&'* || "$stripped" == *';'* ]]; then
   block 'Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or gh --repo instead. See bash-tool.md.'
 fi
 
+# doc: bash-tool.md § Avoid `env -C`
 re_env='(^|[;&|][[:space:]]*)env[[:space:]]+(-C|--chdir)([[:space:]]|=)'
 if [[ "$stripped" =~ $re_env ]]; then
   block 'env -C cannot be statically analyzed, so it prompts every time. Use a tool-native directory flag (git -C, mise -C, go -C), absolute paths (pytest /abs/path/tests/x_test.py), or a bare cd <dir> as its own command first. See bash-tool.md.'
 fi
 
+# doc: bash-tool.md § Avoid Brace Expansion
 re_brace='\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\}'
 if [[ "$stripped" =~ $re_brace ]]; then
   block 'Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md.'
@@ -102,6 +112,7 @@ fi
 
 # The allow list keys on the bare command name, so Bash(cat:*) never matches
 # /bin/cat — the absolute form prompts on every call.
+# doc: bash-tool.md § Avoid Absolute Paths to System Binaries
 re_sysbin='(^|[;&|][[:space:]])/(usr/)?bin/([A-Za-z0-9_.-]+)'
 if [[ "$stripped" =~ $re_sysbin ]]; then
   block "Use '${BASH_REMATCH[3]}' instead of its absolute path. The allow list keys on the bare command name, so /bin and /usr/bin prefixes never match it and prompt every time. See bash-tool.md."
@@ -111,6 +122,7 @@ fi
 # Last, because it matches the widest range of commands — anything the rules
 # above can name more precisely should be blocked with their message instead.
 
+# doc: bash-tool.md § Avoid Command Substitution in Arguments
 # shellcheck disable=SC2016  # the literal $( is the pattern being matched
 if [[ "$cmd" == *'$('* ]]; then
   block 'Command substitution $(...) triggers an unsuppressible permission prompt. Run the inner command first, then use the result in the next call. See bash-tool.md.'

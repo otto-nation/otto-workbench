@@ -379,6 +379,39 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+# ── Guard ↔ rules contract ───────────────────────────────────────────────────
+# Every rule in the guard carries a `# doc: <file> § <heading>` marker naming
+# the prose that says what to do instead. A rule without one blocks Claude with
+# no documented alternative, which is worse than the prompt it prevents.
+
+@test "guard: every rule carries a doc marker" {
+  local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+  local blocks markers
+  blocks=$(grep -c '^  block ' "$guard" || true)
+  markers=$(grep -c '^# doc: ' "$guard" || true)
+  [ "$blocks" -eq "$markers" ] || {
+    echo "claude-bash-guard has $blocks block calls but $markers '# doc:' markers"
+    return 1
+  }
+}
+
+@test "guard: every doc marker resolves to a rules section" {
+  local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
+  local marker file heading
+  while IFS= read -r marker; do
+    file="${marker%% § *}"
+    heading="${marker#* § }"
+    [ -f "$REPO_ROOT/ai/guidelines/rules/$file" ] || {
+      echo "doc marker names a missing rules file: $file"
+      return 1
+    }
+    grep -qxF "## $heading" "$REPO_ROOT/ai/guidelines/rules/$file" || {
+      echo "$file has no section '## $heading'"
+      return 1
+    }
+  done < <(grep '^# doc: ' "$guard" | sed 's/^# doc: //')
+}
+
 # The bodies below each put the pattern after a statement separator, which is
 # what the whole-command form matched on — a body line starting with the pattern
 # was never a false positive, since the regex only anchors to start-of-string.

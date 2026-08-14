@@ -375,6 +375,20 @@ to read the body from stdin. Like every other write here it needs `--post`;
 without it the body is printed under `DRAFT (not published)` and nothing is
 sent. Use it instead of `gh api .../replies`, which bypasses the dedup entirely.
 
+**The summary is one comment, and it only grows:**
+
+A review cycle runs several rounds against a single `Review Comments Addressed`
+comment, edited in place. It reports all five thread outcomes — fixed, already
+addressed, dismissed, deferred, and the ones still awaiting discussion — so a
+`needs_human` thread appears as open rather than not at all.
+
+The replacement body is built from local state, which is per-target and
+per-worktree, and routinely absent for a round the comment already covers: `pr
+gc`, a recreated worktree, a later round run from another machine. So the
+published comment is read before the edit and any row this run cannot account
+for is carried forward verbatim, counted as `N carried over`, and logged. An
+edit never removes a row the comment already had.
+
 **`pr describe` is commit-aware:**
 
 The pass records the HEAD it described. A repeated run against an unchanged

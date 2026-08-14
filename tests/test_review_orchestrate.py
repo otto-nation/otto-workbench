@@ -109,23 +109,71 @@ class TestVerifyFinding:
         evidence = 'msg := "value // not a comment"'
         assert ro._verify_finding("handler.go", evidence, str(tmp_path)) is True
 
+    @pytest.mark.parametrize("lines", [(0, 6), (1, 5), (2, 6), (4, 6)])
+    def test_verbatim_quote_of_any_span_passes(self, ro, tmp_path, lines):
+        """Evidence copied out of the file verifies, whatever it spans.
 
-class TestStripTrailingComments:
+        The regression for #697: comment stripping ran on the quote only, so
+        the file kept text the quote no longer had. Every span here — over a
+        whole-line comment, over a trailing comment that is not on the last
+        line, or both — failed to match the file it was copied from.
+        """
+        source = (
+            "def run(action):\n"
+            "    if not publishing.enabled():\n"
+            "        # The closing line is the one read as the outcome, so it\n"
+            "        # carries the label the body was printed under.\n"
+            "        publishing.draft(action)  # not a post\n"
+            "        return 0\n"
+        )
+        src = tmp_path / "publish.py"
+        src.write_text(source)
+        start, end = lines
+        evidence = "\n".join(source.split("\n")[start:end])
+        assert ro._verify_finding("publish.py", evidence, str(tmp_path)) is True
+
+    def test_reviewer_annotation_comment_passes(self, ro, tmp_path):
+        # Reviewers annotate evidence with lines the file does not contain.
+        src = tmp_path / "handler.go"
+        src.write_text("func foo() {\n\tresult := db.Query(q)\n}\n")
+        evidence = "result := db.Query(q)\n// err is never checked"
+        assert ro._verify_finding("handler.go", evidence, str(tmp_path)) is True
+
+    def test_wrong_code_beside_a_comment_still_fails(self, ro, tmp_path):
+        src = tmp_path / "handler.go"
+        src.write_text("func foo() {\n\t// query the db\n\tresult := db.Query(q)\n}\n")
+        evidence = "// query the db\nresult := db.Exec(q)"
+        assert ro._verify_finding("handler.go", evidence, str(tmp_path)) is False
+
+
+class TestStripComments:
     def test_strips_go_comment(self, ro):
-        assert ro._strip_trailing_comments("x = 1 // explanation") == "x = 1"
+        assert ro._strip_comments("x = 1 // explanation") == "x = 1"
 
     def test_strips_python_comment(self, ro):
-        assert ro._strip_trailing_comments("x = 1 # explanation") == "x = 1"
+        assert ro._strip_comments("x = 1 # explanation") == "x = 1"
 
     def test_strips_template_comment(self, ro):
-        assert ro._strip_trailing_comments("{{ end }}{{/* note */}}") == "{{ end }}"
+        assert ro._strip_comments("{{ end }}{{/* note */}}") == "{{ end }}"
 
     def test_preserves_comment_inside_string(self, ro):
         line = 'msg := "value // not a comment"'
-        assert ro._strip_trailing_comments(line) == line
+        assert ro._strip_comments(line) == line
 
     def test_no_comment_unchanged(self, ro):
-        assert ro._strip_trailing_comments("x = 1") == "x = 1"
+        assert ro._strip_comments("x = 1") == "x = 1"
+
+    def test_drops_indented_whole_line_comment(self, ro):
+        assert ro._strip_comments("    # why this matters\n    x = 1") == "\n    x = 1"
+
+    def test_drops_column_zero_whole_line_comment(self, ro):
+        assert ro._strip_comments("// why this matters\nx = 1") == "\nx = 1"
+
+    def test_keeps_directive_with_no_space_after_marker(self, ro):
+        # Not prose: dropping these would erase code from the comparison.
+        assert ro._strip_comments("#!/usr/bin/env bash") == "#!/usr/bin/env bash"
+        assert ro._strip_comments("#include <stdio.h>") == "#include <stdio.h>"
+        assert ro._strip_comments("\t//nolint:errcheck") == "\t//nolint:errcheck"
 
 
 class TestVerificationDetail:

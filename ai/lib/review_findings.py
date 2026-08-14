@@ -592,11 +592,28 @@ _TRAILING_LINE_COMMENT_RE = re.compile(
 
 _TEMPLATE_COMMENT_RE = re.compile(r"\s*\{\{/\*.*?\*/\}\}\s*$")
 
+# A line whose content is nothing but prose commentary. The space after the
+# marker is what separates prose from a directive that is really code —
+# `#!/usr/bin/env bash`, `#include`, `//nolint:errcheck` — which is kept, on the
+# same rule the trailing form already applies.
+_COMMENT_ONLY_RE = re.compile(r"^\s*(?://|#)(?:\s|$)")
 
-def _strip_trailing_comments(text: str) -> str:
+
+def _strip_comments(text: str) -> str:
+    """Drop comments from one side of the evidence match.
+
+    A whole-line comment goes entirely: reviewers annotate evidence with lines
+    that are not in the file at all, so a comment line is not something the
+    match can insist on. A comment on a code line loses only its tail.
+
+    Both sides of the comparison run through this — see `_check_fragments`.
+    """
     lines = []
     for line in text.split("\n"):
         line = _TEMPLATE_COMMENT_RE.sub("", line)
+        if _COMMENT_ONLY_RE.match(line):
+            lines.append("")
+            continue
         m = _TRAILING_LINE_COMMENT_RE.match(line)
         if m:
             line = line[:m.start(2)]
@@ -611,8 +628,16 @@ def _find_mismatch(norm_frag: str, norm_file: str) -> dict:
     return {"longest_match_prefix": 0, "first_mismatch": norm_frag[:60]}
 
 
-def _check_fragments(evidence: str, norm_file: str) -> dict:
-    cleaned = _strip_trailing_comments(evidence)
+def _check_fragments(evidence: str, file_content: str) -> dict:
+    """Match each evidence fragment against the file it was quoted from.
+
+    The two sides are normalised the same way — `_strip_comments` then
+    `_normalize_code` — because the comparison is a substring test. Stripping
+    only the quote leaves the file holding text the quote no longer has, and a
+    verbatim quote then fails to match itself.
+    """
+    cleaned = _strip_comments(evidence)
+    norm_file = _normalize_code(_strip_comments(file_content))
     fragments = re.split(r"(?m)^\s*\.\.\.\s*$", cleaned)
     fragments = [f for f in fragments if f.strip()]
     if not fragments:
@@ -643,7 +668,7 @@ def _match_evidence(path: str, evidence: str | None, wt_path: str) -> dict:
     except OSError:
         detail["match_result"] = False
         return detail
-    detail.update(_check_fragments(evidence, _normalize_code(file_content)))
+    detail.update(_check_fragments(evidence, file_content))
     return detail
 
 

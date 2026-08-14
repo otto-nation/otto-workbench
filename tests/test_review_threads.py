@@ -1120,11 +1120,13 @@ class TestRenderDeferredSummary:
         assert "Deferred" in body
         assert "→" not in body
 
-    def test_omits_needs_human_from_body(self, rt):
+    def test_reports_needs_human_as_open(self, rt):
+        """The one condition that routes here is a needs_human thread — #714."""
         fix = FixSummary(
             threads=[
                 ThreadOutcome(id="t1", summary="auto fix", file="a.py", line=1, action=ThreadAction.FIXED),
-                ThreadOutcome(id="t2", summary="contested", file="b.py", line=2, action=ThreadAction.NEEDS_HUMAN),
+                ThreadOutcome(id="t2", summary="premise disputed", file="b.py", line=2,
+                              action=ThreadAction.NEEDS_HUMAN, reason="contested"),
                 ThreadOutcome(id="t3", summary="complex", file="c.py", line=3, action=ThreadAction.DEFERRED),
             ],
             commit_sha="abc1234",
@@ -1140,7 +1142,35 @@ class TestRenderDeferredSummary:
         body = mock_post.call_args[0][2]
         assert "auto fix" in body
         assert "complex" in body
-        assert "contested" not in body
+        assert "premise disputed" in body
+        assert "1 need discussion" in body
+
+    def test_needs_human_settled_by_hand_renders_as_fixed(self, rt, worktree):
+        """--finish reconciles first, so the row credits the hand fix — #714."""
+        pr_state.save_state(worktree / "target", PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="aaaaaaa", worktree_root=str(worktree)),
+            fix=FixSummary(head_sha="aaaaaaa", summary_deferred=True,
+                           commit_status="no_changes", threads=[
+                               ThreadOutcome(id="t1", summary="premise disputed",
+                                             file="b.py", line=2,
+                                             action=ThreadAction.NEEDS_HUMAN,
+                                             reason="contested"),
+                           ]),
+        ))
+        ctx = make_ctx(branch="b", worktree_root=worktree, head_sha="aaaaaaa",
+                       target_dir=worktree / "target")
+        report = PRReport(threads=[ReportThread(
+            id="t1", state=ThreadState.RESOLVED, is_resolved=True,
+            comments=[{"body": "x"}],
+        )])
+        with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
+            rt._finish_deferred_work(ctx, report, track=rt.TRACK_ALL)
+        body = mock_post.call_args[0][2]
+        assert "premise disputed" in body
+        assert "Addressed outside the fix pass" in body
+        assert "need discussion" not in body
 
     def test_reconstructs_commit_link(self, rt):
         fix = FixSummary(
@@ -1909,14 +1939,39 @@ class TestReconcileFixSnapshot:
         assert rt._reconcile_fix_snapshot(state, {}) == 0
         assert state.fix.threads[0].action == ThreadAction.DEFERRED
 
-    def test_non_deferred_outcomes_are_left_alone(self, rt):
+    def test_a_needs_human_thread_settled_by_hand_is_reclaimed(self, rt):
+        """The pass handed it to the operator; the operator answering it is the ending."""
         state = _make_state(FixSummary(head_sha="aaaaaaa", threads=[
-            ThreadOutcome(id="t1", action=ThreadAction.NEEDS_HUMAN),
+            ThreadOutcome(id="t1", action=ThreadAction.NEEDS_HUMAN, reason="contested"),
         ]))
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
+        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert state.fix.threads[0].action == ThreadAction.FIXED
+
+    def test_a_needs_human_thread_still_open_is_left_alone(self, rt):
+        state = _make_state(FixSummary(head_sha="aaaaaaa", threads=[
+            ThreadOutcome(id="t1", action=ThreadAction.NEEDS_HUMAN, reason="contested"),
+        ]))
+        threads = {"t1": self._thread([{"body": "why not do it the other way?"}])}
         assert rt._reconcile_fix_snapshot(state, threads) == 0
         assert state.fix.threads[0].action == ThreadAction.NEEDS_HUMAN
+
+    def test_settled_outcomes_are_left_alone(self, rt):
+        """Only the two open actions are reconcilable — the rest are already decided."""
+        settled = (ThreadAction.FIXED, ThreadAction.DISMISSED,
+                   ThreadAction.ALREADY_ADDRESSED)
+        state = _make_state(FixSummary(head_sha="aaaaaaa", threads=[
+            ThreadOutcome(id=f"t{i}", action=action)
+            for i, action in enumerate(settled)
+        ]))
+        threads = {
+            f"t{i}": ReportThread(id=f"t{i}", comments=[{"body": "x"}],
+                                  state=ThreadState.RESOLVED, is_resolved=True)
+            for i in range(len(settled))
+        }
+        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert [t.action for t in state.fix.threads] == list(settled)
 
     def test_the_reason_records_why_it_flipped(self, rt):
         state = self._state()

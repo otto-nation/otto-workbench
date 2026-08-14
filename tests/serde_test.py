@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,7 +16,7 @@ sys.path.insert(0, str(LIB_DIR))
 
 from pr_state import PRState
 from review_preflight import PipelineState
-from serde import from_dict, load_file, to_dict
+from serde import from_dict, load_file, to_dict, write_json
 
 
 class Color(str, Enum):
@@ -481,6 +482,114 @@ def test_load_file_recovers_a_null_behind_a_scalar_hint(tmp_path, capsys):
     assert state is not None
     assert state.ci.failure_count == 0
     assert capsys.readouterr().err == ""
+
+
+class TestWriteJson:
+    """The one atomic write every state file goes through."""
+
+    def test_it_round_trips_through_load_file(self, tmp_path):
+        path = tmp_path / "inner.json"
+
+        write_json(path, to_dict(Inner(name="x", color=Color.BLUE)))
+
+        assert load_file(Inner, path) == Inner(name="x", color=Color.BLUE)
+
+    def test_it_creates_parent_directories(self, tmp_path):
+        path = tmp_path / "a" / "b" / "state.json"
+
+        write_json(path, {"k": "v"})
+
+        assert json.loads(path.read_text()) == {"k": "v"}
+
+    def test_it_does_not_coerce_a_path_from_what_it_is_handed(self, tmp_path, monkeypatch):
+        """A `MagicMock` satisfies `os.PathLike`, so a `Path(path)` here would
+        turn a test's stubbed state directory into real directories under the
+        working directory — `ci_check` reaches this through a mocked context and
+        swallows the failure, so the only symptom was junk in the repo.
+
+        Which exception a stub fails with is not the contract — where the mock's
+        `__fspath__` lands decides that. The empty working directory is.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(Exception):
+            write_json(MagicMock() / "state.json", {"k": "v"})
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_failed_write_leaves_the_previous_file_intact(self, tmp_path):
+        """The defect that motivates the temp file: `open(path, "w")` truncates
+        before the first byte is written, so a value that cannot be encoded — or
+        a crash partway through — destroys the state that was already there."""
+        path = tmp_path / "state.json"
+        write_json(path, {"good": True})
+
+        with pytest.raises(TypeError):
+            write_json(path, {"bad": object()})
+
+        assert json.loads(path.read_text()) == {"good": True}
+
+    def test_a_failed_write_leaves_no_temp_file_behind(self, tmp_path):
+        path = tmp_path / "state.json"
+
+        with pytest.raises(TypeError):
+            write_json(path, {"bad": object()})
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_successful_write_leaves_no_temp_file_behind(self, tmp_path):
+        path = tmp_path / "state.json"
+
+        write_json(path, {"k": "v"})
+
+        assert [p.name for p in tmp_path.iterdir()] == ["state.json"]
+
+    def test_a_reader_never_observes_a_partial_file(self, tmp_path, monkeypatch):
+        """A reader running between the truncate and the last byte is what makes
+        a non-atomic write corrupt a state file. Standing in for that reader at
+        the one moment it matters — mid-serialization — the destination still
+        holds the whole previous document."""
+        path = tmp_path / "state.json"
+        write_json(path, {"generation": 1})
+        seen = []
+
+        # The hook lands because `indent` sends `json.dump` down the pure-Python
+        # encoder, which asks a dict subclass for `items()`. The C encoder walks
+        # the hash table directly and would never call this.
+        class Peeking(dict):
+            def items(self):
+                seen.append(json.loads(path.read_text()))
+                return super().items()
+
+        write_json(path, Peeking({"generation": 2}))
+
+        assert seen == [{"generation": 1}]
+        assert json.loads(path.read_text()) == {"generation": 2}
+
+
+def test_serde_owns_the_only_atomic_rename():
+    """No second copy of the write-temp-then-rename dance.
+
+    Four hand-rolled copies is what this replaced, and one of them had drifted
+    into not being atomic at all. A fifth starts the same way: `os.replace` in
+    a module that is not this one.
+    """
+    ai = Path(__file__).resolve().parent.parent / "ai"
+    # The extensionless `ai/claude/bin/*` commands are Python too, so match on
+    # the shebang rather than the suffix — a copy lands wherever it is written.
+    sources = (
+        p for p in ai.rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts
+    )
+    offenders = sorted(
+        p.relative_to(ai).as_posix()
+        for p in sources
+        for text in [p.read_text(errors="ignore")]
+        if (p.suffix == ".py" or text.startswith("#!/usr/bin/env python"))
+        and "os.replace(" in text
+    )
+
+    assert offenders == ["lib/serde.py"]
 
 
 def test_load_file_returns_none_when_a_required_field_is_absent(tmp_path):

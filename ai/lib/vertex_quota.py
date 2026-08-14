@@ -15,7 +15,6 @@ import hashlib
 import json
 import os
 import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -25,6 +24,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import log
+import serde
 import workbench_paths
 from review_common import Phase
 
@@ -159,22 +159,11 @@ def _check_cache(project: str, region: str) -> dict[str, str] | None:
     return None
 
 
-def _atomic_write(path: Path, payload: str) -> None:
-    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(payload)
-        os.replace(tmp_path, path)
-    except OSError:
-        os.unlink(tmp_path)
-        raise
-
-
 def _write_cache(project: str, region: str, models: dict[str, str]) -> None:
-    path = _cache_key(project, region)
+    """Record the quota probe's result. A cache that cannot be written is not
+    a failure worth surfacing — the next run re-probes."""
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(path, json.dumps({"ts": time.time(), "models": models}))
+        serde.write_json(_cache_key(project, region), {"ts": time.time(), "models": models})
     except OSError:
         pass
 

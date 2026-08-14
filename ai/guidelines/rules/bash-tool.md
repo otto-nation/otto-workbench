@@ -27,6 +27,7 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
   - `cat /path/to/file` instead of `/bin/cat /path/to/file`
   - `env` instead of `/usr/bin/env`
 - This is the opposite of the `bin/local/` rule: workbench scripts must use the *relative* path, system binaries must use the *bare* name. Both exist so a single allow-list entry covers every invocation
+- Like the other statement-anchored checks below, the hook enforcing this scans the quote-stripped first line — a `/bin/...` path inside a quoted argument or a heredoc body is left alone, and a `/bin/...` call on a later line is not caught
 
 ## Avoid Env-Var Prefix Syntax
 

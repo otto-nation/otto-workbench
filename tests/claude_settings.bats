@@ -276,7 +276,9 @@ _get_pr_create_hook() {
 
 # ── system binary absolute paths ────────────────────────────────────────────
 # The allow list keys on the bare command name, so `Bash(cat:*)` never matches
-# `/bin/cat` — the absolute form prompts on every call.
+# `/bin/cat` — the absolute form prompts on every call. This check rides the
+# same quote-stripped first line as the four guardrails below, so a `/bin/...`
+# path inside a quoted argument is not mistaken for an invocation.
 
 _get_sysbin_hook() {
   _get_bash_hook "its absolute path"
@@ -319,6 +321,13 @@ _get_sysbin_hook() {
   [ "$status" -eq 0 ]
 }
 
+@test "sysbin hook: allows a separator-prefixed path inside a quoted argument" {
+  local hook
+  hook=$(_get_sysbin_hook)
+  run _run_hook "$hook" '{"tool_input":{"command":"git commit -m \"fix: drop; /usr/bin/env callers\""}}'
+  [ "$status" -eq 0 ]
+}
+
 # ── statement-anchored Bash guardrails ──────────────────────────────────────
 # These checks match at the start of any statement, not just the start of the
 # command — a leading no-op token must not be a way around them. They scope to
@@ -334,9 +343,9 @@ _get_sysbin_hook() {
 # steer command style, they are not a security boundary. Upgrade to a real
 # tokenizer if either misfire shows up on a command worth running.
 
-@test "the four first-line checks live in exactly one hook" {
+@test "the first-line checks live in exactly one hook" {
   local needle count
-  for needle in "function_definition" "VAR=value" "Compound cd" "Brace expansion"; do
+  for needle in "function_definition" "VAR=value" "Compound cd" "Brace expansion" "its absolute path"; do
     count=$(_get_bash_hook "$needle" | wc -l | tr -d ' ')
     [ "$count" -eq 1 ] || {
       echo "'$needle' matched $count hooks — the quote-stripping preamble was duplicated"

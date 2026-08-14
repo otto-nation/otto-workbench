@@ -122,12 +122,7 @@ A second `pr` run refused to start because one is already in flight against the 
 ✗ another pr run already owns this target: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
 ```
 
-Two runs against one PR corrupt each other — they both read-modify-write that
-target's `state.json`, and with `--fix` they both edit and commit the same
-checkout. The lock is keyed on what a run targets, not where it was launched:
-reviews of two different PRs from one directory run concurrently, and two runs
-against the same PR exclude each other from anywhere. Wait for the holder to
-finish, or stop it with the printed `kill <pid>`.
+Two runs against one PR corrupt each other — they both read-modify-write that target's `state.json`, and with `--fix` they both commit to the same branch, whether from one checkout or two. The lock is keyed on what a run targets, not where it was launched: reviews of two different PRs from one directory run concurrently, and two runs against the same PR exclude each other from anywhere. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
 
 `pr status` is read-only and never contends. `pr gc` prunes target state for merged and closed PRs, skips its own target, and takes each target's lock before touching it — so it will not delete state out from under a running review, and it is safe to run at any time.
 

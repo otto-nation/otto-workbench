@@ -80,7 +80,7 @@ stripped=$(printf '%s' "$first_line" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
 
 re_func='(^|[;&|][[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\(\)|function[[:space:]])'
 if [[ "$stripped" =~ $re_func ]]; then
-  block 'A shell function definition makes the parser classify the whole command as too complex to analyze ("Contains function_definition"), which skips the allow list entirely. Write the command directly with absolute paths. See bash-tool.md § Avoid Shell Function Definitions.'
+  block 'A shell function definition makes the whole command too complex to analyze ("Contains function_definition"), skipping the allow list entirely. Write the command directly with absolute paths. See bash-tool.md § Avoid Shell Function Definitions.'
 fi
 
 re_var='(^|[;&|][[:space:]]*)[A-Z_][A-Z0-9_]*='
@@ -107,7 +107,7 @@ fi
 
 re_sysbin='(^|[;&|][[:space:]]*)/(usr/)?bin/([A-Za-z0-9_.-]+)'
 if [[ "$stripped" =~ $re_sysbin ]]; then
-  block "The allow list keys on the bare command name, so /bin and /usr/bin paths never match it and prompt every time. Use '${BASH_REMATCH[3]}' instead of its absolute path. See bash-tool.md § Avoid Absolute Paths to System Binaries."
+  block "Use '${BASH_REMATCH[3]}' instead of its absolute path — the allow list keys on the bare command name, so /bin and /usr/bin paths prompt every time. See bash-tool.md § Avoid Absolute Paths to System Binaries."
 fi
 
 # ── Catch-all ────────────────────────────────────────────────────────────────

@@ -1050,8 +1050,48 @@ def test_delegate_value_flags_degrades_on_a_hung_delegate(_mock_run):
 
 @patch("pr_cli.subprocess.run")
 def test_delegate_value_flags_degrades_on_a_nonzero_exit(mock_run):
-    mock_run.return_value = MagicMock(returncode=2, stdout="--reply\n")
+    mock_run.return_value = MagicMock(returncode=2, stdout="--reply\n", stderr="")
     assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+
+
+@patch("pr_cli.subprocess.run")
+def test_delegate_value_flags_reprints_a_refusal(mock_run, capsys):
+    """Degrading is silent misclassification, so the delegate's reason is surfaced."""
+    mock_run.return_value = MagicMock(
+        returncode=2, stdout="",
+        stderr="ci-check: --value-flags: --track declares nargs='+'\n",
+    )
+    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    err = capsys.readouterr().err
+    assert "ci-check --value-flags" in err
+    assert "--track declares nargs='+'" in err
+
+
+@patch("pr_cli.subprocess.run")
+def test_delegate_value_flags_stays_quiet_when_the_probe_says_nothing(mock_run, capsys):
+    mock_run.return_value = MagicMock(returncode=2, stdout="", stderr="  \n")
+    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    sorted(name for name, entry in pr_cli._COMMANDS.items() if entry.get("script")),
+)
+def test_every_delegate_answers_the_probe(command):
+    """CI gate for the arity protocol: a flag it cannot describe fails here first.
+
+    The refusal in tool_parser only reaches a human who happens to run the
+    ambiguous form of the command, so this asserts the whole registry up front —
+    adding an unsupported nargs to any delegate breaks the build, not a user.
+    """
+    script = str(BIN_DIR / pr_cli._COMMANDS[command]["script"])
+    probe = _REAL_SUBPROCESS_RUN(
+        [script, pr_cli.VALUE_FLAGS_FLAG],
+        capture_output=True, text=True, timeout=pr_cli.VALUE_FLAGS_TIMEOUT,
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.split(), f"{script} answered the probe with nothing"
 
 
 @patch("pr_cli.subprocess.run")

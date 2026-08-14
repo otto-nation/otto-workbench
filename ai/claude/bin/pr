@@ -43,10 +43,11 @@ from trail import Trail, add_trail_args
 # key; internal commands omit it.  "prefix" adds sub-command tokens before the
 # user's argv (e.g. claude-review gc …).
 
-# Seconds to wait for a delegate to answer the --value-flags probe. Generous
-# because the answer costs a Python interpreter start, and cheap because the
-# probe only runs on the ambiguous path (a bare positional, no --pr/--branch).
-VALUE_FLAGS_TIMEOUT = 10.0
+# Seconds to wait for a delegate to answer the --value-flags probe. The answer
+# costs an interpreter start plus argparse construction, so this is already
+# orders of magnitude of headroom — and a delegate that hangs stalls a command
+# the user expected to be instant, so the ceiling stays low.
+VALUE_FLAGS_TIMEOUT = 5.0
 
 _COMMANDS = {
     "create":   {"help": "Create a PR (wraps task pr:create)"},
@@ -124,6 +125,13 @@ def _delegate_value_flags(entry: dict) -> frozenset[str]:
         # pre-arity behaviour.
         return frozenset()
     if probe.returncode != 0:
+        # Same degradation as above, but this failure is the delegate's own
+        # doing rather than the environment's — a flag the protocol cannot
+        # describe, or a parser that no longer builds. Reprint what it said so
+        # whoever broke it sees a diagnosis instead of a token quietly going to
+        # the wrong place.
+        if probe.stderr.strip():
+            log.warn(f"{script} {VALUE_FLAGS_FLAG}: {probe.stderr.strip()}")
         return frozenset()
     return frozenset(tok for tok in probe.stdout.split() if tok.startswith("-"))
 

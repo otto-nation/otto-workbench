@@ -223,3 +223,54 @@ def test_tool_parser_answers_the_probe(capsys):
         parser.parse_args([VALUE_FLAGS_FLAG])
     assert exc_info.value.code == 0
     assert "--repo-dir" in capsys.readouterr().out
+
+
+# ── multi-value options the protocol cannot describe ───────────────────────
+
+
+@pytest.mark.parametrize("nargs", ["?", "+", "*", 2, argparse.REMAINDER])
+def test_value_taking_options_rejects_a_multi_value_option(nargs):
+    """A flat option list cannot say how many tokens an option eats — so refuse."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--track", nargs=nargs)
+    with pytest.raises(ValueError, match="--track declares nargs="):
+        value_taking_options(parser)
+
+
+def test_value_taking_options_accepts_an_explicit_nargs_of_one():
+    """nargs=1 and the nargs=None default both mean exactly one token."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--reply", nargs=1)
+    assert value_taking_options(parser) == ["--reply"]
+
+
+def test_value_taking_options_still_ignores_multi_value_positionals():
+    """claude-review's `args` positional is nargs='*' and must keep working."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--reply")
+    parser.add_argument("args", nargs="*")
+    assert value_taking_options(parser) == ["--reply"]
+
+
+def test_handle_value_flags_reports_a_multi_value_option_on_stderr(capsys):
+    """Loud, not silent: the probe names the flag it cannot describe and exits 2."""
+    parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)
+    parser.add_argument("--track", nargs="+")
+    with pytest.raises(SystemExit) as exc_info:
+        handle_value_flags(parser, [VALUE_FLAGS_FLAG])
+    assert exc_info.value.code == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == "", "a refusal must not look like an empty answer"
+    assert captured.err.startswith(f"bad-delegate: {VALUE_FLAGS_FLAG}: ")
+    assert "--track declares nargs='+'" in captured.err
+    assert "_positional_index" in captured.err, "the message must name the fix"
+
+
+def test_a_multi_value_option_does_not_break_normal_parsing(capsys):
+    """The constraint is on the probe, not on the delegate's own CLI."""
+    parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)
+    parser.add_argument("--track", nargs="+")
+    handle_value_flags(parser, ["--track", "a", "b"])
+    assert parser.parse_args(["--track", "a", "b"]).track == ["a", "b"]
+    assert capsys.readouterr().err == ""

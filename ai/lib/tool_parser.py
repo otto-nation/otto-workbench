@@ -33,6 +33,11 @@ _FRAMEWORK_ARGS = frozenset({"help", "tool_schema", "debug"})
 # Hidden probe asking a script which of its options consume a following value.
 VALUE_FLAGS_FLAG = "--value-flags"
 
+# The nargs values that mean "this option consumes exactly one token", which is
+# the only arity the --value-flags answer can express.  argparse spells the
+# default two ways: None (plain store) and a literal 1.
+_SINGLE_VALUE_NARGS = (None, 1)
+
 
 class ToolParser(ArgumentParser):
     """ArgumentParser subclass that supports --tool-schema introspection.
@@ -129,11 +134,28 @@ def value_taking_options(parser: ArgumentParser) -> list[str]:
     two answers to the same question, and a caller matching raw argv tokens
     needs both.  Store-true/count/help actions declare ``nargs=0`` and are
     excluded; everything else (``store``, ``append``, typed options) takes one.
+
+    The answer is a flat set of option strings, so it can only say "this option
+    eats the next token" — it has no way to say how many.  An option declared
+    ``nargs='?'``, ``'+'``, ``'*'``, ``REMAINDER`` or an int above 1 therefore
+    raises ``ValueError`` instead of being reported as single-valued, which
+    would make the caller skip the wrong number of tokens and silently
+    misclassify the one after them.  Positionals are exempt because they never
+    appear in the answer — ``claude-review`` declares ``args`` with ``nargs='*'``.
     """
     options = set()
     for action in parser._actions:
         if not action.option_strings or action.nargs == 0:
             continue
+        if action.nargs not in _SINGLE_VALUE_NARGS:
+            raise ValueError(
+                f"{'/'.join(action.option_strings)} declares nargs={action.nargs!r}, "
+                f"but {VALUE_FLAGS_FLAG} can only describe options that consume exactly "
+                "one value (nargs=None or 1). Callers skip a fixed one token after such "
+                "an option, so answering for this one would misclassify the next. Give "
+                "the option a single value, or teach both this function and "
+                "_positional_index in ai/claude/bin/pr to carry a count."
+            )
         options.update(action.option_strings)
     return sorted(options)
 
@@ -152,10 +174,20 @@ def handle_value_flags(parser: ArgumentParser, args=None) -> None:
     ``--tool-schema`` also enrolls a script in MCP tool discovery
     (``ai/claude/mcps/server.py``), which is not a side effect an arity probe
     should carry.
+
+    A parser this protocol cannot describe (see ``value_taking_options``) is
+    reported on stderr and exits 2 rather than raising: the probe runs as a
+    subprocess, so a traceback would reach nobody, while a one-line diagnosis
+    is reprinted by the caller that captured it.
     """
     if VALUE_FLAGS_FLAG not in (sys.argv[1:] if args is None else args):
         return
-    sys.stdout.write("".join(f"{opt}\n" for opt in value_taking_options(parser)))
+    try:
+        options = value_taking_options(parser)
+    except ValueError as exc:
+        sys.stderr.write(f"{parser.prog}: {VALUE_FLAGS_FLAG}: {exc}\n")
+        sys.exit(2)
+    sys.stdout.write("".join(f"{opt}\n" for opt in options))
     sys.exit(0)
 
 

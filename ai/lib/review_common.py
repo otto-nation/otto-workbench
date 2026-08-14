@@ -471,6 +471,14 @@ class Diagnosis:
             return cls(_MESSAGE_KINDS[text])
         return cls(DiagnosisKind.UNKNOWN, detail=text)
 
+    @classmethod
+    def _raw_schema(cls, object_schema: dict) -> dict:
+        """Both shapes `_from_raw` reads, for anything that publishes a schema
+        over a diagnosis. The bare string is the pre-typed form a review file
+        written by an older run still holds, and a schema naming only the
+        object would call that file invalid where the reader accepts it."""
+        return {"oneOf": [object_schema, {"type": "string"}]}
+
 
 # ── Templates ────────────────────────────────────────────────────────────────
 

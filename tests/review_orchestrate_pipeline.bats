@@ -693,7 +693,7 @@ print(f'stats={stats_exists},prompt={prompt_exists}')
   [ "$result" = "stats=True,prompt=False" ]
 }
 
-@test "_review_group: skip=True returns early when output exists" {
+@test "_review_group: recovery skip returns early when output exists" {
   echo "existing group review" > "$TMPDIR/group-1.md"
 
   result=$(_py "
@@ -709,7 +709,9 @@ with contextlib.redirect_stdout(io.StringIO()):
         session_log='$TMPDIR/s.jsonl',
     )
     grp = mod.Group(name='services', files=['a.go'], lines=15)
-    idx, output, failed = mod._review_group(1, grp, job, 3, 'holistic', skip=True)
+    idx, output, failed = mod._review_group(
+        1, grp, job, 3, 'holistic', skip=mod.GroupSkip.RECOVERY,
+    )
 print(f'idx={idx},failed={failed}')
 import os
 print(f'output_exists={os.path.exists(output)}')
@@ -719,7 +721,7 @@ print(f'output_exists={os.path.exists(output)}')
   [[ "$result" == *"output_exists=True"* ]]
 }
 
-@test "_review_group: skip=True with missing output reports failure" {
+@test "_review_group: recovery skip with missing output reports failure" {
   result=$(_py "
 import io, contextlib
 with contextlib.redirect_stdout(io.StringIO()):
@@ -733,11 +735,56 @@ with contextlib.redirect_stdout(io.StringIO()):
         session_log='$TMPDIR/s.jsonl',
     )
     grp = mod.Group(name='services', files=['a.go'], lines=15)
-    idx, output, failed = mod._review_group(1, grp, job, 3, 'holistic', skip=True)
+    idx, output, failed = mod._review_group(
+        1, grp, job, 3, 'holistic', skip=mod.GroupSkip.RECOVERY,
+    )
 print(f'idx={idx},group={failed.group},reason={failed.diagnosis.message}')
 ")
   echo "$result"
   [[ "$result" == *"idx=1,group=services,reason=output missing"* ]]
+}
+
+@test "_review_group: carried skip with no output is not a failure" {
+  result=$(_py "
+import io, contextlib
+with contextlib.redirect_stdout(io.StringIO()):
+    job = mod.ReviewJob(
+        repo='org/repo', pr_number='1',
+        pr=mod.PRMetadata(title='t', body='', head='f', base='main', head_sha='abc',
+            additions=10, deletions=5, changed_files=1,
+            files=[{'path': 'a.go', 'additions': 10, 'deletions': 5}]),
+        ctx=mod.PRContext(), wt_path='/tmp/wt',
+        review_file='$TMPDIR/review.md',
+        session_log='$TMPDIR/s.jsonl',
+    )
+    grp = mod.Group(name='services', files=['a.go'], lines=15)
+    idx, output, failed = mod._review_group(
+        1, grp, job, 3, 'holistic', skip=mod.GroupSkip.CARRIED,
+    )
+import os
+print(f'idx={idx},failed={failed},output_exists={os.path.exists(output)}')
+")
+  echo "$result"
+  [[ "$result" == *"idx=1,failed=None,output_exists=False"* ]]
+}
+
+@test "_build_group_skips: keeps incremental and recovery skips distinct" {
+  _py_here <<'PY'
+skips = mod._build_group_skips({1, 6}, None)
+assert skips == {1: mod.GroupSkip.CARRIED, 6: mod.GroupSkip.CARRIED}, skips
+
+skips = mod._build_group_skips(set(), {2, 3})
+assert skips == {2: mod.GroupSkip.RECOVERY, 3: mod.GroupSkip.RECOVERY}, skips
+
+# A group both carried and already on disk is a recovery skip: its output
+# exists, so reusing it beats re-deriving findings from the prior review.
+skips = mod._build_group_skips({1, 6}, {1, 2})
+assert skips == {
+    1: mod.GroupSkip.RECOVERY,
+    2: mod.GroupSkip.RECOVERY,
+    6: mod.GroupSkip.CARRIED,
+}, skips
+PY
 }
 
 @test "_validate_resume_state: matching state returns valid" {

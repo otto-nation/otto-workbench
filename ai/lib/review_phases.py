@@ -29,7 +29,7 @@ from review_agent import (
 )
 from review_common import (
     FILE_STAT_FMT,
-    AgentKind, Diagnosis, DiagnosisKind, Effort, Phase, Thinking,
+    AgentKind, Diagnosis, DiagnosisKind, Effort, GroupSkip, Phase, Thinking,
     EFFORT_PRESETS,
     TEMPLATE_DISPROVE, TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT,
     phase_log_path,
@@ -281,14 +281,21 @@ def _synthesis_max_turns(merged_content: str) -> int:
 def _review_group(
     i: int, grp: Group, job: ReviewJob,
     group_count: int, holistic_content: str,
-    skip: bool = False,
+    skip: GroupSkip | None = None,
     pipeline_state: PipelineState | None = None,
     max_turns: int | None = None,
     retry_hint: str = "",
 ) -> tuple[int, str, GroupFailure | None]:
     group_output = phase_output_path(job.review_file, Phase.GROUP, i)
 
-    if skip:
+    if skip is GroupSkip.CARRIED:
+        log.info(
+            f"Phase 2: Group {i}/{group_count} — {grp.name} skipped "
+            f"(unchanged — findings carried forward)"
+        )
+        return (i, group_output, None)
+
+    if skip is GroupSkip.RECOVERY:
         if _has_output(group_output):
             log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
             return (i, group_output, None)
@@ -486,17 +493,16 @@ def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> b
 def _run_serial_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str,
-    skip_groups: set[int] | None,
+    skip_groups: dict[int, GroupSkip],
     pipeline_state: PipelineState | None,
 ) -> list[GroupFailure]:
     failed_groups: list[GroupFailure] = []
     consecutive_same_reason = 0
     last: Diagnosis | None = None
     for i, grp in enumerate(groups, 1):
-        skip = skip_groups is not None and i in skip_groups
         _, _, failed = _review_group(
             i, grp, job, group_count, holistic_content,
-            skip=skip, pipeline_state=pipeline_state,
+            skip=skip_groups.get(i), pipeline_state=pipeline_state,
         )
         if not failed:
             consecutive_same_reason = 0
@@ -521,7 +527,7 @@ def _run_serial_reviews(
 def _run_parallel_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, workers: int,
-    skip_groups: set[int] | None,
+    skip_groups: dict[int, GroupSkip],
     pipeline_state: PipelineState | None,
 ) -> list[GroupFailure]:
     log.info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
@@ -530,7 +536,7 @@ def _run_parallel_reviews(
         futures = [
             pool.submit(
                 _review_group, i, grp, job, group_count, holistic_content,
-                skip=(skip_groups is not None and i in skip_groups),
+                skip=skip_groups.get(i),
                 pipeline_state=pipeline_state,
             )
             for i, grp in enumerate(groups, 1)
@@ -634,9 +640,10 @@ def _run_skipped_groups(
 def _phase_group_reviews(
     groups: list[Group], job: ReviewJob,
     group_count: int, holistic_content: str, max_parallel: int,
-    skip_groups: set[int] | None = None,
+    skip_groups: dict[int, GroupSkip] | None = None,
     pipeline_state: PipelineState | None = None,
 ) -> tuple[list[str], list[GroupFailure]]:
+    skip_groups = skip_groups or {}
     group_outputs = [
         phase_output_path(job.review_file, Phase.GROUP, i)
         for i in range(1, group_count + 1)

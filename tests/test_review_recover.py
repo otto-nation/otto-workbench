@@ -27,6 +27,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import review_gc
 import review_phases
 import review_pipeline
 import review_state
@@ -157,8 +158,12 @@ def run(monkeypatch):
             review_body=review_body,
         )
         monkeypatch.setattr(review_phases, "invoke_agent", agent)
+        # The sweep belongs to the orchestrator's scope rather than to the
+        # pipeline, so a run that leaves no state behind is only visible to a
+        # harness that enters that scope too.
         with contextlib.redirect_stdout(io.StringIO()):
-            review_pipeline.run_multi_phase(job, **pipeline_kwargs)
+            with review_gc.cleaned_on_success(Path(job.artifact_dir)):
+                review_pipeline.run_multi_phase(job, **pipeline_kwargs)
         return agent
 
     return _run

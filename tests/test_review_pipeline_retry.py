@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import review_gc
 import review_phases
 import review_pipeline
 import review_preflight
@@ -214,7 +215,11 @@ class TestRetryMissingOutput:
 
 
 class TestSingleAgentCleanup:
-    """A single-agent run leaves the directory holding only its deliverable."""
+    """A single-agent run leaves the directory holding only its deliverable.
+
+    The pipeline does not sweep — the orchestrator's scope does, once every
+    phase is done — so the harness enters that scope the same way it does.
+    """
 
     def _run(self, tmp_path, monkeypatch):
         job = _make_job(tmp_path)
@@ -226,7 +231,8 @@ class TestSingleAgentCleanup:
 
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
         monkeypatch.setattr(review_phases, "invoke_agent", _agent)
-        review_pipeline.run_single_agent(job, disprove=False)
+        with review_gc.cleaned_on_success(Path(job.artifact_dir)):
+            review_pipeline.run_single_agent(job, disprove=False)
         return job
 
     def test_disprove_artifacts_do_not_survive(self, tmp_path, monkeypatch):

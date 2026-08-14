@@ -4340,3 +4340,134 @@ class TestInjectFailuresAndStatus:
 
         content = review_file.read_text()
         assert content.count("<!-- status:") == 1
+
+
+class TestCleanupScope:
+    """What `_run_orchestrate` leaves in the review directory when it returns.
+
+    Driven through the whole run rather than through the sweep, because the
+    leak this covers was in the order the phases run and not in any one of
+    them: the pipeline swept as it returned, and the fix pass wrote its log
+    afterwards. Each phase is replaced by something that writes the files a
+    real one leaves behind, which is all the sweep can see.
+    """
+
+    _REVIEW = (
+        "# Review: org/repo#1 — t\n"
+        "<!-- status: completed -->\n"
+        "## Summary\nAll good.\n\n"
+        "## Verdict\nApprove\n"
+    )
+
+    @staticmethod
+    def _args(ro, review_file, repo_dir, **overrides):
+        from types import SimpleNamespace
+
+        defaults = {
+            "pr": "1", "review_file": str(review_file), "repo_dir": str(repo_dir),
+            "mode": ro.Mode.PR, "effort": ro.Effort.MEDIUM,
+            "prior_review": "", "issue": "", "issue_context": "",
+            "generator_version": "", "model": "", "recover_sha": "",
+            "max_parallel": 2, "max_cost": 20.0, "max_groups": None,
+            "no_holistic": False, "no_scout": False, "disprove": False,
+            "generated": False, "fix": False,
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def _run(self, ro, monkeypatch, tmp_path, pipeline=None, **arg_overrides):
+        """Drive `_run_orchestrate` over *tmp_path* with every phase faked."""
+        review_dir = tmp_path / "review-dir"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+
+        pr = ro.PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc123",
+            additions=10, deletions=0, changed_files=1,
+            files=[{"path": "a.py", "additions": 10, "deletions": 0}],
+        )
+
+        def _pipeline(job, **_kwargs):
+            Path(job.review_file).write_text(self._REVIEW)
+            Path(job.session_log).write_text("{}\n")
+            (review_dir / "meta.json").write_text("{}")
+            (review_dir / "disprove.jsonl").write_text("{}\n")
+            (review_dir / "prompt-single.md").write_text("PROMPT")
+
+        def _fix(job, **_kwargs):
+            (Path(job.artifact_dir) / "fix.jsonl").write_text("{}\n")
+
+        monkeypatch.setattr(ro.ai_backend, "preflight", lambda *a, **k: True)
+        monkeypatch.setattr(ro.pr_state, "load_state", lambda *a, **k: None)
+        monkeypatch.setattr(
+            ro, "_fetch_metadata", lambda *a, **k: (pr, ro.PRContext(), None),
+        )
+        monkeypatch.setattr(ro, "collect_preflight_data", lambda job: MagicMock())
+        monkeypatch.setattr(ro, "run_single_agent", pipeline or _pipeline)
+        monkeypatch.setattr(ro, "run_static_analysis", lambda *a, **k: [])
+        monkeypatch.setattr(ro, "run_fix_pass", _fix)
+
+        args = self._args(ro, review_file, tmp_path, **arg_overrides)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ro._run_orchestrate(MagicMock(), args, "org/repo", str(review_dir / "session.jsonl"))
+        return review_dir
+
+    def test_the_fix_pass_log_does_not_outlive_the_run(self, ro, monkeypatch, tmp_path):
+        """Regression for #678: the sweep used to run before the fix pass did."""
+        review_dir = self._run(ro, monkeypatch, tmp_path, fix=True)
+
+        assert not (review_dir / "fix.jsonl").exists()
+        assert sorted(p.name for p in review_dir.iterdir()) == [
+            "meta.json", "review.md", "session.jsonl",
+        ]
+
+    def test_a_run_without_the_fix_pass_is_swept_too(self, ro, monkeypatch, tmp_path):
+        review_dir = self._run(ro, monkeypatch, tmp_path)
+
+        assert not (review_dir / "disprove.jsonl").exists()
+        assert not (review_dir / "prompt-single.md").exists()
+        assert (review_dir / "review.md").exists()
+
+    def test_a_failed_run_keeps_its_artifacts(self, ro, monkeypatch, tmp_path):
+        """A pipeline that exits non-zero leaves everything for diagnosis."""
+        def _fails(job, **_kwargs):
+            (Path(job.artifact_dir) / "disprove.jsonl").write_text("{}\n")
+            (Path(job.artifact_dir) / "prompt-single.md").write_text("PROMPT")
+            raise SystemExit(1)
+
+        with pytest.raises(SystemExit) as exc:
+            self._run(ro, monkeypatch, tmp_path, pipeline=_fails, fix=True)
+
+        assert exc.value.code == 1
+        review_dir = tmp_path / "review-dir"
+        assert (review_dir / "disprove.jsonl").exists()
+        assert (review_dir / "prompt-single.md").exists()
+
+    def test_a_partial_run_keeps_its_artifacts(self, ro, monkeypatch, tmp_path):
+        """Failed groups are not an exception, but they still block the sweep.
+
+        `pr review --recover` resumes from pipeline.json and the outputs of the
+        groups that did succeed, so a sweep here would strand the recovery.
+        """
+        import serde
+        from review_common import Diagnosis, DiagnosisKind, FILENAME_PIPELINE_STATE
+        from review_preflight import PipelineState
+
+        def _partial(job, **_kwargs):
+            review_dir = Path(job.artifact_dir)
+            Path(job.review_file).write_text(self._REVIEW)
+            (review_dir / "group-1.md").write_text("finding")
+            state = PipelineState(
+                head_sha="abc123", group_names=["a", "b"], groups_done=[1],
+                groups_failed={2: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)},
+                synthesis_done=True,
+            )
+            (review_dir / FILENAME_PIPELINE_STATE).write_text(
+                json.dumps(serde.to_dict(state)),
+            )
+
+        review_dir = self._run(ro, monkeypatch, tmp_path, pipeline=_partial, fix=True)
+
+        assert (review_dir / "group-1.md").exists()
+        assert (review_dir / "pipeline.json").exists()
+        assert (review_dir / "fix.jsonl").exists()

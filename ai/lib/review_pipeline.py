@@ -6,7 +6,8 @@ review document (synthesis, mechanical fallback, meta header), consolidating
 the session logs, and fetching the PR metadata a run starts from.
 
 The run ends when the review file is written — what happens to the findings
-afterwards belongs to review_fix.
+afterwards belongs to review_fix, and removing what the run left behind belongs
+to review_gc, which the orchestrator runs once every phase is done.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ import log
 from review_common import (
     count_severity,
     FILENAME_META,
-    FILENAME_PROMPT_STATS,
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
@@ -32,7 +32,6 @@ from review_common import (
     TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
-    phase_artifacts,
     phase_log_path,
     phase_output_path,
     read_pipeline_status,
@@ -70,7 +69,7 @@ from review_retry import (
     _retry_missing_output,
 )
 from review_state import (
-    _inject_failures_and_status, _pipeline_state_path,
+    _inject_failures_and_status,
     _resolve_recovery,
     _write_pipeline_state,
     build_failures_section,
@@ -152,7 +151,6 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     _post_process_review(job)
     _write_review_sidecar(job)
-    _cleanup_intermediates(job)
 
 
 def _build_meta_header(
@@ -331,30 +329,6 @@ def _consolidate_logs(
         Path(job.session_log).write_text(_read_existing_logs(all_logs))
     except OSError:
         pass
-
-
-def _cleanup_intermediates(job: ReviewJob):
-    """Leave a completed review directory holding only its deliverable.
-
-    What to remove is read off the directory rather than named by the caller,
-    so a phase the run happened to take — disprove, or one added later — is
-    cleaned without the call site listing it. That also lets both pipelines
-    share the pass: single-agent runs reach the same disprove gate, and the
-    multi-phase caller no longer has a list only it could supply.
-
-    This also sweeps fix.jsonl: a prior `--fix` pass's log is diagnostic, not a
-    finding, so it is swept the same as any other phase log rather than
-    surviving a re-review.
-    """
-    review_dir = Path(job.review_file).parent
-    cleanup = phase_artifacts(review_dir)
-    cleanup.append(Path(_pipeline_state_path(job)))
-    cleanup.extend(
-        p for p in review_dir.glob("prompt-*") if p.name != FILENAME_PROMPT_STATS
-    )
-
-    for path in cleanup:
-        path.unlink(missing_ok=True)
 
 
 def _write_clean_review(job: ReviewJob, group_count: int, skipped_groups: int = 0):
@@ -699,14 +673,14 @@ def run_multi_phase(
         else:
             log.info(f"Skipping disprove — only {ms_count} M/S findings (threshold: {DISPROVE_MIN_FINDINGS})")
 
-    # ── Cleanup ──────────────────────────────────────────────────────────────
+    # ── Consolidate logs ─────────────────────────────────────────────────────
+    # Removing what this run leaves behind is the orchestrator's, not the
+    # pipeline's: phases run after this function returns. See
+    # `review_gc.cleaned_on_success`.
     _consolidate_logs(
         job, holistic.log, group_count, synthesis.log,
         disprove_log=disprove_result.log,
     )
-
-    if not failed_groups:
-        _cleanup_intermediates(job)
 
 
 def _with_local_diff(pr: PRMetadata, local: PRMetadata) -> PRMetadata:

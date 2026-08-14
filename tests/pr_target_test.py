@@ -73,6 +73,9 @@ REPO_KEY_VECTORS = [
     ("https://github.com/acme/widget/", "acme-widget-b9d71e86"),
     ("https://github.com/acme/widget.git/", "acme-widget-b9d71e86"),
     ("https://github.com/acme//widget.git", "acme-widget-b9d71e86"),
+    # `git clone .../repo/.git` is a spelling git accepts. The suffix strip
+    # uncovers a trailing slash, so slashes are normalized on both sides of it.
+    ("https://github.com/acme/widget/.git", "acme-widget-b9d71e86"),
     ("ssh://git@github.com/acme/widget.git", "acme-widget-b9d71e86"),
     ("ssh://git@host:2222/acme/widget.git", "acme-widget-b9d71e86"),
     ("git://host/acme/widget.git", "acme-widget-b9d71e86"),
@@ -95,6 +98,7 @@ REPO_KEY_VECTORS = [
     # A local remote keys on its trailing segment alone — see the ceiling in
     # pr_target: leading directories are machine-specific.
     ("/srv/git/widget.git", "widget-8ac140ce"),
+    ("/srv/git/widget/.git", "widget-8ac140ce"),
     ("/srv/mirrors/otto-workbench/", "otto-workbench-3df215bb"),
     ("../widget", "widget-8ac140ce"),
     # A remote naming no path names no repo. Keying the userinfo, the host, or a
@@ -107,12 +111,18 @@ REPO_KEY_VECTORS = [
     ("file:///", None),
     ("/", None),
     ("", None),
-    # The canonical form folds to lowercase and drops one trailing ".git"
-    # case-insensitively: GitHub and GitLab treat a repo path case-insensitively,
-    # so every casing of one path is one repo and takes one lock.
+    # The canonical form folds A-Z to a-z and drops one trailing ".git" through
+    # that same fold: GitHub and GitLab treat a repo path case-insensitively, so
+    # every casing of one path is one repo and takes one lock.
     ("https://github.com/Acme/Widget.git", "acme-widget-b9d71e86"),
     ("git@github.com:acme/widget.GIT", "acme-widget-b9d71e86"),
     ("https://github.com/Acme/Widget.GIT", "acme-widget-b9d71e86"),
+    ("https://github.com/acme/API", "acme-api-c7198fbc"),
+    # A-Z and nothing else. É (U+00C9) is left as it is, so the mirror never has
+    # to agree with this runtime about a Unicode version or a locale. The price
+    # is these two rows: a mixed-case non-ASCII path is two keys, not one.
+    ("https://github.com/acme/CAFÉ", "acme-caf-bd08d87c"),
+    ("https://github.com/acme/café", "acme-caf-84687fb6"),
     # Segments that slug to nothing contribute nothing readable; the digest is
     # what keeps them apart. Without it every such repo under acme/ shares a key.
     ("https://github.com/acme/文档.git", "acme-3aa38a61"),
@@ -219,6 +229,39 @@ def test_the_git_suffix_strip_ignores_case():
     """`.GIT` and `.git` name one repo, so a clone spelled either way is one target."""
     assert pr_target._repo_key("git@github.com:acme/widget.GIT") == \
         pr_target._repo_key("git@github.com:acme/widget.git")
+
+
+@pytest.mark.parametrize("with_dot_git,plain", [
+    ("https://github.com/acme/widget/.git", "https://github.com/acme/widget"),
+    ("/srv/git/widget/.git", "/srv/git/widget"),
+    ("file:///srv/git/widget/.git", "file:///srv/git/widget"),
+])
+def test_a_dot_git_directory_keys_as_the_repo_holding_it(with_dot_git, plain):
+    """`git clone /path/to/repo/.git` is a spelling git accepts.
+
+    Stripping the suffix uncovers a trailing slash, so a slash pass that ran
+    only before the strip left one: the hosted spelling took a second directory
+    and a second lock, and the local spelling canonicalized to "" and reported
+    no state at all for a repo that has some.
+    """
+    assert pr_target._repo_key(with_dot_git) == pr_target._repo_key(plain)
+    assert pr_target._repo_key(with_dot_git) is not None
+
+
+def test_the_case_fold_maps_a_to_z_and_nothing_else():
+    """The fold is what the digest hashes, so it cannot depend on the runtime.
+
+    `.toLocaleLowerCase()` folds ASCII `I` to `ı` under a Turkish locale, and a
+    Unicode-wide fold moves with the runtime's Unicode version — either one
+    hands one repo two keys depending on where the process runs. Folding only
+    U+0041-U+005A removes both channels, at the cost of the last two assertions.
+    """
+    assert pr_target._canonical("https://github.com/ACME/API") == "acme/api"
+    assert pr_target._repo_key("https://github.com/acme/API") == "acme-api-c7198fbc"
+    # É (U+00C9) is cased, and is deliberately left alone.
+    assert pr_target._canonical("https://github.com/acme/CAFÉ") == "acme/cafÉ"
+    assert pr_target._repo_key("https://github.com/acme/CAFÉ") != \
+        pr_target._repo_key("https://github.com/acme/café")
 
 
 @pytest.mark.parametrize("url", [u for u, key in REPO_KEY_VECTORS if key])

@@ -16,4 +16,8 @@ regexes = [
   '''YOUR_SIGNING_KEY|YOUR_NAME|YOUR_GPG|your-username|you@example\.com''',
   # Git credential helper path — not a credential
   '''helper\s*=\s*/.*git-credential''',
+  # Repo-key vector for https://github.com/acme/API in tests/pr_target_test.py.
+  # The trailing hex is the first 8 characters of the SHA-256 of a public URL,
+  # published as a cross-repo fixture; "api" next to it trips generic-api-key.
+  '''acme-api-c7198fbc''',
 ]

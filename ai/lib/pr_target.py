@@ -24,37 +24,46 @@ frees it to be as lossy as flattening a path into one component requires.
 The rule, in one paragraph because ui-code has to mirror it and a rule that is
 hard to restate is itself a defect:
 
-    Reduce the origin URL to a **canonical form**: for a remote that names a
-    host (an explicit ``scheme://authority``, or scp-style ``host:path``), the
-    path below the host; for a ``file://`` URL or a plain filesystem path, the
-    trailing path segment alone. Strip leading and trailing ``/``, collapse
-    repeated ``/``, strip one trailing ``.git`` case-insensitively, and
-    lowercase the result. An empty canonical form means no key — return
-    ``None``. The key is ``slug(canonical)``, truncated to 64 characters and
-    stripped of trailing ``-``, then ``-``, then the first 8 hex characters of
-    ``sha256(canonical.encode("utf-8")).hexdigest()``. When the readable part is
-    empty, the key is the digest alone.
+    Take the remote's **path**: for a remote that names a host (an explicit
+    ``scheme://authority``, or scp-style ``host:path``), the path below the
+    host; for a ``file://`` URL, the path below the authority; for a plain
+    filesystem path, the whole string. Collapse repeated ``/`` and strip
+    leading and trailing ``/``. Strip one trailing ``.git``, matching the
+    suffix through the fold below, then strip trailing ``/`` again. For a
+    ``file://`` URL or a filesystem path, keep the trailing segment alone.
+    Fold the result: **map U+0041–U+005A to U+0061–U+007A and leave every other
+    codepoint alone.** That is the **canonical form**; when it is empty there is
+    no key — return ``None``. The key is ``slug(canonical)``, truncated to 64
+    characters and stripped of trailing ``-``, then ``-``, then the first 8 hex
+    characters of ``sha256(canonical.encode("utf-8")).hexdigest()``. When the
+    readable part is empty, the key is the digest alone.
 
-The slash normalization runs before the ``.git`` strip, not after: git accepts
-``https://github.com/acme/widget.git/``, whose trailing slash hides the suffix
-from a strip that ran first, and that spelling has to reach the same key as
-every other spelling of the same repo.
-
-Two properties of that rule a mirror has to reproduce exactly, because a run
-that disagrees about either looks in a directory nobody writes:
+Three properties of that rule a mirror has to reproduce exactly, because a run
+that disagrees about any of them looks in a directory nobody writes:
 
 * **A remote is hosted per its scheme, never per its authority.** ``file`` is
   never hosted, whatever authority follows it, because git ignores a file URL's
   authority and clones the path — ``file://localhost/srv/git/widget.git`` is the
   same clone as ``/srv/git/widget.git``. A remote naming no path names no repo.
-* **The repo key folds to lowercase; the branch slug never folds.** Repo paths
-  are case-insensitive on GitHub and GitLab, so two differently-cased remotes
-  are one repo; git refs are case-sensitive, so ``feat/A`` and ``feat/a`` are
-  two branches. The fold is on the canonical form, so it is what the digest
-  sees: mirror it with Unicode default case conversion — Python's ``.lower()``
-  and TypeScript's ``.toLowerCase()``, never a locale-sensitive variant such as
-  ``toLocaleLowerCase``, which folds ``I`` to ``ı`` under a Turkish locale and
-  would hand one repo two digests.
+* **Slashes are normalized on both sides of the ``.git`` strip.** git accepts
+  ``https://github.com/acme/widget.git/``, whose trailing slash hides the suffix
+  from a strip that ran first, and it accepts ``https://github.com/acme/widget/.git``,
+  whose strip uncovers a trailing slash a pass that ran only first would leave
+  behind. Normalizing once, on either side, gives one of those two spellings its
+  own directory and its own lock.
+* **The fold is codepoint arithmetic, not a call to a language's lowercase.**
+  Repo paths are case-insensitive on GitHub and GitLab, so two differently-cased
+  remotes are one repo; git refs are case-sensitive, so ``feat/A`` and ``feat/a``
+  are two branches and the branch slug never folds. Deliberately *not*
+  ``.toLowerCase()`` or ``.lower()``, on any subset of the input: the canonical
+  form is what the digest hashes, so the fold has to be a pure function of
+  codepoints and nothing else. A locale-sensitive variant such as
+  ``toLocaleLowerCase`` folds ASCII ``I`` to ``ı`` under a Turkish locale, which
+  would give ``acme/API`` two keys depending on where the process runs; and a
+  Unicode-wide fold makes the key depend on the runtime's Unicode version, which
+  is not the same across implementations (this runtime is Unicode 16.0, Node 22
+  ships ICU 15.1). Restricting the fold to A–Z removes both channels: the 26
+  codepoints it touches have meant the same thing in every Unicode version.
 
 There is deliberately no second key format. An alternate PR-number key would be
 a second source of truth for one target, and a transient ``gh`` failure could
@@ -105,6 +114,12 @@ _LOCAL_SCHEME = "file"
 # scp-style too, and dropping it here would collide every repo behind that alias.
 _SCP_RE = re.compile(r"^[^/:]+:")
 
+# The case fold, as codepoint arithmetic: U+0041-U+005A map to U+0061-U+007A and
+# every other codepoint is left alone. Not str.lower() — see the module
+# docstring: the canonical form is hashed, so a fold that varies by locale or by
+# the runtime's Unicode version hands one repo two keys.
+_ASCII_FOLD = {c: c + 0x20 for c in range(ord("A"), ord("Z") + 1)}
+
 
 def slug(branch: str) -> str:
     """A branch name as a single path component.
@@ -135,14 +150,20 @@ def _remote_path(url: str) -> tuple[str, bool]:
     return (url[scp.end():], True) if scp else (url, False)
 
 
+def _fold_case(text: str) -> str:
+    """``A``-``Z`` folded to ``a``-``z``, every other codepoint untouched."""
+    return text.translate(_ASCII_FOLD)
+
+
 def _drop_git_suffix(path: str) -> str:
-    """One trailing ``.git``, whatever its case.
+    """One trailing ``.git``, whatever the case of the suffix.
 
     ``widget.GIT`` and ``widget.git`` are one repo on every host, so a clone
-    spelled either way has to reach one key. Case-insensitively here rather than
-    after the fold so that the fold has one job.
+    spelled either way has to reach one key. Matched through ``_fold_case``
+    rather than ``str.lower`` so that the whole contract has exactly one notion
+    of case and no path through this module can reach a Unicode fold.
     """
-    return path[: -len(".git")] if path.lower().endswith(".git") else path
+    return path[: -len(".git")] if _fold_case(path[-len(".git"):]) == ".git" else path
 
 
 def _canonical(url: str) -> str:
@@ -157,17 +178,28 @@ def _canonical(url: str) -> str:
     # design, kept: one repo is routinely spelled with several hosts (an ssh
     # alias, a mirror), and those spellings must take one lock. Upgrade trigger:
     # anyone running the pr CLI against two same-pathed repos on two hosts.
+    # Because the host is gone, the key cannot know whether the forge that
+    # served it was case-sensitive, so the fold below is unconditional: on a
+    # self-hosted forge that does distinguish them, acme/Widget and acme/widget
+    # are two repos and one key.
     path, hosted = _remote_path(url)
     path = _SLASHES_RE.sub("/", path).strip("/")
+    # Both sides of the strip: the first pass uncovers a suffix hidden behind a
+    # trailing slash (acme/widget.git/), the second removes a slash the strip
+    # itself uncovered (acme/widget/.git, the git directory of a non-bare
+    # checkout, which git accepts as a clone source).
+    path = _drop_git_suffix(path).strip("/")
     if not hosted:
         # ceiling: a local remote keys on its trailing segment alone, so
         # /srv/a/widget and /srv/b/widget are one key. Deliberate — a local
         # clone's leading directories are machine-specific, and keying on them
         # would give one repo a different key on every machine, which is the
         # worse failure. Upgrade trigger: anyone running two same-named local
-        # repos against the pr CLI on one machine.
+        # repos against the pr CLI on one machine. The same reduction puts a
+        # local clone and a one-segment hosted path on one key: git@host:widget
+        # and /srv/git/widget both canonicalize to "widget".
         path = path.rpartition("/")[2]
-    return _drop_git_suffix(path).lower()
+    return _fold_case(path)
 
 
 def _repo_key(url: str) -> str | None:
@@ -199,8 +231,11 @@ def _repo_key(url: str) -> str | None:
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
     # ceiling: the readable prefix is truncated at 64 characters, so two long
     # paths can share it. Harmless — the digest still separates them — and the
-    # cap is what keeps the directory name inside every filesystem's component
-    # limit. Nothing to upgrade; the note is here so nobody "fixes" it.
+    # note is here so nobody "fixes" the truncation. What the cap buys is a
+    # bound on the key's half of the directory name (73 characters: 64 + "-" +
+    # 8), not a bound on the name: target_dir appends slug(branch), which is
+    # uncapped, so a long enough branch still overruns a filesystem's component
+    # limit. That half is the branch slug's shape, fixed by the approved spec.
     readable = slug(canonical)[:64].rstrip("-")
     return f"{readable}-{digest}" if readable else digest
 

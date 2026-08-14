@@ -66,6 +66,12 @@ class Keyed:
 
 
 @dataclass
+class Palette:
+    """An enum-keyed dict, the shape a config's per-phase map takes."""
+    swatches: dict[Color, str] = field(default_factory=dict)
+
+
+@dataclass
 class OuterOptional:
     """A nested dataclass field that is genuinely optional, not just defaulted."""
     inner: Inner | None = None
@@ -179,6 +185,28 @@ class TestIntDictKeys:
     def test_str_keys_are_left_alone(self):
         obj = from_dict(Container, {"entries": {"7": {"name": "x"}}})
         assert list(obj.entries) == ["7"]
+
+
+class TestEnumDictKeys:
+    """`dict[SomeEnum, V]` keys are converted, so an unknown one is rejected.
+
+    A StrEnum member and its own value hash alike, so without the conversion a
+    misspelled key would sit in the map looking valid and never be read.
+    """
+
+    def test_enum_keys_are_coerced(self):
+        obj = from_dict(Palette, {"swatches": {"red": "#f00"}})
+        assert list(obj.swatches) == [Color.RED]
+        assert isinstance(next(iter(obj.swatches)), Color)
+
+    def test_unknown_enum_key_is_rejected(self):
+        with pytest.raises(ValueError, match="mauve"):
+            from_dict(Palette, {"swatches": {"mauve": "#f0f"}})
+
+    def test_enum_keys_survive_a_json_hop(self):
+        original = Palette(swatches={Color.BLUE: "#00f"})
+        restored = from_dict(Palette, json.loads(json.dumps(to_dict(original))))
+        assert restored == original
 
 
 class TestFromRawHook:

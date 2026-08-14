@@ -45,7 +45,8 @@ def from_dict(cls, data: dict):
     - Extra keys are ignored
     - Enum fields are reconstructed from their string values
     - Nested dataclass fields are recursively reconstructed
-    - `dict[int, V]` keys are restored to ints from the strings JSON makes of them
+    - `dict[int, V]` and `dict[SomeEnum, V]` keys are restored from the strings
+      JSON makes of them; an unknown enum key raises rather than lingering
     - A nested dataclass defining `_from_raw` reconstructs itself through it,
       which is how a type stored in more than one shape stays readable
     - An explicit `null` on a field with no null form of its own (enum, scalar,
@@ -215,6 +216,20 @@ def classify(hint) -> tuple[HintKind, tuple]:
 
 def _identity(value):
     return value
+
+
+def _key_coercer(hint):
+    """How a dict key comes back from the string JSON and YAML make of it.
+
+    An enum key is converted rather than passed through so an unknown one is
+    rejected at load. A StrEnum member and its own value hash alike, so a
+    stray key would otherwise sit in the map, valid-looking and never read.
+    """
+    if hint is int:
+        return int
+    if isinstance(hint, type) and issubclass(hint, Enum):
+        return hint
+    return _identity
 
 
 def _coerce(hint, value):

@@ -546,13 +546,6 @@ REVIEW_EXT = ".md"
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"
 
-def workbench_dir() -> Path:
-    """The state root. Kept as an alias — `workbench_paths` owns the chain."""
-    return workbench_paths.state_dir()
-
-
-REVIEWS_DIR = workbench_dir() / "reviews"
-
 SEVERITY_PREFIXES = ["M", "S", "N", "I"]
 SEVERITY_JSON_KEYS = ["must_fix", "should_fix", "nit", "idiom"]
 SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
@@ -743,7 +736,7 @@ def has_uncommitted_changes(wt_path: str | Path) -> bool:
 def review_file_path(repo: str, pr_number: str) -> Path:
     """Return the expected path for a review file given repo and PR number."""
     repo_name = repo.split("/")[-1]
-    return REVIEWS_DIR / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
+    return workbench_paths.reviews_dir() / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
 
 
 def find_review_file(repo: str, pr_number: str) -> Path | None:
@@ -751,10 +744,11 @@ def find_review_file(repo: str, pr_number: str) -> Path | None:
     canonical = review_file_path(repo, pr_number)
     if canonical.is_file():
         return canonical
-    if not REVIEWS_DIR.is_dir():
+    reviews = workbench_paths.reviews_dir()
+    if not reviews.is_dir():
         return None
     repo_name = repo.split("/")[-1]
-    for entry in REVIEWS_DIR.iterdir():
+    for entry in reviews.iterdir():
         if not entry.is_dir() or not entry.name.startswith(repo_name):
             continue
         review = entry / f"review{REVIEW_EXT}"

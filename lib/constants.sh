@@ -83,6 +83,16 @@ INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 # into. The hand-authored settings are overrides/ under the config root.
 INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 
+# ─── Review state ─────────────────────────────────────────────────────────────
+# The shell half of two joins the Python side also spells out — this file for
+# bash, ai/lib/workbench_paths.py's reviews_dir() and retro-scan's
+# CONSUMED_REVIEWS_NAME for Python. tests/workbench_roots.bats cross-validates
+# both pairs, the same way it does the roots they hang off.
+REVIEWS_DIR="$WORKBENCH_STATE_DIR/reviews"
+# Written by retro-scan, then read and emptied by the retro skill's
+# retro-complete.sh — the list of review directories a retro has consumed.
+RETRO_CONSUMED_REVIEWS_FILE="$WORKBENCH_STATE_DIR/retro-consumed-reviews.txt"
+
 # ─── Claude Code ──────────────────────────────────────────────────────────────
 CLAUDE_DIR="$HOME/.claude"
 CLAUDE_CONFIG_FILE="$HOME/.claude.json"

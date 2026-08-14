@@ -43,6 +43,20 @@ _TEST_REPLY_ID = "3777767789"
 _TEST_REPLY_BODY_FILE = "/tmp/reply.md"
 
 
+@pytest.fixture
+def reviews_dir(tmp_path, monkeypatch):
+    """A throwaway reviews root, reached the way every workbench root is.
+
+    Through the environment rather than by patching a path onto a module: the
+    commands under test resolve the root per call, so nothing here has to know
+    which module reads it.
+    """
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    d = workbench_paths.reviews_dir()
+    d.mkdir(parents=True)
+    return d
+
+
 # ── _parse_review_summary ──────────────────────────────────────────────────
 
 
@@ -432,16 +446,12 @@ def test_review_recover_passes_through_to_delegate():
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_review_post_delegates_to_review_post(mock_run, tmp_path):
+def test_cmd_review_post_delegates_to_review_post(mock_run, reviews_dir):
     mock_run.return_value = MagicMock(returncode=0)
-    import review_common
-    reviews_dir = tmp_path / "reviews"
     review_dir = reviews_dir / "repo-42"
-    review_dir.mkdir(parents=True)
+    review_dir.mkdir()
     (review_dir / "review.md").write_text("# Review")
-    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = make_ctx(pr_number=42)
-        rc = pr_cli.cmd_review(["--post"], ctx)
+    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42))
     assert rc == 0
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-post")
@@ -450,46 +460,33 @@ def test_cmd_review_post_delegates_to_review_post(mock_run, tmp_path):
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_review_post_passes_submit(mock_run, tmp_path):
+def test_cmd_review_post_passes_submit(mock_run, reviews_dir):
     mock_run.return_value = MagicMock(returncode=0)
-    import review_common
-    reviews_dir = tmp_path / "reviews"
     review_dir = reviews_dir / "repo-42"
-    review_dir.mkdir(parents=True)
+    review_dir.mkdir()
     (review_dir / "review.md").write_text("# Review")
-    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = make_ctx(pr_number=42)
-        rc = pr_cli.cmd_review(["--post", "--submit"], ctx)
+    rc = pr_cli.cmd_review(["--post", "--submit"], make_ctx(pr_number=42))
     assert rc == 0
     cmd = mock_run.call_args[0][0]
     assert "--submit" in cmd
 
 
-def test_cmd_review_post_fails_without_review_file(tmp_path):
-    import review_common
-    reviews_dir = tmp_path / "reviews"
-    reviews_dir.mkdir()
-    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = make_ctx(pr_number=42)
-        rc = pr_cli.cmd_review(["--post"], ctx)
+def test_cmd_review_post_fails_without_review_file(reviews_dir):
+    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42))
     assert rc == 1
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_review_post_finds_review_via_meta(mock_run, tmp_path):
+def test_cmd_review_post_finds_review_via_meta(mock_run, reviews_dir):
     """--post discovers a review stored under a non-canonical directory name."""
     mock_run.return_value = MagicMock(returncode=0)
-    import review_common
-    reviews_dir = tmp_path / "reviews"
     alt_dir = reviews_dir / "repo-self-some-branch"
-    alt_dir.mkdir(parents=True)
+    alt_dir.mkdir()
     (alt_dir / "review.md").write_text("# Review")
     (alt_dir / "meta.json").write_text(json.dumps({
         "repo": "owner/repo", "pr_number": "42",
     }))
-    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = make_ctx(pr_number=42)
-        rc = pr_cli.cmd_review(["--post"], ctx)
+    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42))
     assert rc == 0
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-post")
@@ -652,29 +649,20 @@ def test_cmd_comments_resolve_passes_flag(mock_run):
 
 
 @patch("pr_cli._update_review_state")
-def test_cmd_review_repair_succeeds_with_review_file(mock_update, tmp_path):
-    import review_common
-    reviews_dir = tmp_path / "reviews"
+def test_cmd_review_repair_succeeds_with_review_file(mock_update, reviews_dir):
     review_dir = reviews_dir / "repo-42"
-    review_dir.mkdir(parents=True)
+    review_dir.mkdir()
     (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
-    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = make_ctx(pr_number=42)
-        rc = pr_cli.cmd_review(["--repair"], ctx)
+    rc = pr_cli.cmd_review(["--repair"], make_ctx(pr_number=42))
     assert rc == 0
     mock_update.assert_called_once()
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_review_repair_falls_back_to_rebuild(mock_run, tmp_path):
-    import review_common
-    reviews_dir = tmp_path / "reviews"
-    review_dir = reviews_dir / "repo-42"
-    review_dir.mkdir(parents=True)
+def test_cmd_review_repair_falls_back_to_rebuild(mock_run, reviews_dir):
+    (reviews_dir / "repo-42").mkdir()
     mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = make_ctx(pr_number=42)
-        rc = pr_cli.cmd_review(["--repair"], ctx)
+    rc = pr_cli.cmd_review(["--repair"], make_ctx(pr_number=42))
     assert rc == 0
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-rebuild")
@@ -689,15 +677,11 @@ def test_cmd_review_repair_no_pr_fails():
 # ── cmd_review --summary ───────────────────────────────────────────────────
 
 
-def test_cmd_review_summary_outputs_json(tmp_path, capsys):
-    import review_common
-    reviews_dir = tmp_path / "reviews"
+def test_cmd_review_summary_outputs_json(reviews_dir, capsys):
     review_dir = reviews_dir / "repo-42"
-    review_dir.mkdir(parents=True)
+    review_dir.mkdir()
     (review_dir / "review.md").write_text("## Must fix\n- **[M1]** path:1 — bug\n")
-    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = make_ctx(pr_number=42)
-        rc = pr_cli.cmd_review(["--summary"], ctx)
+    rc = pr_cli.cmd_review(["--summary"], make_ctx(pr_number=42))
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("REVIEW_SUMMARY:")
@@ -705,13 +689,8 @@ def test_cmd_review_summary_outputs_json(tmp_path, capsys):
     assert data["findings"]["must_fix"] == 1
 
 
-def test_cmd_review_summary_fails_without_review(tmp_path):
-    import review_common
-    reviews_dir = tmp_path / "reviews"
-    reviews_dir.mkdir()
-    with patch.object(review_common, "REVIEWS_DIR", reviews_dir):
-        ctx = make_ctx(pr_number=42)
-        rc = pr_cli.cmd_review(["--summary"], ctx)
+def test_cmd_review_summary_fails_without_review(reviews_dir):
+    rc = pr_cli.cmd_review(["--summary"], make_ctx(pr_number=42))
     assert rc == 1
 
 

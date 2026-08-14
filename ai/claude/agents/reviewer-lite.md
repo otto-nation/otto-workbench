@@ -112,7 +112,7 @@ Use the Write tool to save findings to the output path specified in the prompt. 
 - **[I1]** **`<file>:<line>`** — <finding>
 ```
 
-Section headers MUST be exactly `## Must fix`, `## Should fix`, `## Nit`, `## Idioms` — h2 level, no hyphens, no nesting. Omit severity sections with no findings. Skip files with no issues.
+Severity section headers MUST be exactly `## Must fix`, `## Should fix`, `## Nit`, `## Idioms` — h2 level, no hyphens, no nesting. Omit severity sections with no findings. Skip files with no issues. A re-review adds one more h2 section, `## Prior findings`, when the prompt asks for it.
 
 Finding format: `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap the file path in backticks inside the bold markers.
 

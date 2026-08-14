@@ -7,16 +7,15 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 import log
 from review_common import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
-    SECTION_FILE_TRIAGE, plural,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, PriorDisposition, plural,
 )
-
-_FINDING_SECTIONS = [(s.section, s.key) for s in SEVERITIES]
 
 # Severity header name -> key mapping (section + aliases, lowercased)
 def _build_severity_names() -> dict[str, str]:
@@ -130,6 +129,63 @@ def _parse_finding_line(stripped: str) -> Finding | None:
         id=f"{sev}{seq}", severity=sev, seq=seq,
         path=path, line=line_num, end_line=end_line, body=body,
         checked=(checkbox is not None and checkbox.lower() == "x"),
+    )
+
+
+@dataclass(frozen=True)
+class FindingRef:
+    """How a re-review names a prior finding: its ID and its path.
+
+    The pair travels together because neither half identifies a finding on its
+    own — IDs are per-review sequence numbers and one file holds many findings.
+    """
+
+    finding_id: str = ""
+    path: str = ""
+
+    @property
+    def label(self) -> str:
+        """How the reference reads in a log line."""
+        return f"{self.finding_id} `{self.path}`".strip()
+
+
+@dataclass(frozen=True)
+class LedgerEntry:
+    """One `## Prior findings` line: a prior finding, and what became of it."""
+
+    ref: FindingRef
+    disposition: PriorDisposition | None
+    text: str
+
+    def covers(self, ref: FindingRef) -> bool:
+        """Whether this entry accounts for `ref`.
+
+        An entry that names no path stands on its ID alone; one that names a
+        path has to name the right one, or a single entry would account for
+        every prior finding in its file.
+        """
+        if self.ref.finding_id != ref.finding_id:
+            return False
+        return not self.ref.path or self.ref.path == ref.path
+
+
+@dataclass(frozen=True)
+class PriorFinding:
+    """A finding line from the prior review, as reconciliation sees it."""
+
+    ref: FindingRef
+    stable_id: str
+
+
+def _parse_ledger_line(raw: str) -> LedgerEntry | None:
+    """The entry a ledger line carries, or None when it names no finding."""
+    parsed = _parse_finding_line(raw.strip())
+    if not parsed:
+        return None
+    return LedgerEntry(
+        ref=FindingRef(parsed.id, parsed.path),
+        disposition=PriorDisposition.parse(parsed.body),
+        text=raw,
     )
 
 
@@ -254,7 +310,10 @@ def _clean_section_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-_VALID_SECTION_HEADERS = {s.section.lower() for s in SEVERITIES} | {SECTION_FILE_TRIAGE.lower()}
+_VALID_SECTION_HEADERS = (
+    {s.section.lower() for s in SEVERITIES}
+    | {SECTION_FILE_TRIAGE.lower(), SECTION_PRIOR_FINDINGS.lower()}
+)
 
 
 def _validate_group_output(output_path: str, group_name: str) -> bool:
@@ -313,8 +372,8 @@ def _renumber_prefix(text: str, prefix: str) -> str:
 
 
 def renumber_findings(text: str) -> str:
-    for _, prefix in _FINDING_SECTIONS:
-        text = _renumber_prefix(text, prefix)
+    for severity in SEVERITIES:
+        text = _renumber_prefix(text, severity.key)
     return text
 
 
@@ -338,18 +397,25 @@ _FINDING_PATH_RE = re.compile(
 _FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
 
 
-def _finding_dedup_key(line: str) -> tuple[str, str] | None:
+@dataclass(frozen=True)
+class FindingKey:
+    """What makes two findings the same one: where they point and what they say."""
+
+    path: str
+    desc: str
+
+
+def _finding_dedup_key(line: str) -> FindingKey | None:
     m = _FINDING_PATH_RE.match(line)
     if not m:
         return None
     path = (m.group(1) or m.group(2) or "").replace("\\_", "_").strip()
     dm = _FINDING_DESC_RE.search(line)
-    desc = dm.group(1).strip().lower() if dm else ""
-    return (path, desc)
+    return FindingKey(path, dm.group(1).strip().lower() if dm else "")
 
 
 def _dedup_findings(text: str, prefix: str) -> str:
-    seen: set[tuple[str, str]] = set()
+    seen: set[FindingKey] = set()
     kept: list[str] = []
     skipping = False
     for line in text.split("\n"):
@@ -375,9 +441,16 @@ def _merge_one_review(
         cleaned = _clean_triage(triage)
         if cleaned:
             merged_triage += cleaned + "\n"
-    for section, prefix in _FINDING_SECTIONS:
+    # Kept out of the renumbering below: these IDs belong to the prior review,
+    # and each group only dispositions the prior findings for its own files, so
+    # the merged ledger is the union of what every group accounted for.
+    ledger = _clean_section_text(_extract_section(content, SECTION_PRIOR_FINDINGS))
+    if ledger:
+        merged[SECTION_PRIOR_FINDINGS] += ledger + "\n"
+    for severity in SEVERITIES:
+        section = severity.section
         raw = _clean_section_text(_extract_section(content, section))
-        text, count = renumber_section(prefix, raw, offsets[section])
+        text, count = renumber_section(severity.key, raw, offsets[section])
         if text:
             merged[section] += text + "\n"
         offsets[section] += count
@@ -396,10 +469,41 @@ def _dedup_triage(triage: str) -> str:
     return "\n".join(lines)
 
 
+def _dedup_ledger(ledger: str) -> str:
+    """Collapse repeats — two groups can disposition the same prior finding.
+
+    When two groups disagree about one finding, the group that still sees it
+    wins: a finding is gone only when no group reports it.
+    """
+    slot: dict[FindingRef, int] = {}
+    seen_prose: set[str] = set()
+    lines: list[str] = []
+    for line in ledger.split("\n"):
+        entry = _parse_ledger_line(line)
+        if entry and entry.ref in slot:
+            _keep_open_disposition(lines, slot[entry.ref], entry)
+            continue
+        if not entry and line.strip() in seen_prose:
+            continue
+        if entry:
+            slot[entry.ref] = len(lines)
+        else:
+            seen_prose.add(line.strip())
+        lines.append(line)
+    return "\n".join(lines).strip() + "\n"
+
+
+def _keep_open_disposition(lines: list[str], index: int, entry: LedgerEntry) -> None:
+    """Let a still-open verdict overwrite the one already kept for its finding."""
+    if entry.disposition is PriorDisposition.STILL_OPEN:
+        lines[index] = entry.text
+
+
 def merge_reviews(group_files: list[str]) -> str:
     merged_triage = ""
-    merged: dict[str, str] = {section: "" for section, _ in _FINDING_SECTIONS}
-    offsets: dict[str, int] = {section: 0 for section, _ in _FINDING_SECTIONS}
+    merged: dict[str, str] = {s.section: "" for s in SEVERITIES}
+    merged[SECTION_PRIOR_FINDINGS] = ""
+    offsets: dict[str, int] = {s.section: 0 for s in SEVERITIES}
 
     for path in group_files:
         p = Path(path)
@@ -409,14 +513,21 @@ def merge_reviews(group_files: list[str]) -> str:
 
     merged_triage = _dedup_triage(merged_triage)
 
-    for section, prefix in _FINDING_SECTIONS:
-        if merged[section]:
-            merged[section] = _dedup_findings(merged[section], prefix)
+    for severity in SEVERITIES:
+        if merged[severity.section]:
+            merged[severity.section] = _dedup_findings(
+                merged[severity.section], severity.key
+            )
 
     parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
-    for section, _ in _FINDING_SECTIONS:
-        if merged[section]:
-            parts.append(f"## {section}\n{merged[section]}")
+    for severity in SEVERITIES:
+        if merged[severity.section]:
+            parts.append(f"## {severity.section}\n{merged[severity.section]}")
+    if merged[SECTION_PRIOR_FINDINGS]:
+        parts.append(
+            f"## {SECTION_PRIOR_FINDINGS}\n"
+            f"{_dedup_ledger(merged[SECTION_PRIOR_FINDINGS])}"
+        )
     return "\n".join(parts)
 
 
@@ -424,18 +535,18 @@ def merge_reviews(group_files: list[str]) -> str:
 
 def _count_findings(text: str) -> dict[str, int]:
     return {
-        prefix: len(set(re.findall(
-            rf"^- (?:\[ \] )?\*\*\[{prefix}(\d+)\]\*\*",
+        severity.key: len(set(re.findall(
+            rf"^- (?:\[ \] )?\*\*\[{severity.key}(\d+)\]\*\*",
             text,
             re.MULTILINE,
         )))
-        for _, prefix in _FINDING_SECTIONS
+        for severity in SEVERITIES
     }
 
 
 def _has_findings(merged_content: str) -> bool:
-    for _, prefix in _FINDING_SECTIONS:
-        if re.search(rf"\[{prefix}\d+\]", merged_content):
+    for severity in SEVERITIES:
+        if re.search(rf"\[{severity.key}\d+\]", merged_content):
             return True
     return False
 
@@ -696,16 +807,20 @@ def _extract_finding_path(line: str, after: str) -> str:
     return cb_path_re.group(1) if cb_path_re else ""
 
 
-def _annotate_finding_line(line: str, m: re.Match) -> str:
-    prefix = m.group(1)
-    after = line[m.end():]
-    path_str = _extract_finding_path(line, after)
+def _finding_stable_id(line: str, m: re.Match) -> str:
+    """The stable ID a finding line hashes to, or "" when it names no path."""
+    path_str = _extract_finding_path(line, line[m.end():])
     if not path_str:
-        return line
+        return ""
     desc_m = _FINDING_DESC_RE.search(line)
-    desc = desc_m.group(1).strip() if desc_m else ""
-    sid = compute_stable_id(path_str, desc)
-    return f"{prefix} <!-- sid:{sid} --> {after}"
+    return compute_stable_id(path_str, desc_m.group(1).strip() if desc_m else "")
+
+
+def _annotate_finding_line(line: str, m: re.Match) -> str:
+    sid = _finding_stable_id(line, m)
+    if not sid:
+        return line
+    return f"{m.group(1)} <!-- sid:{sid} --> {line[m.end():]}"
 
 
 def annotate_prior_with_stable_ids(review_text: str) -> str:
@@ -720,10 +835,88 @@ def annotate_prior_with_stable_ids(review_text: str) -> str:
     return "\n".join(result)
 
 
-def _check_orphaned_prior_ids(prior_text: str, review_text: str) -> list[str]:
-    prior_ids = set(re.findall(r"<!-- sid:(\w+) -->", prior_text))
-    review_ids = set(re.findall(r"<!-- sid:(\w+) -->", review_text))
-    return sorted(prior_ids - review_ids)
+_SID_MARKER_RE = re.compile(r"<!-- sid:(\w+) -->")
+
+
+def _stable_ids(text: str) -> set[str]:
+    """Every prior-finding identity the text carries.
+
+    Both the markers in carried-forward text and the ID each finding line
+    hashes to on its own — a synthesis agent that retypes a carried finding
+    drops the marker but keeps the path and the wording, so the recomputed ID
+    is the part that survives it.
+    """
+    ids = set(_SID_MARKER_RE.findall(text))
+    for raw in text.split("\n"):
+        line = raw.strip()
+        m = _ANNOTATE_FINDING_RE.match(line)
+        if m:
+            ids.add(_finding_stable_id(line, m))
+    ids.discard("")
+    return ids
+
+
+def _parse_ledger(review_text: str) -> list[LedgerEntry]:
+    """The entries of the review's prior-findings ledger, in order."""
+    section = _extract_section(review_text, SECTION_PRIOR_FINDINGS)
+    entries = (_parse_ledger_line(raw) for raw in section.split("\n"))
+    return [entry for entry in entries if entry]
+
+
+def _parse_prior_findings(prior_text: str) -> list[PriorFinding]:
+    """Every finding the prior review reported."""
+    findings: list[PriorFinding] = []
+    for raw in prior_text.split("\n"):
+        line = raw.strip()
+        m = _ANNOTATE_FINDING_RE.match(line)
+        if not m:
+            continue
+        label_m = BOLD_FINDING_ID_RE.search(line)
+        findings.append(PriorFinding(
+            ref=FindingRef(
+                label_m.group(1) if label_m else "",
+                _extract_finding_path(line, line[m.end():]),
+            ),
+            stable_id=_finding_stable_id(line, m),
+        ))
+    return findings
+
+
+def unaccounted_prior_findings(prior_text: str, review_text: str) -> list[str]:
+    """Prior findings the new review neither restates nor dispositions.
+
+    A prior finding is accounted for when the new review carries it forward —
+    same path and wording, marker or not — or when the ledger has an entry for
+    it, whatever that entry says became of it. Matching stops there on purpose:
+    an agent restates an ID and a path verbatim but rewords a description, and
+    never reproduces an internal marker it was not handed. A still-open entry
+    counts too — the same rewording that hides a carry-forward from the stable
+    IDs is what the ledger is there to vouch for.
+    """
+    carried = _stable_ids(review_text)
+    ledger = _parse_ledger(review_text)
+    missing: list[str] = []
+    for finding in _parse_prior_findings(prior_text):
+        if finding.stable_id in carried:
+            continue
+        if any(entry.covers(finding.ref) for entry in ledger):
+            continue
+        missing.append(finding.ref.label or finding.stable_id)
+    return missing
+
+
+def strip_sections(text: str, headers: Iterable[str]) -> str:
+    """Drop whole `## <header>` sections, headings included."""
+    excluded = {h.lower() for h in headers}
+    kept: list[str] = []
+    dropping = False
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            dropping = stripped[3:].strip().lower() in excluded
+        if not dropping:
+            kept.append(line)
+    return "\n".join(kept)
 
 
 def strip_stable_ids(text: str) -> str:
@@ -767,12 +960,12 @@ def post_process_findings(
         return None
     text = path.read_text()
     if prior_review:
-        orphaned = _check_orphaned_prior_ids(
-            annotate_prior_with_stable_ids(prior_review),
-            text,
-        )
-        if orphaned:
-            log.warn(f"{len(orphaned)} prior findings neither carried forward nor resolved: {', '.join(orphaned)}")
+        unaccounted = unaccounted_prior_findings(prior_review, text)
+        if unaccounted:
+            log.warn(
+                f"{len(unaccounted)} prior findings not accounted for in "
+                f"'{SECTION_PRIOR_FINDINGS}': {', '.join(unaccounted)}"
+            )
     verification: dict | None = None
     if wt_path:
         text, verification = verify_findings(text, wt_path)
@@ -781,6 +974,10 @@ def post_process_findings(
             log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
     text = strip_evidence_blocks(text)
     text = strip_stable_ids(text)
+    # Before renumbering: the ledger's IDs number the prior review, so leaving
+    # them in would both mislead a reader and skew the renumbering of the
+    # findings that are actually in this review.
+    text = strip_sections(text, [SECTION_PRIOR_FINDINGS])
     text = renumber_findings(text)
     path.write_text(text)
     return verification

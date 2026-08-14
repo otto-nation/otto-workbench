@@ -21,7 +21,7 @@ from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcom
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TriageStats, triage_result_from_dict,
 )
-from review_common import Diagnosis, DiagnosisKind
+from review_common import SECTION_PRIOR_FINDINGS, Diagnosis, DiagnosisKind
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -414,6 +414,30 @@ class TestBuildPriorSectionWithThreads:
 
     def test_empty_prior_returns_empty(self):
         assert _build_prior_section("", reply_threads={"threads": []}) == ""
+
+
+class TestBuildPriorSectionLedger:
+    def test_asks_for_the_ledger_alongside_the_context(self):
+        result = _build_prior_section(
+            "## Must fix\n- **[M1]** `a.py:10` — Issue",
+            "This is a re-review.",
+        )
+        assert "This is a re-review." in result
+        assert f"## {SECTION_PRIOR_FINDINGS}" in result
+
+    def test_ledger_asked_for_without_a_context(self):
+        result = _build_prior_section("## Must fix\n- **[M1]** `a.py:10` — Issue")
+        assert f"## {SECTION_PRIOR_FINDINGS}" in result
+
+    def test_prior_ledger_not_shown_back_to_the_agent(self):
+        # Reconciliation strips it before publishing, but a review from an
+        # older generator can still carry one — it dispositions findings from
+        # the review before last, which is noise here.
+        result = _build_prior_section(
+            "## Must fix\n- **[M1]** `a.py:10` — Issue\n"
+            f"## {SECTION_PRIOR_FINDINGS}\n- **[M9]** `gone.py` — Fixed\n"
+        )
+        assert "gone.py" not in result
 
 
 # ── _strip_internal_sections ─────────────────────────────────────────────────

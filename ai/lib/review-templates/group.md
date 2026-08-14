@@ -20,7 +20,7 @@ ${reply_threads}
 ## Output
 ${output_block}
 
-Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit / ## Idioms sections only.
+Format: ## File Triage section + ## Must fix / ## Should fix / ## Nit / ## Idioms sections, plus the ## Prior findings section when a Prior review section asks for one.
 Do NOT write a Summary or Verdict — those will be added in a synthesis step.
 Use finding IDs starting at [M1], [S1], [N1], [I1] — they will be renumbered during merge.
 Finding format: `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap the file path in backticks inside the bold markers.

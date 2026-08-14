@@ -581,6 +581,30 @@ group's IDs are shifted past the groups before it, references included, but a
 reference the group cannot resolve is left alone — another group may well
 declare it, and the merge-wide pass is the first place that can tell.
 
+### When evidence verification drops a finding
+
+Every must-fix and should-fix finding quotes the code it is about. After the
+review is written, that quote is checked against the file: a finding whose
+evidence does not match what is on disk is dropped, and the survivors are
+renumbered. Roughly a quarter of reviews drop at least one finding this way.
+
+The synthesis agent wrote the `## Summary` and the `## Verdict` before that check
+ran, so both can describe findings that are no longer in the file. Regenerating
+them would cost the agent's qualitative assessment, which is the part of a review
+a reader cannot reconstruct from counts. So the prose stays and the review says
+what left it:
+
+- A blockquote at the end of `## Summary` names each dropped finding by severity
+  and path — not by ID, since renumbering has already reassigned those — and why
+  it was dropped.
+- `## Verdict` is rewritten when the surviving counts no longer support the stated
+  action. A drop can only remove findings, so this only ever lowers a verdict:
+  `Disapprove` → `Request changes` → `Needs discussion` → `Approve`. A verdict the
+  remaining findings still support is left exactly as written.
+
+Both are idempotent — a review that already carries the note is left alone, so
+re-running post-processing does not stack notes or re-lower a verdict.
+
 ### Where review artifacts live
 
 Each review owns a directory under `~/.local/state/workbench/reviews/` — `review.md`

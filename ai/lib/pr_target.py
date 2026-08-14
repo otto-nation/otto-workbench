@@ -38,13 +38,26 @@ hard to restate is itself a defect:
     characters of ``sha256(canonical.encode("utf-8")).hexdigest()``. When the
     readable part is empty, the key is the digest alone.
 
+``slug(s)``, used above and again for the branch, is the whole of its own rule:
+
+    Replace every run of one or more characters **outside**
+    ``A-Z a-z 0-9 . _ -`` with a single ``-``, then strip leading and trailing
+    ``-``. Nothing else — no case fold, and the dot and underscore survive. A
+    mirror that guesses ``[^a-z0-9-]`` turns ``feat/v1.2`` into ``feat-v1-2``
+    where this gives ``feat-v1.2``: two directories for one target, and #680's
+    under-locking is back for every branch with a dot in its name.
+
 Three properties of that rule a mirror has to reproduce exactly, because a run
 that disagrees about any of them looks in a directory nobody writes:
 
 * **A remote is hosted per its scheme, never per its authority.** ``file`` is
   never hosted, whatever authority follows it, because git ignores a file URL's
   authority and clones the path — ``file://localhost/srv/git/widget.git`` is the
-  same clone as ``/srv/git/widget.git``. A remote naming no path names no repo.
+  same clone as ``/srv/git/widget.git``. The scheme is matched
+  case-insensitively and folded before that comparison, so ``FILE:///srv/repo``
+  is unhosted exactly as ``file:///srv/repo`` is; a mirror testing
+  ``scheme === "file"`` against the raw text calls it hosted and keeps the whole
+  path. A remote naming no path names no repo.
 * **Slashes are normalized on both sides of the ``.git`` strip.** git accepts
   ``https://github.com/acme/widget.git/``, whose trailing slash hides the suffix
   from a strip that ran first, and it accepts ``https://github.com/acme/widget/.git``,
@@ -74,6 +87,8 @@ The layout is a published interface — ui-code reimplements it in TypeScript::
     <state_dir()>/pr/<repo-key>-<branch-slug>/
         state.json
         run.lock
+
+where ``<repo-key>`` is the key above and ``<branch-slug>`` is ``slug(branch)``.
 
 ``state_dir()`` rather than a literal path: #624 phase 4 moves that root to
 ``XDG_STATE_HOME`` alongside the migration that carries the data, and resolving

@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Renders ai/claude/bin/bash-guard.rules.yml into its two consumers.
+#
+# Writes:
+#   ai/claude/bin/claude-bash-guard        — the GUARD_MSG_* block-message table
+#   ai/guidelines/rules/bash-tool.md       — the lead bullet of each rule section
+#
+# Both are rewritten in place between markers; everything outside them is
+# hand-written and preserved. The registry exists so a rule's `why` and
+# `remedy` are stated once instead of once per consumer — they had already
+# drifted when they were separate.
+#
+# Run automatically via the pre-commit and pre-push hooks.
+#
+# Environment overrides (used in tests):
+#   BASH_GUARD_RULES      path to bash-guard.rules.yml
+#   BASH_GUARD_PATH       path to claude-bash-guard
+#   BASH_GUARD_RULES_DIR  directory holding the rules markdown files
+#
+# Usage: bin/local/generate-bash-guard [--quiet]
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$REPO_ROOT}"
+
+# shellcheck source=../../lib/ui.sh
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Generate the claude-bash-guard message table and the bash-tool.md lead bullets
+from ai/claude/bin/bash-guard.rules.yml.
+
+Usage: $(basename "$0") [options]
+
+Options:
+  --quiet     Suppress output on success
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+RULES_YML="${BASH_GUARD_RULES:-$REPO_ROOT/ai/claude/bin/bash-guard.rules.yml}"
+GUARD="${BASH_GUARD_PATH:-$REPO_ROOT/ai/claude/bin/claude-bash-guard}"
+RULES_DIR="${BASH_GUARD_RULES_DIR:-$REPO_ROOT/ai/guidelines/rules}"
+
+GUARD_START='# >>> generated: block messages — edit bash-guard.rules.yml, not this table'
+GUARD_END='# <<< generated'
+DOC_END='<!-- /rule -->'
+
+# Strip markdown emphasis that reads as noise in a terminal message.
+_plain() {
+  printf '%s' "$1" | sed 's/`//g'
+}
+
+# Escape for a double-quoted bash string. Backslashes first, or the escapes
+# this adds get escaped again by the later passes.
+_esc() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/\\$/g' -e 's/`/\\`/g'
+}
+
+# _replace_region FILE START END CONTENT_FILE — swap the lines between two
+# marker lines for CONTENT_FILE, leaving the markers in place.
+_replace_region() {
+  local file="$1" start="$2" end="$3" content="$4"
+  grep -qxF "$start" "$file" || { err "$file has no marker: $start"; exit 1; }
+  grep -qxF "$end" "$file" || { err "$file has no closing marker after: $start"; exit 1; }
+  awk -v start="$start" -v end="$end" -v content="$content" '
+    $0 == start { print; while ((getline line < content) > 0) print line; skip = 1; next }
+    $0 == end { skip = 0 }
+    !skip { print }
+  ' "$file" > "$file.tmp"
+  # Copy through rather than mv: the target is an executable hook reached by
+  # symlink, and mv would replace it with the temp file's inode and 0644 mode.
+  cat "$file.tmp" > "$file"
+  rm -f "$file.tmp"
+}
+
+# doc_only is `.guard == false` rather than `.guard // true` because in yq, as
+# in jq, `false // true` yields true — an explicit `guard: false` would read as
+# a guarded rule and get a block message no code path can reach.
+FIELDS='[.id, .doc, .title, ((.guard == false) | tostring), (.list // false | tostring),
+         (.never // ""), .why, .remedy, (.guard_remedy // ""), (.scope_example // "")]
+        | join("|~|")'
+
+msg_table=$(mktemp)
+rules=$(mktemp)
+trap 'rm -f "$msg_table" "$rules"' EXIT
+
+# Materialized rather than piped: a yq failure inside a process substitution
+# does not fail the script, and an empty read loop would then blank the guard's
+# message table without erroring.
+yq -r ".rules[] | $FIELDS" "$RULES_YML" > "$rules"
+[[ -s "$rules" ]] || { err "no rules parsed from $RULES_YML"; exit 1; }
+
+while IFS= read -r line; do
+  IFS=$'\x1f' read -r id doc title doc_only list never why remedy guard_remedy scope <<< "${line//|~|/$'\x1f'}"
+
+  target="$RULES_DIR/$doc"
+  [[ -f "$target" ]] || { err "rule '$id' names a missing rules file: $doc"; exit 1; }
+  grep -qxF "## $title" "$target" || { err "rule '$id': $doc has no section '## $title'"; exit 1; }
+
+  # Guard message: why reads sentence-initial, remedy names the way out.
+  if [[ "$doc_only" != "true" ]]; then
+    why_plain=$(_plain "$why")
+    remedy_plain=$(_plain "${guard_remedy:-$remedy}")
+    printf 'GUARD_MSG_%s="%s. %s. See %s."\n' \
+      "$id" "$(_esc "${why_plain^}")" "$(_esc "$remedy_plain")" "$doc" >> "$msg_table"
+  fi
+
+  # Doc bullet: only files carrying the marker take one. Rules documented in
+  # another domain's file (git-operations.md, bash.md) are validated above and
+  # left alone — their sections say more than a generated bullet could.
+  grep -qxF "<!-- rule:$id -->" "$target" || continue
+  suffix=""
+  [[ "$list" == "true" ]] && suffix=":"
+  scope_note=""
+  [[ -n "$scope" ]] && scope_note=" This applies wherever a statement begins, not just at the start of the command: \`$scope\` counts."
+  bullet=$(mktemp)
+  printf -- '- Never %s — %s.%s %s%s\n' "$never" "$why" "$scope_note" "$remedy" "$suffix" > "$bullet"
+  _replace_region "$target" "<!-- rule:$id -->" "$DOC_END" "$bullet"
+  rm -f "$bullet"
+done < "$rules"
+
+_replace_region "$GUARD" "$GUARD_START" "$GUARD_END" "$msg_table"
+
+$QUIET || success "Generated block messages and bash-tool.md lead bullets"

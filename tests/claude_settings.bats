@@ -380,36 +380,45 @@ _init_test_repo() {
 }
 
 # ── Guard ↔ rules contract ───────────────────────────────────────────────────
-# Every rule in the guard carries a `# doc: <file> § <heading>` marker naming
-# the prose that says what to do instead. A rule without one blocks Claude with
-# no documented alternative, which is worse than the prompt it prevents.
+# bash-guard.rules.yml is the single source for each rule's `why` and `remedy`,
+# rendering into both the guard's block message and the doc section. A rule with
+# no entry blocks Claude with no documented alternative, which is worse than the
+# prompt it prevents.
 
-@test "guard: every rule carries a doc marker" {
+@test "guard: every block call uses a generated message" {
   local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
-  local blocks markers
-  blocks=$(grep -c '^  block ' "$guard" || true)
-  markers=$(grep -c '^# doc: ' "$guard" || true)
-  [ "$blocks" -eq "$markers" ] || {
-    echo "claude-bash-guard has $blocks block calls but $markers '# doc:' markers"
+  local literal
+  literal=$(grep '^  block ' "$guard" | grep -vc 'GUARD_MSG_' || true)
+  [ "$literal" -eq 0 ] || {
+    echo "claude-bash-guard has $literal hand-written block message(s)"
+    grep -n '^  block ' "$guard" | grep -v 'GUARD_MSG_'
     return 1
   }
 }
 
-@test "guard: every doc marker resolves to a rules section" {
+@test "guard: every rule message has a registry entry" {
   local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
-  local marker file heading
-  while IFS= read -r marker; do
-    file="${marker%% § *}"
-    heading="${marker#* § }"
-    [ -f "$REPO_ROOT/ai/guidelines/rules/$file" ] || {
-      echo "doc marker names a missing rules file: $file"
+  local rules="$REPO_ROOT/ai/claude/bin/bash-guard.rules.yml"
+  local id
+  while IFS= read -r id; do
+    yq -e ".rules[] | select(.id == \"$id\")" "$rules" > /dev/null || {
+      echo "block message GUARD_MSG_$id has no rule with that id in bash-guard.rules.yml"
       return 1
     }
-    grep -qxF "## $heading" "$REPO_ROOT/ai/guidelines/rules/$file" || {
-      echo "$file has no section '## $heading'"
-      return 1
-    }
-  done < <(grep '^# doc: ' "$guard" | sed 's/^# doc: //')
+  done < <(grep -oE 'GUARD_MSG_[a-z_]+' "$guard" | sed 's/GUARD_MSG_//' | sort -u)
+}
+
+@test "guard: generated output is current" {
+  local work="$BATS_TEST_TMPDIR/gen"
+  mkdir -p "$work/rules"
+  cp "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$work/guard"
+  cp "$REPO_ROOT"/ai/guidelines/rules/*.md "$work/rules/"
+  export BASH_GUARD_PATH="$work/guard"
+  export BASH_GUARD_RULES_DIR="$work/rules"
+  run "$REPO_ROOT/bin/local/generate-bash-guard" --quiet
+  [ "$status" -eq 0 ]
+  diff "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$work/guard"
+  diff "$REPO_ROOT/ai/guidelines/rules/bash-tool.md" "$work/rules/bash-tool.md"
 }
 
 # The bodies below each put the pattern after a statement separator, which is
@@ -455,7 +464,7 @@ _init_test_repo() {
 @test "subst hook: blocks command substitution" {
   run _run_guard '{"tool_input":{"command":"ls $(git rev-parse --show-toplevel)"}}'
   [ "$status" -eq 2 ]
-  [[ "$output" == *"Command substitution"* ]]
+  [[ "$output" == *"Run the inner command first"* ]]
 }
 
 # ── sync-settings.jq integrity ───────────────────────────────────────────────

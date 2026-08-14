@@ -1282,21 +1282,38 @@ class TestSummaryStillOwed:
 class TestPendingFixReplies:
     """--resolve is the second chance for fix replies the fix pass didn't send."""
 
-    def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt, publishing_on):
+    # id, summary, file, line, root comment databaseId
+    _SEEDS = [
+        ("t1", "fix it", "x.py", 1, 100),
+        ("t2", "and this", "y.py", 2, 200),
+    ]
+
+    def _queue(self, count=1, **fix_kw):
+        """A queue of `count` fixed threads: the FixSummary and its threads_by_id.
+
+        Which thread is which never matters here — every test in this class turns
+        on the queue's state (pushed, drafted, already drained), not its contents.
+        So the seeds stay fixed and each test names only the fields it turns on.
+        """
+        seeds = self._SEEDS[:count]
         fix = FixSummary(
             threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
-                ThreadOutcome(id="t2", summary="another", file="y.py", line=2, action=ThreadAction.FIXED),
+                ThreadOutcome(id=tid, summary=summary, file=path, line=line,
+                              action=ThreadAction.FIXED)
+                for tid, summary, path, line, _ in seeds
             ],
             commit_sha="abc1234",
-            commit_status="push_failed",
-            summary_deferred=True,
+            **fix_kw,
         )
-        state = _make_state(fix)
         threads_by_id = {
-            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
-            "t2": ReportThread(id="t2", is_resolved=False, comments=[{"databaseId": 200}]),
+            tid: ReportThread(id=tid, is_resolved=False, comments=[{"databaseId": db}])
+            for tid, _, _, _, db in seeds
         }
+        return fix, threads_by_id
+
+    def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt, publishing_on):
+        fix, threads_by_id = self._queue(2, commit_status="push_failed", summary_deferred=True)
+        state = _make_state(fix)
         with patch.object(rt, "_is_pushed", return_value=True), \
              patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
@@ -1306,14 +1323,7 @@ class TestPendingFixReplies:
         assert fix.commit_status == "pushed"
 
     def test_skips_when_still_unpushed(self, rt):
-        fix = FixSummary(
-            threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
-            ],
-            commit_sha="abc1234",
-            commit_status="push_failed",
-            summary_deferred=True,
-        )
+        fix, _ = self._queue(commit_status="push_failed", summary_deferred=True)
         state = _make_state(fix)
         with patch.object(rt, "_is_pushed", return_value=False), \
              patch("pr_comments.post_thread_reply") as mock_reply:
@@ -1329,36 +1339,16 @@ class TestPendingFixReplies:
         mock_reply.assert_not_called()
 
     def test_draft_run_keeps_the_queue_for_a_later_post(self, rt):
-        fix = FixSummary(
-            threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
-            ],
-            commit_sha="abc1234",
-            commit_status="push_failed",
-            summary_deferred=True,
-        )
+        fix, threads_by_id = self._queue(commit_status="push_failed", summary_deferred=True)
         state = _make_state(fix)
-        threads_by_id = {
-            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
-        }
         with patch.object(rt, "_is_pushed", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.commit_status == "push_failed"
 
     def test_drains_the_queue_a_drafted_fix_pass_left_behind(self, rt, publishing_on):
         """A drafted --fix pushes its commit but sends nothing; --post must catch up."""
-        fix = FixSummary(
-            threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
-            ],
-            commit_sha="abc1234",
-            commit_status="pushed",
-            replies_pending=True,
-        )
+        fix, threads_by_id = self._queue(commit_status="pushed", replies_pending=True)
         state = _make_state(fix)
-        threads_by_id = {
-            "t1": ReportThread(id="t1", is_resolved=False, comments=[{"databaseId": 100}]),
-        }
         with patch.object(rt, "_is_pushed", return_value=True), \
              patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr_comments.resolve_thread", return_value=True):
@@ -1366,15 +1356,30 @@ class TestPendingFixReplies:
         assert mock_reply.call_count == 1
         assert fix.replies_pending is False
 
-    def test_noop_once_the_replies_have_gone_out(self, rt, publishing_on):
-        fix = FixSummary(
-            threads=[
-                ThreadOutcome(id="t1", summary="fix it", file="x.py", line=1, action=ThreadAction.FIXED),
-            ],
-            commit_sha="abc1234",
-            commit_status="pushed",
-            replies_pending=False,
+    def test_counts_the_replies_it_drained(self, rt, publishing_on):
+        """The drafted pass recorded 0 sent; the run that sends them owns the count."""
+        fix, threads_by_id = self._queue(
+            2, commit_status="pushed", replies_pending=True, replies_posted=0,
         )
+        state = _make_state(fix)
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert fix.replies_posted == 2
+
+    def test_draft_drain_counts_nothing(self, rt):
+        """A draft sends nothing, so the counter must not move on its way past."""
+        fix, threads_by_id = self._queue(
+            commit_status="pushed", replies_pending=True, replies_posted=0,
+        )
+        state = _make_state(fix)
+        with patch.object(rt, "_is_pushed", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert fix.replies_posted == 0
+
+    def test_noop_once_the_replies_have_gone_out(self, rt, publishing_on):
+        fix, _ = self._queue(commit_status="pushed", replies_pending=False)
         state = _make_state(fix)
         with patch("pr_comments.post_thread_reply") as mock_reply:
             rt._post_pending_fix_replies(state, "owner/repo", 1, {})

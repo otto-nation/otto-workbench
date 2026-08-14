@@ -20,6 +20,8 @@ from pr_context import (
     fetch_and_reset, create_worktree_for_branch,
 )
 
+from conftest import make_ctx  # noqa: E402
+
 
 # ── PR input parsing ────────────────────────────────────────────────────────
 
@@ -75,20 +77,13 @@ def test_resolved_context_fields():
 
 
 def test_require_worktree_returns_path():
-    ctx = ResolvedContext(
-        repo="owner/repo", branch="feat/auth",
-        pr_number=None, worktree_root=Path("/wt"), head_sha="def",
-        target_dir=Path("/wt/target"),
-    )
+    ctx = make_ctx(branch="feat/auth", pr_number=None)
     assert ctx.require_worktree() == Path("/wt")
 
 
 def test_require_worktree_exits_with_actionable_message(capsys):
-    ctx = ResolvedContext(
-        repo="owner/repo", branch="feat/auth",
-        pr_number=None, worktree_root=None, head_sha="",
-        target_dir=Path("/tmp/target"),
-    )
+    ctx = make_ctx(branch="feat/auth", pr_number=None,
+                   worktree_root=None, head_sha="")
     with pytest.raises(SystemExit) as exc:
         ctx.require_worktree()
     assert exc.value.code == 1
@@ -181,13 +176,9 @@ def test_fetch_and_reset_survives_fetch_exception(mock_run):
 
 
 def _make_ctx(**overrides):
-    defaults = dict(
-        repo="owner/repo", branch="feat/x",
-        pr_number=1, worktree_root=Path("/wt"), head_sha="aaa",
-        target_dir=Path("/wt/target"),
-    )
-    defaults.update(overrides)
-    return ResolvedContext(**defaults)
+    """A context on the branch these tests' _current_branch_quiet mock returns."""
+    return make_ctx(**{"branch": "feat/x", "pr_number": 1, "head_sha": "aaa",
+                       **overrides})
 
 
 def test_update_to_remote_noop_without_worktree():

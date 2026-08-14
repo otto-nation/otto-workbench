@@ -27,7 +27,7 @@ _spec.loader.exec_module(pr_rebase_cli)
 
 import pr_context  # noqa: E402
 
-from conftest import assert_no_worktree_exit  # noqa: E402
+from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
 
 
 # ── _detect_rebase_in_progress ──────────────────────────────────────────────
@@ -2914,11 +2914,7 @@ def test_fix_only_still_resolves_conflicts():
 
 def test_main_without_a_worktree_exits_with_guidance(capsys):
     """The old code coerced None to "None" and handed it to git -C."""
-    ctx = pr_context.ResolvedContext(
-        repo="owner/repo", branch="isaac/feat/x", pr_number=42,
-        worktree_root=None, head_sha="abc1234",
-        target_dir=Path("/target"),
-    )
+    ctx = make_ctx(branch="isaac/feat/x", worktree_root=None, head_sha="abc1234")
     with mock.patch("sys.argv", ["pr-rebase"]), \
          mock.patch.object(pr_rebase_cli.pr_context, "resolve", return_value=ctx), \
          mock.patch.object(pr_rebase_cli, "Trail") as mock_trail_cls:

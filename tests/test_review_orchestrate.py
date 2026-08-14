@@ -682,10 +682,11 @@ class TestRenumberSection:
 
     def test_offset_shifts_ids_it_did_not_expect(self, ro):
         # IDs arrive however the agent wrote them; gaps are closed later, not here.
-        result, count = ro.renumber_section("S", "- **[S1]** first\n- **[S7]** second", 2)
+        result, highest = ro.renumber_section("S", "- **[S1]** first\n- **[S7]** second", 2)
         assert "[S3]" in result
         assert "[S9]" in result
-        assert count == 2
+        # What the next group has to clear, not how many findings this one had.
+        assert highest == 7
 
     def test_a_reference_this_group_cannot_resolve_is_left_alone(self, ro):
         # Only the merge-wide pass can tell a dangling reference from one whose
@@ -931,6 +932,32 @@ class TestMergeReviews:
 
         assert "- **[S2]** **`a.go:2`** — issue b, related to [S1]" in result
         assert "- **[S4]** **`b.go:2`** — issue d, see S3 above" in result
+
+    def test_merge_clears_a_gap_the_first_group_left(self, ro, tmp_path):
+        # Nothing closes a group's gaps before the merge, so offsetting by the
+        # number of findings would drop the second group's S1 onto the first
+        # group's S3 — two findings, one ID, and dedup keeps both.
+        g1 = tmp_path / "g1.md"
+        g1.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            "## Should fix\n"
+            "- **[S1]** **`a.go:1`** — issue a\n"
+            "- **[S3]** **`a.go:3`** — issue b\n"
+            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        g2 = tmp_path / "g2.md"
+        g2.write_text(
+            "## File Triage\n- `b.go` — reviewed\n"
+            "## Should fix\n- **[S1]** **`b.go:1`** — issue c\n"
+            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        result = ro.merge_reviews([str(g1), str(g2)])
+
+        # Offsetting by the count would put issue c on S3, where issue b already
+        # sits; the gaps close afterwards, so all three come out distinct.
+        assert "- **[S1]** **`a.go:1`** — issue a" in result
+        assert "- **[S2]** **`a.go:3`** — issue b" in result
+        assert "- **[S3]** **`b.go:1`** — issue c" in result
 
     def test_merge_unions_prior_findings_ledgers(self, ro, tmp_path):
         g1 = tmp_path / "g1.md"

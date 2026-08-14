@@ -396,6 +396,13 @@ def _rewrite_ids(
 def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
     """Shift one group's IDs past the groups already merged, references included.
 
+    Returns the highest ID the group leaves in use, which is what the next group
+    has to clear. Counting declarations instead would under-shift any group
+    whose agent skipped a number — nothing closes those gaps before the merge —
+    and two groups would land on the same ID. Gaps are closed afterwards, over
+    the merged text, where a number freed up by one group can be handed to
+    another.
+
     Dangling references are left as they are: this runs per group, and an ID
     this group does not declare may still be declared by another one. The
     merge-wide pass is the first place that can tell.
@@ -406,7 +413,7 @@ def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
     if offset > 0:
         shifted = {old: old + offset for old in declared}
         text = _rewrite_ids(text, prefix, shifted, mark_dangling=False)
-    return text, len(declared)
+    return text, max(declared, default=0)
 
 
 def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None = None) -> str:
@@ -521,10 +528,10 @@ def _merge_one_review(
     for severity in SEVERITIES:
         section = severity.section
         raw = _clean_section_text(_extract_section(content, section))
-        text, count = renumber_section(severity.key, raw, offsets[section])
+        text, highest = renumber_section(severity.key, raw, offsets[section])
         if text:
             merged[section] += text + "\n"
-        offsets[section] += count
+        offsets[section] += highest
     return merged_triage
 
 

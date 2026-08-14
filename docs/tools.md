@@ -326,7 +326,8 @@ machine. Every phase drafts to stderr and publishes nothing without it, so
 `--post` neither implies a phase nor is implied by one. `--finish --post` is
 therefore not saying the same thing twice — the first names the work, the
 second opens the gate. The same `--post` gates `pr review` and `--reply`; it is
-one switch for the whole process, not a `comments` flag (`ai/lib/publishing.py`).
+one switch for the whole process, not a `comments` flag — see
+`ai/lib/publishing.py`, which owns it.
 
 The work itself runs in two phases:
 

@@ -36,9 +36,9 @@ ANSI_LEVELS = {
 
 # ── Discovery ─────────────────────────────────────────────────────────────
 
-# A file whose stem names a month can be skipped by name; `legacy.jsonl` — what
-# the 20260814 migration carried the pre-cutover history into — cannot, so it is
-# always read.
+# A file whose stem names a month can be skipped by name. Any other stem —
+# `legacy.jsonl`, where the cutover migration parks the pre-cutover history —
+# cannot be placed in time from its name, so it is always read.
 _MONTH_STEM = re.compile(r"\d{4}-\d{2}$")
 
 

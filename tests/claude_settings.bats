@@ -276,6 +276,34 @@ _init_test_repo() {
 # same quote-stripped first line as the four guardrails below, so a `/bin/...`
 # path inside a quoted argument is not mistaken for an invocation.
 
+@test "binlocal hook: blocks an absolute path to a bin/local script" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/bin/local/validate-all"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"bin/local/validate-all"* ]]
+}
+
+@test "binlocal hook: blocks an absolute path after a statement separator" {
+  run _run_guard '{"tool_input":{"command":"ls -la; /Users/me/git/repo/bin/local/validate-all"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"bin/local/validate-all"* ]]
+}
+
+@test "binlocal hook: names the git/ prefixed path" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/git/bin/local/generate-git-rules"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'git/bin/local/generate-git-rules'"* ]]
+}
+
+@test "binlocal hook: allows the relative form" {
+  run _run_guard '{"tool_input":{"command":"bin/local/validate-all"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "binlocal hook: allows an absolute path inside a quoted argument" {
+  run _run_guard '{"tool_input":{"command":"git commit -m \"drop; /Users/me/repo/bin/local/old\""}}'
+  [ "$status" -eq 0 ]
+}
+
 @test "sysbin hook: blocks /bin/cat and names the bare command" {
   run _run_guard '{"tool_input":{"command":"/bin/cat /tmp/x/review.diff"}}'
   [ "$status" -eq 2 ]
@@ -449,6 +477,11 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+@test "binlocal hook: allows an absolute bin/local path inside a heredoc body" {
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\ntrue; /Users/me/repo/bin/local/validate-all\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
 @test "cd hook: allows a compound cd inside a heredoc body" {
   run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\nmkdir -p /tmp/y; cd /tmp/y && ls\nEOF"}}'
   [ "$status" -eq 0 ]
@@ -457,17 +490,6 @@ _init_test_repo() {
 # ── whole-command Bash guardrails ───────────────────────────────────────────
 # These scan the entire command rather than the quote-stripped first line: the
 # analyzer flags them wherever they appear, including inside a quoted argument.
-
-@test "binlocal hook: blocks an absolute path to a bin/local script" {
-  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/bin/local/validate-all"}}'
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"bin/local/validate-all"* ]]
-}
-
-@test "binlocal hook: allows the relative form" {
-  run _run_guard '{"tool_input":{"command":"bin/local/validate-all"}}'
-  [ "$status" -eq 0 ]
-}
 
 @test "exec hook: blocks find -exec" {
   run _run_guard '{"tool_input":{"command":"find . -name x -exec grep foo {} ;"}}'

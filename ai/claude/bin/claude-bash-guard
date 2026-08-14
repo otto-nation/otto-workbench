@@ -50,11 +50,6 @@ if [[ "$cmd" == *"gh pr create"* ]]; then
   block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
 fi
 
-re_binlocal='^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
-if [[ "$cmd" =~ $re_binlocal ]]; then
-  block "Use relative path '${BASH_REMATCH[1]}' instead of the absolute path — an absolute path prompts again in every worktree. See bash.md § Script Invocation."
-fi
-
 if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
   block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead. See bash-tool.md § Avoid find -exec.'
 fi
@@ -103,6 +98,24 @@ fi
 re_brace='\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\}'
 if [[ "$stripped" =~ $re_brace ]]; then
   block 'Brace expansion triggers an unsuppressible permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md § Avoid Brace Expansion.'
+fi
+
+# Ahead of the /bin rule below: a repo path ending in bin/local/ is the narrower
+# match, and the two would otherwise both fire on a repo rooted at /bin.
+re_binlocal='(^|[;&|][[:space:]]*)/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
+if [[ "$stripped" =~ $re_binlocal ]]; then
+  # The leading .*/ is greedy, so it swallows a `git/` segment and leaves the
+  # capture naming a path that does not resolve. Put it back from the whole
+  # match — `git/bin/local/x` is real, `bin/local/x` alone would not run.
+  #
+  # ceiling: a repo whose own directory is named `git` is indistinguishable from
+  # the git/ component here, and gets the `git/` prefix it does not need. That
+  # costs one wrong suggestion. Upgrade to resolving the repo root if it bites.
+  rel="${BASH_REMATCH[2]}"
+  if [[ "${BASH_REMATCH[0]}" == */git/bin/local/* ]]; then
+    rel="git/$rel"
+  fi
+  block "Use relative path '$rel' instead of the absolute path — an absolute path prompts again in every worktree. See bash.md § Script Invocation."
 fi
 
 re_sysbin='(^|[;&|][[:space:]]*)/(usr/)?bin/([A-Za-z0-9_.-]+)'

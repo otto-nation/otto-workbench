@@ -1,0 +1,17 @@
+# Generated files — edit the source and regenerate, never the artifact.
+# See CLAUDE.md § Conventions. Marking them linguist-generated collapses them
+# in GitHub diffs and drops them from the repo language stats; they stay
+# diffable locally so a regeneration is still reviewable.
+#
+# The other generated files (ai/guidelines/rules/tools.generated*.md,
+# git.generated.md) are gitignored, so they need no attributes here.
+
+# bin/local/generate-config-schema, from ai/lib/workbench_config.py
+config.schema.json linguist-generated=true
+
+# release-please
+CHANGELOG.md linguist-generated=true
+.github/.release-please-manifest.json linguist-generated=true
+
+# uv
+uv.lock linguist-generated=true

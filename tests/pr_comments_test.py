@@ -83,6 +83,29 @@ def test_save_creates_parent_directories():
         assert path.exists()
 
 
+def test_save_never_exposes_a_truncated_file(monkeypatch):
+    """Regression: this save was the one copy of the write-and-rename pattern
+    that had drifted into a plain `open(path, "w")`, which truncates the target
+    before the first byte lands. A failed write left the thread lifecycle state
+    half-written — the corruption the read side then has to discard."""
+    import serde
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "state.json"
+        save_state(path, empty_state("owner/repo", 1, "user"))
+
+        def _explode(obj, fp, **kwargs):
+            fp.write('{"partial":')
+            raise OSError("disk full")
+
+        monkeypatch.setattr(serde.json, "dump", _explode)
+        with pytest.raises(OSError):
+            save_state(path, empty_state("owner/repo", 2, "user"))
+
+        assert load_state(path)["pr_number"] == 1
+        assert list(Path(tmp).glob("*.tmp")) == []
+
+
 def _make_comments(*entries):
     """Helper: create comment list from (login, body) tuples."""
     comments = []

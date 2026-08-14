@@ -10,8 +10,6 @@ run's target — see ``pr_target.target_dir``, which owns that path.
 
 from __future__ import annotations
 
-import json
-import os
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
@@ -28,6 +26,7 @@ from serde import (
     from_dict as _serde_from_dict,
     load_file as _serde_load_file,
     to_dict as _serde_to_dict,
+    write_json as _serde_write_json,
 )
 
 
@@ -410,26 +409,11 @@ def load_state(target_dir: Path) -> PRState | None:
 def save_state(target_dir: Path, state: PRState) -> None:
     """Save unified PR state, creating directories as needed.
 
-    Writes to a per-process temp file and renames it over the target.
-    ``open(path, "w")`` truncates in place, so a concurrent reader can
-    observe a zero-byte file and fail with a JSONDecodeError; os.replace
-    is atomic, so readers see either the old state or the new one.
+    ``serde.write_json`` owns the atomicity: the status line reads this file
+    from whatever shell the user is in, concurrently with the write.
     """
-    path = target_dir / STATE_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
     state.updated_at = datetime.now(timezone.utc).isoformat()
-    # Per-process, not per-call: two threads in one process saving at once
-    # would share this name. Nothing here saves off the main thread, and the
-    # run lock already keeps other processes out.
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    try:
-        with open(tmp, "w") as f:
-            json.dump(state_to_dict(state), f, indent=2)
-            f.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    _serde_write_json(target_dir / STATE_FILE, state_to_dict(state))
 
 
 # ── Updaters ────────────────────────────────────────────────────────────────

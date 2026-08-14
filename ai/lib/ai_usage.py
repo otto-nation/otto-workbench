@@ -16,10 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import log
+import workbench_paths
 
 # One file per month: rotation falls out of the filename, --since can select files
 # without reading them, and nothing needs a pruning job.
-LEDGER_DIR = Path.home() / ".config" / "workbench" / "usage"
+LEDGER_DIR = workbench_paths.state_dir() / "usage"
 
 
 @dataclass(frozen=True)

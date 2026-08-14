@@ -66,8 +66,11 @@ class TestDefaults:
     def test_config_falls_back_to_dot_config(self, clean_env):
         assert workbench_paths.config_dir() == clean_env / ".config/workbench"
 
-    def test_state_falls_back_to_dot_config(self, clean_env):
-        assert workbench_paths.state_dir() == clean_env / ".config/workbench"
+    def test_state_falls_back_to_dot_local_state(self, clean_env):
+        assert workbench_paths.state_dir() == clean_env / ".local/state/workbench"
+
+    def test_state_no_longer_shares_the_config_default(self, clean_env):
+        assert workbench_paths.state_dir() != workbench_paths.config_dir()
 
     def test_cache_falls_back_to_dot_cache(self, clean_env):
         assert workbench_paths.cache_dir() == clean_env / ".cache/workbench"
@@ -82,12 +85,9 @@ class TestXdgRung:
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
         assert workbench_paths.cache_dir() == tmp_path / "xdg-cache/workbench"
 
-    def test_xdg_state_home_does_not_move_state(self, monkeypatch, tmp_path, clean_env):
-        # The state root has no XDG rung until #624 phase 4 ships the migration
-        # that carries the existing reviews and logs. Honouring the variable now
-        # would strand that data behind a path nothing else reads.
+    def test_xdg_state_home_moves_state(self, monkeypatch, tmp_path):
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
-        assert workbench_paths.state_dir() == clean_env / ".config/workbench"
+        assert workbench_paths.state_dir() == tmp_path / "xdg-state/workbench"
 
     def test_empty_xdg_var_falls_through_to_the_default(self, monkeypatch, clean_env):
         # An exported-but-empty XDG variable is the same as unset, per the spec.
@@ -112,7 +112,7 @@ class TestOverrideRung:
 
     @pytest.mark.parametrize("var,func,default", [
         ("WORKBENCH_CONFIG_DIR", "config_dir", ".config/workbench"),
-        ("WORKBENCH_STATE_DIR", "state_dir", ".config/workbench"),
+        ("WORKBENCH_STATE_DIR", "state_dir", ".local/state/workbench"),
         ("WORKBENCH_CACHE_DIR", "cache_dir", ".cache/workbench"),
     ])
     def test_an_empty_override_falls_through(self, monkeypatch, clean_env, var, func, default):
@@ -133,10 +133,11 @@ class TestResolvedPerCall:
 
 class TestLogsDir:
     def test_bare_logs_dir_is_the_parent_otto_log_globs(self, clean_env):
-        assert workbench_paths.logs_dir() == clean_env / ".config/workbench/logs"
+        assert workbench_paths.logs_dir() == clean_env / ".local/state/workbench/logs"
 
     def test_named_logs_dir_nests_under_it(self, clean_env):
-        assert workbench_paths.logs_dir("ci-check") == clean_env / ".config/workbench/logs/ci-check"
+        expected = clean_env / ".local/state/workbench/logs/ci-check"
+        assert workbench_paths.logs_dir("ci-check") == expected
 
     def test_logs_follow_the_state_root(self, monkeypatch, tmp_path):
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
@@ -385,4 +386,4 @@ class TestTrailDir:
         outside = tmp_path / "plain"
         outside.mkdir()
         assert workbench_paths.trail_dir(outside, "pr") == \
-            clean_env / ".config/workbench/logs/pr"
+            clean_env / ".local/state/workbench/logs/pr"

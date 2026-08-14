@@ -17,7 +17,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 ### constants.sh
 
-Path and filename constants auto-derived from the workbench root. Single source of truth for `WORKBENCH_DIR`, `LOCAL_BIN_DIR`, `ZSH_CONFIG_DIR`, `CLAUDE_DIR`, `MIGRATIONS_STATE_FILE`, `INSTALLED_STATE_FILE`, `MAINTENANCE_LAST_FILE`, and all other shared paths.
+Path and filename constants auto-derived from the workbench root. Single source of truth for `WORKBENCH_DIR`, `LOCAL_BIN_DIR`, `ZSH_CONFIG_DIR`, `CLAUDE_DIR`, `MIGRATIONS_STATE_FILE`, `INSTALL_YML_FILE`, `INSTALLED_STATE_FILE`, `MAINTENANCE_LAST_FILE`, and all other shared paths.
 
 No functions — constants only. Sources `roots.sh`. Loaded via `ui.sh`.
 
@@ -31,11 +31,15 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 
 | Constant | Holds | XDG rung | Default |
 |----------|-------|----------|---------|
-| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `install.yml`, `overrides/`, `mcp-tools.json` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
-| `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `logs/`, `usage/`, applied migrations | *(none yet)* | `~/.config/workbench` |
+| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `overrides/`, `mcp-tools.json`, `review.yml`, `reuse-level` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
+| `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `logs/`, `usage/`, `install.yml`, applied migrations | `XDG_STATE_HOME` | `~/.local/state/workbench` |
 | `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: `vertex-quota/` | `XDG_CACHE_HOME` | `~/.cache/workbench` |
 
-The state root has no `XDG_STATE_HOME` rung yet: honouring it would relocate the existing reviews and logs with nothing to carry them. The rung and the `~/.local/state/workbench` default arrive together with that migration.
+`install.yml` sits under state despite the name: `lib/state.sh` owns every write to it, and it is what the old `installed.components` file migrated into. It records what a sync found or installed, not anything a user chose to type.
+
+Machines set up before the split keep everything in `~/.config/workbench`. `adopt_legacy_workbench_root` in [`lib/migrations.sh`](../lib/migrations.sh) carries that directory across on the next sync, entry by entry, and runs ahead of the migration framework because `migrations.applied` is one of the files it moves. Nothing falls back to the old path once it has run — the adoption is the entire compatibility story.
+
+A file the new root already holds is normally kept on both sides and warned about rather than clobbered. The exception is the append-only ledgers — `trail.jsonl` and `usage/*.jsonl` — which are concatenated instead: their only writers open them in append mode, and `otto-log` sorts every record by `ts` after loading, so one history split across two files reassembles either way. The rule is keyed on those names, not on the `.jsonl` extension, because the review artifacts (`session.jsonl`, `post.jsonl`, `*.holistic.jsonl`) are whole-file writes whose convention is prior-content-first.
 
 Its own module rather than part of `constants.sh` because two other consumers need the roots without the rest: the `otto-ai-tools` tarball ships `roots.sh` alongside its own `ui.sh` facade, and `registries.sh` sources it directly when a caller has not loaded `constants.sh`.
 
@@ -129,7 +133,7 @@ Component installation state tracking.
 | `state_prune_orphans` | Remove entries for deleted components |
 | `state_detect_installed` | Heuristic-based detection for bootstrapping |
 
-State file: `$INSTALLED_STATE_FILE` — `installed.components` under the [state root](#rootssh). Loaded via `ui.sh`.
+State file: `$INSTALL_YML_FILE` — `install.yml` under the [state root](#rootssh). The flat `installed.components` it replaced survives only as the second half of `state_file_exists`. Loaded via `ui.sh`.
 
 ### migrations.sh
 

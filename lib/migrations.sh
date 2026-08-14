@@ -12,9 +12,10 @@
 #   run_all_migrations              # discover and run across all components
 #   run_component_migrations DIR    # run for a single component directory
 
-# Guard: constants must be loaded (provides WORKBENCH_DIR, MIGRATIONS_STATE_FILE, etc.)
-if [[ -z "${WORKBENCH_DIR:-}" ]]; then
-  echo "ERROR: lib/migrations.sh requires WORKBENCH_DIR (source lib/ui.sh first)" >&2
+# Guard: constants must be loaded (provides WORKBENCH_DIR, MIGRATIONS_STATE_FILE,
+# LEGACY_WORKBENCH_ROOT, and the roots the adoption below moves data between)
+if [[ -z "${WORKBENCH_DIR:-}" || -z "${LEGACY_WORKBENCH_ROOT:-}" ]]; then
+  echo "ERROR: lib/migrations.sh requires WORKBENCH_DIR and LEGACY_WORKBENCH_ROOT (source lib/ui.sh first)" >&2
   return 1 2>/dev/null || exit 1
 fi
 
@@ -125,9 +126,213 @@ _prune_stale_migration_state() {
   fi
 }
 
+# ─── Adoption of the pre-split root (#624) ───────────────────────────────────
+#
+# Config, state, and ~200 MB of generated artifacts all used to live in
+# ~/.config/workbench. The roots now split three ways, and this carries what a
+# machine already has on disk across to them.
+#
+# It runs ahead of the framework rather than as a migration of its own because
+# migrations.applied is one of the files it moves. A migration that moved its
+# own bookkeeping would first have to be selected by a framework reading an
+# empty state file — which would re-run every past migration alongside it.
+
+# What stays behind in the config root; everything else the legacy root holds
+# is state. The list that has to be exhaustive is deliberately the short one:
+# the inventory in #624 found four state files that no manifest written in
+# advance had thought to list.
+readonly _LEGACY_CONFIG_ENTRIES=(
+  overrides reuse-level reuse-default review.yml mcp-tools.json
+  config.yml config.schema.json
+)
+
+# _path_exists PATH — true for anything on disk, a broken symlink included.
+_path_exists() {
+  [[ -e "$1" || -L "$1" ]]
+}
+
+# _is_append_only_ledger SRC DST — true for a pair of files that can be
+# concatenated rather than kept side by side.
+#
+# trail.py and ai_usage.py are the only writers of these, both open them in
+# append mode, and otto-log sorts every record by `ts` after loading — so the
+# two halves reassemble in any order. Matched by name rather than by the
+# .jsonl extension on purpose: the review artifacts (session.jsonl,
+# post.jsonl, *.holistic.jsonl) are whole-file writes whose convention is
+# prior-content-first, and splicing two runs together would misreport both.
+_is_append_only_ledger() {
+  local src="$1" dst="$2" parent
+  if [[ ! -f "$src" || -L "$src" || ! -f "$dst" || -L "$dst" ]]; then
+    return 1
+  fi
+  if [[ "${src##*/}" == "trail.jsonl" ]]; then
+    return 0
+  fi
+  parent="${src%/*}"
+  if [[ "${parent##*/}" == "usage" && "$src" == *.jsonl ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# _append_ledger SRC DST — fold an append-only ledger into its successor.
+# Builds the merged result in a temp file and swaps it in with `mv` so a
+# failure partway through never leaves DST with a partial, unrepeatable
+# append — a retry sees the original DST and SRC untouched.
+_append_ledger() {
+  local src="$1" dst="$2" tmp mode
+  tmp="$(mktemp "${dst}.XXXXXX")" || {
+    warn "Could not create a temp file to merge $src into $dst"
+    return 1
+  }
+  # mktemp defaults to 0600; every other _adopt_entry path preserves the
+  # original file's mode via a plain mv, so this one should too.
+  mode=$(file_mode "$dst") && chmod "$mode" "$tmp"
+  if ! cat "$dst" > "$tmp"; then
+    warn "Could not read $dst — left $src in place"
+    rm -f "$tmp"
+    return 1
+  fi
+  # A destination that does not end in a newline would fuse its last record
+  # with the first one appended after it, and the reader silently drops lines
+  # it cannot parse.
+  if [[ -s "$tmp" && -n "$(tail -c 1 "$tmp")" ]]; then
+    printf '\n' >> "$tmp"
+  fi
+  if ! cat "$src" >> "$tmp"; then
+    warn "Could not append $src to $dst — left it in place"
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv "$tmp" "$dst"; then
+    warn "Could not replace $dst with the merged ledger — left $src in place"
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$src"
+  return 0
+}
+
+# _adopt_entry SRC DST — carry one entry across, resuming a partial run.
+# Hand-rolled rather than `rsync -a --remove-source-files`: rsync is not a
+# workbench dependency, and this runs on a machine mid-sync that may not have it.
+# Tallies _ADOPT_MOVED/_ADOPT_STAYED at each leaf decision (rather than letting
+# the caller count by top-level entry) so a directory merge with some children
+# moved and one failed is not misreported as a single entry that stayed.
+_adopt_entry() {
+  local src="$1" dst="$2"
+
+  if ! _path_exists "$dst"; then
+    mkdir -p "$(dirname "$dst")"
+    if ! mv "$src" "$dst"; then
+      warn "Could not move $src to $dst — left it in place"
+      _ADOPT_STAYED=$(( _ADOPT_STAYED + 1 ))
+      return 1
+    fi
+    _ADOPT_MOVED=$(( _ADOPT_MOVED + 1 ))
+    return 0
+  fi
+
+  # A destination that already exists is either a run that was interrupted
+  # partway through 200 MB or a directory the new root already had. Merging
+  # child by child finishes what the first run started; a plain mv would fail
+  # or nest the source inside the destination.
+  if [[ -d "$src" && ! -L "$src" && -d "$dst" && ! -L "$dst" ]]; then
+    _adopt_dir "$src" "$dst"
+    return $?
+  fi
+
+  # A ledger both roots hold is not a conflict — it is one history in two
+  # files, and keeping both would hide the older one from every reader.
+  if _is_append_only_ledger "$src" "$dst"; then
+    if _append_ledger "$src" "$dst"; then
+      _ADOPT_MOVED=$(( _ADOPT_MOVED + 1 ))
+      return 0
+    fi
+    _ADOPT_STAYED=$(( _ADOPT_STAYED + 1 ))
+    return 1
+  fi
+
+  warn "Both $src and $dst exist — kept the new one; reconcile and remove the old"
+  _ADOPT_STAYED=$(( _ADOPT_STAYED + 1 ))
+  return 1
+}
+
+# _adopt_dir SRC DST — merge SRC into an existing DST, entry by entry.
+_adopt_dir() {
+  local src="$1" dst="$2" child failed=0
+  # Dotfiles are skipped at the top level, where the only ones that turn up are
+  # the filesystem's own, but a review or a log directory can legitimately hold
+  # one — leaving it behind would strand data and block the rmdir below.
+  local restore_dotglob=false
+  shopt -q dotglob || restore_dotglob=true
+  shopt -s dotglob
+
+  for child in "$src"/*; do
+    _path_exists "$child" || continue
+    if ! _adopt_entry "$child" "$dst/${child##*/}"; then
+      failed=1
+    fi
+  done
+
+  if [[ "$restore_dotglob" == true ]]; then
+    shopt -u dotglob
+  fi
+  # Only an empty directory goes; whatever could not move keeps its home.
+  rmdir "$src" 2>/dev/null || true
+  return "$failed"
+}
+
+# adopt_legacy_workbench_root
+# Move a pre-#624 ~/.config/workbench to whichever roots now own its contents.
+# No-op once the legacy root is gone, or when a root still resolves to it.
+adopt_legacy_workbench_root() {
+  local legacy="$LEGACY_WORKBENCH_ROOT"
+  [[ -d "$legacy" ]] || return 0
+
+  local entry name target
+  # _adopt_entry tallies these itself, down to the leaf, so a partial
+  # directory merge is reflected in the counts instead of collapsing to one
+  # failed top-level entry.
+  _ADOPT_MOVED=0
+  _ADOPT_STAYED=0
+  # Dotfiles are left where they are: the only ones that turn up are the
+  # filesystem's own (.DS_Store), and they belong to no root.
+  for entry in "$legacy"/*; do
+    _path_exists "$entry" || continue
+    name="${entry##*/}"
+    target="$WORKBENCH_STATE_DIR"
+    if _array_contains "$name" "${_LEGACY_CONFIG_ENTRIES[@]}"; then
+      target="$WORKBENCH_CONFIG_DIR"
+    fi
+    if [[ "$target" == "$legacy" ]]; then
+      continue
+    fi
+    _adopt_entry "$entry" "$target/$name"
+  done
+
+  if (( _ADOPT_MOVED > 0 )); then
+    # No destination named: config entries and state entries went to different
+    # roots, and on an overridden machine both of those moved.
+    success "Adopted $_ADOPT_MOVED entries from $legacy"
+  fi
+  # The sync that runs this is usually the unattended one from the maintenance
+  # agent, whose output goes to a log file. A partial adoption has to state
+  # itself rather than be inferred from the warnings scattered above it.
+  if (( _ADOPT_STAYED > 0 )); then
+    warn "$_ADOPT_STAYED entries could not be adopted — $legacy still holds them"
+  fi
+  rmdir "$legacy" 2>/dev/null || true
+  return 0
+}
+
 # run_all_migrations
 # Discovers and runs migrations across all components, then prunes stale state.
 run_all_migrations() {
+  # Before anything reads the state root: carry a pre-split ~/.config/workbench
+  # into the roots that own it now, migrations.applied included.
+  adopt_legacy_workbench_root
+
   # Prune stale state entries before running (handles removed/renamed migrations)
   _prune_stale_migration_state
 

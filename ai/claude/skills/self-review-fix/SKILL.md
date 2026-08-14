@@ -24,7 +24,7 @@ Reviews a branch and automatically applies fixes for the findings.
 
 1. Determine the branch name (from argument or current HEAD)
 2. Check if a self-review already exists for the current repo and branch in
-   `~/.config/workbench/reviews/`
+   `~/.local/state/workbench/reviews/`
 3. If no review, or the review is stale, run `pr review --self --fix`
 4. Report what was fixed and what was skipped — never ask, never fix manually
 
@@ -54,7 +54,7 @@ internally via `pr_context` — pass the argument through directly.
    echo "<branch_name>" | tr '/' '-'
    ```
    ```bash
-   ls ~/.config/workbench/reviews/<repo>-self-<sanitized>/review.md
+   ls ~/.local/state/workbench/reviews/<repo>-self-<sanitized>/review.md
    ```
 
 If the review file exists, read it with the Read tool. Extract the
@@ -106,5 +106,5 @@ what is auto-fixable; trust its judgment.
 - **Non-destructive.** All fixes are applied via Edit tool — individual changes
   are reviewable in the git log.
 - **Idempotent.** Running twice on the same review skips already-fixed findings.
-- **Review preserved.** The review file is kept in `~/.config/workbench/reviews/`
+- **Review preserved.** The review file is kept in `~/.local/state/workbench/reviews/`
   for retro analysis — it is not deleted after fixing.

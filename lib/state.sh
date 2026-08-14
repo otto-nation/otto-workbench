@@ -2,7 +2,7 @@
 # Component installation state tracking via YAML.
 #
 # Tracks which components and sub-tools are installed in a structured
-# YAML file (~/.config/workbench/install.yml). Core components (bin, git,
+# YAML file (~/.local/state/workbench/install.yml). Core components (bin, git,
 # zsh, task) are omitted — they always sync.
 #
 # Usage (from scripts that already source lib/ui.sh):
@@ -134,6 +134,26 @@ state_prune_orphans() {
   done
 }
 
+# _state_detect_docker_runtime — records which docker runtime is in use.
+#
+# docker/setup.sh writes docker.runtime when the user picks a runtime, so the
+# record is the owner and a machine that has one needs nothing from us. Reading
+# the choice back out of the symlink is the fallback for machines configured
+# before that record existed, not the source of truth.
+_state_detect_docker_runtime() {
+  if [[ -n "$(state_get "docker.runtime")" ]]; then
+    return 0
+  fi
+
+  local _target _runtime
+  _target=$(readlink "$DOCKER_RUNTIME_ALIASES" 2>/dev/null || true)
+  if [[ "$_target" == *"/docker/"*"/aliases.zsh" ]]; then
+    _runtime="${_target%/aliases.zsh}"
+    _runtime="${_runtime##*/}"
+    state_set "docker.runtime" "$_runtime"
+  fi
+}
+
 # state_detect_installed — detects currently installed components and records them.
 # Uses heuristics (config files, symlinks, directories) to determine what is present.
 # Called by the initial-state migration and by `otto-workbench discover regenerate`.
@@ -141,14 +161,7 @@ state_detect_installed() {
   # Docker — detect by state symlink presence
   if [[ -L "$DOCKER_RUNTIME_ALIASES" ]]; then
     state_record "docker"
-    # Enrich with runtime choice from symlink target
-    local _target _runtime
-    _target=$(readlink "$DOCKER_RUNTIME_ALIASES" 2>/dev/null || true)
-    if [[ "$_target" == *"/docker/"*"/aliases.zsh" ]]; then
-      _runtime="${_target%/aliases.zsh}"
-      _runtime="${_runtime##*/}"
-      state_set "docker.runtime" "$_runtime"
-    fi
+    _state_detect_docker_runtime
   fi
 
   # AI / Claude — detect by settings file

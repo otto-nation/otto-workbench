@@ -8,6 +8,7 @@ setup() {
   common_setup
   TMPDIR="$(mktemp -d)"
   PROMOTE_SCAN="$REPO_ROOT/ai/claude/bin/promote-scan"
+  sandbox_state_dir
 }
 
 teardown() {

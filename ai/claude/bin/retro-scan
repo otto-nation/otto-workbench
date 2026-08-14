@@ -56,8 +56,10 @@ NOISE_PATTERNS = re.compile(
 
 COMMENT_BODY_MAX = 500
 
-REVIEWS_DIR_REL = Path(".config") / "workbench" / "reviews"
-CONSUMED_REVIEWS_REL = Path(".config") / "workbench" / "retro-consumed-reviews.txt"
+# Under the state root rather than under --home: both are generated data, and
+# retro-complete.sh deletes them through WORKBENCH_STATE_DIR.
+REVIEWS_DIR_NAME = "reviews"
+CONSUMED_REVIEWS_NAME = "retro-consumed-reviews.txt"
 
 FINDING_RE = re.compile(
     r"^- \[[ x]\] \*\*\[([MSNI])(\d+)\]\*\*\s+"
@@ -822,10 +824,10 @@ def _scan_review_dir(
 
 
 def scan_local_reviews(
-    home: Path, rules: list[dict], rule_match_counts: dict[str, dict],
+    state_dir: Path, rules: list[dict], rule_match_counts: dict[str, dict],
 ) -> tuple[list[dict], int, list[str]]:
     """Returns (repo_list, unmatched_count, consumed_dir_names)."""
-    reviews_dir = home / REVIEWS_DIR_REL
+    reviews_dir = state_dir / REVIEWS_DIR_NAME
     if not reviews_dir.exists():
         return [], 0, []
 
@@ -948,8 +950,9 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
             })
     trail.info("fetch_pr_comments", f"fetched review data from {len(repos)} repos")
 
+    state_dir = workbench_paths.state_dir()
     local_repos, local_unmatched, consumed_dirs = scan_local_reviews(
-        home, rules, rule_match_counts,
+        state_dir, rules, rule_match_counts,
     )
     local_repos = _dedup_local_against_github(scan_repos, local_repos)
     for lr in local_repos:
@@ -963,7 +966,7 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
     trail.info("scan_local_reviews", f"scanned {sum(len(r['prs']) for r in local_repos)} local reviews")
 
     if consumed_dirs:
-        consumed_file = home / CONSUMED_REVIEWS_REL
+        consumed_file = state_dir / CONSUMED_REVIEWS_NAME
         consumed_file.parent.mkdir(parents=True, exist_ok=True)
         consumed_file.write_text("\n".join(consumed_dirs) + "\n")
         trail.info("write_consumed", f"wrote {len(consumed_dirs)} consumed review dirs")

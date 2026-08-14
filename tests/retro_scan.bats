@@ -8,6 +8,7 @@ setup() {
   common_setup
   TMPDIR="$(mktemp -d)"
   RETRO_SCAN="$REPO_ROOT/ai/claude/bin/retro-scan"
+  sandbox_state_dir
 }
 
 teardown() {
@@ -632,7 +633,7 @@ PY
 # ── scan_local_reviews: consumed dirs ───────────────────────────────────────
 
 @test "scan_local_reviews: returns consumed dir names" {
-  local reviews_dir="$TMPDIR/.config/workbench/reviews"
+  local reviews_dir="$TMPDIR/state/reviews"
   mkdir -p "$reviews_dir/myrepo-self-1"
   cat > "$reviews_dir/myrepo-self-1/review.md" <<'EOF'
 # Self-Review: myrepo — branch
@@ -648,7 +649,7 @@ EOF
 from pathlib import Path
 rules = mod.load_rules(Path("$TMPDIR/wb"))
 counts = {r["filename"]: {"matched": 0} for r in rules}
-repos, unmatched, consumed = mod.scan_local_reviews(Path("$TMPDIR"), rules, counts)
+repos, unmatched, consumed = mod.scan_local_reviews(Path("$TMPDIR/state"), rules, counts)
 print(len(consumed))
 print(consumed[0] if consumed else "none")
 PY

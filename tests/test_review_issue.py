@@ -114,9 +114,9 @@ def test_load_issue_provider_reads_wt_path_config(tmp_path):
 
 def test_load_issue_provider_falls_back_to_workbench_config(tmp_path):
     wt_path = str(tmp_path / "worktree")
-    workbench_dir = str(tmp_path / "workbench")
-    Path(workbench_dir).mkdir(parents=True)
-    review_yml = Path(workbench_dir) / "review.yml"
+    config_dir = str(tmp_path / "config")
+    Path(config_dir).mkdir(parents=True)
+    review_yml = Path(config_dir) / "review.yml"
     review_yml.write_text("issue_tracker:\n  provider: github\n")
 
     def fake_run(cmd, **kwargs):
@@ -129,7 +129,7 @@ def test_load_issue_provider_falls_back_to_workbench_config(tmp_path):
         return r
 
     with patch("subprocess.run", side_effect=fake_run), \
-         patch.dict("os.environ", {"WORKBENCH_STATE_DIR": workbench_dir}):
+         patch.dict("os.environ", {"WORKBENCH_CONFIG_DIR": config_dir}):
         result = load_issue_provider(wt_path)
 
     assert result.name == "github"

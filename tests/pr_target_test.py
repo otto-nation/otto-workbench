@@ -25,16 +25,23 @@ CONTRACT = json.loads(
     (REPO_ROOT / "docs" / "contracts" / "pr-target-vectors.json").read_text(encoding="utf-8")
 )
 
+
+def why(row):
+    """The row's own reasoning, carried into the failure message.
+
+    A row's rationale lives in the artifact now rather than in a comment beside
+    it, and a failure that prints only the input and the two keys leaves whoever
+    reads it to go find out what the row was for.
+    """
+    return row.get("note", "see docs/contracts/pr-target-vectors.json")
+
+
 # The published fixtures, asserted here against the implementation that
 # generated them. The validator makes the same comparison from the other
 # direction; this one keeps a plain `pytest tests/` run able to catch the drift.
-SLUG_VECTORS = [(row["branch"], row["expected"]) for row in CONTRACT["slug"]]
-REPO_KEY_VECTORS = [(row["url"], row["expected"]) for row in CONTRACT["repo_key"]]
-
-
-@pytest.mark.parametrize("branch,expected", SLUG_VECTORS)
-def test_slug_vectors(branch, expected):
-    assert pr_target.slug(branch) == expected
+@pytest.mark.parametrize("row", CONTRACT["slug"], ids=lambda row: row["branch"])
+def test_slug_vectors(row):
+    assert pr_target.slug(row["branch"]) == row["expected"], why(row)
 
 
 def test_target_dir_is_rooted_at_the_state_dir(tmp_path, monkeypatch):
@@ -54,21 +61,17 @@ def test_target_dir_follows_a_moved_state_root(tmp_path, monkeypatch):
     assert after.parent.parent == tmp_path / "new"
 
 
-@pytest.mark.parametrize("url,expected", REPO_KEY_VECTORS)
-def test_repo_key_vectors(url, expected):
-    assert pr_target._repo_key(url) == expected
+@pytest.mark.parametrize("row", CONTRACT["repo_key"], ids=lambda row: row["url"])
+def test_repo_key_vectors(row):
+    assert pr_target._repo_key(row["url"]) == row["expected"], why(row)
 
 
 @pytest.mark.parametrize("row", CONTRACT["target_dir"], ids=lambda row: row["branch"])
 def test_target_dir_vectors(row, tmp_path, monkeypatch):
-    """The published join, asserted against target_dir() rather than re-derived.
-
-    The artifact's expected value is composed from TARGETS_DIR and slug(); this
-    is the one place that composition is checked against the function consumers
-    are actually mirroring.
-    """
+    """The published join, read back through the state root consumers resolve."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    assert pr_target.target_dir(row["repo_key"], row["branch"]) == tmp_path / row["expected"]
+    assert pr_target.target_dir(row["repo_key"], row["branch"]) == tmp_path / row["expected"], \
+        why(row)
 
 
 @pytest.mark.parametrize("a,b", [
@@ -185,7 +188,8 @@ def test_the_case_fold_maps_a_to_z_and_nothing_else():
         pr_target._repo_key("https://github.com/acme/café")
 
 
-@pytest.mark.parametrize("url", [u for u, key in REPO_KEY_VECTORS if key])
+@pytest.mark.parametrize(
+    "url", [row["url"] for row in CONTRACT["repo_key"] if row["expected"]])
 def test_a_key_is_always_one_safe_path_component(url, tmp_path, monkeypatch):
     """A key holding "/", "." or ".." would put a run's state outside pr/."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))

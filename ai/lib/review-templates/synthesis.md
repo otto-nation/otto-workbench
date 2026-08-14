@@ -25,7 +25,7 @@ ${reviews_section}
 7. Check for cross-file concerns — do findings in one group imply issues in files from another group? Deduplicate: if the same issue appears in multiple group reviews (same file, same concern), keep the most complete version and drop the rest
 8. Add any cross-cutting findings
 9. If the merged findings contain a ## Prior findings section, copy it into your output verbatim — it records which prior findings the group agents found fixed, and it is stripped before the review is published
-10. Write ## Verdict (Approve / Request changes / Disapprove / Needs discussion) — Idioms findings do not affect the verdict. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead
+10. Write ## Verdict (${verdict_options}) — Idioms findings do not affect the verdict. Disapprove means the overall approach is wrong and the PR should not land in any form — explain what should be done instead
 11. Save the COMPLETE review file as described under ## Output below
 
 ## Output

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import log
+from pr_state import ReviewVerdict
 from review_common import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, PriorDisposition, plural,
@@ -1034,18 +1035,10 @@ _VERDICT_LABELS = [(s.key, s.label) for s in SEVERITIES]
 _MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
 
 
-def _verdict_action(counts: dict[str, int]) -> str:
-    """The strongest action the finding counts alone justify.
-
-    Sole owner of the counts-to-action mapping: the mechanical verdict and the
-    post-drop revision both read it, so a review can never state one action
-    while its own counts imply another.
-    """
-    if counts.get(SEVERITY_MUST):
-        return "Request changes"
-    if counts.get(SEVERITY_SHOULD):
-        return "Needs discussion"
-    return "Approve"
+def _verdict_from_counts(counts: dict[str, int]) -> ReviewVerdict:
+    return ReviewVerdict.from_counts(
+        counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
+    )
 
 
 def _count_parts(counts: dict[str, int]) -> list[str]:
@@ -1055,12 +1048,11 @@ def _count_parts(counts: dict[str, int]) -> list[str]:
 def mechanical_verdict(counts: dict[str, int]) -> str:
     parts = _count_parts(counts)
     if not parts:
-        return f"Approve — no findings {_MECHANICAL_NOTE}.\n"
+        return f"{ReviewVerdict.APPROVE.prose} — no findings {_MECHANICAL_NOTE}.\n"
 
-    must = counts.get(SEVERITY_MUST, 0)
-    should = counts.get(SEVERITY_SHOULD, 0)
-    suffix = " only" if not must and not should else ""
-    return f"{_verdict_action(counts)} — {', '.join(parts)}{suffix} {_MECHANICAL_NOTE}.\n"
+    verdict = _verdict_from_counts(counts)
+    suffix = " only" if verdict is ReviewVerdict.APPROVE else ""
+    return f"{verdict.prose} — {', '.join(parts)}{suffix} {_MECHANICAL_NOTE}.\n"
 
 
 # ── Reconciling prose against dropped findings ───────────────────────────────
@@ -1072,24 +1064,6 @@ def mechanical_verdict(counts: dict[str, int]) -> str:
 # review says what left it, next to the prose that is now wrong.
 
 _DROP_NOTE_MARKER = "<!-- verification-drops -->"
-
-# Dropping only ever removes findings, so a stale verdict can only overstate.
-# Ranking them lets the revision lower a verdict without ever raising one.
-#
-# Disapprove is deliberately absent. Per `review-templates/synthesis.md`, it means
-# the overall approach is wrong and the PR should not land in any form — a holistic
-# judgment the finding counts do not derive, so no drop refutes it. Leaving it out
-# of the ranking is what makes an unmatched verdict fall through untouched.
-_VERDICT_RANK = {
-    "approve": 0,
-    "needs discussion": 1,
-    "request changes": 2,
-}
-
-_VERDICT_STATED_RE = re.compile(
-    r"^\**(" + "|".join(re.escape(a) for a in _VERDICT_RANK) + r")\**",
-    re.IGNORECASE,
-)
 
 
 def _section_bounds(text: str, header: str) -> tuple[int, int] | None:
@@ -1137,25 +1111,26 @@ def _insert_drop_note(text: str, note: str) -> str:
 
 
 def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
-    """Lower a verdict the surviving findings no longer support."""
+    """Lower a verdict the surviving findings no longer support.
+
+    Dropping only ever removes findings, so a stale verdict can only overstate
+    — the revision lowers, never raises, and leaves an unranked verdict alone.
+    """
     bounds = _section_bounds(text, "Verdict")
     if bounds is None:
         return text
 
     start, end = bounds
     body = text[start:end]
-    stated = _VERDICT_STATED_RE.match(body.strip())
-    if stated is None:
-        return text
-
-    supported = _verdict_action(counts)
-    if _VERDICT_RANK[stated.group(1).lower()] <= _VERDICT_RANK[supported.lower()]:
+    stated = ReviewVerdict.stated_in(body)
+    supported = _verdict_from_counts(counts)
+    if not stated or not stated.outranks(supported):
         return text
 
     parts = _count_parts(counts)
     remaining = ", ".join(parts) if parts else "no findings"
     revised = (
-        f"{supported} — {remaining} after evidence verification removed "
+        f"{supported.prose} — {remaining} after evidence verification removed "
         f"{n_dropped} finding{plural(n_dropped)}.\n"
     )
     return f"{text[:start]}\n{revised}\n{text[end:].lstrip(chr(10))}"

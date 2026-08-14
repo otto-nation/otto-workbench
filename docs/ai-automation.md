@@ -607,6 +607,31 @@ what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
+### How a review's verdict is decided
+
+`ReviewVerdict` owns the four verdicts in both spellings they are written in: the
+word the prompt asks for and the review states (`Request changes`), and the value
+recorded in state and shown by `pr status` (`changes_requested`). One member owns
+both, so the prompt cannot ask for wording the parser does not recognise, and the
+markdown cannot say one thing while the dashboard reports another.
+
+The verdict a review is recorded with reconciles two readings of it — the prose
+the agent wrote and the findings that survived verification — and the stronger
+call wins:
+
+- Findings that block cannot be under-reported. A review stating `Approve` with a
+  must-fix finding still records `changes_requested`.
+- A stronger call the agent made is not discarded. A review stating
+  `Request changes` over nits alone keeps it.
+- `Disapprove` is unranked and always stands: it judges the overall approach,
+  which no finding count implies or refutes.
+- A self-review records no verdict — it is advisory and has no PR to approve or
+  block. `Disapprove` is the exception, since it holds without a PR.
+
+Counts alone map to `Request changes` (any must-fix), `Needs discussion` (any
+should-fix), or `Approve`. Nits and idioms do not affect the verdict, and a review
+file that does not exist records no verdict rather than an approval.
+
 ### Where review artifacts live
 
 Each review owns a directory under `~/.local/state/workbench/reviews/` — `review.md`

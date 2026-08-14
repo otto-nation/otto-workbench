@@ -854,19 +854,14 @@ def build_failure_detail(review_dir: Path | None) -> str:
     return "; ".join(parts)
 
 
-def parse_review_verdict(review_path: Path | None) -> str:
-    """Extract verdict from review markdown's ## Verdict section.
-
-    Returns the ReviewVerdict value if Disapprove is found, empty string otherwise
-    (caller falls back to mechanical count-based verdict).
-    """
+def parse_review_verdict(review_path: Path | None) -> ReviewVerdict | None:
+    """The verdict a review's `## Verdict` section states, if it states one."""
     if not review_path or not review_path.is_file():
-        return ""
+        return None
     try:
         text = review_path.read_text()
     except OSError:
-        return ""
-    from pr_state import ReviewVerdict
+        return None
     in_verdict = False
     for line in text.splitlines():
         if line.strip().lower().startswith("## verdict"):
@@ -877,8 +872,36 @@ def parse_review_verdict(review_path: Path | None) -> str:
         stripped = line.strip()
         if not stripped:
             continue
-        return ReviewVerdict.DISAPPROVE.value if stripped.lower().startswith("disapprove") else ""
-    return ""
+        return ReviewVerdict.stated_in(stripped)
+    return None
+
+
+def resolve_review_verdict(
+    review_path: Path | None, *, self_review: bool = False,
+) -> ReviewVerdict | None:
+    """The verdict to record and report for a finished review.
+
+    The prose the synthesis agent wrote and the findings that survived
+    verification are two readings of the same review, and this is the only
+    place they are reconciled: the stronger call wins, so the prose can never
+    under-report findings that block, and the counts can never quietly discard
+    a stronger call the agent made. Disapprove is unranked and always stands —
+    no count implies it and none refutes it.
+    """
+    if not review_path or not review_path.is_file():
+        return None
+    stated = parse_review_verdict(review_path)
+    if stated is ReviewVerdict.DISAPPROVE:
+        return stated
+    # A self-review is advisory — it has no PR to approve or block. Disapprove
+    # is the exception above: it judges the approach, which holds without a PR.
+    if self_review:
+        return None
+    derived = ReviewVerdict.from_counts(
+        count_severity(review_path, SEVERITY_MUST),
+        count_severity(review_path, SEVERITY_SHOULD),
+    )
+    return stated if stated and stated.outranks(derived) else derived
 
 
 def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
@@ -894,16 +917,8 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
     review_dir = Path(review_file).parent if review_file else None
     meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
 
-    from pr_state import ReviewVerdict
-    parsed_verdict = parse_review_verdict(review_path)
-    if parsed_verdict:
-        verdict = parsed_verdict
-    elif meta.mode is Mode.SELF:
-        # A self-review is advisory — it has no PR to approve or block.
-        verdict = ""
-    else:
-        must_count = counts.get("must_fix", 0)
-        verdict = ReviewVerdict.CHANGES_REQUESTED.value if must_count > 0 else ReviewVerdict.APPROVE.value
+    resolved = resolve_review_verdict(review_path, self_review=meta.mode is Mode.SELF)
+    verdict = resolved.value if resolved else ""
 
     usage = aggregate_session_usage(review_dir)
 

@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""Validate that the published contract fixtures still match the implementation.
+
+Usage: bin/local/validate-contract-vectors [--quiet] [--write]
+
+The run-target path layout is a published interface: ui-code reimplements it in
+TypeScript so its server can find state written by this repo's `pr` CLI. Neither
+repo's CI can see the other, so nothing catches a change to `pr_target.py` or
+`workbench_paths.py` that moves the directory — the consumer keeps reading a
+path nobody writes, and a missing state file reads as "never reviewed" rather
+than as an error. That failure has already shipped once: #624 phase 4 added the
+XDG rung to `state_dir()` and ui-code went on resolving the old default.
+
+So the fixtures are generated from the live functions and committed:
+
+    docs/contracts/pr-target-vectors.json
+
+This script regenerates them and diffs against that file. A behaviour change
+fails here, at the moment it is made, by the person making it — which is the
+only place the drift is visible, because the consumer's tests assert against a
+copy of this same artifact and would happily keep passing.
+
+Failing is the point, not a nuisance. When the change is intended, rerun with
+--write, commit the artifact, and open the matching consumer PR: the artifact
+is the thing consumers vendor, so until it lands they have nothing to update to.
+
+Exit code: 0 if the artifact is current, 1 if it is stale.
+"""
+
+import argparse
+import difflib
+import json
+import os
+import sys
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'ai', 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
+import pr_state  # noqa: E402
+import pr_target  # noqa: E402
+import review_common  # noqa: E402
+import run_lock  # noqa: E402
+import workbench_paths  # noqa: E402
+
+ARTIFACT = os.path.join('docs', 'contracts', 'pr-target-vectors.json')
+
+# Consumers substitute their own home directory. Absolute paths from this
+# machine would make the artifact unusable anywhere else, and unstable here.
+HOME = '<home>'
+
+# Bumped when a row's meaning changes, not when one is added: a consumer pinned
+# to an older artifact needs to know whether its copy is merely incomplete or
+# actively wrong.
+VERSION = 1
+
+# ── Inputs ──────────────────────────────────────────────────────────────────
+# Only the inputs live here. Every expected value below is computed by calling
+# the live implementation, so this file cannot assert a stale answer — the
+# committed artifact is what holds the frozen expectation.
+
+SLUG_INPUTS = [
+    ('main', 'The ordinary case: already a legal component, unchanged.'),
+    ('isaac/fix/target_scoped_run_lock',
+     'Underscores survive; only the separators collapse.'),
+    ('feat/a--b', 'A run of legal dashes is content, not a separator to collapse.'),
+    ('release/v1.2.3',
+     'The dot survives. A mirror guessing [^a-z0-9-] gives release-v1-2-3 — a '
+     'second directory for one target, which is #680 again for every dotted branch.'),
+    ('/leading/', 'Leading and trailing dashes are stripped after substitution.'),
+    ('dependabot/npm_and_yarn/foo/bar-1.0.0',
+     'The shape a bot actually produces, with every legal character class in it.'),
+]
+
+REPO_KEY_INPUTS = [
+    ('git@github.com:acme/widget.git',
+     'canonical "acme/widget" — every spelling of one repo takes one key.'),
+    ('https://github.com/acme/widget.git', None),
+    ('https://github.com/acme/widget', None),
+    ('https://github.com/acme/widget/', None),
+    ('https://github.com/acme/widget.git/',
+     'A trailing slash hides the .git from a strip that runs before it.'),
+    ('https://github.com/acme//widget.git', 'git accepts the doubled separator.'),
+    ('https://github.com/acme/widget/.git',
+     '`git clone .../repo/.git` is a spelling git accepts. The strip uncovers a '
+     'trailing slash, so slashes normalize on both sides of it.'),
+    ('ssh://git@github.com/acme/widget.git', None),
+    ('ssh://git@host:2222/acme/widget.git', 'A port is part of the authority, not the path.'),
+    ('git://host/acme/widget.git', None),
+    ('https://user:token@host/acme/widget', 'Userinfo is part of the authority.'),
+    ('file:///srv/git/widget.git',
+     'file:// names no host whatever authority it carries: git ignores a file '
+     "URL's authority and clones the path, so all three of these are one target."),
+    ('file://localhost/srv/git/widget.git', None),
+    ('file://bogushost/srv/git/widget.git', None),
+    ('gitbox:acme/widget.git',
+     'An ~/.ssh/config Host alias. Scp-style with no "user@", which git accepts '
+     'and which therefore has to be qualified like any other hosted remote.'),
+    ('git@host:widget.git', 'A hosted remote naming a single segment.'),
+    ('https://gitlab.com/group/subgroup/widget.git',
+     'The whole path below the host, not its last two segments — '
+     'group-a/platform/api and group-b/platform/api are different repos.'),
+    ('https://gitlab.com/group/sub/widget.git', None),
+    ('https://gitlab.com/group/sub/team/service/widget.git', None),
+    ('/srv/git/widget.git',
+     'A local remote keys on its trailing segment alone — leading directories '
+     'are machine-specific, so keying on them gives one repo a key per machine.'),
+    ('/srv/git/widget/.git', None),
+    ('/srv/mirrors/otto-workbench/', None),
+    ('../widget', None),
+    ('ssh://git@github.com/',
+     'A remote naming no path names no repo. Keying the userinfo, the host, or a '
+     "file URL's discarded authority would give every such URL one directory."),
+    ('https://github.com', None),
+    ('git@github.com:', None),
+    ('file://localhost/', None),
+    ('file://bogushost/', None),
+    ('file:///', None),
+    ('/', None),
+    ('', None),
+    ('https://github.com/Acme/Widget.git',
+     'The canonical form folds A-Z to a-z and drops one trailing ".git" through '
+     'that same fold: GitHub and GitLab treat a repo path case-insensitively, so '
+     'every casing of one path is one repo and takes one lock.'),
+    ('git@github.com:acme/widget.GIT', None),
+    ('https://github.com/Acme/Widget.GIT', None),
+    ('https://github.com/acme/API', None),
+    ('https://github.com/acme/CAFÉ',
+     'A-Z and nothing else. É (U+00C9) is left as it is, so the mirror never has '
+     'to agree with this runtime about a Unicode version or a locale. The price '
+     'is these two rows: a mixed-case non-ASCII path is two keys, not one.'),
+    ('https://github.com/acme/café', None),
+    ('https://github.com/acme/文档.git',
+     'Segments that slug to nothing contribute nothing readable; the digest is '
+     'what keeps them apart. Without it every such repo under acme/ shares a key.'),
+    ('https://github.com/acme/日本語.git', None),
+    ('https://github.com/acme/@@@.git', None),
+    ('https://github.com/文档', 'Nothing readable at all: the key is the digest alone.'),
+    ('https://github.com/acme/wídget.git',
+     'A lossy slug, not an empty one. The readable part collides deliberately.'),
+    ('https://github.com/acme/wîdget.git', None),
+    ('https://github.com/acme/-widget.git',
+     "The slug's separator is legal inside a segment, and its strip('-') eats an "
+     'edge hyphen. Both readable parts collide; both keys do not.'),
+    ('https://github.com/acme/wid/get.git', None),
+    ('https://github.com/acme/wid-get.git', None),
+    ('https://github.com/..',
+     'Relative components survive as readable text, never as a path component: '
+     'the digest suffix means no key can be "." or "..".'),
+    ('https://github.com/./widget.git', None),
+]
+
+TARGET_DIR_INPUTS = [
+    ('acme-widget-b9d71e86', 'main', 'The join: <targets_dir>/<repo-key>-<branch-slug>.'),
+    ('acme-widget-b9d71e86', 'feat/A',
+     'The branch slug never folds case — git refs are case-sensitive, so feat/A '
+     'and feat/a are two branches and must not share a lock.'),
+    ('acme-widget-b9d71e86', 'feat/a', None),
+]
+
+# Each row is one resolution of the state root. The environment is a dimension
+# of the contract in its own right: no table of path-to-key rows could have
+# caught a missing rung, which is exactly how the consumer went stale.
+STATE_ROOT_INPUTS = [
+    ({}, 'No override and no XDG variable: the built-in default.'),
+    ({'XDG_STATE_HOME': f'{HOME}/xdg-state'},
+     'The XDG rung, which appends "workbench" to the value.'),
+    ({'WORKBENCH_STATE_DIR': f'{HOME}/explicit'},
+     'The override rung, taken verbatim with nothing appended.'),
+    ({'WORKBENCH_STATE_DIR': f'{HOME}/explicit', 'XDG_STATE_HOME': f'{HOME}/xdg-state'},
+     'The override wins over the XDG rung.'),
+    ({'WORKBENCH_STATE_DIR': ''},
+     'An exported-but-empty override is unset. `export WORKBENCH_STATE_DIR=` in '
+     'a profile leaves the variable present and empty; reading it as a real '
+     "override resolves the root to the caller's cwd or to /."),
+    ({'XDG_STATE_HOME': ''}, 'An exported-but-empty XDG variable is unset, per the spec.'),
+]
+
+ROOT_VARS = ('WORKBENCH_STATE_DIR', 'XDG_STATE_HOME', 'WORKBENCH_CONFIG_DIR', 'XDG_CONFIG_HOME')
+
+
+# ── Generation ──────────────────────────────────────────────────────────────
+
+def _row(inputs, expected, note):
+    """One fixture row, with its note only when it carries one.
+
+    Notes are attached to the first row of a group and left off the rows that
+    illustrate the same rule, so a consumer reading the artifact sees the
+    reasoning without it being repeated verbatim on every line.
+    """
+    row = dict(inputs)
+    row['expected'] = expected
+    if note:
+        row['note'] = note
+    return row
+
+
+def _restore_env(saved):
+    """Put back what was there, treating a recorded None as "was not set"."""
+    for var, value in saved.items():
+        if value is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value
+
+
+def _resolved_state_root(env, home):
+    """state_dir() under one environment, with this machine's paths tokenized."""
+    saved = {var: os.environ.get(var) for var in (*ROOT_VARS, 'HOME')}
+    try:
+        for var in ROOT_VARS:
+            os.environ.pop(var, None)
+        os.environ['HOME'] = home
+        for var, value in env.items():
+            os.environ[var] = value.replace(HOME, home)
+        return str(workbench_paths.state_dir()).replace(home, HOME)
+    finally:
+        _restore_env(saved)
+
+
+def build_artifact():
+    """The published fixtures, computed from the live implementation."""
+    # A path this machine does not have, so a rung that silently expanded
+    # something else would show up as an untokenized absolute path in the diff.
+    home = '/nonexistent-home'
+    return {
+        'contract': 'pr-target',
+        'version': VERSION,
+        'owner': {
+            'repo': 'otto-nation/otto-workbench',
+            'modules': ['ai/lib/pr_target.py', 'ai/lib/workbench_paths.py'],
+            'regenerate': 'bin/local/validate-contract-vectors --write',
+        },
+        'description':
+            'Fixtures for the run-target path layout, generated from the owning '
+            'implementation. Consumers vendor this file verbatim and assert '
+            'against it rather than transcribing the tables by hand.',
+        'layout': {
+            'path': '<state_root>/<targets_dir>/<repo_key>-<branch_slug>/',
+            'targets_dir': pr_target.TARGETS_DIR,
+            'state_file': pr_state.STATE_FILE,
+            'lock_file': run_lock.LOCK_FILE,
+            'reviews_dir': review_common.REVIEWS_DIR.name,
+            'worktree_state_dir': workbench_paths.WORKTREE_STATE_DIRNAME,
+            'legacy_worktree_state_dir': workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME,
+        },
+        'state_root': [
+            _row({'env': env}, _resolved_state_root(env, home), note)
+            for env, note in STATE_ROOT_INPUTS
+        ],
+        'slug': [
+            _row({'branch': branch}, pr_target.slug(branch), note)
+            for branch, note in SLUG_INPUTS
+        ],
+        'repo_key': [
+            _row({'url': url}, pr_target._repo_key(url), note)
+            for url, note in REPO_KEY_INPUTS
+        ],
+        'target_dir': [
+            _row({'repo_key': key, 'branch': branch},
+                 f'{pr_target.TARGETS_DIR}/{key}-{pr_target.slug(branch)}', note)
+            for key, branch, note in TARGET_DIR_INPUTS
+        ],
+    }
+
+
+def serialize(artifact):
+    """Stable text, so a diff shows the changed row and nothing else."""
+    return json.dumps(artifact, indent=2, ensure_ascii=False, sort_keys=False) + '\n'
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate the published run-target contract fixtures.')
+    parser.add_argument('--quiet', action='store_true', help='Only show failures')
+    parser.add_argument('--write', action='store_true',
+                        help='Regenerate the artifact instead of checking it')
+    args = parser.parse_args()
+
+    path = os.path.join(_WORKBENCH_DIR, ARTIFACT)
+    current = serialize(build_artifact())
+
+    if args.write:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write(current)
+        print(f'{GREEN}✓{NC} wrote {ARTIFACT}')
+        return
+
+    try:
+        with open(path, encoding='utf-8') as handle:
+            committed = handle.read()
+    except FileNotFoundError:
+        print(f'{RED}✗{NC} {ARTIFACT} is missing', file=sys.stderr)
+        print(f'    {DIM}regenerate: bin/local/validate-contract-vectors --write{NC}',
+              file=sys.stderr)
+        sys.exit(1)
+
+    if committed == current:
+        if not args.quiet:
+            print(f'{GREEN}✓{NC} {ARTIFACT} matches the implementation')
+        return
+
+    print(f'{RED}✗{NC} {ARTIFACT} is stale — the implementation moved without it',
+          file=sys.stderr)
+    diff = difflib.unified_diff(
+        committed.splitlines(keepends=True), current.splitlines(keepends=True),
+        fromfile=f'{ARTIFACT} (committed)', tofile='(implementation)')
+    sys.stderr.writelines(diff)
+    print(f'\n    {DIM}Every consumer vendors this file. If the change is intended:{NC}',
+          file=sys.stderr)
+    print(f'    {DIM}  1. bin/local/validate-contract-vectors --write{NC}', file=sys.stderr)
+    print(f'    {DIM}  2. commit the artifact with the change{NC}', file=sys.stderr)
+    print(f'    {DIM}  3. open the ui-code PR that re-vendors it{NC}', file=sys.stderr)
+    sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

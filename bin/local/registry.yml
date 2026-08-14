@@ -54,6 +54,11 @@ tools:
     visibility: brief
     description: "Validates that stat format flags are confined to the lib/portable.sh helpers"
 
+  - name: validate-contract-vectors
+    permission: false
+    visibility: brief
+    description: "Validates that docs/contracts/pr-target-vectors.json still matches the run-target implementation consumers mirror"
+
   - name: validate-eval-baselines
     permission: false
     visibility: brief

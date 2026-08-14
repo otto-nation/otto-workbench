@@ -93,6 +93,12 @@ where ``<repo-key>`` is the key above and ``<branch-slug>`` is ``slug(branch)``.
 ``state_dir()`` rather than a literal path: #624 phase 4 moves that root to
 ``XDG_STATE_HOME`` alongside the migration that carries the data, and resolving
 through the function is what makes ``pr/`` ride along instead of being stranded.
+
+Being published makes every change here a change to somebody else's runtime, so
+the fixtures consumers assert against are generated from these functions and
+committed at ``docs/contracts/pr-target-vectors.json``. ``validate-all`` fails
+when they drift; regenerate with ``bin/local/validate-contract-vectors --write``
+and land the consumer's re-vendoring with the change.
 """
 
 from __future__ import annotations
@@ -107,7 +113,7 @@ import workbench_paths
 TARGETS_DIR = "pr"
 
 # Runs of anything outside this set collapse to one dash. ui-code mirrors this
-# exactly; tests/pr_target_test.py::SLUG_VECTORS is the shared fixture.
+# exactly; docs/contracts/pr-target-vectors.json is the shared fixture.
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 # "acme//widget" is "acme/widget": git accepts the doubled separator and clones

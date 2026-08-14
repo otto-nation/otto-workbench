@@ -677,9 +677,14 @@ collapsed to `-`, then stripped of leading and trailing `-`.
 
 Both components are readable from a checkout with no network call, which is what
 lets external consumers derive the same path. `ai/lib/pr_target.py` is the owner
-and its module docstring states the rule in full; a reimplementation should
-assert against both published fixtures in `tests/pr_target_test.py` —
-`SLUG_VECTORS` for the branch slug and `REPO_KEY_VECTORS` for the repo key.
+and its module docstring states the rule in full.
+
+A reimplementation asserts against `docs/contracts/pr-target-vectors.json`. The
+artifact is generated from the live functions by
+`bin/local/validate-contract-vectors`, which `validate-all` runs on every change
+— a behaviour change that moves the directory fails here, in the repo making it,
+rather than in a consumer nobody's CI can see. Consumers vendor the file verbatim
+alongside the commit SHA they took it from; they do not transcribe its rows.
 
 Every script's trail goes to one root — `~/.local/state/workbench/trail/YYYY-MM.jsonl`,
 one file per month. `otto-log recent --repo <org/repo>` narrows it to one repo;

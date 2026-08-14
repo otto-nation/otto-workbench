@@ -1,10 +1,12 @@
 """Tests for the run-target path contract.
 
-SLUG_VECTORS and REPO_KEY_VECTORS are cross-repo fixtures: ui-code's TypeScript
-mirror asserts against the same tables. Changing a row changes where live runs
-look for their own state, in a repo whose tests cannot see this one.
+The vector tables are loaded from `docs/contracts/pr-target-vectors.json`, the
+published artifact ui-code vendors and asserts against. Both sides read one
+file, so neither can transcribe a row wrong; `bin/local/validate-contract-vectors`
+regenerates it from the live functions and fails when the two disagree.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -19,19 +21,15 @@ import pytest
 
 import pr_target
 
+CONTRACT = json.loads(
+    (REPO_ROOT / "docs" / "contracts" / "pr-target-vectors.json").read_text(encoding="utf-8")
+)
 
-# Cross-repo fixture. ui-code reimplements slug() in TypeScript and asserts
-# against this same table; nothing in this repo's CI can see that side, so a row
-# edited here drifts silently until a live run looks for state in a directory the
-# other implementation never writes. Change a row only together with ui-code.
-SLUG_VECTORS = [
-    ("main", "main"),
-    ("isaac/fix/target_scoped_run_lock", "isaac-fix-target_scoped_run_lock"),
-    ("feat/a--b", "feat-a--b"),
-    ("release/v1.2.3", "release-v1.2.3"),
-    ("/leading/", "leading"),
-    ("dependabot/npm_and_yarn/foo/bar-1.0.0", "dependabot-npm_and_yarn-foo-bar-1.0.0"),
-]
+# The published fixtures, asserted here against the implementation that
+# generated them. The validator makes the same comparison from the other
+# direction; this one keeps a plain `pytest tests/` run able to catch the drift.
+SLUG_VECTORS = [(row["branch"], row["expected"]) for row in CONTRACT["slug"]]
+REPO_KEY_VECTORS = [(row["url"], row["expected"]) for row in CONTRACT["repo_key"]]
 
 
 @pytest.mark.parametrize("branch,expected", SLUG_VECTORS)
@@ -56,98 +54,21 @@ def test_target_dir_follows_a_moved_state_root(tmp_path, monkeypatch):
     assert after.parent.parent == tmp_path / "new"
 
 
-# The URL-to-key contract, one row per form git accepts as an origin. These are
-# the assertions, not illustrations of them: a changed row is a changed state
-# directory, and any run already holding the old one keeps holding it.
-#
-# Every key is <readable>-<digest>, where the digest is the first 8 hex of the
-# SHA-256 of the canonical form and is what makes the key injective. The
-# readable part is only there so a human can tell two directories apart, so it
-# is allowed to be lossy; the rows below that share a readable part and differ
-# only in the digest are the point of the design, not an accident of it.
-REPO_KEY_VECTORS = [
-    # canonical "acme/widget" — every spelling of one repo takes one key.
-    ("git@github.com:acme/widget.git", "acme-widget-b9d71e86"),
-    ("https://github.com/acme/widget.git", "acme-widget-b9d71e86"),
-    ("https://github.com/acme/widget", "acme-widget-b9d71e86"),
-    ("https://github.com/acme/widget/", "acme-widget-b9d71e86"),
-    ("https://github.com/acme/widget.git/", "acme-widget-b9d71e86"),
-    ("https://github.com/acme//widget.git", "acme-widget-b9d71e86"),
-    # `git clone .../repo/.git` is a spelling git accepts. The suffix strip
-    # uncovers a trailing slash, so slashes are normalized on both sides of it.
-    ("https://github.com/acme/widget/.git", "acme-widget-b9d71e86"),
-    ("ssh://git@github.com/acme/widget.git", "acme-widget-b9d71e86"),
-    ("ssh://git@host:2222/acme/widget.git", "acme-widget-b9d71e86"),
-    ("git://host/acme/widget.git", "acme-widget-b9d71e86"),
-    ("https://user:token@host/acme/widget", "acme-widget-b9d71e86"),
-    # file:// names no host whatever authority it carries: git ignores a file
-    # URL's authority and clones the path, so all three of these are one target.
-    ("file:///srv/git/widget.git", "widget-8ac140ce"),
-    ("file://localhost/srv/git/widget.git", "widget-8ac140ce"),
-    ("file://bogushost/srv/git/widget.git", "widget-8ac140ce"),
-    # An ~/.ssh/config Host alias. Scp-style with no "user@", which git accepts
-    # and which therefore has to be qualified like any other hosted remote.
-    ("gitbox:acme/widget.git", "acme-widget-b9d71e86"),
-    ("git@host:widget.git", "widget-8ac140ce"),
-    # The whole path below the host, not its last two segments — group-a/platform/api
-    # and group-b/platform/api are different repos.
-    ("https://gitlab.com/group/subgroup/widget.git", "group-subgroup-widget-2cc27ab1"),
-    ("https://gitlab.com/group/sub/widget.git", "group-sub-widget-5fe8bb83"),
-    ("https://gitlab.com/group/sub/team/service/widget.git",
-     "group-sub-team-service-widget-b37e4eef"),
-    # A local remote keys on its trailing segment alone — see the ceiling in
-    # pr_target: leading directories are machine-specific.
-    ("/srv/git/widget.git", "widget-8ac140ce"),
-    ("/srv/git/widget/.git", "widget-8ac140ce"),
-    ("/srv/mirrors/otto-workbench/", "otto-workbench-3df215bb"),
-    ("../widget", "widget-8ac140ce"),
-    # A remote naming no path names no repo. Keying the userinfo, the host, or a
-    # file URL's discarded authority would give every such URL one directory.
-    ("ssh://git@github.com/", None),
-    ("https://github.com", None),
-    ("git@github.com:", None),
-    ("file://localhost/", None),
-    ("file://bogushost/", None),
-    ("file:///", None),
-    ("/", None),
-    ("", None),
-    # The canonical form folds A-Z to a-z and drops one trailing ".git" through
-    # that same fold: GitHub and GitLab treat a repo path case-insensitively, so
-    # every casing of one path is one repo and takes one lock.
-    ("https://github.com/Acme/Widget.git", "acme-widget-b9d71e86"),
-    ("git@github.com:acme/widget.GIT", "acme-widget-b9d71e86"),
-    ("https://github.com/Acme/Widget.GIT", "acme-widget-b9d71e86"),
-    ("https://github.com/acme/API", "acme-api-c7198fbc"),
-    # A-Z and nothing else. É (U+00C9) is left as it is, so the mirror never has
-    # to agree with this runtime about a Unicode version or a locale. The price
-    # is these two rows: a mixed-case non-ASCII path is two keys, not one.
-    ("https://github.com/acme/CAFÉ", "acme-caf-bd08d87c"),
-    ("https://github.com/acme/café", "acme-caf-84687fb6"),
-    # Segments that slug to nothing contribute nothing readable; the digest is
-    # what keeps them apart. Without it every such repo under acme/ shares a key.
-    ("https://github.com/acme/文档.git", "acme-3aa38a61"),
-    ("https://github.com/acme/日本語.git", "acme-bc6e6e54"),
-    ("https://github.com/acme/@@@.git", "acme-cbe08fd8"),
-    # Nothing readable at all: the key is the digest alone.
-    ("https://github.com/文档", "2687ccdb"),
-    # A lossy slug, not an empty one. The readable part collides deliberately.
-    ("https://github.com/acme/wídget.git", "acme-w-dget-7aa6a4f7"),
-    ("https://github.com/acme/wîdget.git", "acme-w-dget-7fb0703f"),
-    # The slug's separator is legal inside a segment, and its strip("-") eats an
-    # edge hyphen. Both readable parts collide; both keys do not.
-    ("https://github.com/acme/-widget.git", "acme--widget-c023fff7"),
-    ("https://github.com/acme/wid/get.git", "acme-wid-get-7ba0b50c"),
-    ("https://github.com/acme/wid-get.git", "acme-wid-get-273cf4a6"),
-    # Relative components survive as readable text, never as a path component:
-    # the digest suffix means no key can be "." or "..".
-    ("https://github.com/..", "..-5ec1f7e7"),
-    ("https://github.com/./widget.git", ".-widget-57d146cd"),
-]
-
-
 @pytest.mark.parametrize("url,expected", REPO_KEY_VECTORS)
 def test_repo_key_vectors(url, expected):
     assert pr_target._repo_key(url) == expected
+
+
+@pytest.mark.parametrize("row", CONTRACT["target_dir"], ids=lambda row: row["branch"])
+def test_target_dir_vectors(row, tmp_path, monkeypatch):
+    """The published join, asserted against target_dir() rather than re-derived.
+
+    The artifact's expected value is composed from TARGETS_DIR and slug(); this
+    is the one place that composition is checked against the function consumers
+    are actually mirroring.
+    """
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+    assert pr_target.target_dir(row["repo_key"], row["branch"]) == tmp_path / row["expected"]
 
 
 @pytest.mark.parametrize("a,b", [

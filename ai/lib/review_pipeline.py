@@ -26,7 +26,7 @@ from review_common import (
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
-    Diagnosis, DiagnosisKind, Effort, Mode, Phase, ReviewType,
+    Diagnosis, DiagnosisKind, Effort, GroupSkip, Mode, Phase, ReviewType,
     EFFORT_PRESETS,
     PRIOR_DATE_RE,
     TEMPLATE_SELF_REVIEW,
@@ -416,6 +416,22 @@ def _identify_incremental_skips(
     return skips
 
 
+def _build_group_skips(
+    incremental_skips: set[int], recovery_skips: set[int] | None,
+) -> dict[int, GroupSkip]:
+    """Why each skipped group is being skipped, by 1-based group index.
+
+    Recovery wins where the two overlap: that group's output is already on
+    disk, so reusing it beats re-deriving its findings from the prior review.
+    No path produces that overlap today — a carried group never runs, so it
+    never reaches `state.groups_done` — but the precedence is stated rather
+    than assumed, because a dict merge silently picks one either way.
+    """
+    skips: dict[int, GroupSkip] = {i: GroupSkip.CARRIED for i in incremental_skips}
+    skips.update({i: GroupSkip.RECOVERY for i in recovery_skips or ()})
+    return skips
+
+
 def _holistic_skip_reason(
     skip_holistic: bool, incremental: bool, group_count: int,
     effort: Effort = Effort.MEDIUM,
@@ -491,7 +507,7 @@ def _run_holistic_phase(
 def _run_group_phase(
     job: ReviewJob, groups: list[Group], group_count: int,
     holistic_content: str, max_parallel: int,
-    skip_groups: "set[int] | None", state: PipelineState,
+    skip_groups: "dict[int, GroupSkip]", state: PipelineState,
 ) -> "tuple[list[str], list[GroupFailure], float]":
     group_outputs, failed_groups = _phase_group_reviews(
         groups, job, group_count, holistic_content, max_parallel,
@@ -501,7 +517,7 @@ def _run_group_phase(
     cost = 0.0
     new_group_indices = [
         i for i in range(1, len(group_outputs) + 1)
-        if skip_groups is None or i not in skip_groups
+        if i not in skip_groups
     ]
     for i in new_group_indices:
         cost += _parse_session_cost(phase_log_path(job.review_file, Phase.GROUP, i))
@@ -635,11 +651,7 @@ def run_multi_phase(
         )
         _write_pipeline_state(job, state)
 
-    # Merge incremental skips with any recovery skips
-    if skip_groups is None:
-        skip_groups = incremental_skips if incremental_skips else None
-    elif incremental_skips:
-        skip_groups = skip_groups | incremental_skips
+    group_skips = _build_group_skips(incremental_skips, skip_groups)
 
     # ── Phase 1: Scout/Holistic ─────────────────────────────────────────────
     holistic = _run_holistic_phase(
@@ -658,7 +670,7 @@ def run_multi_phase(
     else:
         group_outputs, failed_groups, groups_cost = _run_group_phase(
             job, groups, group_count, holistic.content, max_parallel,
-            skip_groups, state,
+            group_skips, state,
         )
         cost_so_far += groups_cost
 

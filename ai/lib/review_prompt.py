@@ -16,6 +16,7 @@ from string import Template
 
 import json
 import log
+from pr_state import ReviewVerdict
 from review_common import (
     EFFORT_PRESETS, Effort,
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
@@ -41,6 +42,12 @@ from review_preflight import (
     THREAD_RESOLVED, THREAD_UNREPLIED,
     _scope_diff, build_project_context, format_preflight_data,
 )
+
+# The verdicts the prompt offers, written from the same members the review's
+# `## Verdict` line is parsed against — the wording an agent is asked for cannot
+# drift from the wording that is recognised.
+VERDICT_OPTIONS = " / ".join(v.prose for v in ReviewVerdict)
+
 
 # ── Template rendering ────────────────────────────────────────────────────────
 
@@ -857,6 +864,7 @@ def _synthesis_prompt(job, common, extra, *, shared: tuple[str, ...], ident: dic
     b.set("wt_path", job.wt_path)
     b.set("prior_section", "")
     b.set("group_count", extra["group_count"])
+    b.set("verdict_options", VERDICT_OPTIONS)
     b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")
     b.set("merged_content", extra["merged_content"])
     b.output(job.review_file)
@@ -894,6 +902,7 @@ def _prompt_single(job, common, extra):
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
+    b.set("verdict_options", VERDICT_OPTIONS)
     b.output(job.review_file, stdout_warning=True)
     b.set("preflight_data", _build_preflight_section(job))
     return b, ""

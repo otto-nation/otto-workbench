@@ -113,6 +113,27 @@ class WorkbenchConfig:
     review: ReviewConfig = field(default_factory=ReviewConfig)
 
 
+def schema_json() -> str:
+    """``WorkbenchConfig`` as the JSON Schema text ``config.schema.json`` holds.
+
+    Here rather than in the generator script so the write and the ``--check``
+    comparison render through one code path, and so the schema's wrapper
+    metadata sits beside the dataclass it describes.
+    """
+    import schema_gen
+
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "otto-workbench configuration",
+        "description": (
+            "Generated from WorkbenchConfig by bin/local/generate-config-schema. "
+            "Do not edit by hand."
+        ),
+        **schema_gen.dataclass_to_schema(WorkbenchConfig),
+    }
+    return json.dumps(schema, indent=2)
+
+
 def global_config_path() -> Path:
     return workbench_paths.config_dir() / CONFIG_NAME
 

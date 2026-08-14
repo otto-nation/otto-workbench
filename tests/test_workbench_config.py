@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -148,6 +149,30 @@ def test_a_non_mapping_file_is_rejected(roots):
     _write(config_root / "config.yml", "- one\n- two\n")
     with pytest.raises(wc.ConfigError, match="mapping"):
         wc.load_config(project)
+
+
+# ── Schema ──────────────────────────────────────────────────────────────────
+
+
+def test_committed_schema_matches_the_generator():
+    """The committed schema is generated, so drift is a test failure.
+
+    CLAUDE.md requires a cross-validation test wherever the same defaults
+    appear in two formats. This is that test: renaming a field or adding a
+    Phase member fails here until `bin/local/generate-config-schema` is re-run.
+    """
+    committed = json.loads(
+        (Path(__file__).resolve().parent.parent / "config.schema.json").read_text(),
+    )
+    assert committed == json.loads(wc.schema_json())
+
+
+def test_schema_lists_every_phase_as_a_valid_key():
+    import schema_gen
+
+    schema = schema_gen.dataclass_to_schema(wc.WorkbenchConfig)
+    phases = schema["properties"]["review"]["properties"]["phases"]
+    assert phases["propertyNames"]["enum"] == [p.value for p in Phase]
 
 
 # ── Writing ─────────────────────────────────────────────────────────────────

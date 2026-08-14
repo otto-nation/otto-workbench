@@ -288,6 +288,12 @@ _init_test_repo() {
   [[ "$output" == *"Use 'grep'"* ]]
 }
 
+@test "sysbin hook: blocks /bin with no space after the separator" {
+  run _run_guard '{"tool_input":{"command":"ls -la;/bin/cat f"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'cat'"* ]]
+}
+
 @test "sysbin hook: allows the bare command name" {
   run _run_guard '{"tool_input":{"command":"cat /tmp/x/review.diff"}}'
   [ "$status" -eq 0 ]
@@ -379,46 +385,54 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
-# ── Guard ↔ rules contract ───────────────────────────────────────────────────
-# bash-guard.rules.yml is the single source for each rule's `why` and `remedy`,
-# rendering into both the guard's block message and the doc section. A rule with
-# no entry blocks Claude with no documented alternative, which is worse than the
-# prompt it prevents.
+@test "env hook: blocks env -C behind another flag" {
+  run _run_guard '{"tool_input":{"command":"env -i -C /tmp/wt pytest tests/"}}'
+  [ "$status" -eq 2 ]
+}
 
-@test "guard: every block call uses a generated message" {
+@test "env hook: blocks env -C with an attached directory" {
+  run _run_guard '{"tool_input":{"command":"env -C/tmp/wt ls"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "env hook: allows an env var assignment passed to env" {
+  run _run_guard '{"tool_input":{"command":"env FOO=bar printenv FOO"}}'
+  [ "$status" -eq 0 ]
+}
+
+# ── Guard ↔ rules contract ───────────────────────────────────────────────────
+# A block message must name the alternative and cite the rules section holding
+# the rest. A rule blocking Claude with no documented alternative is worse than
+# the prompt it prevents, so both halves of the citation are tested: that every
+# block call carries one, and that every one it carries resolves to a heading.
+
+@test "guard: every block call cites a rules section" {
   local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
-  local literal
-  literal=$(grep '^  block ' "$guard" | grep -vc 'GUARD_MSG_' || true)
-  [ "$literal" -eq 0 ] || {
-    echo "claude-bash-guard has $literal hand-written block message(s)"
-    grep -n '^  block ' "$guard" | grep -v 'GUARD_MSG_'
+  local uncited
+  uncited=$(grep -n '^  block ' "$guard" | grep -v 'See [a-z-]*\.md §' || true)
+  [ -z "$uncited" ] || {
+    echo "block call(s) with no 'See <doc>.md § <Section>' citation:"
+    echo "$uncited"
     return 1
   }
 }
 
-@test "guard: every rule message has a registry entry" {
+@test "guard: every cited rules section exists" {
   local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
-  local rules="$REPO_ROOT/ai/claude/bin/bash-guard.rules.yml"
-  local id
-  while IFS= read -r id; do
-    yq -e ".rules[] | select(.id == \"$id\")" "$rules" > /dev/null || {
-      echo "block message GUARD_MSG_$id has no rule with that id in bash-guard.rules.yml"
+  local doc section
+  # Headings are compared with backticks stripped: the guard's messages are
+  # plain text, so `## Avoid \`env -C\`` is cited as `§ Avoid env -C`.
+  while IFS='|' read -r doc section; do
+    [ -f "$REPO_ROOT/ai/guidelines/rules/$doc" ] || {
+      echo "guard cites a rules file that does not exist: $doc"
       return 1
     }
-  done < <(grep -oE 'GUARD_MSG_[a-z_]+' "$guard" | sed 's/GUARD_MSG_//' | sort -u)
-}
-
-@test "guard: generated output is current" {
-  local work="$BATS_TEST_TMPDIR/gen"
-  mkdir -p "$work/rules"
-  cp "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$work/guard"
-  cp "$REPO_ROOT"/ai/guidelines/rules/*.md "$work/rules/"
-  export BASH_GUARD_PATH="$work/guard"
-  export BASH_GUARD_RULES_DIR="$work/rules"
-  run "$REPO_ROOT/bin/local/generate-bash-guard" --quiet
-  [ "$status" -eq 0 ]
-  diff "$REPO_ROOT/ai/claude/bin/claude-bash-guard" "$work/guard"
-  diff "$REPO_ROOT/ai/guidelines/rules/bash-tool.md" "$work/rules/bash-tool.md"
+    sed 's/`//g' "$REPO_ROOT/ai/guidelines/rules/$doc" | grep -qxF "## $section" || {
+      echo "guard cites '$doc § $section', which has no matching heading"
+      return 1
+    }
+  done < <(grep -oE 'See [a-z-]+\.md § [^.]+\.' "$guard" |
+    sed -E 's/^See ([a-z-]+\.md) § (.*)\.$/\1|\2/' | sort -u)
 }
 
 # The bodies below each put the pattern after a statement separator, which is

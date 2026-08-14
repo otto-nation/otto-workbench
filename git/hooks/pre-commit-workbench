@@ -14,4 +14,3 @@ WORKBENCH_DIR="$REPO_ROOT"
 # Regenerate AI context files (gitignored — no staging needed)
 "$REPO_ROOT/bin/local/generate-tool-context" --quiet
 "$REPO_ROOT/git/bin/local/generate-git-rules" --quiet
-"$REPO_ROOT/bin/local/generate-bash-guard" --quiet

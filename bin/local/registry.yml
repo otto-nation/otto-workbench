@@ -63,8 +63,3 @@ tools:
     permission: false
     visibility: brief
     description: "Generates tools.generated*.md rule files from the domain registries"
-
-  - name: generate-bash-guard
-    permission: false
-    visibility: brief
-    description: "Renders bash-guard.rules.yml into the claude-bash-guard message table and the bash-tool.md lead bullets"

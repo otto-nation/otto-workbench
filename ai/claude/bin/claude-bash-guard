@@ -5,28 +5,15 @@
 # matches a shape that triggers a permission prompt no allow-list rule can
 # suppress. Exits 0 otherwise.
 #
-# The message each rule blocks with comes from ai/claude/bin/bash-guard.rules.yml,
-# which also generates the matching section of ai/guidelines/rules/ — a rule with
-# no entry there has no documented alternative, so Claude gets blocked without
-# being told what to do instead. Add the entry, then run
-# bin/local/generate-bash-guard. Enforced by tests/claude_settings.bats.
+# Every block message names the alternative, then cites the rules section that
+# holds the rest: `See <file>.md § <Section>`. The citation is the contract —
+# a rule whose section is missing blocks Claude without telling it what to do
+# instead. tests/claude_settings.bats enforces that every block call carries one
+# and that every cited section exists.
 #
 # Usage: claude-bash-guard        (stdin: {"tool_input":{"command":"..."}})
 
 set -e
-
-# >>> generated: block messages — edit bash-guard.rules.yml, not this table
-GUARD_MSG_gh_pr_create="The repo PR template is skipped when gh pr create is called directly. Use task pr:create instead. See git-operations.md."
-GUARD_MSG_bin_local="Permission rules match the first word of the command, so an absolute path prompts again in every worktree. Use relative path '{match}' instead. See bash.md."
-GUARD_MSG_cmd_substitution="Claude Code's static analyzer cannot resolve the substitution, triggering a \"cannot be statically analyzed\" permission prompt. Run the inner command first, then use the result in the next call. See bash-tool.md."
-GUARD_MSG_compound_cd="Compound commands containing cd trigger an unsuppressible security prompt in Claude Code. Use these alternatives instead. See bash-tool.md."
-GUARD_MSG_env_chdir="The analyzer reports \"env with -C flag cannot be statically analyzed\", which no permission rule can suppress; env -C is not an escape hatch from the compound-cd rule, it is a second unsuppressible prompt. Use a bare cd <dir> first, per § Avoid Compound cd Commands. See bash-tool.md."
-GUARD_MSG_func_def="Both name() { ...; } and function name { ...; } make the parser classify the whole command as too complex to analyze (\"Contains function_definition\"), which skips the allow list entirely so no permission rule can match it. Write the command directly with absolute paths. See bash-tool.md."
-GUARD_MSG_sysbin="The permission allow list keys on the bare command name (Bash(cat:*)), so the /bin and /usr/bin forms never match it and prompt every time. Use '{match}' instead of its absolute path. See bash-tool.md."
-GUARD_MSG_env_var_prefix="Claude Code's permission matcher sees VAR=value as the command name, triggering a prompt every time. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See bash-tool.md."
-GUARD_MSG_brace_expansion="Claude Code flags it with an unsuppressible \"Brace expansion\" permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md."
-GUARD_MSG_find_exec="Claude Code blocks -exec even with Bash(find:*) allowed because -exec can run arbitrary commands. Use find ... -print0 | xargs -0 <command> instead. See bash-tool.md."
-# <<< generated
 
 usage() {
   cat <<EOF
@@ -60,16 +47,16 @@ cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 # broad one.
 
 if [[ "$cmd" == *"gh pr create"* ]]; then
-  block "$GUARD_MSG_gh_pr_create"
+  block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
 fi
 
 re_binlocal='^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
 if [[ "$cmd" =~ $re_binlocal ]]; then
-  block "${GUARD_MSG_bin_local//\{match\}/${BASH_REMATCH[1]}}"
+  block "Use relative path '${BASH_REMATCH[1]}' instead of the absolute path — an absolute path prompts again in every worktree. See bash.md § Script Invocation."
 fi
 
 if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
-  block "$GUARD_MSG_find_exec"
+  block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead. See bash-tool.md § Avoid find -exec.'
 fi
 
 # ── Statement-anchored rules ─────────────────────────────────────────────────
@@ -93,34 +80,34 @@ stripped=$(printf '%s' "$first_line" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
 
 re_func='(^|[;&|][[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\(\)|function[[:space:]])'
 if [[ "$stripped" =~ $re_func ]]; then
-  block "$GUARD_MSG_func_def"
+  block 'A shell function definition makes the parser classify the whole command as too complex to analyze ("Contains function_definition"), which skips the allow list entirely. Write the command directly with absolute paths. See bash-tool.md § Avoid Shell Function Definitions.'
 fi
 
 re_var='(^|[;&|][[:space:]]*)[A-Z_][A-Z0-9_]*='
 if [[ "$stripped" =~ $re_var ]]; then
-  block "$GUARD_MSG_env_var_prefix"
+  block 'A VAR=value prefix is read as the command name and prompts every time. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ...). See bash-tool.md § Avoid Env-Var Prefix Syntax.'
 fi
 
 re_cd='(^|[;&|][[:space:]]*)cd[[:space:]]'
 if [[ "$stripped" =~ $re_cd ]] && [[ "$stripped" == *'&&'* || "$stripped" == *';'* ]]; then
-  block "$GUARD_MSG_compound_cd"
+  block 'Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or a bare cd <dir> as its own call. See bash-tool.md § Avoid Compound cd Commands.'
 fi
 
-re_env='(^|[;&|][[:space:]]*)env[[:space:]]+(-C|--chdir)([[:space:]]|=)'
+# ceiling: flags carrying a separate argument are not skipped, so `env -u FOO -C
+# /x` slips through. Upgrade to a real option parser if that form shows up.
+re_env='(^|[;&|][[:space:]]*)env([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(-[A-Za-z0-9]*C|--chdir)([[:space:]/=]|$)'
 if [[ "$stripped" =~ $re_env ]]; then
-  block "$GUARD_MSG_env_chdir"
+  block 'env -C cannot be statically analyzed, and it is not an escape hatch from the compound-cd rule — it is a second unsuppressible prompt. Run a bare cd <dir> as its own call first. See bash-tool.md § Avoid env -C.'
 fi
 
 re_brace='\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\}'
 if [[ "$stripped" =~ $re_brace ]]; then
-  block "$GUARD_MSG_brace_expansion"
+  block 'Brace expansion triggers an unsuppressible permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md § Avoid Brace Expansion.'
 fi
 
-# The allow list keys on the bare command name, so Bash(cat:*) never matches
-# /bin/cat — the absolute form prompts on every call.
-re_sysbin='(^|[;&|][[:space:]])/(usr/)?bin/([A-Za-z0-9_.-]+)'
+re_sysbin='(^|[;&|][[:space:]]*)/(usr/)?bin/([A-Za-z0-9_.-]+)'
 if [[ "$stripped" =~ $re_sysbin ]]; then
-  block "${GUARD_MSG_sysbin//\{match\}/${BASH_REMATCH[3]}}"
+  block "The allow list keys on the bare command name, so /bin and /usr/bin paths never match it and prompt every time. Use '${BASH_REMATCH[3]}' instead of its absolute path. See bash-tool.md § Avoid Absolute Paths to System Binaries."
 fi
 
 # ── Catch-all ────────────────────────────────────────────────────────────────
@@ -129,7 +116,7 @@ fi
 
 # shellcheck disable=SC2016  # the literal $( is the pattern being matched
 if [[ "$cmd" == *'$('* ]]; then
-  block "$GUARD_MSG_cmd_substitution"
+  block 'Command substitution cannot be statically analyzed. Run the inner command first, then use the result in the next call. See bash-tool.md § Avoid Command Substitution in Arguments.'
 fi
 
 exit 0

@@ -109,7 +109,7 @@
           },
           {
             "type": "command",
-            "command": "repo=$(git rev-parse --show-toplevel 2>/dev/null) && bash $HOME/.claude/skills/ceiling-debt/should-ceiling-scan.sh \"$repo\" && python3 $HOME/.local/bin/ceiling-scan --output \"$repo/.claude/ceiling-debt.md\" \"$repo\" || true"
+            "command": "repo=$(git rev-parse --show-toplevel 2>/dev/null) && python3 $HOME/.local/bin/ceiling-scan --output \"$repo/.claude/ceiling-debt.md\" \"$repo\" || true"
           },
           {
             "type": "command",

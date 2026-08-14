@@ -8,9 +8,7 @@ setup() {
   common_setup
   TMPDIR="$(mktemp -d)"
   RETRO_SCAN="$REPO_ROOT/ai/claude/bin/retro-scan"
-  # Reviews, the consumed-reviews list, and the run's trail all resolve through
-  # the state root — without this they would land in the real one.
-  export WORKBENCH_STATE_DIR="$TMPDIR/state"
+  sandbox_state_dir
 }
 
 teardown() {

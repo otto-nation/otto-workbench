@@ -8,9 +8,7 @@ setup() {
   common_setup
   TMPDIR="$(mktemp -d)"
   DREAM_SCAN="$REPO_ROOT/ai/claude/bin/dream-scan"
-  # The run's trail resolves through the state root — without this it appends
-  # to the real one.
-  export WORKBENCH_STATE_DIR="$TMPDIR/state"
+  sandbox_state_dir
 }
 
 teardown() {

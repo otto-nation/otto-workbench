@@ -549,6 +549,30 @@ The [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on
 demand. It is not a pull-request check: each run spends real money on real model
 calls. Without `ANTHROPIC_API_KEY` configured it validates the corpus and stops.
 
+### Finding IDs and cross-references
+
+Finding IDs (`M1`, `S2`, `N3`, `I1`) are assigned mechanically and are only
+meaningful inside the review that carries them. Agents write whatever IDs they
+like; merging, deduplication, and evidence verification all remove findings, and
+a final pass closes the gaps so each severity numbers from 1 with no holes.
+
+Only a *declaration* — a finding at the head of its own list item, `- **[M1]**
+…` or `- [ ] **[M1]** …` — gets a number. Everything else that names an ID is a
+reference, and references are rewritten through the same map, so a finding that
+cites another one still cites the same one afterwards. Bare mentions in prose
+(`see M2`) are rewritten too.
+
+A reference to a finding that is no longer in the review becomes `[removed]`.
+Leaving the ID alone would be worse than useless: the number it names has since
+been reassigned to a different finding, and a reader who follows it lands
+somewhere unrelated with nothing to signal the misdirection. Deduplication is
+the exception — a duplicate is merged rather than dropped, so references to it
+move to the copy that survived.
+
+Text that declares no findings of a given severity is left untouched, since
+there is no map to rewrite through and every ID in it belongs to some other
+document.
+
 ### Where review artifacts live
 
 Each review owns a directory under `~/.local/state/workbench/reviews/` — `review.md`

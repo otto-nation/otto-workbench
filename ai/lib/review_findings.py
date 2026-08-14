@@ -342,33 +342,66 @@ def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
     return text, count
 
 
-def _renumber_prefix(text: str, prefix: str) -> str:
-    seen_ids: list[int] = []
-    for m in re.finditer(rf"\[{prefix}(\d+)\]", text):
-        num = int(m.group(1))
-        if num not in seen_ids:
-            seen_ids.append(num)
+# What a reference becomes when nothing declares the finding it names. It is
+# deliberately not an ID: once the gaps close, the number that reference used to
+# carry belongs to a different finding, and a reader who follows it lands on
+# something unrelated without ever learning they were misdirected.
+_REMOVED_REF = "[removed]"
 
-    remap = {}
-    for new_num, old_num in enumerate(seen_ids, 1):
-        if old_num != new_num:
-            remap[old_num] = new_num
 
-    if not remap:
+def _declared_ids(text: str, prefix: str) -> list[int]:
+    """The IDs `text` declares under `prefix`, in the order they first appear.
+
+    A finding declares its ID at the head of its own list item; every other
+    occurrence is a reference to a declaration. Only declarations get numbers,
+    because a reference can name a finding that evidence verification or
+    deduplication has since taken out of the review.
+    """
+    ids: list[int] = []
+    for line in text.split("\n"):
+        m = FINDING_ID_RE.match(line.strip())
+        if not m or m.group(2) != prefix or int(m.group(3)) in ids:
+            continue
+        ids.append(int(m.group(3)))
+    return ids
+
+
+def _declared_id(line: str, prefix: str) -> int | None:
+    ids = _declared_ids(line, prefix)
+    return ids[0] if ids else None
+
+
+def _id_reference_re(prefix: str) -> re.Pattern[str]:
+    """Every way a review names a finding: `[M1]`, and bare `M1` in prose."""
+    return re.compile(rf"\[{prefix}(\d+)\]|(?<![\w\[]){prefix}(\d+)(?![\d\]])")
+
+
+def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None = None) -> str:
+    """Close the gaps in `prefix` IDs, taking every reference along with them.
+
+    References are rewritten through the same map as the declarations, so a
+    finding that cites another one still cites the same one afterwards.
+    """
+    declared = _declared_ids(text, prefix)
+    if not declared:
+        # Nothing here declares an ID, so there is no map to rewrite through and
+        # every occurrence is a reference into text we are not looking at.
         return text
 
-    placeholder = "\x00"
-    for old_num in sorted(remap, reverse=True):
-        text = text.replace(f"[{prefix}{old_num}]", f"[{placeholder}{prefix}{remap[old_num]}]")
-    text = text.replace(placeholder, "")
+    new_by_old = {old: new for new, old in enumerate(declared, 1)}
+    # A deduplicated finding was not dropped, it was merged: its references
+    # belong on the copy that survived, which says the same thing.
+    for gone, survivor in (merged_into or {}).items():
+        if gone not in new_by_old and survivor in new_by_old:
+            new_by_old[gone] = new_by_old[survivor]
 
-    for old_num in sorted(remap, reverse=True):
-        text = re.sub(
-            rf"(?<!\[)(?<!\x00){prefix}{old_num}(?!\d)(?!\])",
-            f"\x00{prefix}{remap[old_num]}",
-            text,
-        )
-    return text.replace("\x00", "")
+    def rewrite(m: re.Match[str]) -> str:
+        new = new_by_old.get(int(m.group(1) or m.group(2)))
+        if new is None:
+            return _REMOVED_REF
+        return f"[{prefix}{new}]" if m.group(1) is not None else f"{prefix}{new}"
+
+    return _id_reference_re(prefix).sub(rewrite, text)
 
 
 def renumber_findings(text: str) -> str:
@@ -414,22 +447,31 @@ def _finding_dedup_key(line: str) -> FindingKey | None:
     return FindingKey(path, dm.group(1).strip().lower() if dm else "")
 
 
+def _record_merge(merged_into: dict[int, int], survivor: int | None, dup: int | None) -> None:
+    """Remember that `dup`'s references should end up on `survivor`."""
+    if survivor is None or dup is None:
+        return
+    merged_into[dup] = survivor
+
+
 def _dedup_findings(text: str, prefix: str) -> str:
-    seen: set[FindingKey] = set()
+    seen: dict[FindingKey, int | None] = {}
+    merged_into: dict[int, int] = {}
     kept: list[str] = []
     skipping = False
     for line in text.split("\n"):
         key = _finding_dedup_key(line)
         if key is not None and key in seen:
             skipping = True
+            _record_merge(merged_into, seen[key], _declared_id(line, prefix))
             continue
         if key is not None:
-            seen.add(key)
+            seen[key] = _declared_id(line, prefix)
             skipping = False
         if skipping:
             continue
         kept.append(line)
-    return _renumber_prefix("\n".join(kept), prefix)
+    return _renumber_prefix("\n".join(kept), prefix, merged_into)
 
 
 def _merge_one_review(

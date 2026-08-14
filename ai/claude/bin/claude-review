@@ -723,12 +723,14 @@ def _build_orchestrate_args(
     max_groups: int | None = None,
     no_scout: bool = False, disprove: bool | None = None,
     generated: bool = False, recover_sha: str = "",
+    target_dir: Path | str = "",
 ) -> list[str]:
     args = [
         str(BIN_DIR / "review-orchestrate"),
         "--repo", repo,
         "--review-file", str(review_file),
         "--repo-dir", wt_path,
+        "--target-dir", str(target_dir),
         "--session-log", session_log,
     ]
     if pr_number:
@@ -774,6 +776,7 @@ def _run_review_body(
     max_parallel, no_holistic, max_cost, model, no_post, auto_post,
     auto_submit, pr_url, effort="medium", max_groups=None,
     no_scout=False, disprove=None, generated=False, recover_sha="",
+    target_dir="",
 ) -> None:
     orchestrate_args = _build_orchestrate_args(
         pr_number=pr_number, repo=repo, review_file=review_file,
@@ -783,7 +786,7 @@ def _run_review_body(
         no_holistic=no_holistic, max_cost=max_cost, model=model,
         effort=effort, max_groups=max_groups,
         no_scout=no_scout, disprove=disprove, generated=generated,
-        recover_sha=recover_sha,
+        recover_sha=recover_sha, target_dir=target_dir,
     )
     wall_start = time.monotonic()
     rc = subprocess.run(orchestrate_args).returncode
@@ -933,7 +936,7 @@ def _run_review_pr(
             max_parallel, no_holistic, max_cost, model, no_post, auto_post,
             auto_submit, pr_url, effort=effort, max_groups=max_groups,
             no_scout=no_scout, disprove=disprove, generated=generated,
-            recover_sha=recover_sha,
+            recover_sha=recover_sha, target_dir=ctx.target_dir,
         )
     finally:
         review_worktree.cleanup_worktree(pinned_wt, repo_root)
@@ -1014,7 +1017,7 @@ def _run_self_review_body(
     no_holistic, max_cost, model, fix_pass, args,
     self_review_dir, branch_name, effort="medium", max_groups=None,
     no_scout=False, disprove=None, generated=False,
-    recover=False, head_sha="",
+    recover=False, head_sha="", target_dir="",
 ) -> None:
     review_file = self_review_dir / f"review{REVIEW_EXT}"
     session_log = str(self_review_dir / FILENAME_SESSION)
@@ -1058,7 +1061,7 @@ def _run_self_review_body(
         no_holistic=no_holistic, max_cost=max_cost, model=model,
         mode="self", fix_pass=fix_pass, effort=effort, max_groups=max_groups,
         no_scout=no_scout, disprove=disprove, generated=generated,
-        recover_sha=recover_sha,
+        recover_sha=recover_sha, target_dir=target_dir,
     )
 
     wall_start = time.monotonic()
@@ -1197,6 +1200,7 @@ def _run_self_review(args) -> None:
             effort=effort, max_groups=max_groups,
             no_scout=no_scout, disprove=disprove, generated=generated,
             recover=recover, head_sha=recover_head_sha,
+            target_dir=ctx.target_dir,
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))

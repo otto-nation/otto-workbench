@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import subprocess
 import sys
 from pathlib import Path
 
@@ -28,10 +27,12 @@ from _reuse_levels import read_default, read_level
 
 try:
     import pr_state
+    import pr_target
 except Exception:
     # The status line renders on every turn and has no way to report a fault.
     # A broken ai/lib blanks the PR segment rather than killing the line.
     pr_state = None
+    pr_target = None
 
 
 def _reuse_piece() -> str:
@@ -43,25 +44,22 @@ def _reuse_piece() -> str:
 
 
 def _pr_piece() -> str:
-    if pr_state is None:
+    if pr_state is None or pr_target is None:
         return ""
 
+    # No `gh` and no network: this runs on every prompt render.
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            return ""
-        repo_root = result.stdout.strip()
+        target = pr_target.target_dir_for_checkout(Path.cwd())
     except Exception:
+        return ""
+    if target is None:
         return ""
 
     # load_state warns on stderr when the file will not parse. The status line
     # has nowhere to put that, so it is swallowed here; `pr status` and every
     # write path still surface it.
     with contextlib.redirect_stderr(io.StringIO()):
-        state = pr_state.load_state(Path(repo_root))
+        state = pr_state.load_state(target)
 
     if state is None or not state.identity.pr_number:
         return ""

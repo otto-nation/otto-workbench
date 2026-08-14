@@ -170,7 +170,11 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
     )
 
     job.throttle = QuotaThrottle()
-    job.pr_state_data = pr_state.load_state(Path(args.repo_dir))
+    # Handed to us, not derived: --repo-dir may be a detached review worktree,
+    # which has no branch to key on.
+    job.pr_state_data = (
+        pr_state.load_state(Path(args.target_dir)) if args.target_dir else None
+    )
 
     if pr_data and args.mode != Mode.SELF:
         viewer = pr_data.viewer_login
@@ -252,6 +256,8 @@ def main():
     parser.add_argument("--review-file", required=True, help="Output review file path")
     parser.add_argument("--repo-dir", "--worktree",
                         required=True, help="Worktree path")
+    parser.add_argument("--target-dir", default="",
+                        help="Where the run's state lives (see pr_target)")
     parser.add_argument("--repo", default="", help="Repository name (owner/repo)")
     parser.add_argument("--session-log", help="Session log path")
     parser.add_argument("--prior-review", help="Path to prior review file for iterative context")

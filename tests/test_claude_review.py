@@ -1653,6 +1653,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(cr, reviews_dir, m
     """Checking out the target moves HEAD — the recover sha must come from the new worktree."""
     ctx = SimpleNamespace(
         repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
+        target_dir=Path("/state/pr/owner-repo-x-feat-x"),
     )
     monkeypatch.setattr(cr, "_resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
     monkeypatch.setattr(cr, "_resolve_branch_input", lambda pr_input, repo_dir: pr_input)

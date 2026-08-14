@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from dataclasses import dataclass, field
@@ -11,7 +12,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from tool_parser import ToolParser
+from tool_parser import (
+    VALUE_FLAGS_FLAG, ToolParser, handle_value_flags, value_taking_options,
+)
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
@@ -159,3 +162,115 @@ def test_store_false_action(capsys):
     props = schema["input_schema"]["properties"]
     assert props["push"]["type"] == "boolean"
     assert "no_push" not in props
+
+
+# ── value-flags probe ──────────────────────────────────────────────────────
+
+
+def test_value_taking_options_lists_only_value_options():
+    assert value_taking_options(_make_parser()) == [
+        "--branch", "--count", "--effort", "--pr", "--repo-dir",
+    ]
+
+
+def test_value_taking_options_lists_every_alias():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir")
+    assert value_taking_options(parser) == ["--repo-dir", "--worktree"]
+
+
+def test_value_taking_options_covers_append_and_hidden_options():
+    """append takes a value, and a SUPPRESSed option is still a real flag."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--track", action="append", default=[])
+    parser.add_argument("--secret", help=argparse.SUPPRESS)
+    parser.add_argument("--verbose", action="count")
+    assert value_taking_options(parser) == ["--secret", "--track"]
+
+
+def test_value_taking_options_ignores_positionals():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("args", nargs="*")
+    assert value_taking_options(parser) == []
+
+
+def test_handle_value_flags_prints_and_exits(capsys):
+    parser = _make_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        handle_value_flags(parser, [VALUE_FLAGS_FLAG])
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out.split() == [
+        "--branch", "--count", "--effort", "--pr", "--repo-dir",
+    ]
+
+
+def test_handle_value_flags_is_a_noop_without_the_flag(capsys):
+    handle_value_flags(_make_parser(), ["--fix"])
+    assert capsys.readouterr().out == ""
+
+
+def test_handle_value_flags_reads_sys_argv_by_default(capsys, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["test-tool", VALUE_FLAGS_FLAG])
+    with pytest.raises(SystemExit):
+        handle_value_flags(_make_parser())
+    assert "--branch" in capsys.readouterr().out
+
+
+def test_tool_parser_answers_the_probe(capsys):
+    """ToolParser scripts inherit the probe the same way they inherit --tool-schema."""
+    parser = _make_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args([VALUE_FLAGS_FLAG])
+    assert exc_info.value.code == 0
+    assert "--repo-dir" in capsys.readouterr().out
+
+
+# ── multi-value options the protocol cannot describe ───────────────────────
+
+
+@pytest.mark.parametrize("nargs", ["?", "+", "*", 2, argparse.REMAINDER])
+def test_value_taking_options_rejects_a_multi_value_option(nargs):
+    """A flat option list cannot say how many tokens an option eats — so refuse."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--track", nargs=nargs)
+    with pytest.raises(ValueError, match="--track declares nargs="):
+        value_taking_options(parser)
+
+
+def test_value_taking_options_accepts_an_explicit_nargs_of_one():
+    """nargs=1 and the nargs=None default both mean exactly one token."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--reply", nargs=1)
+    assert value_taking_options(parser) == ["--reply"]
+
+
+def test_value_taking_options_still_ignores_multi_value_positionals():
+    """claude-review's `args` positional is nargs='*' and must keep working."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--reply")
+    parser.add_argument("args", nargs="*")
+    assert value_taking_options(parser) == ["--reply"]
+
+
+def test_handle_value_flags_reports_a_multi_value_option_on_stderr(capsys):
+    """Loud, not silent: the probe names the flag it cannot describe and exits 2."""
+    parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)
+    parser.add_argument("--track", nargs="+")
+    with pytest.raises(SystemExit) as exc_info:
+        handle_value_flags(parser, [VALUE_FLAGS_FLAG])
+    assert exc_info.value.code == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == "", "a refusal must not look like an empty answer"
+    assert captured.err.startswith(f"bad-delegate: {VALUE_FLAGS_FLAG}: ")
+    assert "--track declares nargs='+'" in captured.err
+    assert "_positional_index" in captured.err, "the message must name the fix"
+
+
+def test_a_multi_value_option_does_not_break_normal_parsing(capsys):
+    """The constraint is on the probe, not on the delegate's own CLI."""
+    parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)
+    parser.add_argument("--track", nargs="+")
+    handle_value_flags(parser, ["--track", "a", "b"])
+    assert parser.parse_args(["--track", "a", "b"]).track == ["a", "b"]
+    assert capsys.readouterr().err == ""

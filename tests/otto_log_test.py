@@ -17,6 +17,7 @@ sys.path.insert(0, str(LIB_DIR))
 sys.path.insert(0, str(BIN_DIR))
 
 import ai_usage
+import workbench_paths
 from trail import TRAIL_FILENAME, Trail
 
 _spec = importlib.util.spec_from_loader(
@@ -37,14 +38,22 @@ def _make_trail(d: str, script: str, events: list[tuple[str, str]]) -> str:
 
 
 class TestTrailDiscovery:
-    def test_discover_worktree_trail(self):
-        with tempfile.TemporaryDirectory() as d:
-            wb_dir = Path(d) / ".workbench"
-            wb_dir.mkdir()
-            _make_trail(str(wb_dir), "ci-check", [("fetch", "fetched")])
-            trails = otto_log.discover_trails(worktree_root=d)
-            assert len(trails) >= 1
-            assert any(str(wb_dir / TRAIL_FILENAME) in str(t) for t in trails)
+    def test_discover_worktree_trail(self, worktree):
+        wb_dir = workbench_paths.worktree_state_dir(worktree)
+        wb_dir.mkdir(parents=True, exist_ok=True)
+        _make_trail(str(wb_dir), "ci-check", [("fetch", "fetched")])
+        trails = otto_log.discover_trails(worktree_root=str(worktree))
+        assert len(trails) >= 1
+        assert any(str(wb_dir / TRAIL_FILENAME) in str(t) for t in trails)
+
+    def test_a_directory_that_is_not_a_worktree_has_no_trail(self, tmp_path):
+        """otto-log runs wherever the user is, which need not be a worktree."""
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        assert otto_log.discover_trails(
+            worktree_root=str(tmp_path),
+            reviews_dir=str(empty), logs_dir=str(empty),
+        ) == []
 
     def test_discover_review_trails(self):
         with tempfile.TemporaryDirectory() as d:

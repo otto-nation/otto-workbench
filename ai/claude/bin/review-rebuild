@@ -25,6 +25,7 @@ from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,
 )
 
+SCRIPT = Path(__file__).name
 REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."
 
 
@@ -99,7 +100,7 @@ def main():
     mode = meta.get("mode", "")
 
     trail = Trail.start(
-        script="review-rebuild",
+        script=SCRIPT,
         artifact_dir=str(review_dir),
         context={"repo": repo, "pr": args.pr},
         debug=args.debug,

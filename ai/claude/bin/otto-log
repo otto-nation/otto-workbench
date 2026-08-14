@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Query trail files and AI usage across otto-workbench scripts.
 
-Discovers trail.jsonl files from worktree (.workbench/), review artifacts
-(<state root>/reviews/), and standalone tool logs (<state root>/logs/) — see
-ai/lib/workbench_paths.py for how the state root resolves.
+Discovers trail.jsonl files from the current worktree (<git-dir>/workbench/),
+review artifacts (<state root>/reviews/), and standalone tool logs
+(<state root>/logs/) — see ai/lib/workbench_paths.py for how both resolve.
 The `stats` subcommand reads the global AI usage ledger instead — a separate,
 monthly-rotated store that every AI call appends to.
 """
@@ -25,7 +25,6 @@ import ai_usage
 import log
 import workbench_paths
 from trail import TRAIL_FILENAME
-from pr_state import STATE_DIR as WORKBENCH_DIR
 from review_common import REVIEWS_DIR
 
 LOGS_DIR = workbench_paths.logs_dir()
@@ -65,8 +64,11 @@ def discover_trails(
     # Worktree trail
     wt = worktree_root or _detect_worktree_root()
     if wt:
-        wt_trail = Path(wt) / WORKBENCH_DIR / TRAIL_FILENAME
-        if wt_trail.is_file():
+        try:
+            wt_trail = workbench_paths.worktree_state_dir(wt) / TRAIL_FILENAME
+        except workbench_paths.NotAWorktree:
+            wt_trail = None
+        if wt_trail is not None and wt_trail.is_file():
             trails.append(wt_trail)
 
     # Review trails

@@ -59,6 +59,8 @@ from review_static_analysis import (  # noqa: E402
 )
 import ai_backend  # noqa: E402
 
+SCRIPT = Path(__file__).name
+
 _SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rph, _rrt, _rst)
 
 # Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
@@ -302,7 +304,7 @@ def main():
 
     review_dir = Path(args.review_file).parent
     trail = Trail.start(
-        script="review-orchestrate",
+        script=SCRIPT,
         artifact_dir=str(review_dir),
         context={"repo": repo, "pr": args.pr, "mode": args.mode},
         debug=args.debug,

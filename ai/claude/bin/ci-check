@@ -2,7 +2,7 @@
 """Fetch CI run data, classify failures, and output status.
 
 Renders a human-readable dashboard to stderr and structured JSON to stdout.
-Manages local state in <worktree>/.workbench/state.json.
+Manages local state in the worktree's own git dir (see workbench_paths).
 
 Usage:
   ci-check                      # latest run for current branch
@@ -38,6 +38,8 @@ import log
 import workbench_paths
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
+
+SCRIPT = Path(__file__).name
 
 
 # ── Fix phase constants ─────────────────────────────────────────────────────
@@ -592,7 +594,7 @@ def _run_ci(trail, args, ctx) -> dict:
             pr_state.save_state(toplevel, state)
         except Exception as exc:
             trail.error("state_update", f"state update failed: {exc}")
-            log.error(f"ci-check: state update failed: {exc}")
+            log.error(f"{SCRIPT}: state update failed: {exc}")
 
     if report["failures"]:
         json.dump(report, sys.stdout, indent=2)
@@ -985,7 +987,7 @@ def _run_ci_wait(trail, args, ctx) -> dict:
             pr_state.save_state(toplevel, state)
         except Exception as exc:
             trail.error("state_update", f"state update failed: {exc}")
-            log.error(f"ci-check: state update failed: {exc}")
+            log.error(f"{SCRIPT}: state update failed: {exc}")
 
     _emit_json(report, "final")
 
@@ -994,7 +996,7 @@ def _run_ci_wait(trail, args, ctx) -> dict:
 
 def main():
     parser = ToolParser(
-        prog="ci-check",
+        prog=SCRIPT,
         description="CI failure status",
         output_schema=pr_state.CIDomain,
     )
@@ -1027,14 +1029,17 @@ def main():
     # Acquired before Trail.start so contention costs no trail artifacts.
     worktree_lock.claim_for_process(
         toplevel,
-        command=" ".join(["ci-check"] + sys.argv[1:]),
+        command=" ".join([SCRIPT] + sys.argv[1:]),
         started=pr_state.now_iso(),
     )
 
+    # No worktree means no state to sit beside; the trail still gets written.
+    trail_root = workbench_paths.logs_dir(SCRIPT)
+    if toplevel:
+        trail_root = workbench_paths.trail_dir(toplevel, SCRIPT)
     trail = Trail.start(
-        script="ci-check",
-        artifact_dir=str(toplevel / pr_state.STATE_DIR) if toplevel
-        else str(workbench_paths.logs_dir("ci-check")),
+        script=SCRIPT,
+        artifact_dir=str(trail_root),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

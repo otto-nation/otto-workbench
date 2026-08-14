@@ -36,6 +36,7 @@ import publishing
 from pr_comments import ThreadState
 import review_common
 import review_issue
+import workbench_paths
 from review_common import Diagnosis
 from pr_thread_models import (
     ClassificationResult,
@@ -50,6 +51,8 @@ from pr_thread_models import (
 from review_github import fetch_pr_data
 from review_issue import CreatedIssue
 from trail import Trail, add_trail_args
+
+SCRIPT = Path(__file__).name
 
 TRIAGE_CONTEXT_LINES = 10
 FIX_MIN_TURNS = 20
@@ -2792,13 +2795,13 @@ def main():
     # Acquired before Trail.start so contention costs no trail artifacts.
     worktree_lock.claim_for_process(
         toplevel,
-        command=" ".join(["review-threads"] + sys.argv[1:]),
+        command=" ".join([SCRIPT] + sys.argv[1:]),
         started=pr_state.now_iso(),
     )
 
     trail = Trail.start(
-        script="review-threads",
-        artifact_dir=str(toplevel / pr_state.STATE_DIR),
+        script=SCRIPT,
+        artifact_dir=str(workbench_paths.trail_dir(toplevel, SCRIPT)),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
+SCRIPT = Path(__file__).name
 sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 
 import ci_failures
@@ -27,6 +28,7 @@ import rebase_status
 import review_gc
 import log
 import review_common
+import workbench_paths
 import worktree_lock
 from review_common import (
     ReviewType, build_review_summary, find_review_file, json_summary, review_file_path,
@@ -254,7 +256,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     flags = set(argv)
     mode_flags = flags & {"--post", "--repair", "--summary", "--recover"}
     if len(mode_flags) > 1:
-        log.error("pr: --post, --repair, --summary, and --recover are mutually exclusive")
+        log.error(f"{SCRIPT}: --post, --repair, --summary, and --recover are mutually exclusive")
         return 1
 
     if "--post" in flags:
@@ -439,7 +441,12 @@ def _clear_state_dir(state_dir: Path) -> None:
 def _gc_stale_pr_state(worktree_root: Path) -> int:
     """Remove pr state directory if it is unreadable, or if the PR is merged or
     closed. Returns 1 if cleaned."""
-    state_dir = worktree_root / pr_state.STATE_DIR
+    try:
+        state_dir = workbench_paths.worktree_state_dir(worktree_root)
+    except workbench_paths.NotAWorktree:
+        # A directory that is not a worktree has no pr state to collide with,
+        # same as every other worktree_state_dir call site in this file.
+        return 0
     state_file = state_dir / pr_state.STATE_FILE
     if not state_file.is_file():
         return 0
@@ -543,7 +550,7 @@ Run 'pr <command> -h' for details on a specific command."""
 def _tool_schema() -> dict:
     """Build --tool-schema output for the pr command."""
     return {
-        "name": "pr",
+        "name": SCRIPT,
         "description": "Unified PR lifecycle CLI — CI, review, comments, rebase",
         "input_schema": {
             "type": "object",
@@ -567,9 +574,14 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
               original_pr: str | None,
               original_branch: str | None) -> int:
     """Start the trail and route to the command's handler or backing script."""
+    # A command that runs without a worktree — `pr status` from a bare repo —
+    # has no state for its trail to sit beside, so it goes to pr's own logs.
+    trail_root = workbench_paths.logs_dir(SCRIPT)
+    if ctx.worktree_root:
+        trail_root = workbench_paths.trail_dir(ctx.worktree_root, SCRIPT)
     trail = Trail.start(
-        script="pr",
-        artifact_dir=str(ctx.worktree_root / pr_state.STATE_DIR) if ctx.worktree_root else "/tmp",
+        script=SCRIPT,
+        artifact_dir=str(trail_root),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=getattr(global_args, "debug", False),
     )
@@ -617,7 +629,7 @@ def main():
     global_args, remaining = _global.parse_known_args()
 
     parser = argparse.ArgumentParser(
-        prog="pr",
+        prog=SCRIPT,
         description="PR lifecycle management",
         add_help=False,
     )
@@ -678,7 +690,7 @@ def main():
     try:
         with worktree_lock.acquire(
             lock_root,
-            command=" ".join(["pr"] + sys.argv[1:]),
+            command=" ".join([SCRIPT] + sys.argv[1:]),
             started=pr_state.now_iso(),
         ):
             sys.exit(_dispatch(args, ctx, extra, global_args,

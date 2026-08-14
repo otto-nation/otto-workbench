@@ -33,6 +33,7 @@ from review_github import (  # noqa: E402
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+SCRIPT = Path(__file__).name
 DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
 WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
 
@@ -576,7 +577,7 @@ def format_report(scan_data: dict) -> str:
 
     lines: list[str] = []
     lines.append("# Retro Scan Report")
-    version = _version_string("retro-scan").split("\n")[0]
+    version = _version_string(SCRIPT).split("\n")[0]
     lines.append(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: {version} -->")
     lines.append(f"<!-- repos: {len(repos)} | prs: {total_prs} | comments: {total_comments} -->")
     dir_parts = [f"{k}: {v}" for k, v in sorted(direction_counts.items())]
@@ -1005,14 +1006,14 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.version:
-        print(_version_string("retro-scan"))
+        print(_version_string(SCRIPT))
         raise SystemExit(0)
 
     home = Path(os.path.expanduser(args.home))
     workbench = Path(os.path.expanduser(args.workbench)).resolve()
-    log_dir = str(workbench_paths.logs_dir("retro-scan"))
+    log_dir = str(workbench_paths.logs_dir(SCRIPT))
     trail = Trail.start(
-        script="retro-scan",
+        script=SCRIPT,
         artifact_dir=log_dir,
         context={"workbench": args.workbench, "home": str(home)},
         debug=args.debug,

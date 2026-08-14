@@ -1,13 +1,13 @@
 """Advisory whole-run lock for worktree-mutating ``pr`` subcommands.
 
 Two concurrent runs against one worktree corrupt each other: they both
-read-modify-write ``.workbench/state.json``, and with ``--fix`` they both
-edit and commit the same files. This serializes them at the process level
-— a second run refuses to start rather than interleaving.
+read-modify-write the worktree's ``state.json``, and with ``--fix`` they
+both edit and commit the same files. This serializes them at the process
+level — a second run refuses to start rather than interleaving.
 
-Uses ``fcntl.flock`` on ``.workbench/run.lock``. The kernel drops the lock
-when the holder exits for any reason, including SIGKILL, so there is no
-stale-lock state to reap.
+Uses ``fcntl.flock`` on ``run.lock`` in the worktree's state dir, beside
+the state it guards. The kernel drops the lock when the holder exits for
+any reason, including SIGKILL, so there is no stale-lock state to reap.
 
 Delegate scripts (``claude-review``, ``ci-check``, ``review-threads``) are
 entry points in their own right and take the lock themselves, so a direct
@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 import log
+import workbench_paths
 
 LOCK_FILE = "run.lock"
 LOCK_ENV = "WORKBENCH_WORKTREE_LOCK"
@@ -94,8 +95,14 @@ def _prepare(worktree_root: Path | None):
     # Already ours: pass through rather than deadlock on our own parent.
     if os.environ.get(LOCK_ENV) == target:
         return None
-    path = root / ".workbench" / LOCK_FILE
-    path.parent.mkdir(exist_ok=True)
+    try:
+        state_dir = workbench_paths.worktree_state_dir(root)
+    except workbench_paths.NotAWorktree:
+        # A directory that is not a worktree has no `pr` run to collide with,
+        # for the same reason a missing one does not.
+        return None
+    path = state_dir / LOCK_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
     # "a+" rather than "w": opening must not destroy the current holder's
     # record before we know whether we can take the lock away from them.
     return open(path, "a+"), path, target

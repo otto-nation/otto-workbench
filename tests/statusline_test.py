@@ -26,14 +26,27 @@ with patch.object(sys, "argv", ["workbench-statusline"]):
 sys.modules.setdefault("workbench_statusline", statusline)
 
 import pr_state  # noqa: E402
+import workbench_paths  # noqa: E402
+
+from conftest import state_path  # noqa: E402
 
 
 def _at(root: Path):
-    """Make _pr_piece resolve its repo root to `root`."""
-    return patch(
-        "workbench_statusline.subprocess.run",
-        return_value=SimpleNamespace(returncode=0, stdout=str(root)),
-    )
+    """Make _pr_piece resolve its repo root to `root`.
+
+    The patch lands on the subprocess module itself, so it also answers the
+    `git rev-parse` behind the state's own path. Both questions are stubbed
+    from the real worktree, or the segment would look for state somewhere the
+    test never wrote it. A third git call routed through here needs its own
+    branch in `_run`, or it silently gets answered with the repo root.
+    """
+    git_dir = workbench_paths.worktree_state_dir(root).parent
+
+    def _run(cmd, *_args, **_kwargs):
+        out = git_dir if "--absolute-git-dir" in cmd else root
+        return SimpleNamespace(returncode=0, stdout=str(out))
+
+    return patch("workbench_statusline.subprocess.run", side_effect=_run)
 
 
 def _save(root: Path, *domains, pr_number: int | None = 42):
@@ -44,36 +57,36 @@ def _save(root: Path, *domains, pr_number: int | None = 42):
     pr_state.save_state(root, state)
 
 
-def test_pr_piece_renders_ci_failures(tmp_path):
-    _save(tmp_path, pr_state.CIDomain(conclusion="failure", failure_count=3))
+def test_pr_piece_renders_ci_failures(worktree):
+    _save(worktree, pr_state.CIDomain(conclusion="failure", failure_count=3))
 
-    with _at(tmp_path):
+    with _at(worktree):
         assert statusline._pr_piece() == "PR#42 CI:3F"
 
 
-def test_pr_piece_is_blank_without_a_state_file(tmp_path):
-    with _at(tmp_path):
+def test_pr_piece_is_blank_without_a_state_file(worktree):
+    with _at(worktree):
         assert statusline._pr_piece() == ""
 
 
-def test_pr_piece_is_blank_for_a_corrupt_state_file(tmp_path, capsys):
+def test_pr_piece_is_blank_for_a_corrupt_state_file(worktree, capsys):
     """The status line renders or it does not. It never tracebacks, and it
     never leaks load_state's warning into the terminal."""
-    path = tmp_path / pr_state.STATE_DIR / pr_state.STATE_FILE
+    path = state_path(worktree)
     path.parent.mkdir(parents=True)
     path.write_text("{ not json")
 
-    with _at(tmp_path):
+    with _at(worktree):
         assert statusline._pr_piece() == ""
     assert capsys.readouterr().err == ""
 
 
-def test_pr_piece_survives_null_behind_a_scalar_field(tmp_path):
+def test_pr_piece_survives_null_behind_a_scalar_field(worktree):
     """Regression: a syntactically valid state.json with an explicit `null`
     behind an int or dict field used to load successfully and then crash in
     `_pr_details` — `failure_count > 0` on a `None`, `by_state.get()` on a
     `None`. serde now degrades a `null` there to the field's default."""
-    path = tmp_path / pr_state.STATE_DIR / pr_state.STATE_FILE
+    path = state_path(worktree)
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({
         "identity": {
@@ -81,23 +94,23 @@ def test_pr_piece_survives_null_behind_a_scalar_field(tmp_path):
             "branch": "feat",
             "pr_number": 42,
             "head_sha": "abc",
-            "worktree_root": str(tmp_path),
+            "worktree_root": str(worktree),
         },
         "ci": {"conclusion": "failure", "failure_count": None},
         "comments": {"by_state": None},
     }))
 
-    with _at(tmp_path):
+    with _at(worktree):
         # failure_count degrades to 0, so the CI:<n>F branch does not fire —
         # the point of this test is that it renders at all, not which branch.
         assert statusline._pr_piece() == "PR#42 CI:failure"
 
 
-def test_pr_piece_survives_a_wrong_typed_scalar_field(tmp_path):
+def test_pr_piece_survives_a_wrong_typed_scalar_field(worktree):
     """Regression: `"failure_count": "many"` parsed cleanly and then raised
     TypeError on `failure_count > 0`, which killed the whole line rather than
     the segment. serde now degrades an unrecoverable value to the default."""
-    path = tmp_path / pr_state.STATE_DIR / pr_state.STATE_FILE
+    path = state_path(worktree)
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({
         "identity": {
@@ -105,12 +118,12 @@ def test_pr_piece_survives_a_wrong_typed_scalar_field(tmp_path):
             "branch": "feat",
             "pr_number": 42,
             "head_sha": "abc",
-            "worktree_root": str(tmp_path),
+            "worktree_root": str(worktree),
         },
         "ci": {"conclusion": "failure", "failure_count": "many"},
     }))
 
-    with _at(tmp_path):
+    with _at(worktree):
         assert statusline._pr_piece() == "PR#42 CI:failure"
 
 

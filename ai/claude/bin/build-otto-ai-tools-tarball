@@ -34,7 +34,7 @@ MANIFEST_KEY="ai/claude"
 BASH_MODULES=(output.sh prompts.sh roots.sh)
 
 # Files excluded from bin/ discovery (this script + support files)
-BIN_EXCLUDE="build-otto-ai-tools-tarball|_version.py"
+BIN_EXCLUDE="${0##*/}|_version.py"
 
 # Minimum expected file counts — catches silent glob failures
 MIN_BIN_SCRIPTS=5

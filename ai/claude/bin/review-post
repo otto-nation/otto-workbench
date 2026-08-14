@@ -67,6 +67,8 @@ from review_posting import (  # noqa: E402
 )
 from review_sections import ReviewSections  # noqa: E402
 
+SCRIPT = Path(__file__).name
+
 _SUBMODULES = (_rc, _rd, _rfi, _rfmt, _rg, _rp, _rs)
 
 
@@ -244,7 +246,7 @@ def main():
     args.repo = repo
 
     trail = Trail.start(
-        script="review-post",
+        script=SCRIPT,
         artifact_dir=str(review_path.parent),
         context={"repo": repo, "pr": args.pr},
         debug=args.debug,

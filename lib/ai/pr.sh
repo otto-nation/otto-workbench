@@ -63,8 +63,7 @@ PR_URL_PATTERN='https://github\.com/[^[:space:]]+/pull/[0-9]+'
 # gh's exit code is the authoritative success signal; a zero exit with no parsable
 # pull request URL is still treated as a failure. Returns 1 on any failure.
 create_pr() {
-  local output url
-  local status=0
+  local output url status=0
   output=$(gh pr create "$@" 2>&1) || status=$?
 
   if [[ "$status" -ne 0 ]]; then

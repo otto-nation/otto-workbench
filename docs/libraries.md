@@ -45,7 +45,7 @@ Its own module rather than part of `constants.sh` because two other consumers ne
 
 Two definitions outside `lib/` express the same chain, and `tests/workbench_roots.bats` cross-validates all three:
 
-- [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python owner. Exposes `config_dir()`, `state_dir()`, `cache_dir(consumer=None)`, and `logs_dir(tool=None)`, resolved per call rather than frozen at import. The two that take a name return one consumer's subtree of the root, and reject anything but a bare directory name — a path would land outside the tree the root's owner globs over.
+- [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python owner. Exposes `config_dir()`, `state_dir()`, `cache_dir(consumer=None)`, `logs_dir(tool=None)`, and `reviews_dir()`, resolved per call rather than frozen at import. The two that take a name return one consumer's subtree of the root, and reject anything but a bare directory name — a path would land outside the tree the root's owner globs over. `reviews_dir()` is the sole owner of the reviews join, so the review system and the tools that read its output — `otto-log` for the trails, `retro-scan` for the findings — cannot disagree about where a review is.
 - [`zsh/config.d/aliases/docker.zsh`](../zsh/config.d/aliases/docker.zsh) — spelled inline, because `WORKBENCH_DIR` is unknown at shell startup and sourcing would add a file read to every shell.
 
 #### The fourth root: per-worktree state

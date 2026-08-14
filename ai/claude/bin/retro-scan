@@ -56,9 +56,10 @@ NOISE_PATTERNS = re.compile(
 
 COMMENT_BODY_MAX = 500
 
-# Under the state root rather than under --home: both are generated data, and
-# retro-complete.sh deletes them through WORKBENCH_STATE_DIR.
-REVIEWS_DIR_NAME = "reviews"
+# Beside reviews/ under the state root rather than under --home: both are
+# generated data, and retro-complete.sh reads them through the state root too.
+# Its half of this name is RETRO_CONSUMED_REVIEWS_FILE in lib/constants.sh;
+# tests/workbench_roots.bats holds the two together.
 CONSUMED_REVIEWS_NAME = "retro-consumed-reviews.txt"
 
 FINDING_RE = re.compile(
@@ -824,10 +825,9 @@ def _scan_review_dir(
 
 
 def scan_local_reviews(
-    state_dir: Path, rules: list[dict], rule_match_counts: dict[str, dict],
+    reviews_dir: Path, rules: list[dict], rule_match_counts: dict[str, dict],
 ) -> tuple[list[dict], int, list[str]]:
     """Returns (repo_list, unmatched_count, consumed_dir_names)."""
-    reviews_dir = state_dir / REVIEWS_DIR_NAME
     if not reviews_dir.exists():
         return [], 0, []
 
@@ -952,7 +952,7 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
 
     state_dir = workbench_paths.state_dir()
     local_repos, local_unmatched, consumed_dirs = scan_local_reviews(
-        state_dir, rules, rule_match_counts,
+        workbench_paths.reviews_dir(), rules, rule_match_counts,
     )
     local_repos = _dedup_local_against_github(scan_repos, local_repos)
     for lr in local_repos:

@@ -25,9 +25,6 @@ import ai_usage
 import log
 import workbench_paths
 from trail import TRAIL_FILENAME
-from review_common import REVIEWS_DIR
-
-LOGS_DIR = workbench_paths.logs_dir()
 
 ANSI_RESET = "\033[0m"
 ANSI_BOLD = "\033[1m"
@@ -72,13 +69,13 @@ def discover_trails(
             trails.append(wt_trail)
 
     # Review trails
-    rd = Path(reviews_dir) if reviews_dir else REVIEWS_DIR
+    rd = Path(reviews_dir) if reviews_dir else workbench_paths.reviews_dir()
     if rd.is_dir():
         for trail_file in rd.glob(f"*/{TRAIL_FILENAME}"):
             trails.append(trail_file)
 
     # Standalone tool trails
-    ld = Path(logs_dir) if logs_dir else LOGS_DIR
+    ld = Path(logs_dir) if logs_dir else workbench_paths.logs_dir()
     if ld.is_dir():
         for trail_file in ld.glob(f"*/{TRAIL_FILENAME}"):
             trails.append(trail_file)

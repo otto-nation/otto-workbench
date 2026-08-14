@@ -22,13 +22,13 @@ import log
 import pr_state
 import pr_target
 import run_lock
+import workbench_paths
 from pr_state import ReviewStatus
 from review_common import (
     FILENAME_META,
     FILENAME_PIPELINE_STATE,
     FILENAME_PROMPT_STATS,
     REVIEW_EXT,
-    REVIEWS_DIR,
     phase_artifacts,
     read_pipeline_status,
     read_review_meta,
@@ -162,7 +162,7 @@ def _collect_strays(reviews_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
 
 def gc_reviews(reviews_dir: Path | None = None) -> int:
     """Remove orphaned review dirs and stale intermediates. Returns items cleaned."""
-    reviews_dir = reviews_dir or REVIEWS_DIR
+    reviews_dir = reviews_dir or workbench_paths.reviews_dir()
     if not reviews_dir.is_dir():
         return 0
 
@@ -192,7 +192,7 @@ def _has_pipeline_failure(review_dir: Path) -> bool:
 
 def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE_MAX_FILES) -> int:
     """Remove review directories for merged/closed PRs. Returns count pruned."""
-    reviews_dir = reviews_dir or REVIEWS_DIR
+    reviews_dir = reviews_dir or workbench_paths.reviews_dir()
     if not reviews_dir.is_dir():
         return 0
 

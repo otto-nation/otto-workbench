@@ -21,6 +21,7 @@ import log
 import pr_context
 import pr_state
 import run_lock
+import workbench_paths
 from tool_parser import handle_value_flags
 from trail import Trail, add_trail_args
 from serde import to_dict as _serde_to_dict
@@ -32,7 +33,7 @@ except ImportError:
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
 from review_common import (
     FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
-    FILENAME_SESSION, REVIEWS_DIR, REVIEW_EXT,
+    FILENAME_SESSION, REVIEW_EXT,
     SEVERITY_COUNT_RE_FMT, SEVERITY_JSON_KEYS, SEVERITY_PREFIXES,
     SEVERITIES,
     Mode, ReviewMeta, ReviewType, aggregate_session_usage, build_failure_detail,
@@ -65,15 +66,16 @@ ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
 def _migrate_legacy_reviews() -> None:
     if not LEGACY_REVIEWS_DIR.is_dir():
         return
+    reviews = workbench_paths.reviews_dir()
     files = [f for p in ("*.md", "*.jsonl") for f in LEGACY_REVIEWS_DIR.glob(p)]
     for f in files:
-        dest = REVIEWS_DIR / f.name
+        dest = reviews / f.name
         if not dest.exists():
             shutil.move(str(f), str(dest))
 
 
-def _migrate_one_flat_review(flat_review: Path, dir_name: str) -> None:
-    review_dir = REVIEWS_DIR / dir_name
+def _migrate_one_flat_review(reviews: Path, flat_review: Path, dir_name: str) -> None:
+    review_dir = reviews / dir_name
     review_dir.mkdir(parents=True, exist_ok=True)
     shutil.move(str(flat_review), str(review_dir / f"review{REVIEW_EXT}"))
 
@@ -85,7 +87,7 @@ def _migrate_one_flat_review(flat_review: Path, dir_name: str) -> None:
         ".prior.md": "prior.md",
     }
     for suffix, new_name in suffix_map.items():
-        flat_file = REVIEWS_DIR / f"{dir_name}{suffix}"
+        flat_file = reviews / f"{dir_name}{suffix}"
         if flat_file.is_file():
             shutil.move(str(flat_file), str(review_dir / new_name))
 
@@ -98,14 +100,14 @@ def _migrate_one_flat_review(flat_review: Path, dir_name: str) -> None:
         f"{dir_name}.holistic.md", f"{dir_name}.holistic.jsonl",
         f"{dir_name}.synthesis.jsonl",
     )
-    intermediates = [f for p in intermediate_patterns for f in REVIEWS_DIR.glob(p)]
+    intermediates = [f for p in intermediate_patterns for f in reviews.glob(p)]
     for intermediate in intermediates:
         fname = intermediate.name.removeprefix(f"{dir_name}.")
         shutil.move(str(intermediate), str(review_dir / fname))
 
     archive_dir = review_dir / "archives"
     archive_patterns = (f"{dir_name}.2*.md", f"{dir_name}.session.2*.jsonl", f"{dir_name}.post.2*.jsonl")
-    archives = [f for p in archive_patterns for f in REVIEWS_DIR.glob(p)]
+    archives = [f for p in archive_patterns for f in reviews.glob(p)]
     for archive in archives:
         archive_dir.mkdir(exist_ok=True)
         fname = archive.name.removeprefix(f"{dir_name}.")
@@ -113,15 +115,16 @@ def _migrate_one_flat_review(flat_review: Path, dir_name: str) -> None:
 
 
 def _migrate_flat_reviews() -> None:
+    reviews = workbench_paths.reviews_dir()
     migrated = 0
-    for flat_review in REVIEWS_DIR.glob(f"*{REVIEW_EXT}"):
+    for flat_review in reviews.glob(f"*{REVIEW_EXT}"):
         if not flat_review.is_file():
             continue
         dir_name = flat_review.stem
-        review_dir = REVIEWS_DIR / dir_name
+        review_dir = reviews / dir_name
         if review_dir.is_dir():
             continue
-        _migrate_one_flat_review(flat_review, dir_name)
+        _migrate_one_flat_review(reviews, flat_review, dir_name)
         migrated += 1
 
     if migrated > 0:
@@ -1203,7 +1206,7 @@ def _run_self_review(args) -> None:
 
     repo_name = repo.split("/")[-1]
     branch_sanitized = (ctx.branch or "").replace("/", "-")
-    self_review_dir = REVIEWS_DIR / f"{repo_name}-self-{branch_sanitized}"
+    self_review_dir = workbench_paths.reviews_dir() / f"{repo_name}-self-{branch_sanitized}"
     self_review_dir.mkdir(parents=True, exist_ok=True)
 
     trail = Trail.start(
@@ -1300,7 +1303,7 @@ def main() -> None:
         parsed.positional = [parsed.pr]
 
     # Startup migrations
-    REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    workbench_paths.reviews_dir().mkdir(parents=True, exist_ok=True)
     _migrate_legacy_reviews()
     _migrate_flat_reviews()
 

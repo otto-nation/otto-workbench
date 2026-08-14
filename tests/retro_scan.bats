@@ -649,7 +649,7 @@ EOF
 from pathlib import Path
 rules = mod.load_rules(Path("$TMPDIR/wb"))
 counts = {r["filename"]: {"matched": 0} for r in rules}
-repos, unmatched, consumed = mod.scan_local_reviews(Path("$TMPDIR/state"), rules, counts)
+repos, unmatched, consumed = mod.scan_local_reviews(Path("$TMPDIR/state/reviews"), rules, counts)
 print(len(consumed))
 print(consumed[0] if consumed else "none")
 PY

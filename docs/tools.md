@@ -291,20 +291,6 @@ claude-rules <command> [<args>]
 
 Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → `bash`, `yml` → `yaml`.
 
-### `claude-review threads`
-
-Show thread lifecycle status for a PR — dashboard and JSON report.
-
-```
-claude-review threads [<pr_url_or_number>] [--finish] [--repo-dir <PATH>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `<pr_url_or_number>` | PR number or URL (auto-detects from current branch if omitted) |
-| `--finish` | Close out deferred work (aliases: `--resolve`, `--resolve-verified`) |
-| `--repo-dir <PATH>` | Git worktree directory (aliases: `--repo`, `--worktree`) |
-
 ### `pr`
 
 Unified PR lifecycle CLI — manages CI, code review, comments, rebasing, and push state.
@@ -332,7 +318,18 @@ pr [global flags] <command> [flags]
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
 | `gc` | Clean up stale PR review artifacts and cached state |
 
-**`pr comments` runs in two phases:**
+**`pr comments` flags fall on two axes — phase and gate:**
+
+The phase flags (`--triage`, `--fix`, `--finish`, `--reply`) choose which work
+the run does. `--post` is the gate: it decides whether that work leaves the
+machine. Every phase drafts to stderr and publishes nothing without it, so
+`--post` neither implies a phase nor is implied by one. `--finish --post` is
+therefore not saying the same thing twice — the first names the work, the
+second opens the gate. The same `--post` gates `pr review` and `--reply`; it is
+one switch for the whole process, not a `comments` flag — see
+`ai/lib/publishing.py`, which owns it.
+
+The work itself runs in two phases:
 
 `--fix` triages threads, applies mechanical fixes, and resolves the verified
 ones. It withholds the summary comment whenever threads need human input,
@@ -354,10 +351,10 @@ per thread. A `--finish` logs the deferral ids it left unfiled, whether the
 selection was empty or partial. Naming an id that is not a deferred thread is an
 error rather than a silent skip, so a typo cannot pass for agreement.
 
-`--resolve` is an alias for `--finish`. `--resolve-verified` is the historical
-name from `claude-review threads` (see above) — both flags are now accepted by
-`pr comments` for backwards compatibility, but the canonical name is `--finish`.
-The old name was misleading: resolving verified threads happens under `--triage`,
+`--resolve` and `--resolve-verified` are deprecated aliases for `--finish`,
+carried over from the removed `claude-review threads` subcommand. Both still
+parse, but the canonical name is `--finish` and new callers should use it. The
+old name was misleading: resolving verified threads happens under `--triage`,
 which `--fix` implies, so the flag never gated resolution.
 
 **Replies are one per thread:**

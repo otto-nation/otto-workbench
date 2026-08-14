@@ -17,6 +17,11 @@ Nothing reaches GitHub until the user approves it. Replies, the summary comment,
 thread resolutions, and deferral issues are drafted to stderr; `--post` is what
 publishes them, and it is only ever passed after the user has read the drafts.
 
+`--post` is a gate, not a step. The phase flags — `--fix`, `--finish`,
+`--reply` — choose which work the run does; `--post` decides whether that work
+leaves the machine. Neither implies the other, so `--finish --post` is not
+saying "publish" twice.
+
 Run with `/pr-comments`, `/pr-comments <pr_number>`, or `/pr-comments <branch_name>`.
 
 ---
@@ -198,6 +203,22 @@ a finished conversation, so don't publish before the discussion is done. A
 drafted run recorded nothing as posted, so the queue is intact — never re-run
 `--fix` to get back to it.
 
+**Preview the closeout first whenever you are passing `--track`.** The tracking
+issue body and the deferral replies are the exception to Step 3's drafts: the
+finish phase builds them, so the fix pass never printed them and the user has
+not seen them. Run the same command without `--post` — it drafts both to stderr
+and sends nothing:
+
+```bash
+pr comments --finish --track <thread_id> ... [--repo-dir <PATH>]
+```
+
+Show those drafts, get approval, then re-run with `--post` added. `--track` is
+required for the preview to render anything: without it the finish phase files
+nothing, so there is no issue body to draft. The preview costs one GitHub fetch
+and no AI call — the issue body and deferral replies are templated, not
+generated — and it leaves the queue intact like any other drafted run.
+
 Pass one `--track <thread_id>` per thread the user chose to track — in Step 3,
 or, on the resume path, in the earlier pass or in the request that sent you
 here. Omit the flag entirely when they chose none, or when you cannot see what
@@ -235,7 +256,10 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
 
 ## Constraints
 
-- Never pass `--post` before the user has seen the drafts and approved them
+- Never pass `--post` before the user has seen the drafts and approved them.
+  The fix pass does not draft the tracking issue or the deferral replies — only
+  the finish phase renders those, so `--finish --post --track` publishes text
+  nobody read unless the drafted `--finish --track` ran first
 - Never re-run `--fix` to resume a pass whose drafts the user already approved.
   The queue is intact, and regenerating it means `--post` publishes text they
   never saw — the same violation as posting before approval

@@ -90,6 +90,11 @@ if [[ "$stripped" =~ $re_cd ]] && [[ "$stripped" == *'&&'* || "$stripped" == *';
   block 'Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or gh --repo instead. See bash-tool.md.'
 fi
 
+re_env='(^|[;&|][[:space:]]*)env[[:space:]]+(-C|--chdir)([[:space:]]|=)'
+if [[ "$stripped" =~ $re_env ]]; then
+  block 'env -C cannot be statically analyzed, so it prompts every time. Use a tool-native directory flag (git -C, mise -C, go -C), absolute paths (pytest /abs/path/tests/x_test.py), or a bare cd <dir> as its own command first. See bash-tool.md.'
+fi
+
 re_brace='\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\}'
 if [[ "$stripped" =~ $re_brace ]]; then
   block 'Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md.'

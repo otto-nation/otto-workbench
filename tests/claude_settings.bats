@@ -356,6 +356,29 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+@test "env hook: blocks env -C" {
+  run _run_guard '{"tool_input":{"command":"env -C /tmp/wt pytest tests/foo_test.py -q"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "env hook: blocks env --chdir" {
+  run _run_guard '{"tool_input":{"command":"env --chdir=/tmp/wt bats tests/"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "env hook: blocks env -C after a pipe" {
+  run _run_guard '{"tool_input":{"command":"echo hi | env -C /tmp/wt cat"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "env hook: allows env without a directory flag" {
+  run _run_guard '{"tool_input":{"command":"env | grep PATH"}}'
+  [ "$status" -eq 0 ]
+}
+
 # The bodies below each put the pattern after a statement separator, which is
 # what the whole-command form matched on — a body line starting with the pattern
 # was never a false positive, since the regex only anchors to start-of-string.

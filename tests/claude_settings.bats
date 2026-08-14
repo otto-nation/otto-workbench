@@ -128,23 +128,41 @@ teardown() {
 
 # ── Hook behavior ────────────────────────────────────────────────────────────
 
-# Extracts and evaluates a hook command from settings.json.
+# Extracts and evaluates an inline hook command from settings.json.
 # The hook reads tool_input from stdin (JSON), so we pipe a mock payload.
 _run_hook() {
   local hook_cmd=$1 tool_input=$2
   echo "$tool_input" | bash -c "$hook_cmd" 2>&1
 }
 
-# The VAR=, compound-cd, brace-expansion, and function-definition checks share a
-# single hook — it strips quoted spans off the first line once, then runs each
-# regex. Selecting by a phrase from any one message returns that same command.
-_get_bash_hook() {
-  jq -r --arg needle "$1" '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
-    select(.command | contains($needle)) | .command' "$SETTINGS"
+# Runs the Bash PreToolUse guard against a mock payload. Every Bash rule lives
+# in that one script, so these tests exercise the source rather than a
+# JSON-escaped copy of it.
+_run_guard() {
+  echo "$1" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1
 }
 
-_get_brace_hook() {
-  _get_bash_hook "Brace expansion"
+@test "settings delegates every Bash rule to the guard script" {
+  local bin_dir cmds
+  bin_dir=$(sed -n 's/^LOCAL_BIN_DIR="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+  [ -n "$bin_dir" ]
+
+  cmds=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$SETTINGS")
+  [ "$cmds" = "bash $bin_dir/claude-bash-guard" ] || {
+    echo "expected a single guard invocation, got:"
+    echo "$cmds"
+    return 1
+  }
+}
+
+@test "guard: exits 0 on a payload with no command" {
+  run _run_guard '{"tool_input":{}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "guard: fails open on a malformed payload" {
+  run _run_guard 'not json'
+  [ "$status" -eq 0 ]
 }
 
 _get_branch_hook() {
@@ -152,32 +170,25 @@ _get_branch_hook() {
 }
 
 @test "brace hook: blocks real brace expansion" {
-  local hook
-  hook=$(_get_brace_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"cp file.{txt,bak}"}}'
+  run _run_guard '{"tool_input":{"command":"cp file.{txt,bak}"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Brace expansion"* ]]
 }
 
 @test "brace hook: allows heredoc with braces in body" {
-  local hook cmd
-  hook=$(_get_brace_hook)
+  local cmd
   cmd=$(printf 'python3 << '\''PYEOF'\''\nd = {"a": 1, "b": 2}\nPYEOF')
-  run _run_hook "$hook" "{\"tool_input\":{\"command\":$(jq -Rsa '.' <<< "$cmd")}}"
+  run _run_guard "{\"tool_input\":{\"command\":$(jq -Rsa '.' <<< "$cmd")}}"
   [ "$status" -eq 0 ]
 }
 
 @test "brace hook: allows python -c with dict in double quotes" {
-  local hook
-  hook=$(_get_brace_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"python3 -c \"d = {\\\"a\\\": 1, \\\"b\\\": 2}\""}}'
+  run _run_guard '{"tool_input":{"command":"python3 -c \"d = {\\\"a\\\": 1, \\\"b\\\": 2}\""}}'
   [ "$status" -eq 0 ]
 }
 
 @test "brace hook: allows jq with braces in single quotes" {
-  local hook
-  hook=$(_get_brace_hook)
-  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"jq '.items[] | {name, value}' file.json\"}}"
+  run _run_guard "{\"tool_input\":{\"command\":\"jq '.items[] | {name, value}' file.json\"}}"
   [ "$status" -eq 0 ]
 }
 
@@ -232,45 +243,30 @@ _init_test_repo() {
 
 # ── gh pr create block ──────────────────────────────────────────────────────
 
-_get_pr_create_hook() {
-  jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] |
-    select(.command | test("gh pr create")) | .command' "$SETTINGS"
-}
-
 @test "pr create hook: blocks gh pr create" {
-  local hook
-  hook=$(_get_pr_create_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"gh pr create"}}'
+  run _run_guard '{"tool_input":{"command":"gh pr create"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"BLOCKED"* ]]
 }
 
 @test "pr create hook: blocks gh pr create --draft" {
-  local hook
-  hook=$(_get_pr_create_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"gh pr create --draft --title \"fix: thing\""}}'
+  run _run_guard '{"tool_input":{"command":"gh pr create --draft --title \"fix: thing\""}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"BLOCKED"* ]]
 }
 
 @test "pr create hook: allows gh pr list" {
-  local hook
-  hook=$(_get_pr_create_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"gh pr list --state open"}}'
+  run _run_guard '{"tool_input":{"command":"gh pr list --state open"}}'
   [ "$status" -eq 0 ]
 }
 
 @test "pr create hook: allows gh pr view" {
-  local hook
-  hook=$(_get_pr_create_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"gh pr view 42 --json state"}}'
+  run _run_guard '{"tool_input":{"command":"gh pr view 42 --json state"}}'
   [ "$status" -eq 0 ]
 }
 
 @test "pr create hook: allows gh api" {
-  local hook
-  hook=$(_get_pr_create_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"gh api repos/owner/repo/pulls"}}'
+  run _run_guard '{"tool_input":{"command":"gh api repos/owner/repo/pulls"}}'
   [ "$status" -eq 0 ]
 }
 
@@ -280,51 +276,35 @@ _get_pr_create_hook() {
 # same quote-stripped first line as the four guardrails below, so a `/bin/...`
 # path inside a quoted argument is not mistaken for an invocation.
 
-_get_sysbin_hook() {
-  _get_bash_hook "its absolute path"
-}
-
 @test "sysbin hook: blocks /bin/cat and names the bare command" {
-  local hook
-  hook=$(_get_sysbin_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"/bin/cat /tmp/x/review.diff"}}'
+  run _run_guard '{"tool_input":{"command":"/bin/cat /tmp/x/review.diff"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'cat'"* ]]
 }
 
 @test "sysbin hook: blocks /usr/bin after a statement separator" {
-  local hook
-  hook=$(_get_sysbin_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"ls -la; /usr/bin/grep -n foo f"}}'
+  run _run_guard '{"tool_input":{"command":"ls -la; /usr/bin/grep -n foo f"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'grep'"* ]]
 }
 
 @test "sysbin hook: allows the bare command name" {
-  local hook
-  hook=$(_get_sysbin_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"cat /tmp/x/review.diff"}}'
+  run _run_guard '{"tool_input":{"command":"cat /tmp/x/review.diff"}}'
   [ "$status" -eq 0 ]
 }
 
 @test "sysbin hook: allows a /bin path inside a sed expression" {
-  local hook
-  hook=$(_get_sysbin_hook)
-  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"sed -e 's|/bin/cat|x|' f\"}}"
+  run _run_guard "{\"tool_input\":{\"command\":\"sed -e 's|/bin/cat|x|' f\"}}"
   [ "$status" -eq 0 ]
 }
 
 @test "sysbin hook: allows absolute paths outside /bin and /usr/bin" {
-  local hook
-  hook=$(_get_sysbin_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"bash /Users/me/.local/bin/thing"}}'
+  run _run_guard '{"tool_input":{"command":"bash /Users/me/.local/bin/thing"}}'
   [ "$status" -eq 0 ]
 }
 
 @test "sysbin hook: allows a separator-prefixed path inside a quoted argument" {
-  local hook
-  hook=$(_get_sysbin_hook)
-  run _run_hook "$hook" '{"tool_input":{"command":"git commit -m \"fix: drop; /usr/bin/env callers\""}}'
+  run _run_guard '{"tool_input":{"command":"git commit -m \"fix: drop; /usr/bin/env callers\""}}'
   [ "$status" -eq 0 ]
 }
 
@@ -332,82 +312,47 @@ _get_sysbin_hook() {
 # These checks match at the start of any statement, not just the start of the
 # command — a leading no-op token must not be a way around them. They scope to
 # the first line so a heredoc body being written to a file is not scanned as if
-# it were the command itself.
-#
-# ceiling: the hook strips quoted spans with two sed passes, which mis-handles
-# escaped quotes and embedded apostrophes, in both directions. An unpaired
-# apostrophe re-pairs with a later quote, so `echo it's; cd /x && ls 'q'` strips
-# the real cd away and is not blocked; an escaped quote ends a span early, so
-# `echo "say \"{a,b}\" now"` strips to `echo {a,b}\` and is blocked as brace
-# expansion. Both outcomes cost at most one permission prompt — these guardrails
-# steer command style, they are not a security boundary. Upgrade to a real
-# tokenizer if either misfire shows up on a command worth running.
-
-@test "the first-line checks live in exactly one hook" {
-  local needle count
-  for needle in "function_definition" "VAR=value" "Compound cd" "Brace expansion" "its absolute path"; do
-    count=$(_get_bash_hook "$needle" | wc -l | tr -d ' ')
-    [ "$count" -eq 1 ] || {
-      echo "'$needle' matched $count hooks — the quote-stripping preamble was duplicated"
-      return 1
-    }
-  done
-}
+# it were the command itself. The quote-stripping ceiling is documented in the
+# guard script itself.
 
 @test "funcdef hook: blocks a cd() no-op stub wrapping a grep" {
-  local hook
-  hook=$(_get_bash_hook "function_definition")
-  run _run_hook "$hook" '{"tool_input":{"command":"cd() { :; }; W=/tmp/x; grep -rn foo \"$W/tests/\""}}'
+  run _run_guard '{"tool_input":{"command":"cd() { :; }; W=/tmp/x; grep -rn foo \"$W/tests/\""}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"function_definition"* ]]
 }
 
 @test "funcdef hook: blocks the function keyword form" {
-  local hook
-  hook=$(_get_bash_hook "function_definition")
-  run _run_hook "$hook" '{"tool_input":{"command":"function run { echo hi; }; run"}}'
+  run _run_guard '{"tool_input":{"command":"function run { echo hi; }; run"}}'
   [ "$status" -eq 2 ]
 }
 
 @test "funcdef hook: allows a plain grep with parens inside quotes" {
-  local hook
-  hook=$(_get_bash_hook "function_definition")
-  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"grep -rnE '(worktree list|worktree_list)' /tmp/x/tests/ | head -40\"}}"
+  run _run_guard "{\"tool_input\":{\"command\":\"grep -rnE '(worktree list|worktree_list)' /tmp/x/tests/ | head -40\"}}"
   [ "$status" -eq 0 ]
 }
 
 @test "var hook: blocks a VAR=value prefix at the start" {
-  local hook
-  hook=$(_get_bash_hook "VAR=value")
-  run _run_hook "$hook" '{"tool_input":{"command":"W=/tmp/x grep -rn foo /tmp/x"}}'
+  run _run_guard '{"tool_input":{"command":"W=/tmp/x grep -rn foo /tmp/x"}}'
   [ "$status" -eq 2 ]
 }
 
 @test "var hook: blocks a VAR=value assignment after a leading token" {
-  local hook
-  hook=$(_get_bash_hook "VAR=value")
-  run _run_hook "$hook" '{"tool_input":{"command":"true; W=/tmp/x; grep -rn foo /tmp/x"}}'
+  run _run_guard '{"tool_input":{"command":"true; W=/tmp/x; grep -rn foo /tmp/x"}}'
   [ "$status" -eq 2 ]
 }
 
 @test "var hook: allows uppercase flag values mid-command" {
-  local hook
-  hook=$(_get_bash_hook "VAR=value")
-  run _run_hook "$hook" '{"tool_input":{"command":"docker run -e FOO=bar alpine"}}'
+  run _run_guard '{"tool_input":{"command":"docker run -e FOO=bar alpine"}}'
   [ "$status" -eq 0 ]
 }
 
 @test "cd hook: blocks a compound cd after a leading token" {
-  local hook
-  hook=$(_get_bash_hook "Compound cd")
-  run _run_hook "$hook" '{"tool_input":{"command":"mkdir -p /tmp/x; cd /tmp/x && ls"}}'
+  run _run_guard '{"tool_input":{"command":"mkdir -p /tmp/x; cd /tmp/x && ls"}}'
   [ "$status" -eq 2 ]
 }
 
 @test "cd hook: allows a cd nested inside a quoted argument" {
-  local hook
-  hook=$(_get_bash_hook "Compound cd")
-  run _run_hook "$hook" "{\"tool_input\":{\"command\":\"bash -c 'cd /tmp/x && ls'\"}}"
+  run _run_guard "{\"tool_input\":{\"command\":\"bash -c 'cd /tmp/x && ls'\"}}"
   [ "$status" -eq 0 ]
 }
 
@@ -416,24 +361,45 @@ _get_sysbin_hook() {
 # was never a false positive, since the regex only anchors to start-of-string.
 
 @test "funcdef hook: allows a function definition inside a heredoc body" {
-  local hook
-  hook=$(_get_bash_hook "function_definition")
-  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/lib.sh <<EOF\nsetup; run() { echo hi; }\nEOF"}}'
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/lib.sh <<EOF\nsetup; run() { echo hi; }\nEOF"}}'
   [ "$status" -eq 0 ]
 }
 
 @test "var hook: allows an assignment inside a heredoc body" {
-  local hook
-  hook=$(_get_bash_hook "VAR=value")
-  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\ntrue; FOO=bar\nEOF"}}'
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\ntrue; FOO=bar\nEOF"}}'
   [ "$status" -eq 0 ]
 }
 
 @test "cd hook: allows a compound cd inside a heredoc body" {
-  local hook
-  hook=$(_get_bash_hook "Compound cd")
-  run _run_hook "$hook" '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\nmkdir -p /tmp/y; cd /tmp/y && ls\nEOF"}}'
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\nmkdir -p /tmp/y; cd /tmp/y && ls\nEOF"}}'
   [ "$status" -eq 0 ]
+}
+
+# ── whole-command Bash guardrails ───────────────────────────────────────────
+# These scan the entire command rather than the quote-stripped first line: the
+# analyzer flags them wherever they appear, including inside a quoted argument.
+
+@test "binlocal hook: blocks an absolute path to a bin/local script" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/bin/local/validate-all"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"bin/local/validate-all"* ]]
+}
+
+@test "binlocal hook: allows the relative form" {
+  run _run_guard '{"tool_input":{"command":"bin/local/validate-all"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "exec hook: blocks find -exec" {
+  run _run_guard '{"tool_input":{"command":"find . -name x -exec grep foo {} ;"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"-print0"* ]]
+}
+
+@test "subst hook: blocks command substitution" {
+  run _run_guard '{"tool_input":{"command":"ls $(git rev-parse --show-toplevel)"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Command substitution"* ]]
 }
 
 # ── sync-settings.jq integrity ───────────────────────────────────────────────

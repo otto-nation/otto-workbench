@@ -40,6 +40,10 @@ def discover_trails() -> list[Path]:
     try:
         return sorted(workbench_paths.trail_dir().glob("*.jsonl"))
     except OSError:
+        # A missing trail root is not an error — glob on a directory that
+        # does not exist yet raises nothing, so the only thing this catches
+        # is a real I/O failure (e.g. permissions), and an empty result is
+        # the right answer either way: there is nothing to query.
         return []
 
 

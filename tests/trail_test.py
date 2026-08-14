@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import textwrap
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
@@ -22,20 +22,16 @@ from trail import (
 )
 
 
-def _read_events(month: str = "") -> list[dict]:
+def _read_events() -> list[dict]:
     """Every record in the trail root, oldest file first.
 
-    Without *month* this reads the whole root, which is what most tests want:
-    one run writes one file and the test does not need to know its name.
+    One run writes one file, so the test does not need to know its name.
     """
     root = workbench_paths.trail_dir()
     if not root.is_dir():
         return []
-    files = [root / f"{month}.jsonl"] if month else sorted(root.glob("*.jsonl"))
     events = []
-    for path in files:
-        if not path.is_file():
-            continue
+    for path in sorted(root.glob("*.jsonl")):
         events += [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     return events
 
@@ -75,11 +71,18 @@ class TestTrailRoot:
 
     def test_the_events_own_month_picks_the_file(self):
         """A run crossing midnight on the 31st writes each event where its ts says."""
+        now = datetime.now(timezone.utc)
+        # +32 days always overshoots the longest possible month by at least a
+        # day, so this lands in the immediately following month every time,
+        # including a December run rolling into next January.
+        next_month = (now.replace(day=1) + timedelta(days=32)).strftime("%Y-%m")
+        this_month = now.strftime("%Y-%m")
         trail = Trail.start(script="test-script", context={})
         event = trail._make_event(Level.INFO, EventType.ACTION, "late", "after midnight")
-        event.ts = "2026-09-01T00:00:01Z"
+        event.ts = f"{next_month}-01T00:00:01Z"
         trail._emit(event)
-        assert (workbench_paths.trail_dir() / "2026-09.jsonl").is_file()
+        assert (workbench_paths.trail_dir() / f"{next_month}.jsonl").is_file()
+        assert not (workbench_paths.trail_dir() / f"{this_month}.jsonl").is_file()
 
     def test_start_generates_invocation_id(self):
         trail = Trail.start(script="test-script", context={})
@@ -180,11 +183,53 @@ class TestTrailAppend:
     def test_two_processes_append_intact_lines(self, tmp_path):
         """One file now takes appends from `pr` and the script it spawned.
 
-        Each record is far past PIPE_BUF, so without the flock the two writers
-        interleave mid-line and the reader silently drops what it cannot parse.
+        A short write splits a record across two write() calls — this happens
+        for real on NFS-mounted homes, on signal interruption, and at rlimit
+        boundaries — and without the flock the other process's append can
+        land in the gap between them. Every raw write is forced short here
+        (4 KiB) so the interleaving window opens on every record, on every
+        filesystem, deterministically.
         """
         writer = tmp_path / "writer.py"
         writer.write_text(textwrap.dedent(f"""
+            # `_io.FileIO` is a static type on this interpreter and refuses
+            # attribute assignment, so the short write is forced one layer up:
+            # `open()` itself is swapped for a version whose raw layer is a
+            # pure-Python RawIOBase that truncates every write to 4 KiB. trail.py
+            # opens the trail file with a bare `open(path, "a")`, so patching
+            # only that call, by mode and suffix, leaves every other open alone.
+            import builtins
+            import io
+            import os
+
+            _real_open = builtins.open
+
+            class _ShortRawIO(io.RawIOBase):
+                def __init__(self, fd):
+                    self._fd = fd
+
+                def writable(self):
+                    return True
+
+                def write(self, b):
+                    return os.write(self._fd, bytes(b)[:4096])
+
+                def fileno(self):
+                    return self._fd
+
+                def close(self):
+                    if not self.closed:
+                        os.close(self._fd)
+                    super().close()
+
+            def _short_open(file, mode="r", *args, **kwargs):
+                if mode == "a" and str(file).endswith(".jsonl"):
+                    fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+                    return io.TextIOWrapper(io.BufferedWriter(_ShortRawIO(fd)))
+                return _real_open(file, mode, *args, **kwargs)
+
+            builtins.open = _short_open
+
             import sys
             sys.path.insert(0, {str(LIB_DIR)!r})
             from trail import Trail

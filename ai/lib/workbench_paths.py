@@ -86,8 +86,9 @@ def trail_dir() -> Path:
     """Every trail, one root: ``<state>/trail/YYYY-MM.jsonl``.
 
     Mirrors ``ai_usage.LEDGER_DIR`` and for the same reasons — rotation falls
-    out of the filename, ``--since`` drops whole files without opening them,
-    and nothing needs a pruning job.
+    out of the filename and nothing needs a pruning job. The monthly naming
+    also means a future ``--since`` can skip whole files by name instead of
+    opening every one of them, though ``otto-log`` does not do that yet.
     """
     return state_dir() / "trail"
 

@@ -88,7 +88,7 @@ class TrailEvent:
 
 # ── Trail ─────────────────────────────────────────────────────────────────
 
-_print_lock = threading.Lock()
+_emit_lock = threading.Lock()
 
 
 class Trail:
@@ -123,11 +123,12 @@ class Trail:
         # The month comes from the event, not from the run: a run crossing a
         # month boundary writes each record to the file its timestamp names.
         path = workbench_paths.trail_dir() / f"{event.ts[:7]}.jsonl"
-        with _print_lock:
-            # _print_lock covers this process's worker threads; the flock covers
+        with _emit_lock:
+            # _emit_lock covers this process's worker threads; the flock covers
             # the other processes appending to the same file — `pr` and the
-            # script it spawned. Trail `data` is arbitrary, so a record can
-            # exceed PIPE_BUF and a bare O_APPEND write can interleave.
+            # script it spawned. A short write — NFS, a signal, an rlimit —
+            # splits a record across two write() calls, and without the flock
+            # the other process's append can land in the gap between them.
             with open(path, "a") as f:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 f.write(line + "\n")

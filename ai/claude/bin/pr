@@ -494,8 +494,9 @@ def _sweep_legacy_state(worktree_root: Path) -> int:
 
     Returns 1 if anything was removed. No migration carries these: they are
     gitignored, worktree-local, and rebuilt by the next command that writes
-    them. `trail.jsonl` and the directory itself stay — the trail still lives
-    there.
+    them. `trail.jsonl` and the directory itself stay untouched — nothing
+    reads a trail from here any more, but removing the directory is a
+    separate call this function does not make.
     """
     legacy = worktree_root / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
     removed = 0

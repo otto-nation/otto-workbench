@@ -60,6 +60,12 @@ def severity_by_key(key: str) -> SeverityConfig:
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"
 
+# A re-review's ledger: one line per prior finding, saying whether the change
+# resolved it. Reconciliation reads it to tell a finding the re-review dropped
+# on purpose from one it lost track of; it is stripped before the review is
+# posted, since its finding IDs number the prior review, not this one.
+SECTION_PRIOR_FINDINGS = "Prior findings"
+
 
 def plural(n: int) -> str:
     """Return the plural suffix for a count — `f"{total} finding{plural(total)}"`."""

@@ -444,19 +444,64 @@ class TestMergeReviewsCleanup:
         assert "---" not in result
 
 
-class TestCheckOrphanedPriorIds:
-    def test_no_orphans(self, ro):
-        prior = "<!-- sid:aabb1122 --> finding 1"
-        review = "<!-- sid:aabb1122 --> carried forward"
-        assert ro._check_orphaned_prior_ids(prior, review) == []
+PRIOR_ONE_FINDING = (
+    "## Must fix\n"
+    "- **[M1]** **`handler.go:42`** — missing error check\n"
+)
 
-    def test_detects_orphans(self, ro):
-        prior = "<!-- sid:aabb1122 --> finding 1\n<!-- sid:ccdd3344 --> finding 2"
-        review = "<!-- sid:aabb1122 --> carried forward"
-        assert ro._check_orphaned_prior_ids(prior, review) == ["ccdd3344"]
 
+class TestUnaccountedPriorFindings:
     def test_empty_prior(self, ro):
-        assert ro._check_orphaned_prior_ids("", "<!-- sid:abc -->") == []
+        assert ro.unaccounted_prior_findings("", "<!-- sid:abc -->") == []
+
+    def test_sid_marker_carries_finding_forward(self, ro):
+        review = (
+            "## Must fix\n"
+            "- **[M1]** <!-- sid:deadbeef --> **`other.go:1`** — reworded\n"
+        )
+        sid = ro.compute_stable_id("handler.go", "missing error check")
+        review = review.replace("deadbeef", sid)
+        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
+
+    def test_verbatim_carry_forward_without_marker(self, ro):
+        # Synthesis retypes carried findings and drops the marker; the ID the
+        # line hashes to is what survives.
+        review = (
+            "## Must fix\n"
+            "- **[M2]** **`handler.go:42`** — missing error check\n"
+        )
+        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
+
+    def test_ledger_entry_accounts_for_fixed_finding(self, ro):
+        review = (
+            "## Summary\nAll prior findings addressed.\n"
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
+            "- **[M1]** `handler.go` — Fixed\n"
+        )
+        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
+
+    def test_ledger_matches_reworded_finding_by_path(self, ro):
+        review = (
+            "## Must fix\n"
+            "- **[M4]** **`handler.go:42`** — db.Query() error is discarded\n"
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
+            "- **[M1]** `handler.go` — Still open\n"
+        )
+        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
+
+    def test_reports_finding_the_review_dropped(self, ro):
+        review = "## Must fix\n- **[M1]** **`other.go:7`** — unrelated issue\n"
+        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == [
+            "M1 `handler.go`",
+        ]
+
+    def test_reports_only_the_unaccounted_one(self, ro):
+        prior = PRIOR_ONE_FINDING + "- **[M2]** **`cache.go:9`** — stale entry\n"
+        review = (
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
+            "- **[M1]** `handler.go` — Fixed\n"
+        )
+        assert ro.unaccounted_prior_findings(prior, review) == ["M2 `cache.go`"]
 
 
 # ── 1. _mechanical_verdict ───────────────────────────────────────────────────
@@ -689,6 +734,34 @@ class TestMergeReviews:
         result = ro.merge_reviews([str(g1), str(g2)])
         assert "[S1]" in result
         assert "[S2]" in result
+
+    def test_merge_unions_prior_findings_ledgers(self, ro, tmp_path):
+        g1 = tmp_path / "g1.md"
+        g1.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            "## Must fix\n- **[M1]** **`a.go:1`** — new issue\n"
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — Fixed\n"
+        )
+        g2 = tmp_path / "g2.md"
+        g2.write_text(
+            "## File Triage\n- `b.go` — reviewed\n"
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
+            "- **[M3]** `a.go` — Fixed\n"
+            "- **[S2]** `b.go` — Still open\n"
+        )
+        result = ro.merge_reviews([str(g1), str(g2)])
+        assert result.count("**[M3]** `a.go` — Fixed") == 1
+        assert "**[S2]** `b.go` — Still open" in result
+        # Ledger IDs name the prior review, so the merge must not renumber them.
+        assert "[M1]" in result
+
+    def test_merge_omits_ledger_when_no_group_has_one(self, ro, tmp_path):
+        g1 = tmp_path / "g1.md"
+        g1.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
+        )
+        assert ro.SECTION_PRIOR_FINDINGS not in ro.merge_reviews([str(g1)])
 
     def test_missing_file_skipped(self, ro, tmp_path):
         g1 = tmp_path / "g1.md"
@@ -2548,6 +2621,33 @@ class TestPostProcessFindings:
         result = review.read_text()
         assert f"[{prefix}1]" in result
         assert f"[{prefix}2]" in result
+
+    def test_strips_prior_findings_ledger(self, ro, tmp_path):
+        review = tmp_path / "review.md"
+        must = ro.severity_by_key(ro.SEVERITY_MUST).section
+        prefix = ro.SEVERITY_MUST
+        review.write_text(
+            f"## {must}\n"
+            f"- **[{prefix}5]** **`foo.py:1`** — still broken\n"
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
+            f"- **[{prefix}2]** `bar.py` — Fixed\n"
+        )
+        ro.post_process_findings(str(review))
+        result = review.read_text()
+        assert ro.SECTION_PRIOR_FINDINGS not in result
+        assert "bar.py" not in result
+        # Renumbering sees only the findings this review actually reports.
+        assert f"[{prefix}1]" in result
+
+    def test_ledger_suppresses_the_unaccounted_warning(self, ro, tmp_path, capsys):
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Summary\nPrior finding fixed.\n"
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
+            "- **[M1]** `handler.go` — Fixed\n"
+        )
+        ro.post_process_findings(str(review), prior_review=PRIOR_ONE_FINDING)
+        assert "not accounted for" not in capsys.readouterr().err
 
 
 # ── build_mechanical_review ─────────────────────────────────────────────────

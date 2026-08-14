@@ -75,6 +75,7 @@ Write the triage as a `## File Triage` section in the review output, listing eve
      - When the author contested a finding, re-evaluate: if their argument is valid, note it as resolved; if the finding still holds, note it as still open with a response to their point
      - **Do not repeat unresolved findings in the severity sections** — those sections are for genuinely new findings only. Unresolved prior findings should be responded to in their original threads, not re-posted
      - **Do reference them.** Include a `## Prior findings` section after `## Summary` that lists each prior finding with its disposition (fixed, still open, contested, needs discussion) and a link to the original thread. This keeps them visible without restating them
+     - Start each line with the prior finding's ID and path copied verbatim — `- **[M1]** \`path/to/file.py\` — Still open — <thread link>`. Reconciliation matches on those two, and a prior finding missing from this section is reported as unaccounted for
 
 ### 1. Context
 - If CLAUDE.md is provided in pre-collected data, use it directly. Otherwise read the repo's CLAUDE.md (and any sub-CLAUDE.md files it references). Use project-specific rules as review criteria throughout

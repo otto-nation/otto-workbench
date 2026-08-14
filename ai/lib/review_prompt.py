@@ -19,7 +19,7 @@ import log
 from review_common import (
     EFFORT_PRESETS, Effort,
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
-    SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
     TEMPLATE_DIR_REL,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
@@ -520,6 +520,7 @@ def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
 # stripping here keeps the unscoped prompts consistent with it.
 _PRIOR_EXCLUDED_SECTIONS = {
     SECTION_FILE_TRIAGE.lower(),
+    SECTION_PRIOR_FINDINGS.lower(),
     SECTION_STATIC_ANALYSIS.lower(),
 }
 
@@ -565,6 +566,19 @@ def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
     return "\n".join(result)
 
 
+# The disposition ledger every re-review must emit. Reconciliation matches a
+# prior finding on its ID or its path — the two parts an agent restates
+# verbatim — so the instruction asks for exactly those, and never for the
+# internal sid marker, which nothing downstream requires the agent to echo.
+_LEDGER_INSTRUCTION = f"""
+End your output with a `## {SECTION_PRIOR_FINDINGS}` section listing EVERY prior
+finding above, one line each, copying its ID and path exactly as written there:
+- `- **[M1]** \\`path/to/file.py\\` — Fixed` when the change resolves it
+- `- **[M1]** \\`path/to/file.py\\` — Still open` when it does not
+This section is bookkeeping — it is stripped before the review is published, and
+a prior finding missing from it is reported as unaccounted for."""
+
+
 def _build_prior_section(
     prior_review: str,
     context: str = "",
@@ -580,17 +594,10 @@ def _build_prior_section(
         return ""
     if reply_threads:
         review_text = _annotate_with_thread_state(review_text, reply_threads)
-    default = (
-        "This is a re-review. Each prior finding has a stable ID (<!-- sid:XXXXXXXX -->).\n"
-        "For each prior finding:\n"
-        "- If fixed: note as fixed in the Prior findings section\n"
-        "- If still open: reference in the Prior findings section with disposition and thread link — do not repeat in severity sections\n"
-        "- Severity sections (Must fix, Should fix, etc.) are for genuinely new findings only\n"
-        "- New findings get no stable ID — one will be assigned automatically"
-    )
     return f"""
 ## Prior review
-{context or default}
+{context}
+{_LEDGER_INSTRUCTION}
 
 <prior_review>
 {review_text}
@@ -815,8 +822,8 @@ def _prompt_self_review(job, common, extra):
     prior_ctx = _incremental_prior_ctx(job, (
         "This is a re-review of your own code. Below are the findings from the previous self-review. "
         "For each prior finding:\n"
-        "- If the issue has been fixed, omit it from the new review\n"
         "- If the issue is still present, carry it forward\n"
+        "- If the issue has been fixed, leave it out of the severity sections\n"
         "- Add any new findings from changes since the last review"
     ))
     prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
@@ -875,8 +882,8 @@ def _prompt_single(job, common, extra):
     prior_ctx = _incremental_prior_ctx(job, (
         "This is a re-review. Below are the findings from the previous review. "
         "For each prior finding:\n"
-        "- If the issue has been fixed, note it as resolved and omit from the new review\n"
         "- If the issue is still present, carry it forward\n"
+        "- If the issue has been fixed, leave it out of the severity sections\n"
         "- Add any new findings from changes since the last review"
     ))
     prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
@@ -923,9 +930,9 @@ def _prompt_group(job, common, extra):
     group_files = extra.get("group_file_paths", [])
     file_filter = group_files or None
     prior_ctx = _incremental_prior_ctx(job, (
-        "This is a re-review. Below are the prior findings. "
-        "Carry forward findings relevant to YOUR files only. "
-        "Mark fixed findings as resolved."
+        "This is a re-review. Below are the prior findings for YOUR files. "
+        "Carry forward the ones still present; leave fixed ones out of the "
+        "severity sections."
     ))
     prior_section = _build_prior_section(
         job.prior_review, prior_ctx,

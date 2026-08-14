@@ -17,6 +17,21 @@ When adding or modifying a review phase, verify these integration points:
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
 
+## Re-review reconciliation
+
+A re-review accounts for every prior finding in a `## Prior findings` ledger —
+one line per prior finding, `- **[M1]** \`path\` — Fixed` or `— Still open`,
+with the ID and path copied from the prior review.
+`unaccounted_prior_findings()` matches a prior finding by an ID or path the
+ledger names, or by the stable ID the new review's own finding lines hash to
+(so a verbatim carry-forward matches with or without its `<!-- sid: -->`
+marker); anything it cannot match is warned about. The ledger is unioned across
+groups by `merge_reviews()`, copied through by the synthesis templates, and
+stripped in `post_process_findings()` before renumbering — its IDs number the
+prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`, the
+merge, the synthesis templates, or `_build_prior_section()`'s instruction means
+checking the other three.
+
 ## Debugging claude-review
 
 Review artifacts live in `~/.config/workbench/reviews/{repo}-{pr_or_branch}/`:

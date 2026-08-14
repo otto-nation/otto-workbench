@@ -371,6 +371,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
+        env=inv.env,
     )
 
     prefix = f"  {ANSI_DIM}[{inv.label}]{ANSI_RESET} " if inv.label else ""
@@ -429,6 +430,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
+        env=inv.env,
     )
 
     start_time = time.monotonic()

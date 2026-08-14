@@ -16,6 +16,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+# Captured before any test patches pr_cli.subprocess.run — pr_cli.subprocess is
+# the subprocess module itself, so that patch is global and this is the only
+# handle left on the real thing.
+_REAL_SUBPROCESS_RUN = subprocess.run
+
 # Import the extensionless pr script via importlib
 _pr_path = str(BIN_DIR / "pr")
 _loader = importlib.machinery.SourceFileLoader("pr_cli", _pr_path)
@@ -31,6 +36,11 @@ import run_lock  # noqa: E402
 import workbench_paths  # noqa: E402
 
 from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
+
+# Shared fixture values for the positional-vs-flag-value tests below.
+_TEST_PR = "3057"
+_TEST_REPLY_ID = "3777767789"
+_TEST_REPLY_BODY_FILE = "/tmp/reply.md"
 
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
@@ -831,9 +841,9 @@ def test_cmd_fix_reports_a_failing_describe(mock_load, mock_run):
 def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run):
     """Regression: 'pr rebase my-branch' must not pass my-branch as a bare positional."""
     mock_resolve.return_value = make_ctx(branch="my-branch", pr_number=None)
-    mock_run.return_value = MagicMock(returncode=0)
+    _probe_real_delegates(mock_run)
     _run_main("rebase", "my-branch")
-    cmd = mock_run.call_args[0][0]
+    cmd = _delegate_cmd(mock_run)
     assert "--branch" in cmd
     assert cmd[cmd.index("--branch") + 1] == "my-branch"
     assert cmd.count("my-branch") == 1, f"Branch appeared {cmd.count('my-branch')} times: {cmd}"
@@ -844,12 +854,262 @@ def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_run):
 def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run):
     """Regression: 'pr ci 42' must not pass 42 as a bare positional."""
     mock_resolve.return_value = make_ctx(pr_number=42)
-    mock_run.return_value = MagicMock(returncode=0)
+    _probe_real_delegates(mock_run)
     _run_main("ci", "42")
-    cmd = mock_run.call_args[0][0]
+    cmd = _delegate_cmd(mock_run)
     assert "--pr" in cmd
     assert cmd[cmd.index("--pr") + 1] == "42"
     assert cmd.count("42") == 1, f"PR number appeared {cmd.count('42')} times: {cmd}"
+
+
+# ── positional target vs. flag arity (issue #685) ──────────────────────────
+
+
+def _probe_real_delegates(mock_run):
+    """Let --value-flags probes reach the real delegate; stub every other run.
+
+    The point of these tests is that the wrapper reads arity off the delegate's
+    own parser, so the delegate has to be the one answering. Everything else
+    stays mocked — no delegate does its real work here.
+    """
+    def side_effect(cmd, *args, **kwargs):
+        if pr_cli.VALUE_FLAGS_FLAG in cmd:
+            return _REAL_SUBPROCESS_RUN(cmd, *args, **kwargs)
+        return MagicMock(returncode=0)
+
+    mock_run.side_effect = side_effect
+    return mock_run
+
+
+def _delegate_cmd(mock_run):
+    """The argv of the last non-probe subprocess call."""
+    calls = [c for c in mock_run.call_args_list
+             if pr_cli.VALUE_FLAGS_FLAG not in c[0][0]]
+    assert calls, "no delegate was dispatched"
+    return calls[-1][0][0]
+
+
+def _probe_scripts(mock_run):
+    """Basenames of the delegates asked for their flag arity."""
+    return [Path(c[0][0][0]).name for c in mock_run.call_args_list
+            if pr_cli.VALUE_FLAGS_FLAG in c[0][0]]
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_run):
+    """Regression #685: --reply's value is its argument, not the PR number."""
+    mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
+    _probe_real_delegates(mock_run)
+    _run_main("comments", "--reply", _TEST_REPLY_ID,
+              "--body-file", _TEST_REPLY_BODY_FILE, "--repo-dir", "/path")
+    cmd = _delegate_cmd(mock_run)
+    assert cmd[cmd.index("--reply") + 1] == _TEST_REPLY_ID
+    assert cmd[cmd.index("--body-file") + 1] == _TEST_REPLY_BODY_FILE
+    assert "--pr" not in cmd
+    assert mock_resolve.call_args[1]["pr"] is None
+    assert mock_resolve.call_args[1]["branch"] is None
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_body_file_path_is_not_eaten_after_an_inline_reply(mock_resolve, mock_run):
+    """Regression #685: --reply=ID self-contained, so --body-file's path survives too."""
+    mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
+    _probe_real_delegates(mock_run)
+    _run_main("comments", f"--reply={_TEST_REPLY_ID}", f"--body-file={_TEST_REPLY_BODY_FILE}")
+    cmd = _delegate_cmd(mock_run)
+    assert f"--reply={_TEST_REPLY_ID}" in cmd
+    assert f"--body-file={_TEST_REPLY_BODY_FILE}" in cmd
+    assert mock_resolve.call_args[1]["branch"] is None
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_reply_value_survives_an_explicit_branch(mock_resolve, mock_run):
+    """An explicit --branch skips classification entirely; extra stays intact."""
+    mock_resolve.return_value = make_ctx(branch="some/branch", pr_number=None)
+    _probe_real_delegates(mock_run)
+    _run_main("comments", "--branch", "some/branch",
+              "--reply", "123", "--body-file", "/tmp/x.md")
+    cmd = _delegate_cmd(mock_run)
+    assert cmd[cmd.index("--reply") + 1] == "123"
+    assert cmd[cmd.index("--body-file") + 1] == "/tmp/x.md"
+    assert _probe_scripts(mock_run) == [], "no ambiguity, so no probe"
+
+
+@pytest.mark.parametrize("flag", ["--fix", "--triage"])
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_target_after_a_boolean_flag_is_still_the_target(mock_resolve, mock_run, flag):
+    """A boolean flag consumes nothing, so the token after it is the PR number."""
+    mock_resolve.return_value = make_ctx(pr_number=int(_TEST_PR))
+    _probe_real_delegates(mock_run)
+    _run_main("comments", flag, _TEST_PR)
+    cmd = _delegate_cmd(mock_run)
+    assert cmd[cmd.index("--pr") + 1] == _TEST_PR
+    assert flag in cmd
+    assert cmd.count(_TEST_PR) == 1, f"PR number appeared twice: {cmd}"
+    assert _probe_scripts(mock_run) == ["review-threads"]
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_review_takes_a_bare_pr_number(mock_resolve, mock_run):
+    mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
+    _probe_real_delegates(mock_run)
+    _run_main("review", _TEST_PR)
+    cmd = _delegate_cmd(mock_run)
+    assert cmd[0].endswith("/claude-review")
+    assert cmd[cmd.index("--pr") + 1] == _TEST_PR
+    assert "--self" not in cmd
+    assert _probe_scripts(mock_run) == ["claude-review"]
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_no_positional_candidate_skips_the_probe(mock_resolve, mock_run):
+    """The common case must not pay for a delegate spawn."""
+    mock_resolve.return_value = make_ctx()
+    _probe_real_delegates(mock_run)
+    _run_main("comments", "--triage")
+    assert _probe_scripts(mock_run) == []
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_status_needs_no_delegate_to_classify(mock_resolve, mock_run, worktree,
+                                              stub_state_dir):
+    """`pr status` is internal, has no delegate, and takes no positional."""
+    mock_resolve.return_value = make_ctx(worktree_root=worktree)
+    _probe_real_delegates(mock_run)
+    assert _run_main("--repo-dir", str(worktree), "status") == 0
+    assert _probe_scripts(mock_run) == []
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_internal_command_still_classifies_a_positional(mock_resolve, mock_run,
+                                                        worktree, stub_state_dir):
+    """`pr fix 3057` has no delegate to ask, but 3057 is still the target."""
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, pr_number=int(_TEST_PR))
+    _probe_real_delegates(mock_run)
+    with patch("pr_cli.pr_state.load_state", return_value=None):
+        _run_main("--repo-dir", str(worktree), "fix", _TEST_PR)
+    assert mock_resolve.call_args[1]["pr"] == _TEST_PR
+    assert _probe_scripts(mock_run) == []
+
+
+# ── _positional_index ──────────────────────────────────────────────────────
+
+
+def test_positional_index_skips_a_flag_value():
+    extra = ["--reply", _TEST_REPLY_ID, "--body-file", _TEST_REPLY_BODY_FILE]
+    assert pr_cli._positional_index(extra, frozenset({"--reply", "--body-file"})) == -1
+
+
+def test_positional_index_finds_a_target_after_a_boolean_flag():
+    assert pr_cli._positional_index(["--triage", _TEST_PR], frozenset({"--reply"})) == 1
+
+
+def test_positional_index_treats_inline_values_as_self_contained():
+    extra = ["--reply=1", _TEST_PR]
+    assert pr_cli._positional_index(extra, frozenset({"--reply"})) == 1
+
+
+def test_positional_index_removes_the_token_it_identified():
+    """Index, not value: a target that repeats a flag's value must not misfire."""
+    extra = ["--reply", _TEST_PR, "--triage", _TEST_PR]
+    idx = pr_cli._positional_index(extra, frozenset({"--reply"}))
+    assert idx == 3
+    extra.pop(idx)
+    assert extra == ["--reply", _TEST_PR, "--triage"]
+
+
+def test_positional_index_without_arity_matches_the_historical_scan():
+    assert pr_cli._positional_index(["--reply", _TEST_PR], frozenset()) == 1
+
+
+# ── _delegate_value_flags ──────────────────────────────────────────────────
+
+
+def test_delegate_value_flags_reads_the_real_delegate():
+    flags = pr_cli._delegate_value_flags(pr_cli._COMMANDS["comments"])
+    assert {"--reply", "--body-file", "--track"} <= flags
+    assert "--triage" not in flags
+    assert "--fix" not in flags
+
+
+def test_delegate_value_flags_is_empty_for_an_internal_command():
+    assert pr_cli._delegate_value_flags(pr_cli._COMMANDS["fix"]) == frozenset()
+
+
+def test_delegate_value_flags_degrades_when_the_delegate_is_missing():
+    assert pr_cli._delegate_value_flags({"script": "no-such-delegate"}) == frozenset()
+
+
+@patch("pr_cli.subprocess.run", side_effect=subprocess.TimeoutExpired("x", 1))
+def test_delegate_value_flags_degrades_on_a_hung_delegate(_mock_run):
+    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+
+
+@patch("pr_cli.subprocess.run")
+def test_delegate_value_flags_degrades_on_a_nonzero_exit(mock_run):
+    mock_run.return_value = MagicMock(returncode=2, stdout="--reply\n", stderr="")
+    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+
+
+@patch("pr_cli.subprocess.run")
+def test_delegate_value_flags_reprints_a_refusal(mock_run, capsys):
+    """Degrading is silent misclassification, so the delegate's reason is surfaced."""
+    mock_run.return_value = MagicMock(
+        returncode=2, stdout="",
+        stderr="ci-check: --value-flags: --track declares nargs='+'\n",
+    )
+    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    err = capsys.readouterr().err
+    assert "ci-check --value-flags" in err
+    assert "--track declares nargs='+'" in err
+
+
+@patch("pr_cli.subprocess.run")
+def test_delegate_value_flags_stays_quiet_when_the_probe_says_nothing(mock_run, capsys):
+    mock_run.return_value = MagicMock(returncode=2, stdout="", stderr="  \n")
+    assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    sorted(name for name, entry in pr_cli._COMMANDS.items() if entry.get("script")),
+)
+def test_every_delegate_answers_the_probe(command):
+    """CI gate for the arity protocol: a flag it cannot describe fails here first.
+
+    The refusal in tool_parser only reaches a human who happens to run the
+    ambiguous form of the command, so this asserts the whole registry up front —
+    adding an unsupported nargs to any delegate breaks the build, not a user.
+    """
+    script = str(BIN_DIR / pr_cli._COMMANDS[command]["script"])
+    probe = _REAL_SUBPROCESS_RUN(
+        [script, pr_cli.VALUE_FLAGS_FLAG],
+        capture_output=True, text=True, timeout=pr_cli.VALUE_FLAGS_TIMEOUT,
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.split(), f"{script} answered the probe with nothing"
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_a_failed_probe_still_dispatches_the_command(mock_resolve, mock_run):
+    """Introspection is best-effort: a broken probe must not fail the run."""
+    mock_resolve.return_value = make_ctx(pr_number=int(_TEST_PR))
+    mock_run.return_value = MagicMock(returncode=0, stdout="")
+    with patch("pr_cli._delegate_value_flags", return_value=frozenset()):
+        assert _run_main("comments", "--triage", _TEST_PR) == 0
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0].endswith("/review-threads")
+    assert "--triage" in cmd
 
 
 # ── SIGINT handling ──────────────────────────────────────────────────────────

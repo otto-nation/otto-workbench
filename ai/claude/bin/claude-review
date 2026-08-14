@@ -21,6 +21,7 @@ import log
 import pr_context
 import pr_state
 import run_lock
+from tool_parser import handle_value_flags
 from trail import Trail, add_trail_args
 from serde import to_dict as _serde_to_dict
 try:
@@ -1270,6 +1271,7 @@ def main() -> None:
     parser.add_argument("-V", "--version", action="store_true")
     parser.add_argument("args", nargs="*")
     add_trail_args(parser)
+    handle_value_flags(parser)
 
     parsed = parser.parse_args()
 

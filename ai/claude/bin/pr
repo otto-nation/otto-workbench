@@ -33,6 +33,7 @@ import run_lock
 from review_common import (
     ReviewType, build_review_summary, find_review_file, json_summary, review_file_path,
 )
+from tool_parser import VALUE_FLAGS_FLAG
 from trail import Trail, add_trail_args
 
 
@@ -41,6 +42,12 @@ from trail import Trail, add_trail_args
 # Single source of truth for subcommands.  Delegating commands have a "script"
 # key; internal commands omit it.  "prefix" adds sub-command tokens before the
 # user's argv (e.g. claude-review gc …).
+
+# Seconds to wait for a delegate to answer the --value-flags probe. The answer
+# costs an interpreter start plus argparse construction, so this is already
+# orders of magnitude of headroom — and a delegate that hangs stalls a command
+# the user expected to be instant, so the ceiling stays low.
+VALUE_FLAGS_TIMEOUT = 5.0
 
 _COMMANDS = {
     "create":   {"help": "Create a PR (wraps task pr:create)"},
@@ -92,6 +99,65 @@ def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
     positionals = [a for a in argv if not a.startswith("-")]
     flags = [a for a in argv if a.startswith("-")]
     return positionals, flags
+
+
+def _delegate_value_flags(entry: dict) -> frozenset[str]:
+    """Ask a delegate which of its option strings consume a following value.
+
+    The delegate's own argparse parser is the single source of truth for its
+    flags, so the wrapper asks it (see tool_parser.handle_value_flags) instead
+    of mirroring a list here that would rot the next time a delegate grows a
+    flag.  Internal commands have no delegate and answer empty.
+    """
+    script = entry.get("script")
+    if not script:
+        return frozenset()
+    try:
+        probe = subprocess.run(
+            [str(BIN_DIR / script), VALUE_FLAGS_FLAG],
+            capture_output=True, text=True, timeout=VALUE_FLAGS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        # Arity is an improvement on the historical arity-blind scan, not a
+        # precondition for it: a delegate that is missing, crashes, or hangs
+        # must not take down the command the user actually asked for. Every
+        # failure degrades to "no option takes a value", which is exactly the
+        # pre-arity behaviour — but a hung delegate is worth surfacing since
+        # it's as diagnosable as the non-zero-exit case below.
+        log.warn(f"{script} {VALUE_FLAGS_FLAG}: timed out after {VALUE_FLAGS_TIMEOUT}s")
+        return frozenset()
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warn(f"{script} {VALUE_FLAGS_FLAG}: {exc}")
+        return frozenset()
+    if probe.returncode != 0:
+        # Same degradation as above, but this failure is the delegate's own
+        # doing rather than the environment's — a flag the protocol cannot
+        # describe, or a parser that no longer builds. Reprint what it said so
+        # whoever broke it sees a diagnosis instead of a token quietly going to
+        # the wrong place.
+        if probe.stderr.strip():
+            log.warn(f"{script} {VALUE_FLAGS_FLAG}: {probe.stderr.strip()}")
+        return frozenset()
+    return frozenset(tok for tok in probe.stdout.split() if tok.startswith("-"))
+
+
+def _positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
+    """Index in *extra* of the first bare positional, or -1 if there is none.
+
+    Options are skipped, and so is the token after an option that takes a
+    value — that token is the flag's argument, not the command's target.
+    The ``--flag=value`` form carries its own value and skips nothing.
+    """
+    consumed = False
+    for i, token in enumerate(extra):
+        if consumed:
+            consumed = False
+            continue
+        if token.startswith("-"):
+            consumed = token in value_flags
+            continue
+        return i
+    return -1
 
 
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
@@ -633,15 +699,16 @@ def main():
     original_pr = getattr(args, "pr", None)
     original_branch = getattr(args, "branch", None)
 
-    # Classify the first positional (if any) as PR or branch when
-    # no explicit --pr/--branch flag was given.
-    if original_pr is None and original_branch is None:
-        first_pos = next((a for a in extra if not a.startswith("-")), None)
-        if first_pos:
-            pos_pr, pos_branch = pr_context.classify_target(first_pos)
-            original_pr = pos_pr
-            original_branch = pos_branch
-            extra.remove(first_pos)
+    # Classify the first positional (if any) as PR or branch when no explicit
+    # --pr/--branch flag was given. The delegate is only asked for its flag
+    # arity once a bare token exists to be ambiguous about, so the common case
+    # (`pr review`, `pr comments --triage`) spawns nothing.
+    ambiguous = original_pr is None and original_branch is None
+    if ambiguous and any(not a.startswith("-") for a in extra):
+        idx = _positional_index(extra, _delegate_value_flags(entry))
+        if idx >= 0:
+            original_pr, original_branch = pr_context.classify_target(extra[idx])
+            extra.pop(idx)
 
     ctx = pr_context.resolve(
         pr=original_pr,

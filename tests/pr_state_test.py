@@ -25,8 +25,6 @@ from pr_state import (
 import workbench_paths
 from ci_failures import RunState, FailureGroup, FailureItem, FailureKind, Outcome
 
-from conftest import state_path
-
 
 # ── Dataclass construction ──────────────────────────────────────────────────
 
@@ -883,7 +881,7 @@ def test_load_or_init_loads_existing_and_updates_identity(worktree):
 
 def test_apply_state_update_ci(worktree):
     apply_state_update(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=1, head_sha="abc", domain="ci",
         data={"conclusion": "failure", "failure_count": 2, "failure_kinds": {"lint": 2}, "updated_at": "t"},
     )
@@ -895,7 +893,7 @@ def test_apply_state_update_ci(worktree):
 
 def test_apply_state_update_review(worktree):
     apply_state_update(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=1, head_sha="abc", domain="review",
         data={"verdict": ReviewVerdict.APPROVE.value, "finding_counts": {"S": 1}, "cost_usd": 0.5, "updated_at": "t"},
     )
@@ -907,7 +905,7 @@ def test_apply_state_update_review(worktree):
 
 def test_apply_state_update_triage(worktree):
     apply_state_update(
-        worktree_root=worktree, repo="owner/repo", branch="feat",
+        target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=1, head_sha="abc", domain="triage",
         data={"total": 5, "actionable": 2, "valid": 1, "questions": 1, "updated_at": "t"},
     )

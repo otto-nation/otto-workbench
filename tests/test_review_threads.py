@@ -2411,17 +2411,6 @@ class TestFixBudgetUsd:
         assert rt._fix_budget_usd(100) == 5.0
 
 
-class TestFixRetryBudget:
-    def test_bumps_by_increment(self, rt):
-        assert rt._fix_retry_budget(25) == 40
-
-    def test_minimum_floor(self, rt):
-        assert rt._fix_retry_budget(10) == 30
-
-    def test_caps_at_maximum(self, rt):
-        assert rt._fix_retry_budget(50) == 60
-
-
 # ── _diff_context_for_file ─────────────────────────────────────────────────
 
 class TestDiffContextForFile:

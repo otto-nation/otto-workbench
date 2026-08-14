@@ -33,7 +33,7 @@ def _ctx(worktree, head_sha="aaaa111", pr_number=7):
         pr_number=pr_number,
         worktree_root=worktree,
         head_sha=head_sha,
-        target_dir=tmp_path / "target",
+        target_dir=worktree / "target",
     )
 
 
@@ -139,7 +139,7 @@ def test_conforming_body_is_left_alone_but_still_recorded(worktree):
     rc, edits, _ = _run(_ctx(worktree), ai=(pr_describe_cli._NO_CHANGE, 0))
     assert rc == 0
     assert edits == []
-    pr_state.save_state(worktree / "target", state)
+    state = pr_state.load_state(worktree / "target")
     # The SHA is recorded either way — a body confirmed current at this HEAD
     # does not need confirming twice.
     assert state.describe.head_sha == "aaaa111"
@@ -162,14 +162,14 @@ def test_dry_run_prints_without_applying_or_recording(worktree, capsys):
     assert rc == 0
     assert edits == []
     assert "NEW BODY" in capsys.readouterr().out
-    state = pr_state.load_state(worktree / "target")
+    assert pr_state.load_state(worktree / "target") is None
 
 
 def test_blank_ai_answer_would_wipe_the_body_so_it_fails(worktree):
     rc, edits, _ = _run(_ctx(worktree), ai=("   ", 0))
     assert rc == 1
     assert edits == []
-    state = pr_state.load_state(worktree / "target")
+    assert pr_state.load_state(worktree / "target") is None
 
 
 def test_an_unmarked_answer_is_never_posted(worktree):

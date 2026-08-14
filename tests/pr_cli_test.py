@@ -999,7 +999,9 @@ def test_review_state_lands_with_the_pr_not_the_caller(tmp_path):
     )
 
     assert (target / pr_state.STATE_FILE).is_file()
-    assert not (caller / pr_state.STATE_DIR / pr_state.STATE_FILE).exists()
+    # Nothing at all under the caller's checkout: state is keyed on the run's
+    # target now, so the caller's tree should not gain a state file anywhere.
+    assert not list(caller.rglob(pr_state.STATE_FILE))
     written = pr_state.load_state(target)
     assert written.identity.pr_number == 2973
     assert written.identity.head_sha == "pr-sha"

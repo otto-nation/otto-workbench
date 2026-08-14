@@ -156,4 +156,6 @@ def claim_for_process(target_dir: Path, command: str, started: str) -> None:
 def report_busy(exc: LockBusy) -> None:
     """Print a contention error with the remediation hint."""
     log.error(str(exc))
-    log.info(f"wait for it to finish, or stop it with: kill {exc.holder.get('pid', '<pid>')}")
+    log.info(
+        f"wait for it to finish, or stop it with: kill {exc.holder.get('pid', '<pid>')}"
+    )

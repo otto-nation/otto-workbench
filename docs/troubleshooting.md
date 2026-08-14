@@ -130,7 +130,7 @@ Two runs against one PR corrupt each other — they both read-modify-write that 
 
 The lock is an advisory `flock` on the target's `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 
-Both files live in the worktree's own git dir, under `workbench/` — `<repo>/.git/workbench/` for the main worktree, `<repo>/.git/worktrees/<name>/workbench/` for a linked one. `git rev-parse --absolute-git-dir` prints the git dir of whichever worktree you are standing in. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` takes the state with the worktree.
+Both files live outside every checkout, in the target's own directory: `~/.config/workbench/pr/<repo-key>-<branch-slug>/` (rooted at `WORKBENCH_STATE_DIR` when you set it). The two components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the lock reach across checkouts. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
 
 ## "`state.json` is unreadable — discarding it"
 

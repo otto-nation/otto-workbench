@@ -33,11 +33,6 @@ def _clear_lock_env():
         os.environ[LOCK_ENV] = saved
 
 
-def _lock_path(root) -> Path:
-    """The lock file of *root*, resolved the way the lock resolves it."""
-    return workbench_paths.worktree_state_dir(root) / LOCK_FILE
-
-
 def _contend(root, command="pr review --fix"):
     """Enter the lock the way a fresh, unrelated run would.
 

@@ -431,7 +431,7 @@ def _sweep_legacy_state(worktree_root: Path) -> int:
     them. `trail.jsonl` and the directory itself stay — the trail still lives
     there.
     """
-    legacy = worktree_root / pr_state.STATE_DIR
+    legacy = worktree_root / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
     removed = 0
     for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE):
         path = legacy / name

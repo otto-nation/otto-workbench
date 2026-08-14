@@ -461,6 +461,10 @@ class TestPriorDisposition:
     def test_unrecognised_wording_has_no_disposition(self, ro):
         assert ro.PriorDisposition.parse("moved to a follow-up") is None
 
+    def test_a_qualified_verdict_is_not_read_as_its_optimistic_half(self, ro):
+        assert ro.PriorDisposition.parse("Fixed, but only on the happy path") is None
+        assert ro.PriorDisposition.parse("Fixed in a follow-up branch") is None
+
 
 class TestUnaccountedPriorFindings:
     def test_empty_prior(self, ro):

@@ -151,7 +151,7 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
 
 
 def _pr_close_state(repo: str, pr_number: int) -> str:
-    """"MERGED", "CLOSED", or "" for an open PR or a question we could not ask.
+    """Return "MERGED", "CLOSED", or "" — open, or a question we could not ask.
 
     Collapsing "open" and "could not ask" is deliberate: both mean keep the
     artifacts. gc that deletes on a network blip is worse than gc that runs

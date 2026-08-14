@@ -112,6 +112,9 @@ def test_prune_merged_targets_counts_a_partial_prune_failure_as_not_pruned(tmp_p
 
     assert review_gc.prune_merged_targets(tmp_path) == 0
     assert target.exists()
+    # The next sweep's glob only finds targets that still have a state.json,
+    # so surviving the failure means surviving with that file.
+    assert (target / pr_state.STATE_FILE).is_file()
 
 
 def test_prune_merged_targets_yields_to_a_run_that_arrives_mid_removal(tmp_path, monkeypatch):

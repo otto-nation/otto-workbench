@@ -1869,8 +1869,6 @@ def test_submit_pending_review_survives_an_unreadable_post_tracking_file(
     assert "Could not read review_id" in capsys.readouterr().err
 
 
-
-
 # ── _update_pr_state ─────────────────────────────────────────────────────────
 
 

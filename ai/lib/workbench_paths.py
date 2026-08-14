@@ -97,7 +97,7 @@ def reviews_dir() -> Path:
     its output — ``otto-log`` for the trails, ``retro-scan`` for the findings —
     cannot disagree about where a review is.
     """
-    return state_dir() / "reviews"
+    return _subdir(state_dir(), "reviews")
 
 
 # ── Per-worktree state ──────────────────────────────────────────────────────

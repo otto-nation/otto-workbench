@@ -50,6 +50,7 @@ from pr_thread_models import (
 )
 from review_github import fetch_pr_data
 from review_issue import CreatedIssue
+from tool_parser import handle_value_flags
 from trail import Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
@@ -2767,7 +2768,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main():
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    handle_value_flags(parser)
+    args = parser.parse_args()
 
     if args.fix:
         args.triage = True

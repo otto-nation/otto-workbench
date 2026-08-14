@@ -8,6 +8,11 @@ input schema (derived from argparse actions), and output schema
 MCP discovery only probes scripts whose source names ``ToolParser`` or
 ``--tool-schema`` (see ``ai/claude/mcps/server.py``). A tool that implements
 the protocol some other way will not be discovered.
+
+This module also provides ``handle_value_flags``, a lighter probe that answers
+which of a parser's options take a value.  ToolParser scripts inherit it;
+plain-``argparse`` scripts opt in with one call.  See its docstring for why the
+arity question is not answered out of ``--tool-schema``.
 """
 
 from __future__ import annotations
@@ -24,6 +29,9 @@ _CONTEXT_ARGS = frozenset({"repo_dir", "branch", "pr"})
 # Args managed by the framework, not the tool.
 # "debug" is registered by add_trail_args() in the pr dispatcher, not by ToolParser.
 _FRAMEWORK_ARGS = frozenset({"help", "tool_schema", "debug"})
+
+# Hidden probe asking a script which of its options consume a following value.
+VALUE_FLAGS_FLAG = "--value-flags"
 
 
 class ToolParser(ArgumentParser):
@@ -54,6 +62,8 @@ class ToolParser(ArgumentParser):
             json.dump(self._build_schema(), sys.stdout, indent=2)
             sys.stdout.write("\n")
             sys.exit(0)
+
+        handle_value_flags(self, args)
 
         return super().parse_args(args, namespace)
 
@@ -110,6 +120,43 @@ class ToolParser(ArgumentParser):
         raise TypeError(
             f"output_schema must be a dict or dataclass, got {type(self._output_schema)}"
         )
+
+
+def value_taking_options(parser: ArgumentParser) -> list[str]:
+    """Every option string of *parser* that consumes a following value.
+
+    Aliases are listed individually — ``--repo-dir`` and ``--worktree`` are
+    two answers to the same question, and a caller matching raw argv tokens
+    needs both.  Store-true/count/help actions declare ``nargs=0`` and are
+    excluded; everything else (``store``, ``append``, typed options) takes one.
+    """
+    options = set()
+    for action in parser._actions:
+        if not action.option_strings or action.nargs == 0:
+            continue
+        options.update(action.option_strings)
+    return sorted(options)
+
+
+def handle_value_flags(parser: ArgumentParser, args=None) -> None:
+    """Answer the ``--value-flags`` probe, printing one option per line.
+
+    A wrapper CLI that classifies a bare positional (``ai/claude/bin/pr``)
+    cannot tell a target from a flag's value without knowing the delegate's
+    arity.  The delegate's own parser is the single source of truth for that,
+    so the wrapper asks rather than mirroring a list that would rot.
+
+    This is deliberately separate from ``--tool-schema``: that document is
+    keyed by ``dest``, drops ``help=SUPPRESS`` actions, and loses option
+    aliases, so arity cannot be recovered from it faithfully.  Declaring
+    ``--tool-schema`` also enrolls a script in MCP tool discovery
+    (``ai/claude/mcps/server.py``), which is not a side effect an arity probe
+    should carry.
+    """
+    if VALUE_FLAGS_FLAG not in (sys.argv[1:] if args is None else args):
+        return
+    sys.stdout.write("".join(f"{opt}\n" for opt in value_taking_options(parser)))
+    sys.exit(0)
 
 
 def _action_to_property(action) -> dict | None:

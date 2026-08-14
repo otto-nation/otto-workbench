@@ -31,7 +31,7 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 
 | Constant | Holds | XDG rung | Default |
 |----------|-------|----------|---------|
-| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `overrides/`, `mcp-tools.json`, `review.yml`, `reuse-level` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
+| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `config.yml`, `overrides/`, `mcp-tools.json` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
 | `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `trail/`, `usage/`, `install.yml`, applied migrations | `XDG_STATE_HOME` | `~/.local/state/workbench` |
 | `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: `vertex-quota/` | `XDG_CACHE_HOME` | `~/.cache/workbench` |
 
@@ -141,6 +141,56 @@ Component installation state tracking.
 | `state_detect_installed` | Heuristic-based detection for bootstrapping |
 
 State file: `$INSTALL_YML_FILE` — `install.yml` under the [state root](#rootssh). The flat `installed.components` it replaced survives only as the second half of `state_file_exists`. Loaded via `ui.sh`.
+
+### config.sh
+
+Hand-authored settings, read from YAML. One file per scope:
+
+| Scope | Path | Constant |
+|-------|------|----------|
+| Global | `config.yml` under the [config root](#rootssh) | `WORKBENCH_CONFIG_FILE` |
+| Project | `<repo>/.workbench.yml` | `WORKBENCH_PROJECT_CONFIG_NAME` |
+
+| Function | Purpose |
+|----------|---------|
+| `wb_config_get KEY [DEFAULT]` | One dotted key, project scope first, then global, then the default |
+
+A malformed file reads as absent — a bash caller wants its default, not a `yq` parse error on stdout. Reporting a bad file is the typed loader's job. Loaded via `ui.sh`.
+
+[`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed owner of the same two files: it deep-merges them into a `WorkbenchConfig` and rejects an unknown enum value or phase key rather than silently dropping it. [`config.schema.json`](../config.schema.json) is generated from that dataclass by `bin/local/generate-config-schema`; `tests/test_workbench_config.py` fails if the committed copy drifts from the generator.
+
+A complete file:
+
+```yaml
+reuse:
+  level: ultra
+  default: full
+review:
+  model: sonnet
+  thinking: medium
+  effort: high
+  phases:
+    scout:
+      model: haiku
+      thinking: low
+  issue_tracker:
+    provider: linear
+    team: ENG
+```
+
+Five layers decide a review value, highest first:
+
+| # | Layer | Example |
+|---|-------|---------|
+| 1 | Explicit flag | `--model opus`, `--effort high` |
+| 2 | Phase env var | `CLAUDE_REVIEW_SCOUT_MODEL` |
+| 3 | Global env var | `CLAUDE_REVIEW_MODEL` |
+| 4 | Project config | `.workbench.yml` |
+| 5 | Global config | `config.yml` |
+
+Within one file a `review.phases.<phase>` entry outranks the `review.*` section it sits under. Layers 4 and 5 deep-merge, so a project file that sets one phase keeps every global sibling.
+
+A repo still holding the pre-#626 `.claude/review.yml` is converted to `.workbench.yml` the first time a review reads its issue tracker; the old file is left in place, since it is usually tracked in the consumer repo. The machine-wide files — `reuse-level`, `reuse-default`, `review.yml` — are folded into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 
 ### migrations.sh
 

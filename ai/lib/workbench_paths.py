@@ -49,7 +49,7 @@ def _subdir(base: Path, name: str | None) -> Path:
 
 
 def config_dir() -> Path:
-    """Hand-authored settings: overrides/, mcp-tools.json, review.yml, reuse-level."""
+    """Hand-authored settings: config.yml, overrides/, mcp-tools.json."""
     return _root("WORKBENCH_CONFIG_DIR", "XDG_CONFIG_HOME", "~/.config/workbench")
 
 

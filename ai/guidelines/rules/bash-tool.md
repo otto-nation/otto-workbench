@@ -21,6 +21,14 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
   - `grep -rn "pattern" /abs/path/tests/ | head -40` instead of `cd() { :; }; W=/abs/path; grep -rn "pattern" "$W/tests/" | head -40`
 - A no-op stub such as `cd() { :; }` is not a way around the compound-`cd` rule — it trades a rule you can satisfy for a prompt you cannot suppress. Use an absolute path, `git -C <path>`, or `gh --repo` instead
 
+## Avoid Absolute Paths to System Binaries
+
+- Never invoke a system binary by its absolute path — `/bin/cat`, `/usr/bin/grep`, `/usr/bin/env`. The permission allow list keys on the bare command name (`Bash(cat:*)`), so the `/bin` and `/usr/bin` forms never match it and prompt every time. This applies wherever a statement begins, not just at the start of the command: `ls; /bin/cat file` counts. Call the bare name instead — it resolves through `PATH` to the same binary:
+  - `cat /path/to/file` instead of `/bin/cat /path/to/file`
+  - `env` instead of `/usr/bin/env`
+- This is the opposite of the `bin/local/` rule: workbench scripts must use the *relative* path, system binaries must use the *bare* name. Both exist so a single allow-list entry covers every invocation
+- Like the other statement-anchored checks below, the hook enforcing this scans the quote-stripped first line — a `/bin/...` path inside a quoted argument or a heredoc body is left alone, and a `/bin/...` call on a later line is not caught
+
 ## Avoid Env-Var Prefix Syntax
 
 - Never prefix a command with `VAR=value command` — Claude Code's permission matcher sees `VAR=value` as the command name, triggering a prompt every time. This applies wherever a statement begins, not just at the start of the command: `true; W=/tmp x` counts. Use tool-native alternatives:

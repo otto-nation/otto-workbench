@@ -45,6 +45,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
 | `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |
 | `otto-mcp-server` | Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients |
+| `claude-bash-guard` | PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
 | `validate-all` | Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI |
 | `validate-registries` | Validates all tool registry YAML files for schema correctness and cross-file consistency |

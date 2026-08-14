@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# PreToolUse guard for the Bash tool.
+#
+# Reads a hook payload on stdin and exits 2 with an explanation when the command
+# matches a shape that triggers a permission prompt no allow-list rule can
+# suppress. Exits 0 otherwise.
+#
+# Every rule here has a matching section in ai/guidelines/rules/bash-tool.md —
+# add both, or Claude gets blocked without being told what to do instead.
+#
+# Usage: claude-bash-guard        (stdin: {"tool_input":{"command":"..."}})
+
+set -e
+
+usage() {
+  cat <<EOF
+Usage: claude-bash-guard
+
+PreToolUse hook for the Bash tool. Reads a hook payload on stdin and exits 2
+with an explanation when the command would trigger a permission prompt that no
+allow-list rule can suppress.
+
+The rules are documented for humans in ai/guidelines/rules/bash-tool.md.
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+# block MESSAGE — refuse the tool call and name the alternative.
+# Exit 2 is the only status Claude Code treats as blocking, and stderr is the
+# only stream it feeds back, so both are load-bearing.
+block() {
+  echo "BLOCKED: $1" >&2
+  exit 2
+}
+
+# Fail open: a malformed payload must not block every Bash call.
+cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
+[[ -n "$cmd" ]] || exit 0
+
+# ── Whole-command rules ──────────────────────────────────────────────────────
+
+if [[ "$cmd" == *"gh pr create"* ]]; then
+  block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template.'
+fi
+
+# ── Statement-anchored rules ─────────────────────────────────────────────────
+# These match at the start of any statement, not just the start of the command —
+# a leading no-op token must not be a way around them. They scope to the first
+# line so a heredoc body being written to a file is not scanned as if it were
+# the command itself, and to a quote-stripped copy so a pattern inside a quoted
+# argument is not read as an invocation.
+#
+# ceiling: quoted spans are stripped with two sed passes, which mis-handle
+# escaped quotes and embedded apostrophes, in both directions. An unpaired
+# apostrophe re-pairs with a later quote, so `echo it's; cd /x && ls 'q'` strips
+# the real cd away and is not blocked; an escaped quote ends a span early, so
+# `echo "say \"{a,b}\" now"` strips to `echo {a,b}\` and is blocked as brace
+# expansion. Both outcomes cost at most one permission prompt — these rules
+# steer command style, they are not a security boundary. Upgrade to a real
+# tokenizer if either misfire shows up on a command worth running.
+
+first_line=$(printf '%s\n' "$cmd" | head -1)
+stripped=$(printf '%s' "$first_line" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+
+re_func='(^|[;&|][[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\(\)|function[[:space:]])'
+if [[ "$stripped" =~ $re_func ]]; then
+  block 'A shell function definition makes the whole command unanalyzable (Contains function_definition) — the allow list is skipped entirely, so it prompts every time. Write the command directly with absolute paths. See bash-tool.md.'
+fi
+
+re_var='(^|[;&|][[:space:]]*)[A-Z_][A-Z0-9_]*='
+if [[ "$stripped" =~ $re_var ]]; then
+  block 'VAR=value prefix triggers permission prompts. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ..., go env -w ...). See bash-tool.md.'
+fi
+
+re_cd='(^|[;&|][[:space:]]*)cd[[:space:]]'
+if [[ "$stripped" =~ $re_cd ]] && [[ "$stripped" == *'&&'* || "$stripped" == *';'* ]]; then
+  block 'Compound cd commands (cd path && ...) trigger unsuppressible permission prompts. Use absolute paths, git -C <path>, or gh --repo instead. See bash-tool.md.'
+fi
+
+re_brace='\{[^{}]*[a-zA-Z_][^{}]*,[^{}]*\}'
+if [[ "$stripped" =~ $re_brace ]]; then
+  block 'Brace expansion ({a,b,...}) triggers a permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md.'
+fi
+
+# The allow list keys on the bare command name, so Bash(cat:*) never matches
+# /bin/cat — the absolute form prompts on every call.
+re_sysbin='(^|[;&|][[:space:]])/(usr/)?bin/([A-Za-z0-9_.-]+)'
+if [[ "$stripped" =~ $re_sysbin ]]; then
+  block "Use '${BASH_REMATCH[3]}' instead of its absolute path. The allow list keys on the bare command name, so /bin and /usr/bin prefixes never match it and prompt every time. See bash-tool.md."
+fi
+
+# ── Remaining whole-command rules ────────────────────────────────────────────
+
+re_binlocal='^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
+if [[ "$cmd" =~ $re_binlocal ]]; then
+  block "Use relative path '${BASH_REMATCH[1]}' instead of absolute path. Absolute paths to bin/local/ scripts trigger a new permission prompt in every worktree."
+fi
+
+if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
+  block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead.'
+fi
+
+# shellcheck disable=SC2016  # the literal $( is the pattern being matched
+if [[ "$cmd" == *'$('* ]]; then
+  block 'Command substitution $(...) triggers an unsuppressible permission prompt. Run the inner command first, then use the result in the next call. See bash-tool.md.'
+fi
+
+exit 0

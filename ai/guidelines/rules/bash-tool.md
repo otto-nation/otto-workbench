@@ -2,6 +2,8 @@
 
 Patterns that trigger unsuppressible permission prompts in Claude Code's static analyzer. These apply to Bash tool usage, not to writing shell scripts.
 
+Every pattern below is enforced by `ai/claude/bin/claude-bash-guard`, the PreToolUse hook for the Bash tool. Add a rule in both places — a guard rule with no section here blocks Claude without telling it what to do instead.
+
 ## Avoid Command Substitution in Arguments
 
 - Never use `$(...)` command substitution inside Bash tool commands — Claude Code's static analyzer cannot resolve the substitution, triggering a "cannot be statically analyzed" permission prompt. Run the commands sequentially instead:

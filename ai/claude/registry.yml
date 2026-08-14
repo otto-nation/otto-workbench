@@ -152,3 +152,8 @@ tools:
     permission: false
     visibility: hidden
     description: "Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients"
+
+  - name: claude-bash-guard
+    permission: false
+    visibility: hidden
+    description: "PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts"

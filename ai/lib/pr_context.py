@@ -115,10 +115,11 @@ def resolve(
     elif branch:
         branch_name = _resolve_branch(branch, cwd)
         pr_number = _pr_from_branch(repo, branch_name)
-        head_sha = _head_sha(cwd) if worktree_root else ""
     else:
         branch_name = _current_branch(cwd)
         pr_number = _pr_from_current(cwd)
+
+    if not pr:
         head_sha = _head_sha(cwd) if worktree_root else ""
 
     current = _current_branch_quiet(cwd) if worktree_root else None
@@ -477,7 +478,7 @@ def _pr_head(repo: str, pr_number: int) -> tuple[str | None, str]:
     r = subprocess.run(
         ["gh", "pr", "view", str(pr_number), "--repo", repo,
          "--json", "headRefName,headRefOid",
-         "--jq", '.headRefName + " " + .headRefOid'],
+         "-q", '.headRefName + " " + .headRefOid'],
         capture_output=True, text=True,
     )
     if r.returncode != 0:

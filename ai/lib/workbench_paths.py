@@ -87,8 +87,8 @@ def trail_dir() -> Path:
 
     Mirrors ``ai_usage.LEDGER_DIR`` and for the same reasons — rotation falls
     out of the filename and nothing needs a pruning job. The monthly naming
-    also means a future ``--since`` can skip whole files by name instead of
-    opening every one of them, though ``otto-log`` does not do that yet.
+    also lets ``otto-log --since`` skip whole files by name instead of
+    opening every one of them.
     """
     return state_dir() / "trail"
 

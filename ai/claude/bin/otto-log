@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 from datetime import datetime, timezone, timedelta
@@ -35,16 +36,26 @@ ANSI_LEVELS = {
 
 # ── Discovery ─────────────────────────────────────────────────────────────
 
-def discover_trails() -> list[Path]:
-    """Every trail file, oldest month first."""
+# A file whose stem names a month can be skipped by name; `legacy.jsonl` — what
+# the 20260814 migration carried the pre-cutover history into — cannot, so it is
+# always read.
+_MONTH_STEM = re.compile(r"\d{4}-\d{2}$")
+
+
+def discover_trails(since: datetime | None = None) -> list[Path]:
+    """Every trail file a *since* window can reach, oldest month first."""
     try:
-        return sorted(workbench_paths.trail_dir().glob("*.jsonl"))
+        files = sorted(workbench_paths.trail_dir().glob("*.jsonl"))
     except OSError:
         # A missing trail root is not an error — glob on a directory that
         # does not exist yet raises nothing, so the only thing this catches
         # is a real I/O failure (e.g. permissions), and an empty result is
         # the right answer either way: there is nothing to query.
         return []
+    if since is None:
+        return files
+    cutoff = f"{since:%Y-%m}"
+    return [p for p in files if not _MONTH_STEM.match(p.stem) or p.stem >= cutoff]
 
 
 # ── Loading ───────────────────────────────────────────────────────────────
@@ -72,6 +83,16 @@ def load_events(trail_paths: list[str | Path]) -> list[dict]:
         events.extend(_parse_trail_file(path))
     events.sort(key=lambda e: e.get("ts", ""))
     return events
+
+
+def load_trail_events(since: str | None) -> list[dict]:
+    """Every event in the files *since* can reach, oldest first.
+
+    The window is applied twice on purpose: once at the filename, which is what
+    lets a year of history stay unopened, and once per record in
+    `filter_events`, which is what makes the boundary exact.
+    """
+    return load_events(discover_trails(_parse_since(since) if since else None))
 
 
 # ── Filtering ─────────────────────────────────────────────────────────────
@@ -301,9 +322,8 @@ def format_stats_table(rows: list[dict]) -> str:
 # ── Commands ──────────────────────────────────────────────────────────────
 
 def cmd_recent(args):
-    trails = discover_trails()
-    events = load_events(trails)
-    filtered = filter_events(events, since=args.since)
+    events = load_trail_events(args.since)
+    filtered = filter_events(events, repo=args.repo, since=args.since)
     if args.json:
         for e in filtered:
             print(json.dumps(e, separators=(",", ":")))
@@ -313,8 +333,7 @@ def cmd_recent(args):
 
 
 def cmd_query(args):
-    trails = discover_trails()
-    events = load_events(trails)
+    events = load_trail_events(args.since)
     filtered = filter_events(
         events,
         script=args.script,
@@ -334,8 +353,7 @@ def cmd_query(args):
 
 
 def cmd_show(args):
-    trails = discover_trails()
-    events = load_events(trails)
+    events = load_trail_events(None)
     filtered = filter_events(events, invocation=args.invocation)
     if args.json:
         for e in filtered:
@@ -345,11 +363,11 @@ def cmd_show(args):
 
 
 def cmd_list(args):
-    trails = discover_trails()
-    events = load_events(trails)
-    since = args.since
-    if since:
-        events = filter_events(events, since=since)
+    events = load_trail_events(args.since)
+    if args.since:
+        events = filter_events(events, since=args.since)
+    if args.repo:
+        events = filter_events(events, repo=args.repo)
     if args.script:
         events = filter_events(events, script=args.script)
 
@@ -409,6 +427,7 @@ def main():
     # recent
     p_recent = sub.add_parser("recent", help="Recent events (default: last 1h)")
     p_recent.add_argument("--since", default="1h", help="Time window (e.g. 2h, 1d, 30m)")
+    p_recent.add_argument("--repo", help="Filter by repo (org/repo)")
     p_recent.add_argument("--json", action="store_true", help="Output raw JSONL")
 
     # query
@@ -431,6 +450,7 @@ def main():
     p_list = sub.add_parser("list", help="List invocations")
     p_list.add_argument("--script", help="Filter by script name")
     p_list.add_argument("--since", help="Time window (e.g. 2h, 1d)")
+    p_list.add_argument("--repo", help="Filter by repo (org/repo)")
     p_list.add_argument("--json", action="store_true", help="Output raw JSONL")
 
     # stats

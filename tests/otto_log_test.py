@@ -80,6 +80,60 @@ class TestQueryFiltering:
         assert all(e["invocation"] == inv1 for e in filtered)
 
 
+class TestSinceSkipsFilesByName:
+    def _write(self, name: str, script: str):
+        root = workbench_paths.trail_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(json.dumps({
+            "ts": "2026-01-01T00:00:00Z", "script": script, "invocation": "a1b2c3d4",
+            "level": "info", "event_type": "action", "action": "x", "detail": "",
+            "context": {},
+        }) + "\n")
+
+    def test_drops_a_month_below_the_cutoff(self):
+        self._write("2026-01.jsonl", "old")
+        self._write("2026-08.jsonl", "new")
+        names = [p.name for p in otto_log.discover_trails(
+            since=datetime(2026, 8, 1, tzinfo=timezone.utc))]
+        assert names == ["2026-08.jsonl"]
+
+    def test_always_reads_a_stem_that_is_not_a_month(self):
+        """`legacy.jsonl` holds every pre-cutover record; its stem names no month."""
+        self._write("legacy.jsonl", "carried")
+        self._write("2026-01.jsonl", "old")
+        names = [p.name for p in otto_log.discover_trails(
+            since=datetime(2026, 8, 1, tzinfo=timezone.utc))]
+        assert names == ["legacy.jsonl"]
+
+    def test_no_cutoff_reads_everything(self):
+        self._write("2026-01.jsonl", "old")
+        self._write("legacy.jsonl", "carried")
+        assert len(otto_log.discover_trails()) == 2
+
+
+class TestRepoScoping:
+    def _trail(self, repo: str):
+        trail = Trail.start(script="pr", context={"repo": repo, "pr": 1})
+        trail.info("act", "did")
+        trail.finish()
+
+    def test_recent_narrows_to_one_repo(self, capsys):
+        self._trail("org/alpha")
+        self._trail("org/beta")
+        otto_log.cmd_recent(argparse.Namespace(since="1d", repo="org/alpha", json=True))
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert rows
+        assert all(r["context"]["repo"] == "org/alpha" for r in rows)
+
+    def test_list_narrows_to_one_repo(self, capsys):
+        self._trail("org/alpha")
+        self._trail("org/beta")
+        otto_log.cmd_list(argparse.Namespace(
+            script=None, since=None, repo="org/alpha", json=True))
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert len(rows) == 1
+
+
 # ── stats ─────────────────────────────────────────────────────────────────────
 
 

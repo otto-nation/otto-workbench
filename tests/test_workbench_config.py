@@ -371,3 +371,53 @@ def test_adopt_is_a_no_op_without_an_old_file(roots):
     _, project = roots
     assert review_issue.adopt_project_review_yml(str(project)) is False
     assert not (project / ".workbench.yml").exists()
+
+
+# ── Reuse level ─────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def reuse_levels(roots):
+    """_reuse_levels, importable only with ai/claude/bin on the path."""
+    bin_dir = str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin")
+    if bin_dir not in sys.path:
+        sys.path.insert(0, bin_dir)
+    import _reuse_levels
+
+    return _reuse_levels
+
+
+def test_reuse_level_defaults_to_full(reuse_levels):
+    assert reuse_levels.read_level() == "full"
+    assert reuse_levels.read_default() == "full"
+
+
+def test_reuse_level_round_trips_through_the_config(reuse_levels):
+    reuse_levels.write_level("ultra")
+    assert reuse_levels.read_level() == "ultra"
+    assert wc.load_config().reuse.level is wc.ReuseLevel.ULTRA
+
+
+def test_reuse_default_round_trips_through_the_config(reuse_levels):
+    reuse_levels.write_default("lite")
+    assert reuse_levels.read_default() == "lite"
+    assert wc.load_config().reuse.default is wc.ReuseLevel.LITE
+
+
+def test_reuse_level_falls_back_to_the_configured_default(reuse_levels, roots):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "reuse:\n  default: lite\n")
+    assert reuse_levels.read_level() == "lite"
+
+
+def test_reuse_default_env_var_still_wins(reuse_levels, roots, monkeypatch):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "reuse:\n  default: lite\n")
+    monkeypatch.setenv("REUSE_DEFAULT_MODE", "ultra")
+    assert reuse_levels.read_default() == "ultra"
+
+
+def test_reuse_reader_survives_a_bad_config(reuse_levels, roots):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "reuse:\n  level: turbo\n")
+    assert reuse_levels.read_level() == "full"

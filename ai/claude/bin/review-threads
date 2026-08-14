@@ -961,8 +961,15 @@ def _our_last_reply_id(thread: ReportThread | None) -> int | None:
 
     Editing is only safe while nobody has answered us: rewriting a comment a
     reviewer has already replied to changes the text their reply responds to.
-    ThreadState.ADDRESSED means exactly "we replied and no one replied back",
-    so the lifecycle state the report already carries is the whole test.
+    Authorship of the last comment is therefore the whole test, and resolution
+    is orthogonal to it — a resolved thread whose last comment is ours still
+    has one standing reply to revise.
+
+    ThreadState.ADDRESSED cannot stand in for that: compute_thread_state
+    returns RESOLVED for any resolved thread before it looks at who spoke
+    last, and `--finish --post` resolves every thread it replies to. Reading
+    the state instead of the comments stacked a second reply on exactly the
+    threads the one-reply-per-thread rule is for.
 
     The length guard covers self-review, where the thread root is our own
     comment — editing that would rewrite the review point instead of our
@@ -970,7 +977,7 @@ def _our_last_reply_id(thread: ReportThread | None) -> int | None:
     """
     if not thread or len(thread.comments) < 2:
         return None
-    if thread.state != ThreadState.ADDRESSED:
+    if not pc.last_comment_is_mine(thread.comments, thread.my_login):
         return None
     return thread.comments[-1].get("databaseId")
 
@@ -2529,6 +2536,7 @@ def _run_threads(trail, args, ctx) -> None:
             is_resolved=thread_data.get("isResolved", False),
             file=thread_data.get("path", ""),
             line=thread_data.get("line"),
+            my_login=my_login,
         ))
     report = PRReport(
         repo=repo,
@@ -2668,6 +2676,7 @@ def _find_reply_target(
             is_resolved=is_resolved,
             file=data.get("path", ""),
             line=data.get("line"),
+            my_login=my_login,
         )
     return None
 
@@ -2723,7 +2732,14 @@ def _run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | No
         )
 
     existing_id = _our_last_reply_id(thread)
-    if not _upsert_thread_reply(thread, repo, pr_number, body, existing_id) and publishing.enabled():
+    wrote = _upsert_thread_reply(thread, repo, pr_number, body, existing_id)
+    if not publishing.enabled():
+        # The closing line is the one read as the outcome, so it carries the
+        # same label the body was printed under rather than a past tense the
+        # run never earned.
+        publishing.draft(f"{'edit' if existing_id else 'post'} reply on {thread.id}")
+        return 0
+    if not wrote:
         log.error(f"failed to reply on {thread.id}")
         return 1
     log.info(f"{'Edited' if existing_id else 'Posted'} reply on {thread.id}")
@@ -2758,7 +2774,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reply", metavar="THREAD_OR_COMMENT_ID",
                         help="Reply to one thread, editing our standing reply if it "
                              "is still the last comment. Accepts a thread node ID, a "
-                             "comment ID, or a #discussion_r... URL")
+                             "comment ID, or a #discussion_r... URL. A write like any "
+                             "other: needs --post to leave the machine")
     parser.add_argument("--body-file", metavar="PATH",
                         help="File holding the --reply body ('-' for stdin)")
     add_trail_args(parser)

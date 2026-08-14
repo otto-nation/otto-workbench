@@ -193,6 +193,31 @@ def test_long_positive_reply_is_ambiguous_not_contested():
     assert state == "ambiguous"
 
 
+def test_last_comment_is_mine_ignores_resolution():
+    """The predicate compute_thread_state cannot answer once a thread is resolved."""
+    comments = _make_comments(("alice", "Use RunTx here"), ("isaacg", "Fixed."))
+    state = compute_thread_state(comments, is_resolved=True, my_login="isaacg")
+    assert state == "resolved"
+    assert pr_comments.last_comment_is_mine(comments, "isaacg")
+
+
+def test_last_comment_is_mine_is_false_when_a_reviewer_answered():
+    comments = _make_comments(
+        ("alice", "Use RunTx here"),
+        ("isaacg", "Fixed."),
+        ("alice", "Not quite"),
+    )
+    assert not pr_comments.last_comment_is_mine(comments, "isaacg")
+
+
+@pytest.mark.parametrize("comments,login", [
+    ([], "isaacg"),
+    (_make_comments(("isaacg", "mine")), ""),
+])
+def test_last_comment_is_mine_needs_both_halves(comments, login):
+    assert not pr_comments.last_comment_is_mine(comments, login)
+
+
 def test_sync_clears_summary_on_new_replies():
     threads = [{
         "id": "T_abc",

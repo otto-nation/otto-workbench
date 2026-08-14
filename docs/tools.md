@@ -367,13 +367,16 @@ edits our standing reply in place while that reply is still the last comment on
 the thread, and posts a new one only once a reviewer has answered. Editing under
 a reviewer's reply would rewrite the text they were responding to; leaving a
 second comment when nobody has answered leaves them holding two of our positions
-with no way to tell which stands.
+with no way to tell which stands. Whether the thread is resolved makes no
+difference: `--finish --post` resolves the threads it answers, and the reply it
+left there is still the one to revise.
 
-`--reply <id> --body-file <path>` accepts a thread node ID, any comment
+`--reply <id> --body-file <path> --post` accepts a thread node ID, any comment
 `databaseId` in the thread, or a `...#discussion_r<id>` URL, and warns when the
 body carries no `blob/<sha>/` permalink to back its claims. Pass `-` as the path
-to read the body from stdin. Use it instead of `gh api .../replies`, which
-bypasses the dedup entirely.
+to read the body from stdin. Like every other write here it needs `--post`;
+without it the body is printed under `DRAFT (not published)` and nothing is
+sent. Use it instead of `gh api .../replies`, which bypasses the dedup entirely.
 
 **`pr describe` is commit-aware:**
 

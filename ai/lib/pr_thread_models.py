@@ -135,6 +135,11 @@ class ReportThread:
     is_resolved: bool = False
     file: str = ""
     line: int | None = None
+    # The login that makes a comment on this thread ours. Carried per thread
+    # because the reply upsert decides edit-vs-post from comment authorship,
+    # several call layers below the PRReport that knows the login. Empty means
+    # "cannot tell", which the upsert reads as post rather than edit.
+    my_login: str = ""
 
 
 @dataclass

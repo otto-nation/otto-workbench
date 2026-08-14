@@ -673,6 +673,27 @@ class TestRenumberSection:
         result, count = ro.renumber_section("M", text, 0)
         assert count == 1
 
+    def test_offset_carries_references(self, ro):
+        # The offset is what keeps two groups' IDs apart. A reference left behind
+        # would name whatever the earlier group happened to put at that number.
+        text = "- **[S1]** first\n- **[S2]** second, see S1 above and [S1] again"
+        result, _ = ro.renumber_section("S", text, 2)
+        assert "see S3 above and [S3] again" in result
+
+    def test_offset_shifts_ids_it_did_not_expect(self, ro):
+        # IDs arrive however the agent wrote them; gaps are closed later, not here.
+        result, count = ro.renumber_section("S", "- **[S1]** first\n- **[S7]** second", 2)
+        assert "[S3]" in result
+        assert "[S9]" in result
+        assert count == 2
+
+    def test_a_reference_this_group_cannot_resolve_is_left_alone(self, ro):
+        # Only the merge-wide pass can tell a dangling reference from one whose
+        # finding lives in another group.
+        text = "- **[S1]** first, see S4 elsewhere"
+        result, _ = ro.renumber_section("S", text, 2)
+        assert "see S4 elsewhere" in result
+
     def test_empty_text(self, ro):
         result, count = ro.renumber_section("M", "", 0)
         assert result == ""
@@ -724,6 +745,22 @@ class TestRenumberPrefix:
     def test_bare_reference_to_a_dropped_finding_points_nowhere(self, ro):
         text = f"{_decl('S', 2, 'real problem')}\nblocked on S1"
         assert "blocked on [removed]" in ro._renumber_prefix(text, "S")
+
+    def test_prose_that_merely_looks_like_an_id_is_left_alone(self, ro):
+        # S3 the object store, M1 the laptop. Nothing cites them, so nothing
+        # may rewrite them — and a review of storage code says "S3" constantly.
+        text = "\n".join([
+            _decl("S", 3, "uploads to an S3 bucket on every M1 build"),
+            _decl("S", 5, "second"),
+        ])
+        result = ro._renumber_prefix(text, "S")
+        assert "uploads to an S3 bucket on every M1 build" in result
+        assert "- **[S1]**" in result
+        assert "- **[S2]**" in result
+
+    def test_a_cited_bare_reference_is_still_rewritten(self, ro):
+        text = f"{_decl('S', 3, 'first')}\n{_decl('S', 5, 'second, duplicate of S3')}"
+        assert "duplicate of S1" in ro._renumber_prefix(text, "S")
 
     def test_references_survive_a_second_pass(self, ro):
         text = f"{_decl('S', 2, 'real problem')}\nblocked on [S1]"
@@ -869,6 +906,31 @@ class TestMergeReviews:
         result = ro.merge_reviews([str(g1), str(g2)])
         assert "[S1]" in result
         assert "[S2]" in result
+
+    def test_merge_keeps_each_groups_references_inside_that_group(self, ro, tmp_path):
+        # Both groups number from S1, so the second group's IDs get offset past
+        # the first's. A reference that did not move with them would name the
+        # first group's finding — a different file, a different problem.
+        g1 = tmp_path / "g1.md"
+        g1.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            "## Should fix\n"
+            "- **[S1]** **`a.go:1`** — issue a\n"
+            "- **[S2]** **`a.go:2`** — issue b, related to [S1]\n"
+            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        g2 = tmp_path / "g2.md"
+        g2.write_text(
+            "## File Triage\n- `b.go` — reviewed\n"
+            "## Should fix\n"
+            "- **[S1]** **`b.go:1`** — issue c\n"
+            "- **[S2]** **`b.go:2`** — issue d, see S1 above\n"
+            "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        result = ro.merge_reviews([str(g1), str(g2)])
+
+        assert "- **[S2]** **`a.go:2`** — issue b, related to [S1]" in result
+        assert "- **[S4]** **`b.go:2`** — issue d, see S3 above" in result
 
     def test_merge_unions_prior_findings_ledgers(self, ro, tmp_path):
         g1 = tmp_path / "g1.md"

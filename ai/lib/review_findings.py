@@ -332,21 +332,21 @@ def _validate_group_output(output_path: str, group_name: str) -> bool:
 
 # ── Renumbering ──────────────────────────────────────────────────────────────
 
-def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
-    if not text:
-        return "", 0
-    count = len(set(re.findall(rf"\[{prefix}\d+\]", text)))
-    if offset > 0:
-        for i in range(count, 0, -1):
-            text = text.replace(f"[{prefix}{i}]", f"[{prefix}{i + offset}]")
-    return text, count
-
-
 # What a reference becomes when nothing declares the finding it names. It is
 # deliberately not an ID: once the gaps close, the number that reference used to
 # carry belongs to a different finding, and a reader who follows it lands on
 # something unrelated without ever learning they were misdirected.
 _REMOVED_REF = "[removed]"
+
+# A bare `S3` is both a finding ID and an object store, and `M1` is both a
+# finding ID and a laptop. So a mention without brackets only counts as a
+# reference when a citing phrase introduces it — a review that says "stored in
+# an S3 bucket" has to come out the other side still saying it.
+# ceiling: fixed phrase list, extend it if reviews learn to cite some other way
+_REFERENCE_CUES = (
+    r"see(?:\s+also)?|cf\.?|per|once|duplicate of|related to|blocked on"
+    r"|depends on|addressed by|superseded by"
+)
 
 
 def _declared_ids(text: str, prefix: str) -> list[int]:
@@ -372,8 +372,41 @@ def _declared_id(line: str, prefix: str) -> int | None:
 
 
 def _id_reference_re(prefix: str) -> re.Pattern[str]:
-    """Every way a review names a finding: `[M1]`, and bare `M1` in prose."""
-    return re.compile(rf"\[{prefix}(\d+)\]|(?<![\w\[]){prefix}(\d+)(?![\d\]])")
+    """Every way a review names a finding: `[M1]`, and a cited bare `M1`."""
+    return re.compile(
+        rf"\[{prefix}(\d+)\]"
+        rf"|(\b(?i:{_REFERENCE_CUES})\s+){prefix}(\d+)(?![\d\]])"
+    )
+
+
+def _rewrite_ids(
+    text: str, prefix: str, new_by_old: dict[int, int], *, mark_dangling: bool,
+) -> str:
+    """Move every ID and every reference to one onto its new number."""
+    def rewrite(m: re.Match[str]) -> str:
+        bracketed, cue, bare = m.group(1), m.group(2) or "", m.group(3)
+        new = new_by_old.get(int(bracketed or bare))
+        if new is None:
+            return m.group(0) if not mark_dangling else f"{cue}{_REMOVED_REF}"
+        return f"{cue}[{prefix}{new}]" if bracketed else f"{cue}{prefix}{new}"
+
+    return _id_reference_re(prefix).sub(rewrite, text)
+
+
+def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
+    """Shift one group's IDs past the groups already merged, references included.
+
+    Dangling references are left as they are: this runs per group, and an ID
+    this group does not declare may still be declared by another one. The
+    merge-wide pass is the first place that can tell.
+    """
+    if not text:
+        return "", 0
+    declared = _declared_ids(text, prefix)
+    if offset > 0:
+        shifted = {old: old + offset for old in declared}
+        text = _rewrite_ids(text, prefix, shifted, mark_dangling=False)
+    return text, len(declared)
 
 
 def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None = None) -> str:
@@ -390,18 +423,14 @@ def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None 
 
     new_by_old = {old: new for new, old in enumerate(declared, 1)}
     # A deduplicated finding was not dropped, it was merged: its references
-    # belong on the copy that survived, which says the same thing.
+    # belong on the copy that survived, which says the same thing. The survivor
+    # is always declared here — it is the copy dedup kept — but guard anyway, so
+    # a map built from other text cannot quietly point a reference somewhere new.
     for gone, survivor in (merged_into or {}).items():
-        if gone not in new_by_old and survivor in new_by_old:
-            new_by_old[gone] = new_by_old[survivor]
+        if survivor in new_by_old:
+            new_by_old.setdefault(gone, new_by_old[survivor])
 
-    def rewrite(m: re.Match[str]) -> str:
-        new = new_by_old.get(int(m.group(1) or m.group(2)))
-        if new is None:
-            return _REMOVED_REF
-        return f"[{prefix}{new}]" if m.group(1) is not None else f"{prefix}{new}"
-
-    return _id_reference_re(prefix).sub(rewrite, text)
+    return _rewrite_ids(text, prefix, new_by_old, mark_dangling=True)
 
 
 def renumber_findings(text: str) -> str:

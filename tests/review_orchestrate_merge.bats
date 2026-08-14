@@ -388,15 +388,15 @@ print('[M1]' in result and '[M2]' not in result)
 
 @test "renumber_section: no offset keeps IDs" {
   result=$(_py '
-text, count = mod.renumber_section("M", "- [M1] bug\n- [M2] other", 0)
+text, count = mod.renumber_section("M", "- **[M1]** bug\n- **[M2]** other", 0)
 print(f"{count}:{text}")
 ')
-  [[ "$result" == "2:- [M1] bug"* ]]
+  [[ "$result" == "2:- **[M1]** bug"* ]]
 }
 
 @test "renumber_section: offset renumbers" {
   result=$(_py '
-text, count = mod.renumber_section("S", "- [S1] fix\n- [S2] fix2", 3)
+text, count = mod.renumber_section("S", "- **[S1]** fix\n- **[S2]** fix2", 3)
 print(text)
 ')
   [[ "$result" == *"[S4]"* ]]

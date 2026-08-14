@@ -559,8 +559,13 @@ a final pass closes the gaps so each severity numbers from 1 with no holes.
 Only a *declaration* — a finding at the head of its own list item, `- **[M1]**
 …` or `- [ ] **[M1]** …` — gets a number. Everything else that names an ID is a
 reference, and references are rewritten through the same map, so a finding that
-cites another one still cites the same one afterwards. Bare mentions in prose
-(`see M2`) are rewritten too.
+cites another one still cites the same one afterwards.
+
+Brackets are what make a reference unambiguous. A bare `S3` is also an object
+store and a bare `M1` is also a laptop, so an unbracketed mention only counts
+when a citing phrase introduces it — `see S3`, `duplicate of S3`, `blocked on
+S3`. Anything else is left as prose. The phrase list lives in
+`_REFERENCE_CUES` in `ai/lib/review_findings.py`.
 
 A reference to a finding that is no longer in the review becomes `[removed]`.
 Leaving the ID alone would be worse than useless: the number it names has since
@@ -571,7 +576,10 @@ move to the copy that survived.
 
 Text that declares no findings of a given severity is left untouched, since
 there is no map to rewrite through and every ID in it belongs to some other
-document.
+document. The same reasoning applies while groups are still being merged: each
+group's IDs are shifted past the groups before it, references included, but a
+reference the group cannot resolve is left alone — another group may well
+declare it, and the merge-wide pass is the first place that can tell.
 
 ### Where review artifacts live
 

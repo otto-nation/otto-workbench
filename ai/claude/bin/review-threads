@@ -2862,18 +2862,27 @@ def _run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | No
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="PR review thread status")
+    # Two axes, and the help text has to keep them apart: --triage/--fix/--finish
+    # /--reply choose the work, --post decides whether it leaves the machine.
+    # Read as peers, `--finish --post` looks like it says publish twice, and the
+    # pair gets typed as one unit — which is how a bare --finish stops being the
+    # way to preview a closeout.
+    parser = argparse.ArgumentParser(
+        description="PR review threads. Phase flags (--triage/--fix/--finish/"
+                    "--reply) pick the work; --post publishes it.")
     parser.add_argument("--pr", help="PR number")
     parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
     parser.add_argument("--triage", action="store_true",
-                        help="Classify threads via AI and auto-resolve verified")
+                        help="Phase: classify threads via AI and auto-resolve verified")
     parser.add_argument("--fix", action="store_true",
-                        help="Triage threads and apply mechanical fixes via Claude agent")
+                        help="Phase: triage threads and apply mechanical fixes via "
+                             "Claude agent")
     # --resolve is kept as an alias: resolution is not what this gates (--triage
     # already resolves verified threads), but the flag shipped under that name.
     parser.add_argument("--finish", "--resolve", "--resolve-verified",
                         action="store_true", dest="finish",
-                        help="Close out deferred work: replies, tracking issue, summary")
+                        help="Phase: close out deferred work — replies, tracking "
+                             "issue, summary. Drafts them unless --post is given")
     parser.add_argument("--track", action="append", default=[], metavar="THREAD_ID",
                         help="File this deferred thread on the tracking issue "
                              "(repeatable). Deferral is a per-thread decision, so "
@@ -2882,7 +2891,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="File every deferred thread. Only for a set the user "
                              "has actually reviewed")
     parser.add_argument("--post", action="store_true",
-                        help="Publish replies, summaries, and resolutions "
+                        help="Gate, not a phase: publish whatever the chosen phase "
+                             "produced — replies, summaries, resolutions "
                              "(default: print drafts to stderr and post nothing)")
     parser.add_argument("--repo-dir", "--worktree",
                         help="Git worktree directory (skips git toplevel detection)")

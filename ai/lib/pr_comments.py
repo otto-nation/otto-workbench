@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -240,20 +241,41 @@ def patch_thread_reply(repo: str, comment_database_id: int, body: str) -> bool:
     return code == 0
 
 
+@dataclass(frozen=True)
+class MarkerComment:
+    """The upsert target for a marked comment, as the lookup found it.
+
+    ``found`` is whether the lookup itself succeeded, which is not the same
+    question as whether a comment exists. A listing that errored must not read
+    as "no prior comment": the caller would post a duplicate, and one that
+    reconciles against ``body`` would conclude the published comment was empty
+    and drop everything already in it.
+    """
+    found: bool = False
+    comment_id: int | None = None
+    body: str = ""
+
+
 def post_issue_comment(
     repo: str, pr_number: int, body: str, marker: str = "",
+    existing: MarkerComment | None = None,
 ) -> str | None:
     """Post an issue-level comment on a PR. Returns the comment URL or None.
 
     When marker is given, an existing comment containing it is edited in place
     instead of posting a new one.  Review cycles run several rounds; without
     this each round leaves its own partial summary behind.
+
+    ``existing`` is that same lookup, already done. A caller that reconciles the
+    new body against what is published has to read the comment before it can
+    render, and paying for the listing twice would also let the two reads
+    disagree about which comment is the target.
     """
     if marker:
-        found, existing_id = _find_comment_by_marker(repo, pr_number, marker)
-        if existing_id:
-            return _patch_issue_comment(repo, existing_id, body)
-        if not found:
+        target = existing if existing is not None else find_marker_comment(repo, pr_number, marker)
+        if target.comment_id:
+            return _patch_issue_comment(repo, target.comment_id, body)
+        if not target.found:
             # The lookup failed rather than came back empty, so an earlier
             # comment may exist. Posting a duplicate beats dropping the update.
             log.error("could not list PR comments — posting a new one instead of editing")
@@ -267,31 +289,26 @@ def post_issue_comment(
         return None
 
 
-def _find_comment_by_marker(
-    repo: str, pr_number: int, marker: str,
-) -> tuple[bool, int | None]:
+def find_marker_comment(repo: str, pr_number: int, marker: str) -> MarkerComment:
     """Find the newest issue comment containing marker.
-
-    Returns (lookup_succeeded, comment_id). The flag distinguishes "no such
-    comment" from "could not tell" — the caller treats those differently.
 
     Paginated: the marker comment is posted on the first round of a review
     cycle, so on a busy PR it is the one most likely to fall off page one.
     """
     code, out = _paginated_json(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
     if code != 0:
-        return False, None
+        return MarkerComment()
     try:
         pages = json.loads(out)
     except (json.JSONDecodeError, TypeError):
-        return False, None
+        return MarkerComment()
     if not isinstance(pages, list):
-        return False, None
+        return MarkerComment()
     comments = [c for page in pages for c in page] if pages and isinstance(pages[0], list) else pages
     for c in reversed(comments):
         if marker in (c.get("body") or ""):
-            return True, c.get("id")
-    return True, None
+            return MarkerComment(True, c.get("id"), c.get("body") or "")
+    return MarkerComment(found=True)
 
 
 def _patch_issue_comment(repo: str, comment_id: int, body: str) -> str | None:

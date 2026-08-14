@@ -479,7 +479,7 @@ MARKER = "<!-- pr-comments:summary -->"
 
 def test_post_issue_comment_posts_new_without_marker():
     with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post, \
-         patch.object(pr_comments, "_find_comment_by_marker",
+         patch.object(pr_comments, "find_marker_comment",
                       autospec=True) as find:
         url = pr_comments.post_issue_comment("owner/repo", 1, "body")
     assert url == "u"
@@ -516,42 +516,72 @@ def test_post_issue_comment_posts_new_when_marker_absent():
     post.assert_called_once()
 
 
-def test_find_comment_by_marker_prefers_latest():
+def _found(comment_id, body):
+    return pr_comments.MarkerComment(True, comment_id, body)
+
+
+def test_find_marker_comment_prefers_latest():
     listing = _pages([
         {"id": 10, "body": f"{MARKER}\nold"},
         {"id": 11, "body": f"{MARKER}\nnew"},
     ])
     with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
-        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, 11)
+        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+    assert found == _found(11, f"{MARKER}\nnew")
 
 
-def test_find_comment_by_marker_spans_pages():
+def test_find_marker_comment_spans_pages():
     """The marker comment is posted first, so on a busy PR it is not on page one."""
     listing = _pages(
         [{"id": 10, "body": f"{MARKER}\nround one"}],
         [{"id": 11, "body": "unrelated"}],
     )
     with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
-        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, 10)
+        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+    assert found == _found(10, f"{MARKER}\nround one")
 
 
-def test_find_comment_by_marker_accepts_flat_listing():
+def test_find_marker_comment_accepts_flat_listing():
     """A single unslurped page must still be readable."""
     listing = json.dumps([{"id": 12, "body": f"{MARKER}\nonly"}])
     with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
-        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, 12)
+        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+    assert found == _found(12, f"{MARKER}\nonly")
 
 
-def test_find_comment_by_marker_reports_lookup_failure():
-    """A failed listing must be distinguishable from an empty one."""
-    for payload in ((1, ""), (0, "not json"), (0, '{"message": "Not Found"}')):
-        with patch.object(pr_comments, "_paginated_json", return_value=payload):
-            assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (False, None)
+@pytest.mark.parametrize("payload", [
+    (1, ""),
+    (0, "not json"),
+    (0, '{"message": "Not Found"}'),
+])
+def test_find_marker_comment_reports_lookup_failure(payload):
+    """A failed listing must be distinguishable from an empty one.
+
+    A caller reconciling against the published body reads an empty `body` as
+    "the comment said nothing", so `found` has to carry the difference.
+    """
+    with patch.object(pr_comments, "_paginated_json", return_value=payload):
+        assert pr_comments.find_marker_comment("owner/repo", 1, MARKER) == \
+            pr_comments.MarkerComment(found=False)
 
 
-def test_find_comment_by_marker_reports_empty_listing():
+def test_find_marker_comment_reports_empty_listing():
     with patch.object(pr_comments, "_paginated_json", return_value=(0, "[]")):
-        assert pr_comments._find_comment_by_marker("owner/repo", 1, MARKER) == (True, None)
+        assert pr_comments.find_marker_comment("owner/repo", 1, MARKER) == \
+            pr_comments.MarkerComment(found=True)
+
+
+def test_post_issue_comment_reuses_a_supplied_lookup():
+    """A caller that already read the comment must not pay for the listing twice."""
+    with patch.object(pr_comments, "_paginated_json") as listing, \
+         patch.object(pr_comments, "_patch_issue_comment", return_value="u2") as patch_fn:
+        url = pr_comments.post_issue_comment(
+            "owner/repo", 1, "round two", marker=MARKER,
+            existing=_found(11, f"{MARKER}\nround one"),
+        )
+    assert url == "u2"
+    listing.assert_not_called()
+    patch_fn.assert_called_once_with("owner/repo", 11, "round two")
 
 
 def test_post_issue_comment_logs_when_lookup_fails():

@@ -1899,7 +1899,7 @@ def _post_pending_fix_replies(
                         reviewer=t.reviewer, summary=t.summary)
             for t in fixed_threads
         ]
-        # Accumulate rather than assign: these are the same round's replies
+        # Accumulate rather than discard: these are the same round's replies
         # finally going out, and the fix pass already counted any it sent
         # itself. A draft returns 0 here, so a drafted drain adds nothing.
         fix.replies_posted += _post_fix_replies(

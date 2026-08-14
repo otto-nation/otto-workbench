@@ -386,4 +386,4 @@ class TestTrailDir:
         outside = tmp_path / "plain"
         outside.mkdir()
         assert workbench_paths.trail_dir(outside, "pr") == \
-            clean_env / ".config/workbench/logs/pr"
+            clean_env / ".local/state/workbench/logs/pr"

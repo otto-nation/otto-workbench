@@ -332,43 +332,112 @@ def _validate_group_output(output_path: str, group_name: str) -> bool:
 
 # ── Renumbering ──────────────────────────────────────────────────────────────
 
+# What a reference becomes when nothing declares the finding it names. It is
+# deliberately not an ID: once the gaps close, the number that reference used to
+# carry belongs to a different finding, and a reader who follows it lands on
+# something unrelated without ever learning they were misdirected.
+_REMOVED_REF = "[removed]"
+
+# A bare `S3` is both a finding ID and an object store, and `M1` is both a
+# finding ID and a laptop. So a mention without brackets only counts as a
+# reference when a citing phrase introduces it — a review that says "stored in
+# an S3 bucket" has to come out the other side still saying it.
+# ceiling: fixed phrase list, extend it if reviews learn to cite some other way
+_REFERENCE_CUES = (
+    r"see(?:\s+also)?|cf\.?|per|once|duplicate of|related to|blocked on"
+    r"|depends on|addressed by|superseded by"
+)
+
+
+def _declared_ids(text: str, prefix: str) -> list[int]:
+    """The IDs `text` declares under `prefix`, in the order they first appear.
+
+    A finding declares its ID at the head of its own list item; every other
+    occurrence is a reference to a declaration. Only declarations get numbers,
+    because a reference can name a finding that evidence verification or
+    deduplication has since taken out of the review.
+    """
+    ids: list[int] = []
+    for line in text.split("\n"):
+        m = FINDING_ID_RE.match(line.strip())
+        if not m or m.group(2) != prefix or int(m.group(3)) in ids:
+            continue
+        ids.append(int(m.group(3)))
+    return ids
+
+
+def _declared_id(line: str, prefix: str) -> int | None:
+    ids = _declared_ids(line, prefix)
+    return ids[0] if ids else None
+
+
+def _id_reference_re(prefix: str) -> re.Pattern[str]:
+    """Every way a review names a finding: `[M1]`, and a cited bare `M1`."""
+    return re.compile(
+        rf"\[{prefix}(\d+)\]"
+        rf"|(\b(?i:{_REFERENCE_CUES})\s+){prefix}(\d+)(?![\d\]])"
+    )
+
+
+def _rewrite_ids(
+    text: str, prefix: str, new_by_old: dict[int, int], *, mark_dangling: bool,
+) -> str:
+    """Move every ID and every reference to one onto its new number."""
+    def rewrite(m: re.Match[str]) -> str:
+        bracketed, cue, bare = m.group(1), m.group(2) or "", m.group(3)
+        new = new_by_old.get(int(bracketed or bare))
+        if new is None:
+            return m.group(0) if not mark_dangling else f"{cue}{_REMOVED_REF}"
+        return f"{cue}[{prefix}{new}]" if bracketed else f"{cue}{prefix}{new}"
+
+    return _id_reference_re(prefix).sub(rewrite, text)
+
+
 def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
+    """Shift one group's IDs past the groups already merged, references included.
+
+    Returns the highest ID the group leaves in use, which is what the next group
+    has to clear. Counting declarations instead would under-shift any group
+    whose agent skipped a number — nothing closes those gaps before the merge —
+    and two groups would land on the same ID. Gaps are closed afterwards, over
+    the merged text, where a number freed up by one group can be handed to
+    another.
+
+    Dangling references are left as they are: this runs per group, and an ID
+    this group does not declare may still be declared by another one. The
+    merge-wide pass is the first place that can tell.
+    """
     if not text:
         return "", 0
-    count = len(set(re.findall(rf"\[{prefix}\d+\]", text)))
+    declared = _declared_ids(text, prefix)
     if offset > 0:
-        for i in range(count, 0, -1):
-            text = text.replace(f"[{prefix}{i}]", f"[{prefix}{i + offset}]")
-    return text, count
+        shifted = {old: old + offset for old in declared}
+        text = _rewrite_ids(text, prefix, shifted, mark_dangling=False)
+    return text, max(declared, default=0)
 
 
-def _renumber_prefix(text: str, prefix: str) -> str:
-    seen_ids: list[int] = []
-    for m in re.finditer(rf"\[{prefix}(\d+)\]", text):
-        num = int(m.group(1))
-        if num not in seen_ids:
-            seen_ids.append(num)
+def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None = None) -> str:
+    """Close the gaps in `prefix` IDs, taking every reference along with them.
 
-    remap = {}
-    for new_num, old_num in enumerate(seen_ids, 1):
-        if old_num != new_num:
-            remap[old_num] = new_num
-
-    if not remap:
+    References are rewritten through the same map as the declarations, so a
+    finding that cites another one still cites the same one afterwards.
+    """
+    declared = _declared_ids(text, prefix)
+    if not declared:
+        # Nothing here declares an ID, so there is no map to rewrite through and
+        # every occurrence is a reference into text we are not looking at.
         return text
 
-    placeholder = "\x00"
-    for old_num in sorted(remap, reverse=True):
-        text = text.replace(f"[{prefix}{old_num}]", f"[{placeholder}{prefix}{remap[old_num]}]")
-    text = text.replace(placeholder, "")
+    new_by_old = {old: new for new, old in enumerate(declared, 1)}
+    # A deduplicated finding was not dropped, it was merged: its references
+    # belong on the copy that survived, which says the same thing. The survivor
+    # is always declared here — it is the copy dedup kept — but guard anyway, so
+    # a map built from other text cannot quietly point a reference somewhere new.
+    for gone, survivor in (merged_into or {}).items():
+        if survivor in new_by_old:
+            new_by_old.setdefault(gone, new_by_old[survivor])
 
-    for old_num in sorted(remap, reverse=True):
-        text = re.sub(
-            rf"(?<!\[)(?<!\x00){prefix}{old_num}(?!\d)(?!\])",
-            f"\x00{prefix}{remap[old_num]}",
-            text,
-        )
-    return text.replace("\x00", "")
+    return _rewrite_ids(text, prefix, new_by_old, mark_dangling=True)
 
 
 def renumber_findings(text: str) -> str:
@@ -414,22 +483,31 @@ def _finding_dedup_key(line: str) -> FindingKey | None:
     return FindingKey(path, dm.group(1).strip().lower() if dm else "")
 
 
+def _record_merge(merged_into: dict[int, int], survivor: int | None, dup: int | None) -> None:
+    """Remember that `dup`'s references should end up on `survivor`."""
+    if survivor is None or dup is None:
+        return
+    merged_into[dup] = survivor
+
+
 def _dedup_findings(text: str, prefix: str) -> str:
-    seen: set[FindingKey] = set()
+    seen: dict[FindingKey, int | None] = {}
+    merged_into: dict[int, int] = {}
     kept: list[str] = []
     skipping = False
     for line in text.split("\n"):
         key = _finding_dedup_key(line)
         if key is not None and key in seen:
             skipping = True
+            _record_merge(merged_into, seen[key], _declared_id(line, prefix))
             continue
         if key is not None:
-            seen.add(key)
+            seen[key] = _declared_id(line, prefix)
             skipping = False
         if skipping:
             continue
         kept.append(line)
-    return _renumber_prefix("\n".join(kept), prefix)
+    return _renumber_prefix("\n".join(kept), prefix, merged_into)
 
 
 def _merge_one_review(
@@ -450,10 +528,10 @@ def _merge_one_review(
     for severity in SEVERITIES:
         section = severity.section
         raw = _clean_section_text(_extract_section(content, section))
-        text, count = renumber_section(severity.key, raw, offsets[section])
+        text, highest = renumber_section(severity.key, raw, offsets[section])
         if text:
             merged[section] += text + "\n"
-        offsets[section] += count
+        offsets[section] += highest
     return merged_triage
 
 

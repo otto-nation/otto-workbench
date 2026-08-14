@@ -178,13 +178,17 @@ def _remove_target(target: Path) -> None:
     from the non-recursive rmdir.
     """
     lock_path = target / run_lock.LOCK_FILE
+    state_path = target / pr_state.STATE_FILE
     # ceiling: a target directory is flat — state.json and run.lock — so an
-    # entry that is itself a directory raises IsADirectoryError here and the
-    # target is reported as not pruned rather than removed. Upgrade trigger:
-    # anything that starts writing a subdirectory under a target.
+    # entry that is itself a directory raises OSError here (EISDIR on Linux,
+    # EPERM on macOS) and the target is reported as not pruned rather than
+    # removed. Upgrade trigger: anything that starts writing a subdirectory
+    # under a target. state.json goes after that loop so a target we fail to
+    # empty keeps the file the next sweep's glob finds it by.
     for entry in target.iterdir():
-        if entry != lock_path:
+        if entry not in (lock_path, state_path):
             entry.unlink()
+    state_path.unlink(missing_ok=True)
     lock_path.unlink(missing_ok=True)
     target.rmdir()
 

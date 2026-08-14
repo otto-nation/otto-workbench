@@ -1997,7 +1997,7 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     """
     import run_lock
 
-    target = tmp_path / "pr" / "acme-widget-b9d71e86-feat-x"
+    target = tmp_path / "pr" / "target"
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
 
     cr._run_self_review(_self_review_args())
@@ -2019,7 +2019,7 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
     """Launched by `pr`, a --self run inherits WORKBENCH_RUN_LOCK, not a deadlock."""
     import run_lock
 
-    target = tmp_path / "pr" / "acme-widget-b9d71e86-feat-x"
+    target = tmp_path / "pr" / "target"
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
 
     with run_lock.acquire(target, command="pr review --self --fix", started="t"):

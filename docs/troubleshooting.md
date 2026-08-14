@@ -122,9 +122,14 @@ A second `pr` run refused to start because one is already in flight against the 
 ✗ another pr run already owns this target: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
 ```
 
-Two runs on one worktree corrupt each other — they both read-modify-write the worktree's `state.json`, and with `--fix` they both edit and commit the same files. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
+Two runs against one PR corrupt each other — they both read-modify-write that
+target's `state.json`, and with `--fix` they both edit and commit the same
+checkout. The lock is keyed on what a run targets, not where it was launched:
+reviews of two different PRs from one directory run concurrently, and two runs
+against the same PR exclude each other from anywhere. Wait for the holder to
+finish, or stop it with the printed `kill <pid>`.
 
-`pr status` is read-only and never contends. `pr gc` does take the lock — it deletes the state directory, so it is not safe to run against a live run.
+`pr status` is read-only and never contends. `pr gc` prunes target state for merged and closed PRs, skips its own target, and takes each target's lock before touching it — so it will not delete state out from under a running review, and it is safe to run at any time.
 
 `claude-review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `claude-review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_RUN_LOCK` from it and pass through rather than deadlocking on their own parent's lock.
 
@@ -134,7 +139,7 @@ Both files live in the worktree's own git dir, under `workbench/` — `<repo>/.g
 
 ## "`state.json` is unreadable — discarding it"
 
-The per-worktree PR state file did not parse — truncated by a killed write, hand-edited, or written by an older schema. Nothing in it is authoritative: every field is rebuilt by the command that wrote it, so `pr` commands carry on with no cached state rather than failing.
+The run target's PR state file did not parse — truncated by a killed write, hand-edited, or written by an older schema. Nothing in it is authoritative: every field is rebuilt by the command that wrote it, so `pr` commands carry on with no cached state rather than failing.
 
 Any command that writes state — `pr ci`, `pr review`, `pr comments`, `pr rebase` — replaces the file on its next run, so the warning usually clears itself. To clear it deliberately:
 

@@ -381,9 +381,37 @@ from the review file's path, and it is the only place outside the worktree that
 review agents may write to. Granting the shared reviews root instead is how agent
 scratch files ended up sitting beside unrelated reviews.
 
-`pr gc` collects loose files at the reviews root once they are a week old. A flat
-`<name>.md` and its suffixed siblings are left alone: those are input to the
-startup migration that folds the old flat layout into directories.
+`pr gc` collects loose files at the reviews root once they are a week old, prunes
+review directories and run-target directories for merged and closed PRs (skipping
+its own target), and sweeps the `state.json` and `run.lock` the pre-target layout
+left behind in a worktree's `.workbench/`. A flat `<name>.md` and its suffixed
+siblings are left alone: those are input to the startup migration that folds the
+old flat layout into directories.
+
+### Run target paths
+
+A `pr` run's bookkeeping is keyed on what it targets, not where it was launched:
+
+    <state_dir()>/pr/<repo-key>-<branch-slug>/
+        state.json    unified PR state (non-authoritative; rebuilt on demand)
+        run.lock      advisory flock for the whole run
+
+`<repo-key>` identifies the repo behind `git remote get-url origin`. It is
+`<readable>-<digest>`: a slug of the remote's canonical path, for a human
+scanning `pr/`, plus the first 8 hex characters of the SHA-256 of that canonical
+path, which is what actually keeps two repos apart. Treat it as opaque — nothing
+outside `ai/lib/pr_target.py` should parse or rebuild one.
+
+`<branch-slug>` is the branch with runs of characters outside `[A-Za-z0-9._-]`
+collapsed to `-`, then stripped of leading and trailing `-`.
+
+Both components are readable from a checkout with no network call, which is what
+lets external consumers derive the same path. `ai/lib/pr_target.py` is the owner
+and its module docstring states the rule in full; a reimplementation should
+assert against both published fixtures in `tests/pr_target_test.py` —
+`SLUG_VECTORS` for the branch slug and `REPO_KEY_VECTORS` for the repo key.
+
+Trails stay worktree-local at `<worktree>/.workbench/trail.jsonl`.
 
 ### Drafts, and what it takes to publish
 

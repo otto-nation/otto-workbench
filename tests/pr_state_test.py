@@ -556,8 +556,10 @@ def test_save_preserves_triage_data(worktree):
 def test_save_never_exposes_a_truncated_file(worktree, monkeypatch):
     """Regression: save_state used to truncate the target in place, so a
     concurrent reader could load a zero-byte file and die on JSONDecodeError.
-    A failed write must leave the previous state readable."""
-    import pr_state as pr_state_module
+    A failed write must leave the previous state readable. The temp file the
+    guarantee rests on is serde's now, so that is where the failure is
+    injected — this asserts save_state still routes through it."""
+    import serde
 
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
                       worktree_root=str(worktree))
@@ -567,7 +569,7 @@ def test_save_never_exposes_a_truncated_file(worktree, monkeypatch):
         fp.write('{"partial":')
         raise OSError("disk full")
 
-    monkeypatch.setattr(pr_state_module.json, "dump", _explode)
+    monkeypatch.setattr(serde.json, "dump", _explode)
     with pytest.raises(OSError):
         save_state(worktree, state)
 
@@ -586,7 +588,7 @@ def test_save_leaves_no_temp_files_behind(worktree):
 
 
 def test_save_discards_the_temp_file_when_the_write_fails(worktree, monkeypatch):
-    import pr_state as pr_state_module
+    import serde
 
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
                       worktree_root=str(worktree))
@@ -595,7 +597,7 @@ def test_save_discards_the_temp_file_when_the_write_fails(worktree, monkeypatch)
     def _explode(obj, fp, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(pr_state_module.json, "dump", _explode)
+    monkeypatch.setattr(serde.json, "dump", _explode)
     with pytest.raises(OSError):
         save_state(worktree, state)
 

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import log
 import publishing
+import serde
 from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
 from review_common import plural
 from review_github import PRData, fetch_review_threads
@@ -43,11 +44,8 @@ def load_state(path: Path) -> dict | None:
 
 def save_state(path: Path, state: dict) -> None:
     """Save state to file, creating parent directories."""
-    path.parent.mkdir(parents=True, exist_ok=True)
     state["last_run"] = datetime.now(timezone.utc).isoformat()
-    with open(path, "w") as f:
-        json.dump(state, f, indent=2)
-        f.write("\n")
+    serde.write_json(path, state)
 
 
 # ── Thread lifecycle states ────────────────────────────────────────────────

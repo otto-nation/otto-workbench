@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import tempfile
 from enum import Enum
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints
@@ -93,6 +95,47 @@ def load_file(cls, path: Path):
     except (OSError, TypeError, ValueError):
         log.warn(f"{path} is unreadable — discarding it")
         return None
+
+
+def write_json(path: Path, data) -> None:
+    """Write `data` to `path` as JSON, atomically, creating parent directories.
+
+    The single owner of "put this JSON on disk without a reader ever seeing it
+    half-written". ``open(path, "w")`` truncates in place, so a concurrent
+    reader can observe a zero-byte or partial file and fail with a
+    JSONDecodeError; writing a temp file and renaming it means a reader sees
+    either the whole previous file or the whole new one.
+
+    The temp file is created by `mkstemp` in the destination directory: unique
+    per call, so two threads or two processes writing the same path cannot land
+    on the same temp name, and on the same filesystem, so `os.replace` is a
+    rename rather than a copy. It inherits mkstemp's 0600 — these are per-user
+    state and cache files under a worktree or `~/.local/state`, and nothing
+    reads them as another user.
+
+    Serialization runs before the rename, so a value JSON cannot encode leaves
+    the existing file untouched rather than truncating it to the point of the
+    failure.
+
+    Takes a `Path`, and does not coerce one from what it is handed. `Path(x)`
+    accepts anything with `__fspath__`, which a `MagicMock` has — coercing here
+    turns a test's stubbed state directory into a real one under the working
+    directory, silently, at the bottom of a call stack that never meant to
+    touch the disk.
+    """
+    # ceiling: no fsync — os.replace orders the rename against a concurrent
+    # reader, which is what these files need; surviving a machine crash
+    # mid-write is not. Add one if a caller ever stores something unrebuildable.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def _identity(value):

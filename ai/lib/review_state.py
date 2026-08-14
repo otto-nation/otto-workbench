@@ -13,8 +13,6 @@ functions.
 
 from __future__ import annotations
 
-import json
-import os
 import re
 import threading
 from dataclasses import dataclass
@@ -41,10 +39,7 @@ def _pipeline_state_path(job: ReviewJob) -> str:
 
 
 def _write_pipeline_state(job: ReviewJob, state: PipelineState):
-    dest = _pipeline_state_path(job)
-    tmp = dest + ".tmp"
-    Path(tmp).write_text(json.dumps(serde.to_dict(state)))
-    os.replace(tmp, dest)
+    serde.write_json(Path(_pipeline_state_path(job)), serde.to_dict(state))
 
 
 def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":

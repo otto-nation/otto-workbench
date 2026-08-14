@@ -20,21 +20,16 @@ pr_describe_cli = importlib.util.module_from_spec(_spec)
 pr_describe_cli.__file__ = _path
 _spec.loader.exec_module(pr_describe_cli)
 
-import pr_context  # noqa: E402
 import pr_state  # noqa: E402
 
-from conftest import assert_no_worktree_exit  # noqa: E402
+from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
 
 
 def _ctx(worktree, head_sha="aaaa111", pr_number=7):
-    return pr_context.ResolvedContext(
-        repo="owner/repo",
-        branch="isaac/feat/x",
-        pr_number=pr_number,
-        worktree_root=worktree,
-        head_sha=head_sha,
-        target_dir=worktree / "target",
-    )
+    """A context rooted in *worktree*, which these tests read and write for real."""
+    return make_ctx(branch="isaac/feat/x", pr_number=pr_number,
+                    worktree_root=worktree, head_sha=head_sha,
+                    target_dir=worktree / "target")
 
 
 def _wrapped(body: str) -> str:
@@ -275,24 +270,15 @@ def test_prompt_says_so_when_the_repo_ships_no_template(worktree):
 
 
 def test_run_describe_without_a_worktree_exits_with_guidance(capsys):
-    ctx = pr_context.ResolvedContext(
-        repo="owner/repo",
-        branch="isaac/feat/x",
-        pr_number=7,
-        worktree_root=None,
-        head_sha="aaaa111",
-        target_dir=Path("/target"),
-    )
+    ctx = make_ctx(branch="isaac/feat/x", pr_number=7,
+                   worktree_root=None, head_sha="aaaa111")
     assert_no_worktree_exit(capsys, "isaac/feat/x",
                             pr_describe_cli.run_describe, ctx)
 
 
 def test_no_pr_reports_before_demanding_a_worktree(capsys):
     """The trail directory degrades, so the no-PR path is not blocked by it."""
-    ctx = pr_context.ResolvedContext(
-        repo="owner/repo", branch="isaac/feat/x", pr_number=None,
-        worktree_root=None, head_sha="aaaa111",
-        target_dir=Path("/target"),
-    )
+    ctx = make_ctx(branch="isaac/feat/x", pr_number=None,
+                   worktree_root=None, head_sha="aaaa111")
     assert pr_describe_cli.run_describe(ctx) == 0
     assert "nothing to describe" in capsys.readouterr().err

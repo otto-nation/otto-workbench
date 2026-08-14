@@ -8,14 +8,10 @@ from __future__ import annotations
 
 import re
 
+from pr_state import VERDICT_PROSE_PREFIX_RE
 from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
 from review_sections import ReviewSections, SectionConfig
-
-_VERDICT_ACTION_RE = re.compile(
-    r"^\*{0,2}(?:Request changes|Needs discussion|Approve|Disapprove)\*{0,2}\s*[—–\-]\s*",
-    re.IGNORECASE,
-)
 
 
 # ── Classification constants ────────────────────────────────────────────────
@@ -241,7 +237,7 @@ def _render_before_findings(
         if cfg.heading:
             parts.extend((cfg.heading, ""))
         if cfg.strip_action:
-            content = _VERDICT_ACTION_RE.sub("", content, count=1)
+            content = VERDICT_PROSE_PREFIX_RE.sub("", content, count=1)
         parts.extend((content, ""))
     last_cfg = next((c for c, _ in before if c.key == current_parent), None)
     if last_cfg and last_cfg.trailing_separator:

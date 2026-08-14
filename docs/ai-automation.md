@@ -581,6 +581,61 @@ group's IDs are shifted past the groups before it, references included, but a
 reference the group cannot resolve is left alone — another group may well
 declare it, and the merge-wide pass is the first place that can tell.
 
+### When evidence verification drops a finding
+
+Every must-fix and should-fix finding quotes the code it is about. After the
+review is written, that quote is checked against the file: a finding whose
+evidence does not match what is on disk is dropped, and the survivors are
+renumbered. Roughly a quarter of reviews drop at least one finding this way.
+
+The synthesis agent wrote the `## Summary` and the `## Verdict` before that check
+ran, so both can describe findings that are no longer in the file. Regenerating
+them would cost the agent's qualitative assessment, which is the part of a review
+a reader cannot reconstruct from counts. So the prose stays and the review says
+what left it:
+
+- A blockquote at the end of `## Summary` names each dropped finding by severity
+  and path — not by ID, since renumbering has already reassigned those — and why
+  it was dropped.
+- `## Verdict` is rewritten when the surviving counts no longer support the stated
+  action. A drop can only remove findings, so this only ever lowers a verdict:
+  `Request changes` → `Needs discussion` → `Approve`. A verdict the remaining
+  findings still support is left exactly as written, and `Disapprove` is never
+  touched — it means the overall approach is wrong, which the counts do not
+  derive, so no drop refutes it.
+
+Both are idempotent — a review that already carries the note is left alone, so
+re-running post-processing does not stack notes or re-lower a verdict.
+
+The lowering rule above only ever revises a verdict a drop leaves unsupported;
+it is not the whole story of how a verdict ends up recorded. See the next
+section for that.
+
+### How a review's verdict is decided
+
+`ReviewVerdict` owns the four verdicts in both spellings they are written in: the
+word the prompt asks for and the review states (`Request changes`), and the value
+recorded in state and shown by `pr status` (`changes_requested`). One member owns
+both, so the prompt cannot ask for wording the parser does not recognise, and the
+markdown cannot say one thing while the dashboard reports another.
+
+The verdict a review is recorded with reconciles two readings of it — the prose
+the agent wrote and the findings that survived verification — and the stronger
+call wins:
+
+- Findings that block cannot be under-reported. A review stating `Approve` with a
+  must-fix finding still records `changes_requested`.
+- A stronger call the agent made is not discarded. A review stating
+  `Request changes` over nits alone keeps it.
+- `Disapprove` is unranked and always stands: it judges the overall approach,
+  which no finding count implies or refutes.
+- A self-review records no verdict — it is advisory and has no PR to approve or
+  block. `Disapprove` is the exception, since it holds without a PR.
+
+Counts alone map to `Request changes` (any must-fix), `Needs discussion` (any
+should-fix), or `Approve`. Nits and idioms do not affect the verdict, and a review
+file that does not exist records no verdict rather than an approval.
+
 ### Where review artifacts live
 
 Each review owns a directory under `~/.local/state/workbench/reviews/` — `review.md`

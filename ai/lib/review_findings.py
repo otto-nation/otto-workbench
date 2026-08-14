@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import log
+from pr_state import ReviewVerdict
 from review_common import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, PriorDisposition, plural,
+    severity_by_key,
 )
 
 # Severity header name -> key mapping (section + aliases, lowercased)
@@ -1033,22 +1035,119 @@ _VERDICT_LABELS = [(s.key, s.label) for s in SEVERITIES]
 _MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
 
 
+def _verdict_from_counts(counts: dict[str, int]) -> ReviewVerdict:
+    return ReviewVerdict.from_counts(
+        counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
+    )
+
+
+def _count_parts(counts: dict[str, int]) -> list[str]:
+    return [f"{counts[key]} {label}" for key, label in _VERDICT_LABELS if counts.get(key)]
+
+
 def mechanical_verdict(counts: dict[str, int]) -> str:
-    parts = [f"{counts[key]} {label}" for key, label in _VERDICT_LABELS if counts.get(key)]
-    must = counts.get(SEVERITY_MUST, 0)
-    should = counts.get(SEVERITY_SHOULD, 0)
+    parts = _count_parts(counts)
+    if not parts:
+        return f"{ReviewVerdict.APPROVE.prose} — no findings {_MECHANICAL_NOTE}.\n"
 
-    if must:
-        action = "Request changes"
-    elif should:
-        action = "Needs discussion"
-    elif parts:
-        action = "Approve"
-    else:
-        return f"Approve — no findings {_MECHANICAL_NOTE}.\n"
+    verdict = _verdict_from_counts(counts)
+    suffix = " only" if verdict is ReviewVerdict.APPROVE else ""
+    return f"{verdict.prose} — {', '.join(parts)}{suffix} {_MECHANICAL_NOTE}.\n"
 
-    suffix = " only" if not must and not should else ""
-    return f"{action} — {', '.join(parts)}{suffix} {_MECHANICAL_NOTE}.\n"
+
+# ── Reconciling prose against dropped findings ───────────────────────────────
+
+# The synthesis agent writes the Summary and the Verdict before evidence
+# verification runs, so both describe findings the drop may since have removed.
+# Regenerating them would cost the agent's qualitative assessment, which is the
+# part of a review a reader cannot get from counts. So the prose stays and the
+# review says what left it, next to the prose that is now wrong.
+
+_DROP_NOTE_MARKER = "<!-- verification-drops -->"
+
+
+def _section_bounds(text: str, header: str) -> tuple[int, int] | None:
+    """Character span of a `## <header>` section's body, heading excluded."""
+    m = re.search(rf"^## {re.escape(header)}\s*$", text, re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return None
+    start = m.end()
+    nxt = re.search(r"^## ", text[start:], re.MULTILINE)
+    return start, start + nxt.start() if nxt else len(text)
+
+
+def _drop_note(details: list[dict], dropped: list[str]) -> str:
+    """A blockquote naming every dropped finding and why it went.
+
+    Identified by severity and path rather than by ID: `renumber_findings` runs
+    after the drop, so the IDs the verification recorded no longer point at the
+    findings that survived.
+    """
+    dropped_set = set(dropped)
+    lines = [
+        f"> - {severity_by_key(d['severity']).section} — `{d['path']}`: {_drop_reason(d)}"
+        for d in details
+        if d["id"] in dropped_set
+    ]
+    n = len(lines)
+    header = f"> **Evidence verification removed {n} finding{plural(n)}:**"
+    return "\n".join([_DROP_NOTE_MARKER, header, *lines])
+
+
+def _insert_drop_note(text: str, note: str) -> str:
+    bounds = _section_bounds(text, "Summary")
+    if bounds is None:
+        # No Summary to correct — the mechanical paths build theirs from this
+        # text afterwards, so the note goes above the findings it explains and
+        # ends up directly beneath the summary they generate.
+        first = re.search(r"^## ", text, re.MULTILINE)
+        if first is None:
+            return f"{text.rstrip()}\n\n{note}\n"
+        return f"{text[:first.start()]}{note}\n\n{text[first.start():]}"
+
+    start, end = bounds
+    body = text[start:end].rstrip()
+    return f"{text[:start]}{body}\n\n{note}\n\n{text[end:].lstrip(chr(10))}"
+
+
+def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
+    """Lower a verdict the surviving findings no longer support.
+
+    Dropping only ever removes findings, so a stale verdict can only overstate
+    — the revision lowers, never raises, and leaves an unranked verdict alone.
+    """
+    bounds = _section_bounds(text, "Verdict")
+    if bounds is None:
+        return text
+
+    start, end = bounds
+    body = text[start:end]
+    stated = ReviewVerdict.stated_in(body)
+    supported = _verdict_from_counts(counts)
+    if not stated or not stated.outranks(supported):
+        return text
+
+    parts = _count_parts(counts)
+    remaining = ", ".join(parts) if parts else "no findings"
+    revised = (
+        f"{supported.prose} — {remaining} after evidence verification removed "
+        f"{n_dropped} finding{plural(n_dropped)}.\n"
+    )
+    return f"{text[:start]}\n{revised}\n{text[end:].lstrip(chr(10))}"
+
+
+def reconcile_dropped_findings(text: str, verification: dict) -> str:
+    """Make a review's prose account for the findings verification removed.
+
+    Runs after renumbering, so the counts it reads are the ones the finished
+    file reports.
+    """
+    dropped = verification.get("dropped") or []
+    if not dropped or _DROP_NOTE_MARKER in text:
+        return text
+
+    text = _revise_verdict(text, _count_findings(text), len(dropped))
+    return _insert_drop_note(text, _drop_note(verification.get("details") or [], dropped))
 
 
 def post_process_findings(
@@ -1082,6 +1181,10 @@ def post_process_findings(
     # findings that are actually in this review.
     text = strip_sections(text, [SECTION_PRIOR_FINDINGS])
     text = renumber_findings(text)
+    # After renumbering: the reconciliation reads the counts the finished file
+    # reports, and must not describe findings by IDs renumbering has reassigned.
+    if verification:
+        text = reconcile_dropped_findings(text, verification)
     path.write_text(text)
     return verification
 

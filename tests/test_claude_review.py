@@ -20,7 +20,7 @@ if LIB_DIR not in sys.path:
 import workbench_paths
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
-    FILENAME_POST_SESSION, count_severity, json_summary, parse_review_verdict,
+    FILENAME_POST_SESSION, count_severities, json_summary, parse_review_verdict,
     read_pipeline_status, read_pipeline_warnings, review_file_path,
 )
 import review_gc
@@ -268,10 +268,10 @@ def test_format_usage_model_usage_tokens(cr, tmp_path):
     assert "(1k cached)" in result
 
 
-# ── count_severity ────────────────────────────────────────────────────────────
+# ── count_severities ──────────────────────────────────────────────────────────
 
 
-def test_count_severity_must_fix(cr, tmp_path):
+def test_count_severities_counts_every_severity(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n"
@@ -280,37 +280,39 @@ def test_count_severity_must_fix(cr, tmp_path):
         "## Should fix\n"
         "- **[S1]** path:3 — description\n"
     )
-    assert count_severity(review, "M") == 2
+    assert count_severities(review) == {"M": 2, "S": 1, "N": 0, "I": 0}
 
 
-def test_count_severity_excludes_strikethrough(cr, tmp_path):
+def test_count_severities_excludes_strikethrough(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n"
         "- **[M1]** path:1 — active\n"
         "- ~~**[M2]** path:2 — resolved~~\n"
     )
-    assert count_severity(review, "M") == 1
+    assert count_severities(review)["M"] == 1
 
 
-def test_count_severity_checkbox_findings(cr, tmp_path):
+def test_count_severities_checkbox_findings(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n"
         "- [ ] **[M1]** path:1 — with checkbox\n"
         "- **[M2]** path:2 — without checkbox\n"
     )
-    assert count_severity(review, "M") == 2
+    assert count_severities(review)["M"] == 2
 
 
-def test_count_severity_missing_file(cr, tmp_path):
-    assert count_severity(tmp_path / "nonexistent.md", "M") == 0
+def test_count_severities_missing_file_is_zeroed_not_empty(cr, tmp_path):
+    """Callers index the result directly, so every key must be present."""
+    assert count_severities(tmp_path / "nonexistent.md") == {"M": 0, "S": 0, "N": 0, "I": 0}
+    assert count_severities(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
 
 
-def test_count_severity_empty_file(cr, tmp_path):
+def test_count_severities_empty_file(cr, tmp_path):
     review = tmp_path / "empty.md"
     review.write_text("")
-    assert count_severity(review, "M") == 0
+    assert count_severities(review) == {"M": 0, "S": 0, "N": 0, "I": 0}
 
 
 # ── json_summary ──────────────────────────────────────────────────────────────
@@ -337,7 +339,7 @@ def test_json_summary_with_findings(cr, tmp_path):
     assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
 
 
-def test_json_summary_approve_no_must_fix(cr, tmp_path):
+def test_json_summary_needs_discussion_no_must_fix(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
         "## Should fix\n- **[S1]** path:1 — improvement\n"
@@ -345,8 +347,16 @@ def test_json_summary_approve_no_must_fix(cr, tmp_path):
     )
     result = json_summary("org/repo", "10", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
-    assert data["verdict"] == ReviewVerdict.APPROVE.value
+    assert data["verdict"] == ReviewVerdict.NEEDS_DISCUSSION.value
     assert data["findings"]["total"] == 2
+
+
+def test_json_summary_approve_no_blocking_findings(cr, tmp_path):
+    review = tmp_path / "review.md"
+    review.write_text("## Nit\n- **[N1]** path:2 — style\n")
+    result = json_summary("org/repo", "10", str(review))
+    data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
+    assert data["verdict"] == ReviewVerdict.APPROVE.value
 
 
 def test_json_summary_includes_metadata(cr, tmp_path):
@@ -381,10 +391,11 @@ def test_json_summary_null_metadata_without_meta_json(cr, tmp_path):
 
 
 def test_json_summary_missing_review_file(cr, tmp_path):
+    """No review file is no verdict — not an approval of a review never written."""
     result = json_summary("org/repo", "42", str(tmp_path / "nonexistent.md"))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
     assert data["findings"]["total"] == 0
-    assert data["verdict"] == ReviewVerdict.APPROVE.value
+    assert data["verdict"] == ""
 
 
 def test_json_summary_self_review_no_pr(cr, tmp_path):
@@ -419,39 +430,44 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
 def test_parse_review_verdict_disapprove(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text("## Summary\nSome text\n\n## Verdict\nDisapprove — wrong approach entirely.\n")
-    assert parse_review_verdict(review) == ReviewVerdict.DISAPPROVE.value
+    assert parse_review_verdict(review) is ReviewVerdict.DISAPPROVE
 
 
 def test_parse_review_verdict_disapprove_lowercase(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text("## Verdict\ndisapprove — this should be a config change.\n")
-    assert parse_review_verdict(review) == ReviewVerdict.DISAPPROVE.value
+    assert parse_review_verdict(review) is ReviewVerdict.DISAPPROVE
 
 
-def test_parse_review_verdict_approve_returns_empty(cr, tmp_path):
+def test_parse_review_verdict_reads_every_verdict(cr, tmp_path):
     review = tmp_path / "review.md"
-    review.write_text("## Verdict\nApprove — looks good.\n")
-    assert parse_review_verdict(review) == ""
+    for prose, expected in [
+        ("Approve", ReviewVerdict.APPROVE),
+        ("**Needs discussion**", ReviewVerdict.NEEDS_DISCUSSION),
+        ("Request changes", ReviewVerdict.CHANGES_REQUESTED),
+    ]:
+        review.write_text(f"## Verdict\n{prose} — rationale.\n")
+        assert parse_review_verdict(review) is expected
 
 
-def test_parse_review_verdict_request_changes_returns_empty(cr, tmp_path):
+def test_parse_review_verdict_unrecognised_wording(cr, tmp_path):
     review = tmp_path / "review.md"
-    review.write_text("## Verdict\nRequest changes — 2 must-fix.\n")
-    assert parse_review_verdict(review) == ""
+    review.write_text("## Verdict\nLooks fine to me.\n")
+    assert parse_review_verdict(review) is None
 
 
 def test_parse_review_verdict_no_verdict_section(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text("## Summary\nSome findings.\n## Must fix\n- **[M1]** a:1 — bug\n")
-    assert parse_review_verdict(review) == ""
+    assert parse_review_verdict(review) is None
 
 
 def test_parse_review_verdict_no_file(cr, tmp_path):
-    assert parse_review_verdict(tmp_path / "nonexistent.md") == ""
+    assert parse_review_verdict(tmp_path / "nonexistent.md") is None
 
 
 def test_parse_review_verdict_none_path(cr):
-    assert parse_review_verdict(None) == ""
+    assert parse_review_verdict(None) is None
 
 
 def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):
@@ -468,11 +484,23 @@ def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):
 
 
 def test_json_summary_verdict_not_overridden_by_approve(cr, tmp_path):
-    """When review says Approve, mechanical verdict (from counts) still wins."""
+    """Prose cannot under-report findings that block — the counts win."""
     review = tmp_path / "review.md"
     review.write_text(
         "## Must fix\n- **[M1]** path:1 — bug\n\n"
         "## Verdict\nApprove — looks fine.\n"
+    )
+    result = json_summary("org/repo", "42", str(review))
+    data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
+    assert data["verdict"] == ReviewVerdict.CHANGES_REQUESTED.value
+
+
+def test_json_summary_verdict_keeps_stronger_prose(cr, tmp_path):
+    """Counts cannot discard a stronger call the agent stated."""
+    review = tmp_path / "review.md"
+    review.write_text(
+        "## Nit\n- **[N1]** path:1 — style\n\n"
+        "## Verdict\nRequest changes — the approach needs rework.\n"
     )
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
@@ -904,7 +932,7 @@ def test_format_verdict_with_must_fix(cr, tmp_path):
     review.write_text(
         "## Must fix\n- **[M1]** `file.py:10` — bug\n\n## Verdict\nApprove\n"
     )
-    assert cr._format_verdict(str(review)) == "Changes requested"
+    assert cr._format_verdict(str(review)) == "Request changes"
 
 
 def test_format_verdict_explicit_disapprove(cr, tmp_path):
@@ -1603,8 +1631,7 @@ def test_constants_match_expected(cr):
     assert cr.DEFAULT_MAX_PARALLEL == 1
     assert review_gc.GC_STALE_DAYS == 7
     assert review_gc.PRUNE_MAX_FILES == 10
-    assert len(cr.SEVERITY_PREFIXES) == 4
-    assert len(cr.SEVERITY_JSON_KEYS) == 4
+    assert len(cr.SEVERITIES) == 4
 
 
 # ── _resolve_recover_sha ──────────────────────────────────────────────────────

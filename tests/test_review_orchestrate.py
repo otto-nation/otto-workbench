@@ -2925,6 +2925,165 @@ class TestPostProcessFindings:
         assert "not accounted for" not in capsys.readouterr().err
 
 
+# ── reconcile_dropped_findings ──────────────────────────────────────────────
+
+
+class TestReconcileDroppedFindings:
+    """A review must never describe a finding evidence verification removed.
+
+    The synthesis agent writes the Summary and the Verdict before verification
+    runs, so both are asserted against the finished file rather than against
+    the intermediate dict.
+    """
+
+    @staticmethod
+    def _review(tmp_path, verdict="Request changes — the unchecked error is a bug.", extra=""):
+        """A review whose Summary names a must-fix that will not verify."""
+        (tmp_path / "kept.py").write_text("x = 1\n")
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Summary\n"
+            "Solid change overall; the most serious problem is the unchecked "
+            "error in `deleted.py`.\n"
+            "## Must fix\n"
+            "- **[M1]** **`deleted.py:10`** — the error is never checked\n"
+            f"{extra}"
+            "## Nit\n"
+            "- **[N1]** **`kept.py:1`** — prefer a constant\n"
+            f"## Verdict\n{verdict}\n"
+        )
+        return review
+
+    def test_drop_leaves_a_note_naming_what_went(self, ro, tmp_path):
+        review = self._review(tmp_path)
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "Evidence verification removed 1 finding:" in result
+        assert "> - Must fix — `deleted.py`: file not found" in result
+        # The finding itself is gone, so only the note may mention it.
+        assert "the error is never checked" not in result
+
+    def test_note_lands_in_the_summary_it_corrects(self, ro, tmp_path):
+        review = self._review(tmp_path)
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        summary = result.index("## Summary")
+        note = result.index("Evidence verification removed")
+        assert summary < note < result.index("## Must fix")
+
+    def test_note_does_not_cite_renumbered_ids(self, ro, tmp_path):
+        # Two must-fix findings, the second surviving and renumbered M2 -> M1.
+        review = self._review(
+            tmp_path,
+            extra="- **[M2]** **`kept.py:1`** — also worth fixing\n",
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        note = result[result.index("Evidence verification removed"):]
+        note = note[:note.index("## ")]
+        assert "[M1]" not in note and "[M2]" not in note
+        # M2 survived and took M1's number — citing the dropped ID would point
+        # the reader at it.
+        assert "- **[M1]** **`kept.py:1`**" in result
+
+    def test_verdict_is_lowered_to_what_survives(self, ro, tmp_path):
+        review = self._review(tmp_path)
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        verdict = result[result.index("## Verdict"):]
+        assert verdict.strip().startswith("## Verdict\nApprove — 1 nit")
+        assert "Request changes" not in result
+
+    def test_disapprove_is_never_lowered(self, ro, tmp_path):
+        # Disapprove means the approach is wrong, which the finding counts do
+        # not derive — dropping a finding cannot refute it. The note still says
+        # what went, so the reader can weigh the verdict against it.
+        review = self._review(tmp_path, verdict="**Disapprove** — the approach is wrong.")
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "**Disapprove** — the approach is wrong." in result
+        assert "Evidence verification removed 1 finding:" in result
+
+    def test_verdict_the_counts_still_support_is_left_alone(self, ro, tmp_path):
+        review = self._review(
+            tmp_path,
+            extra="- **[M2]** **`kept.py:1`** — also worth fixing\n",
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "Request changes — the unchecked error is a bug." in result
+        assert "Evidence verification removed 1 finding:" in result
+
+    def test_no_note_when_nothing_dropped(self, ro, tmp_path):
+        (tmp_path / "kept.py").write_text("x = 1\n")
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Summary\nOne real problem.\n"
+            "## Must fix\n- **[M1]** **`kept.py:1`** — the error is never checked\n"
+            "## Verdict\nRequest changes — worth fixing.\n"
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "Evidence verification" not in result
+        assert "Request changes — worth fixing." in result
+
+    def test_second_pass_does_not_stack_notes(self, ro, tmp_path):
+        review = self._review(tmp_path)
+        ro.post_process_findings(str(review), str(tmp_path))
+        ro.post_process_findings(str(review), str(tmp_path))
+        assert review.read_text().count("Evidence verification removed") == 1
+
+    def test_note_survives_without_a_summary_section(self, ro, tmp_path):
+        # The mechanical paths post-process the merged content, which has no
+        # Summary — they build one from the processed text afterwards.
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n- **[M1]** **`deleted.py:10`** — the error is never checked\n"
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert result.index("Evidence verification removed") < result.index("## Must fix")
+
+    def test_drop_reason_reports_evidence_mismatch_with_char_offset(self, ro, tmp_path):
+        # kept.py exists, so the drop is a content mismatch rather than a
+        # missing file — the reason must name the offset, not "file not found".
+        (tmp_path / "kept.py").write_text("x = 1\n")
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Summary\nOne real problem.\n"
+            "## Must fix\n"
+            "- **[M1]** **`kept.py:1`** — quotes code that is not there\n"
+            "  > ```python\n"
+            "  > y = 2\n"
+            "  > ```\n"
+            "## Verdict\nRequest changes — worth fixing.\n"
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "> - Must fix — `kept.py`: evidence mismatch at char" in result
+
+    def test_drop_note_pluralizes_the_header_for_multiple_findings(self, ro, tmp_path):
+        review = self._review(
+            tmp_path,
+            extra="- **[M2]** **`also-deleted.py:1`** — another error never checked\n",
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "Evidence verification removed 2 findings:" in result
+        assert "> - Must fix — `deleted.py`: file not found" in result
+        assert "> - Must fix — `also-deleted.py`: file not found" in result
+
+
 # ── build_mechanical_review ─────────────────────────────────────────────────
 
 

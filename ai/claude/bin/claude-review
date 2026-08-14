@@ -34,10 +34,10 @@ except ImportError:
 from review_common import (
     FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
     FILENAME_SESSION, REVIEW_EXT,
-    SEVERITY_COUNT_RE_FMT, SEVERITY_JSON_KEYS, SEVERITY_PREFIXES,
+    SEVERITY_COUNT_RE_FMT,
     SEVERITIES,
     Mode, ReviewMeta, ReviewType, aggregate_session_usage, build_failure_detail,
-    count_severity, detect_repo, json_summary, parse_review_verdict,
+    count_severities, detect_repo, json_summary, resolve_review_verdict,
     read_pipeline_status, read_pipeline_warnings, read_review_meta,
     review_file_path, review_meta_from_dict,
 )
@@ -226,23 +226,17 @@ def _format_findings_line(review_file: str) -> str:
     review_path = Path(review_file) if review_file else None
     if not review_path or not review_path.is_file():
         return ""
-    parts = []
-    for sev in SEVERITIES:
-        c = count_severity(review_path, sev.key)
-        if c > 0:
-            parts.append(f"{c} {sev.section.lower()}")
+    counts = count_severities(review_path)
+    parts = [
+        f"{counts[sev.key]} {sev.section.lower()}"
+        for sev in SEVERITIES if counts[sev.key] > 0
+    ]
     return ", ".join(parts)
 
 
 def _format_verdict(review_file: str) -> str:
-    review_path = Path(review_file) if review_file else None
-    parsed = parse_review_verdict(review_path)
-    if parsed:
-        return parsed.capitalize()
-    if not review_path or not review_path.is_file():
-        return ""
-    must = count_severity(review_path, "M")
-    return "Changes requested" if must > 0 else "Approve"
+    verdict = resolve_review_verdict(Path(review_file) if review_file else None)
+    return verdict.prose if verdict else ""
 
 
 def _print_summary(
@@ -300,25 +294,16 @@ def _update_pr_state(
     review_path = Path(review_file)
     review_dir = review_path.parent
 
-    finding_counts = {}
-    for prefix, key in zip(SEVERITY_PREFIXES, SEVERITY_JSON_KEYS):
-        c = count_severity(review_path, prefix)
-        if c > 0:
-            finding_counts[key] = c
+    by_key = count_severities(review_path)
+    finding_counts = {s.json_key: by_key[s.key] for s in SEVERITIES if by_key[s.key]}
 
     meta = read_review_meta(review_dir)
     # Mode, not review type. A self-review has no PR to approve or block; how
     # much of the branch it covered is a separate question, and both are recorded.
-    if mode is Mode.SELF:
-        verdict = ""
-    else:
-        parsed_verdict = parse_review_verdict(review_path)
-        if parsed_verdict:
-            verdict = parsed_verdict
-        else:
-            must_count = finding_counts.get("must_fix", 0)
-            verdict = (pr_state.ReviewVerdict.CHANGES_REQUESTED.value if must_count > 0
-                       else pr_state.ReviewVerdict.APPROVE.value)
+    resolved = resolve_review_verdict(
+        review_path, counts=by_key, self_review=mode is Mode.SELF,
+    )
+    verdict = resolved.value if resolved else ""
     usage = aggregate_session_usage(review_dir)
 
     status = read_pipeline_status(review_dir)

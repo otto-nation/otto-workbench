@@ -287,7 +287,7 @@ One sentence on what the change does and overall quality.
 - **[I1]** **`<file>:<line>`** — <finding>
 
 ## Verdict
-Approve / Request changes / Needs discussion
+Approve / Needs discussion / Request changes / Disapprove
 ```
 
 Section headers MUST be exactly `## Must fix`, `## Should fix`, `## Nit`, `## Idioms`, `## Verdict` — h2 level, no hyphens, no nesting under a parent like `## Findings`. The posting tool parses these headers mechanically.

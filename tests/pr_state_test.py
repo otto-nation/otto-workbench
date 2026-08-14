@@ -1280,3 +1280,55 @@ def test_apply_fix_replaces_deferred_issue_when_supplied():
     apply(state, FixSummary(deferred_issue_id="ENG-2", deferred_issue_url="u2"))
     assert state.fix.deferred_issue_id == "ENG-2"
     assert state.fix.deferred_issue_url == "u2"
+
+
+# ── ReviewVerdict ───────────────────────────────────────────────────────────
+
+
+def test_review_verdict_value_is_the_persisted_spelling():
+    """Serialized state keeps the snake-case values it always held."""
+    assert ReviewVerdict.APPROVE.value == "approve"
+    assert ReviewVerdict.CHANGES_REQUESTED.value == "changes_requested"
+    assert ReviewVerdict.DISAPPROVE.value == "disapprove"
+
+
+def test_review_verdict_prose_is_the_spelling_reviews_are_written_in():
+    assert ReviewVerdict.CHANGES_REQUESTED.prose == "Request changes"
+    assert ReviewVerdict.NEEDS_DISCUSSION.prose == "Needs discussion"
+
+
+@pytest.mark.parametrize("must,should,expected", [
+    (2, 3, ReviewVerdict.CHANGES_REQUESTED),
+    (1, 0, ReviewVerdict.CHANGES_REQUESTED),
+    (0, 1, ReviewVerdict.NEEDS_DISCUSSION),
+    (0, 0, ReviewVerdict.APPROVE),
+])
+def test_review_verdict_from_counts(must, should, expected):
+    assert ReviewVerdict.from_counts(must, should) is expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Approve — looks good.", ReviewVerdict.APPROVE),
+    ("**Needs discussion** — two open questions.", ReviewVerdict.NEEDS_DISCUSSION),
+    ("request changes — a bug.", ReviewVerdict.CHANGES_REQUESTED),
+    ("  Disapprove — wrong approach.", ReviewVerdict.DISAPPROVE),
+    ("Looks fine to me.", None),
+    ("", None),
+])
+def test_review_verdict_stated_in(text, expected):
+    assert ReviewVerdict.stated_in(text) is expected
+
+
+def test_review_verdict_outranks_orders_the_derivable_calls():
+    assert ReviewVerdict.CHANGES_REQUESTED.outranks(ReviewVerdict.NEEDS_DISCUSSION)
+    assert ReviewVerdict.NEEDS_DISCUSSION.outranks(ReviewVerdict.APPROVE)
+    assert not ReviewVerdict.APPROVE.outranks(ReviewVerdict.CHANGES_REQUESTED)
+    assert not ReviewVerdict.APPROVE.outranks(ReviewVerdict.APPROVE)
+
+
+def test_review_verdict_disapprove_is_outside_the_ranking():
+    """No finding count implies Disapprove, and none refutes it."""
+    assert ReviewVerdict.DISAPPROVE.rank is None
+    assert not ReviewVerdict.DISAPPROVE.outranks(ReviewVerdict.APPROVE)
+    assert not ReviewVerdict.CHANGES_REQUESTED.outranks(ReviewVerdict.DISAPPROVE)
+    assert not ReviewVerdict.APPROVE.outranks(None)

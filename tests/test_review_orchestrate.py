@@ -3052,6 +3052,37 @@ class TestReconcileDroppedFindings:
 
         assert result.index("Evidence verification removed") < result.index("## Must fix")
 
+    def test_drop_reason_reports_evidence_mismatch_with_char_offset(self, ro, tmp_path):
+        # kept.py exists, so the drop is a content mismatch rather than a
+        # missing file — the reason must name the offset, not "file not found".
+        (tmp_path / "kept.py").write_text("x = 1\n")
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Summary\nOne real problem.\n"
+            "## Must fix\n"
+            "- **[M1]** **`kept.py:1`** — quotes code that is not there\n"
+            "  > ```python\n"
+            "  > y = 2\n"
+            "  > ```\n"
+            "## Verdict\nRequest changes — worth fixing.\n"
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "> - Must fix — `kept.py`: evidence mismatch at char" in result
+
+    def test_drop_note_pluralizes_the_header_for_multiple_findings(self, ro, tmp_path):
+        review = self._review(
+            tmp_path,
+            extra="- **[M2]** **`also-deleted.py:1`** — another error never checked\n",
+        )
+        ro.post_process_findings(str(review), str(tmp_path))
+        result = review.read_text()
+
+        assert "Evidence verification removed 2 findings:" in result
+        assert "> - Must fix — `deleted.py`: file not found" in result
+        assert "> - Must fix — `also-deleted.py`: file not found" in result
+
 
 # ── build_mechanical_review ─────────────────────────────────────────────────
 

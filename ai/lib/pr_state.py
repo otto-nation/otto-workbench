@@ -113,6 +113,10 @@ class ReviewVerdict(Enum):
     deliberately unranked: per `review-templates/synthesis.md` it means the
     overall approach is wrong and the PR should not land in any form — a
     holistic judgment no count implies and none refutes.
+
+    Declaration order is significant: `VERDICT_OPTIONS` in `review_prompt.py`
+    renders the options the synthesis prompt offers by iterating this enum, so
+    reordering these members reorders what agents are asked to choose from.
     """
 
     APPROVE = ("approve", "Approve", 0)

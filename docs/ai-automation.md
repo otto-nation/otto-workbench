@@ -607,6 +607,10 @@ what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
+The lowering rule above only ever revises a verdict a drop leaves unsupported;
+it is not the whole story of how a verdict ends up recorded. See the next
+section for that.
+
 ### How a review's verdict is decided
 
 `ReviewVerdict` owns the four verdicts in both spellings they are written in: the

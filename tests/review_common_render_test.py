@@ -168,3 +168,11 @@ def test_resolve_verdict_self_review_still_reports_disapprove(tmp_path):
 def test_resolve_verdict_missing_file_has_no_verdict(tmp_path):
     assert resolve_review_verdict(tmp_path / "nope.md") is None
     assert resolve_review_verdict(None) is None
+
+
+def test_resolve_verdict_uses_passed_counts_instead_of_rereading(tmp_path):
+    # The file itself has no findings at all — if resolve_review_verdict re-read
+    # it instead of trusting the passed counts, this would resolve to Approve.
+    review = _review(tmp_path, "## Verdict\nRequest changes — rework it.\n")
+    result = resolve_review_verdict(review, counts={"M": 0, "S": 1})
+    assert result is pr_state.ReviewVerdict.CHANGES_REQUESTED

@@ -384,14 +384,15 @@ main() {
   done < <(printf '%s\n' "${!dir_files[@]}" | sort)
 
   # ── Split directories into detailed and indexed ────────────────────────
-  # Per-file tables are capped at MAX_FILES so anatomy.md stays small enough to
-  # read. The cut lands on a directory boundary, and every directory past it is
-  # still listed in the Directory Index below — a repo over the cap loses
-  # per-file detail, never whole areas.
+  # A directory gets a per-file table only if it fits in what is left of the
+  # MAX_FILES budget, so the total row count is bounded even when one directory
+  # is enormous on its own. Everything that does not fit is still listed in the
+  # Directory Index below — a repo over the cap loses per-file detail, never
+  # whole areas.
   local -a detail_dirs=() index_dirs=()
   local detailed=0
   for dir in "${sorted_dirs[@]}"; do
-    if [[ $detailed -lt $MAX_FILES ]]; then
+    if [[ $((detailed + dir_counts["$dir"])) -le $MAX_FILES ]]; then
       detail_dirs+=("$dir")
       detailed=$((detailed + dir_counts["$dir"]))
     else

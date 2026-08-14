@@ -96,6 +96,24 @@ _make_dirs() {
   [ "$missing" -eq 0 ]
 }
 
+@test "a single directory larger than MAX_FILES is indexed, not detailed" {
+  # One dir of 2100 files exceeds the 2000-file budget on its own. The budget is
+  # a bound on the whole document, so this directory gets an index row only.
+  _make_dirs 1 2100
+  _init_repo
+
+  run bash "$GEN_ANATOMY" "$REPO"
+  [ "$status" -eq 0 ]
+
+  grep -q '^| area-000/ | 2100 |' "$REPO/.claude/anatomy.md"
+  run grep -c '^| f[0-9]' "$REPO/.claude/anatomy.md"
+  [ "$output" -eq 0 ]
+
+  run head -2 "$REPO/.claude/anatomy.md"
+  [[ "$output" == *"detailed: 0 in 0 dirs"* ]]
+  [[ "$output" == *"indexed: 1 dirs"* ]]
+}
+
 @test "header reports detailed and indexed counts separately" {
   _make_dirs 60 40
   _init_repo

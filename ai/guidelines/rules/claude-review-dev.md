@@ -19,7 +19,7 @@ When adding or modifying a review phase, verify these integration points:
 
 ## Debugging claude-review
 
-Review artifacts live in `~/.config/workbench/reviews/{repo}-{pr_or_branch}/`:
+Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}/`:
 
 | File | Survives success | Purpose |
 |------|-----------------|---------|

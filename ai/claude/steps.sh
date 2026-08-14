@@ -182,11 +182,14 @@ step_claude_settings() {
 
   # Inject additionalDirectories — workbench-managed paths Claude needs access to
   local dirs_json
+  # The config root is named separately now that it no longer sits inside the
+  # state root — $HOME/.local covers the state root's new home, not ~/.config.
   dirs_json=$(jq -n \
     --arg claude "$CLAUDE_DIR" \
+    --arg config "$WORKBENCH_CONFIG_DIR" \
     --arg state "$WORKBENCH_STATE_DIR" \
     --arg local "$HOME/.local" \
-    '[$claude, $local, $state]')
+    '[$claude, $local, $config, $state] | unique')
   template=$(jq --argjson dirs "$dirs_json" \
     '.permissions.additionalDirectories = $dirs' <<< "$template")
 

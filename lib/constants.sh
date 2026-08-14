@@ -58,6 +58,11 @@ TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
 # shellcheck source=./roots.sh
 . "$(dirname "${BASH_SOURCE[0]}")/roots.sh"
 
+# The single root everything used to share, before #624 split it three ways.
+# Only adopt_legacy_workbench_root in lib/migrations.sh reads this — it is the
+# path being emptied, not a path anything should still write to.
+LEGACY_WORKBENCH_ROOT="$HOME/.config/workbench"
+
 # Core components — always synced, never tracked in install.yml.
 CORE_COMPONENTS="bin git zsh task"
 
@@ -73,6 +78,9 @@ MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
 # maintenance status`.
 MAINTENANCE_LAST_FILE="$WORKBENCH_STATE_DIR/maintenance.last"
 INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
+# State despite the name reading like config: lib/state.sh writes it through
+# state_record and state_set, and it is what installed.components migrated
+# into. The hand-authored settings are overrides/ under the config root.
 INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 
 # ─── Claude Code ──────────────────────────────────────────────────────────────
@@ -149,8 +157,8 @@ CLAUDE_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/skills"
 CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
 CLAUDE_TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
 
-# ─── User overrides (machine-local customizations in ~/.config/workbench/) ───
-USER_AI_DIR="$WORKBENCH_STATE_DIR/overrides/ai"
+# ─── User overrides (hand-authored, so they live under the config root) ──────
+USER_AI_DIR="$WORKBENCH_CONFIG_DIR/overrides/ai"
 USER_CLAUDE_DIR="$USER_AI_DIR/claude"
 USER_AGENTS_DIR="$USER_CLAUDE_DIR/agents"
 USER_SKILLS_DIR="$USER_CLAUDE_DIR/skills"

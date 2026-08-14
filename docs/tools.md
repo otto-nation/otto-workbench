@@ -234,7 +234,7 @@ claude-review post <pr_url_or_number>
 | `--no-post` | Skip all interactive prompts; run review and exit | — |
 | `--post` | Run review then post automatically (fully headless) | — |
 | `--submit` | Submit the review (use with `--post` for fully headless) | — |
-| `--self` | Self-review mode: output to `~/.config/workbench/reviews/<repo>-self-<branch>/review.md` | — |
+| `--self` | Self-review mode: output to `~/.local/state/workbench/reviews/<repo>-self-<branch>/review.md` | — |
 | `--skip-user-verification` | Skip ownership check in self-review mode | — |
 | `--force` | Skip pending review and stale review warnings | — |
 | `--no-holistic` | Skip holistic phase in multi-phase reviews | — |

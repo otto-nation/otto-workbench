@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import log
 import publishing
-import review_common
+import workbench_paths
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
@@ -75,13 +75,17 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
 
 
 def _find_config_file(wt_path: str | None) -> str:
-    """Locate the review.yml config file, or return empty string."""
+    """Locate the review.yml config file, or return empty string.
+
+    Hand-authored, so the machine-wide copy sits under the config root rather
+    than beside the reviews it configures.
+    """
     if wt_path:
         project_cfg = os.path.join(wt_path, _CONFIG_DIR, _CONFIG_FILE)
         if os.path.isfile(project_cfg):
             return project_cfg
 
-    candidate = str(review_common.workbench_dir() / _CONFIG_FILE)
+    candidate = str(workbench_paths.config_dir() / _CONFIG_FILE)
     if os.path.isfile(candidate):
         return candidate
 

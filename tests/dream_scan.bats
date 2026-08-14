@@ -8,6 +8,7 @@ setup() {
   common_setup
   TMPDIR="$(mktemp -d)"
   DREAM_SCAN="$REPO_ROOT/ai/claude/bin/dream-scan"
+  sandbox_state_dir
 }
 
 teardown() {

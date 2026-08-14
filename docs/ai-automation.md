@@ -650,6 +650,21 @@ derived from the argparse actions, and an annotated output schema. It is how the
 server discovers tools, and it is what the skill reference above cites for `ci-check`
 and `pr-rebase`.
 
+The output schema is generated from the tool's dataclass by
+[`ai/lib/schema_gen.py`](../ai/lib/schema_gen.py), which describes what
+[`serde`](../ai/lib/serde.py) will accept for each field rather than deciding that
+for itself: `serde.classify` sorts a type hint into a `HintKind`, and both the
+reader and the schema emitter dispatch on that one answer. A new kind fails a test
+in every module that has to handle it, which is what keeps the published contract
+from drifting from the reader.
+
+One case needs the dataclass's help. A class that reads more than one stored shape
+through `_from_raw` — a legacy string, a renamed key — is the only thing that knows
+what those shapes are, so it also defines `_raw_schema(object_schema)`, returning
+the widened fragment. Without it the published schema would call a document invalid
+that `serde` reads without complaint; a test fails any `_from_raw` class in
+`ai/lib/` that does not define one.
+
 `--value-flags` prints one option string per line: every option of that parser that
 consumes a following value. `pr` asks a delegate this before deciding whether a bare
 token is the command's target or some other flag's argument. Without it,

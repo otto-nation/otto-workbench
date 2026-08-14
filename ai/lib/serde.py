@@ -2,6 +2,10 @@
 
 Replaces hand-written _to_dict/_from_dict pairs. Uses dataclasses.asdict()
 for serialization and type-hint-driven reconstruction for deserialization.
+
+`classify` is the type-hint walk itself, exported because reading a value is
+not the only thing that has to know what an annotation means — `schema_gen`
+describes the same hints to a model and dispatches on the same answer.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ import dataclasses
 import json
 import os
 import tempfile
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints
 
@@ -138,96 +142,171 @@ def write_json(path: Path, data) -> None:
         raise
 
 
+class HintKind(StrEnum):
+    """What a type hint is, for everything that has to walk one.
+
+    `classify` is the single owner of the question "what does this annotation
+    mean". `_coerce` answers it with a value and `schema_gen` answers it with a
+    JSON Schema fragment, and neither re-derives the question — two independent
+    walks over `get_origin`/`get_args` is how the two drifted apart before.
+
+    Adding a member is adding a capability: both dispatch tables are keyed on
+    this enum and a test walks its members, so a new kind is a failing test in
+    every module that has to handle it rather than a silent fallthrough.
+    """
+
+    OPTIONAL = "optional"
+    FROM_RAW = "from_raw"
+    DATACLASS = "dataclass"
+    ENUM = "enum"
+    SCALAR = "scalar"
+    LIST = "list"
+    TUPLE = "tuple"
+    DICT = "dict"
+    OPAQUE = "opaque"
+
+
+# The kinds that read a `None` as something other than "field omitted". Every
+# other kind — enum, scalar, list, tuple, dict, and the `_from_raw` hook, which
+# has no null form of its own — takes the shared rule in `_coerce`.
+_NULL_AWARE = frozenset({HintKind.OPTIONAL, HintKind.DATACLASS})
+
+
+def classify(hint) -> tuple[HintKind, tuple]:
+    """Sort a type hint into a `HintKind` and the type arguments that kind uses.
+
+    The returned args are what the kind's handler needs, not `get_args` verbatim:
+    OPTIONAL yields the non-None members, containers yield their element types,
+    and a kind that needs nothing from the annotation yields `()`. A bare
+    `list`/`tuple`/`dict` is its own kind with no args — shape is all it states.
+    """
+    args = get_args(hint)
+    origin = get_origin(hint)
+    is_type = isinstance(hint, type)
+
+    # Optional[X] / X | None. A union with no non-None member is not a hint any
+    # of this can act on, so it falls through to OPAQUE with the rest.
+    if args and type(None) in args:
+        non_none = tuple(a for a in args if a is not type(None))
+        if non_none:
+            return HintKind.OPTIONAL, non_none
+
+    if is_type and dataclasses.is_dataclass(hint):
+        # A class stored in more than one shape owns its own reconstruction.
+        # The plain dataclass path only knows how to read a dict.
+        return (HintKind.FROM_RAW if hasattr(hint, "_from_raw") else HintKind.DATACLASS), ()
+
+    if is_type and issubclass(hint, Enum):
+        return HintKind.ENUM, ()
+
+    if hint in _SCALARS:
+        return HintKind.SCALAR, ()
+
+    if origin is list or hint is list:
+        return HintKind.LIST, args
+    if origin is tuple or hint is tuple:
+        return HintKind.TUPLE, args
+    if origin is dict or hint is dict:
+        # A dict hint carries a key type as well, and only a full pair is usable.
+        return HintKind.DICT, args if len(args) >= 2 else ()
+
+    return HintKind.OPAQUE, ()
+
+
 def _identity(value):
     return value
 
 
 def _coerce(hint, value):
     """Coerce a raw value to match its type hint."""
-    origin = get_origin(hint)
-    args = get_args(hint)
+    kind, args = classify(hint)
 
-    # Optional[X] / X | None — union types containing None
-    if args and type(None) in args:
-        non_none = [a for a in args if a is not type(None)]
-        if value is None:
-            return None
-        if non_none:
-            return _coerce(non_none[0], value)
-        return value
-
-    # Nested dataclass. A class that can be stored in more than one shape owns
-    # its own reconstruction through `_from_raw` — the plain path below only
-    # knows how to read a dict.
-    is_dataclass_hint = isinstance(hint, type) and dataclasses.is_dataclass(hint)
-    if is_dataclass_hint and hasattr(hint, "_from_raw"):
-        # `_from_raw` owns every shape this type is stored in, but no type
-        # has a null form. Route a null to the same place a missing key
-        # goes rather than into a hook that will mis-handle it: a field
-        # with a default gets that default, one without still raises
-        # TypeError from `cls(**kwargs)`.
-        if value is None:
-            raise _Omitted
-        return hint._from_raw(value)
-    if is_dataclass_hint:
-        # An explicit `null` on a nested-dataclass field means "value omitted",
-        # matching from_dict's own `if data is None: data = {}` guard one level up.
-        # A dataclass has no null state of its own — treating None as {} here
-        # lets fields with defaults reconstruct as a default instance, and
-        # lets a dataclass with required fields (e.g. PRIdentity) still raise
-        # TypeError, rather than smuggling a bare None past the type hint.
-        if value is None:
-            value = {}
-        if not isinstance(value, dict):
-            raise _Omitted
-        return from_dict(hint, value)
-
-    # Every hint below this line — enum, scalar, list, tuple, dict — has no
-    # null form of its own. An explicit `null` written for one means what a
-    # missing key means: use the field's default. Only a hand-edited or
+    # Every kind but the two that own a null reads one the way it reads a
+    # missing key: use the field's default. Only a hand-edited or
     # partially-written file produces one, since `to_dict` emits real values;
     # the alternative is a `None` sitting behind an `int` hint until a reader
     # does arithmetic on it. A field with no default still raises TypeError
-    # from `cls(**kwargs)`, exactly as an absent key does.
-    if value is None:
+    # from `cls(**kwargs)`, exactly as an absent key does. For a `_from_raw`
+    # type that means the hook never sees a null it would have to invent a
+    # value for.
+    if value is None and kind not in _NULL_AWARE:
         raise _Omitted
 
-    # Enum
-    if isinstance(hint, type) and issubclass(hint, Enum):
-        if isinstance(value, hint):
-            return value
-        return hint(value)
+    return _COERCERS[kind](hint, args, value)
 
-    # Scalar — bool, int, float, str. See _coerce_scalar for the rules.
-    if hint in _SCALARS:
-        return _coerce_scalar(hint, value)
 
-    # A value that cannot be the container its hint names is an omitted field,
-    # not a value to pass through. Returning it verbatim would plant a str
-    # behind a `list[X]` hint for the first loop over it to trip on. A bare
-    # `list`/`tuple`/`dict` hint carries no element type, so shape is all
-    # there is to check.
-    if origin is list or hint is list:
-        if not isinstance(value, list):
-            raise _Omitted
-        return [_coerce(args[0], v) for v in value] if args else value
+def _coerce_optional(hint, args, value):
+    return None if value is None else _coerce(args[0], value)
 
-    if origin is tuple or hint is tuple:
-        if not isinstance(value, (list, tuple)):
-            raise _Omitted
-        return tuple(_coerce(args[0], v) for v in value) if args else tuple(value)
 
-    # dict[K, V] — coerce values, and int keys back from the strings JSON made
-    # of them. Only int: every other key type survives the trip as itself.
-    if origin is dict or hint is dict:
-        if not isinstance(value, dict):
-            raise _Omitted
-        if len(args) < 2:
-            return value
-        coerce_key = int if args[0] is int else _identity
-        return {coerce_key(k): _coerce(args[1], v) for k, v in value.items()}
+def _coerce_from_raw(hint, args, value):
+    return hint._from_raw(value)
 
+
+def _coerce_dataclass(hint, args, value):
+    # An explicit `null` on a nested-dataclass field means "value omitted",
+    # matching from_dict's own `if data is None: data = {}` guard one level up.
+    # A dataclass has no null state of its own — treating None as {} here
+    # lets fields with defaults reconstruct as a default instance, and
+    # lets a dataclass with required fields (e.g. PRIdentity) still raise
+    # TypeError, rather than smuggling a bare None past the type hint.
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise _Omitted
+    return from_dict(hint, value)
+
+
+def _coerce_enum(hint, args, value):
+    if isinstance(value, hint):
+        return value
+    return hint(value)
+
+
+# A value that cannot be the container its hint names is an omitted field, not
+# a value to pass through. Returning it verbatim would plant a str behind a
+# `list[X]` hint for the first loop over it to trip on. A bare `list`/`tuple`/
+# `dict` hint carries no element type, so shape is all there is to check.
+def _coerce_list(hint, args, value):
+    if not isinstance(value, list):
+        raise _Omitted
+    return [_coerce(args[0], v) for v in value] if args else value
+
+
+def _coerce_tuple(hint, args, value):
+    if not isinstance(value, (list, tuple)):
+        raise _Omitted
+    return tuple(_coerce(args[0], v) for v in value) if args else tuple(value)
+
+
+def _coerce_dict(hint, args, value):
+    """dict[K, V] — coerce values, and int keys back from the strings JSON made
+    of them. Only int: every other key type survives the trip as itself."""
+    if not isinstance(value, dict):
+        raise _Omitted
+    if not args:
+        return value
+    coerce_key = int if args[0] is int else _identity
+    return {coerce_key(k): _coerce(args[1], v) for k, v in value.items()}
+
+
+def _coerce_opaque(hint, args, value):
+    """A hint nothing here can act on — a bare union, an unparameterised alias.
+    The written value is the best available answer."""
     return value
+
+
+_COERCERS = {
+    HintKind.OPTIONAL: _coerce_optional,
+    HintKind.FROM_RAW: _coerce_from_raw,
+    HintKind.DATACLASS: _coerce_dataclass,
+    HintKind.ENUM: _coerce_enum,
+    HintKind.SCALAR: lambda hint, args, value: _coerce_scalar(hint, value),
+    HintKind.LIST: _coerce_list,
+    HintKind.TUPLE: _coerce_tuple,
+    HintKind.DICT: _coerce_dict,
+    HintKind.OPAQUE: _coerce_opaque,
+}
 
 
 def _coerce_scalar(hint, value):

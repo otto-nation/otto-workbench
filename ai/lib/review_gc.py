@@ -11,9 +11,9 @@ from datetime import datetime
 from pathlib import Path
 
 import log
+import pr_state
 import pr_target
 import run_lock
-import workbench_paths
 from pr_state import ReviewStatus
 from review_common import (
     FILENAME_META,
@@ -177,17 +177,25 @@ def _prune_one_target(target: Path) -> bool:
     one inode — deleting it out from under a running review would let the next
     contender create a fresh file and take an uncontended lock while the first
     is still working. Taking the lock first is how we learn nobody is there.
+
+    Returns whether the directory is actually gone. `ignore_errors=True` keeps
+    a permission-denied subdir from aborting the rest of the sweep, but that
+    means rmtree can fail partway through, so a caller that trusted a bare
+    "did not raise" would log and count a target that is still there — and if
+    state.json alone went, the next sweep's glob would never revisit it.
     """
     try:
         with run_lock.acquire(target, command="pr gc", started=""):
             shutil.rmtree(target, ignore_errors=True)
     except run_lock.LockBusy:
         return False
-    return True
+    return not target.exists()
 
 
 def _prune_and_count(target: Path, message: str) -> int:
-    """Prune *target*, logging *message* first. Returns 1 if it happened.
+    """Prune *target*, logging *message* after a successful prune. Returns 1 if it happened.
+
+    A busy or partially-failed prune returns 0 and logs nothing.
 
     Factored out of prune_merged_targets's loop body so neither of its two
     call sites nests a second `if` inside the loop's `if`.
@@ -210,10 +218,13 @@ def prune_merged_targets(targets_dir: Path | None = None,
     `skip` is the caller's own target. It cannot be detected by trying the lock:
     the caller already holds it, so LOCK_ENV would pass us straight through into
     deleting live state.
-    """
-    import pr_state
 
-    targets_dir = targets_dir or (workbench_paths.state_dir() / pr_target.TARGETS_DIR)
+    `max_files` bounds how many PRs this call asks GitHub about, not how many
+    targets it can recover. A corrupt state file is dropped for free, without
+    touching the budget, because deleting it costs no network call — the
+    budget exists to bound `gh` questions, not local unlinks.
+    """
+    targets_dir = targets_dir or pr_target.targets_root()
     if not targets_dir.is_dir():
         return 0
 
@@ -231,6 +242,11 @@ def prune_merged_targets(targets_dir: Path | None = None,
             # Nothing here is authoritative, so dropping it is a clean recovery.
             pruned += _prune_and_count(target, f"Pruned unreadable target state at {target.name}")
             continue
+        # ceiling: a target for a branch that never opens a PR is never
+        # reclaimed, because the only liveness signal this sweep has is the
+        # PR's close state. Upgrade trigger: if these accumulate enough to
+        # matter, add a second signal (the branch no longer existing on the
+        # remote) rather than an age cutoff.
         if not state.identity.pr_number or not state.identity.repo:
             continue
         checked += 1

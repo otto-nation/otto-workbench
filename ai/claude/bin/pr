@@ -418,6 +418,11 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
+# ceiling: this sweep runs on every `pr gc` forever, with no removal
+# trigger of its own. Deliberate — the pre-target layout it cleans up after
+# has no expiry, so neither does the code that reclaims it. Upgrade trigger:
+# once the target-scoped layout has shipped long enough that no worktree
+# still carries the legacy files, delete this function and its call site.
 def _sweep_legacy_state(worktree_root: Path) -> int:
     """Remove state and lock files the pre-target layout left in a worktree.
 

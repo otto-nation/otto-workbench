@@ -255,9 +255,20 @@ def repo_key_from_origin(cwd: str | None = None) -> str | None:
     return _repo_key(r.stdout.strip())
 
 
+def targets_root() -> Path:
+    """The directory every run's target lives under, before the repo-branch key.
+
+    A function, not a module constant: ``state_dir()`` resolves per call, and
+    caching this at import time is what would break ``WORKBENCH_STATE_DIR``
+    monkeypatching in tests. The sole owner of the join, so a second copy of
+    it (e.g. in review_gc's gc sweep) cannot drift from this one.
+    """
+    return workbench_paths.state_dir() / TARGETS_DIR
+
+
 def target_dir(repo_key: str, branch: str) -> Path:
     """Where a run's state and lock live, keyed by what the run targets."""
-    return workbench_paths.state_dir() / TARGETS_DIR / f"{repo_key}-{slug(branch)}"
+    return targets_root() / f"{repo_key}-{slug(branch)}"
 
 
 def target_dir_for_checkout(path: Path) -> Path | None:

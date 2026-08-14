@@ -287,6 +287,21 @@ class ThreadOutcome:
             data["id"] = data.pop("thread_id")
         return _serde_from_dict(cls, data)
 
+    @classmethod
+    def _raw_schema(cls, object_schema: dict) -> dict:
+        """What `_from_raw` accepts, for the schema `pr --tool-schema` publishes.
+
+        Reachable from PRState through `FixSummary.threads`, so this is a live
+        contract, not a latent one: without the legacy alias the published
+        schema calls a document invalid that `_from_raw` reads without
+        complaint. Same key, same type — `id` under the name it used to have.
+        """
+        properties = object_schema["properties"]
+        return {
+            **object_schema,
+            "properties": {**properties, "thread_id": properties["id"]},
+        }
+
 
 @dataclass
 class FixSummary(Domain):

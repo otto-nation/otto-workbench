@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
@@ -11,7 +12,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import schema_gen
+import serde
 from schema_gen import dataclass_to_schema
+from serde import HintKind
 
 
 # ── Test fixtures ──────────────────────────────────────────────────────────
@@ -179,3 +183,178 @@ def test_tuple():
 
     schema = dataclass_to_schema(WithTuple)
     assert schema["properties"]["items"] == {"type": "array", "items": {"type": "integer"}}
+
+
+def test_bare_list():
+    """A bare `list` states its shape and nothing about its elements — which is
+    also all `serde` checks for one. It used to fall through to an open schema
+    that did not even say "array"."""
+    @dataclass
+    class WithBareList:
+        items: list = field(default_factory=list)
+
+    schema = dataclass_to_schema(WithBareList)
+    assert schema["properties"]["items"] == {"type": "array"}
+
+
+# ── Parity with serde ──────────────────────────────────────────────────────
+#
+# The defect class: `serde._coerce` learns to read a shape and the schema
+# published to a model keeps describing the old one. Both modules dispatch on
+# `serde.classify`, so the guard is that neither table has a hole — walked from
+# the enum's own members, so a new kind is covered without editing anything here.
+
+
+@pytest.mark.parametrize("kind", list(HintKind), ids=lambda k: k.value)
+def test_both_walks_handle_every_hint_kind(kind):
+    assert kind in serde._COERCERS, f"serde._coerce cannot read a {kind.value} hint"
+    assert kind in schema_gen._EMITTERS, f"schema_gen cannot describe a {kind.value} hint"
+
+
+def test_dict_with_int_keys_says_the_keys_must_parse_as_integers():
+    """JSON stringifies every key and `serde` restores `dict[int, V]` with
+    `int()` — a key that will not parse makes the whole file unreadable. The
+    schema used to say only `additionalProperties`, so a model reading the
+    contract had nothing telling it the keys were numeric."""
+    @dataclass
+    class WithIntKeys:
+        counts: dict[int, str] = field(default_factory=dict)
+
+    counts = dataclass_to_schema(WithIntKeys)["properties"]["counts"]
+    assert counts == {
+        "type": "object",
+        "additionalProperties": {"type": "string"},
+        "propertyNames": {"pattern": r"^-?[0-9]+$"},
+    }
+
+
+def test_dict_with_str_keys_is_left_unconstrained():
+    schema = dataclass_to_schema(Person)
+    assert "propertyNames" not in schema["properties"]["metadata"]
+
+
+class Priority(Enum):
+    LOW = 1
+    HIGH = 2
+
+
+@dataclass
+class WithIntEnum:
+    priority: Priority = Priority.LOW
+
+
+def test_an_int_valued_enum_is_not_described_as_a_string():
+    """`serde` rebuilds an enum by calling it with the written value, whatever
+    type that is. The schema used to claim `string` for every enum."""
+    assert dataclass_to_schema(WithIntEnum)["properties"]["priority"] == {
+        "type": "integer", "enum": [1, 2],
+    }
+
+
+# ── The `_from_raw` contract ───────────────────────────────────────────────
+
+
+@dataclass
+class Tagged:
+    """A type stored in more than one shape, which owns both its reconstruction
+    and the schema for what that accepts."""
+    value: str = ""
+
+    @classmethod
+    def _from_raw(cls, raw):
+        return cls(value=str(raw)) if not isinstance(raw, dict) else cls(**raw)
+
+    @classmethod
+    def _raw_schema(cls, object_schema: dict) -> dict:
+        return {"oneOf": [object_schema, {"type": "string"}]}
+
+
+@dataclass
+class Untagged:
+    """`_from_raw` with no published schema — an out-of-tree type."""
+    value: str = ""
+
+    @classmethod
+    def _from_raw(cls, raw):
+        return cls(value=str(raw))
+
+
+@dataclass
+class TaggedHolder:
+    tagged: Tagged = field(default_factory=Tagged)
+
+
+@dataclass
+class UntaggedHolder:
+    untagged: Untagged = field(default_factory=Untagged)
+
+
+def test_a_from_raw_type_publishes_the_shapes_it_accepts():
+    tagged = dataclass_to_schema(TaggedHolder)["properties"]["tagged"]
+    assert tagged == {
+        "oneOf": [
+            {"type": "object", "properties": {"value": {"type": "string"}}},
+            {"type": "string"},
+        ],
+    }
+
+
+def test_a_from_raw_type_without_a_schema_hook_is_left_open():
+    """Open, not the object form. `serde` hands the whole field to the hook, so
+    an object schema would call a document invalid that the reader accepts —
+    the failure mode is a model told to write a shape that is not the only
+    legal one, which is worse than being told nothing."""
+    assert dataclass_to_schema(UntaggedHolder)["properties"]["untagged"] == {}
+
+
+def test_every_from_raw_type_in_the_tree_publishes_a_raw_schema():
+    """Discovered by parsing, not listed: a class that teaches `serde` to read
+    an extra shape has to teach `schema_gen` to describe it in the same edit.
+
+    The AST is enough to find them and avoids importing every module in the
+    tree just to ask.
+    """
+    lib = Path(__file__).resolve().parent.parent / "ai" / "lib"
+    classes = [
+        (source.name, node)
+        for source in sorted(lib.glob("*.py"))
+        for node in ast.walk(ast.parse(source.read_text()))
+        if isinstance(node, ast.ClassDef)
+    ]
+    methods = {
+        f"{filename}:{node.name}": {n.name for n in node.body if isinstance(n, ast.FunctionDef)}
+        for filename, node in classes
+    }
+
+    hooks = {where: names for where, names in methods.items() if "_from_raw" in names}
+    missing = sorted(where for where, names in hooks.items() if "_raw_schema" not in names)
+
+    # A scan that finds nothing passes for the wrong reason.
+    assert hooks, "no _from_raw classes found — the scan has stopped looking"
+    assert missing == []
+
+
+def test_thread_outcome_schema_accepts_the_legacy_key_serde_accepts():
+    """The live case. `pr --tool-schema` publishes PRState, `FixSummary.threads`
+    holds ThreadOutcome, and its `_from_raw` reads `thread_id` as `id` — the
+    published schema described only the current name."""
+    from pr_state import PRState
+
+    outcome = dataclass_to_schema(PRState)["properties"]["fix"]["properties"]["threads"]["items"]
+    assert outcome["properties"]["thread_id"] == {"type": "string"}
+    assert outcome["properties"]["id"] == {"type": "string"}
+
+
+def test_a_diagnosis_schema_accepts_the_legacy_string_form():
+    """Both gaps in one real field: `PipelineState.groups_failed` is a
+    `dict[int, Diagnosis]`, so its keys must parse as integers and its values
+    are whatever `Diagnosis._from_raw` reads — an object or the rendered string
+    an older run wrote."""
+    from review_preflight import PipelineState
+
+    failed = dataclass_to_schema(PipelineState)["properties"]["groups_failed"]
+    assert failed["propertyNames"] == {"pattern": r"^-?[0-9]+$"}
+
+    object_form, string_form = failed["additionalProperties"]["oneOf"]
+    assert string_form == {"type": "string"}
+    assert object_form["properties"]["kind"]["type"] == "string"

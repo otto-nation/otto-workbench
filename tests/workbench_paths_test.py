@@ -131,24 +131,24 @@ class TestResolvedPerCall:
         assert workbench_paths.state_dir() == tmp_path / "moved" != before
 
 
-class TestLogsDir:
-    def test_bare_logs_dir_is_the_parent_otto_log_globs(self, clean_env):
-        assert workbench_paths.logs_dir() == clean_env / ".local/state/workbench/logs"
+class TestTrailDir:
+    def test_defaults_under_the_state_root(self, clean_env):
+        assert workbench_paths.trail_dir() == clean_env / ".local/state/workbench/trail"
 
-    def test_named_logs_dir_nests_under_it(self, clean_env):
-        expected = clean_env / ".local/state/workbench/logs/ci-check"
-        assert workbench_paths.logs_dir("ci-check") == expected
+    def test_follows_the_xdg_state_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+        assert workbench_paths.trail_dir() == tmp_path / "workbench/trail"
 
-    def test_logs_follow_the_state_root(self, monkeypatch, tmp_path):
+    def test_the_override_wins(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-        assert workbench_paths.logs_dir("retro-scan") == tmp_path / "state/logs/retro-scan"
+        assert workbench_paths.trail_dir() == tmp_path / "state/trail"
 
-    @pytest.mark.parametrize("tool", ["/etc", "../escaped", "nested/tool", ".."])
-    def test_a_path_like_tool_name_is_rejected(self, tool):
-        # Anything but a bare name lands outside the tree otto-log globs over,
-        # so the run's trail would simply never be found again.
-        with pytest.raises(ValueError):
-            workbench_paths.logs_dir(tool)
+    def test_resolves_per_call(self, tmp_path, monkeypatch):
+        """Frozen at import, a monkeypatched state root would never take effect."""
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "one"))
+        first = workbench_paths.trail_dir()
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "two"))
+        assert workbench_paths.trail_dir() != first
 
 
 class TestReviewsDir:
@@ -388,17 +388,3 @@ class TestLegacyAdoption:
         self._legacy(worktree)
         state = workbench_paths.worktree_state_dir(worktree)
         assert (state / "state.json").read_text() == '{"version": 9}'
-
-
-class TestTrailDir:
-    def test_a_trail_sits_beside_the_state_it_describes(self, worktree):
-        assert workbench_paths.trail_dir(worktree, "pr") == \
-            workbench_paths.worktree_state_dir(worktree)
-
-    def test_outside_a_worktree_it_falls_back_to_the_tools_logs(self, tmp_path, clean_env):
-        """`pr status` from a bare repo still has a trail to write, and it goes
-        to the other place otto-log looks."""
-        outside = tmp_path / "plain"
-        outside.mkdir()
-        assert workbench_paths.trail_dir(outside, "pr") == \
-            clean_env / ".local/state/workbench/logs/pr"

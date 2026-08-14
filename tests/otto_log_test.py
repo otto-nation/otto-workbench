@@ -3,7 +3,6 @@
 import argparse
 import json
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 import importlib.machinery
@@ -18,7 +17,7 @@ sys.path.insert(0, str(BIN_DIR))
 
 import ai_usage
 import workbench_paths
-from trail import TRAIL_FILENAME, Trail
+from trail import Trail
 
 _spec = importlib.util.spec_from_loader(
     "otto_log",
@@ -28,9 +27,9 @@ otto_log = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(otto_log)
 
 
-def _make_trail(d: str, script: str, events: list[tuple[str, str]]) -> str:
+def _make_trail(script: str, events: list[tuple[str, str]]) -> str:
     """Write a trail with the given action/detail pairs, return invocation ID."""
-    trail = Trail.start(script=script, artifact_dir=d, context={"repo": "org/repo", "pr": 42})
+    trail = Trail.start(script=script, context={"repo": "org/repo", "pr": 42})
     for action, detail in events:
         trail.info(action, detail)
     trail.finish()
@@ -38,58 +37,47 @@ def _make_trail(d: str, script: str, events: list[tuple[str, str]]) -> str:
 
 
 class TestTrailDiscovery:
-    def test_discover_worktree_trail(self, worktree):
-        wb_dir = workbench_paths.worktree_state_dir(worktree)
-        wb_dir.mkdir(parents=True, exist_ok=True)
-        _make_trail(str(wb_dir), "ci-check", [("fetch", "fetched")])
-        trails = otto_log.discover_trails(worktree_root=str(worktree))
-        assert len(trails) >= 1
-        assert any(str(wb_dir / TRAIL_FILENAME) in str(t) for t in trails)
+    def test_finds_the_month_file_every_writer_appends_to(self):
+        _make_trail("ci-check", [("fetch", "fetched")])
+        trails = otto_log.discover_trails()
+        assert len(trails) == 1
+        assert trails[0].parent == workbench_paths.trail_dir()
 
-    def test_a_directory_that_is_not_a_worktree_has_no_trail(self, tmp_path):
-        """otto-log runs wherever the user is, which need not be a worktree."""
-        empty = tmp_path / "empty"
-        empty.mkdir()
-        assert otto_log.discover_trails(
-            worktree_root=str(tmp_path),
-            reviews_dir=str(empty), logs_dir=str(empty),
-        ) == []
+    def test_an_empty_root_has_no_trails(self):
+        assert otto_log.discover_trails() == []
 
-    def test_discover_review_trails(self):
-        with tempfile.TemporaryDirectory() as d:
-            review_dir = Path(d) / "reviews" / "repo-42"
-            review_dir.mkdir(parents=True)
-            _make_trail(str(review_dir), "claude-review", [("review", "reviewed")])
-            trails = otto_log.discover_trails(reviews_dir=str(Path(d) / "reviews"))
-            assert len(trails) >= 1
+    def test_every_script_lands_in_the_same_file(self):
+        _make_trail("ci-check", [("a", "first")])
+        _make_trail("claude-review", [("b", "second")])
+        assert len(otto_log.discover_trails()) == 1
 
 
 class TestQueryFiltering:
     def test_filter_by_script(self):
-        with tempfile.TemporaryDirectory() as d:
-            _make_trail(d, "ci-check", [("a", "first")])
-            _make_trail(d, "pr-rebase", [("b", "second")])
-            events = otto_log.load_events([str(Path(d) / TRAIL_FILENAME)])
-            filtered = otto_log.filter_events(events, script="ci-check")
-            assert all(e["script"] == "ci-check" for e in filtered)
+        _make_trail("ci-check", [("a", "first")])
+        _make_trail("pr-rebase", [("b", "second")])
+        events = otto_log.load_events(otto_log.discover_trails())
+        filtered = otto_log.filter_events(events, script="ci-check")
+        assert filtered
+        assert all(e["script"] == "ci-check" for e in filtered)
 
     def test_filter_by_level(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.info("ok", "fine")
-            trail.error("bad", "broken")
-            trail.finish()
-            events = otto_log.load_events([str(Path(d) / TRAIL_FILENAME)])
-            filtered = otto_log.filter_events(events, level="error")
-            assert all(e["level"] == "error" for e in filtered)
+        trail = Trail.start(script="test", context={})
+        trail.info("ok", "fine")
+        trail.error("bad", "broken")
+        trail.finish()
+        events = otto_log.load_events(otto_log.discover_trails())
+        filtered = otto_log.filter_events(events, level="error")
+        assert filtered
+        assert all(e["level"] == "error" for e in filtered)
 
     def test_filter_by_invocation(self):
-        with tempfile.TemporaryDirectory() as d:
-            inv1 = _make_trail(d, "test", [("a", "first")])
-            _make_trail(d, "test", [("b", "second")])
-            events = otto_log.load_events([str(Path(d) / TRAIL_FILENAME)])
-            filtered = otto_log.filter_events(events, invocation=inv1)
-            assert all(e["invocation"] == inv1 for e in filtered)
+        inv1 = _make_trail("test", [("a", "first")])
+        _make_trail("test", [("b", "second")])
+        events = otto_log.load_events(otto_log.discover_trails())
+        filtered = otto_log.filter_events(events, invocation=inv1)
+        assert filtered
+        assert all(e["invocation"] == inv1 for e in filtered)
 
 
 # ── stats ─────────────────────────────────────────────────────────────────────

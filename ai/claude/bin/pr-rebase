@@ -42,7 +42,6 @@ import ai_backend
 import log
 import pr_context
 import pr_state
-import workbench_paths
 from pr_state import RebaseStatus, RebaseSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
@@ -2032,7 +2031,6 @@ def main():
     global _trail
     _trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(workbench_paths.trail_dir(cwd, SCRIPT)),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=args.debug,
     )

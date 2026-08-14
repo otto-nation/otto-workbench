@@ -1,15 +1,16 @@
 """Structured trail logging for otto-workbench AI scripts.
 
-Every script writes an append-only JSONL trail to its artifact directory.
-The trail is always written; the --debug flag controls stderr echo only.
+Every script appends to one root, ``workbench_paths.trail_dir()``, in a file
+named for the emitting event's UTC month. The trail is always written; the
+--debug flag controls stderr echo only.
 """
 
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -17,10 +18,9 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from uuid import uuid4
 
-import log
+import workbench_paths
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────
@@ -43,8 +43,12 @@ class EventType(str, Enum):
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
-TRAIL_FILENAME = "trail.jsonl"
 SCHEMA_VERSION = 1
+
+# The action on the one summary event that reports a run's own duration.
+# `pr gc` writes a second kind of summary with no duration, so readers select
+# the run-end event by action rather than by type.
+FINISH_ACTION = "finish"
 
 _ANSI_DIM = "\033[2m"
 _ANSI_RESET = "\033[0m"
@@ -82,62 +86,6 @@ class TrailEvent:
         return json.dumps(d, separators=(",", ":"))
 
 
-def _ensure_gitignored(artifact_path: Path) -> None:
-    """Add the artifact directory to .gitignore when it sits inside a repo.
-
-    The trail is the only thing that creates this directory now that state is
-    user-scoped, so keeping it out of the consumer repo's diff lands here. Every
-    trail passes through, not only `.workbench` inside a consumer repo, so
-    whether the directory is inside a repo is checked rather than assumed: a
-    review artifact dir under state_dir() usually is not, but a machine whose
-    ~/.config is itself a git repo puts one there.
-
-    The rule written is the directory's path relative to the repo root, anchored
-    with a leading slash — a bare name would ignore every directory called that
-    anywhere in the tree, and this function only ever means the one directory it
-    just created.
-    """
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(artifact_path),
-             "rev-parse", "--show-toplevel", "--show-prefix"],
-            capture_output=True, text=True,
-        )
-    except FileNotFoundError:
-        return
-
-    lines = r.stdout.splitlines()
-    toplevel = lines[0].strip() if lines else ""
-    # --show-prefix is empty when the artifact dir *is* the repo root, which is
-    # not a directory anyone can ignore.
-    rel = lines[1].strip().strip("/") if len(lines) > 1 else ""
-    # Emptiness is checked alongside the exit code because Path("") is Path("."):
-    # a rev-parse that somehow succeeds saying nothing would write .gitignore
-    # into whatever directory the process happens to be standing in.
-    if r.returncode != 0 or not toplevel or not rel:
-        return
-
-    ignored = subprocess.run(
-        ["git", "-C", toplevel, "check-ignore", "-q", rel],
-        capture_output=True,
-    )
-    if ignored.returncode == 0:
-        return
-
-    gitignore = Path(toplevel) / ".gitignore"
-    try:
-        content = gitignore.read_text() if gitignore.exists() else ""
-        needs_newline = bool(content) and not content.endswith("\n")
-        lead = "\n" if needs_newline else ""
-        separator = "\n" if content else ""
-        with open(gitignore, "a") as f:
-            f.write(f"{lead}{separator}# Run artifacts (otto-workbench AI scripts)\n/{rel}/\n")
-    except OSError as e:
-        log.warn(f"trail: could not update {gitignore}: {e}")
-        return
-    log.info(f"trail: added /{rel}/ to {gitignore}")
-
-
 # ── Trail ─────────────────────────────────────────────────────────────────
 
 _print_lock = threading.Lock()
@@ -147,54 +95,41 @@ class Trail:
     def __init__(
         self,
         script: str,
-        artifact_dir: str,
         context: dict,
         invocation: str,
         debug: bool,
         start_ns: int,
     ):
         self._script = script
-        self._artifact_dir = Path(artifact_dir)
         self._context = context
         self.invocation = invocation
         self._debug = debug
         self._start_ns = start_ns
-        self._trail_path = self._artifact_dir / TRAIL_FILENAME
 
     @classmethod
-    def start(
-        cls,
-        script: str,
-        artifact_dir: str,
-        context: dict,
-        debug: bool = False,
-    ) -> Trail:
+    def start(cls, script: str, context: dict, debug: bool = False) -> Trail:
         debug = debug or os.environ.get("WORKBENCH_DEBUG", "") == "1"
-        artifact_path = Path(artifact_dir)
-        # mkdir's own FileExistsError, not a preceding exists() check, decides who
-        # created the directory: two processes racing to start a trail at the same
-        # target must not both see "created" and both append to .gitignore.
-        try:
-            artifact_path.mkdir(parents=True)
-            created = True
-        except FileExistsError:
-            created = False
-        if created:
-            _ensure_gitignored(artifact_path)
-        invocation = uuid4().hex[:8]
+        workbench_paths.trail_dir().mkdir(parents=True, exist_ok=True)
         return cls(
             script=script,
-            artifact_dir=artifact_dir,
             context=context,
-            invocation=invocation,
+            invocation=uuid4().hex[:8],
             debug=debug,
             start_ns=time.monotonic_ns(),
         )
 
     def _emit(self, event: TrailEvent) -> None:
         line = event.to_json()
+        # The month comes from the event, not from the run: a run crossing a
+        # month boundary writes each record to the file its timestamp names.
+        path = workbench_paths.trail_dir() / f"{event.ts[:7]}.jsonl"
         with _print_lock:
-            with open(self._trail_path, "a") as f:
+            # _print_lock covers this process's worker threads; the flock covers
+            # the other processes appending to the same file — `pr` and the
+            # script it spawned. Trail `data` is arbitrary, so a record can
+            # exceed PIPE_BUF and a bare O_APPEND write can interleave.
+            with open(path, "a") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 f.write(line + "\n")
             if self._debug:
                 self._echo_stderr(event)
@@ -267,7 +202,8 @@ class Trail:
 
     def finish(self) -> None:
         elapsed_ms = (time.monotonic_ns() - self._start_ns) // 1_000_000
-        self._emit(self._make_event(Level.INFO, EventType.SUMMARY, "finish", "", duration_ms=elapsed_ms))
+        self._emit(self._make_event(
+            Level.INFO, EventType.SUMMARY, FINISH_ACTION, "", duration_ms=elapsed_ms))
 
 
 # ── Argparse helper ───────────────────────────────────────────────────────

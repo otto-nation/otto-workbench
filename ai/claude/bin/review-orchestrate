@@ -329,10 +329,8 @@ def main():
 
     session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
 
-    review_dir = Path(args.review_file).parent
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(review_dir),
         context={"repo": repo, "pr": args.pr, "mode": args.mode},
         debug=args.debug,
     )

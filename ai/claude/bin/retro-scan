@@ -1014,10 +1014,8 @@ def main() -> None:
 
     home = Path(os.path.expanduser(args.home))
     workbench = Path(os.path.expanduser(args.workbench)).resolve()
-    log_dir = str(workbench_paths.logs_dir(SCRIPT))
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=log_dir,
         context={"workbench": args.workbench, "home": str(home)},
         debug=args.debug,
     )

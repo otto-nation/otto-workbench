@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Query trail files and AI usage across otto-workbench scripts.
 
-Discovers trail.jsonl files from the current worktree (<git-dir>/workbench/),
-review artifacts (<state root>/reviews/), and standalone tool logs
-(<state root>/logs/) — see ai/lib/workbench_paths.py for how both resolve.
-The `stats` subcommand reads the global AI usage ledger instead — a separate,
-monthly-rotated store that every AI call appends to.
+Trails are discovered from one root — `workbench_paths.trail_dir()`, monthly
+files under the state root. The `stats` subcommand reads the global AI usage
+ledger instead — a separate, monthly-rotated store that every AI call appends to.
 """
 
 from __future__ import annotations
@@ -13,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
-import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -24,7 +21,7 @@ sys.path.insert(0, str(LIB_DIR))
 import ai_usage
 import log
 import workbench_paths
-from trail import TRAIL_FILENAME
+
 
 ANSI_RESET = "\033[0m"
 ANSI_BOLD = "\033[1m"
@@ -38,49 +35,12 @@ ANSI_LEVELS = {
 
 # ── Discovery ─────────────────────────────────────────────────────────────
 
-def _detect_worktree_root() -> str | None:
+def discover_trails() -> list[Path]:
+    """Every trail file, oldest month first."""
     try:
-        r = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
-        )
-        if r.returncode == 0:
-            return r.stdout.strip()
-    except FileNotFoundError:
-        pass
-    return None
-
-
-def discover_trails(
-    worktree_root: str | None = None,
-    reviews_dir: str | None = None,
-    logs_dir: str | None = None,
-) -> list[Path]:
-    trails = []
-
-    # Worktree trail
-    wt = worktree_root or _detect_worktree_root()
-    if wt:
-        try:
-            wt_trail = workbench_paths.worktree_state_dir(wt) / TRAIL_FILENAME
-        except workbench_paths.NotAWorktree:
-            wt_trail = None
-        if wt_trail is not None and wt_trail.is_file():
-            trails.append(wt_trail)
-
-    # Review trails
-    rd = Path(reviews_dir) if reviews_dir else workbench_paths.reviews_dir()
-    if rd.is_dir():
-        for trail_file in rd.glob(f"*/{TRAIL_FILENAME}"):
-            trails.append(trail_file)
-
-    # Standalone tool trails
-    ld = Path(logs_dir) if logs_dir else workbench_paths.logs_dir()
-    if ld.is_dir():
-        for trail_file in ld.glob(f"*/{TRAIL_FILENAME}"):
-            trails.append(trail_file)
-
-    return trails
+        return sorted(workbench_paths.trail_dir().glob("*.jsonl"))
+    except OSError:
+        return []
 
 
 # ── Loading ───────────────────────────────────────────────────────────────

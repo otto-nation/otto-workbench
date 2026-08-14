@@ -610,14 +610,8 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
               original_pr: str | None,
               original_branch: str | None) -> int:
     """Start the trail and route to the command's handler or backing script."""
-    # A command that runs without a worktree — `pr status` from a bare repo —
-    # has no state for its trail to sit beside, so it goes to pr's own logs.
-    trail_root = workbench_paths.logs_dir(SCRIPT)
-    if ctx.worktree_root:
-        trail_root = workbench_paths.trail_dir(ctx.worktree_root, SCRIPT)
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(trail_root),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=getattr(global_args, "debug", False),
     )

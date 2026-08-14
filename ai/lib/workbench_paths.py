@@ -63,7 +63,7 @@ def config_dir() -> Path:
 
 
 def state_dir() -> Path:
-    """Generated, machine-local data: reviews/, logs/, usage/, install.yml.
+    """Generated, machine-local data: reviews/, trail/, usage/, install.yml.
 
     The move off the old ``~/.config/workbench`` default is a hard cut: nothing
     falls back to the legacy path, and ``lib/migrations.sh`` carries the data
@@ -82,12 +82,14 @@ def cache_dir(consumer: str | None = None) -> Path:
     return _subdir(root, consumer)
 
 
-def logs_dir(tool: str | None = None) -> Path:
-    """Trail and log artifacts for a standalone tool run.
+def trail_dir() -> Path:
+    """Every trail, one root: ``<state>/trail/YYYY-MM.jsonl``.
 
-    Without ``tool`` this is the parent that ``otto-log`` globs over.
+    Mirrors ``ai_usage.LEDGER_DIR`` and for the same reasons — rotation falls
+    out of the filename, ``--since`` drops whole files without opening them,
+    and nothing needs a pruning job.
     """
-    return _subdir(state_dir() / "logs", tool)
+    return state_dir() / "trail"
 
 
 def reviews_dir() -> Path:
@@ -204,19 +206,3 @@ def worktree_state_dir(worktree_root: Path | str) -> Path:
     if legacy.is_dir() and not target.exists():
         _adopt(legacy, target)
     return target
-
-
-def trail_dir(worktree_root: Path | str, tool: str) -> Path:
-    """Where a run's trail belongs: alongside the state it is a trail of.
-
-    A directory git does not claim has no state dir to sit beside, and a run
-    still has a trail to write, so it falls back to the tool's own logs — the
-    other place ``otto-log`` looks. Callers with no worktree at all call
-    ``logs_dir`` directly; ``validate-worktree-guards`` wants that branch
-    written out at the call site rather than hidden behind an optional
-    parameter here.
-    """
-    try:
-        return worktree_state_dir(worktree_root)
-    except NotAWorktree:
-        return logs_dir(tool)

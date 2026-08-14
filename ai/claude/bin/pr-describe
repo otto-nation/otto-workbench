@@ -29,7 +29,6 @@ import ai_backend
 import log
 import pr_context
 import pr_state
-import workbench_paths
 from pr_state import DescribeSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
@@ -288,13 +287,8 @@ def main():
     ctx = pr_context.resolve(
         repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
     )
-    # No worktree means no state to sit beside; the trail still gets written.
-    trail_root = workbench_paths.logs_dir(SCRIPT)
-    if ctx.worktree_root:
-        trail_root = workbench_paths.trail_dir(ctx.worktree_root, SCRIPT)
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(trail_root),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=args.debug,
     )

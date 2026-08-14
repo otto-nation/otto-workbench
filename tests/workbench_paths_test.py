@@ -151,6 +151,15 @@ class TestLogsDir:
             workbench_paths.logs_dir(tool)
 
 
+class TestReviewsDir:
+    def test_bare_reviews_dir_is_the_parent_every_review_sits_in(self, clean_env):
+        assert workbench_paths.reviews_dir() == clean_env / ".local/state/workbench/reviews"
+
+    def test_reviews_follow_the_state_root(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+        assert workbench_paths.reviews_dir() == tmp_path / "state/reviews"
+
+
 class TestCacheConsumer:
     def test_bare_cache_dir_is_the_root_itself(self, clean_env):
         assert workbench_paths.cache_dir() == clean_env / ".cache/workbench"
@@ -173,17 +182,18 @@ class TestCacheConsumer:
 
 
 class TestConsumers:
-    def test_reviews_dir_sits_under_the_state_root(self, monkeypatch, tmp_path):
-        """Loaded fresh: REVIEWS_DIR is resolved at import, before this test ran."""
-        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-        review_common = _load_module("review_common_fresh", LIB_DIR / "review_common.py")
-        assert review_common.REVIEWS_DIR == tmp_path / "state/reviews"
+    def test_review_paths_follow_a_root_set_after_import(self, monkeypatch, tmp_path):
+        """The module imported by the rest of the suite, not a fresh copy.
 
-    def test_workbench_dir_is_an_alias_for_the_state_root(self, monkeypatch, tmp_path):
+        A consumer that resolves the root at import time answers a fresh-load
+        assertion correctly and still ignores the environment for the rest of
+        the process, which is exactly what review_common used to do.
+        """
         import review_common
 
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-        assert review_common.workbench_dir() == workbench_paths.state_dir()
+        assert (review_common.review_file_path("owner/repo", "42")
+                == tmp_path / "state/reviews/repo-42/review.md")
 
     def test_mcp_config_sits_under_the_config_root(self, monkeypatch, tmp_path):
         """mcp-tools.json is hand-authored, so it belongs to config, not state.

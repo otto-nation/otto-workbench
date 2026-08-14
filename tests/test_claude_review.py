@@ -17,6 +17,7 @@ SCRIPT_PATH = REPO_ROOT / "ai" / "claude" / "bin" / "claude-review"
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
+import workbench_paths
 from pr_state import ReviewStatus, ReviewVerdict
 from review_common import (
     FILENAME_POST_SESSION, count_severity, json_summary, parse_review_verdict,
@@ -43,13 +44,15 @@ def cr():
 
 
 @pytest.fixture
-def reviews_dir(tmp_path, cr, monkeypatch):
-    d = tmp_path / "reviews"
-    d.mkdir()
-    monkeypatch.setattr(cr, "REVIEWS_DIR", d)
-    import review_common
-    monkeypatch.setattr(review_common, "REVIEWS_DIR", d)
-    monkeypatch.setattr(review_gc, "REVIEWS_DIR", d)
+def reviews_dir(tmp_path, monkeypatch):
+    """A throwaway reviews root, pointed at through the state root.
+
+    One environment variable rather than one setattr per module that reads the
+    root: every consumer resolves it per call, so there is nothing to patch.
+    """
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    d = workbench_paths.reviews_dir()
+    d.mkdir(parents=True)
     return d
 
 

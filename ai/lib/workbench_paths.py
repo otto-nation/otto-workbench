@@ -90,6 +90,16 @@ def logs_dir(tool: str | None = None) -> Path:
     return _subdir(state_dir() / "logs", tool)
 
 
+def reviews_dir() -> Path:
+    """One directory per review, holding its deliverable and its artifacts.
+
+    The sole owner of the join, so the review system and the tools that read
+    its output — ``otto-log`` for the trails, ``retro-scan`` for the findings —
+    cannot disagree about where a review is.
+    """
+    return state_dir() / "reviews"
+
+
 # ── Per-worktree state ──────────────────────────────────────────────────────
 
 WORKTREE_STATE_DIRNAME = "workbench"

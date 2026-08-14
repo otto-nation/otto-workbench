@@ -18,6 +18,27 @@ fi
 
 WORKBENCH_PROJECT_CONFIG_NAME=".workbench.yml"
 
+# The modeline a config file is born with, so an editor's YAML language server
+# validates the file against the committed schema as the user hand-edits it.
+# Pinned to main rather than a release tag: the file on disk tracks whatever
+# workbench is installed, and main is where the schema is regenerated.
+# ai/lib/workbench_config.py holds the same string for the files it creates;
+# tests/config.bats cross-validates the pair.
+WORKBENCH_CONFIG_SCHEMA_URL="https://raw.githubusercontent.com/otto-nation/otto-workbench/main/config.schema.json"
+WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHEMA_URL"
+
+# wb_config_ensure_file [FILE] — create FILE holding just the modeline, when it
+# does not already exist. `yq -i` needs a file to write into, and seeding it
+# with the modeline rather than `{}` is what puts the schema in front of an
+# editor. yq carries the comment through every later write, and both readers
+# take a comment-only file as an empty mapping.
+wb_config_ensure_file() {
+  local file="${1:-$WORKBENCH_CONFIG_FILE}"
+  if [[ -f "$file" ]]; then return 0; fi
+  mkdir -p "$(dirname "$file")" || return 1
+  printf '%s\n' "$WORKBENCH_CONFIG_HEADER" > "$file"
+}
+
 # _wb_config_project_file — the project config for $PWD, or nothing.
 # Outside a git repo there is no project scope, which is not an error.
 _wb_config_project_file() {

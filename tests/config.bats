@@ -97,3 +97,44 @@ _make_project() {
   [ "$status" -eq 0 ]
   [ "$output" = "sonnet" ]
 }
+
+# ─── Seeding (SSOT guard) ────────────────────────────────────────────────────
+
+@test "wb_config_ensure_file creates the file holding just the modeline" {
+  run wb_config_ensure_file "$WORKBENCH_CONFIG_FILE"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$WORKBENCH_CONFIG_FILE")" = "$WORKBENCH_CONFIG_HEADER" ]
+
+  # Comment-only, so a reader still sees an empty config rather than an error.
+  run wb_config_get "reuse.level" "full"
+  [ "$status" -eq 0 ]
+  [ "$output" = "full" ]
+}
+
+@test "wb_config_ensure_file leaves an existing file alone" {
+  printf 'reuse:\n  level: ultra\n' > "$WORKBENCH_CONFIG_FILE"
+  run wb_config_ensure_file "$WORKBENCH_CONFIG_FILE"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$WORKBENCH_CONFIG_FILE")" = "$(printf 'reuse:\n  level: ultra')" ]
+}
+
+@test "wb_config_ensure_file creates the parent directory" {
+  local nested="$TMPDIR/missing/config.yml"
+  run wb_config_ensure_file "$nested"
+  [ "$status" -eq 0 ]
+  [ -f "$nested" ]
+}
+
+# The header is spelled in two languages, which CLAUDE.md allows only with a
+# test that fails when they drift. Both files create config.yml, so a mismatch
+# would mean an editor validating one machine's file and not another's.
+@test "the modeline matches the one ai/lib/workbench_config.py writes" {
+  local from_python
+  from_python="$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import workbench_config
+print(workbench_config.CONFIG_HEADER, end='')
+")"
+  [ "$WORKBENCH_CONFIG_HEADER" = "$from_python" ]
+}

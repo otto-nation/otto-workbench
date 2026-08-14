@@ -65,7 +65,7 @@ migration_20260814_unify_workbench_config() {
 
   info "Unifying workbench settings into config.yml"
   mkdir -p "$WORKBENCH_CONFIG_DIR"
-  [[ -f "$WORKBENCH_CONFIG_FILE" ]] || echo "{}" > "$WORKBENCH_CONFIG_FILE"
+  wb_config_ensure_file "$WORKBENCH_CONFIG_FILE" || return 1
 
   local failed=0
   _unify_workbench_config_fold_scalar "$level_file" .reuse.level || failed=1

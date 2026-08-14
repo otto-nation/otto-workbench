@@ -14,6 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import workbench_config as wc
 from review_common import Effort, Phase, Thinking
 
+# The PyYAML write path only exists for a machine without yq, so the tests for
+# it only run where PyYAML is installed — the same shape test_review_profiles
+# uses for the reader.
+needs_yaml = pytest.mark.skipif(wc.yaml is None, reason="PyYAML not installed")
+
 
 @pytest.fixture
 def roots(tmp_path, monkeypatch):
@@ -194,6 +199,78 @@ def test_set_value_preserves_unrelated_keys(roots):
     cfg = wc.load_config()
     assert cfg.review.model == "sonnet"
     assert cfg.reuse.level is wc.ReuseLevel.ULTRA
+
+
+# ── Schema modeline ─────────────────────────────────────────────────────────
+
+
+def test_the_schema_url_points_at_a_path_the_repo_actually_has():
+    """A moved or renamed schema has to move the URL with it.
+
+    The modeline is the only consumer of the committed schema, and a URL
+    pointing at a path the repo no longer has fails silently — in someone
+    else's editor, months later. No network here, but neither a rename nor a
+    move into a subdirectory gets past it.
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    assert (repo_root / wc.SCHEMA_PATH).is_file()
+    assert wc.SCHEMA_URL.endswith("/" + wc.SCHEMA_PATH)
+
+
+def test_a_new_config_file_is_born_with_the_modeline(roots):
+    config_root, _ = roots
+    wc.set_value("reuse.level", "ultra")
+    assert (config_root / "config.yml").read_text().startswith(wc.CONFIG_HEADER)
+
+
+def test_the_modeline_survives_later_writes(roots):
+    """yq is the writer precisely because it carries comments through."""
+    config_root, _ = roots
+    wc.set_value("reuse.level", "ultra")
+    wc.set_value("review.model", "sonnet")
+    text = (config_root / "config.yml").read_text()
+    assert text.startswith(wc.CONFIG_HEADER)
+    assert text.count(wc.CONFIG_HEADER) == 1
+    cfg = wc.load_config()
+    assert cfg.reuse.level is wc.ReuseLevel.ULTRA
+    assert cfg.review.model == "sonnet"
+
+
+def test_a_modeline_only_file_reads_as_an_empty_config(roots):
+    """The seeded file is comments and nothing else until the first key lands."""
+    config_root, project = roots
+    _write(config_root / "config.yml", wc.CONFIG_HEADER + "\n")
+    cfg = wc.load_config(project)
+    assert cfg.reuse.level is None
+    assert cfg.reuse.default is wc.ReuseLevel.FULL
+
+
+@needs_yaml
+def test_the_pyyaml_fallback_puts_the_modeline_back(roots, monkeypatch):
+    """Without yq the document is re-rendered, so the header is re-applied.
+
+    Every comment the user wrote is still lost on this path — the modeline is
+    the one this module owns and can restore.
+    """
+    config_root, _ = roots
+    monkeypatch.setattr(wc.shutil, "which", lambda _: None)
+    wc.set_value("reuse.level", "ultra")
+    wc.set_value("review.model", "sonnet")
+    text = (config_root / "config.yml").read_text()
+    assert text.startswith(wc.CONFIG_HEADER)
+    assert text.count(wc.CONFIG_HEADER) == 1
+    assert wc.load_config().review.model == "sonnet"
+
+
+@needs_yaml
+def test_the_pyyaml_fallback_adds_no_modeline_to_a_file_without_one(
+    roots, monkeypatch,
+):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "review:\n  model: sonnet\n")
+    monkeypatch.setattr(wc.shutil, "which", lambda _: None)
+    wc.set_value("reuse.level", "ultra")
+    assert wc.CONFIG_HEADER not in (config_root / "config.yml").read_text()
 
 
 # ── Precedence across all five layers ───────────────────────────────────────

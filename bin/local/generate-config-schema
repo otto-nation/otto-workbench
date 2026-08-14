@@ -29,7 +29,7 @@ sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
 import workbench_config  # noqa: E402
 
-SCHEMA_FILE = REPO_ROOT / "config.schema.json"
+SCHEMA_FILE = REPO_ROOT / workbench_config.SCHEMA_PATH
 
 
 def main(argv: list[str]) -> int:

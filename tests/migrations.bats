@@ -473,6 +473,10 @@ unify_in_fake() {
     export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
     export WORKBENCH_CONFIG_FILE="$FAKE_CONFIG/config.yml"
     . "$FAKE_ROOT/lib/ui.sh"
+    # The real config.sh, not the stub: the migration seeds config.yml through
+    # wb_config_ensure_file, which is where the schema modeline comes from. The
+    # real ui.sh sources it the same way.
+    . "$REPO_ROOT/lib/config.sh"
     . "$REPO_ROOT/bin/migrations/20260814-unify-workbench-config.sh"
     migration_20260814_unify_workbench_config
   )
@@ -546,6 +550,29 @@ unify_in_fake() {
   [ "$status" -eq 0 ]
   [ -f "$FAKE_CONFIG/review.yml.migrated" ]
   [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "unification seeds a new config.yml with the schema modeline" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+
+  run head -1 "$FAKE_CONFIG/config.yml"
+  [[ "$output" == "# yaml-language-server: \$schema="* ]]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+}
+
+@test "unification leaves a config.yml the user already wrote unseeded" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'reuse:\n  default: lite\n' > "$FAKE_CONFIG/config.yml"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  run head -1 "$FAKE_CONFIG/config.yml"
+  [[ "$output" != *"yaml-language-server"* ]]
 }
 
 @test "unification re-run after a fold is a no-op" {

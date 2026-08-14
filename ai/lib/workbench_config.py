@@ -38,6 +38,23 @@ except ImportError:
 CONFIG_NAME = "config.yml"
 PROJECT_CONFIG_NAME = ".workbench.yml"
 
+# Where the generated schema lives, repo-relative, and the raw URL that serves
+# it. One spelling of the path: bin/local/generate-config-schema writes there,
+# the modeline below points there, and tests/test_workbench_config.py fails if
+# the two stop agreeing — so moving the file is a one-line change here.
+# Pinned to main rather than a release tag: the config on a machine tracks
+# whatever workbench is installed, and main is where the schema is regenerated.
+SCHEMA_PATH = "config.schema.json"
+SCHEMA_URL = (
+    "https://raw.githubusercontent.com/otto-nation/otto-workbench/main/"
+    + SCHEMA_PATH
+)
+# The modeline a config file is born with, so an editor's YAML language server
+# validates the file against that schema as the user hand-edits it.
+# lib/config.sh spells the same string for the files bash creates;
+# tests/config.bats cross-validates the pair.
+CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
+
 _YQ_TIMEOUT = 10
 
 
@@ -281,7 +298,7 @@ def set_value(key: str, value: str) -> None:
     path = global_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        path.write_text("")
+        path.write_text(CONFIG_HEADER + "\n")
     if shutil.which("yq"):
         env = dict(os.environ, WB_CONFIG_VALUE=value)
         try:
@@ -298,6 +315,10 @@ def set_value(key: str, value: str) -> None:
 def _set_value_with_pyyaml(path: Path, key: str, value: str) -> None:
     if yaml is None:
         raise ConfigError("neither yq nor PyYAML is available to write config")
+    # PyYAML re-renders the document, so every comment in it is lost. The
+    # modeline is the one comment this module owns, so it is the one it can put
+    # back; a comment the user wrote is gone, which is why yq goes first.
+    had_header = path.is_file() and path.read_text().startswith(CONFIG_HEADER)
     data = read_yaml(path)
     cursor = data
     parts = key.split(".")
@@ -308,4 +329,7 @@ def _set_value_with_pyyaml(path: Path, key: str, value: str) -> None:
             cursor[part] = nxt
         cursor = nxt
     cursor[parts[-1]] = value
-    path.write_text(yaml_dump(data))
+    text = yaml_dump(data)
+    if had_header:
+        text = f"{CONFIG_HEADER}\n{text}"
+    path.write_text(text)

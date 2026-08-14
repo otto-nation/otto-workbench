@@ -154,10 +154,19 @@ Hand-authored settings, read from YAML. One file per scope:
 | Function | Purpose |
 |----------|---------|
 | `wb_config_get KEY [DEFAULT]` | One dotted key, project scope first, then global, then the default |
+| `wb_config_ensure_file [FILE]` | Create FILE holding just the schema modeline, when it does not exist |
 
 A malformed file reads as absent — a bash caller wants its default, not a `yq` parse error on stdout. Reporting a bad file is the typed loader's job. Loaded via `ui.sh`.
 
 [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed owner of the same two files: it deep-merges them into a `WorkbenchConfig` and rejects an unknown enum value or phase key rather than silently dropping it. [`config.schema.json`](../config.schema.json) is generated from that dataclass by `bin/local/generate-config-schema`; `tests/test_workbench_config.py` fails if the committed copy drifts from the generator.
+
+A `config.yml` the workbench creates is born holding one line, the modeline that points an editor's YAML language server at that schema:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/otto-nation/otto-workbench/main/config.schema.json
+```
+
+Both writers seed it — `wb_config_ensure_file` in bash, `set_value` in Python — and `yq -i` carries it through every later write, so completion and enum validation work while the file is hand-edited. Paste it at the top of a `.workbench.yml` to get the same in a project. A file that already exists is never seeded: the modeline is a courtesy on creation, not something sync re-imposes.
 
 A complete file:
 

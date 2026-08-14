@@ -93,9 +93,11 @@ def logs_dir(tool: str | None = None) -> Path:
 def reviews_dir() -> Path:
     """One directory per review, holding its deliverable and its artifacts.
 
-    The sole owner of the join, so the review system and the tools that read
-    its output — ``otto-log`` for the trails, ``retro-scan`` for the findings —
-    cannot disagree about where a review is.
+    The owner of the join for Python, so the review system and the tools that
+    read its output — ``otto-log`` for the trails, ``retro-scan`` for the
+    findings — cannot disagree about where a review is. Bash reaches the same
+    directory through ``REVIEWS_DIR`` in ``lib/constants.sh``, which
+    ``tests/workbench_roots.bats`` holds to this value.
     """
     return state_dir() / "reviews"
 

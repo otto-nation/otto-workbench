@@ -183,17 +183,22 @@ class TestCacheConsumer:
 
 class TestConsumers:
     def test_review_paths_follow_a_root_set_after_import(self, monkeypatch, tmp_path):
-        """The module imported by the rest of the suite, not a fresh copy.
+        """Resolved twice across a moved root, on the module the suite imported.
 
-        A consumer that resolves the root at import time answers a fresh-load
+        A consumer that reads the root at import time answers a fresh-load
         assertion correctly and still ignores the environment for the rest of
-        the process, which is exactly what review_common used to do.
+        the process, which is exactly what review_common used to do — so the
+        assertion has to be a second resolve, not a first one.
         """
         import review_common
 
-        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-        assert (review_common.review_file_path("owner/repo", "42")
-                == tmp_path / "state/reviews/repo-42/review.md")
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "old"))
+        before = review_common.review_file_path("owner/repo", "42")
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "new"))
+        after = review_common.review_file_path("owner/repo", "42")
+
+        assert before == tmp_path / "old/reviews/repo-42/review.md"
+        assert after == tmp_path / "new/reviews/repo-42/review.md"
 
     def test_mcp_config_sits_under_the_config_root(self, monkeypatch, tmp_path):
         """mcp-tools.json is hand-authored, so it belongs to config, not state.

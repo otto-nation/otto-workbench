@@ -57,7 +57,9 @@ NOISE_PATTERNS = re.compile(
 COMMENT_BODY_MAX = 500
 
 # Beside reviews/ under the state root rather than under --home: both are
-# generated data, and retro-complete.sh deletes them through WORKBENCH_STATE_DIR.
+# generated data, and retro-complete.sh reads them through the state root too.
+# Its half of this name is RETRO_CONSUMED_REVIEWS_FILE in lib/constants.sh;
+# tests/workbench_roots.bats holds the two together.
 CONSUMED_REVIEWS_NAME = "retro-consumed-reviews.txt"
 
 FINDING_RE = re.compile(

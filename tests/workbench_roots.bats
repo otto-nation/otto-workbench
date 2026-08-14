@@ -9,6 +9,10 @@
 # it, lib/constants.sh assigned the state root unconditionally while the Python
 # side read WORKBENCH_STATE_DIR, so exporting that variable moved one root and
 # not the other.
+#
+# Also guards the joins under those roots that both languages spell out, where
+# the same divergence costs the same thing one level down: a writer and a
+# deleter that disagree leave data nothing ever collects.
 
 setup() {
   load 'test_helper'
@@ -214,6 +218,48 @@ assert_combo_agrees() {
     "$TMPDIR/explicit-state|$TMPDIR/xdg-state|$TMPDIR/xdg-config|$TMPDIR/xdg-cache"; do
     assert_combo_agrees "$combo"
   done
+}
+
+# ─── Joins under the roots ──────────────────────────────────────────────────
+
+# resolve_constants VAR — the value lib/constants.sh gives VAR in a fresh bash.
+resolve_constants() {
+  bash -c '. "$1/lib/constants.sh"; printf "%s" "${!2}"' _ "$REPO_ROOT" "$1"
+}
+
+# resolve_python_retro_consumed — the consumed-reviews file as retro-scan
+# spells it: its own CONSUMED_REVIEWS_NAME under the Python state root. Loaded
+# through SourceFileLoader because the script carries no .py extension.
+resolve_python_retro_consumed() {
+  python3 -c "
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader(
+    'retro_scan', '$REPO_ROOT/ai/claude/bin/retro-scan')
+spec = importlib.util.spec_from_loader('retro_scan', loader)
+mod = importlib.util.module_from_spec(spec)
+sys.modules['retro_scan'] = mod
+spec.loader.exec_module(mod)
+import workbench_paths
+print(workbench_paths.state_dir() / mod.CONSUMED_REVIEWS_NAME, end='')
+"
+}
+
+@test "bash and Python agree on reviews/ and the consumed-reviews file" {
+  [ "$(resolve_constants REVIEWS_DIR)" = "$(resolve_python reviews_dir)" ]
+  [ "$(resolve_constants RETRO_CONSUMED_REVIEWS_FILE)" = "$(resolve_python_retro_consumed)" ]
+}
+
+@test "both joins ride along when the state root moves" {
+  # retro-scan writes the consumed list in Python and retro-complete.sh deletes
+  # the directories it names in bash. A root that moves for one and not the
+  # other leaves every consumed review on disk with nothing left to collect it.
+  export WORKBENCH_STATE_DIR="$TMPDIR/explicit-state"
+  local consumed="$TMPDIR/explicit-state/retro-consumed-reviews.txt"
+
+  [ "$(resolve_constants REVIEWS_DIR)" = "$TMPDIR/explicit-state/reviews" ]
+  [ "$(resolve_python reviews_dir)" = "$TMPDIR/explicit-state/reviews" ]
+  [ "$(resolve_constants RETRO_CONSUMED_REVIEWS_FILE)" = "$consumed" ]
+  [ "$(resolve_python_retro_consumed)" = "$consumed" ]
 }
 
 # ─── Registry root expansion ────────────────────────────────────────────────

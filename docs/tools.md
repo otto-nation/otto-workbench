@@ -56,6 +56,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-cli-flags` | Validates CLI flag conventions — no --repo alias, --pr/--branch mutual exclusivity |
 | `validate-worktree-guards` | Validates that ctx.worktree_root is never dereferenced without a guard or require_worktree() |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
+| `validate-contract-vectors` | Validates that docs/contracts/pr-target-vectors.json still matches the run-target implementation consumers mirror |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |

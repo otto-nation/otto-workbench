@@ -1,0 +1,329 @@
+{
+  "contract": "pr-target",
+  "version": 1,
+  "owner": {
+    "repo": "otto-nation/otto-workbench",
+    "modules": [
+      "ai/lib/pr_target.py",
+      "ai/lib/workbench_paths.py"
+    ],
+    "regenerate": "bin/local/validate-contract-vectors --write"
+  },
+  "description": "Fixtures for the run-target path layout, generated from the owning implementation. Consumers vendor this file verbatim and assert against it rather than transcribing the tables by hand.",
+  "layout": {
+    "path": "<state_root>/<targets_dir>/<repo_key>-<branch_slug>/",
+    "targets_dir": "pr",
+    "state_file": "state.json",
+    "lock_file": "run.lock",
+    "reviews_dir": "reviews",
+    "worktree_state_dir": "workbench",
+    "legacy_worktree_state_dir": ".workbench"
+  },
+  "state_root": [
+    {
+      "env": {},
+      "expected": "<home>/.local/state/workbench",
+      "note": "No override and no XDG variable: the built-in default."
+    },
+    {
+      "env": {
+        "XDG_STATE_HOME": "<home>/xdg-state"
+      },
+      "expected": "<home>/xdg-state/workbench",
+      "note": "The XDG rung, which appends \"workbench\" to the value."
+    },
+    {
+      "env": {
+        "WORKBENCH_STATE_DIR": "<home>/explicit"
+      },
+      "expected": "<home>/explicit",
+      "note": "The override rung, taken verbatim with nothing appended."
+    },
+    {
+      "env": {
+        "WORKBENCH_STATE_DIR": "<home>/explicit",
+        "XDG_STATE_HOME": "<home>/xdg-state"
+      },
+      "expected": "<home>/explicit",
+      "note": "The override wins over the XDG rung."
+    },
+    {
+      "env": {
+        "WORKBENCH_STATE_DIR": ""
+      },
+      "expected": "<home>/.local/state/workbench",
+      "note": "An exported-but-empty override is unset. `export WORKBENCH_STATE_DIR=` in a profile leaves the variable present and empty; reading it as a real override resolves the root to the caller's cwd or to /."
+    },
+    {
+      "env": {
+        "XDG_STATE_HOME": ""
+      },
+      "expected": "<home>/.local/state/workbench",
+      "note": "An exported-but-empty XDG variable is unset, per the spec."
+    }
+  ],
+  "slug": [
+    {
+      "branch": "main",
+      "expected": "main",
+      "note": "The ordinary case: already a legal component, unchanged."
+    },
+    {
+      "branch": "isaac/fix/target_scoped_run_lock",
+      "expected": "isaac-fix-target_scoped_run_lock",
+      "note": "Underscores survive; only the separators collapse."
+    },
+    {
+      "branch": "feat/a--b",
+      "expected": "feat-a--b",
+      "note": "A run of legal dashes is content, not a separator to collapse."
+    },
+    {
+      "branch": "release/v1.2.3",
+      "expected": "release-v1.2.3",
+      "note": "The dot survives. A mirror guessing [^a-z0-9-] gives release-v1-2-3 — a second directory for one target, which is #680 again for every dotted branch."
+    },
+    {
+      "branch": "/leading/",
+      "expected": "leading",
+      "note": "Leading and trailing dashes are stripped after substitution."
+    },
+    {
+      "branch": "dependabot/npm_and_yarn/foo/bar-1.0.0",
+      "expected": "dependabot-npm_and_yarn-foo-bar-1.0.0",
+      "note": "The shape a bot actually produces, with every legal character class in it."
+    }
+  ],
+  "repo_key": [
+    {
+      "url": "git@github.com:acme/widget.git",
+      "expected": "acme-widget-b9d71e86",
+      "note": "canonical \"acme/widget\" — every spelling of one repo takes one key."
+    },
+    {
+      "url": "https://github.com/acme/widget.git",
+      "expected": "acme-widget-b9d71e86"
+    },
+    {
+      "url": "https://github.com/acme/widget",
+      "expected": "acme-widget-b9d71e86"
+    },
+    {
+      "url": "https://github.com/acme/widget/",
+      "expected": "acme-widget-b9d71e86"
+    },
+    {
+      "url": "https://github.com/acme/widget.git/",
+      "expected": "acme-widget-b9d71e86",
+      "note": "A trailing slash hides the .git from a strip that runs before it."
+    },
+    {
+      "url": "https://github.com/acme//widget.git",
+      "expected": "acme-widget-b9d71e86",
+      "note": "git accepts the doubled separator."
+    },
+    {
+      "url": "https://github.com/acme/widget/.git",
+      "expected": "acme-widget-b9d71e86",
+      "note": "`git clone .../repo/.git` is a spelling git accepts. The strip uncovers a trailing slash, so slashes normalize on both sides of it."
+    },
+    {
+      "url": "ssh://git@github.com/acme/widget.git",
+      "expected": "acme-widget-b9d71e86"
+    },
+    {
+      "url": "ssh://git@host:2222/acme/widget.git",
+      "expected": "acme-widget-b9d71e86",
+      "note": "A port is part of the authority, not the path."
+    },
+    {
+      "url": "git://host/acme/widget.git",
+      "expected": "acme-widget-b9d71e86"
+    },
+    {
+      "url": "https://user:token@host/acme/widget",
+      "expected": "acme-widget-b9d71e86",
+      "note": "Userinfo is part of the authority."
+    },
+    {
+      "url": "file:///srv/git/widget.git",
+      "expected": "widget-8ac140ce",
+      "note": "file:// names no host whatever authority it carries: git ignores a file URL's authority and clones the path, so all three of these are one target."
+    },
+    {
+      "url": "file://localhost/srv/git/widget.git",
+      "expected": "widget-8ac140ce"
+    },
+    {
+      "url": "file://bogushost/srv/git/widget.git",
+      "expected": "widget-8ac140ce"
+    },
+    {
+      "url": "gitbox:acme/widget.git",
+      "expected": "acme-widget-b9d71e86",
+      "note": "An ~/.ssh/config Host alias. Scp-style with no \"user@\", which git accepts and which therefore has to be qualified like any other hosted remote."
+    },
+    {
+      "url": "git@host:widget.git",
+      "expected": "widget-8ac140ce",
+      "note": "A hosted remote naming a single segment."
+    },
+    {
+      "url": "https://gitlab.com/group/subgroup/widget.git",
+      "expected": "group-subgroup-widget-2cc27ab1",
+      "note": "The whole path below the host, not its last two segments — group-a/platform/api and group-b/platform/api are different repos."
+    },
+    {
+      "url": "https://gitlab.com/group/sub/widget.git",
+      "expected": "group-sub-widget-5fe8bb83"
+    },
+    {
+      "url": "https://gitlab.com/group/sub/team/service/widget.git",
+      "expected": "group-sub-team-service-widget-b37e4eef"
+    },
+    {
+      "url": "/srv/git/widget.git",
+      "expected": "widget-8ac140ce",
+      "note": "A local remote keys on its trailing segment alone — leading directories are machine-specific, so keying on them gives one repo a key per machine."
+    },
+    {
+      "url": "/srv/git/widget/.git",
+      "expected": "widget-8ac140ce"
+    },
+    {
+      "url": "/srv/mirrors/otto-workbench/",
+      "expected": "otto-workbench-3df215bb"
+    },
+    {
+      "url": "../widget",
+      "expected": "widget-8ac140ce"
+    },
+    {
+      "url": "ssh://git@github.com/",
+      "expected": null,
+      "note": "A remote naming no path names no repo. Keying the userinfo, the host, or a file URL's discarded authority would give every such URL one directory."
+    },
+    {
+      "url": "https://github.com",
+      "expected": null
+    },
+    {
+      "url": "git@github.com:",
+      "expected": null
+    },
+    {
+      "url": "file://localhost/",
+      "expected": null
+    },
+    {
+      "url": "file://bogushost/",
+      "expected": null
+    },
+    {
+      "url": "file:///",
+      "expected": null
+    },
+    {
+      "url": "/",
+      "expected": null
+    },
+    {
+      "url": "",
+      "expected": null
+    },
+    {
+      "url": "https://github.com/Acme/Widget.git",
+      "expected": "acme-widget-b9d71e86",
+      "note": "The canonical form folds A-Z to a-z and drops one trailing \".git\" through that same fold: GitHub and GitLab treat a repo path case-insensitively, so every casing of one path is one repo and takes one lock."
+    },
+    {
+      "url": "git@github.com:acme/widget.GIT",
+      "expected": "acme-widget-b9d71e86"
+    },
+    {
+      "url": "https://github.com/Acme/Widget.GIT",
+      "expected": "acme-widget-b9d71e86"
+    },
+    {
+      "url": "https://github.com/acme/API",
+      "expected": "acme-api-c7198fbc"
+    },
+    {
+      "url": "https://github.com/acme/CAFÉ",
+      "expected": "acme-caf-bd08d87c",
+      "note": "A-Z and nothing else. É (U+00C9) is left as it is, so the mirror never has to agree with this runtime about a Unicode version or a locale. The price is these two rows: a mixed-case non-ASCII path is two keys, not one."
+    },
+    {
+      "url": "https://github.com/acme/café",
+      "expected": "acme-caf-84687fb6"
+    },
+    {
+      "url": "https://github.com/acme/文档.git",
+      "expected": "acme-3aa38a61",
+      "note": "Segments that slug to nothing contribute nothing readable; the digest is what keeps them apart. Without it every such repo under acme/ shares a key."
+    },
+    {
+      "url": "https://github.com/acme/日本語.git",
+      "expected": "acme-bc6e6e54"
+    },
+    {
+      "url": "https://github.com/acme/@@@.git",
+      "expected": "acme-cbe08fd8"
+    },
+    {
+      "url": "https://github.com/文档",
+      "expected": "2687ccdb",
+      "note": "Nothing readable at all: the key is the digest alone."
+    },
+    {
+      "url": "https://github.com/acme/wídget.git",
+      "expected": "acme-w-dget-7aa6a4f7",
+      "note": "A lossy slug, not an empty one. The readable part collides deliberately."
+    },
+    {
+      "url": "https://github.com/acme/wîdget.git",
+      "expected": "acme-w-dget-7fb0703f"
+    },
+    {
+      "url": "https://github.com/acme/-widget.git",
+      "expected": "acme--widget-c023fff7",
+      "note": "The slug's separator is legal inside a segment, and its strip('-') eats an edge hyphen. Both readable parts collide; both keys do not."
+    },
+    {
+      "url": "https://github.com/acme/wid/get.git",
+      "expected": "acme-wid-get-7ba0b50c"
+    },
+    {
+      "url": "https://github.com/acme/wid-get.git",
+      "expected": "acme-wid-get-273cf4a6"
+    },
+    {
+      "url": "https://github.com/..",
+      "expected": "..-5ec1f7e7",
+      "note": "Relative components survive as readable text, never as a path component: the digest suffix means no key can be \".\" or \"..\"."
+    },
+    {
+      "url": "https://github.com/./widget.git",
+      "expected": ".-widget-57d146cd"
+    }
+  ],
+  "target_dir": [
+    {
+      "repo_key": "acme-widget-b9d71e86",
+      "branch": "main",
+      "expected": "pr/acme-widget-b9d71e86-main",
+      "note": "The join: <targets_dir>/<repo-key>-<branch-slug>."
+    },
+    {
+      "repo_key": "acme-widget-b9d71e86",
+      "branch": "feat/A",
+      "expected": "pr/acme-widget-b9d71e86-feat-A",
+      "note": "The branch slug never folds case — git refs are case-sensitive, so feat/A and feat/a are two branches and must not share a lock."
+    },
+    {
+      "repo_key": "acme-widget-b9d71e86",
+      "branch": "feat/a",
+      "expected": "pr/acme-widget-b9d71e86-feat-a"
+    }
+  ]
+}

@@ -1562,6 +1562,27 @@ def test_cleaned_on_success_keeps_a_partial_run_for_recover(cr, tmp_path):
     assert (d / "disprove.md").exists()
 
 
+def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, capsys, monkeypatch):
+    """A tidy-up failure must not take the run's outcome down with it.
+
+    The orchestrator prints the JSON its caller parses after this scope closes,
+    so an OSError escaping here would discard a review that succeeded.
+    """
+    d = _finished_review(tmp_path)
+
+    def _explode(review_dir):
+        raise OSError(30, "Read-only file system", str(review_dir / "disprove.md"))
+
+    monkeypatch.setattr(review_gc, "cleanup_intermediates", _explode)
+
+    with review_gc.cleaned_on_success(d):
+        pass
+
+    err = capsys.readouterr().err
+    assert "could not sweep" in err
+    assert "disprove.md" in err
+
+
 # ── _generator_version ────────────────────────────────────────────────────────
 
 

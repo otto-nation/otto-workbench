@@ -50,8 +50,8 @@ def cleanup_intermediates(review_dir: Path) -> None:
     finding, so it goes the same way as any other phase log rather than
     surviving the run that wrote it.
 
-    When this runs is not this function's decision — see `cleaned_on_success`,
-    which is the only thing that should call it.
+    When this runs is not this function's decision — a review run sweeps
+    through `cleaned_on_success`, which is what knows the run is over.
     """
     cleanup = phase_artifacts(review_dir)
     cleanup.append(review_dir / FILENAME_PIPELINE_STATE)
@@ -79,11 +79,23 @@ def cleaned_on_success(review_dir: Path):
     included, which is how a phase reports that it produced no review — and so
     does a pipeline whose state records a failure, since `pr review --recover`
     resumes from exactly those artifacts.
+
+    Failing to tidy up, on the other hand, does not undo a run that worked. The
+    sweep is best-effort for that reason — see the comment on its guard.
     """
     yield
     if read_pipeline_status(review_dir) != ReviewStatus.COMPLETED.value:
         return
-    cleanup_intermediates(review_dir)
+    # Best-effort: the deliverable is already written, and the orchestrator
+    # prints the result JSON its caller parses only after this scope closes. An
+    # OSError here — `unlink(missing_ok=True)` still raises on a permissions or
+    # read-only-filesystem failure — would otherwise throw away a review that
+    # succeeded to report leftover files nobody asked about. The warning is what
+    # keeps that from being silent; the leftovers are the next `pr gc`'s work.
+    try:
+        cleanup_intermediates(review_dir)
+    except OSError as exc:
+        log.warn(f"could not sweep {review_dir} ({exc}) — leaving its intermediates in place")
 
 
 def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:

@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from conftest import synthetic_review
+
 
 class TestExtractEvidence:
     def test_extracts_from_blockquoted_fenced_code(self, ro):
@@ -4352,12 +4354,7 @@ class TestCleanupScope:
     real one leaves behind, which is all the sweep can see.
     """
 
-    _REVIEW = (
-        "# Review: org/repo#1 — t\n"
-        "<!-- status: completed -->\n"
-        "## Summary\nAll good.\n\n"
-        "## Verdict\nApprove\n"
-    )
+    _REVIEW = synthetic_review(meta="status: completed", summary="All good.")
 
     @staticmethod
     def _args(ro, review_file, repo_dir, **overrides):
@@ -4375,8 +4372,12 @@ class TestCleanupScope:
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
 
-    def _run(self, ro, monkeypatch, tmp_path, pipeline=None, **arg_overrides):
-        """Drive `_run_orchestrate` over *tmp_path* with every phase faked."""
+    def _run(self, ro, monkeypatch, tmp_path, pipeline=None, out=None, **arg_overrides):
+        """Drive `_run_orchestrate` over *tmp_path* with every phase faked.
+
+        Pass *out* to keep the result JSON the run prints; the default throws
+        it away, since what most of these tests read is the directory.
+        """
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
@@ -4408,7 +4409,7 @@ class TestCleanupScope:
         monkeypatch.setattr(ro, "run_fix_pass", _fix)
 
         args = self._args(ro, review_file, tmp_path, **arg_overrides)
-        with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(out if out is not None else io.StringIO()):
             ro._run_orchestrate(MagicMock(), args, "org/repo", str(review_dir / "session.jsonl"))
         return review_dir
 
@@ -4471,3 +4472,28 @@ class TestCleanupScope:
         assert (review_dir / "group-1.md").exists()
         assert (review_dir / "pipeline.json").exists()
         assert (review_dir / "fix.jsonl").exists()
+
+    def test_a_failed_sweep_still_reports_the_review(self, ro, monkeypatch, tmp_path):
+        """The result JSON is printed after the sweep, so the sweep must not eat it.
+
+        `unlink(missing_ok=True)` only suppresses FileNotFoundError; a
+        read-only filesystem raises. claude-review reads the review it just
+        paid for out of this JSON, so failing to delete a log cannot be what
+        loses it.
+        """
+        import review_gc
+
+        def _explode(review_dir):
+            raise OSError(30, "Read-only file system", str(review_dir / "disprove.jsonl"))
+
+        monkeypatch.setattr(review_gc, "cleanup_intermediates", _explode)
+
+        out = io.StringIO()
+        review_dir = self._run(ro, monkeypatch, tmp_path, out=out)
+
+        assert json.loads(out.getvalue()) == {
+            "review_file": str(review_dir / "review.md"),
+            "session_log": str(review_dir / "session.jsonl"),
+            "mode": ro.PIPELINE_SINGLE,
+        }
+        assert (review_dir / "disprove.jsonl").exists()

@@ -295,13 +295,13 @@ def _coerce_tuple(hint, args, value):
 
 
 def _coerce_dict(hint, args, value):
-    """dict[K, V] — coerce values, and int keys back from the strings JSON made
-    of them. Only int: every other key type survives the trip as itself."""
+    """dict[K, V] — coerce values, and keys back from the strings JSON made of
+    them. `_key_coercer` owns which key types need converting."""
     if not isinstance(value, dict):
         raise _Omitted
     if not args:
         return value
-    coerce_key = int if args[0] is int else _identity
+    coerce_key = _key_coercer(args[0])
     return {coerce_key(k): _coerce(args[1], v) for k, v in value.items()}
 
 

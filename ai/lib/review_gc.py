@@ -170,25 +170,56 @@ def _pr_close_state(repo: str, pr_number: int) -> str:
     return state if state in ("MERGED", "CLOSED") else ""
 
 
+def _remove_target(target: Path) -> None:
+    """Empty *target* and remove it, unlinking its lock file last.
+
+    Raises OSError if anything is left — an entry that would not unlink, or a
+    run that recreated one in the window below, which surfaces as ENOTEMPTY
+    from the non-recursive rmdir.
+    """
+    lock_path = target / run_lock.LOCK_FILE
+    # ceiling: a target directory is flat — state.json and run.lock — so an
+    # entry that is itself a directory raises IsADirectoryError here and the
+    # target is reported as not pruned rather than removed. Upgrade trigger:
+    # anything that starts writing a subdirectory under a target.
+    for entry in target.iterdir():
+        if entry != lock_path:
+            entry.unlink()
+    lock_path.unlink(missing_ok=True)
+    target.rmdir()
+
+
 def _prune_one_target(target: Path) -> bool:
     """Remove a target directory, unless a live run holds it.
 
-    rmtree unlinks run.lock, and a flock only excludes processes that agree on
-    one inode — deleting it out from under a running review would let the next
-    contender create a fresh file and take an uncontended lock while the first
-    is still working. Taking the lock first is how we learn nobody is there.
+    The lock is what tells us no run is *already* in flight. It cannot tell us
+    about one that arrives mid-removal: a flock only excludes processes that
+    agree on one inode, so once run.lock is unlinked the next contender creates
+    a fresh file and takes an uncontended lock on a new inode while we still
+    hold the old one. `rmtree` unlinks it partway through its walk and then
+    keeps deleting, which is how a target's state.json could be pulled out from
+    under a run that had every right to it.
 
-    Returns whether the directory is actually gone. `ignore_errors=True` keeps
-    a permission-denied subdir from aborting the rest of the sweep, but that
-    means rmtree can fail partway through, so a caller that trusted a bare
-    "did not raise" would log and count a target that is still there — and if
-    state.json alone went, the next sweep's glob would never revisit it.
+    So the lock file goes last and the directory goes with a non-recursive
+    `os.rmdir`, which fails with ENOTEMPTY precisely when a run has recreated
+    something in that window. That failure is the answer we want, not an error
+    to paper over: we report the target as not pruned and leave it to its new
+    owner.
+
+    Returns whether the directory is actually gone, rather than whether the
+    removal raised — a caller that logged and counted a target still on disk
+    would also lose it from the next sweep, whose glob only finds targets that
+    still have a state.json.
     """
     try:
-        with run_lock.acquire(target, command="pr gc", started=""):
-            shutil.rmtree(target, ignore_errors=True)
+        with run_lock.acquire(target, command="pr gc", started=pr_state.now_iso()):
+            _remove_target(target)
     except run_lock.LockBusy:
         return False
+    except OSError:
+        # Reported, not raised: one target we could not empty must not abort
+        # the sweep, and `not target.exists()` below already says what happened.
+        log.warn(f"GC: could not remove {target.name} — leaving it in place")
     return not target.exists()
 
 

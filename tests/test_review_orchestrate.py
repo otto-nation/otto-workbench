@@ -2960,8 +2960,7 @@ class TestReconcileDroppedFindings:
         result = review.read_text()
 
         assert "Evidence verification removed 1 finding:" in result
-        assert "`deleted.py`" in result
-        assert "file not found" in result
+        assert "> - Must fix — `deleted.py`: file not found" in result
         # The finding itself is gone, so only the note may mention it.
         assert "the error is never checked" not in result
 
@@ -2999,12 +2998,16 @@ class TestReconcileDroppedFindings:
         assert verdict.strip().startswith("## Verdict\nApprove — 1 nit")
         assert "Request changes" not in result
 
-    def test_disapprove_is_lowered_too(self, ro, tmp_path):
-        # parse_review_verdict propagates a Disapprove into pr status, so a
-        # stale one is a wrong machine state and not only wrong prose.
+    def test_disapprove_is_never_lowered(self, ro, tmp_path):
+        # Disapprove means the approach is wrong, which the finding counts do
+        # not derive — dropping a finding cannot refute it. The note still says
+        # what went, so the reader can weigh the verdict against it.
         review = self._review(tmp_path, verdict="**Disapprove** — the approach is wrong.")
         ro.post_process_findings(str(review), str(tmp_path))
-        assert "Disapprove" not in review.read_text()
+        result = review.read_text()
+
+        assert "**Disapprove** — the approach is wrong." in result
+        assert "Evidence verification removed 1 finding:" in result
 
     def test_verdict_the_counts_still_support_is_left_alone(self, ro, tmp_path):
         review = self._review(

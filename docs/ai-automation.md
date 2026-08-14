@@ -599,8 +599,10 @@ what left it:
   it was dropped.
 - `## Verdict` is rewritten when the surviving counts no longer support the stated
   action. A drop can only remove findings, so this only ever lowers a verdict:
-  `Disapprove` → `Request changes` → `Needs discussion` → `Approve`. A verdict the
-  remaining findings still support is left exactly as written.
+  `Request changes` → `Needs discussion` → `Approve`. A verdict the remaining
+  findings still support is left exactly as written, and `Disapprove` is never
+  touched — it means the overall approach is wrong, which the counts do not
+  derive, so no drop refutes it.
 
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.

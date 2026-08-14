@@ -1075,11 +1075,15 @@ _DROP_NOTE_MARKER = "<!-- verification-drops -->"
 
 # Dropping only ever removes findings, so a stale verdict can only overstate.
 # Ranking them lets the revision lower a verdict without ever raising one.
+#
+# Disapprove is deliberately absent. Per `review-templates/synthesis.md`, it means
+# the overall approach is wrong and the PR should not land in any form — a holistic
+# judgment the finding counts do not derive, so no drop refutes it. Leaving it out
+# of the ranking is what makes an unmatched verdict fall through untouched.
 _VERDICT_RANK = {
     "approve": 0,
     "needs discussion": 1,
     "request changes": 2,
-    "disapprove": 3,
 }
 
 _VERDICT_STATED_RE = re.compile(
@@ -1107,7 +1111,7 @@ def _drop_note(details: list[dict], dropped: list[str]) -> str:
     """
     dropped_set = set(dropped)
     lines = [
-        f"> - {severity_by_key(d['severity']).label} — `{d['path']}`: {_drop_reason(d)}"
+        f"> - {severity_by_key(d['severity']).section} — `{d['path']}`: {_drop_reason(d)}"
         for d in details
         if d["id"] in dropped_set
     ]

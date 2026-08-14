@@ -1904,10 +1904,10 @@ class TestFinishFlag:
 # ── --reply ──────────────────────────────────────────────────────────────
 
 
-def _raw_thread(tid, comment_ids, login="reviewer"):
+def _raw_thread(tid, comment_ids, login="reviewer", resolved=False):
     return {
         "id": tid,
-        "isResolved": False,
+        "isResolved": resolved,
         "path": "src/app.py",
         "line": 4,
         "comments": {"nodes": [
@@ -1915,6 +1915,13 @@ def _raw_thread(tid, comment_ids, login="reviewer"):
             for cid in comment_ids
         ]},
     }
+
+
+def _raw_answered_thread(tid="PRRT_abc", resolved=False):
+    """A reviewer's thread we have already replied to, as GraphQL returns it."""
+    raw = _raw_thread(tid, [111, 222], resolved=resolved)
+    raw["comments"]["nodes"][1]["author"] = {"login": "me"}
+    return raw
 
 
 class TestFindReplyTarget:
@@ -1938,6 +1945,13 @@ class TestFindReplyTarget:
     def test_carries_the_lifecycle_state_the_upsert_needs(self, rt):
         raw = [_raw_thread("PRRT_abc", [111, 222], login="me")]
         assert rt._find_reply_target(raw, "PRRT_abc", "me").state == ThreadState.ADDRESSED
+
+    def test_carries_the_viewer_login_the_upsert_needs(self, rt):
+        """Without it the upsert cannot tell our own reply from a reviewer's."""
+        raw = [_raw_answered_thread(resolved=True)]
+        thread = rt._find_reply_target(raw, "PRRT_abc", "me")
+        assert thread.my_login == "me"
+        assert rt._our_last_reply_id(thread) == 222
 
 
 class TestRunReply:
@@ -2015,6 +2029,52 @@ class TestRunReply:
              patch.object(rt.log, "error") as err:
             assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
         err.assert_not_called()
+
+    def test_a_drafted_reply_says_draft_and_sends_nothing(self, rt, tmp_path):
+        """#686: the closing line claimed a post no draft run ever made."""
+        body = tmp_path / "reply.md"
+        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
+        fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch.object(rt.pc.subprocess, "run") as run, \
+             patch.object(rt.log, "info") as info:
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+        run.assert_not_called()
+        lines = [c[0][0] for c in info.call_args_list]
+        assert any("DRAFT (not published)" in line for line in lines)
+        assert not any("Posted" in line or "Edited" in line for line in lines)
+
+    @pytest.mark.parametrize("raw,call,verb", [
+        ([_raw_thread("PRRT_abc", [111])], "post_thread_reply", "Posted"),
+        ([_raw_answered_thread()], "patch_thread_reply", "Edited"),
+    ])
+    def test_a_published_reply_reports_what_it_did(
+        self, rt, tmp_path, publishing_on, raw, call, verb,
+    ):
+        body = tmp_path / "reply.md"
+        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
+        fetch_pr, fetch_threads = self._patches(rt, raw, login="me")
+        with fetch_pr, fetch_threads, \
+             patch(f"pr_comments.{call}", return_value=True), \
+             patch.object(rt.log, "info") as info:
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+        assert f"{verb} reply on PRRT_abc" in [c[0][0] for c in info.call_args_list]
+
+    def test_edits_the_standing_reply_on_a_resolved_thread(
+        self, rt, tmp_path, publishing_on,
+    ):
+        """#676 end to end: --finish --post resolves the threads it answers."""
+        body = tmp_path / "reply.md"
+        body.write_text("Revised. https://github.com/owner/repo/blob/abc/src/app.py#L4")
+        fetch_pr, fetch_threads = self._patches(
+            rt, [_raw_answered_thread(resolved=True)], login="me",
+        )
+        with fetch_pr, fetch_threads, \
+             patch("pr_comments.post_thread_reply") as post, \
+             patch("pr_comments.patch_thread_reply", return_value=True) as edit:
+            assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+        post.assert_not_called()
+        assert edit.call_args[0][1] == 222
 
     def test_distinguishes_a_missing_body_file_from_an_empty_one(self, rt, tmp_path):
         empty = tmp_path / "empty.md"
@@ -2113,12 +2173,14 @@ class TestPostAlreadyAddressedReplies:
 # ── reply upsert ─────────────────────────────────────────────────────────
 
 
-def _standing_reply_thread(tid="t1", body="Applied: old take"):
+def _standing_reply_thread(tid="t1", body="Applied: old take", **kw):
     """A thread whose last comment is ours and unanswered — the editable case."""
-    return ReportThread(id=tid, state=ThreadState.ADDRESSED, comments=[
-        {"databaseId": 111, "body": "reviewer's point"},
-        {"databaseId": 222, "body": body},
-    ])
+    kw.setdefault("state", ThreadState.ADDRESSED)
+    kw.setdefault("my_login", "me")
+    return ReportThread(id=tid, comments=[
+        {"databaseId": 111, "body": "reviewer's point", "author": {"login": "kgn"}},
+        {"databaseId": 222, "body": body, "author": {"login": "me"}},
+    ], **kw)
 
 
 def _dismissed(**overrides):
@@ -2126,6 +2188,39 @@ def _dismissed(**overrides):
     fields = {"id": "t1", "summary": "not applicable", "reasoning": "reason"}
     fields.update(overrides)
     return CommentItem(**fields)
+
+
+class TestOurLastReplyId:
+    """Edit-vs-post turns on who spoke last, not on the thread's lifecycle."""
+
+    def test_our_unanswered_reply_is_editable(self, rt):
+        assert rt._our_last_reply_id(_standing_reply_thread()) == 222
+
+    def test_resolution_does_not_retire_our_standing_reply(self, rt):
+        """#676: --finish --post resolves what it replies to, and RESOLVED
+        outranks ADDRESSED — reading the state stacked a second comment."""
+        thread = _standing_reply_thread(state=ThreadState.RESOLVED, is_resolved=True)
+        assert rt._our_last_reply_id(thread) == 222
+
+    def test_none_once_a_reviewer_has_answered(self, rt):
+        thread = _standing_reply_thread(state=ThreadState.CONTESTED)
+        thread.comments.append(
+            {"databaseId": 333, "body": "not what I meant", "author": {"login": "kgn"}},
+        )
+        assert rt._our_last_reply_id(thread) is None
+
+    def test_none_for_a_lone_root_comment(self, rt):
+        thread = ReportThread(id="t1", my_login="me", state=ThreadState.ADDRESSED,
+                              comments=[{"databaseId": 111, "author": {"login": "me"}}])
+        assert rt._our_last_reply_id(thread) is None
+
+    def test_none_without_a_viewer_login(self, rt):
+        """An unknown viewer cannot claim authorship of anything."""
+        thread = _standing_reply_thread(my_login="")
+        assert rt._our_last_reply_id(thread) is None
+
+    def test_none_for_a_thread_that_is_not_there(self, rt):
+        assert rt._our_last_reply_id(None) is None
 
 
 class TestReplyUpsert:
@@ -2149,10 +2244,14 @@ class TestReplyUpsert:
         """Editing under a reviewer's reply would rewrite what they answered."""
         dismissed = [_dismissed()]
         threads_by_id = {
-            "t1": ReportThread(id="t1", state=ThreadState.CONTESTED, comments=[
-                {"databaseId": 111, "body": "reviewer's point"},
-                {"databaseId": 222, "body": "Applied: old take"},
-                {"databaseId": 333, "body": "that is not what I meant"},
+            "t1": ReportThread(id="t1", my_login="me",
+                               state=ThreadState.CONTESTED, comments=[
+                {"databaseId": 111, "body": "reviewer's point",
+                 "author": {"login": "kgn"}},
+                {"databaseId": 222, "body": "Applied: old take",
+                 "author": {"login": "me"}},
+                {"databaseId": 333, "body": "that is not what I meant",
+                 "author": {"login": "kgn"}},
             ]),
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as post, \
@@ -2183,8 +2282,9 @@ class TestReplyUpsert:
         """On a self-review the root is ours; editing it rewrites the review point."""
         dismissed = [_dismissed()]
         threads_by_id = {
-            "t1": ReportThread(id="t1", state=ThreadState.ADDRESSED,
-                               comments=[{"databaseId": 111, "body": "my own note"}]),
+            "t1": ReportThread(id="t1", state=ThreadState.ADDRESSED, my_login="me",
+                               comments=[{"databaseId": 111, "body": "my own note",
+                                          "author": {"login": "me"}}]),
         }
         with patch("pr_comments.post_thread_reply", return_value=True) as post, \
              patch("pr_comments.patch_thread_reply") as edit:
@@ -2195,15 +2295,17 @@ class TestReplyUpsert:
         edit.assert_not_called()
         assert post.call_args[0][2] == 111
 
-    @pytest.mark.parametrize("state,failing", [
-        (ThreadState.ADDRESSED, "patch_thread_reply"),
-        (ThreadState.NEW, "post_thread_reply"),
+    @pytest.mark.parametrize("standing,failing", [
+        (True, "patch_thread_reply"),
+        (False, "post_thread_reply"),
     ])
-    def test_a_failed_call_is_not_counted(self, rt, tmp_path, state, failing):
+    def test_a_failed_call_is_not_counted(self, rt, tmp_path, standing, failing):
         """replies_posted feeds the run summary, so a silent failure would inflate it."""
         dismissed = [_dismissed()]
-        thread = _standing_reply_thread()
-        thread.state = state
+        thread = _standing_reply_thread() if standing else ReportThread(
+            id="t1", my_login="me",
+            comments=[{"databaseId": 111, "author": {"login": "kgn"}}],
+        )
         with patch("pr_comments.post_thread_reply", return_value=True), \
              patch("pr_comments.patch_thread_reply", return_value=True), \
              patch(f"pr_comments.{failing}", return_value=False):

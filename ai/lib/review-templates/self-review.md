@@ -51,6 +51,7 @@ Rules:
 - Do NOT include a File Triage section
 - Do NOT include a Verdict section
 - Omit empty severity sections entirely (no "None" or "N/A")
+- On a re-review — a `## Prior review` section is present below — add the `## Prior findings` ledger it asks for after the severity sections
 
 ## Output
 ${output_block}

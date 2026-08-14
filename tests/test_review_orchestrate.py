@@ -450,6 +450,18 @@ PRIOR_ONE_FINDING = (
 )
 
 
+class TestPriorDisposition:
+    def test_parses_the_word_the_prompt_asks_for(self, ro):
+        assert ro.PriorDisposition.parse("Fixed") is ro.PriorDisposition.FIXED
+        assert (
+            ro.PriorDisposition.parse("Still open — see below")
+            is ro.PriorDisposition.STILL_OPEN
+        )
+
+    def test_unrecognised_wording_has_no_disposition(self, ro):
+        assert ro.PriorDisposition.parse("moved to a follow-up") is None
+
+
 class TestUnaccountedPriorFindings:
     def test_empty_prior(self, ro):
         assert ro.unaccounted_prior_findings("", "<!-- sid:abc -->") == []
@@ -494,6 +506,24 @@ class TestUnaccountedPriorFindings:
         assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == [
             "M1 `handler.go`",
         ]
+
+    def test_ledger_entry_may_carry_a_line_number(self, ro):
+        review = (
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
+            "- **[M1]** `handler.go:42` — Fixed\n"
+        )
+        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
+
+    def test_one_ledger_entry_does_not_cover_a_sibling_in_the_same_file(self, ro):
+        prior = (
+            PRIOR_ONE_FINDING
+            + "- **[M2]** **`handler.go:88`** — unchecked type assertion\n"
+        )
+        review = (
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
+            "- **[M1]** `handler.go` — Fixed\n"
+        )
+        assert ro.unaccounted_prior_findings(prior, review) == ["M2 `handler.go`"]
 
     def test_reports_only_the_unaccounted_one(self, ro):
         prior = PRIOR_ONE_FINDING + "- **[M2]** **`cache.go:9`** — stale entry\n"
@@ -752,8 +782,24 @@ class TestMergeReviews:
         result = ro.merge_reviews([str(g1), str(g2)])
         assert result.count("**[M3]** `a.go` — Fixed") == 1
         assert "**[S2]** `b.go` — Still open" in result
-        # Ledger IDs name the prior review, so the merge must not renumber them.
-        assert "[M1]" in result
+        # Ledger IDs name the prior review, so the merge must not renumber them
+        # into the sequence it assigns this review's findings.
+        assert "- **[M1]** **`a.go:1`** — new issue" in result
+
+    def test_merge_keeps_the_still_open_verdict_when_groups_disagree(self, ro, tmp_path):
+        g1 = tmp_path / "g1.md"
+        g1.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — Fixed\n"
+        )
+        g2 = tmp_path / "g2.md"
+        g2.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            f"## {ro.SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — Still open\n"
+        )
+        result = ro.merge_reviews([str(g1), str(g2)])
+        assert "**[M3]** `a.go` — Still open" in result
+        assert "Fixed" not in result
 
     def test_merge_omits_ledger_when_no_group_has_one(self, ro, tmp_path):
         g1 = tmp_path / "g1.md"
@@ -828,21 +874,20 @@ class TestFindingDedupKey:
         line = "- **[M1]** **`pkg/handler.go:42`** — missing error check"
         result = ro._finding_dedup_key(line)
         assert result is not None
-        path, desc = result
-        assert "handler.go" in path
-        assert "missing error check" in desc
+        assert "handler.go" in result.path
+        assert "missing error check" in result.desc
 
     def test_checkbox_finding(self, ro):
         line = "- [ ] **[S1]** **`handler.go:10`** — issue here"
         result = ro._finding_dedup_key(line)
         assert result is not None
-        assert "handler.go" in result[0]
+        assert "handler.go" in result.path
 
     def test_stable_id(self, ro):
         line = "- **[M1]** <!-- sid:abc12345 --> **`file.go:1`** — desc"
         result = ro._finding_dedup_key(line)
         assert result is not None
-        assert "file.go" in result[0]
+        assert "file.go" in result.path
 
     def test_non_finding_line(self, ro):
         assert ro._finding_dedup_key("just some text") is None

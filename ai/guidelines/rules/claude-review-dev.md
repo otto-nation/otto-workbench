@@ -12,7 +12,7 @@ paths:
 
 When adding or modifying a review phase, verify these integration points:
 - `review_common.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
-- `review-orchestrate`: `_FINDING_SECTIONS` (derived from registry), `renumber_section()`, `merge_reviews()`, `build_prompt()` template rendering
+- `review-orchestrate`: iteration over `SEVERITIES`, `renumber_section()`, `merge_reviews()`, `build_prompt()` template rendering
 - `review-post`: `renumber_for_posting()`, `parse_findings()` parser, `classify_findings()` posting routing
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
@@ -21,16 +21,19 @@ When adding or modifying a review phase, verify these integration points:
 
 A re-review accounts for every prior finding in a `## Prior findings` ledger —
 one line per prior finding, `- **[M1]** \`path\` — Fixed` or `— Still open`,
-with the ID and path copied from the prior review.
-`unaccounted_prior_findings()` matches a prior finding by an ID or path the
-ledger names, or by the stable ID the new review's own finding lines hash to
-(so a verbatim carry-forward matches with or without its `<!-- sid: -->`
-marker); anything it cannot match is warned about. The ledger is unioned across
-groups by `merge_reviews()`, copied through by the synthesis templates, and
-stripped in `post_process_findings()` before renumbering — its IDs number the
-prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`, the
-merge, the synthesis templates, or `_build_prior_section()`'s instruction means
-checking the other three.
+with the ID and path copied from the prior review. Those two verdicts are
+`PriorDisposition`, and `_build_prior_section()`'s instruction interpolates the
+enum's values, so the words asked for and the words parsed cannot drift apart.
+`unaccounted_prior_findings()` matches a prior finding against a `FindingRef`
+(ID plus path) named by the ledger, or against the stable ID the new review's
+own finding lines hash to (so a verbatim carry-forward matches with or without
+its `<!-- sid: -->` marker); anything it cannot match is warned about. The
+ledger is unioned across groups by `merge_reviews()` — where a `Still open`
+entry beats a `Fixed` one for the same finding — copied through by the
+synthesis templates, and stripped in `post_process_findings()` before
+renumbering, since its IDs number the prior review, not this one. Changing any
+one of `SECTION_PRIOR_FINDINGS`, `PriorDisposition`, the merge, the synthesis
+templates, or `_build_prior_section()`'s instruction means checking the others.
 
 ## Debugging claude-review
 

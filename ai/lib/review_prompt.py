@@ -20,13 +20,16 @@ from review_common import (
     EFFORT_PRESETS, Effort,
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
+    PriorDisposition,
     TEMPLATE_DIR_REL,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path, build_output_block, build_worktree_block,
 )
-from review_findings import BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids
+from review_findings import (
+    BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids, strip_sections,
+)
 from review_scout import (
     format_leads_block,
     is_scout_output, parse_scout_output,
@@ -526,15 +529,7 @@ _PRIOR_EXCLUDED_SECTIONS = {
 
 
 def _strip_internal_sections(prior_text: str) -> str:
-    parts: list[str] = []
-    excluded = False
-    for line in prior_text.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            excluded = stripped[3:].strip().lower() in _PRIOR_EXCLUDED_SECTIONS
-        if not excluded:
-            parts.append(line)
-    return "\n".join(parts).strip()
+    return strip_sections(prior_text, _PRIOR_EXCLUDED_SECTIONS).strip()
 
 
 _STATE_LABELS = {
@@ -569,12 +564,15 @@ def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
 # The disposition ledger every re-review must emit. Reconciliation matches a
 # prior finding on its ID or its path — the two parts an agent restates
 # verbatim — so the instruction asks for exactly those, and never for the
-# internal sid marker, which nothing downstream requires the agent to echo.
+# internal sid marker, which nothing downstream requires the agent to echo. The
+# two verdict words come from the enum the ledger is parsed with, so asking for
+# a word the parser does not know is not expressible here.
 _LEDGER_INSTRUCTION = f"""
 End your output with a `## {SECTION_PRIOR_FINDINGS}` section listing EVERY prior
 finding above, one line each, copying its ID and path exactly as written there:
-- `- **[M1]** \\`path/to/file.py\\` — Fixed` when the change resolves it
-- `- **[M1]** \\`path/to/file.py\\` — Still open` when it does not
+- `- **[M1]** \\`path/to/file.py\\` — {PriorDisposition.FIXED}` when the change resolves it
+- `- **[M1]** \\`path/to/file.py\\` — {PriorDisposition.STILL_OPEN}` when it does not, and
+  carry the finding forward into the severity sections as well
 This section is bookkeeping — it is stripped before the review is published, and
 a prior finding missing from it is reported as unaccounted for."""
 

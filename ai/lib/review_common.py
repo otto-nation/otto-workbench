@@ -67,6 +67,23 @@ SECTION_STATIC_ANALYSIS = "Static Analysis"
 SECTION_PRIOR_FINDINGS = "Prior findings"
 
 
+class PriorDisposition(StrEnum):
+    """What a re-review says became of a prior finding.
+
+    The values are the words the prompt asks for and the words the ledger is
+    parsed for, so the two cannot drift apart.
+    """
+
+    FIXED = "Fixed"
+    STILL_OPEN = "Still open"
+
+    @classmethod
+    def parse(cls, text: str) -> "PriorDisposition | None":
+        """The disposition a ledger line's text opens with, if it names one."""
+        lowered = text.strip().lower()
+        return next((d for d in cls if lowered.startswith(d.value.lower())), None)
+
+
 def plural(n: int) -> str:
     """Return the plural suffix for a count — `f"{total} finding{plural(total)}"`."""
     return "" if n == 1 else "s"

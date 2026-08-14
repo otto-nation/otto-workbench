@@ -60,6 +60,43 @@ def severity_by_key(key: str) -> SeverityConfig:
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"
 
+# A re-review's ledger: one line per prior finding, saying whether the change
+# resolved it. Reconciliation reads it to tell a finding the re-review dropped
+# on purpose from one it lost track of; it is stripped before the review is
+# posted, since its finding IDs number the prior review, not this one.
+SECTION_PRIOR_FINDINGS = "Prior findings"
+
+
+class PriorDisposition(StrEnum):
+    """What a re-review says became of a prior finding.
+
+    The values are the words the prompt asks for and the words the ledger is
+    parsed for, so the two cannot drift apart.
+    """
+
+    FIXED = "Fixed"
+    STILL_OPEN = "Still open"
+
+    @classmethod
+    def parse(cls, text: str) -> "PriorDisposition | None":
+        """The disposition a ledger line states, if it states one plainly.
+
+        The verdict has to stand on its own — the whole text, or ahead of a
+        dash, colon or parenthesis. A qualified one ("Fixed, but only on the
+        happy path") is left unparsed rather than read as its optimistic half.
+        """
+        lowered = text.strip().lower()
+        for member in cls:
+            rest = lowered.removeprefix(member.value.lower())
+            if rest != lowered and _DISPOSITION_TAIL_RE.match(rest):
+                return member
+        return None
+
+
+# What may follow a disposition without qualifying it: nothing, or a break that
+# introduces detail rather than a caveat.
+_DISPOSITION_TAIL_RE = re.compile(r"^\s*(?:[—–:(-]|$)")
+
 
 def plural(n: int) -> str:
     """Return the plural suffix for a count — `f"{total} finding{plural(total)}"`."""

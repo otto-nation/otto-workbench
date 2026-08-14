@@ -7,7 +7,8 @@ Usage:
 Scans for deliberate simplification markers (// ceiling:, # ceiling:, etc.)
 across comment styles. Groups by file, flags missing upgrade triggers.
 
-Binary, oversized, and minified files are skipped — see MAX_FILE_BYTES.
+Work is bounded per file and per line: MAX_FILE_BYTES caps size, BINARY_SNIFF_BYTES
+sniffs for NUL, and MAX_LINE_LEN skips minified and generated lines.
 
 Exit code is always 0 (informational).
 """

@@ -700,7 +700,7 @@ class TestParallelGroupTurnBudget:
         ]
         review_phases._run_parallel_reviews(
             groups, job, len(groups), "holistic", workers=2,
-            skip_groups=None, pipeline_state=None,
+            skip_groups={}, pipeline_state=None,
         )
 
         expected = review_phases.PHASES[Phase.GROUP].max_turns + review_phases.OMITTED_FILE_TURNS

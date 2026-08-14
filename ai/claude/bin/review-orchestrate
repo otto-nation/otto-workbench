@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Review orchestration for claude-review.
 
-Handles everything between "worktree is ready" and "review file is written":
-PR metadata fetching, prompt template rendering, Claude agent invocation,
-stream progress display, file grouping, and review merging.
+Handles everything between "worktree is ready" and "the review directory holds
+only its deliverable": PR metadata fetching, prompt template rendering, Claude
+agent invocation, stream progress display, file grouping, review merging, the
+static analysis section, and the optional fix pass.
+
+Phase order is this script's alone, and so is the cleanup that order decides —
+no phase cleans up after itself.
 
 Called by claude-review (bash wrapper) which handles worktree lifecycle,
 archive management, and interactive prompts.
@@ -32,6 +36,7 @@ import review_prompt as _rpmt  # noqa: E402
 import review_agent as _ra  # noqa: E402
 import review_pipeline as _rpl  # noqa: E402
 import review_fix as _rfx  # noqa: E402
+import review_gc as _rgc  # noqa: E402
 import review_phases as _rph  # noqa: E402
 import review_retry as _rrt  # noqa: E402
 import review_state as _rst  # noqa: E402
@@ -49,6 +54,7 @@ from review_preflight import (  # noqa: E402
 )
 from review_agent import QuotaThrottle  # noqa: E402
 from review_fix import run_fix_pass  # noqa: E402
+from review_gc import cleaned_on_success  # noqa: E402
 from review_phases import collect_phase_models  # noqa: E402
 from review_pipeline import (  # noqa: E402
     DEFAULT_MAX_COST, EFFORT_PRESETS, _fetch_metadata,
@@ -61,7 +67,7 @@ import ai_backend  # noqa: E402
 
 SCRIPT = Path(__file__).name
 
-_SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rph, _rrt, _rst)
+_SUBMODULES = (_au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rgc, _rph, _rrt, _rst)
 
 # Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
 # submodule back the way it was. mock.patch deletes rather than restores when the
@@ -146,6 +152,63 @@ def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_p
     }
 
 
+def _run_phases(trail, args, job) -> str:
+    """Every phase of one run, in order, returning the pipeline it chose.
+
+    Split out from `_run_orchestrate` so the whole sequence sits inside one
+    `cleaned_on_success` statement: what the sweep covers is exactly what this
+    function does, and a phase added here is swept without anyone remembering
+    to sweep it.
+    """
+    pr = job.pr
+    preset = EFFORT_PRESETS[job.effort]
+    line_threshold = preset.multi_phase_line_threshold
+    file_threshold = preset.multi_phase_file_threshold
+    is_large = (
+        pr.total_lines > line_threshold
+        or pr.changed_files > file_threshold
+    )
+    pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
+
+    trail.decision(
+        "select_pipeline",
+        f"chose {pipeline}",
+        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={file_threshold} lines={line_threshold})",
+        data={"pipeline": pipeline, "changed_files": pr.changed_files, "total_lines": pr.total_lines},
+    )
+
+    if is_large:
+        with trail.span("multi_phase"):
+            run_multi_phase(
+                job, max_parallel=args.max_parallel,
+                skip_holistic=args.no_holistic, max_cost=args.max_cost,
+                max_groups=args.max_groups,
+                skip_scout=args.no_scout, disprove=args.disprove,
+            )
+    else:
+        with trail.span("single_agent"):
+            run_single_agent(job, disprove=args.disprove)
+
+    if job.verification:
+        v = job.verification
+        detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
+        trail.info("evidence_verification", detail, data=v)
+
+    sa_summary = _inject_static_analysis_section(job.review_file, job.pr.files, job.wt_path)
+    if sa_summary is not None:
+        detail = f"checkers={sa_summary['checkers_run']} files={sa_summary['files_checked']} violations={sa_summary['violations']}"
+        trail.info("static_analysis", detail, data=sa_summary)
+
+    if args.fix and Path(job.review_file).exists():
+        trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
+        with trail.span("fix_pass"):
+            run_fix_pass(job)
+    elif args.fix:
+        trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
+
+    return pipeline
+
+
 def _run_orchestrate(trail, args, repo, session_log) -> None:
     _log_ai_backend(trail)
     if not ai_backend.preflight(collect_phase_models(args.model), trail):
@@ -196,50 +259,8 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
     else:
         job.preflight = collect_preflight_data(job)
 
-    preset = EFFORT_PRESETS[job.effort]
-    line_threshold = preset.multi_phase_line_threshold
-    file_threshold = preset.multi_phase_file_threshold
-    is_large = (
-        pr.total_lines > line_threshold
-        or pr.changed_files > file_threshold
-    )
-    pipeline = PIPELINE_MULTI if is_large else PIPELINE_SINGLE
-
-    trail.decision(
-        "select_pipeline",
-        f"chose {pipeline}",
-        reason=f"files={pr.changed_files} lines={pr.total_lines} thresholds=(files={file_threshold} lines={line_threshold})",
-        data={"pipeline": pipeline, "changed_files": pr.changed_files, "total_lines": pr.total_lines},
-    )
-
-    if is_large:
-        with trail.span("multi_phase"):
-            run_multi_phase(
-                job, max_parallel=args.max_parallel,
-                skip_holistic=args.no_holistic, max_cost=args.max_cost,
-                max_groups=args.max_groups,
-                skip_scout=args.no_scout, disprove=args.disprove,
-            )
-    else:
-        with trail.span("single_agent"):
-            run_single_agent(job, disprove=args.disprove)
-
-    if job.verification:
-        v = job.verification
-        detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
-        trail.info("evidence_verification", detail, data=v)
-
-    sa_summary = _inject_static_analysis_section(job.review_file, job.pr.files, job.wt_path)
-    if sa_summary is not None:
-        detail = f"checkers={sa_summary['checkers_run']} files={sa_summary['files_checked']} violations={sa_summary['violations']}"
-        trail.info("static_analysis", detail, data=sa_summary)
-
-    if args.fix and Path(job.review_file).exists():
-        trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
-        with trail.span("fix_pass"):
-            run_fix_pass(job)
-    elif args.fix:
-        trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
+    with cleaned_on_success(Path(job.artifact_dir)):
+        pipeline = _run_phases(trail, args, job)
 
     result = {
         "review_file": job.review_file,

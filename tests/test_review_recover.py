@@ -25,8 +25,11 @@ from pathlib import Path
 
 import pytest
 
+from conftest import synthetic_review
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import review_gc
 import review_phases
 import review_pipeline
 import review_state
@@ -42,18 +45,10 @@ _DENIED_RECORD = json.dumps({
 _OK_RECORD = json.dumps({"type": "result", "subtype": "success", "num_turns": 3})
 
 _GROUP_FINDING = "## Nit\n- **[N1]** `a/one.py:1` — naming\n"
-_REVIEW_BODY = (
-    "# Review: org/repo#1 — t\n"
-    "<!-- generator: test -->\n"
-    "## Summary\nSynthesized.\n\n"
-    "## Verdict\nApprove\n"
-)
-_REVIEW_WITH_FINDING = (
-    "# Review: org/repo#1 — t\n"
-    "<!-- generator: test -->\n"
-    "## Summary\nSynthesized.\n\n"
-    "## Must fix\n- **[M1]** `a/one.py:1` — bug\n\n"
-    "## Verdict\nRequest changes\n"
+_REVIEW_BODY = synthetic_review()
+_REVIEW_WITH_FINDING = synthetic_review(
+    findings="## Must fix\n- **[M1]** `a/one.py:1` — bug\n",
+    verdict="Request changes",
 )
 
 _FILES = ("a/one.py", "a/two.py", "b/three.py", "b/four.py")
@@ -157,8 +152,12 @@ def run(monkeypatch):
             review_body=review_body,
         )
         monkeypatch.setattr(review_phases, "invoke_agent", agent)
+        # The sweep belongs to the orchestrator's scope rather than to the
+        # pipeline, so a run that leaves no state behind is only visible to a
+        # harness that enters that scope too.
         with contextlib.redirect_stdout(io.StringIO()):
-            review_pipeline.run_multi_phase(job, **pipeline_kwargs)
+            with review_gc.cleaned_on_success(Path(job.artifact_dir)):
+                review_pipeline.run_multi_phase(job, **pipeline_kwargs)
         return agent
 
     return _run

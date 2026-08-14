@@ -465,3 +465,61 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"duplicate migration filename"* ]]
 }
+
+# ─── Config unification (#626) ───────────────────────────────────────────────
+
+unify_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    export WORKBENCH_CONFIG_FILE="$FAKE_CONFIG/config.yml"
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$REPO_ROOT/bin/migrations/20260814-unify-workbench-config.sh"
+    migration_20260814_unify_workbench_config
+  )
+}
+
+@test "unification is a no-op when no legacy file exists" {
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ ! -f "$FAKE_CONFIG/config.yml" ]
+}
+
+@test "unification folds every legacy file into config.yml" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+  echo "lite" > "$FAKE_CONFIG/reuse-default"
+  printf 'issue_tracker:\n  provider: github\n  team: ENG\n' > "$FAKE_CONFIG/review.yml"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+  [ "$(yq -r '.reuse.default' "$FAKE_CONFIG/config.yml")" = "lite" ]
+  [ "$(yq -r '.review.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+  [ "$(yq -r '.review.issue_tracker.team' "$FAKE_CONFIG/config.yml")" = "ENG" ]
+
+  [ ! -f "$FAKE_CONFIG/reuse-level" ]
+  [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
+  [ -f "$FAKE_CONFIG/review.yml.migrated" ]
+}
+
+@test "unification folds a partial set of legacy files" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+  [ "$(yq -r '.reuse.default // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "unification is idempotent once config.yml exists" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'reuse:\n  level: lite\n' > "$FAKE_CONFIG/config.yml"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "lite" ]
+  [ -f "$FAKE_CONFIG/reuse-level" ]
+}

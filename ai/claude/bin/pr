@@ -7,9 +7,9 @@ registry.  Flags pass through to the backing script untouched; run
 """
 
 import argparse
+import contextlib
 import json
 import signal
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,7 +29,7 @@ import review_gc
 import log
 import review_common
 import workbench_paths
-import worktree_lock
+import run_lock
 from review_common import (
     ReviewType, build_review_summary, find_review_file, json_summary, review_file_path,
 )
@@ -97,11 +97,12 @@ def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
 def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     """Load existing state or create a fresh one from resolved context."""
     return pr_state.load_or_init(
-        worktree_root=ctx.require_worktree(),
+        target_dir=ctx.target_dir,
         repo=ctx.repo,
         branch=ctx.branch,
         pr_number=ctx.pr_number,
         head_sha=ctx.head_sha,
+        worktree_root=str(ctx.worktree_root) if ctx.worktree_root else "",
     )
 
 
@@ -122,12 +123,8 @@ def _update_review_state(summary_data: dict,
     """Update pr_state from a parsed review summary dict.
 
     Best-effort: the caller has already done the real work (a review, a repair),
-    and the review file it produced is user-scoped and survives. A bare repo with
-    no worktree has nowhere to cache the `pr status` snapshot, which is not worth
-    failing a review that worked — so this opts out rather than requiring one.
+    and the review file it produced is user-scoped and survives.
     """
-    if ctx.worktree_root is None:
-        return
     findings = summary_data.get("findings", {})
     finding_counts = {
         k: v for k, v in findings.items()
@@ -148,7 +145,7 @@ def _update_review_state(summary_data: dict,
         cost_usd=summary_data.get("cost_usd", 0.0),
         updated_at=pr_state.now_iso(),
     ))
-    pr_state.save_state(ctx.require_worktree(), state)
+    pr_state.save_state(ctx.target_dir, state)
 
 
 def _update_review_state_from_output(output: str,
@@ -175,7 +172,7 @@ def _is_pr_target(target: str | None) -> bool:
 def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Render unified status dashboard from cached state."""
     wt = ctx.require_worktree()
-    state = pr_state.load_state(wt)
+    state = pr_state.load_state(ctx.target_dir)
 
     pr_label = f"#{state.identity.pr_number}" if state and state.identity.pr_number else "(no PR)"
     branch = state.identity.branch if state else ctx.branch
@@ -362,7 +359,7 @@ def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Run fix passes for CI, review, and comments."""
     wt = ctx.require_worktree()
-    state = pr_state.load_state(wt)
+    state = pr_state.load_state(ctx.target_dir)
     if not state:
         log.error("No state yet. Run pr ci, pr review, or pr comments first.")
         return 1
@@ -421,60 +418,29 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                          original_branch=original_branch)
 
 
-def _clear_state_dir(state_dir: Path) -> None:
-    """Empty the state directory, leaving the lock file in place.
+# ceiling: this sweep runs on every `pr gc` forever, with no removal
+# trigger of its own. Deliberate — the pre-target layout it cleans up after
+# has no expiry, so neither does the code that reclaims it. Upgrade trigger:
+# once the target-scoped layout has shipped long enough that no worktree
+# still carries the legacy files, delete this function and its call site.
+def _sweep_legacy_state(worktree_root: Path) -> int:
+    """Remove state and lock files the pre-target layout left in a worktree.
 
-    Deleting run.lock would unlink the inode this very run holds its flock
-    on, so the next contender would create a fresh file and take an
-    uncontended lock while we are still working — exclusion only holds
-    while every process agrees on one inode.
+    Returns 1 if anything was removed. No migration carries these: they are
+    gitignored, worktree-local, and rebuilt by the next command that writes
+    them. `trail.jsonl` and the directory itself stay — the trail still lives
+    there.
     """
-    for entry in state_dir.iterdir():
-        if entry.name == worktree_lock.LOCK_FILE:
-            continue
-        if entry.is_dir():
-            shutil.rmtree(entry, ignore_errors=True)
-            continue
-        entry.unlink(missing_ok=True)
-
-
-def _gc_stale_pr_state(worktree_root: Path) -> int:
-    """Remove pr state directory if it is unreadable, or if the PR is merged or
-    closed. Returns 1 if cleaned."""
-    try:
-        state_dir = workbench_paths.worktree_state_dir(worktree_root)
-    except workbench_paths.NotAWorktree:
-        # A directory that is not a worktree has no pr state to collide with,
-        # same as every other worktree_state_dir call site in this file.
-        return 0
-    state_file = state_dir / pr_state.STATE_FILE
-    if not state_file.is_file():
-        return 0
-    state = pr_state.load_state(worktree_root)
-    if state is None:
-        # The file exists — checked above — so this is a corrupt one, not an
-        # absent one. gc is the command that owns deleting the state dir, and
-        # nothing in it is authoritative, so clearing it is a clean recovery.
-        _clear_state_dir(state_dir)
-        log.info("GC: removed unreadable pr state")
-        return 1
-    if not state.identity.pr_number:
-        return 0
-    try:
-        r = subprocess.run(
-            ["gh", "pr", "view", str(state.identity.pr_number),
-             "--repo", state.identity.repo,
-             "--json", "state", "--jq", ".state"],
-            capture_output=True, text=True,
-        )
-        pr_st = r.stdout.strip()
-    except Exception:
-        pr_st = ""
-    if pr_st not in ("MERGED", "CLOSED"):
-        return 0
-    _clear_state_dir(state_dir)
-    log.info(f"GC: removed stale pr state ({pr_st})")
-    return 1
+    legacy = worktree_root / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
+    removed = 0
+    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE):
+        path = legacy / name
+        if path.is_file():
+            path.unlink(missing_ok=True)
+            removed = 1
+    if removed:
+        log.info(f"GC: removed legacy worktree state in {legacy}")
+    return removed
 
 
 def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -490,11 +456,15 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
-    # Review artifacts are user-scoped and prune fine from a bare repo; only
-    # the per-worktree state directory needs somewhere to look.
-    total = review_gc.gc_reviews() + review_gc.prune_merged_reviews()
+    # Everything but the legacy sweep is user-scoped and works from a bare repo.
+    # Our own target is skipped: we are holding its lock right now.
+    total = (
+        review_gc.gc_reviews()
+        + review_gc.prune_merged_reviews()
+        + review_gc.prune_merged_targets(skip=ctx.target_dir)
+    )
     if ctx.worktree_root:
-        total += _gc_stale_pr_state(ctx.worktree_root)
+        total += _sweep_legacy_state(ctx.worktree_root)
 
     if total > 0:
         log.info(f"GC: cleaned {total} item(s) total")
@@ -520,7 +490,7 @@ _NO_UPDATE_COMMANDS = {"status", "gc", "rebase", "create"}
 
 # Read-only commands, safe to run alongside another pr run. Everything
 # else writes state.json and may edit/commit the worktree, so it takes
-# the worktree lock — see worktree_lock.py. 'gc' is absent deliberately:
+# the run lock — see run_lock.py. 'gc' is absent deliberately:
 # it deletes the state directory, which is the opposite of read-only.
 _NO_LOCK_COMMANDS = {"status"}
 
@@ -682,22 +652,24 @@ def main():
     if args.command not in _NO_UPDATE_COMMANDS:
         ctx = pr_context.update_to_remote(ctx)
 
-    # Read-only commands pass None so they never contend for the lock.
-    # Acquired before _dispatch so contention costs no trail artifacts.
-    lock_root = None
-    if ctx.worktree_root and args.command not in _NO_LOCK_COMMANDS:
-        lock_root = ctx.worktree_root
+    # Read-only commands take no lock at all. Acquired before _dispatch so
+    # contention costs no trail artifacts.
+
     try:
-        with worktree_lock.acquire(
-            lock_root,
-            command=" ".join([SCRIPT] + sys.argv[1:]),
-            started=pr_state.now_iso(),
-        ):
+        lock = (
+            contextlib.nullcontext() if args.command in _NO_LOCK_COMMANDS
+            else run_lock.acquire(
+                ctx.target_dir,
+                command=" ".join(["pr"] + sys.argv[1:]),
+                started=pr_state.now_iso(),
+            )
+        )
+        with lock:
             sys.exit(_dispatch(args, ctx, extra, global_args,
                                original_pr=original_pr,
                                original_branch=original_branch))
-    except worktree_lock.LockBusy as exc:
-        worktree_lock.report_busy(exc)
+    except run_lock.LockBusy as exc:
+        run_lock.report_busy(exc)
         sys.exit(1)
 
 

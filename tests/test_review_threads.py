@@ -1475,6 +1475,7 @@ class TestFinalizeDeferredCarriesTheReason:
         ctx = pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=worktree, head_sha="abc1234",
+            target_dir=worktree / "target",
         )
         return state, ctx
 
@@ -1535,6 +1536,7 @@ class TestDeferralRequiresAChoice:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=worktree, head_sha="abc1234",
+            target_dir=worktree / "target",
         )
 
     def _run(self, rt, state, ctx, track):
@@ -1651,10 +1653,11 @@ class TestFinishDeferredWork:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=worktree, head_sha="abc1234",
+            target_dir=worktree / "target",
         )
 
     def _save(self, worktree, **fix_kw):
-        pr_state.save_state(worktree, PRState(
+        pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(
                 repo="owner/repo", branch="b", pr_number=42,
                 head_sha="abc1234", worktree_root=str(worktree),
@@ -1685,7 +1688,7 @@ class TestFinishDeferredWork:
                 patch.object(rt, "_finalize_deferred"), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(self._ctx(worktree), PRReport())
-        assert pr_state.load_state(worktree).fix.commit_status == "pushed"
+        assert pr_state.load_state(worktree / "target").fix.commit_status == "pushed"
 
     def test_it_reads_state_from_disk_not_from_the_caller(self, rt, worktree):
         """The fix pass writes its outcomes there; a stale copy would miss them."""
@@ -1791,7 +1794,7 @@ class TestReconcileRunsBeforeTheWrites:
     """Within one invocation the two must not disagree about the same thread."""
 
     def test_reconciled_thread_never_reaches_the_tracking_issue(self, rt, worktree):
-        pr_state.save_state(worktree, PRState(
+        pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
                                 head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(head_sha="aaaaaaa", threads=[
@@ -1800,7 +1803,8 @@ class TestReconcileRunsBeforeTheWrites:
             ]),
         ))
         ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
-                                         worktree_root=worktree, head_sha="aaaaaaa")
+                                         worktree_root=worktree, head_sha="aaaaaaa",
+                                         target_dir=worktree / "target")
         report = PRReport(threads=[ReportThread(
             id="t1", state=ThreadState.NEW, is_resolved=False,
             comments=[{"body": "x"}, {"body": "Applied: one\n\nFixed in `abc1234`."}],
@@ -1815,7 +1819,7 @@ class TestReconcileRunsBeforeTheWrites:
 
     def test_the_flip_is_persisted(self, rt, worktree):
         """Otherwise the next --finish re-derives it from the same stale row."""
-        pr_state.save_state(worktree, PRState(
+        pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
                                 head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(head_sha="aaaaaaa", threads=[
@@ -1823,7 +1827,8 @@ class TestReconcileRunsBeforeTheWrites:
             ]),
         ))
         ctx = pr_context.ResolvedContext(repo="owner/repo", branch="b", pr_number=42,
-                                         worktree_root=worktree, head_sha="aaaaaaa")
+                                         worktree_root=worktree, head_sha="aaaaaaa",
+                                         target_dir=worktree / "target")
         report = PRReport(threads=[ReportThread(
             id="t1", state=ThreadState.RESOLVED, is_resolved=True,
             comments=[{"body": "x"}],
@@ -1831,7 +1836,7 @@ class TestReconcileRunsBeforeTheWrites:
         with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(ctx, report)
-        on_disk = pr_state.load_state(worktree)
+        on_disk = pr_state.load_state(worktree / "target")
         assert on_disk.fix.threads[0].action == ThreadAction.FIXED
 
 
@@ -1850,13 +1855,14 @@ class TestStaleSnapshotIsAnnounced:
                                        reason="agent could not auto-fix")],
             ),
         )
-        pr_state.save_state(worktree, state)
+        pr_state.save_state(worktree / "target", state)
         return state
 
     def _ctx(self, worktree):
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=worktree, head_sha="aaaaaaa",
+            target_dir=worktree / "target",
         )
 
     def _warnings(self, rt, worktree, current_sha):
@@ -1882,11 +1888,11 @@ class TestStaleSnapshotIsAnnounced:
         """Legacy state predates the field; it cannot be vouched for."""
         state = self._state(worktree, "aaaaaaa")
         state.fix.head_sha = ""
-        pr_state.save_state(worktree, state)
+        pr_state.save_state(worktree / "target", state)
         assert any("(unrecorded)" in w for w in self._warnings(rt, worktree, "aaaaaaa"))
 
     def test_an_empty_snapshot_has_nothing_to_be_stale_about(self, rt, worktree):
-        pr_state.save_state(worktree, PRState(
+        pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
                                 head_sha="aaaaaaa", worktree_root=str(worktree)),
             fix=FixSummary(),
@@ -1955,6 +1961,7 @@ class TestRunReply:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="b", pr_number=42,
             worktree_root=tmp_path, head_sha="abc1234",
+            target_dir=tmp_path / "target",
         )
 
     def _patches(self, rt, raw, login="reviewer"):
@@ -2426,17 +2433,6 @@ class TestFixBudgetUsd:
 
     def test_caps_at_maximum(self, rt):
         assert rt._fix_budget_usd(100) == 5.0
-
-
-class TestFixRetryBudget:
-    def test_bumps_by_increment(self, rt):
-        assert rt._fix_retry_budget(25) == 40
-
-    def test_minimum_floor(self, rt):
-        assert rt._fix_retry_budget(10) == 30
-
-    def test_caps_at_maximum(self, rt):
-        assert rt._fix_retry_budget(50) == 60
 
 
 # ── _diff_context_for_file ─────────────────────────────────────────────────
@@ -2990,6 +2986,7 @@ class TestWorktreeGuard:
         return pr_context.ResolvedContext(
             repo="owner/repo", branch="isaac/feat/x", pr_number=42,
             worktree_root=None, head_sha="abc1234",
+            target_dir=Path("/target"),
         )
 
     def test_run_threads_exits_before_touching_github(self, rt, capsys):

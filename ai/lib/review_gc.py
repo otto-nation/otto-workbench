@@ -11,6 +11,9 @@ from datetime import datetime
 from pathlib import Path
 
 import log
+import pr_state
+import pr_target
+import run_lock
 from pr_state import ReviewStatus
 from review_common import (
     FILENAME_META,
@@ -138,19 +141,154 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
         if not _dir_is_all_stale(review_dir, stale_days):
             continue
 
-        try:
-            r = subprocess.run(
-                ["gh", "pr", "view", str(meta.pr_number), "--repo", meta.repo,
-                 "--json", "state", "--jq", ".state"],
-                capture_output=True, text=True,
-            )
-            state = r.stdout.strip()
-        except Exception:
-            state = ""
-
-        if state in ("MERGED", "CLOSED"):
+        state = _pr_close_state(meta.repo, meta.pr_number)
+        if state:
             shutil.rmtree(review_dir, ignore_errors=True)
             log.info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
             pruned += 1
+
+    return pruned
+
+
+def _pr_close_state(repo: str, pr_number: int) -> str:
+    """Return "MERGED", "CLOSED", or "" — open, or a question we could not ask.
+
+    Collapsing "open" and "could not ask" is deliberate: both mean keep the
+    artifacts. gc that deletes on a network blip is worse than gc that runs
+    again tomorrow. Returns the state rather than a bool so callers can name it
+    in their log line.
+    """
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--repo", repo,
+             "--json", "state", "--jq", ".state"],
+            capture_output=True, text=True,
+        )
+    except Exception:
+        return ""
+    state = r.stdout.strip()
+    return state if state in ("MERGED", "CLOSED") else ""
+
+
+def _remove_target(target: Path) -> None:
+    """Empty *target* and remove it, unlinking its lock file last.
+
+    Raises OSError if anything is left — an entry that would not unlink, or a
+    run that recreated one in the window below, which surfaces as ENOTEMPTY
+    from the non-recursive rmdir.
+    """
+    lock_path = target / run_lock.LOCK_FILE
+    state_path = target / pr_state.STATE_FILE
+    # ceiling: a target directory is flat — state.json and run.lock — so an
+    # entry that is itself a directory raises OSError here (EISDIR on Linux,
+    # EPERM on macOS) and the target is reported as not pruned rather than
+    # removed. Upgrade trigger: anything that starts writing a subdirectory
+    # under a target. state.json goes after that loop so a target we fail to
+    # empty keeps the file the next sweep's glob finds it by.
+    for entry in target.iterdir():
+        if entry not in (lock_path, state_path):
+            entry.unlink()
+    state_path.unlink(missing_ok=True)
+    lock_path.unlink(missing_ok=True)
+    target.rmdir()
+
+
+def _prune_one_target(target: Path) -> bool:
+    """Remove a target directory, unless a live run holds it.
+
+    The lock is what tells us no run is *already* in flight. It cannot tell us
+    about one that arrives mid-removal: a flock only excludes processes that
+    agree on one inode, so once run.lock is unlinked the next contender creates
+    a fresh file and takes an uncontended lock on a new inode while we still
+    hold the old one. `rmtree` unlinks it partway through its walk and then
+    keeps deleting, which is how a target's state.json could be pulled out from
+    under a run that had every right to it.
+
+    So the lock file goes last and the directory goes with a non-recursive
+    `os.rmdir`, which fails with ENOTEMPTY precisely when a run has recreated
+    something in that window. That failure is the answer we want, not an error
+    to paper over: we report the target as not pruned and leave it to its new
+    owner.
+
+    Returns whether the directory is actually gone, rather than whether the
+    removal raised — a caller that logged and counted a target still on disk
+    would also lose it from the next sweep, whose glob only finds targets that
+    still have a state.json.
+    """
+    try:
+        with run_lock.acquire(target, command="pr gc", started=pr_state.now_iso()):
+            _remove_target(target)
+    except run_lock.LockBusy:
+        return False
+    except OSError:
+        # Reported, not raised: one target we could not empty must not abort
+        # the sweep, and `not target.exists()` below already says what happened.
+        log.warn(f"GC: could not remove {target.name} — leaving it in place")
+    return not target.exists()
+
+
+def _prune_and_count(target: Path, message: str) -> int:
+    """Prune *target*, logging *message* after a successful prune. Returns 1 if it happened.
+
+    A busy or partially-failed prune returns 0 and logs nothing.
+
+    Factored out of prune_merged_targets's loop body so neither of its two
+    call sites nests a second `if` inside the loop's `if`.
+    """
+    if not _prune_one_target(target):
+        return 0
+    log.info(message)
+    return 1
+
+
+def prune_merged_targets(targets_dir: Path | None = None,
+                         max_files: int = PRUNE_MAX_FILES,
+                         skip: Path | None = None) -> int:
+    """Remove target directories for merged/closed PRs. Returns count pruned.
+
+    Replaces the free cleanup a worktree-local state file used to get from
+    `wt remove` — target state outlives any single checkout by design, so
+    nothing else deletes it.
+
+    `skip` is the caller's own target. It cannot be detected by trying the lock:
+    the caller already holds it, so LOCK_ENV would pass us straight through into
+    deleting live state.
+
+    `max_files` bounds how many PRs this call asks GitHub about, not how many
+    targets it can recover. A corrupt state file is dropped for free, without
+    touching the budget, because deleting it costs no network call — the
+    budget exists to bound `gh` questions, not local unlinks.
+    """
+    targets_dir = targets_dir or pr_target.targets_root()
+    if not targets_dir.is_dir():
+        return 0
+
+    pruned = 0
+    checked = 0
+    for state_file in sorted(targets_dir.glob(f"*/{pr_state.STATE_FILE}")):
+        if checked >= max_files:
+            break
+        target = state_file.parent
+        if skip is not None and target == skip:
+            continue
+        state = pr_state.load_state(target)
+        if state is None:
+            # The glob found the file, so this is corrupt rather than absent.
+            # Nothing here is authoritative, so dropping it is a clean recovery.
+            pruned += _prune_and_count(target, f"Pruned unreadable target state at {target.name}")
+            continue
+        # ceiling: a target for a branch that never opens a PR is never
+        # reclaimed, because the only liveness signal this sweep has is the
+        # PR's close state. Upgrade trigger: if these accumulate enough to
+        # matter, add a second signal (the branch no longer existing on the
+        # remote) rather than an age cutoff.
+        if not state.identity.pr_number or not state.identity.repo:
+            continue
+        checked += 1
+        close_state = _pr_close_state(state.identity.repo, state.identity.pr_number)
+        if not close_state:
+            continue
+        pruned += _prune_and_count(
+            target, f"Pruned {state.identity.repo}#{state.identity.pr_number} ({close_state})")
 
     return pruned

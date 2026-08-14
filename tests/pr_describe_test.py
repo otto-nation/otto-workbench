@@ -33,6 +33,7 @@ def _ctx(worktree, head_sha="aaaa111", pr_number=7):
         pr_number=pr_number,
         worktree_root=worktree,
         head_sha=head_sha,
+        target_dir=worktree / "target",
     )
 
 
@@ -88,7 +89,7 @@ def test_unchanged_head_skips_the_ai_call(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(worktree))
     pr_state.apply(state, pr_state.DescribeSummary(head_sha="aaaa111"))
-    pr_state.save_state(worktree, state)
+    pr_state.save_state(worktree / "target", state)
 
     rc, edits, prompt = _run(_ctx(worktree))
     assert rc == 0
@@ -100,7 +101,7 @@ def test_moved_head_earns_a_fresh_pass(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(worktree))
     pr_state.apply(state, pr_state.DescribeSummary(head_sha="old0000"))
-    pr_state.save_state(worktree, state)
+    pr_state.save_state(worktree / "target", state)
 
     rc, edits, prompt = _run(_ctx(worktree))
     assert rc == 0
@@ -112,7 +113,7 @@ def test_force_overrides_the_head_check(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(worktree))
     pr_state.apply(state, pr_state.DescribeSummary(head_sha="aaaa111"))
-    pr_state.save_state(worktree, state)
+    pr_state.save_state(worktree / "target", state)
 
     rc, edits, prompt = _run(_ctx(worktree), force=True)
     assert rc == 0
@@ -138,7 +139,7 @@ def test_conforming_body_is_left_alone_but_still_recorded(worktree):
     rc, edits, _ = _run(_ctx(worktree), ai=(pr_describe_cli._NO_CHANGE, 0))
     assert rc == 0
     assert edits == []
-    state = pr_state.load_state(worktree)
+    state = pr_state.load_state(worktree / "target")
     # The SHA is recorded either way — a body confirmed current at this HEAD
     # does not need confirming twice.
     assert state.describe.head_sha == "aaaa111"
@@ -151,7 +152,7 @@ def test_revision_is_applied_and_recorded(worktree):
     rc, edits, _ = _run(_ctx(worktree), ai=(_wrapped("## Why\n\nBecause."), 0))
     assert rc == 0
     assert edits == ["## Why\n\nBecause."]
-    state = pr_state.load_state(worktree)
+    state = pr_state.load_state(worktree / "target")
     assert state.describe.changed is True
     assert state.describe.template_path == ".github/pull_request_template.md"
 
@@ -161,14 +162,14 @@ def test_dry_run_prints_without_applying_or_recording(worktree, capsys):
     assert rc == 0
     assert edits == []
     assert "NEW BODY" in capsys.readouterr().out
-    assert pr_state.load_state(worktree) is None
+    assert pr_state.load_state(worktree / "target") is None
 
 
 def test_blank_ai_answer_would_wipe_the_body_so_it_fails(worktree):
     rc, edits, _ = _run(_ctx(worktree), ai=("   ", 0))
     assert rc == 1
     assert edits == []
-    assert pr_state.load_state(worktree) is None
+    assert pr_state.load_state(worktree / "target") is None
 
 
 def test_an_unmarked_answer_is_never_posted(worktree):
@@ -183,7 +184,7 @@ def test_an_unmarked_answer_is_never_posted(worktree):
     assert edits == []
     # Unusable, so it burns the one retry the thrash guard allows.
     assert prompt.call_count == 2
-    assert pr_state.load_state(worktree) is None
+    assert pr_state.load_state(worktree / "target") is None
 
 
 def test_only_the_marked_span_is_posted(worktree):
@@ -202,7 +203,7 @@ def test_failed_ai_call_is_not_recorded(worktree):
     rc, edits, _ = _run(_ctx(worktree), ai=("", 1))
     assert rc == 1
     assert edits == []
-    assert pr_state.load_state(worktree) is None
+    assert pr_state.load_state(worktree / "target") is None
 
 
 def test_unreachable_pr_stops_before_the_ai_call(worktree):
@@ -221,7 +222,7 @@ def test_a_rejected_edit_is_not_recorded(worktree):
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=False):
         rc = pr_describe_cli.run_describe(_ctx(worktree))
     assert rc == 1
-    assert pr_state.load_state(worktree) is None
+    assert pr_state.load_state(worktree / "target") is None
 
 
 # ── thrash guard ────────────────────────────────────────────────────────────
@@ -280,6 +281,7 @@ def test_run_describe_without_a_worktree_exits_with_guidance(capsys):
         pr_number=7,
         worktree_root=None,
         head_sha="aaaa111",
+        target_dir=Path("/target"),
     )
     assert_no_worktree_exit(capsys, "isaac/feat/x",
                             pr_describe_cli.run_describe, ctx)
@@ -290,6 +292,7 @@ def test_no_pr_reports_before_demanding_a_worktree(capsys):
     ctx = pr_context.ResolvedContext(
         repo="owner/repo", branch="isaac/feat/x", pr_number=None,
         worktree_root=None, head_sha="aaaa111",
+        target_dir=Path("/target"),
     )
     assert pr_describe_cli.run_describe(ctx) == 0
     assert "nothing to describe" in capsys.readouterr().err

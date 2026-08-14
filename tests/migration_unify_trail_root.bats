@@ -40,6 +40,45 @@ _seed_review_trail() {
   echo "artifact" > "$STATE/reviews/$name/review.md"
 }
 
+# Builds a fake workbench root under $STATE/fake-$1{,-state,-config,-legacy}
+# with the real lib/components.sh and lib/migrations.sh plus this migration
+# copied in, and stubbed lib/ui.sh + lib/constants.sh. Sets FAKE_ROOT and
+# FAKE_STATE for the caller. Used by tests that need to go through the
+# framework's real source-and-call dispatch (see the tests below), which
+# _run_migration above does not exercise.
+_build_fake_workbench() {
+  local name="$1"
+  FAKE_ROOT="$STATE/fake-$name"
+  FAKE_STATE="$STATE/fake-$name-state"
+  mkdir -p "$FAKE_ROOT/lib" "$FAKE_ROOT/ai/claude/migrations" "$FAKE_STATE/reviews"
+  cp "$REPO_ROOT/lib/components.sh" "$FAKE_ROOT/lib/components.sh"
+  cp "$REPO_ROOT/lib/migrations.sh" "$FAKE_ROOT/lib/migrations.sh"
+  cp "$MIGRATION" "$FAKE_ROOT/ai/claude/migrations/20260814-unify-trail-root.sh"
+
+  cat > "$FAKE_ROOT/lib/ui.sh" <<'STUB'
+success() { echo "OK $*"; }
+warn()    { echo "WARN $*"; }
+STUB
+
+  cat > "$FAKE_ROOT/lib/constants.sh" <<CONST
+WORKBENCH_DIR="$FAKE_ROOT"
+LIB_SRC_DIR="$FAKE_ROOT/lib"
+WORKBENCH_STATE_DIR="$FAKE_STATE"
+WORKBENCH_CONFIG_DIR="$STATE/fake-$name-config"
+LEGACY_WORKBENCH_ROOT="$STATE/fake-$name-legacy"
+MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
+CONST
+}
+
+_run_all_migrations_in_fake() {
+  bash -c '
+    . "$1/lib/ui.sh"
+    . "$1/lib/constants.sh"
+    . "$1/lib/migrations.sh"
+    run_all_migrations
+  ' _ "$FAKE_ROOT"
+}
+
 @test "folds every review trail into legacy.jsonl" {
   _seed_review_trail "repo-1" '{"ts":"a"}
 '
@@ -173,38 +212,47 @@ _seed_review_trail() {
   # suppressed, since that call is the condition of an `if`. Build a fake
   # workbench root, matching the tests/migrations.bats FAKE_ROOT pattern, and
   # go through run_all_migrations for real.
-  local fake_root="$STATE/fake-workbench"
-  local fake_state="$STATE/fake-state"
-  mkdir -p "$fake_root/lib" "$fake_root/ai/claude/migrations" \
-    "$fake_state/reviews/repo-1"
-  printf '{"ts":"a"}\n' > "$fake_state/reviews/repo-1/trail.jsonl"
-  cp "$REPO_ROOT/lib/components.sh" "$fake_root/lib/components.sh"
-  cp "$REPO_ROOT/lib/migrations.sh" "$fake_root/lib/migrations.sh"
-  cp "$MIGRATION" "$fake_root/ai/claude/migrations/20260814-unify-trail-root.sh"
+  _build_fake_workbench "dispatch"
+  mkdir -p "$FAKE_STATE/reviews/repo-1"
+  printf '{"ts":"a"}\n' > "$FAKE_STATE/reviews/repo-1/trail.jsonl"
 
-  cat > "$fake_root/lib/ui.sh" <<'STUB'
-success() { echo "OK $*"; }
-warn()    { echo "WARN $*"; }
-STUB
-
-  cat > "$fake_root/lib/constants.sh" <<CONST
-WORKBENCH_DIR="$fake_root"
-LIB_SRC_DIR="$fake_root/lib"
-WORKBENCH_STATE_DIR="$fake_state"
-WORKBENCH_CONFIG_DIR="$STATE/fake-config"
-LEGACY_WORKBENCH_ROOT="$STATE/fake-legacy"
-MIGRATIONS_STATE_FILE="$fake_state/migrations.applied"
-CONST
-
-  run bash -c '
-    . "$1/lib/ui.sh"
-    . "$1/lib/constants.sh"
-    . "$1/lib/migrations.sh"
-    run_all_migrations
-  ' _ "$fake_root"
+  run _run_all_migrations_in_fake
 
   [ "$status" -eq 0 ]
-  [ ! -f "$fake_state/reviews/repo-1/trail.jsonl" ]
-  run grep -c '"ts"' "$fake_state/trail/legacy.jsonl"
+  [ ! -f "$FAKE_STATE/reviews/repo-1/trail.jsonl" ]
+  run grep -c '"ts"' "$FAKE_STATE/trail/legacy.jsonl"
   [ "$output" = "1" ]
+}
+
+@test "an unreadable source leaves the migration unrecorded and retryable" {
+  # Only the framework-dispatch harness can observe this: lib/migrations.sh
+  # records a migration as applied (MIGRATIONS_STATE_FILE) only when the
+  # explicit "$fn_name" call returns 0, and skips recording — with "will
+  # retry on next run" — otherwise. repo-1 stays unreadable across the whole
+  # first sync; repo-2 must still be carried in that same run.
+  _build_fake_workbench "retry"
+  mkdir -p "$FAKE_STATE/reviews/repo-1" "$FAKE_STATE/reviews/repo-2"
+  printf '{"ts":"a"}\n' > "$FAKE_STATE/reviews/repo-1/trail.jsonl"
+  printf '{"ts":"b"}\n' > "$FAKE_STATE/reviews/repo-2/trail.jsonl"
+  chmod 000 "$FAKE_STATE/reviews/repo-1/trail.jsonl"
+
+  run _run_all_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"will retry on next run"* ]]
+  [ -f "$FAKE_STATE/reviews/repo-1/trail.jsonl" ]
+  [ ! -f "$FAKE_STATE/reviews/repo-2/trail.jsonl" ]
+  run grep -c '"ts":"b"' "$FAKE_STATE/trail/legacy.jsonl"
+  [ "$output" = "1" ]
+  run grep -qxF "ai/claude/20260814-unify-trail-root.sh" "$FAKE_STATE/migrations.applied"
+  [ "$status" -ne 0 ]
+
+  # Fixing the permission and re-syncing must pick up exactly what failed.
+  chmod 644 "$FAKE_STATE/reviews/repo-1/trail.jsonl"
+  run _run_all_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [ ! -f "$FAKE_STATE/reviews/repo-1/trail.jsonl" ]
+  run grep -c '"ts":"a"' "$FAKE_STATE/trail/legacy.jsonl"
+  [ "$output" = "1" ]
+  run grep -qxF "ai/claude/20260814-unify-trail-root.sh" "$FAKE_STATE/migrations.applied"
+  [ "$status" -eq 0 ]
 }

@@ -15,7 +15,7 @@ migration_20260814_unify_trail_root() {
 
     local trail_root="$WORKBENCH_STATE_DIR/trail"
     local legacy="$trail_root/legacy.jsonl"
-    local carried=0 dropped=0
+    local carried=0 dropped=0 failed=0
 
     # _append_ledger reads the destination with `cat "$dst" > "$tmp"`, which
     # fails if $legacy does not exist yet — create it once, up front.
@@ -28,13 +28,19 @@ migration_20260814_unify_trail_root() {
     # single file reassembles into the same timeline.
     #
     # A source that fails to merge (e.g. unreadable) is warned about by
-    # _append_ledger and left in place for the next sync to retry; it must
-    # not take the rest of the carry down with it.
+    # _append_ledger and left in place; it must not take the rest of the carry
+    # down with it, so failures are tallied instead of aborting the loop. If
+    # any source failed, the function returns non-zero at the end so the
+    # framework (lib/migrations.sh:76-82) does not record the migration as
+    # applied — the next sync retries just the sources still present, and a
+    # fixed permission resolves itself the moment that happens.
     local src
     for src in "$WORKBENCH_STATE_DIR"/reviews/*/trail.jsonl; do
         [[ -f "$src" ]] || continue
         if _append_ledger "$src" "$legacy"; then
             carried=$(( carried + 1 ))
+        else
+            failed=$(( failed + 1 ))
         fi
     done
 
@@ -59,19 +65,29 @@ migration_20260814_unify_trail_root() {
     done
     rmdir "$WORKBENCH_STATE_DIR/logs" 2>/dev/null || true
 
-    if (( carried == 0 && dropped == 0 )); then
+    if (( carried == 0 && dropped == 0 && failed == 0 )); then
         success "No trails to carry into $trail_root"
         return 0
     fi
     if (( carried > 0 )); then
         success "Carried $carried review trail(s) into $legacy; dropped $dropped log trail(s)"
-    else
+    elif (( dropped > 0 )); then
         success "Dropped $dropped log trail(s)"
+    fi
+    if (( failed > 0 )); then
+        warn "$failed review trail(s) could not be carried — will retry on next sync"
     fi
     # Per-worktree trails under <git-dir>/workbench/trail.jsonl are not carried:
     # finding them means enumerating every repo on the machine, and they die
     # with their worktree either way.
     warn "Per-worktree trails were not carried — they end with their worktree"
+    (( failed == 0 )) || return 1
 }
 
-migration_20260814_unify_trail_root
+# The framework's own explicit "$fn_name" call (lib/migrations.sh:76) is the
+# one whose return status decides whether this migration gets recorded as
+# applied — this self-invocation exists only so the function actually runs
+# when the file is sourced. Swallowing its exit status here keeps a real
+# per-source failure from tripping this script's own `set -e` and aborting
+# the sync before the framework's own call ever gets to warn and retry.
+migration_20260814_unify_trail_root || true

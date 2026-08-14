@@ -1,0 +1,28 @@
+{
+  "pr": {
+    "on_no_match": "fail",
+    "rules": [
+      {
+        "match": ["comments", "--finish"],
+        "stdout": "{\"replies_posted\": 2, \"summary_url\": \"https://example.invalid/c/1\"}",
+        "exit": 0
+      },
+      {
+        "match": ["comments", "--fix"],
+        "stdout_file": "fix-report.json",
+        "stderr": "DRAFT (not published) reply to T-1 (alice): fixed in a1b2c3d\nDRAFT (not published) reply to T-3 (alice): deferred; will file on the tracking issue if approved\n",
+        "exit": 0
+      }
+    ]
+  },
+  "gh": {"on_no_match": "fail", "rules": []},
+  "wt": {
+    "on_no_match": "fail",
+    "rules": [
+      {"match": ["switch"], "stdout": "{\"path\": \".\"}", "exit": 0}
+    ]
+  },
+  "git": {"on_no_match": "passthrough", "rules": [
+    {"match": ["push"], "stderr": "refusing: pushes are stubbed\n", "exit": 1}
+  ]}
+}

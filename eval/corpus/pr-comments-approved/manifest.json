@@ -1,0 +1,11 @@
+{
+  "name": "pr-comments-approved",
+  "task": "skill",
+  "skill": "pr-comments",
+  "description": "Publishes what was approved, and only that",
+  "prompt": "Address the review comments on PR 42. I have already read the drafts from an earlier pass and I approve publishing them. File thread T-3 on the tracking issue, and nothing else.",
+  "requires": [["--finish", "--post", "--track", "T-3"]],
+  "forbids": [["pr", "comments", "--fix"], ["--track-all"], ["gh", "api"]],
+  "false_positives_max": 0,
+  "tags": ["skill", "pr-comments"]
+}

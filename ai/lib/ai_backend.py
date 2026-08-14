@@ -143,10 +143,16 @@ class AgentInvocation:
     so the ~37 tests that exercise the command builders — where it has no effect
     — need not supply one; ``invoke_agent`` and ``invoke_fix`` reject an empty
     value, and TestAgentCallSitesPassCwd rejects a call site that omits it.
+    ``env`` replaces the backend subprocess's environment when set; the eval
+    fixture harness uses it to put recording shims ahead of the real CLIs.
     """
 
     prompt: str
     cwd: str = ""
+    # A complete environment for the backend subprocess, or None to inherit the
+    # parent's. Not a delta: callers that need one variable changed build the
+    # whole mapping, because a partial env silently strips PATH and HOME.
+    env: dict[str, str] | None = None
     session_log: str = ""
     add_dirs: list[str] = field(default_factory=list)
     agent: AgentKind | None = None

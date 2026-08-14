@@ -118,7 +118,16 @@ def _cifix_task() -> EvalTask:
     return CiFixTask()
 
 
-_TASK_FACTORIES = {DEFAULT_TASK: _review_task, "ci-fix": _cifix_task}
+def _skill_task() -> EvalTask:
+    from eval_scoring_skill import SkillTask
+    return SkillTask()
+
+
+_TASK_FACTORIES = {
+    DEFAULT_TASK: _review_task,
+    "ci-fix": _cifix_task,
+    "skill": _skill_task,
+}
 
 
 def get_task(name: str) -> EvalTask:

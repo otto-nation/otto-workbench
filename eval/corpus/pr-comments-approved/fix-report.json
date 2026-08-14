@@ -1,0 +1,21 @@
+{
+  "fix_pass": {
+    "fixed": [
+      {"id": "T-1", "summary": "quote the path in deploy.sh", "reviewer": "alice"}
+    ],
+    "needs_human": [],
+    "dismissed": [],
+    "already_addressed": [],
+    "deferred": [
+      {"id": "T-3", "summary": "extract the retry loop", "reviewer": "alice"}
+    ],
+    "commit_sha": "a1b2c3d",
+    "replies_posted": 0,
+    "summary_url": null,
+    "summary_deferred": false,
+    "comment_items": {"fixed": 1, "needs_human": 0, "dismissed": 0, "deferred": 1}
+  },
+  "comment_items": [],
+  "issue_comments": [],
+  "review_body_comments": []
+}

@@ -200,6 +200,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
+        env=inv.env,
     )
     _send_stdin(proc, inv.prompt)
     stream_progress(proc, inv.session_log, label=inv.label)
@@ -218,6 +219,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stderr=sys.stderr,
         text=True,
         cwd=inv.cwd,
+        env=inv.env,
     )
     _send_stdin(proc, inv.prompt)
     _stream_fix_output(proc, inv.session_log)

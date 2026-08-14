@@ -326,6 +326,7 @@ statistics over repeated runs are shared and know nothing about any one task.
 |---|---|---|
 | `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
 | `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
+| `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
 
 A `review` finding counts as matched when its path, severity, and description all
 line up and its line range *overlaps* the manifest's `line_range` — not when its
@@ -344,6 +345,181 @@ case fails before the fix and passes after it — an oracle that cannot fail, or
 cannot be satisfied, measures nothing. Because CI failures are usually
 environment-shaped, these cases put stub binaries on `PATH` rather than depending
 on what the host happens to have installed, so they fail the same way everywhere.
+
+A `skill` case grades a procedure rather than an artifact. `pr-comments` and
+`pr-rebase` run inside a Claude session, and their whole effect is the sequence
+of shell commands they issue — which is also how both state their constraints
+("never pass `--post` before the user has seen the drafts", "never run raw
+`git push --force-with-lease`"). So the harness puts recording shims on `PATH`,
+injects the live `SKILL.md` body as the prompt, and scores the trace: `requires`
+groups must appear **in order**, `forbids` groups must not appear at all. Any
+violation drops precision to zero — a constraint is not something you get
+partial credit for breaking.
+
+Each shim's default policy is fail-closed: a call matching no rule in its
+`responses.json` entry exits `97` loudly, so a fixture gap cannot read as a
+pass. A case opts a binary into `on_no_match: "passthrough"` instead when it
+wants the real one — both `pr-rebase` cases do this for `git`, because the
+fixture is a real repo and `git status` should work there; only the rules that
+matter are intercepted, and the attempt is still traced either way. A binary
+left unstubbed is not intercepted at all: the real one on `PATH` runs, and no
+trace line is ever recorded for it.
+
+The `SKILL.md` is read from `ai/claude/skills/`, never copied into a case, so
+editing a skill changes its eval with no corpus edit. That is the point: before
+this, there was no way to tell whether a change to a `SKILL.md` made the skill
+better or worse.
+
+Two limits worth naming. The trace cannot see obligations that are text-only,
+such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
+regenerate those files by hand. And each case drives a single *user* turn, with
+the user's side of the conversation encoded in the scenario prompt — which
+covers both sides of the `pr-comments` approval gate as two cases, but does not
+exercise a real multi-turn exchange. Within that one user turn the session can
+still take several tool-call turns of its own: `SKILL_MAX_TURNS` (20) caps how
+many, and `SKILL_MAX_BUDGET` (1.0, in dollars) caps what the run can spend
+before the harness stops it. A case whose scenario needs more of either hits
+the cap silently rather than completing, so keep fixtures resolvable well
+inside both.
+
+#### A `skill` manifest's fields
+
+`manifest.json` adds four fields on top of the `name`/`task`/`description`/`tags`
+every task shares:
+
+| Field | Meaning |
+|---|---|
+| `skill` | Directory name under `ai/claude/skills/` whose `SKILL.md` body is injected as the driving instructions |
+| `prompt` | The user's request — the other half of the prompt, standing in for the human side of the turn |
+| `requires` | Token groups that must each match a trace line, in order — group *i* must land on a strictly later line than group *i − 1* |
+| `forbids` | Token groups that must match no trace line at all; any single hit zeroes precision |
+| `false_positives_max` | The `forbids` budget, same meaning as a `review` manifest's field of the same name — defaults to `0` |
+
+`requires` and `forbids` each hold a list *of* groups, so a lone group is
+`[["--fix"]]` and not `["--fix"]` — the prose below names groups by their
+tokens alone, one level shallower than a manifest writes them. The shallow
+form is rejected when the case loads, as is an empty group: either would
+match nothing, which for a `forbids` group is a gate that never fires and
+never says so.
+
+A group matches a trace line when every one of its tokens **equals one of that
+line's argv elements** — so `["pr", "rebase", "--fix"]` matches
+`pr rebase --fix --branch main`, and a group never has to spell out the flags
+it doesn't care about. Tokens within a group are unordered; the groups in
+`requires` are ordered relative to each other.
+
+Whole elements, not substrings, so a flag and its longer forms are distinct:
+`["pr", "--track"]` does not match `pr comments --finish --track-all`. That is
+why `pr-comments-draft-only`, which forbids every tracking form, has to forbid
+`["pr", "--track"]` and `["pr", "--track-all"]` by name. A command name and a
+lookalike are distinct too: `["pr", "rebase"]` does not match
+`pr-rebase --branch eval`, because `pr-rebase` is a single element and neither
+token equals it.
+
+Both distinctions are load-bearing, because the substring rule this replaced
+got both wrong. At session startup the Claude Code harness issues
+`git remote get-url --push origin`; a `forbids: ["git", "push"]` group matched
+that as a substring and zeroed precision on sessions that never pushed. And
+`pr-rebase-conflicts-need-approval` could bank a full pass on a call to the
+very backing script the skill forbids, because `["pr", "rebase"]` sat inside
+the word `pr-rebase`. That case still forbids `["pr-rebase"]`, and it is still
+the group that makes such a call *score* — but it now guards against a real
+violation rather than patching a matcher artifact.
+
+A flag written joined to its value is still two tokens. For matching only, an
+argv element containing an `=` also counts as the two halves around its *first*
+`=`, so `["--track", "T-3"]` matches `--track T-3` and `--track=T-3` alike, and
+a group naming the literal `--track=T-3` matches too. A session that joined the
+flag to its value did not do anything different from one that didn't, and the
+grade should not say otherwise. The split cannot undo either distinction above:
+neither `--push` nor `pr-rebase` contains an `=`, so neither gains a token from
+it.
+
+Four things follow for anyone authoring a case.
+
+**1. Name in `forbids` every way the case could be passed without being
+satisfied.** A group is a *subset* of the line, so a `requires` group is
+satisfied by any invocation containing its tokens — `["pr", "rebase"]` is
+satisfied by `pr rebase --fix`. A `requires` group is evidence of what ran,
+never of what did not, and it says nothing at all about the *other* lines in
+the trace. `pr-rebase-conflicts-need-approval` pairs its
+`requires: ["pr", "rebase"]` with a separate `forbids: ["--fix"]` for the first
+reason; `pr-rebase-clean` forbids `["git", "rebase"]` for the second, since
+`requires: ["pr", "rebase", "--fix"]` is met just as well by a session that
+rebased by hand first and then called the dispatcher.
+
+**2. A group naming a binary matches the stub's *name*, not its path.** The
+shim records `argv[0]` as the bare name it was generated under, discarding the
+temp `bin/` directory it actually ran from. That is what makes
+`forbids: ["pr-rebase"]` a workable group at all.
+
+**3. Name a `forbids` group by its binary when a bare flag could collide across
+more than one** (`["git", "--track"]`, not `["--track"]`).
+
+**4. Do not name a git subcommand the Claude Code harness issues for itself.** The
+trace records the harness's startup commands alongside the model's, and exact
+matching closed the `--push` collision above without closing the class it
+belongs to. Six groups fire on the real startup prefix, each of which would
+score precision 0.0 on a fully compliant session: `["git", "config"]`,
+`["git", "remote"]`, `["git", "-c"]`, `["git", "status"]`, `["git", "log"]`,
+`["git", "ls-files"]`. Forbidding a git operation the skill must not perform —
+`["git", "push"]`, `["git", "rebase"]` — is safe; those are not in the prefix.
+
+`responses.json` stubs the CLIs the skill drives, one top-level key per binary
+name:
+
+| Field | Meaning |
+|---|---|
+| `on_no_match` | `"fail"` (the default) exits `97` on an unmatched call; `"passthrough"` execs the real binary instead. Those two spellings are the only accepted values — anything else is rejected when the case loads, rather than read as `"fail"` |
+| `rules` | An ordered list; the first rule whose `match` tokens all match an argv element of the call wins — identical matching to a manifest group, `=` splitting included, so a rule and a group mean the same thing on the same line. To stub a binary purely so its calls are traced, give it `[]` |
+| `match` | Required on every rule, and held to the same shape as a manifest group: a non-empty list of strings. An empty one could never fire, and under `passthrough` that is silent — the call it meant to intercept reaches the real binary |
+| `stdout` / `stderr` | Literal text to emit |
+| `stdout_file` | A path resolved relative to the case directory (not the fixture repo), read and used as `stdout` instead |
+| `exit` | The exit code to return, default `0` |
+
+A binary named as the leading token of any `requires` or `forbids` group needs
+an entry here — with no shim on `PATH` the real binary runs, uncontrolled and
+untraced, and the group can never be satisfied or violated. Every case also
+needs a `src/` directory: `eval-models` copies it into the throwaway git repo
+that becomes the session's `cwd`, and skips any case that has none.
+
+A minimal worked example — a case asserting that a `deploy` skill calls
+`infra apply --yes` and never touches `terraform` directly:
+
+```json
+// manifest.json
+{
+  "name": "deploy-approved",
+  "task": "skill",
+  "skill": "deploy",
+  "prompt": "Deploy this to staging.",
+  "requires": [["infra", "apply", "--yes"]],
+  "forbids": [["terraform"]],
+  "false_positives_max": 0
+}
+```
+
+```json
+// responses.json
+{
+  "infra": {
+    "on_no_match": "fail",
+    "rules": [
+      {"match": ["apply", "--yes"], "stdout": "{\"status\": \"ok\"}", "exit": 0}
+    ]
+  },
+  "terraform": {"on_no_match": "fail", "rules": []}
+}
+```
+
+Landing the case costs a full eval run. `bin/local/validate-eval-baselines`
+fails any corpus entry that no baseline in `eval/results/` covers, and
+`bin/local/validate-all` discovers it by glob — so a new case is red on
+pre-push and in CI from the moment it lands until a baseline records it. That
+baseline has to come from a run over the whole corpus: `_save_baselines`
+rebuilds each model's file wholesale from the entries of the run it is handed,
+so `--entry <new-case> --save-baselines` writes a file holding that one entry
+and drops every other. There is no filtered top-up.
 
 ### What the eval gates on
 

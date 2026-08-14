@@ -1779,6 +1779,10 @@ def _summarize_comment_body(body: str, max_len: int = 120) -> str:
 
 _SummaryEntry = CommentItem | pr_state.ThreadOutcome
 
+_SUMMARY_TABLE_COLUMNS = ("Thread", "Reviewer", "File", "Action")
+_SUMMARY_TABLE_HEADER = f"| {' | '.join(_SUMMARY_TABLE_COLUMNS)} |"
+_SUMMARY_TABLE_DIVIDER = "|" + "|".join("-" * 8 for _ in _SUMMARY_TABLE_COLUMNS) + "|"
+
 
 def _build_summary_body(
     fixed: list[_SummaryEntry],
@@ -1796,17 +1800,26 @@ def _build_summary_body(
     deferred_issue_url: str = "",
     has_comment_items: bool = False,
     head_sha: str = "",
+    carried_over: list[str] | None = None,
 ) -> str:
-    """Build the markdown body for the fix summary comment."""
+    """Build the markdown body for the fix summary comment.
+
+    ``carried_over`` holds rows lifted verbatim from the published comment that
+    this render cannot account for — see `_carried_over_rows`. They are already
+    rendered, so they are re-emitted as-is rather than round-tripped through an
+    entry the state file does not have.
+    """
     dismissed = dismissed or []
     already_addressed = already_addressed or []
     issue_comments = issue_comments or []
     review_body_comments = review_body_comments or []
+    carried_over = carried_over or []
     fixed_count = len(fixed)
     deferred_count = len(deferred)
     human_count = len(needs_human)
     dismissed_count = len(dismissed)
     addressed_count = len(already_addressed)
+    carried_count = len(carried_over)
 
     parts = [_SUMMARY_MARKER, "## Review Comments Addressed", ""]
     counts = []
@@ -1820,6 +1833,8 @@ def _build_summary_body(
         counts.append(f"{deferred_count} deferred")
     if human_count:
         counts.append(f"{human_count} need discussion")
+    if carried_count:
+        counts.append(f"{carried_count} carried over")
     parts.append(" · ".join(counts))
     parts.append("")
 
@@ -1847,11 +1862,19 @@ def _build_summary_body(
         deferred_status = "Deferred"
     for entry in deferred:
         rows.append(_build_row(entry, deferred_status, threads_by_id, repo, pr_number, link_sha))
+    rows.extend(carried_over)
 
     if rows:
-        parts.append("| Thread | Reviewer | File | Action |")
-        parts.append("|--------|----------|------|--------|")
+        parts.append(_SUMMARY_TABLE_HEADER)
+        parts.append(_SUMMARY_TABLE_DIVIDER)
         parts.extend(rows)
+        parts.append("")
+
+    if carried_count:
+        parts.append(
+            f"> {carried_count} row{review_common.plural(carried_count)} carried over "
+            "from an earlier round that this checkout's state file does not cover."
+        )
         parts.append("")
 
     if not has_comment_items:
@@ -1901,6 +1924,96 @@ def _format_issue_comment_items(comments: list[dict]) -> list[str]:
     return lines
 
 
+# What identifies a rendered row across rounds. The permalink anchor is the
+# only stable part: the summary text is regenerated per round and the file cell
+# is pinned to whichever SHA that round rendered against.
+_ROW_ANCHOR_RE = re.compile(r"#(?:discussion_r|issuecomment-|pullrequestreview-)\d+")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def _row_cells(row: str) -> list[str]:
+    return [cell.strip() for cell in row.strip().strip("|").split("|")]
+
+
+def _summary_row_key(row: str) -> str:
+    """Identity of one rendered summary row.
+
+    Falls back to the row's own text for a row with no permalink — a comment
+    item whose source could not be resolved. Link targets and backticks are
+    stripped so the same entry keys the same way however it was decorated, and
+    the Action cell is left out because a later round changing it (deferred to
+    fixed) is exactly the case that must count as the same row.
+    """
+    anchor = _ROW_ANCHOR_RE.search(row)
+    if anchor:
+        return anchor.group(0)
+    return " | ".join(
+        _MD_LINK_RE.sub(r"\1", cell).replace("`", "").strip()
+        for cell in _row_cells(row)[:len(_SUMMARY_TABLE_COLUMNS) - 1]
+    )
+
+
+def _summary_table_rows(body: str) -> list[str]:
+    """The data rows of the summary table in a rendered body, in order."""
+    rows = []
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line.startswith("|"):
+            continue
+        if not line.strip("|-: "):
+            continue
+        if _row_cells(line) == list(_SUMMARY_TABLE_COLUMNS):
+            continue
+        rows.append(line)
+    return rows
+
+
+def _carried_over_rows(published: str, fresh: str) -> list[str]:
+    """Rows the published summary holds that a fresh render does not.
+
+    The summary is one comment edited in place across a review cycle, but the
+    replacement body is built entirely from local state — which is per-target
+    and per-worktree, and routinely absent for a round the comment already
+    covers: `pr gc`, a recreated worktree, a later round run from another
+    machine. Treating state as authoritative then silently deletes rounds
+    nobody can recover from the comment.
+
+    So the published comment is read as the record it is. Anything in it this
+    render cannot account for is kept verbatim rather than overwritten.
+    """
+    if not published:
+        return []
+    fresh_keys = {_summary_row_key(row) for row in _summary_table_rows(fresh)}
+    return [
+        row for row in _summary_table_rows(published)
+        if _summary_row_key(row) not in fresh_keys
+    ]
+
+
+def _publish_summary(
+    repo: str, pr_number: int, build_body: Callable[..., str],
+) -> str | None:
+    """Upsert the summary comment without ever shrinking what it already says.
+
+    `build_body(carried_over=...)` renders from local state. It is called a
+    second time when the published comment holds rows that render did not
+    cover, because the carried rows have to reach the reader through the same
+    body — the counts line and the table are one artifact, not two.
+    """
+    existing = pc.find_marker_comment(repo, pr_number, _SUMMARY_MARKER)
+    body = build_body(carried_over=[])
+    carried = _carried_over_rows(existing.body, body)
+    if carried:
+        log.warn(
+            f"Published summary has {len(carried)} row(s) this run cannot account "
+            "for — carrying them forward rather than dropping them"
+        )
+        body = build_body(carried_over=carried)
+    return pc.post_issue_comment(
+        repo, pr_number, body, marker=_SUMMARY_MARKER, existing=existing,
+    )
+
+
 def _post_fix_summary(
     fixed: list[CommentItem],
     needs_human: list[CommentItem],
@@ -1928,7 +2041,8 @@ def _post_fix_summary(
     if (not fixed and not needs_human and not deferred and not dismissed
             and not already_addressed and not has_unseen):
         return None
-    body = _build_summary_body(
+    url = _publish_summary(repo, pr_number, functools.partial(
+        _build_summary_body,
         fixed, needs_human, deferred, cp, repo, pr_number, threads_by_id,
         dismissed=dismissed,
         already_addressed=already_addressed,
@@ -1936,8 +2050,7 @@ def _post_fix_summary(
         review_body_comments=review_body_comments,
         has_comment_items=has_comment_items,
         head_sha=head_sha,
-    )
-    url = pc.post_issue_comment(repo, pr_number, body, marker=_SUMMARY_MARKER)
+    ))
     if url:
         log.info(f"Posted fix summary: {url}")
     elif publishing.enabled():
@@ -2041,7 +2154,8 @@ def _render_deferred_summary(
         status=status,
         error="",
     )
-    body = _build_summary_body(
+    url = _publish_summary(repo, pr_number, functools.partial(
+        _build_summary_body,
         fixed, needs_human, deferred, cp, repo, pr_number, threads_by_id,
         dismissed=dismissed,
         already_addressed=already_addressed,
@@ -2051,8 +2165,7 @@ def _render_deferred_summary(
         deferred_issue_url=fix.deferred_issue_url,
         has_comment_items=fix.has_comment_items,
         head_sha=fix.commit_sha or state.identity.head_sha,
-    )
-    url = pc.post_issue_comment(repo, pr_number, body, marker=_SUMMARY_MARKER)
+    ))
     if url:
         log.info(f"Posted deferred fix summary: {url}")
         fix.summary_url = url

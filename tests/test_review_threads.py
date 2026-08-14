@@ -35,6 +35,30 @@ from review_prompt import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_published_summary(monkeypatch):
+    """Start every test from a PR with no summary comment yet.
+
+    Every summary upsert reads the published comment first, so without this the
+    suite would shell out to `gh api`. Tests covering the carry-forward stub it
+    with a body of their own.
+    """
+    import pr_comments
+    monkeypatch.setattr(
+        pr_comments, "find_marker_comment",
+        lambda *a, **kw: pr_comments.MarkerComment(found=True),
+    )
+
+
+def _published(body: str):
+    """Stub a prior summary comment with the given body."""
+    import pr_comments
+    return patch.object(
+        pr_comments, "find_marker_comment",
+        return_value=pr_comments.MarkerComment(True, 11, body),
+    )
+
+
 # ── _extract_json ───────────────────────────────────────────────────────────
 
 class TestExtractJson:
@@ -3132,6 +3156,148 @@ class TestSummaryMarker:
         with patch("pr_comments.post_issue_comment", return_value="https://url") as mock_post:
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         assert mock_post.call_args.kwargs["marker"] == rt._SUMMARY_MARKER
+
+
+# ── rows the published comment has and local state does not ────────────────
+
+
+ROUND_ONE_ROW = (
+    "| [drop the guard](https://github.com/owner/repo/pull/1#discussion_r111) "
+    "| @kgn | [`old.go:4`](https://github.com/owner/repo/blob/aaaaaaa/old.go#L4) "
+    "| Fixed in [`9f2e1a0`](https://github.com/owner/repo/commit/9f2e1a0) |"
+)
+
+
+def _published_summary(*rows: str) -> str:
+    """A prior summary comment carrying the given rendered rows."""
+    return "\n".join([
+        "<!-- pr-comments:summary -->", "## Review Comments Addressed", "",
+        "**1 fixed**", "",
+        "| Thread | Reviewer | File | Action |",
+        "|--------|----------|------|--------|",
+        *rows, "",
+    ])
+
+
+class TestSummaryRowKey:
+    """Two renders of one thread must key the same, across rounds — #712."""
+
+    def test_anchor_identifies_the_row(self, rt):
+        assert rt._summary_row_key(ROUND_ONE_ROW) == "#discussion_r111"
+
+    def test_action_and_sha_may_change(self, rt):
+        later = ROUND_ONE_ROW.replace("9f2e1a0", "bbbbbbb").replace("aaaaaaa", "ccccccc")
+        assert rt._summary_row_key(later) == rt._summary_row_key(ROUND_ONE_ROW)
+
+    def test_comment_item_anchors_do_not_collide_with_threads(self, rt):
+        thread = "| [x](https://x/pull/1#discussion_r7) | @a | `f.go` | Fixed |"
+        item = "| [x](https://x/pull/1#issuecomment-7) | @a | `f.go` | Fixed |"
+        assert rt._summary_row_key(thread) != rt._summary_row_key(item)
+
+    def test_falls_back_to_the_row_text_without_a_permalink(self, rt):
+        row = "| plain summary | @kgn | `f.go:2` | Fixed in `abc` |"
+        assert rt._summary_row_key(row) == "plain summary | @kgn | f.go:2"
+
+    def test_the_fallback_ignores_the_action_cell(self, rt):
+        row = "| plain summary | @kgn | `f.go:2` | Deferred |"
+        later = "| plain summary | @kgn | `f.go:2` | Fixed in `abc` |"
+        assert rt._summary_row_key(row) == rt._summary_row_key(later)
+
+
+class TestSummaryTableRows:
+    def test_header_and_divider_are_not_rows(self, rt):
+        assert rt._summary_table_rows(_published_summary(ROUND_ONE_ROW)) == [ROUND_ONE_ROW]
+
+    def test_a_body_without_a_table_has_no_rows(self, rt):
+        assert rt._summary_table_rows("## Review Comments Addressed\n\nnothing yet\n") == []
+
+
+class TestCarriedOverRows:
+    def test_a_row_state_never_saw_is_carried(self, rt):
+        fresh = _published_summary(
+            "| [new work](https://github.com/owner/repo/pull/1#discussion_r222) "
+            "| @kgn | `new.go:1` | Fixed in `bbbbbbb` |")
+        assert rt._carried_over_rows(_published_summary(ROUND_ONE_ROW), fresh) == [ROUND_ONE_ROW]
+
+    def test_a_row_state_still_holds_is_not_duplicated(self, rt):
+        fresh = _published_summary(ROUND_ONE_ROW.replace("Fixed in", "Deferred —"))
+        assert rt._carried_over_rows(_published_summary(ROUND_ONE_ROW), fresh) == []
+
+    def test_nothing_published_carries_nothing(self, rt):
+        assert rt._carried_over_rows("", _published_summary(ROUND_ONE_ROW)) == []
+
+
+class TestPublishedRowsSurviveTheEdit:
+    """State is per-worktree; the comment is the record of rounds it never saw — #712."""
+
+    def _fix(self, **overrides):
+        defaults = dict(
+            threads=[ThreadOutcome(id="t2", summary="round two work", file="new.go",
+                                   line=1, action=ThreadAction.FIXED)],
+            commit_status="no_changes", summary_deferred=True,
+        )
+        defaults.update(overrides)
+        return FixSummary(**defaults)
+
+    def _render(self, rt, published):
+        state = _make_state(self._fix())
+        with _published(published), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        return post.call_args[0][2]
+
+    def test_the_earlier_round_survives_finish(self, rt):
+        body = self._render(rt, _published_summary(ROUND_ONE_ROW))
+        assert "drop the guard" in body
+        assert "round two work" in body
+
+    def test_the_carried_row_is_counted_and_explained(self, rt):
+        body = self._render(rt, _published_summary(ROUND_ONE_ROW))
+        assert "1 carried over" in body
+        assert "state file does not cover" in body
+
+    def test_carrying_forward_is_idempotent(self, rt):
+        once = self._render(rt, _published_summary(ROUND_ONE_ROW))
+        twice = self._render(rt, once)
+        assert twice == once
+
+    def test_a_run_that_warns_says_how_many(self, rt):
+        with patch.object(rt.log, "warn") as warn:
+            self._render(rt, _published_summary(ROUND_ONE_ROW))
+        assert "1 row(s)" in warn.call_args[0][0]
+
+    def test_a_failed_lookup_invents_no_rows(self, rt):
+        """An unreadable listing must not be read as an empty published comment."""
+        import pr_comments
+        state = _make_state(self._fix())
+        with patch.object(pr_comments, "find_marker_comment",
+                          return_value=pr_comments.MarkerComment(found=False)), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        assert "carried over" not in post.call_args[0][2]
+
+    def test_the_fix_pass_upsert_carries_too(self, rt):
+        """--fix edits the same comment, so it can shrink it the same way."""
+        cp = rt.CommitPushResult("bbbbbbb", "pushed", "")
+        with _published(_published_summary(ROUND_ONE_ROW)), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._post_fix_summary(
+                [CommentItem(id="t2", summary="round two work", file="new.go", line=1)],
+                [], [], cp, "owner/repo", 1, {},
+            )
+        body = post.call_args[0][2]
+        assert "drop the guard" in body
+        assert "1 carried over" in body
+
+    def test_the_lookup_is_not_repeated_for_the_write(self, rt):
+        import pr_comments
+        state = _make_state(self._fix())
+        with _published(_published_summary(ROUND_ONE_ROW)) as find, \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        find.assert_called_once()
+        assert post.call_args.kwargs["existing"] == pr_comments.MarkerComment(
+            True, 11, _published_summary(ROUND_ONE_ROW))
 
 
 # ── default-branch resolution in commit lookups ────────────────────────────

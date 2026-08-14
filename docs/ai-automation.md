@@ -676,6 +676,32 @@ missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both.
 
+### The summary comment is the record, not the state file
+
+The `Review Comments Addressed` comment is what a reviewer reads to confirm
+their feedback was accounted for, and it is the one place a whole cycle is
+tallied. A cycle edits one comment rather than appending a summary per round,
+so every round has to leave it at least as complete as it found it.
+
+Two things follow, and both were bugs first —
+[#714](https://github.com/otto-nation/otto-workbench/issues/714) and
+[#712](https://github.com/otto-nation/otto-workbench/issues/712):
+
+**Every outcome is reported, including the ones nobody resolved.** A
+`needs_human` thread is the case that took the most operator judgment, so
+omitting it is the worst row to lose. It renders as open, with its reason. If
+the operator settled it outside the tool — answered the thread, fixed it by
+hand — `--finish` reconciles the snapshot against GitHub first and the row
+credits that work instead of reporting a discussion that already happened.
+
+**Rows the local state file cannot account for are carried forward.** State is
+per-target and per-worktree, and a round routinely runs without the state that
+covered an earlier one: `pr gc`, a pruned state directory, a recreated worktree,
+another machine. Building the replacement body purely from state then deletes
+rounds nobody can recover. So the published body is read first, matched row by
+row on the thread permalink, and anything unaccounted for is re-emitted
+verbatim, counted as `N carried over`, and warned about on the run.
+
 ### Running from a different directory
 
 All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:

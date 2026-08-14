@@ -39,9 +39,21 @@ cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [[ -n "$cmd" ]] || exit 0
 
 # ── Whole-command rules ──────────────────────────────────────────────────────
+# These scan the command as written. Order is by specificity: the first rule to
+# match is the message Claude sees, so a narrow rule earns its place above a
+# broad one.
 
 if [[ "$cmd" == *"gh pr create"* ]]; then
   block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template.'
+fi
+
+re_binlocal='^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
+if [[ "$cmd" =~ $re_binlocal ]]; then
+  block "Use relative path '${BASH_REMATCH[1]}' instead of absolute path. Absolute paths to bin/local/ scripts trigger a new permission prompt in every worktree."
+fi
+
+if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
+  block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead.'
 fi
 
 # ── Statement-anchored rules ─────────────────────────────────────────────────
@@ -90,16 +102,9 @@ if [[ "$stripped" =~ $re_sysbin ]]; then
   block "Use '${BASH_REMATCH[3]}' instead of its absolute path. The allow list keys on the bare command name, so /bin and /usr/bin prefixes never match it and prompt every time. See bash-tool.md."
 fi
 
-# ── Remaining whole-command rules ────────────────────────────────────────────
-
-re_binlocal='^/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
-if [[ "$cmd" =~ $re_binlocal ]]; then
-  block "Use relative path '${BASH_REMATCH[1]}' instead of absolute path. Absolute paths to bin/local/ scripts trigger a new permission prompt in every worktree."
-fi
-
-if [[ "$cmd" == *"-exec "* || "$cmd" == *'-exec"'* ]]; then
-  block 'find -exec triggers an unsuppressible permission prompt. Use find ... -print0 | xargs -0 <command> instead.'
-fi
+# ── Catch-all ────────────────────────────────────────────────────────────────
+# Last, because it matches the widest range of commands — anything the rules
+# above can name more precisely should be blocked with their message instead.
 
 # shellcheck disable=SC2016  # the literal $( is the pattern being matched
 if [[ "$cmd" == *'$('* ]]; then

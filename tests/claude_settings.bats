@@ -143,9 +143,12 @@ _run_guard() {
 }
 
 @test "settings delegates every Bash rule to the guard script" {
-  local cmds
+  local bin_dir cmds
+  bin_dir=$(sed -n 's/^LOCAL_BIN_DIR="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+  [ -n "$bin_dir" ]
+
   cmds=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$SETTINGS")
-  [ "$cmds" = 'bash $HOME/.local/bin/claude-bash-guard' ] || {
+  [ "$cmds" = "bash $bin_dir/claude-bash-guard" ] || {
     echo "expected a single guard invocation, got:"
     echo "$cmds"
     return 1

@@ -213,6 +213,18 @@ parse() {
     assert _check(code) == []
 
 
+def test_multi_line_double_quoted_string_is_not_bash_nesting():
+    """A double-quoted string carries across lines just as a single-quoted one does."""
+    code = '''\
+#!/usr/bin/env bash
+message="Hello
+  if while for keywords inside the string
+  more text"
+echo "$message"
+'''
+    assert _check(code) == []
+
+
 def test_nesting_after_an_embedded_awk_program_is_still_counted():
     code = '''\
 #!/usr/bin/env bash

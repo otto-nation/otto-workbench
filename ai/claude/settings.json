@@ -213,6 +213,7 @@
       "Bash(npx:*)",
       "Bash(otto-log:*)",
       "Bash(otto-workbench:*)",
+      "Bash(perl:*)",
       "Bash(pip3:*)",
       "Bash(pipx:*)",
       "Bash(pr:*)",

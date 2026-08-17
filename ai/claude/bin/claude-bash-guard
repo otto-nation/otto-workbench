@@ -56,10 +56,8 @@ fi
 
 # ── Statement-anchored rules ─────────────────────────────────────────────────
 # These match at the start of any statement, not just the start of the command —
-# a leading no-op token must not be a way around them. They scope to the first
-# line so a heredoc body being written to a file is not scanned as if it were
-# the command itself, and to a quote-stripped copy so a pattern inside a quoted
-# argument is not read as an invocation.
+# a leading no-op token must not be a way around them. They scan a quote-stripped
+# copy so a pattern inside a quoted argument is not read as an invocation.
 #
 # ceiling: quoted spans are stripped with two sed passes, which mis-handle
 # escaped quotes and embedded apostrophes, in both directions. An unpaired
@@ -70,8 +68,42 @@ fi
 # steer command style, they are not a security boundary. Upgrade to a real
 # tokenizer if either misfire shows up on a command worth running.
 
-first_line=$(printf '%s\n' "$cmd" | head -1)
-stripped=$(printf '%s' "$first_line" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+# Every line is scanned, because a multi-line command is several commands and
+# the second one prompts just as loudly as the first. Heredoc bodies are the
+# exception: they are content being written to a file, not commands, so a
+# `cd /x && ls` inside one is not an invocation. Surviving lines are joined with
+# `; ` so the anchors below treat a new line as the new statement it is — and so
+# a lone `cd <dir>`, the sanctioned form, still has no separator to match on.
+re_heredoc="<<-?[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)"
+scannable=""
+marker=""
+while IFS= read -r line; do
+  if [[ -n "$marker" && "$line" =~ ^[[:space:]]*${marker}[[:space:]]*$ ]]; then
+    marker=""
+    continue
+  fi
+  if [[ -n "$marker" ]]; then
+    continue
+  fi
+  scannable+="${scannable:+; }$line"
+  if [[ "$line" =~ $re_heredoc ]]; then
+    marker="${BASH_REMATCH[1]}"
+  fi
+done < <(printf '%s\n' "$cmd")
+
+stripped=$(printf '%s' "$scannable" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+
+# A second variant that strips only single-quoted spans. A `$VAR` survives
+# double quotes and expands, so the expansion rule below has to see inside
+# them; every other rule wants both kinds of quote gone.
+sq_stripped=$(printf '%s' "$scannable" | sed -e "s/'[^']*'//g")
+
+# Ahead of every rule below: a `-c` wrapper hides its payload from all of them,
+# and from the analyzer, so whatever is inside can only be judged once unwrapped.
+re_dashc='(^|[;&|][[:space:]]*)(sh|bash|zsh|dash)[[:space:]]+-[A-Za-z]*c([[:space:]]|$)'
+if [[ "$stripped" =~ $re_dashc ]]; then
+  block "A ${BASH_REMATCH[2]} -c \"...\" wrapper hides the real command, so the whole quoted string needs approval and no allow-list entry can match what is inside. Run the command directly, with a bare cd <dir> as its own call instead of embedding one. See bash-tool.md § Avoid Wrapping Commands in sh -c."
+fi
 
 re_func='(^|[;&|][[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\(\)|function[[:space:]])'
 if [[ "$stripped" =~ $re_func ]]; then
@@ -100,6 +132,37 @@ if [[ "$stripped" =~ $re_brace ]]; then
   block 'Brace expansion triggers an unsuppressible permission prompt. List files individually or use a glob (*.go) instead. See bash-tool.md § Avoid Brace Expansion.'
 fi
 
+# Unlike the rules above, the prompt this one avoids is a file-access gate rather
+# than a static-analysis failure: Claude Code asks per write path for a Bash
+# redirect, while the Edit and Write tools are allow-listed outright. Only echo
+# and printf are matched — they emit literal content the Edit tool can place
+# directly. A redirect capturing another command's output has no tool equivalent.
+#
+# ceiling: the exempt list is the scratch dirs a redirect legitimately targets.
+# A write to a state or log file outside them still gets blocked, and the answer
+# there is the Write tool. Upgrade to reading the session's working directories
+# if a real logging use shows up.
+re_write='(^|[;&|][[:space:]]*)(echo|printf)[[:space:]][^;&|]*>>?[[:space:]]*([^[:space:];&|]+)'
+if [[ "$stripped" =~ $re_write ]]; then
+  case "${BASH_REMATCH[3]}" in
+    /dev/null | /tmp/* | /private/tmp/* | /var/folders/*) ;;
+    *)
+      block "Redirecting echo/printf into ${BASH_REMATCH[3]} prompts for access to that path. Use the Write tool for a new file or the Edit tool to append to an existing one — both are allow-listed and show a diff. See bash-tool.md § Avoid Shell Redirects That Write Files."
+      ;;
+  esac
+fi
+
+# Below the rules above because it matches a wider range of commands than any of
+# them — a `$VAR` in a compound cd or an env -C should get that rule's message.
+# Reads sq_stripped, not stripped: `"$f"` expands, so double-quoted spans have
+# to stay. `$(` is command substitution, which the catch-all names more
+# precisely, so the character class excludes it.
+re_expand='\$[A-Za-z_{]'
+if [[ "$sq_stripped" =~ $re_expand ]]; then
+  # shellcheck disable=SC2016  # the literal $VAR and $f are the shapes being named
+  block 'A $VAR reference is flagged as "simple_expansion" and prompts every time. Use printenv VAR to read an env var, and name the values directly instead of looping over them — `tail -n +1 f1 f2 f3` prints each file under its own header, with no for/$f. See bash-tool.md § Avoid Shell Variable Expansion.'
+fi
+
 # Ahead of the PATH-binary rule below: a repo path ending in bin/local/ is the
 # narrower match, and the two would otherwise both fire on a repo rooted at /bin.
 re_binlocal='(^|[;&|][[:space:]]*)/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
@@ -123,12 +186,18 @@ fi
 # installs into. A binary reached through one of these resolves identically from
 # its bare name, which is the only form the allow list can match.
 #
-# ceiling: the list is static, so a tool installed somewhere else on PATH (a
-# language version manager's shim dir, say) still costs one prompt per call.
-# Upgrade to resolving the basename against PATH at hook time if that shows up.
-re_pathbin='(^|[;&|][[:space:]]*)(/opt/homebrew/s?bin|/usr/local/bin|/usr/bin|/bin|/[^[:space:]]*/\.local/bin)/([A-Za-z0-9_.-]+)'
+# A version manager's dirs are here too: its shims are on PATH, and its install
+# bins are where an agent lands after resolving a shim by hand. Both reach the
+# same binary the bare name does.
+#
+# ceiling: the list is still static, so a tool installed somewhere else on PATH
+# costs one prompt per call — a Homebrew formula's own bin (/opt/homebrew/opt/
+# node/bin) is the remaining known gap. Resolving the basename against PATH at
+# hook time would end the list, but the hook's PATH is not the session's, so it
+# would trade these misses for wrong suggestions. Upgrade only with a real fix.
+re_pathbin='(^|[;&|][[:space:]]*)(/opt/homebrew/s?bin|/usr/local/bin|/usr/bin|/bin|/[^[:space:]]*/(\.local/bin|\.local/share/mise/shims|\.local/share/mise/installs/[^[:space:]]*/bin|\.asdf/shims|\.asdf/installs/[^[:space:]]*/bin))/([A-Za-z0-9_.-]+)'
 if [[ "$stripped" =~ $re_pathbin ]]; then
-  block "Use '${BASH_REMATCH[3]}' instead of its absolute path — the allow list keys on the bare command name, so a ${BASH_REMATCH[2]}/ path prompts every time. See bash-tool.md § Avoid Absolute Paths to PATH Binaries."
+  block "Use '${BASH_REMATCH[4]}' instead of its absolute path — the allow list keys on the bare command name, so a ${BASH_REMATCH[2]}/ path prompts every time. See bash-tool.md § Avoid Absolute Paths to PATH Binaries."
 fi
 
 # ── Catch-all ────────────────────────────────────────────────────────────────

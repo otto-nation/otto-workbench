@@ -89,3 +89,15 @@ def test_render_status_aborted():
     )
     result = rebase_status.render_status(r)
     assert result == ["**Rebase**: aborted"]
+
+
+def test_render_status_already_landed():
+    """A refusal is not a completed rebase — the dashboard has to say which."""
+    r = pr_state.RebaseSummary(
+        status=pr_state.RebaseStatus.ALREADY_LANDED.value,
+        updated_at="2026-06-20T00:00:00Z",
+    )
+    result = rebase_status.render_status(r)
+    assert len(result) == 1
+    assert "already landed" in result[0]
+    assert "pr rebase --force" in result[0]

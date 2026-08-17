@@ -11,12 +11,14 @@ Exit codes:
   0  Success (clean rebase or operation completed)
   1  Error (pre-flight failure, git error)
   3  Conflicts detected (JSON report on stdout)
+  4  Branch already landed — refused before touching the remote (JSON on stdout)
 
 Usage:
   pr-rebase                           # rebase and force-push
   pr-rebase --no-push                 # rebase only, skip force-push
   pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
   pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
+  pr-rebase --force                   # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --repo-dir <path>         # specify worktree directory
 """
@@ -90,6 +92,13 @@ class GeneratedSignal(StrEnum):
     """Which signal identified a file as generated."""
     GITATTRIBUTES = "gitattributes"
     HEADER = "header"
+
+
+class LandedSignal(StrEnum):
+    """Which check found the branch's work already present in the target ref."""
+    PR_MERGED = "pr_merged"
+    EMPTY_DIFF = "empty_diff"
+    COMMITS_UPSTREAM = "commits_upstream"
 
 
 class ParseFailure(StrEnum):
@@ -1664,6 +1673,141 @@ class RebaseOutcome:
         _emit_json(report)
 
 
+# ── Already-landed preflight ────────────────────────────────────────────────
+
+_LANDED_EXIT = 4
+_LANDED_OVERRIDE_FLAG = "--force"
+
+
+@dataclass(frozen=True)
+class LandedReport:
+    """Already-landed refusal — the exit-code-4 payload on stdout."""
+    branch: str
+    signal: str
+    detail: str
+    commits_ahead: int
+    pr_number: int | None = None
+    status: str = RebaseStatus.ALREADY_LANDED.value
+    override: str = _LANDED_OVERRIDE_FLAG
+
+    def emit(self) -> None:
+        _emit_json(asdict(self))
+
+
+def _merged_pr(cwd: str, ctx: pr_context.ResolvedContext) -> tuple[int, str] | None:
+    """The branch's PR as (number, url) when GitHub reports it merged.
+
+    Best effort by design: gh may be absent, unauthenticated, rate-limited, or
+    the branch may have no PR at all. Every one of those is "the tracker has
+    nothing to say", not "the branch is unlanded" — the git signals still get
+    their turn. Only a state of MERGED counts, so an open or closed-unmerged PR
+    reads the same as no answer.
+    """
+    target = str(ctx.pr_number) if ctx.pr_number else ctx.branch
+    cmd = ["gh", "pr", "view", target, "--json", "state,number,url"]
+    if ctx.repo:
+        cmd += ["--repo", ctx.repo]
+
+    r = _try_run(cmd, cwd=cwd)
+    if r is None or r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+    if data.get("state") != "MERGED":
+        return None
+    return data.get("number") or 0, data.get("url") or ""
+
+
+def _diff_is_empty(cwd: str) -> bool:
+    """Whether HEAD's tree is identical to the target ref's.
+
+    Tracker-agnostic, and the one signal that catches a squash merge: the
+    branch's own commits are unreachable from the squashed commit, so nothing
+    that compares commits notices the work landed.
+    """
+    return subprocess.run(
+        ["git", "diff", "--quiet", _TARGET_REF, "HEAD"],
+        capture_output=True, cwd=cwd,
+    ).returncode == 0
+
+
+def _all_commits_upstream(cwd: str) -> bool:
+    """Whether every commit the branch adds already has an equivalent upstream.
+
+    ``git cherry`` compares patch ids, so it still recognises a commit that was
+    rebased or amended on its way into the target ref — the case an empty diff
+    misses once the target has moved on with unrelated work.
+    """
+    r = subprocess.run(
+        ["git", "cherry", _TARGET_REF, "HEAD"],
+        capture_output=True, text=True, cwd=cwd,
+    )
+    if r.returncode != 0:
+        return False
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    return bool(lines) and all(ln.startswith("-") for ln in lines)
+
+
+def _landed_check(
+    cwd: str, ctx: pr_context.ResolvedContext,
+) -> LandedReport | None:
+    """Evidence that the branch's work is already in the target ref, or None.
+
+    Signals are combined most-authoritative first: GitHub saying the PR merged,
+    then an empty diff (squash merges), then matching patch ids (rebase and
+    merge-commit landings). Each stands alone — the tracker is unreachable in
+    some repos, and neither git signal survives every merge style.
+    """
+    ahead = _commits_ahead(cwd)
+
+    merged = _merged_pr(cwd, ctx)
+    if merged is not None:
+        number, url = merged
+        return LandedReport(
+            branch=ctx.branch, signal=LandedSignal.PR_MERGED.value,
+            detail=f"PR #{number} is merged ({url})" if url else f"PR #{number} is merged",
+            commits_ahead=ahead, pr_number=number,
+        )
+
+    # A branch with no commits of its own has nothing that could have landed,
+    # and both git signals below read as "already upstream" for it — vacuously
+    # for the freshly branched worktree that is the common case.
+    if ahead == 0:
+        return None
+
+    if _diff_is_empty(cwd):
+        return LandedReport(
+            branch=ctx.branch, signal=LandedSignal.EMPTY_DIFF.value,
+            detail=f"{ahead} commit(s) ahead of {_TARGET_REF} but no diff against it",
+            commits_ahead=ahead,
+        )
+
+    if _all_commits_upstream(cwd):
+        return LandedReport(
+            branch=ctx.branch, signal=LandedSignal.COMMITS_UPSTREAM.value,
+            detail=f"all {ahead} commit(s) already have an equivalent in {_TARGET_REF}",
+            commits_ahead=ahead,
+        )
+
+    return None
+
+
+def _refuse_landed(
+    ctx: pr_context.ResolvedContext, report: LandedReport,
+) -> int:
+    """Report an already-landed branch and stop before the rebase."""
+    _terr("preflight", f"branch already landed ({report.signal})", data=asdict(report))
+    log.error(f"Refusing to rebase {report.branch} — {report.detail}.")
+    log.dim(f"Rebasing would replay work already in {_TARGET_REF} and force-push "
+            "it back, recreating a remote branch the merge deleted.")
+    log.dim(f"Pass {_LANDED_OVERRIDE_FLAG} to rebase it anyway.")
+    RebaseOutcome(status=RebaseStatus.ALREADY_LANDED).save(ctx)
+    report.emit()
+    return _LANDED_EXIT
+
+
 # ── Push helper ─────────────────────────────────────────────────────────────
 
 
@@ -1842,8 +1986,15 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     return 0
 
 
-def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode) -> int:
-    """Start or resume a rebase onto origin/main."""
+def cmd_start(
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
+    force: bool = False,
+) -> int:
+    """Start or resume a rebase onto origin/main.
+
+    ``force`` waives the already-landed preflight, which only a fresh rebase
+    runs: a resumed one is already past the point the refusal protects.
+    """
     if _detect_rebase_in_progress(cwd):
         if _trail:
             _trail.decision(
@@ -1864,7 +2015,7 @@ def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode) -> int:
             "starting fresh rebase",
             reason="no in-progress rebase detected",
         )
-    rc = _fresh(cwd, ctx, mode)
+    rc = _fresh(cwd, ctx, mode, force=force)
 
     if stashed:
         _auto_unstash(cwd, mode)
@@ -1872,7 +2023,10 @@ def cmd_start(cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode) -> int:
     return rc
 
 
-def _fresh(cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode) -> int:
+def _fresh(
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
+    force: bool = False,
+) -> int:
     """Start a fresh rebase onto the target ref."""
     default = pr_context.default_branch(cwd)
     if ctx.branch == default:
@@ -1881,8 +2035,12 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode) -> int:
         return 1
 
     log.info("Fetching origin...")
+    # --prune is defense in depth behind the already-landed preflight, not a
+    # substitute for it: dropping the remote-tracking ref of a branch deleted
+    # on merge is what stops --force-with-lease from being satisfied by a stale
+    # lease and silently recreating the remote branch.
     fetch = subprocess.run(
-        ["git", "fetch", "origin"],
+        ["git", "fetch", "--prune", "origin"],
         capture_output=True, text=True, cwd=cwd,
     )
     if fetch.returncode != 0:
@@ -1917,6 +2075,12 @@ def _fresh(cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode) -> int:
                 f"checked out {ctx.branch} (was {display})",
                 reason="worktree was on wrong branch or detached HEAD",
             )
+
+    # After the checkout, so HEAD is the branch the signals are asked about,
+    # and after the fetch, so the target ref they compare against is current.
+    landed = None if force else _landed_check(cwd, ctx)
+    if landed is not None:
+        return _refuse_landed(ctx, landed)
 
     log.info(f"Rebasing onto {_TARGET_REF}...")
     r = subprocess.run(
@@ -2016,7 +2180,7 @@ def main():
         prog=SCRIPT,
         description="Rebase onto origin/main with conflict detection and force-push",
         output_schema=RebaseSummary,
-        ok_exit_codes=[3],
+        ok_exit_codes=[3, _LANDED_EXIT],
     )
     parser.add_argument("--repo-dir", "--worktree",
                         dest="repo_dir",
@@ -2030,6 +2194,9 @@ def main():
                         help=argparse.SUPPRESS)
     parser.add_argument("--no-push", action="store_false", dest="push",
                         help="Skip the force-push — print the command instead")
+    parser.add_argument("--force", action="store_true",
+                        help="Rebase even when the branch's work already "
+                             "landed on the target ref")
     parser.add_argument("--abort", action="store_true",
                         help="Abort in-progress rebase")
     add_trail_args(parser)
@@ -2054,7 +2221,10 @@ def main():
 
         mode, reason = _select_mode(args)
         _trail.decision("mode", f"selected {mode}", reason=reason)
-        rc = cmd_start(cwd, ctx, mode)
+        if args.force:
+            _trail.decision("preflight", "waiving the already-landed check",
+                            reason=f"{_LANDED_OVERRIDE_FLAG} flag set")
+        rc = cmd_start(cwd, ctx, mode, force=args.force)
 
         if rc == 0 and mode is RunMode.PUSH:
             rc = cmd_push(cwd, ctx)

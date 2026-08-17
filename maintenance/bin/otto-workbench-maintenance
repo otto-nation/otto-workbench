@@ -68,11 +68,17 @@ else
   log "WARNING: worktree cleanup failed (non-fatal)"
 fi
 
-log "Collecting stale PR artifacts"
-if "$LOCAL_BIN_DIR/pr" gc 2>&1; then
-  log "PR artifact collection complete"
-else
-  log "WARNING: pr gc failed (non-fatal)"
+# Unlike the two blocks above, which run scripts out of the repo itself, `pr`
+# is a symlink the ai/claude component installs. Components install
+# independently, so its absence is a machine that never asked for it — a skip,
+# not a warning to repeat on every cycle for the life of the install.
+if [[ -x "$LOCAL_BIN_DIR/pr" ]]; then
+  log "Collecting stale PR artifacts"
+  if "$LOCAL_BIN_DIR/pr" gc 2>&1; then
+    log "PR artifact collection complete"
+  else
+    log "WARNING: pr gc failed (non-fatal)"
+  fi
 fi
 
 date '+%s' > "$MAINTENANCE_LAST_FILE"

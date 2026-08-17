@@ -468,9 +468,9 @@ def terminal_summary(state: PRState, outcome: str, ended_at: str) -> dict:
     Read straight off the domains rather than recomputed: this is the last
     reading of state that is about to be deleted, not a fresh measurement.
 
-    ``ended_at`` comes from GitHub rather than from the clock — gc runs whenever
-    someone types it, so the event's own ``ts`` says when we noticed, which can
-    be a week after the merge.
+    ``ended_at`` comes from GitHub rather than from the clock — the scheduled
+    maintenance sweep is what usually runs gc, so the event's own ``ts`` says
+    when that sweep noticed, up to a cycle after the merge.
     """
     return {
         "outcome": outcome,

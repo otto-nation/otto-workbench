@@ -231,7 +231,8 @@ def _pr_close_state(repo: str, pr_number: int) -> tuple[str, str]:
     Collapsing "open" and "could not ask" is deliberate: both mean keep the
     artifacts. gc that deletes on a network blip is worse than gc that runs
     again tomorrow. Returns the state rather than a bool so callers can name it
-    in their log line.
+    in their log line. The collapse is in the return value only — every way of
+    failing to ask warns, so an unattended sweep that never prunes says why.
 
     `mergedAt` and `closedAt` ride along on a call we are making anyway, and
     they are the only record of when the PR actually ended — gc's own clock
@@ -243,7 +244,18 @@ def _pr_close_state(repo: str, pr_number: int) -> tuple[str, str]:
              "--json", "state,mergedAt,closedAt"],
             capture_output=True, text=True,
         )
-    except Exception:
+    except Exception as exc:
+        log.warn(f"GC: could not run gh for {repo}#{pr_number} ({exc}) — leaving it in place")
+        return "", ""
+    if r.returncode != 0:
+        # The return value stays ("", "") — the artifacts are kept either way —
+        # but a gh that cannot answer is not a PR that is still open, and the
+        # sweep now runs unattended on a schedule. Unlogged, an expired token
+        # would read as "nothing was ever ready to prune" for as long as it
+        # took anyone to look.
+        stderr_lines = (r.stderr or "").strip().splitlines()
+        detail = stderr_lines[0] if stderr_lines else f"exit {r.returncode}"
+        log.warn(f"GC: gh could not report {repo}#{pr_number} ({detail}) — leaving it in place")
         return "", ""
     try:
         fields = json.loads(r.stdout or "{}")

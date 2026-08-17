@@ -55,7 +55,7 @@ def _seed_target(base, name="widget-feat-a", **overrides):
 
 def test_pr_close_state_reports_merged_with_its_timestamp(monkeypatch):
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
-        stdout=json.dumps({
+        returncode=0, stderr="", stdout=json.dumps({
             "state": "MERGED", "mergedAt": "2026-08-01T12:00:00Z", "closedAt": None,
         })))
     assert review_gc._pr_close_state("acme/widget", 7) == ("MERGED", "2026-08-01T12:00:00Z")
@@ -63,7 +63,7 @@ def test_pr_close_state_reports_merged_with_its_timestamp(monkeypatch):
 
 def test_pr_close_state_reports_closed_with_its_timestamp(monkeypatch):
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
-        stdout=json.dumps({
+        returncode=0, stderr="", stdout=json.dumps({
             "state": "CLOSED", "mergedAt": None, "closedAt": "2026-08-02T08:00:00Z",
         })))
     assert review_gc._pr_close_state("acme/widget", 7) == ("CLOSED", "2026-08-02T08:00:00Z")
@@ -73,8 +73,42 @@ def test_pr_close_state_treats_a_null_mergedat_as_no_timestamp(monkeypatch):
     """gh's `mergedAt` can still be null in the window right after a merge lands;
     a PR noticed as MERGED then must report an empty string, not the word "None"."""
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        returncode=0, stderr="",
         stdout=json.dumps({"state": "MERGED", "mergedAt": None, "closedAt": None})))
     assert review_gc._pr_close_state("acme/widget", 7) == ("MERGED", "")
+
+
+def test_pr_close_state_warns_when_gh_fails_rather_than_reading_as_open(monkeypatch, capsys):
+    """A gh that cannot answer keeps the artifacts, like an open PR does — but the
+    scheduled sweep is unattended, so the two must not look the same in the log."""
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        returncode=1, stdout="",
+        stderr="gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN\nmore\n"))
+
+    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+
+    err = capsys.readouterr().err
+    assert "acme/widget#7" in err
+    assert "set the GH_TOKEN" in err
+    assert "more" not in err
+
+
+def test_pr_close_state_warns_with_the_exit_code_when_gh_says_nothing(monkeypatch, capsys):
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        returncode=4, stdout="", stderr=""))
+
+    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert "exit 4" in capsys.readouterr().err
+
+
+def test_pr_close_state_warns_when_gh_cannot_be_run(monkeypatch, capsys):
+    def _boom(*a, **kw):
+        raise FileNotFoundError("gh")
+
+    monkeypatch.setattr("review_gc.subprocess.run", _boom)
+
+    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert "acme/widget#7" in capsys.readouterr().err
 
 
 def test_prune_merged_targets_removes_a_merged_prs_dir(tmp_path, monkeypatch):

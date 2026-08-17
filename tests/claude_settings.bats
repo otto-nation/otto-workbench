@@ -64,6 +64,22 @@ teardown() {
   [ "$count" -eq 0 ]
 }
 
+# ── npm outward-facing subcommands ────────────────────────────────────────────
+# Bash(npm:*) is allowed because install/run/ci are local and reversible, the
+# same call the already-trusted pip3:* makes. The subcommands that publish to a
+# registry or write credentials are not, so each is denied by name — deny takes
+# precedence over allow. Dropping one silently re-permits it.
+
+@test "npm outward-facing subcommands are denied despite the npm wildcard" {
+  run jq -e '.permissions.allow | index("Bash(npm:*)")' "$SETTINGS"
+  [ "$status" -eq 0 ]
+  local sub
+  for sub in publish unpublish deprecate owner access dist-tag token login adduser "config set"; do
+    run jq -e --arg r "Bash(npm $sub:*)" '.permissions.deny | index($r)' "$SETTINGS"
+    [ "$status" -eq 0 ] || { echo "npm $sub not denied"; return 1; }
+  done
+}
+
 # ── gh permission-list via registry ───────────────────────────────────────────────
 
 @test "gh registry entry does not contain broad Bash(gh:*) wildcard" {
@@ -270,11 +286,13 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
-# ── system binary absolute paths ────────────────────────────────────────────
+# ── PATH binary absolute paths ──────────────────────────────────────────────
 # The allow list keys on the bare command name, so `Bash(cat:*)` never matches
-# `/bin/cat` — the absolute form prompts on every call. This check rides the
-# same quote-stripped first line as the four guardrails below, so a `/bin/...`
-# path inside a quoted argument is not mistaken for an invocation.
+# `/bin/cat` and `Bash(mise:*)` never matches `~/.local/bin/mise` — the absolute
+# form prompts on every call. The rule covers every bin/ on the default PATH,
+# plus a version manager's shim and install dirs. It rides the same quote-
+# stripped text as the guardrails below, so such a path inside a quoted
+# argument is not mistaken for an invocation.
 
 @test "binlocal hook: blocks an absolute path to a bin/local script" {
   run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/bin/local/validate-all"}}'
@@ -304,50 +322,103 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
-@test "sysbin hook: blocks /bin/cat and names the bare command" {
+@test "pathbin hook: blocks /bin/cat and names the bare command" {
   run _run_guard '{"tool_input":{"command":"/bin/cat /tmp/x/review.diff"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'cat'"* ]]
 }
 
-@test "sysbin hook: blocks /usr/bin after a statement separator" {
+@test "pathbin hook: blocks /usr/bin after a statement separator" {
   run _run_guard '{"tool_input":{"command":"ls -la; /usr/bin/grep -n foo f"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'grep'"* ]]
 }
 
-@test "sysbin hook: blocks /bin with no space after the separator" {
+@test "pathbin hook: blocks /bin with no space after the separator" {
   run _run_guard '{"tool_input":{"command":"ls -la;/bin/cat f"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'cat'"* ]]
 }
 
-@test "sysbin hook: allows the bare command name" {
+@test "pathbin hook: blocks a ~/.local/bin path and names the bare command" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/.local/bin/mise doctor"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'mise'"* ]]
+  [[ "$output" == *"/Users/me/.local/bin/"* ]]
+}
+
+@test "pathbin hook: blocks a ~/.local/bin path after a statement separator" {
+  run _run_guard '{"tool_input":{"command":"ls -la; /Users/me/.local/bin/rtk read f"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'rtk'"* ]]
+}
+
+@test "pathbin hook: blocks a homebrew path and names the bare command" {
+  run _run_guard '{"tool_input":{"command":"/opt/homebrew/bin/gh pr view 42"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'gh'"* ]]
+}
+
+@test "pathbin hook: blocks /usr/local/bin and names the bare command" {
+  run _run_guard '{"tool_input":{"command":"/usr/local/bin/node --version"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'node'"* ]]
+}
+
+@test "pathbin hook: blocks a mise install bin and names the bare command" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/.local/share/mise/installs/node/24.18.1/bin/node --test a.mjs"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'node'"* ]]
+}
+
+@test "pathbin hook: blocks a mise shim path" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/.local/share/mise/shims/node --version"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'node'"* ]]
+}
+
+@test "pathbin hook: blocks an asdf shim path" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/.asdf/shims/python --version"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'python'"* ]]
+}
+
+@test "pathbin hook: allows a mise install path as an argument" {
+  run _run_guard '{"tool_input":{"command":"rtk ls /Users/me/.local/share/mise/installs/node/24.18.1/bin/"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "pathbin hook: allows the bare command name" {
   run _run_guard '{"tool_input":{"command":"cat /tmp/x/review.diff"}}'
   [ "$status" -eq 0 ]
 }
 
-@test "sysbin hook: allows a /bin path inside a sed expression" {
+@test "pathbin hook: allows a /bin path inside a sed expression" {
   run _run_guard "{\"tool_input\":{\"command\":\"sed -e 's|/bin/cat|x|' f\"}}"
   [ "$status" -eq 0 ]
 }
 
-@test "sysbin hook: allows absolute paths outside /bin and /usr/bin" {
-  run _run_guard '{"tool_input":{"command":"bash /Users/me/.local/bin/thing"}}'
+@test "pathbin hook: allows absolute paths outside every PATH bin dir" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/scripts/thing"}}'
   [ "$status" -eq 0 ]
 }
 
-@test "sysbin hook: allows a separator-prefixed path inside a quoted argument" {
+@test "pathbin hook: allows a PATH bin path that is an argument, not the command" {
+  run _run_guard '{"tool_input":{"command":"ls -la /Users/me/.local/bin/mise"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "pathbin hook: allows a separator-prefixed path inside a quoted argument" {
   run _run_guard '{"tool_input":{"command":"git commit -m \"fix: drop; /usr/bin/env callers\""}}'
   [ "$status" -eq 0 ]
 }
 
 # ── statement-anchored Bash guardrails ──────────────────────────────────────
 # These checks match at the start of any statement, not just the start of the
-# command — a leading no-op token must not be a way around them. They scope to
-# the first line so a heredoc body being written to a file is not scanned as if
-# it were the command itself. The quote-stripping ceiling is documented in the
-# guard script itself.
+# command — a leading no-op token must not be a way around them, and neither is
+# a second line. Heredoc bodies are dropped before any rule runs, so content
+# being written to a file is not scanned as if it were the command itself. The
+# quote-stripping ceiling is documented in the guard script itself.
 
 @test "funcdef hook: blocks a cd() no-op stub wrapping a grep" {
   run _run_guard '{"tool_input":{"command":"cd() { :; }; W=/tmp/x; grep -rn foo \"$W/tests/\""}}'
@@ -380,13 +451,194 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+# ── multi-line scanning ─────────────────────────────────────────────────────
+# A multi-line command is several commands, and the second prompts as loudly as
+# the first. Lines are joined with `; ` before the anchored rules run, which is
+# why a lone `cd <dir>` — the sanctioned form — still has no separator to match.
+
+@test "scan: blocks a pathbin invocation on a later line" {
+  run _run_guard '{"tool_input":{"command":"rtk ls /tmp/x\n/Users/me/.local/share/mise/installs/node/24.18.1/bin/node --test a.mjs"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'node'"* ]]
+}
+
+@test "scan: blocks an env-var prefix on a later line" {
+  run _run_guard '{"tool_input":{"command":"rtk ls /tmp/x\nNODEBIN=/tmp/x/node\ntrue"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"VAR=value"* ]]
+}
+
+@test "scan: does not end a plain heredoc on an indented marker word" {
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\n  EOF\ntrue; FOO=bar\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "scan: ends a dash heredoc on an indented marker" {
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<-EOF\nbody\n  EOF\ntrue; FOO=bar"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"VAR=value"* ]]
+}
+
+@test "scan: still allows a bare cd as its own call" {
+  run _run_guard '{"tool_input":{"command":"cd /Users/me/git/repo"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "scan: treats a following line as a compound cd" {
+  run _run_guard '{"tool_input":{"command":"cd /tmp/x\nls -la"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Compound cd"* ]]
+}
+
+# ── sh -c wrappers ──────────────────────────────────────────────────────────
+# The analyzer cannot see inside the quoted payload, so it prompts for the
+# wrapper as a whole and the offered rule keys on that exact string. The guard
+# cannot see inside either — double-quoted spans are stripped before it runs.
+
+@test "dashc hook: blocks sh -c wrapping a compound cd" {
+  run _run_guard '{"tool_input":{"command":"sh -c \"cd /tmp/x; node --test a.mjs\""}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"sh -c"* ]]
+}
+
+@test "dashc hook: blocks bash -c on a later line" {
+  run _run_guard '{"tool_input":{"command":"rtk ls /tmp/x\nbash -c \"ls -la\""}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "dashc hook: blocks a combined flag form" {
+  run _run_guard '{"tool_input":{"command":"sh -ec \"ls\""}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "dashc hook: blocks a path-prefixed shell and names the wrapper" {
+  run _run_guard '{"tool_input":{"command":"/bin/sh -c \"ls -la\""}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"sh -c"* ]]
+}
+
+@test "dashc hook: allows running a shell on a script file" {
+  run _run_guard '{"tool_input":{"command":"bash /tmp/x/probe.sh"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "dashc hook: allows a command merely containing sh" {
+  run _run_guard '{"tool_input":{"command":"shellcheck -c /tmp/x/probe.sh"}}'
+  [ "$status" -eq 0 ]
+}
+
+# ── file-writing redirects ──────────────────────────────────────────────────
+# A Bash redirect is gated per write path, while the Edit and Write tools are
+# allow-listed outright — so this rule steers to a different tool, not a
+# different command. Only echo and printf are matched: a redirect capturing
+# another command's output has no tool equivalent and must keep working.
+
+@test "write hook: blocks printf appending to a repo file" {
+  run _run_guard '{"tool_input":{"command":"printf -- '"'"'-- regen\\n'"'"' >> /Users/me/git/svc/schema/.latest.sql"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Write tool"* ]]
+  [[ "$output" == *".latest.sql"* ]]
+}
+
+@test "write hook: blocks echo truncating a relative path" {
+  run _run_guard '{"tool_input":{"command":"echo hello > notes.md"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Edit tool"* ]]
+}
+
+@test "write hook: blocks a redirect after a leading statement" {
+  run _run_guard '{"tool_input":{"command":"ls; printf x >> notes.md"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "write hook: allows a redirect to /dev/null" {
+  run _run_guard '{"tool_input":{"command":"echo probe > /dev/null"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "write hook: allows a redirect to a scratch path" {
+  run _run_guard '{"tool_input":{"command":"printf ok >> /tmp/probe.log"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "write hook: allows capturing another command's output" {
+  run _run_guard '{"tool_input":{"command":"jq -r .name /Users/me/pkg.json > /Users/me/out.txt"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "write hook: blocks a quoted destination path" {
+  run _run_guard "{\"tool_input\":{\"command\":\"echo hi > '/Users/me/my notes.md'\"}}"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"a quoted path"* ]]
+}
+
+@test "write hook: allows a quoted argument before a scratch destination" {
+  run _run_guard '{"tool_input":{"command":"echo \"hello world\" > /tmp/probe.log"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "write hook: allows stderr redirection with no file target" {
+  run _run_guard '{"tool_input":{"command":"echo probe 2>&1 | head -1"}}'
+  [ "$status" -eq 0 ]
+}
+
+# ── shell variable expansion ────────────────────────────────────────────────
+# A `$VAR` reference is flagged as "simple_expansion" and prompts every time.
+# This rule reads text stripped of single-quoted spans only: `'$HOME'` is a
+# literal, `"$f"` expands, so only the latter may be mistaken for one.
+
+@test "expand hook: blocks a for loop over a file list" {
+  run _run_guard '{"tool_input":{"command":"for f in a.sql b.sql; do echo \"### $f\"; rtk read \"$f\"; done"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"simple_expansion"* ]]
+  [[ "$output" == *"tail -n +1"* ]]
+}
+
+@test "expand hook: blocks a bare \$VAR outside quotes" {
+  run _run_guard '{"tool_input":{"command":"echo $HOME"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"printenv"* ]]
+}
+
+@test "expand hook: blocks the \${VAR} brace form" {
+  run _run_guard '{"tool_input":{"command":"ls ${HOME}/git"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"simple_expansion"* ]]
+}
+
+@test "expand hook: allows a \$VAR inside single quotes" {
+  run _run_guard "{\"tool_input\":{\"command\":\"grep -n '\\\$HOME' /tmp/x/f\"}}"
+  [ "$status" -eq 0 ]
+}
+
+@test "expand hook: allows a perl one-liner whose regex ends in \$" {
+  run _run_guard "{\"tool_input\":{\"command\":\"perl -0pi -e 's/foo\\\$/bar/' /tmp/x/f\"}}"
+  [ "$status" -eq 0 ]
+}
+
+@test "expand hook: allows a \$VAR inside a heredoc body" {
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\necho \"$HOME\"\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "expand hook: allows a command with no expansion" {
+  run _run_guard '{"tool_input":{"command":"tail -n +1 a.sql b.sql c.sql"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "expand hook: defers to the compound cd rule" {
+  run _run_guard '{"tool_input":{"command":"cd /tmp/x && echo \"$HOME\""}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Compound cd"* ]]
+}
+
 @test "cd hook: blocks a compound cd after a leading token" {
   run _run_guard '{"tool_input":{"command":"mkdir -p /tmp/x; cd /tmp/x && ls"}}'
   [ "$status" -eq 2 ]
 }
 
 @test "cd hook: allows a cd nested inside a quoted argument" {
-  run _run_guard "{\"tool_input\":{\"command\":\"bash -c 'cd /tmp/x && ls'\"}}"
+  run _run_guard "{\"tool_input\":{\"command\":\"grep -rn 'cd /tmp/x && ls' /tmp/x; true\"}}"
   [ "$status" -eq 0 ]
 }
 

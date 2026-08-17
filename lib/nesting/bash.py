@@ -1,6 +1,6 @@
 import re
 
-from nesting.preprocess import strip_strings_and_comments
+from nesting.preprocess import strip_shell_line
 from nesting.types import Violation
 
 _OPENERS = re.compile(r'\b(if|for|while|until|case)\b')
@@ -13,7 +13,9 @@ _BATS_TEST = re.compile(r'^@test\b')
 
 
 class _State:
-    __slots__ = ('func_name', 'depth', 'sub_depth', 'heredoc_end', 'in_function')
+    __slots__ = (
+        'func_name', 'depth', 'sub_depth', 'heredoc_end', 'in_function', 'in_squote',
+    )
 
     def __init__(self):
         self.func_name = '(top-level)'
@@ -21,6 +23,7 @@ class _State:
         self.sub_depth = 0
         self.heredoc_end = None
         self.in_function = False
+        self.in_squote = False
 
 
 def _preprocess_line(state: _State, raw_line: str) -> str | None:
@@ -35,7 +38,7 @@ def _preprocess_line(state: _State, raw_line: str) -> str | None:
     if m:
         state.heredoc_end = m.group(1)
 
-    stripped = strip_strings_and_comments(line)
+    stripped, state.in_squote = strip_shell_line(line, state.in_squote)
 
     opens = len(_CMD_SUB_OPEN.findall(stripped))
     state.sub_depth += opens

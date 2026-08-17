@@ -14,7 +14,8 @@ import pytest
 
 import pr_state
 from pr_state import (
-    PRIdentity, CIDomain, ReviewSummary, ReviewVerdict, ReviewStatus,
+    PRIdentity, CIDomain, PRCloseState, PRClosure,
+    ReviewSummary, ReviewVerdict, ReviewStatus,
     CommentsSummary, TriageSummary, RebaseSummary,
     ThreadAction, ThreadOutcome, FixSummary,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
@@ -1335,6 +1336,37 @@ def test_review_verdict_disapprove_is_outside_the_ranking():
     assert not ReviewVerdict.APPROVE.outranks(None)
 
 
+class TestPRCloseState:
+    def test_only_a_terminal_state_dates_itself(self):
+        assert PRCloseState.MERGED.is_terminal
+        assert PRCloseState.CLOSED.is_terminal
+        assert not PRCloseState.OPEN.is_terminal
+        assert PRCloseState.OPEN.ended_at_field is None
+
+    def test_each_terminal_state_names_the_field_that_dates_it(self):
+        assert PRCloseState.MERGED.ended_at_field == "mergedAt"
+        assert PRCloseState.CLOSED.ended_at_field == "closedAt"
+
+    def test_parse_reads_what_gh_says(self):
+        assert PRCloseState.parse("MERGED") is PRCloseState.MERGED
+        assert PRCloseState.parse("OPEN") is PRCloseState.OPEN
+
+    def test_parse_returns_none_for_a_state_it_does_not_know(self):
+        """A renamed or added gh state must be distinguishable from OPEN, which
+        is what keeps it from reading as "still open" forever."""
+        assert PRCloseState.parse("LOCKED") is None
+        assert PRCloseState.parse(None) is None
+        assert PRCloseState.parse("") is None
+
+    def test_the_gh_query_asks_for_every_field_a_state_needs(self):
+        """Derived from the enum, so a state added there is fetched for free."""
+        fields = pr_state.GH_STATE_JSON_FIELDS.split(",")
+        assert fields[0] == "state"
+        assert set(fields[1:]) == {
+            s.ended_at_field for s in PRCloseState if s.is_terminal
+        }
+
+
 class TestTerminalSummary:
     def _state(self) -> pr_state.PRState:
         state = pr_state.PRState(identity=pr_state.PRIdentity(
@@ -1349,7 +1381,8 @@ class TestTerminalSummary:
         return state
 
     def test_carries_every_field_the_prune_is_about_to_delete(self):
-        payload = pr_state.terminal_summary(self._state(), "MERGED", "2026-08-13T09:00:00Z")
+        payload = pr_state.terminal_summary(self._state(), PRClosure(
+            PRCloseState.MERGED, "2026-08-13T09:00:00Z"))
         assert payload == {
             "outcome": "MERGED",
             "ended_at": "2026-08-13T09:00:00Z",
@@ -1362,9 +1395,18 @@ class TestTerminalSummary:
 
     def test_finding_counts_are_copied_not_aliased(self):
         state = self._state()
-        payload = pr_state.terminal_summary(state, "CLOSED", "")
+        payload = pr_state.terminal_summary(state, PRClosure(PRCloseState.CLOSED))
         state.review.finding_counts["must-fix"] = 99
         assert payload["finding_counts"]["must-fix"] == 2
+
+    def test_the_outcome_is_recorded_as_a_word_not_an_enum(self):
+        """The payload is written to the trail as JSON; an Enum would not
+        serialize, and `pr gc` reports the failure rather than raising it — so a
+        regression here would go out as a warning nobody reads."""
+        payload = pr_state.terminal_summary(
+            self._state(), PRClosure(PRCloseState.MERGED))
+        assert payload["outcome"] == "MERGED"
+        assert json.loads(json.dumps(payload)) == payload
 
     def test_the_action_name_is_published(self):
         assert pr_state.TERMINAL_SUMMARY_ACTION == "pr_outcome"

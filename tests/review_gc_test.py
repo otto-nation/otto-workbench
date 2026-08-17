@@ -53,39 +53,76 @@ def _seed_target(base, name="widget-feat-a", **overrides):
     return target
 
 
-def test_pr_close_state_reports_merged_with_its_timestamp(monkeypatch):
+def _closed(state: pr_state.PRCloseState, ended_at: str = "") -> pr_state.PRClosure:
+    """A stand-in closure, for tests that patch out the gh call entirely."""
+    return pr_state.PRClosure(state, ended_at)
+
+
+def test_pr_closure_reports_merged_with_its_timestamp(monkeypatch):
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="", stdout=json.dumps({
             "state": "MERGED", "mergedAt": "2026-08-01T12:00:00Z", "closedAt": None,
         })))
-    assert review_gc._pr_close_state("acme/widget", 7) == ("MERGED", "2026-08-01T12:00:00Z")
+    assert review_gc._pr_closure("acme/widget", 7) == pr_state.PRClosure(
+        pr_state.PRCloseState.MERGED, "2026-08-01T12:00:00Z")
 
 
-def test_pr_close_state_reports_closed_with_its_timestamp(monkeypatch):
+def test_pr_closure_reports_closed_with_its_timestamp(monkeypatch):
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="", stdout=json.dumps({
             "state": "CLOSED", "mergedAt": None, "closedAt": "2026-08-02T08:00:00Z",
         })))
-    assert review_gc._pr_close_state("acme/widget", 7) == ("CLOSED", "2026-08-02T08:00:00Z")
+    assert review_gc._pr_closure("acme/widget", 7) == pr_state.PRClosure(
+        pr_state.PRCloseState.CLOSED, "2026-08-02T08:00:00Z")
 
 
-def test_pr_close_state_treats_a_null_mergedat_as_no_timestamp(monkeypatch):
+def test_pr_closure_reads_the_timestamp_field_its_state_names(monkeypatch):
+    """A merged PR is dated by `mergedAt` even when `closedAt` is also populated —
+    GitHub sets both on a merge, and the enum is what picks between them."""
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        returncode=0, stderr="", stdout=json.dumps({
+            "state": "MERGED",
+            "mergedAt": "2026-08-01T12:00:00Z",
+            "closedAt": "2026-08-01T12:00:01Z",
+        })))
+    assert review_gc._pr_closure("acme/widget", 7).ended_at == "2026-08-01T12:00:00Z"
+
+
+def test_pr_closure_asks_gh_for_every_field_a_closure_needs(monkeypatch):
+    """The --json list is derived from the enum, so a state added there is fetched
+    without anyone remembering to widen the query."""
+    seen = []
+
+    def _record(cmd, **kw):
+        seen.append(cmd)
+        return MagicMock(returncode=0, stderr="", stdout=json.dumps({"state": "OPEN"}))
+
+    monkeypatch.setattr("review_gc.subprocess.run", _record)
+
+    review_gc._pr_closure("acme/widget", 7)
+
+    fields = seen[0][seen[0].index("--json") + 1].split(",")
+    assert set(fields) == {"state", "mergedAt", "closedAt"}
+
+
+def test_pr_closure_treats_a_null_mergedat_as_no_timestamp(monkeypatch):
     """gh's `mergedAt` can still be null in the window right after a merge lands;
     a PR noticed as MERGED then must report an empty string, not the word "None"."""
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="",
         stdout=json.dumps({"state": "MERGED", "mergedAt": None, "closedAt": None})))
-    assert review_gc._pr_close_state("acme/widget", 7) == ("MERGED", "")
+    assert review_gc._pr_closure("acme/widget", 7) == pr_state.PRClosure(
+        pr_state.PRCloseState.MERGED, "")
 
 
-def test_pr_close_state_warns_when_gh_fails_rather_than_reading_as_open(monkeypatch, capsys):
+def test_pr_closure_warns_when_gh_fails_rather_than_reading_as_open(monkeypatch, capsys):
     """A gh that cannot answer keeps the artifacts, like an open PR does — but the
     scheduled sweep is unattended, so the two must not look the same in the log."""
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=1, stdout="",
         stderr="gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN\nmore\n"))
 
-    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert review_gc._pr_closure("acme/widget", 7) is None
 
     err = capsys.readouterr().err
     assert "acme/widget#7" in err
@@ -93,59 +130,60 @@ def test_pr_close_state_warns_when_gh_fails_rather_than_reading_as_open(monkeypa
     assert "more" not in err
 
 
-def test_pr_close_state_warns_with_the_exit_code_when_gh_says_nothing(monkeypatch, capsys):
+def test_pr_closure_warns_with_the_exit_code_when_gh_says_nothing(monkeypatch, capsys):
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=4, stdout="", stderr=""))
 
-    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert review_gc._pr_closure("acme/widget", 7) is None
     assert "exit 4" in capsys.readouterr().err
 
 
-def test_pr_close_state_warns_when_gh_cannot_be_run(monkeypatch, capsys):
+def test_pr_closure_warns_when_gh_cannot_be_run(monkeypatch, capsys):
     def _boom(*a, **kw):
         raise FileNotFoundError("gh")
 
     monkeypatch.setattr("review_gc.subprocess.run", _boom)
 
-    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert review_gc._pr_closure("acme/widget", 7) is None
     assert "acme/widget#7" in capsys.readouterr().err
 
 
-def test_pr_close_state_says_nothing_about_an_open_pr(monkeypatch, capsys):
+def test_pr_closure_says_nothing_about_an_open_pr(monkeypatch, capsys):
     """OPEN is a real answer, not a failure to ask — warning on it would put a
     line in the maintenance log for every PR still in flight, every cycle."""
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="",
         stdout=json.dumps({"state": "OPEN", "mergedAt": None, "closedAt": None})))
 
-    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert review_gc._pr_closure("acme/widget", 7) is None
     assert capsys.readouterr().err == ""
 
 
-def test_pr_close_state_warns_when_gh_reports_a_state_it_does_not_know(monkeypatch, capsys):
+def test_pr_closure_warns_when_gh_reports_a_state_it_does_not_know(monkeypatch, capsys):
     """A renamed or added gh state exits 0 and parses cleanly, so it would read as
     "still open" forever and quietly retire the prune."""
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="",
         stdout=json.dumps({"state": "LOCKED", "mergedAt": None, "closedAt": None})))
 
-    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert review_gc._pr_closure("acme/widget", 7) is None
     err = capsys.readouterr().err
     assert "acme/widget#7" in err
     assert "LOCKED" in err
 
 
-def test_pr_close_state_warns_when_gh_omits_the_state_field(monkeypatch, capsys):
+def test_pr_closure_warns_when_gh_omits_the_state_field(monkeypatch, capsys):
     monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
         returncode=0, stderr="", stdout=json.dumps({"mergedAt": None})))
 
-    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert review_gc._pr_closure("acme/widget", 7) is None
     assert "no state field" in capsys.readouterr().err
 
 
 def test_prune_merged_targets_removes_a_merged_prs_dir(tmp_path, monkeypatch):
     target = _seed_target(tmp_path)
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("MERGED", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
     assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 1
     assert not target.exists()
@@ -153,7 +191,7 @@ def test_prune_merged_targets_removes_a_merged_prs_dir(tmp_path, monkeypatch):
 
 def test_prune_merged_targets_keeps_an_open_pr(tmp_path, monkeypatch):
     target = _seed_target(tmp_path)
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure", lambda repo, n: None)
 
     assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
     assert (target / pr_state.STATE_FILE).is_file()
@@ -162,7 +200,8 @@ def test_prune_merged_targets_keeps_an_open_pr(tmp_path, monkeypatch):
 def test_prune_merged_targets_leaves_a_live_targets_dir_alone(tmp_path, monkeypatch):
     """Removing the target would unlink the inode that run's flock lives on."""
     target = _seed_target(tmp_path)
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("MERGED", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
     with run_lock.acquire(target, command="pr review", started="t"):
         os.environ.pop(run_lock.LOCK_ENV, None)
@@ -174,7 +213,8 @@ def test_prune_merged_targets_leaves_a_live_targets_dir_alone(tmp_path, monkeypa
 def test_prune_merged_targets_skips_our_own_target(tmp_path, monkeypatch):
     """gc runs holding its own target's lock; LOCK_ENV would wave it through."""
     target = _seed_target(tmp_path)
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("MERGED", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
     assert review_gc.prune_merged_targets(tmp_path, skip=target, trail=_RecordingTrail()) == 0
     assert (target / pr_state.STATE_FILE).is_file()
@@ -200,7 +240,7 @@ def test_prune_merged_targets_keeps_a_target_with_no_pr_number(tmp_path, monkeyp
     def _fail(repo, n):
         raise AssertionError("must not ask GitHub about a target with no PR")
 
-    monkeypatch.setattr(review_gc, "_pr_close_state", _fail)
+    monkeypatch.setattr(review_gc, "_pr_closure", _fail)
 
     assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
     assert (target / pr_state.STATE_FILE).is_file()
@@ -212,7 +252,8 @@ def test_prune_merged_targets_counts_a_partial_prune_failure_as_not_pruned(tmp_p
     state.json alone went would never revisit it."""
     target = _seed_target(tmp_path)
     (target / "leftover").mkdir()
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("MERGED", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
     assert review_gc.prune_merged_targets(tmp_path, trail=_RecordingTrail()) == 0
     assert target.exists()
@@ -226,7 +267,8 @@ def test_prune_merged_targets_yields_to_a_run_that_arrives_mid_removal(tmp_path,
     run.lock holds a flock on a fresh inode while we still hold the old one.
     A non-recursive rmdir fails with ENOTEMPTY instead of deleting its state."""
     target = _seed_target(tmp_path)
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("MERGED", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
     real_rmdir = Path.rmdir
 
@@ -263,7 +305,8 @@ def test_prune_merged_targets_respects_the_budget(tmp_path, monkeypatch):
     for i in range(5):
         _seed_target(tmp_path, name=f"widget-feat-{i}",
                      branch=f"feat/{i}", pr_number=i + 1)
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("MERGED", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
 
     assert review_gc.prune_merged_targets(tmp_path, max_files=2, trail=_RecordingTrail()) == 2
 
@@ -271,7 +314,8 @@ def test_prune_merged_targets_respects_the_budget(tmp_path, monkeypatch):
 def test_merged_target_emits_one_terminal_summary(tmp_path, monkeypatch):
     _seed_target(tmp_path, "repo-feat-x")
     monkeypatch.setattr(
-        review_gc, "_pr_close_state", lambda repo, n: ("MERGED", "2026-08-13T09:00:00Z"))
+        review_gc, "_pr_closure",
+        lambda repo, n: _closed(pr_state.PRCloseState.MERGED, "2026-08-13T09:00:00Z"))
     trail = _RecordingTrail()
 
     assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 1
@@ -287,7 +331,8 @@ def test_terminal_summary_names_the_pruned_pr_not_the_gc_run(tmp_path, monkeypat
     """`otto-log query --pr N` has to find the record that says how N ended,
     not the repo/pr/branch of the `pr gc` invocation that happened to prune it."""
     _seed_target(tmp_path, "repo-feat-x")
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("CLOSED", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: _closed(pr_state.PRCloseState.CLOSED))
     trail = _RecordingTrail(context={"repo": "org/gc-runner", "pr": 999, "branch": "chore/gc"})
 
     review_gc.prune_merged_targets(tmp_path, trail=trail)
@@ -299,7 +344,7 @@ def test_terminal_summary_names_the_pruned_pr_not_the_gc_run(tmp_path, monkeypat
 
 def test_open_target_emits_nothing(tmp_path, monkeypatch):
     _seed_target(tmp_path, "repo-feat-x")
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure", lambda repo, n: None)
     trail = _RecordingTrail()
 
     assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 0
@@ -308,7 +353,8 @@ def test_open_target_emits_nothing(tmp_path, monkeypatch):
 
 def test_a_target_that_fails_to_prune_emits_nothing(tmp_path, monkeypatch):
     _seed_target(tmp_path, "repo-feat-x")
-    monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("MERGED", ""))
+    monkeypatch.setattr(review_gc, "_pr_closure",
+                        lambda repo, n: _closed(pr_state.PRCloseState.MERGED))
     monkeypatch.setattr(review_gc, "_prune_one_target", lambda target: False)
     trail = _RecordingTrail()
 
@@ -323,7 +369,8 @@ def test_terminal_summary_survives_a_real_trail(tmp_path, monkeypatch):
     `pr gc` in production against a suite that stayed green everywhere else."""
     _seed_target(tmp_path, "repo-feat-x")
     monkeypatch.setattr(
-        review_gc, "_pr_close_state", lambda repo, n: ("MERGED", "2026-08-13T09:00:00Z"))
+        review_gc, "_pr_closure",
+        lambda repo, n: _closed(pr_state.PRCloseState.MERGED, "2026-08-13T09:00:00Z"))
     trail = Trail.start(script="pr", context={"repo": "acme/other", "pr": 99, "branch": "main"})
 
     assert review_gc.prune_merged_targets(tmp_path, trail=trail) == 1

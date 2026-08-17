@@ -24,7 +24,7 @@ import pr_state
 import pr_target
 import run_lock
 import workbench_paths
-from pr_state import ReviewStatus
+from pr_state import PRClosure, PRCloseState, ReviewStatus
 from review_common import (
     FILENAME_META,
     FILENAME_PIPELINE_STATE,
@@ -39,6 +39,10 @@ from trail import Trail
 GC_STALE_DAYS = 7
 GC_FAILED_STALE_DAYS = 30
 PRUNE_MAX_FILES = 10
+
+# Every staleness check reads an mtime, which is seconds, against a threshold
+# stated in days — this is the only conversion between the two.
+SECONDS_PER_DAY = 86_400
 
 
 def cleanup_intermediates(review_dir: Path) -> None:
@@ -109,7 +113,9 @@ def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
     if not files:
         return True
     now = datetime.now().timestamp()
-    return all((now - f.stat().st_mtime) / 86400 > stale_days for f in files)
+    return all(
+        (now - f.stat().st_mtime) / SECONDS_PER_DAY > stale_days for f in files
+    )
 
 
 def _clean_stale_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
@@ -122,7 +128,7 @@ def _clean_stale_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS
     count = 0
     now = datetime.now().timestamp()
     for f in phase_artifacts(review_dir):
-        age_days = (now - f.stat().st_mtime) / 86400
+        age_days = (now - f.stat().st_mtime) / SECONDS_PER_DAY
         if age_days > stale_days:
             f.unlink(missing_ok=True)
             count += 1
@@ -154,7 +160,7 @@ def _collect_strays(reviews_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
     for f in reviews_dir.iterdir():
         if not f.is_file() or _is_migration_input(f, reviews_dir):
             continue
-        if (now - f.stat().st_mtime) / 86400 <= stale_days:
+        if (now - f.stat().st_mtime) / SECONDS_PER_DAY <= stale_days:
             continue
         f.unlink(missing_ok=True)
         log.info(f"GC: removed stray {f.name}")
@@ -216,47 +222,49 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
         if not _dir_is_all_stale(review_dir, stale_days):
             continue
 
-        state, _ = _pr_close_state(meta.repo, meta.pr_number)
-        if state:
+        closure = _pr_closure(meta.repo, meta.pr_number)
+        if closure:
             shutil.rmtree(review_dir, ignore_errors=True)
-            log.info(f"Pruned {meta.repo}#{meta.pr_number} ({state})")
+            log.info(f"Pruned {meta.repo}#{meta.pr_number} ({closure.state.value})")
             pruned += 1
 
     return pruned
 
 
-def _pr_close_state(repo: str, pr_number: int) -> tuple[str, str]:
-    """Return ("MERGED"|"CLOSED"|"", ended_at) — open, or a question we could not ask.
+def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
+    """How the PR ended, or None — still open, or a question we could not ask.
 
-    Collapsing "open" and "could not ask" is deliberate: both mean keep the
-    artifacts. gc that deletes on a network blip is worse than gc that runs
-    again tomorrow. Returns the state rather than a bool so callers can name it
-    in their log line. The collapse is in the return value only — every way of
-    failing to ask warns, so an unattended sweep that never prunes says why.
+    Collapsing "open" and "could not ask" into the same absence is deliberate:
+    both mean keep the artifacts. gc that deletes on a network blip is worse
+    than gc that runs again tomorrow. The collapse is in the return value only —
+    every way of failing to ask warns, so an unattended sweep that never prunes
+    says why.
 
-    `mergedAt` and `closedAt` ride along on a call we are making anyway, and
-    they are the only record of when the PR actually ended — gc's own clock
-    says when we noticed, which can be a week later.
+    A closure rather than a state alone because the timestamp rides along on a
+    call we are making anyway, and it is the only record of when the PR actually
+    ended — gc's own clock says when we noticed, which can be a week later.
+    Which field carries it belongs to `PRCloseState`, so this reads the one the
+    state names instead of choosing between `mergedAt` and `closedAt` itself.
     """
     try:
         r = subprocess.run(
             ["gh", "pr", "view", str(pr_number), "--repo", repo,
-             "--json", "state,mergedAt,closedAt"],
+             "--json", pr_state.GH_STATE_JSON_FIELDS],
             capture_output=True, text=True,
         )
     except Exception as exc:
         log.warn(f"GC: could not run gh for {repo}#{pr_number} ({exc}) — leaving it in place")
-        return "", ""
+        return None
     if r.returncode != 0:
-        # The return value stays ("", "") — the artifacts are kept either way —
-        # but a gh that cannot answer is not a PR that is still open, and the
-        # sweep now runs unattended on a schedule. Unlogged, an expired token
-        # would read as "nothing was ever ready to prune" for as long as it
-        # took anyone to look.
+        # The answer stays None — the artifacts are kept either way — but a gh
+        # that cannot answer is not a PR that is still open, and the sweep now
+        # runs unattended on a schedule. Unlogged, an expired token would read
+        # as "nothing was ever ready to prune" for as long as it took anyone to
+        # look.
         stderr_lines = (r.stderr or "").strip().splitlines()
         detail = stderr_lines[0] if stderr_lines else f"exit {r.returncode}"
         log.warn(f"GC: gh could not report {repo}#{pr_number} ({detail}) — leaving it in place")
-        return "", ""
+        return None
     try:
         fields = json.loads(r.stdout or "{}")
     except json.JSONDecodeError:
@@ -265,19 +273,17 @@ def _pr_close_state(repo: str, pr_number: int) -> tuple[str, str]:
         # the second look exactly like the first — a response-format change would
         # then silently stop every future prune from asking a real question.
         log.warn(f"GC: could not parse gh's response for {repo}#{pr_number} — leaving it in place")
-        return "", ""
-    state = fields.get("state") or ""
-    if state not in ("MERGED", "CLOSED"):
-        # OPEN is a real answer; anything else is gh answering with a state this
-        # code does not know, which is the JSONDecodeError case wearing a 0 exit
-        # — a renamed or added state would otherwise read as "still open"
-        # forever and quietly retire the prune.
-        if state != "OPEN":
-            detail = state or "no state field"
-            log.warn(f"GC: gh reported an unrecognized state for {repo}#{pr_number} ({detail}) — leaving it in place")
-        return "", ""
-    ended_at = fields.get("mergedAt") if state == "MERGED" else fields.get("closedAt")
-    return state, ended_at or ""
+        return None
+    state = PRCloseState.parse(fields.get("state"))
+    if state is None:
+        # A state the enum does not carry is the JSONDecodeError case wearing a
+        # 0 exit: it parses cleanly and means nothing to us.
+        detail = fields.get("state") or "no state field"
+        log.warn(f"GC: gh reported an unrecognized state for {repo}#{pr_number} ({detail}) — leaving it in place")
+        return None
+    if not state.is_terminal:
+        return None
+    return PRClosure(state, fields.get(state.ended_at_field) or "")
 
 
 def _remove_target(target: Path) -> None:
@@ -352,7 +358,7 @@ def _prune_and_count(target: Path, message: str) -> int:
 
 
 def _emit_terminal_summary(
-    trail: Trail, state: pr_state.PRState, close_state: str, ended_at: str,
+    trail: Trail, state: pr_state.PRState, closure: PRClosure,
 ) -> None:
     """Record a pruned target's outcome. Reported, not raised, on failure.
 
@@ -364,8 +370,9 @@ def _emit_terminal_summary(
     try:
         trail.summary(
             pr_state.TERMINAL_SUMMARY_ACTION,
-            f"{state.identity.repo}#{state.identity.pr_number} {close_state.lower()}",
-            data=pr_state.terminal_summary(state, close_state, ended_at),
+            f"{state.identity.repo}#{state.identity.pr_number} "
+            f"{closure.state.value.lower()}",
+            data=pr_state.terminal_summary(state, closure),
             context={
                 "repo": state.identity.repo,
                 "pr": state.identity.pr_number,
@@ -432,16 +439,17 @@ def prune_merged_targets(targets_dir: Path | None = None,
         if not state.identity.pr_number or not state.identity.repo:
             continue
         checked += 1
-        close_state, ended_at = _pr_close_state(
-            state.identity.repo, state.identity.pr_number)
-        if not close_state:
+        closure = _pr_closure(state.identity.repo, state.identity.pr_number)
+        if closure is None:
             continue
         removed = _prune_and_count(
-            target, f"Pruned {state.identity.repo}#{state.identity.pr_number} ({close_state})")
+            target,
+            f"Pruned {state.identity.repo}#{state.identity.pr_number} "
+            f"({closure.state.value})")
         pruned += removed
         # After the prune, not before: a target that would not unlink is still
         # live, and its outcome is not history yet.
         if removed:
-            _emit_terminal_summary(trail, state, close_state, ended_at)
+            _emit_terminal_summary(trail, state, closure)
 
     return pruned

@@ -59,6 +59,24 @@ INVOCATION_HEX_WIDTH = 12
 # the run-end event by action rather than by type.
 FINISH_ACTION = "finish"
 
+# The stamp every event's `ts` carries, and the slices of it readers take. The
+# offsets are only correct because of the format, so they are stated next to it
+# rather than spelled as literals wherever a stamp is cut down.
+TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+TS_MONTH = slice(0, 7)          # 2026-08 — names the file a record lands in
+TS_TO_SECONDS = slice(0, 19)    # 2026-08-17T14:03:07 — a listing's stamp
+TS_TIME_OF_DAY = slice(11, 19)  # 14:03:07 — what a rendered line leads with
+
+# Column widths for a rendered event line, each the widest value its field can
+# hold. `otto-log` renders the same fields from the same records, so the widths
+# live with the enums that bound them rather than being restated per reader. An
+# unknown value is padded past, not truncated: a reader's line simply widens.
+LEVEL_WIDTH = max(len(level.value) for level in Level)
+EVENT_TYPE_WIDTH = max(len(event_type.value) for event_type in EventType)
+
+# Durations are measured with `time.monotonic_ns` and reported in milliseconds.
+NS_PER_MS = 1_000_000
+
 _ANSI_DIM = "\033[2m"
 _ANSI_RESET = "\033[0m"
 _ANSI_LEVELS = {
@@ -131,7 +149,7 @@ class Trail:
         line = event.to_json()
         # The month comes from the event, not from the run: a run crossing a
         # month boundary writes each record to the file its timestamp names.
-        path = workbench_paths.trail_dir() / f"{event.ts[:7]}.jsonl"
+        path = workbench_paths.trail_dir() / f"{event.ts[TS_MONTH]}.jsonl"
         with _emit_lock:
             # _emit_lock covers this process's worker threads; the flock covers
             # the other processes appending to the same file — `pr` and the
@@ -145,10 +163,10 @@ class Trail:
                 self._echo_stderr(event)
 
     def _echo_stderr(self, event: TrailEvent) -> None:
-        ts_short = event.ts[11:19]
+        ts_short = event.ts[TS_TIME_OF_DAY]
         level_color = _ANSI_LEVELS.get(event.level, "")
-        level_str = event.level.value.upper().ljust(5)
-        etype = event.event_type.value.ljust(11)
+        level_str = event.level.value.upper().ljust(LEVEL_WIDTH)
+        etype = event.event_type.value.ljust(EVENT_TYPE_WIDTH)
         parts = [f"{_ANSI_DIM}[trail]{_ANSI_RESET} {ts_short} {level_color}{level_str}{_ANSI_RESET} {etype} {event.action}"]
         if event.detail:
             parts.append(f" — {event.detail}")
@@ -171,7 +189,7 @@ class Trail:
         context: dict | None = None,
     ) -> TrailEvent:
         return TrailEvent(
-            ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ts=datetime.now(timezone.utc).strftime(TS_FORMAT),
             schema_version=SCHEMA_VERSION,
             invocation=self.invocation,
             script=self._script,
@@ -210,7 +228,7 @@ class Trail:
         try:
             yield
         finally:
-            elapsed_ms = (time.monotonic_ns() - start_ns) // 1_000_000
+            elapsed_ms = (time.monotonic_ns() - start_ns) // NS_PER_MS
             self._emit(self._make_event(Level.INFO, EventType.SPAN_END, name, "", span=name, duration_ms=elapsed_ms))
 
     def summary(self, action: str, detail: str, *, data: dict | None = None,
@@ -225,7 +243,7 @@ class Trail:
             Level.INFO, EventType.SUMMARY, action, detail, data=data, context=context))
 
     def finish(self) -> None:
-        elapsed_ms = (time.monotonic_ns() - self._start_ns) // 1_000_000
+        elapsed_ms = (time.monotonic_ns() - self._start_ns) // NS_PER_MS
         self._emit(self._make_event(
             Level.INFO, EventType.SUMMARY, FINISH_ACTION, "", duration_ms=elapsed_ms))
 

@@ -33,6 +33,18 @@ import workbench_config  # noqa: E402
 SCHEMA_FILE = REPO_ROOT / workbench_config.SCHEMA_PATH
 DOCS_FILE = REPO_ROOT / workbench_config.DOCS_PATH
 
+# Both generated files carry a "regenerate with ..." banner naming this script,
+# and workbench_config.py renders those banners, so it holds the name. Check it
+# here rather than trusting it: this is the one place that knows where the
+# script actually lives, and a banner pointing at a moved script sends the next
+# reader after a command that no longer exists.
+if Path(__file__).resolve() != (REPO_ROOT / workbench_config.GENERATOR_PATH).resolve():
+    raise SystemExit(
+        f"{Path(__file__).resolve()} is not "
+        f"{workbench_config.GENERATOR_PATH} — update GENERATOR_PATH in "
+        f"{workbench_config.__file__}, or run this from its own checkout",
+    )
+
 
 def splice(text: str, marker: str, body: str) -> str:
     """``body`` between MARKER-START and MARKER-END, the rest of ``text`` intact.
@@ -83,7 +95,7 @@ def main(argv: list[str]) -> int:
         if stale:
             names = ", ".join(str(p.relative_to(REPO_ROOT)) for p in stale)
             print(
-                f"{names} is stale — run bin/local/generate-config-schema",
+                f"{names} is stale — run {workbench_config.GENERATOR_PATH}",
                 file=sys.stderr,
             )
             return 1

@@ -59,6 +59,16 @@ CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
 DOCS_PATH = "docs/libraries.md"
 DOCS_MARKER = "CONFIG-REFERENCE"
 
+# Repo root as a link from inside DOCS_PATH, so a link the block renders to a
+# repo-root file survives moving the doc to another depth.
+_DOCS_TO_ROOT = "../" * DOCS_PATH.count("/")
+
+# The script that renders both generated files, named in the "do not edit"
+# banner each one carries. Spelled here because both banners are rendered here;
+# the script checks this against its own path, so a rename that misses this line
+# fails loudly rather than pointing readers at a command that does not exist.
+GENERATOR_PATH = "bin/local/generate-config-schema"
+
 # The dotted keys written from outside this module. Spelled here rather than at
 # the call site so a rename of the dataclass field and a rename of the key are
 # the same edit; test_workbench_config.py resolves each one against
@@ -161,8 +171,7 @@ def schema_json() -> str:
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "otto-workbench configuration",
         "description": (
-            "Generated from WorkbenchConfig by bin/local/generate-config-schema. "
-            "Do not edit by hand."
+            f"Generated from WorkbenchConfig by {GENERATOR_PATH}. Do not edit by hand."
         ),
         **schema_gen.dataclass_to_schema(WorkbenchConfig),
     }
@@ -246,7 +255,7 @@ def docs_reference() -> str:
     """
     lines = [
         "<!-- AUTO-GENERATED — do not edit directly -->",
-        "<!-- Regenerate: bin/local/generate-config-schema -->",
+        f"<!-- Regenerate: {GENERATOR_PATH} -->",
         "",
         "| Scope | File |",
         "|-------|------|",
@@ -254,7 +263,8 @@ def docs_reference() -> str:
         f"| Project | `{PROJECT_CONFIG_NAME}` at a repo toplevel |",
         "",
         f"A new config file is born holding one line, the modeline that points an "
-        f"editor's YAML language server at [`{SCHEMA_PATH}`](../{SCHEMA_PATH}):",
+        f"editor's YAML language server at "
+        f"[`{SCHEMA_PATH}`]({_DOCS_TO_ROOT}{SCHEMA_PATH}):",
         "",
         "```yaml",
         CONFIG_HEADER,

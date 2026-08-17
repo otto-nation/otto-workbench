@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -199,6 +200,31 @@ def test_every_written_key_resolves_to_a_field():
     keys = {key for key, _, _ in wc._reference_rows(wc.WorkbenchConfig)}
     assert wc.REUSE_LEVEL_KEY in keys
     assert wc.REUSE_DEFAULT_KEY in keys
+
+
+def test_the_generator_banner_names_a_script_that_exists():
+    """Both generated files tell the reader to run `GENERATOR_PATH`.
+
+    The generator itself compares the constant against its own location, so a
+    move it did not follow fails there — but only for someone who runs it. This
+    fails for everyone, which is what a banner pointing at nothing deserves.
+    """
+    generator = _repo_root() / wc.GENERATOR_PATH
+    assert generator.is_file() and os.access(generator, os.X_OK)
+    assert wc.GENERATOR_PATH in wc.docs_reference()
+    assert wc.GENERATOR_PATH in json.loads(wc.schema_json())["description"]
+
+
+def test_the_docs_link_to_the_schema_resolves_from_the_docs_directory():
+    """The block links to a repo-root file from a doc that is not at the root.
+
+    The `../` depth is derived from `DOCS_PATH`, so moving the doc keeps the
+    link pointing at the schema instead of quietly pointing above the repo.
+    """
+    docs_dir = (_repo_root() / wc.DOCS_PATH).parent
+    link = f"({wc._DOCS_TO_ROOT}{wc.SCHEMA_PATH})"
+    assert link in wc.docs_reference()
+    assert (docs_dir / f"{wc._DOCS_TO_ROOT}{wc.SCHEMA_PATH}").resolve().is_file()
 
 
 def test_schema_lists_every_phase_as_a_valid_key():

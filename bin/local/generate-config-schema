@@ -20,6 +20,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Checked before REPO_ROOT is resolved via git, so --help works outside a
+# git repo (e.g. `pip show`-style introspection, or a stray checkout).
+if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+    print(__doc__.strip())
+    sys.exit(0)
+
 REPO_ROOT = Path(
     subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],

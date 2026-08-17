@@ -586,3 +586,21 @@ unify_in_fake() {
   [ "$status" -eq 0 ]
   [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
 }
+
+@test "a mid-fold yq failure surfaces non-zero and leaves the source un-renamed" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+  # Malformed YAML makes the fold's `yq` read fail rather than parse.
+  printf 'issue_tracker: [unclosed\n' > "$FAKE_CONFIG/review.yml"
+
+  run unify_in_fake
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not fold every setting into config.yml"* ]]
+
+  # The failing fold's source is left in place, not renamed.
+  [ -f "$FAKE_CONFIG/review.yml" ]
+  [ ! -f "$FAKE_CONFIG/review.yml.migrated" ]
+  # A fold that succeeded before the failure still carried its value over.
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+  [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
+}

@@ -571,6 +571,15 @@ _CUSTOM = {
 # Commands that do not need a remote fetch before dispatch.
 _NO_UPDATE_COMMANDS = {"status", "gc", "rebase", "create"}
 
+# Commands that accept no positional target, so every bare token in their argv
+# belongs to the flag before it. 'create' always operates on the current branch
+# and `task pr:create` has no way to accept a target, so the positional scan has
+# nothing to find there — only flag values to swallow. Skipping the scan is what
+# keeps `pr create --title "…"` from arriving as a dangling --title, and it needs
+# no arity list of its own: the flags are parsed by parse_pr_flags in
+# lib/ai/pr.sh, which stays their single source of truth.
+_NO_TARGET_COMMANDS = {"create"}
+
 # Read-only commands, safe to run alongside another pr run. Everything
 # else writes state.json and may edit/commit the worktree, so it takes
 # the run lock — see run_lock.py. 'gc' is absent deliberately:
@@ -712,10 +721,12 @@ def main():
     original_branch = getattr(args, "branch", None)
 
     # Classify the first positional (if any) as PR or branch when no explicit
-    # --pr/--branch flag was given. The delegate is only asked for its flag
-    # arity once a bare token exists to be ambiguous about, so the common case
-    # (`pr review`, `pr comments --triage`) spawns nothing.
-    ambiguous = original_pr is None and original_branch is None
+    # --pr/--branch flag was given and the command takes a target at all. The
+    # delegate is only asked for its flag arity once a bare token exists to be
+    # ambiguous about, so the common case (`pr review`, `pr comments --triage`)
+    # spawns nothing.
+    ambiguous = (original_pr is None and original_branch is None
+                 and args.command not in _NO_TARGET_COMMANDS)
     if ambiguous and any(not a.startswith("-") for a in extra):
         idx = _positional_index(extra, _delegate_value_flags(entry))
         if idx >= 0:

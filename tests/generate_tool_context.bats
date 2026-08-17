@@ -505,3 +505,166 @@ EOF
   scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.core.md"
   [ ! -f "$scoped_file" ]
 }
+
+# ── docs/libraries.md module tables ──────────────────────────────────────────
+
+# _lib_fixture — a temp lib/ and libraries.md the generator will read instead
+# of the real ones. Both are the env hooks main() resolves through.
+_lib_fixture() {
+  export LIB_DIR="$TMPDIR/lib"
+  export LIBRARIES_DOC_PATH="$TMPDIR/docs/libraries.md"
+  mkdir -p "$LIB_DIR/ai"
+  : > "$LIBRARIES_DOC_PATH"
+}
+
+# _lib_markers REL — the splice markers for one module, as the doc holds them.
+_lib_markers() {
+  printf '<!-- LIB-FUNCTIONS:%s-START -->\n<!-- LIB-FUNCTIONS:%s-END -->\n' "$1" "$1" \
+    >> "$LIBRARIES_DOC_PATH"
+}
+
+@test "lib doc rows split signature from purpose on the em dash" {
+  _lib_fixture
+  cat > "$LIB_DIR/output.sh" << 'EOF'
+# info MESSAGE — blue info message with an arrow.
+info() { echo "$*"; }
+EOF
+  run _lib_doc_rows "$LIB_DIR/output.sh"
+  [ "$output" = "$(printf 'info MESSAGE\tblue info message with an arrow.')" ]
+}
+
+@test "lib doc rows take the purpose from the description when the signature stands alone" {
+  _lib_fixture
+  cat > "$LIB_DIR/menu.sh" << 'EOF'
+# select_menu RESULT_VAR COUNT
+#
+# Displays a numbered selection prompt.
+select_menu() { :; }
+EOF
+  run _lib_doc_rows "$LIB_DIR/menu.sh"
+  [ "$output" = "$(printf 'select_menu RESULT_VAR COUNT\tDisplays a numbered selection prompt.')" ]
+}
+
+@test "lib doc rows join a wrapped purpose and stop at the end of the sentence" {
+  _lib_fixture
+  cat > "$LIB_DIR/portable.sh" << 'EOF'
+# file_birth PATH — birth time in epoch seconds. Prints 0 on
+# filesystems that do not record one. Callers must treat 0 as unknown.
+file_birth() { :; }
+EOF
+  run _lib_doc_rows "$LIB_DIR/portable.sh"
+  [ "$output" = "$(printf 'file_birth PATH\tbirth time in epoch seconds. Prints 0 on filesystems that do not record one.')" ]
+}
+
+@test "lib doc rows pair a comment with its function across intervening declarations" {
+  _lib_fixture
+  cat > "$LIB_DIR/install.sh" << 'EOF'
+# resolve_known_components ARRAY_REF — resolves component names to paths.
+declare -a KNOWN_COMPONENTS=()
+declare -A COMPONENT_PATHS=()
+resolve_known_components() { :; }
+EOF
+  run _lib_doc_rows "$LIB_DIR/install.sh"
+  [ "$output" = "$(printf 'resolve_known_components ARRAY_REF\tresolves component names to paths.')" ]
+}
+
+@test "lib functions table skips private functions and escapes pipes" {
+  _lib_fixture
+  cat > "$LIB_DIR/menu.sh" << 'EOF'
+# select_menu RESULT_VAR [--default all|skip] — numbered selection prompt.
+select_menu() { :; }
+
+# _render_row INDEX — internal.
+_render_row() { :; }
+EOF
+  run _lib_functions_table "$LIB_DIR/menu.sh"
+  [[ "$output" == *'| `select_menu RESULT_VAR [--default all\|skip]` | numbered selection prompt. |'* ]]
+  [[ "$output" != *_render_row* ]]
+}
+
+@test "lib roots table reads the constant, XDG rung and default off the assignment" {
+  _lib_fixture
+  cat > "$LIB_DIR/roots.sh" << 'EOF'
+# Hand-authored settings: config.yml, overrides/.
+WORKBENCH_CONFIG_DIR="$(_wb_root "${WORKBENCH_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
+EOF
+  run _lib_roots_table
+  [[ "$output" == *'| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: config.yml, overrides/ | `XDG_CONFIG_HOME` | `~/.config/workbench` |'* ]]
+}
+
+@test "lib doc check fails on a public function with no doc comment" {
+  _lib_fixture
+  _lib_markers "output.sh"
+  cat > "$LIB_DIR/output.sh" << 'EOF'
+# info MESSAGE — blue info message with an arrow.
+info() { echo "$*"; }
+
+warn() { echo "$*"; }
+EOF
+  run _lib_check_docs
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"lib/output.sh: warn has no doc comment"* ]]
+}
+
+@test "lib doc check fails when a module has no section in the doc" {
+  _lib_fixture
+  cat > "$LIB_DIR/output.sh" << 'EOF'
+# info MESSAGE — blue info message with an arrow.
+info() { echo "$*"; }
+EOF
+  run _lib_check_docs
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no section for lib/output.sh"* ]]
+}
+
+@test "lib doc check passes when every public function is documented and placed" {
+  _lib_fixture
+  _lib_markers "output.sh"
+  cat > "$LIB_DIR/output.sh" << 'EOF'
+# info MESSAGE — blue info message with an arrow.
+info() { echo "$*"; }
+
+# _shout MESSAGE — internal, needs no section.
+_shout() { echo "$*"; }
+EOF
+  run _lib_check_docs
+  [ "$status" -eq 0 ]
+}
+
+@test "libraries doc splice renders each module table between its markers" {
+  _lib_fixture
+  cat > "$LIB_DIR/output.sh" << 'EOF'
+# info MESSAGE — blue info message with an arrow.
+info() { echo "$*"; }
+EOF
+  cat > "$LIB_DIR/ai/pr.sh" << 'EOF'
+# load_pr_context PR_NUMBER — fetches PR metadata into the environment.
+load_pr_context() { :; }
+EOF
+  cat > "$LIB_DIR/roots.sh" << 'EOF'
+# Recomputable data, safe to delete at any time.
+WORKBENCH_CACHE_DIR="$(_wb_root "${WORKBENCH_CACHE_DIR:-}" "${XDG_CACHE_HOME:-}" "$HOME/.cache/workbench")"
+EOF
+  cat > "$LIBRARIES_DOC_PATH" << 'EOF'
+### output.sh
+<!-- LIB-FUNCTIONS:output.sh-START -->
+<!-- LIB-FUNCTIONS:output.sh-END -->
+
+### ai/pr.sh
+<!-- LIB-FUNCTIONS:ai/pr.sh-START -->
+<!-- LIB-FUNCTIONS:ai/pr.sh-END -->
+
+## Roots
+<!-- LIB-ROOTS-START -->
+<!-- LIB-ROOTS-END -->
+EOF
+
+  _splice_libraries_doc
+
+  grep -qF '| `info MESSAGE` | blue info message with an arrow. |' "$LIBRARIES_DOC_PATH"
+  grep -qF '| `load_pr_context PR_NUMBER` | fetches PR metadata into the environment. |' "$LIBRARIES_DOC_PATH"
+  grep -qF '| `WORKBENCH_CACHE_DIR` |' "$LIBRARIES_DOC_PATH"
+  # Prose around the blocks is untouched, and roots.sh has no function table.
+  grep -qF '### output.sh' "$LIBRARIES_DOC_PATH"
+  [ "$(grep -c '^| `' "$LIBRARIES_DOC_PATH")" -eq 3 ]
+}

@@ -126,6 +126,7 @@ These files are derived from source data and must never be edited directly. Edit
 | `.claude/anatomy.md` | [`generate-anatomy.sh`](../ai/claude/skills/anatomy/generate-anatomy.sh) | `git ls-files` |
 | [`config.schema.json`](../config.schema.json) | [`generate-config-schema`](../bin/local/generate-config-schema) | [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) |
 | `docs/libraries.md` (config key reference) | [`generate-config-schema`](../bin/local/generate-config-schema) | [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) |
+| `docs/libraries.md` (module tables) | [`generate-tool-context`](../bin/local/generate-tool-context) | `lib/*.sh` doc comments |
 
 **Enforcement:** the pre-push hook runs the tool-context generators and blocks if output changed. The two rendered from `WorkbenchConfig` are enforced instead by `tests/test_workbench_config.py`, which fails when a committed copy differs from what the generator would write — pre-push runs pytest, so both paths block a stale file. CI runs the same freshness checks on every PR.
 

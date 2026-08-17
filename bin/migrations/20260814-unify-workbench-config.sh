@@ -46,8 +46,11 @@ _unify_workbench_config_fold_review() {
   incoming="$(yq '.issue_tracker // ""' "$source_file")" || return 1
   if [[ -z "$existing" && -n "$incoming" ]]; then
     # load() rather than a rendered value, so the mapping lands in block style
-    # like the rest of a file the user is expected to hand-edit.
-    yq -i ".review.issue_tracker = load(\"$source_file\").issue_tracker" \
+    # like the rest of a file the user is expected to hand-edit. The path goes
+    # through strenv for the same reason the scalar folder passes its value that
+    # way: nothing this script controls is spliced into a yq expression.
+    src="$source_file" yq -i \
+      '.review.issue_tracker = load(strenv(src)).issue_tracker' \
       "$WORKBENCH_CONFIG_FILE" || return 1
   fi
 
@@ -73,7 +76,10 @@ migration_20260814_unify_workbench_config() {
   _unify_workbench_config_fold_review "$review_file" || failed=1
 
   if (( failed )); then
-    warn "Could not fold every setting into config.yml — the originals were left in place"
+    # Only the failing fold's source is untouched — a fold that ran before it
+    # has already renamed its own, so the message points at the .migrated files
+    # rather than claiming every original is still there.
+    warn "Could not fold every setting into config.yml — check the .migrated files for what carried over"
     return 1
   fi
 

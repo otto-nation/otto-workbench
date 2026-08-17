@@ -691,6 +691,10 @@ _lib_functions_table() {
 # does not use.
 # shellcheck disable=SC2016  # awk program, not shell expansion
 _lib_roots_table() {
+  if [[ ! -f "$LIB_DIR/roots.sh" ]]; then
+    err "lib/roots.sh is missing — cannot render the roots table"
+    return 1
+  fi
   printf '| Constant | Holds | XDG rung | Default |\n'
   printf '|----------|-------|----------|---------|\n'
   awk '

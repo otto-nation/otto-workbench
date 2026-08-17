@@ -10,7 +10,6 @@ import argparse
 import json
 import re
 import subprocess
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,7 +17,6 @@ from pathlib import Path
 from typing import TypeVar
 
 import ai_usage
-import log
 import serde
 import workbench_paths
 from ai_usage import SessionUsage, parse_session_log
@@ -574,20 +572,6 @@ META_STATUS = "<!-- status: {status} -->"
 
 PRIOR_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
 PRIOR_DATE_RE = re.compile(r"<!-- date: (\d{4}-\d{2}-\d{2}) -->")
-
-
-# ── Repo detection ────────────────────────────────────────────────────────────
-
-def detect_repo(cwd: str | None = None) -> str:
-    """Detect owner/repo from the git remote via ``gh``."""
-    r = subprocess.run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if r.returncode != 0 or not r.stdout.strip():
-        log.error("Cannot determine repository from git remote")
-        sys.exit(1)
-    return r.stdout.strip()
 
 
 # ── Path helpers ─────────────────────────────────────────────────────────────

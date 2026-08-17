@@ -114,6 +114,26 @@ If the hook printed no config origins, the identity is coming from `GIT_AUTHOR_N
 
 Commits already made under the bad identity keep it — rewriting them requires `git filter-branch --env-filter` plus a force push.
 
+## "Cannot determine repository via `gh repo view`"
+
+A `pr`, `claude-review`, `ci-check`, or `review-threads` run could not name the repository it was pointed at. The message quotes what `gh` itself said rather than guessing at a cause, so the rest of the line is the diagnosis:
+
+```
+✗ Cannot determine repository via `gh repo view`: no git remotes found
+✗ Cannot determine repository via `gh repo view`: gh: Bad credentials (HTTP 401)
+✗ Cannot determine repository via `gh repo view` — server error, retry later: HTTP 503: No server is currently available to service your request. (https://api.github.com/graphql)
+```
+
+A 5xx is called out separately because it is the one case where nothing local is wrong: GitHub is down or degraded (check <https://www.githubstatus.com>), and the fix is to wait rather than to touch the remote, the token, or the worktree. Anything else — no remote, a repo `gh` cannot see, an expired token — is local and named by the command's own text.
+
+Run the same command by hand to see the untruncated output:
+
+```bash
+gh repo view --json nameWithOwner -q .nameWithOwner
+```
+
+The same treatment applies to every fatal in `ai/lib/pr_context.py` — `Cannot determine current branch`, `` `gh pr view` could not read the head of <repo>#<n> ``, and the `wt switch` failures all quote the underlying command's stderr through one helper, `pr_context.failure_message()`. If one of them ever prints a bare action with no cause, the command wrote nothing to stderr; re-run it by hand.
+
 ## "another pr run already owns this target"
 
 A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the holder:

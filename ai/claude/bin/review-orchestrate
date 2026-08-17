@@ -44,9 +44,10 @@ import review_state as _rst  # noqa: E402
 import log  # noqa: E402
 import pr_state  # noqa: E402
 
+from pr_context import detect_repo  # noqa: E402
 from review_common import (  # noqa: E402
     FILENAME_SESSION, Effort, Mode, PIPELINE_MULTI, PIPELINE_SINGLE,
-    _derive_path, detect_repo, enum_arg,
+    _derive_path, enum_arg,
 )
 from review_preflight import (  # noqa: E402
     DEFAULT_MAX_PARALLEL,

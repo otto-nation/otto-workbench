@@ -209,6 +209,8 @@
       "Bash(mkdir:*)",
       "Bash(mv:*)",
       "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
       "Bash(otto-log:*)",
       "Bash(otto-workbench:*)",
       "Bash(pip3:*)",

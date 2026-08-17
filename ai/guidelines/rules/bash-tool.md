@@ -28,13 +28,17 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
   - `grep -rn "pattern" /abs/path/tests/ | head -40` instead of `cd() { :; }; W=/abs/path; grep -rn "pattern" "$W/tests/" | head -40`
 - A no-op stub such as `cd() { :; }` is not a way around the compound-`cd` rule — it trades a rule you can satisfy for a prompt you cannot suppress. Use an absolute path, `git -C <path>`, or `gh --repo` instead
 
-## Avoid Absolute Paths to System Binaries
+## Avoid Absolute Paths to PATH Binaries
 
-- Never invoke a system binary by its absolute path (`/bin/cat`, `/usr/bin/grep`, `/usr/bin/env`) — the permission allow list keys on the bare command name (`Bash(cat:*)`), so the `/bin` and `/usr/bin` forms never match it and prompt every time. This applies wherever a statement begins, not just at the start of the command: `ls; /bin/cat file` counts. Call the bare name instead — it resolves through `PATH` to the same binary:
+- Never invoke a binary by its absolute path when the same binary is on `PATH` — the permission allow list keys on the bare command name (`Bash(cat:*)`, `Bash(mise:*)`), so an absolute form never matches it and prompts every time. This applies wherever a statement begins, not just at the start of the command: `ls; /bin/cat file` counts. Call the bare name instead — it resolves through `PATH` to the same binary:
   - `cat /path/to/file` instead of `/bin/cat /path/to/file`
   - `env` instead of `/usr/bin/env`
-- This is the opposite of the `bin/local/` rule: workbench scripts must use the *relative* path, system binaries must use the *bare* name. Both exist so a single allow-list entry covers every invocation
-- Like the other statement-anchored checks below, the hook enforcing this scans the quote-stripped first line — a `/bin/...` path inside a quoted argument or a heredoc body is left alone, and a `/bin/...` call on a later line is not caught
+  - `mise doctor` instead of `~/.local/bin/mise doctor`
+  - `gh pr view` instead of `/opt/homebrew/bin/gh pr view`
+- The directories covered are `/bin`, `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, `/opt/homebrew/sbin`, and any `.local/bin` — the workbench installs its own scripts into `~/.local/bin`, so its tools are reached by bare name too
+- `which <tool>` printing a shell function body (mise and other `activate`-style tools define one) is not a reason to switch to the absolute path — the bare name still resolves through `PATH` in the Bash tool
+- This is the opposite of the `bin/local/` rule: workbench *repo* scripts must use the *relative* path, installed binaries must use the *bare* name. Both exist so a single allow-list entry covers every invocation
+- Like the other statement-anchored checks below, the hook enforcing this scans the quote-stripped first line — such a path inside a quoted argument or a heredoc body is left alone, and one on a later line is not caught
 
 ## Avoid Env-Var Prefix Syntax
 

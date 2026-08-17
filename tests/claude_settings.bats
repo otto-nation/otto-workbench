@@ -270,11 +270,12 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
-# ── system binary absolute paths ────────────────────────────────────────────
+# ── PATH binary absolute paths ──────────────────────────────────────────────
 # The allow list keys on the bare command name, so `Bash(cat:*)` never matches
-# `/bin/cat` — the absolute form prompts on every call. This check rides the
-# same quote-stripped first line as the four guardrails below, so a `/bin/...`
-# path inside a quoted argument is not mistaken for an invocation.
+# `/bin/cat` and `Bash(mise:*)` never matches `~/.local/bin/mise` — the absolute
+# form prompts on every call. The rule covers every bin/ on the default PATH.
+# It rides the same quote-stripped first line as the four guardrails below, so
+# such a path inside a quoted argument is not mistaken for an invocation.
 
 @test "binlocal hook: blocks an absolute path to a bin/local script" {
   run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/bin/local/validate-all"}}'
@@ -304,40 +305,70 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
-@test "sysbin hook: blocks /bin/cat and names the bare command" {
+@test "pathbin hook: blocks /bin/cat and names the bare command" {
   run _run_guard '{"tool_input":{"command":"/bin/cat /tmp/x/review.diff"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'cat'"* ]]
 }
 
-@test "sysbin hook: blocks /usr/bin after a statement separator" {
+@test "pathbin hook: blocks /usr/bin after a statement separator" {
   run _run_guard '{"tool_input":{"command":"ls -la; /usr/bin/grep -n foo f"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'grep'"* ]]
 }
 
-@test "sysbin hook: blocks /bin with no space after the separator" {
+@test "pathbin hook: blocks /bin with no space after the separator" {
   run _run_guard '{"tool_input":{"command":"ls -la;/bin/cat f"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"Use 'cat'"* ]]
 }
 
-@test "sysbin hook: allows the bare command name" {
+@test "pathbin hook: blocks a ~/.local/bin path and names the bare command" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/.local/bin/mise doctor"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'mise'"* ]]
+  [[ "$output" == *"/Users/me/.local/bin/"* ]]
+}
+
+@test "pathbin hook: blocks a ~/.local/bin path after a statement separator" {
+  run _run_guard '{"tool_input":{"command":"ls -la; /Users/me/.local/bin/rtk read f"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'rtk'"* ]]
+}
+
+@test "pathbin hook: blocks a homebrew path and names the bare command" {
+  run _run_guard '{"tool_input":{"command":"/opt/homebrew/bin/gh pr view 42"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'gh'"* ]]
+}
+
+@test "pathbin hook: blocks /usr/local/bin and names the bare command" {
+  run _run_guard '{"tool_input":{"command":"/usr/local/bin/node --version"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'node'"* ]]
+}
+
+@test "pathbin hook: allows the bare command name" {
   run _run_guard '{"tool_input":{"command":"cat /tmp/x/review.diff"}}'
   [ "$status" -eq 0 ]
 }
 
-@test "sysbin hook: allows a /bin path inside a sed expression" {
+@test "pathbin hook: allows a /bin path inside a sed expression" {
   run _run_guard "{\"tool_input\":{\"command\":\"sed -e 's|/bin/cat|x|' f\"}}"
   [ "$status" -eq 0 ]
 }
 
-@test "sysbin hook: allows absolute paths outside /bin and /usr/bin" {
-  run _run_guard '{"tool_input":{"command":"bash /Users/me/.local/bin/thing"}}'
+@test "pathbin hook: allows absolute paths outside every PATH bin dir" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/scripts/thing"}}'
   [ "$status" -eq 0 ]
 }
 
-@test "sysbin hook: allows a separator-prefixed path inside a quoted argument" {
+@test "pathbin hook: allows a PATH bin path that is an argument, not the command" {
+  run _run_guard '{"tool_input":{"command":"ls -la /Users/me/.local/bin/mise"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "pathbin hook: allows a separator-prefixed path inside a quoted argument" {
   run _run_guard '{"tool_input":{"command":"git commit -m \"fix: drop; /usr/bin/env callers\""}}'
   [ "$status" -eq 0 ]
 }

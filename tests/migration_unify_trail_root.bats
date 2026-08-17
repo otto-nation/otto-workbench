@@ -6,6 +6,8 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   common_setup
+  # shellcheck source=../lib/portable.sh
+  source "$REPO_ROOT/lib/portable.sh"
   MIGRATION="$REPO_ROOT/ai/claude/migrations/20260814-unify-trail-root.sh"
   STATE="$(mktemp -d)"
   mkdir -p "$STATE/reviews" "$STATE/logs"
@@ -18,9 +20,13 @@ teardown() {
 
 # Runs the migration against STATE with the ui.sh helpers stubbed out.
 # Sources the real lib/migrations.sh first so _append_ledger — which the
-# migration calls but does not define itself — is in scope, matching how the
-# framework actually invokes it (see the framework-dispatch test below for
-# the source-and-call double-invocation this harness does not exercise).
+# migration calls but does not define itself — is in scope, then sources the
+# migration and calls its function, which is what lib/migrations.sh:69,76
+# does. lib/portable.sh comes along because the real ui.sh sources it and
+# _append_ledger calls file_mode from it; stubbing ui.sh down to success/warn
+# would leave that call undefined and silently skip the chmod it guards.
+# Exit status is the function's own: the framework reads it to decide whether
+# to record the migration (see the framework-dispatch tests below).
 _run_migration() {
   WORKBENCH_STATE_DIR="$STATE" bash -c '
     success() { echo "OK $*"; }
@@ -28,8 +34,10 @@ _run_migration() {
     WORKBENCH_DIR="$2"
     LIB_SRC_DIR="$2/lib"
     LEGACY_WORKBENCH_ROOT="$WORKBENCH_STATE_DIR/.unused-legacy"
+    . "$WORKBENCH_DIR/lib/portable.sh"
     . "$WORKBENCH_DIR/lib/migrations.sh"
-    source "$1"
+    . "$1"
+    migration_20260814_unify_trail_root
   ' _ "$MIGRATION" "$REPO_ROOT"
 }
 
@@ -43,9 +51,9 @@ _seed_review_trail() {
 # Builds a fake workbench root under $STATE/fake-$1{,-state,-config,-legacy}
 # with the real lib/components.sh and lib/migrations.sh plus this migration
 # copied in, and stubbed lib/ui.sh + lib/constants.sh. Sets FAKE_ROOT and
-# FAKE_STATE for the caller. Used by tests that need to go through the
-# framework's real source-and-call dispatch (see the tests below), which
-# _run_migration above does not exercise.
+# FAKE_STATE for the caller. Used by tests about what the framework does with
+# the function's exit status — discovery, recording, and retry — which
+# _run_migration above, calling the function directly, cannot observe.
 _build_fake_workbench() {
   local name="$1"
   FAKE_ROOT="$STATE/fake-$name"
@@ -53,9 +61,13 @@ _build_fake_workbench() {
   mkdir -p "$FAKE_ROOT/lib" "$FAKE_ROOT/ai/claude/migrations" "$FAKE_STATE/reviews"
   cp "$REPO_ROOT/lib/components.sh" "$FAKE_ROOT/lib/components.sh"
   cp "$REPO_ROOT/lib/migrations.sh" "$FAKE_ROOT/lib/migrations.sh"
+  cp "$REPO_ROOT/lib/portable.sh" "$FAKE_ROOT/lib/portable.sh"
   cp "$MIGRATION" "$FAKE_ROOT/ai/claude/migrations/20260814-unify-trail-root.sh"
 
+  # The stub carries portable.sh because the real ui.sh does, and _append_ledger
+  # calls file_mode from it.
   cat > "$FAKE_ROOT/lib/ui.sh" <<'STUB'
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/portable.sh"
 success() { echo "OK $*"; }
 warn()    { echo "WARN $*"; }
 STUB
@@ -152,6 +164,31 @@ _run_all_migrations_in_fake() {
   [[ "$output" == *"No trails to carry"* ]]
 }
 
+@test "nothing to carry leaves no empty legacy.jsonl behind" {
+  # legacy.jsonl has no month in its name, so otto-log reads it on every query
+  # whatever the --since window — a machine with no pre-cutover history must
+  # not be left paying that forever for an empty file.
+  run _run_migration
+  [ "$status" -eq 0 ]
+  [ ! -e "$STATE/trail/legacy.jsonl" ]
+}
+
+@test "carrying preserves the destination's mode rather than mktemp's 0600" {
+  # _append_ledger builds the merged file with mktemp (0600) and restores the
+  # destination's mode from file_mode. Nothing else covers that line on this
+  # destination, and a break in it would quietly narrow legacy.jsonl.
+  _seed_review_trail "repo-1" '{"ts":"a"}
+'
+  mkdir -p "$STATE/trail"
+  printf '{"ts":"z"}\n' > "$STATE/trail/legacy.jsonl"
+  chmod 640 "$STATE/trail/legacy.jsonl"
+
+  run _run_migration
+  [ "$status" -eq 0 ]
+  run file_mode "$STATE/trail/legacy.jsonl"
+  [ "$output" = "640" ]
+}
+
 @test "a resumed run does not duplicate an already-carried record" {
   # Mirrors "adoption resumes a run that was interrupted partway through a
   # directory" in tests/migrations.bats: repo-1 already finished its carry in
@@ -196,7 +233,10 @@ _run_all_migrations_in_fake() {
   chmod 000 "$STATE/reviews/repo-1/trail.jsonl"
 
   run _run_migration
-  [ "$status" -eq 0 ]
+  # Non-zero on purpose: the carry finished for every source it could read,
+  # and the status is how the framework learns not to record the migration
+  # (asserted end-to-end in the retry test below).
+  [ "$status" -eq 1 ]
   [[ "$output" == *"WARN"* ]]
   [ -f "$STATE/reviews/repo-1/trail.jsonl" ]
   run grep -c '"ts":"b"' "$STATE/trail/legacy.jsonl"
@@ -205,13 +245,13 @@ _run_all_migrations_in_fake() {
   chmod 644 "$STATE/reviews/repo-1/trail.jsonl"
 }
 
-@test "carries a trail through the framework's real source-and-call dispatch" {
-  # _run_migration above sources the file once in a fresh bash -c, always
-  # under errexit. The real framework (lib/migrations.sh) sources AND calls,
-  # running the function twice in one process — the second time with errexit
-  # suppressed, since that call is the condition of an `if`. Build a fake
-  # workbench root, matching the tests/migrations.bats FAKE_ROOT pattern, and
-  # go through run_all_migrations for real.
+@test "carries a trail through the framework's real discover-and-dispatch" {
+  # _run_migration above calls the function itself, in a fresh bash -c under
+  # errexit. The real framework (lib/migrations.sh) has to find the file by
+  # its name, derive the function name from it, source it, and call it as the
+  # condition of an `if` — where errexit is suppressed. Build a fake workbench
+  # root, matching the tests/migrations.bats FAKE_ROOT pattern, and go through
+  # run_all_migrations for real.
   _build_fake_workbench "dispatch"
   mkdir -p "$FAKE_STATE/reviews/repo-1"
   printf '{"ts":"a"}\n' > "$FAKE_STATE/reviews/repo-1/trail.jsonl"

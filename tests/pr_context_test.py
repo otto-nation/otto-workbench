@@ -16,7 +16,7 @@ import pr_context
 import pr_target
 from pr_context import (
     _parse_pr_input, _resolve_branch, default_branch, resolve_bare_repo_worktree,
-    find_worktree_for_branch, ResolvedContext, update_to_remote,
+    find_worktree_for_branch, PRHead, ResolvedContext, update_to_remote,
     fetch_and_reset, create_worktree_for_branch,
 )
 
@@ -537,7 +537,7 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: (None, "", ""))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead())
     monkeypatch.setattr(pr_context, "_current_branch",
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
@@ -554,7 +554,7 @@ def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsy
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/x", "", ""))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/x"))
     monkeypatch.setattr(pr_context, "_current_branch",
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
@@ -572,7 +572,7 @@ def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "other")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/login", "pr-sha", ""))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/login", sha="pr-sha"))
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
 
     ctx = pr_context.resolve(pr="2973")
@@ -591,9 +591,9 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
 
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/a", "sha-a", ""))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha-a"))
     first = pr_context.resolve(pr="1")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/b", "sha-b", ""))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/b", sha="sha-b"))
     second = pr_context.resolve(pr="2")
 
     assert first.target_dir != second.target_dir
@@ -641,7 +641,7 @@ def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/a", "sha", ""))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha"))
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: None)
 
     with pytest.raises(SystemExit) as excinfo:
@@ -757,26 +757,41 @@ def test_current_branch_quotes_git_stderr(monkeypatch, capsys):
 # ── PR head resolution ─────────────────────────────────────────────────────
 
 
+def test_pr_head_resolves_both_halves(monkeypatch):
+    _stub_run(monkeypatch, 0, stdout="feat/login abc123\n")
+
+    head = pr_context._pr_head("acme/widget", 42)
+
+    assert head == PRHead(branch="feat/login", sha="abc123")
+    assert head.resolved
+
+
 def test_pr_head_carries_the_reason_gh_gave(monkeypatch):
     """The caller decides this is fatal, so the caller must be able to say why."""
     _stub_run(monkeypatch, 1, stderr="HTTP 503: No server is currently available")
 
-    branch, sha, why = pr_context._pr_head("acme/widget", 42)
+    head = pr_context._pr_head("acme/widget", 42)
 
-    assert (branch, sha) == (None, "")
-    assert "acme/widget#42" in why
-    assert "retry later" in why
-    assert "HTTP 503" in why
+    assert not head.resolved
+    assert "acme/widget#42" in head.reason
+    assert "retry later" in head.reason
+    assert "HTTP 503" in head.reason
 
 
 def test_pr_head_reports_a_partial_answer_from_a_zero_exit(monkeypatch):
-    """gh answered, but not with both fields — say so rather than returning None."""
+    """gh answered, but not with both fields — say so rather than going quiet."""
     _stub_run(monkeypatch, 0, stdout="feat/x\n")
 
-    branch, sha, why = pr_context._pr_head("acme/widget", 42)
+    head = pr_context._pr_head("acme/widget", 42)
 
-    assert (branch, sha) == (None, "")
-    assert "acme/widget#42" in why
+    assert not head.resolved
+    assert "acme/widget#42" in head.reason
+
+
+def test_pr_head_with_a_branch_but_no_sha_is_not_resolved():
+    """A half-answer must not read as success — that is what the guard turns on."""
+    assert not PRHead(branch="feat/x").resolved
+    assert not PRHead(sha="abc123").resolved
 
 
 def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, capsys):
@@ -784,9 +799,9 @@ def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, ca
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: (
-        None, "", "`gh pr view` could not read the head of acme/widget#2973 — "
-                  "server error, retry later: HTTP 503"))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(
+        reason="`gh pr view` could not read the head of acme/widget#2973 — "
+               "server error, retry later: HTTP 503"))
 
     with pytest.raises(SystemExit) as excinfo:
         pr_context.resolve(pr="2973")

@@ -13,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pr_context
 import pr_target
+from pr_context import PRHead
 
 
 def test_pr_and_branch_mutually_exclusive():
@@ -25,7 +26,7 @@ def test_pr_and_branch_mutually_exclusive():
 @patch.object(pr_context, "_current_branch_quiet", return_value="feat/bar")
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_pr_head", return_value=("feat/bar", "pr-sha", ""))
+@patch.object(pr_context, "_pr_head", return_value=PRHead(branch="feat/bar", sha="pr-sha"))
 def test_pr_only_resolves(mock_head, mock_sha, mock_repo, mock_current, mock_top,
                           mock_repo_name):
     ctx = pr_context.resolve(pr="42")
@@ -223,7 +224,7 @@ def test_current_branch_detached_head_exits(mock_sub):
 @patch.object(pr_context, "_current_branch_quiet", return_value=None)
 @patch.object(pr_context, "detect_repo", return_value="owner/repo")
 @patch.object(pr_context, "_head_sha", return_value="abc123")
-@patch.object(pr_context, "_pr_head", return_value=("feat/bar", "pr-sha", ""))
+@patch.object(pr_context, "_pr_head", return_value=PRHead(branch="feat/bar", sha="pr-sha"))
 def test_resolve_sets_current_branch_none_on_detached_head(
     mock_head, mock_sha, mock_repo, mock_quiet, mock_top, mock_repo_name,
 ):

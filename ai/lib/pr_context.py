@@ -64,6 +64,27 @@ def failure_message(action: str, r: subprocess.CompletedProcess) -> str:
 
 
 @dataclass(frozen=True)
+class PRHead:
+    """A PR's head branch and SHA, or the reason ``gh`` could not report them.
+
+    Both halves come from one API call because the SHA is what a PR target's
+    state must be stamped with — reading it from the caller's HEAD is how
+    #2973's state ended up carrying the repo root's SHA.
+    """
+    branch: str = ""
+    sha: str = ""
+    # Ready-to-print reason the call did not answer, quoting gh's stderr. The
+    # caller decides an unresolved head is fatal, so the caller is the one that
+    # has to be able to say why. Empty when the head resolved.
+    reason: str = ""
+
+    @property
+    def resolved(self) -> bool:
+        """True only with both halves in hand — a partial answer is a failure."""
+        return bool(self.branch and self.sha)
+
+
+@dataclass(frozen=True)
 class ResolvedContext:
     """Immutable PR context resolved once at command entry."""
     repo: str
@@ -125,18 +146,20 @@ def resolve(
 
     if pr:
         pr_number = _parse_pr_input(pr)
-        branch_name, pr_sha, why = _pr_head(repo, pr_number)
-        if not branch_name or not pr_sha:
-            # _pr_head's contract says a missing field comes with a reason, but
+        head = _pr_head(repo, pr_number)
+        if not head.resolved:
+            # PRHead's contract says an unresolved head carries a reason, but
             # the guard outlives the contract: a partial result must never fall
             # through to the caller's own branch, reason or no reason.
-            log.error(why or f"Cannot resolve the head branch of {repo}#{pr_number}")
+            log.error(head.reason
+                      or f"Cannot resolve the head branch of {repo}#{pr_number}")
             log.dim("pr keys a run's state and lock on its target branch and "
                     "stamps state with its head SHA")
             sys.exit(1)
+        branch_name = head.branch
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
-        head_sha = pr_sha
+        head_sha = head.sha
     elif branch:
         branch_name = _resolve_branch(branch, cwd)
         pr_number = _pr_from_branch(repo, branch_name)
@@ -498,17 +521,8 @@ def _pr_from_branch(repo: str, branch: str) -> int | None:
         return None
 
 
-def _pr_head(repo: str, pr_number: int) -> tuple[str | None, str, str]:
-    """The PR's head branch and head SHA, in one API call, plus a failure note.
-
-    Both in one request because the SHA is what a PR target's state must be
-    stamped with — reading it from the caller's HEAD is how #2973's state ended
-    up carrying the repo root's SHA.
-
-    The third element is the ready-to-print reason the call did not answer,
-    quoting gh's stderr. The caller decides this is fatal, so the caller is
-    the one that has to be able to say why. Empty on success.
-    """
+def _pr_head(repo: str, pr_number: int) -> PRHead:
+    """The PR's head branch and head SHA, in one API call."""
     r = subprocess.run(
         ["gh", "pr", "view", str(pr_number), "--repo", repo,
          "--json", "headRefName,headRefOid",
@@ -517,9 +531,9 @@ def _pr_head(repo: str, pr_number: int) -> tuple[str | None, str, str]:
     )
     parts = r.stdout.split()
     if r.returncode != 0 or len(parts) != 2:
-        return None, "", failure_message(
-            f"`gh pr view` could not read the head of {repo}#{pr_number}", r)
-    return parts[0], parts[1], ""
+        return PRHead(reason=failure_message(
+            f"`gh pr view` could not read the head of {repo}#{pr_number}", r))
+    return PRHead(branch=parts[0], sha=parts[1])
 
 
 # ── Bare-repo helpers ──────────────────────────────────────────────────────

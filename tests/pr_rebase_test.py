@@ -2162,7 +2162,9 @@ def test_merged_pr_reports_a_merged_pull_request():
     payload = '{"state": "MERGED", "number": 726, "url": "https://x/pull/726"}'
 
     with _gh_response(payload) as mock_try:
-        assert pr_rebase_cli._merged_pr("/fake", ctx) == (726, "https://x/pull/726")
+        answer = pr_rebase_cli._merged_pr("/fake", ctx)
+
+    assert answer == pr_rebase_cli.MergedPR(number=726, url="https://x/pull/726")
 
     cmd = mock_try.call_args[0][0]
     assert cmd[:4] == ["gh", "pr", "view", "726"]
@@ -2173,7 +2175,7 @@ def test_merged_pr_falls_back_to_the_branch_without_a_pr_number():
     ctx = make_ctx(branch="feat/landed", pr_number=None)
 
     with _gh_response('{"state": "MERGED", "number": 1, "url": ""}') as mock_try:
-        assert pr_rebase_cli._merged_pr("/fake", ctx) == (1, "")
+        assert pr_rebase_cli._merged_pr("/fake", ctx) == pr_rebase_cli.MergedPR(number=1)
 
     assert mock_try.call_args[0][0][3] == "feat/landed"
 
@@ -2243,12 +2245,21 @@ def _run_landed_check(*, ahead=3, merged=None, empty_diff=False, upstream=False,
 
 
 def test_landed_check_reports_a_merged_pr():
-    report = _run_landed_check(merged=(726, "https://x/pull/726"))
+    report = _run_landed_check(
+        merged=pr_rebase_cli.MergedPR(number=726, url="https://x/pull/726"),
+    )
 
     assert report.signal == pr_rebase_cli.LandedSignal.PR_MERGED.value
     assert report.pr_number == 726
-    assert "726" in report.detail
+    assert report.detail == "PR #726 is merged (https://x/pull/726)"
     assert report.commits_ahead == 3
+
+
+def test_landed_check_omits_the_link_when_gh_reports_no_url():
+    """The detail sentence is documented in SKILL.md — no empty parentheses."""
+    report = _run_landed_check(merged=pr_rebase_cli.MergedPR(number=726))
+
+    assert report.detail == "PR #726 is merged"
 
 
 def test_landed_check_catches_a_squash_merge_by_empty_diff():
@@ -2267,7 +2278,9 @@ def test_landed_check_catches_a_rebase_merge_by_patch_id():
 
 def test_landed_check_prefers_the_tracker_over_the_git_signals():
     """Signals are ordered most authoritative first, and stop at the first hit."""
-    report = _run_landed_check(merged=(726, ""), empty_diff=True, upstream=True)
+    report = _run_landed_check(
+        merged=pr_rebase_cli.MergedPR(number=726), empty_diff=True, upstream=True,
+    )
 
     assert report.signal == pr_rebase_cli.LandedSignal.PR_MERGED.value
 

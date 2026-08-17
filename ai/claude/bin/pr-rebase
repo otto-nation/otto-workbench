@@ -1694,8 +1694,21 @@ class LandedReport:
         _emit_json(asdict(self))
 
 
-def _merged_pr(cwd: str, ctx: pr_context.ResolvedContext) -> tuple[int, str] | None:
-    """The branch's PR as (number, url) when GitHub reports it merged.
+@dataclass(frozen=True)
+class MergedPR:
+    """The tracker's answer when it reports the branch's PR merged.
+
+    A named answer rather than a bare pair: the caller reads ``.number`` and
+    ``.url`` instead of relying on the order two same-shaped fields happen to
+    be returned in, and a third field later is an added attribute rather than
+    a changed arity at every call site.
+    """
+    number: int
+    url: str = ""
+
+
+def _merged_pr(cwd: str, ctx: pr_context.ResolvedContext) -> MergedPR | None:
+    """The branch's merged PR per GitHub, or None.
 
     Best effort by design: gh may be absent, unauthenticated, rate-limited, or
     the branch may have no PR at all. Every one of those is "the tracker has
@@ -1717,7 +1730,7 @@ def _merged_pr(cwd: str, ctx: pr_context.ResolvedContext) -> tuple[int, str] | N
         return None
     if data.get("state") != "MERGED":
         return None
-    return data.get("number") or 0, data.get("url") or ""
+    return MergedPR(number=data.get("number") or 0, url=data.get("url") or "")
 
 
 def _diff_is_empty(cwd: str) -> bool:
@@ -1764,11 +1777,11 @@ def _landed_check(
 
     merged = _merged_pr(cwd, ctx)
     if merged is not None:
-        number, url = merged
+        where = f" ({merged.url})" if merged.url else ""
         return LandedReport(
             branch=ctx.branch, signal=LandedSignal.PR_MERGED.value,
-            detail=f"PR #{number} is merged ({url})" if url else f"PR #{number} is merged",
-            commits_ahead=ahead, pr_number=number,
+            detail=f"PR #{merged.number} is merged{where}",
+            commits_ahead=ahead, pr_number=merged.number,
         )
 
     # A branch with no commits of its own has nothing that could have landed,

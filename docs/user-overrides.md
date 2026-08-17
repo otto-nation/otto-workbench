@@ -1,3 +1,8 @@
+---
+title: User Overrides
+description: Customize AI rules, skills, agents, and settings without editing tracked files.
+---
+
 # User Overrides
 
 User overrides let you customize AI config — rules, skills, agents, guidelines, and settings — without editing tracked files. They live in `~/.config/workbench/overrides/ai/` and are layered on top of base config during sync.

@@ -1,3 +1,8 @@
+---
+title: Registries
+description: Each tooling directory owns a registry.yml — the single source of truth for tool documentation, AI context, and validation.
+---
+
 # Registries
 
 Each tooling directory owns a `registry.yml` describing the tools it provides. Registries are the single source of truth for tool documentation — they feed AI context generation, doc tables, and validation.

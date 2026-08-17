@@ -1,3 +1,8 @@
+---
+title: Tools & Scripts
+description: Complete catalog of workbench scripts, installed tools, and shell aliases, generated from the tool registries.
+---
+
 # Tools & Scripts Reference
 
 Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-generated from [tool registries](registries.md) — do not edit the generated sections directly.

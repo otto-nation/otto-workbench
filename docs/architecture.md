@@ -1,3 +1,8 @@
+---
+title: Architecture
+description: How otto-workbench manages your developer environment — the concepts, layers, and conventions that hold it together.
+---
+
 # Architecture
 
 How otto-workbench manages your developer environment — the concepts, layers, and conventions that hold it together.

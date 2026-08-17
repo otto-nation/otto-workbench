@@ -31,7 +31,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `promote-scan` | Scan memories and workbench artifacts for promotion evaluation |
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
-| `otto-log` | Query trail files and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
+| `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
 | `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
 | `pr-describe` | Revise the PR description against the repo's PR template once the branch stops moving |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |

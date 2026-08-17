@@ -36,7 +36,6 @@ import pr_state
 import run_lock
 import review_common
 import log
-import workbench_paths
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 
@@ -1019,7 +1018,6 @@ def main():
     repo = ctx.repo
     branch = ctx.branch
     pr_number = ctx.pr_number
-    toplevel = ctx.worktree_root
 
     # A no-op when pr launched us — we resolve the same target and find its key
     # already in WORKBENCH_RUN_LOCK.
@@ -1030,13 +1028,8 @@ def main():
         started=pr_state.now_iso(),
     )
 
-    # No worktree means no state to sit beside; the trail still gets written.
-    trail_root = workbench_paths.logs_dir(SCRIPT)
-    if toplevel:
-        trail_root = workbench_paths.trail_dir(toplevel, SCRIPT)
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(trail_root),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

@@ -289,6 +289,19 @@ def rp():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_trail_root(tmp_path, monkeypatch):
+    """Point the whole state root at a temp dir for the duration of every test.
+
+    Every trail writer appends under this root, so an unsandboxed run would
+    interleave test records with the developer's real history. The environment
+    is set rather than an attribute patched because that is the only form a
+    tool invoked as a subprocess inherits, and because `state_dir()` resolves
+    per call instead of freezing at import.
+    """
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_usage_ledger(tmp_path, monkeypatch):
     """Point the global usage ledger at a temp dir for the duration of every test.
 

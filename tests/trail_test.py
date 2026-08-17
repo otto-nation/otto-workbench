@@ -4,18 +4,18 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
+import textwrap
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-import pytest
-
-import trail as trail_module
+import workbench_paths
 from trail import (
+    FINISH_ACTION,
+    INVOCATION_HEX_WIDTH,
     SCHEMA_VERSION,
-    TRAIL_FILENAME,
     EventType,
     Level,
     Trail,
@@ -23,11 +23,18 @@ from trail import (
 )
 
 
-def _read_events(trail_dir: str) -> list[dict]:
-    trail_file = Path(trail_dir) / TRAIL_FILENAME
-    if not trail_file.exists():
+def _read_events() -> list[dict]:
+    """Every record in the trail root, oldest file first.
+
+    One run writes one file, so the test does not need to know its name.
+    """
+    root = workbench_paths.trail_dir()
+    if not root.is_dir():
         return []
-    return [json.loads(line) for line in trail_file.read_text().splitlines() if line.strip()]
+    events = []
+    for path in sorted(root.glob("*.jsonl")):
+        events += [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return events
 
 
 class TestTrailEvent:
@@ -46,246 +53,252 @@ class TestTrailEvent:
         assert EventType.SUMMARY == "summary"
 
     def test_constants(self):
-        assert TRAIL_FILENAME == "trail.jsonl"
         assert SCHEMA_VERSION == 1
+        assert FINISH_ACTION == "finish"
 
 
-class TestTrailStart:
-    def test_start_creates_trail_file(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test-script", artifact_dir=d, context={"repo": "org/repo"})
-            trail.finish()
-            assert (Path(d) / TRAIL_FILENAME).exists()
+class TestTrailRoot:
+    def test_start_creates_the_root(self):
+        Trail.start(script="test-script", context={"repo": "org/repo"}).finish()
+        assert workbench_paths.trail_dir().is_dir()
+
+    def test_events_land_in_this_months_file(self):
+        trail = Trail.start(script="test-script", context={})
+        trail.info("fetch", "fetched")
+        trail.finish()
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+        names = [p.name for p in workbench_paths.trail_dir().glob("*.jsonl")]
+        assert names == [f"{month}.jsonl"]
+
+    def test_the_events_own_month_picks_the_file(self):
+        """A run crossing midnight on the 31st writes each event where its ts says."""
+        now = datetime.now(timezone.utc)
+        # +32 days always overshoots the longest possible month by at least a
+        # day, so this lands in the immediately following month every time,
+        # including a December run rolling into next January.
+        next_month = (now.replace(day=1) + timedelta(days=32)).strftime("%Y-%m")
+        this_month = now.strftime("%Y-%m")
+        trail = Trail.start(script="test-script", context={})
+        event = trail._make_event(Level.INFO, EventType.ACTION, "late", "after midnight")
+        event.ts = f"{next_month}-01T00:00:01Z"
+        trail._emit(event)
+        assert (workbench_paths.trail_dir() / f"{next_month}.jsonl").is_file()
+        assert not (workbench_paths.trail_dir() / f"{this_month}.jsonl").is_file()
 
     def test_start_generates_invocation_id(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test-script", artifact_dir=d, context={})
-            assert len(trail.invocation) == 8
-            assert all(c in "0123456789abcdef" for c in trail.invocation)
-            trail.finish()
+        trail = Trail.start(script="test-script", context={})
+        assert len(trail.invocation) == INVOCATION_HEX_WIDTH
+        assert all(c in "0123456789abcdef" for c in trail.invocation)
+        trail.finish()
 
-    def test_start_creates_artifact_dir_if_missing(self):
-        with tempfile.TemporaryDirectory() as d:
-            nested = os.path.join(d, "sub", "dir")
-            trail = Trail.start(script="test-script", artifact_dir=nested, context={})
-            trail.finish()
-            assert (Path(nested) / TRAIL_FILENAME).exists()
+    def test_start_writes_no_gitignore(self, tmp_path, monkeypatch):
+        """The trail no longer lands in anyone's working tree, so it ignores nothing."""
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        Trail.start(script="pr", context={}).finish()
+        assert not (tmp_path / ".gitignore").exists()
 
 
 class TestTrailEvents:
     def test_info_writes_action_event(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={"repo": "r"})
-            trail.info("fetch", "fetched 3 items", data={"count": 3})
-            trail.finish()
-            events = _read_events(d)
-            action_events = [e for e in events if e["event_type"] == "action"]
-            assert len(action_events) == 1
-            e = action_events[0]
-            assert e["level"] == "info"
-            assert e["action"] == "fetch"
-            assert e["detail"] == "fetched 3 items"
-            assert e["data"] == {"count": 3}
-            assert e["schema_version"] == SCHEMA_VERSION
-            assert e["script"] == "test"
-            assert e["context"] == {"repo": "r"}
-            assert e["invocation"] == trail.invocation
+        trail = Trail.start(script="test", context={"repo": "r"})
+        trail.info("fetch", "fetched 3 items", data={"count": 3})
+        trail.finish()
+        action_events = [e for e in _read_events() if e["event_type"] == "action"]
+        assert len(action_events) == 1
+        e = action_events[0]
+        assert e["level"] == "info"
+        assert e["action"] == "fetch"
+        assert e["detail"] == "fetched 3 items"
+        assert e["data"] == {"count": 3}
+        assert e["schema_version"] == SCHEMA_VERSION
+        assert e["script"] == "test"
+        assert e["context"] == {"repo": "r"}
+        assert e["invocation"] == trail.invocation
 
     def test_decision_requires_reason(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.decision("classify", "chose A", reason="B was worse")
-            trail.finish()
-            events = _read_events(d)
-            decisions = [e for e in events if e["event_type"] == "decision"]
-            assert len(decisions) == 1
-            assert decisions[0]["reason"] == "B was worse"
+        trail = Trail.start(script="test", context={})
+        trail.decision("classify", "chose A", reason="B was worse")
+        trail.finish()
+        decisions = [e for e in _read_events() if e["event_type"] == "decision"]
+        assert len(decisions) == 1
+        assert decisions[0]["reason"] == "B was worse"
 
     def test_error_sets_both_level_and_event_type(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.error("api_call", "rate limited", data={"status": 429})
-            trail.finish()
-            events = _read_events(d)
-            errors = [e for e in events if e["event_type"] == "error"]
-            assert len(errors) == 1
-            assert errors[0]["level"] == "error"
-            assert errors[0]["event_type"] == "error"
+        trail = Trail.start(script="test", context={})
+        trail.error("api_call", "rate limited", data={"status": 429})
+        trail.finish()
+        errors = [e for e in _read_events() if e["event_type"] == "error"]
+        assert len(errors) == 1
+        assert errors[0]["level"] == "error"
 
     def test_warn_writes_warn_level(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.warn("stale_cache", "cache is 2 days old")
-            trail.finish()
-            events = _read_events(d)
-            warns = [e for e in events if e["level"] == "warn"]
-            assert len(warns) == 1
+        trail = Trail.start(script="test", context={})
+        trail.warn("stale_cache", "cache is 2 days old")
+        trail.finish()
+        assert len([e for e in _read_events() if e["level"] == "warn"]) == 1
 
     def test_debug_writes_debug_level(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.debug("lookup", "checking cache")
-            trail.finish()
-            events = _read_events(d)
-            debugs = [e for e in events if e["level"] == "debug"]
-            assert len(debugs) == 1
+        trail = Trail.start(script="test", context={})
+        trail.debug("lookup", "checking cache")
+        trail.finish()
+        assert len([e for e in _read_events() if e["level"] == "debug"]) == 1
 
 
 class TestTrailSpan:
     def test_span_writes_start_and_end(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            with trail.span("post_review"):
-                trail.info("post_inline", "posted 4 comments")
-            trail.finish()
-            events = _read_events(d)
-            starts = [e for e in events if e["event_type"] == "span_start"]
-            ends = [e for e in events if e["event_type"] == "span_end"]
-            assert len(starts) == 1
-            assert starts[0]["span"] == "post_review"
-            assert len(ends) == 1
-            assert ends[0]["span"] == "post_review"
-            assert ends[0]["duration_ms"] is not None
-            assert ends[0]["duration_ms"] >= 0
+        trail = Trail.start(script="test", context={})
+        with trail.span("post_review"):
+            trail.info("post_inline", "posted 4 comments")
+        trail.finish()
+        events = _read_events()
+        starts = [e for e in events if e["event_type"] == "span_start"]
+        ends = [e for e in events if e["event_type"] == "span_end"]
+        assert len(starts) == 1
+        assert starts[0]["span"] == "post_review"
+        assert len(ends) == 1
+        assert ends[0]["duration_ms"] >= 0
 
 
 class TestTrailFinish:
     def test_finish_writes_summary(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.info("do_thing", "did it")
-            trail.finish()
-            events = _read_events(d)
-            summaries = [e for e in events if e["event_type"] == "summary"]
-            assert len(summaries) == 1
-            assert summaries[0]["duration_ms"] is not None
-            assert summaries[0]["duration_ms"] >= 0
+        trail = Trail.start(script="test", context={})
+        trail.info("do_thing", "did it")
+        trail.finish()
+        summaries = [e for e in _read_events() if e["event_type"] == "summary"]
+        assert len(summaries) == 1
+        assert summaries[0]["action"] == FINISH_ACTION
+        assert summaries[0]["duration_ms"] >= 0
 
 
 class TestTrailAppend:
     def test_multiple_invocations_append(self):
-        with tempfile.TemporaryDirectory() as d:
-            t1 = Trail.start(script="test", artifact_dir=d, context={})
-            t1.info("a", "first")
-            t1.finish()
-            t2 = Trail.start(script="test", artifact_dir=d, context={})
-            t2.info("b", "second")
-            t2.finish()
-            events = _read_events(d)
-            invocations = set(e["invocation"] for e in events)
-            assert len(invocations) == 2
+        t1 = Trail.start(script="test", context={})
+        t1.info("a", "first")
+        t1.finish()
+        t2 = Trail.start(script="test", context={})
+        t2.info("b", "second")
+        t2.finish()
+        assert len(set(e["invocation"] for e in _read_events())) == 2
+
+    def test_two_processes_append_intact_lines(self, tmp_path):
+        """One file now takes appends from `pr` and the script it spawned.
+
+        A short write splits a record across two write() calls — this happens
+        for real on NFS-mounted homes, on signal interruption, and at rlimit
+        boundaries — and without the flock the other process's append can
+        land in the gap between them. Every raw write is forced short here
+        (4 KiB) so the interleaving window opens on every record, on every
+        filesystem, deterministically.
+        """
+        writer = tmp_path / "writer.py"
+        writer.write_text(textwrap.dedent(f"""
+            # `_io.FileIO` is a static type on this interpreter and refuses
+            # attribute assignment, so the short write is forced one layer up:
+            # `open()` itself is swapped for a version whose raw layer is a
+            # pure-Python RawIOBase that truncates every write to 4 KiB. trail.py
+            # opens the trail file with a bare `open(path, "a")`, so patching
+            # only that call, by mode and suffix, leaves every other open alone.
+            import builtins
+            import io
+            import os
+
+            _real_open = builtins.open
+
+            class _ShortRawIO(io.RawIOBase):
+                def __init__(self, fd):
+                    self._fd = fd
+
+                def writable(self):
+                    return True
+
+                def write(self, b):
+                    return os.write(self._fd, bytes(b)[:4096])
+
+                def fileno(self):
+                    return self._fd
+
+                def close(self):
+                    if not self.closed:
+                        os.close(self._fd)
+                    super().close()
+
+            def _short_open(file, mode="r", *args, **kwargs):
+                if mode == "a" and str(file).endswith(".jsonl"):
+                    fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+                    return io.TextIOWrapper(io.BufferedWriter(_ShortRawIO(fd)))
+                return _real_open(file, mode, *args, **kwargs)
+
+            builtins.open = _short_open
+
+            import sys
+            sys.path.insert(0, {str(LIB_DIR)!r})
+            from trail import Trail
+            trail = Trail.start(script=sys.argv[1], context={{}})
+            for _ in range(50):
+                trail.info("bulk", "x" * 9000, data={{"pad": "y" * 9000}})
+            trail.finish()
+        """))
+        procs = [
+            subprocess.Popen([sys.executable, str(writer), name], env=dict(os.environ))
+            for name in ("alpha", "beta")
+        ]
+        for p in procs:
+            assert p.wait() == 0
+        events = _read_events()
+        assert len([e for e in events if e["action"] == "bulk"]) == 100
+        assert {e["script"] for e in events} == {"alpha", "beta"}
 
 
 class TestTrailDebugMode:
     def test_debug_mode_via_flag(self, capsys):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={}, debug=True)
-            trail.info("fetch", "fetched items")
-            trail.finish()
-            captured = capsys.readouterr()
-            assert "[trail]" in captured.err
-            assert "fetch" in captured.err
+        trail = Trail.start(script="test", context={}, debug=True)
+        trail.info("fetch", "fetched items")
+        trail.finish()
+        captured = capsys.readouterr()
+        assert "[trail]" in captured.err
+        assert "fetch" in captured.err
 
     def test_normal_mode_no_stderr(self, capsys):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.info("fetch", "fetched items")
-            trail.finish()
-            captured = capsys.readouterr()
-            assert "[trail]" not in captured.err
+        trail = Trail.start(script="test", context={})
+        trail.info("fetch", "fetched items")
+        trail.finish()
+        assert "[trail]" not in capsys.readouterr().err
 
     def test_debug_mode_via_env(self, capsys, monkeypatch):
         monkeypatch.setenv("WORKBENCH_DEBUG", "1")
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.info("fetch", "fetched items")
-            trail.finish()
-            captured = capsys.readouterr()
-            assert "[trail]" in captured.err
+        trail = Trail.start(script="test", context={})
+        trail.info("fetch", "fetched items")
+        trail.finish()
+        assert "[trail]" in capsys.readouterr().err
 
 
-def test_trail_start_gitignores_a_new_artifact_dir(tmp_path, monkeypatch):
-    """Creating .workbench/ inside a repo is now the trail's job, not state's.
+class TestTrailSummary:
+    def test_summary_writes_a_second_kind_of_summary_event(self):
+        trail = Trail.start(script="pr", context={"repo": "org/repo", "pr": 1})
+        trail.summary("pr_outcome", "org/repo#7 merged", data={"outcome": "MERGED"})
+        trail.finish()
+        summaries = [e for e in _read_events() if e["event_type"] == "summary"]
+        actions = {e["action"] for e in summaries}
+        assert actions == {"pr_outcome", FINISH_ACTION}
+        outcome = next(e for e in summaries if e["action"] == "pr_outcome")
+        assert outcome["data"] == {"outcome": "MERGED"}
+        assert "duration_ms" not in outcome
 
-    Global/system git config is disabled for this test's subprocess calls: a
-    developer machine's own excludesfile may already ignore .workbench/ (this
-    very repo's setup does, via git's default $XDG_CONFIG_HOME/git/ignore),
-    which would make check-ignore report "already ignored" and mask the
-    behavior this test exists to prove.
-    """
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    artifact_dir = tmp_path / ".workbench"
-    Trail.start(script="pr", artifact_dir=str(artifact_dir), context={})
-    assert ".workbench/" in (tmp_path / ".gitignore").read_text()
+    def test_per_event_context_overrides_the_runs(self):
+        """`pr gc` prunes other PRs than its own; the record must name theirs."""
+        trail = Trail.start(script="pr", context={"repo": "org/repo", "pr": 1})
+        trail.summary("pr_outcome", "", context={"pr": 7, "branch": "feat/x"})
+        trail.finish()
+        outcome = next(e for e in _read_events() if e["action"] == "pr_outcome")
+        assert outcome["context"] == {"repo": "org/repo", "pr": 7, "branch": "feat/x"}
 
-
-def test_trail_start_gitignores_a_nested_artifact_dir_by_its_path(tmp_path, monkeypatch):
-    """A bare name would ignore every directory called that, anywhere in the tree.
-
-    This is the `~/.config` case: a dotfiles repo whose first `dream-scan` run
-    creates `workbench/logs/dream-scan/`. Ignoring precisely that path is right;
-    ignoring `dream-scan/` repo-wide is not the trail's call to make.
-    """
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-    monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    artifact_dir = tmp_path / "workbench" / "logs" / "dream-scan"
-    Trail.start(script="dream-scan", artifact_dir=str(artifact_dir), context={})
-    assert "/workbench/logs/dream-scan/" in (tmp_path / ".gitignore").read_text()
-
-
-def test_trail_start_outside_a_repo_writes_no_gitignore(tmp_path, monkeypatch):
-    """Review artifact dirs live under state_dir(), where there is no repo.
-
-    Run from inside tmp_path so an unguarded empty toplevel — Path("") is
-    Path(".") — would land its .gitignore right where this asserts there is none.
-    """
-    monkeypatch.chdir(tmp_path)
-    artifact_dir = tmp_path / "reviews" / "widget-1"
-    Trail.start(script="claude-review", artifact_dir=str(artifact_dir), context={})
-    assert not (tmp_path / ".gitignore").exists()
-
-
-@pytest.mark.parametrize("stdout", [
-    # Nothing at all.
-    "",
-    # A prefix with no toplevel above it: Path("") is Path("."), so an unguarded
-    # toplevel lands .gitignore in whatever directory the process stands in.
-    "\nart/",
-])
-def test_trail_start_ignores_a_rev_parse_that_answers_nothing(tmp_path, monkeypatch, stdout):
-    """returncode 0 without a toplevel is not a repo root, and must not be used."""
-    monkeypatch.chdir(tmp_path)
-    artifact_dir = tmp_path / "art"
-    real_run = subprocess.run
-    # trail_module.subprocess is the one shared subprocess module, so this patch
-    # is live process-wide for the duration of the test. It therefore stands in
-    # for exactly the argv _ensure_gitignored issues and delegates everything
-    # else — matching on "rev-parse" alone would hand a synthetic empty success
-    # to any other caller that happened to run one.
-    stood_in_for = [
-        "git", "-C", str(artifact_dir), "rev-parse", "--show-toplevel", "--show-prefix",
-    ]
-
-    stood_in_calls = []
-
-    def fake_run(cmd, *args, **kwargs):
-        if isinstance(cmd, (list, tuple)) and list(cmd) == stood_in_for:
-            stood_in_calls.append(list(cmd))
-            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
-        return real_run(cmd, *args, **kwargs)
-
-    monkeypatch.setattr(trail_module.subprocess, "run", fake_run)
-    Trail.start(script="pr", artifact_dir=str(artifact_dir), context={})
-    # tmp_path is not a repo, so a real rev-parse also writes no .gitignore: if
-    # _ensure_gitignored's argv changes shape the stand-in stops matching and the
-    # assertion below passes without the branch under test ever running.
-    assert stood_in_calls, "the stand-in never matched; _ensure_gitignored's argv changed"
-    assert not (tmp_path / ".gitignore").exists()
+    def test_the_runs_context_is_not_mutated(self):
+        trail = Trail.start(script="pr", context={"repo": "org/repo", "pr": 1})
+        trail.summary("pr_outcome", "", context={"pr": 7})
+        trail.info("after", "")
+        after = next(e for e in _read_events() if e["action"] == "after")
+        assert after["context"] == {"repo": "org/repo", "pr": 1}
 
 
 class TestAddTrailArgs:
@@ -293,12 +306,10 @@ class TestAddTrailArgs:
         import argparse
         parser = argparse.ArgumentParser()
         add_trail_args(parser)
-        args = parser.parse_args(["--debug"])
-        assert args.debug is True
+        assert parser.parse_args(["--debug"]).debug is True
 
     def test_debug_defaults_false(self):
         import argparse
         parser = argparse.ArgumentParser()
         add_trail_args(parser)
-        args = parser.parse_args([])
-        assert args.debug is False
+        assert parser.parse_args([]).debug is False

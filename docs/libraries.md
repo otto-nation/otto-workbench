@@ -32,7 +32,7 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 | Constant | Holds | XDG rung | Default |
 |----------|-------|----------|---------|
 | `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `overrides/`, `mcp-tools.json`, `review.yml`, `reuse-level` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
-| `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `logs/`, `usage/`, `install.yml`, applied migrations | `XDG_STATE_HOME` | `~/.local/state/workbench` |
+| `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `trail/`, `usage/`, `install.yml`, applied migrations | `XDG_STATE_HOME` | `~/.local/state/workbench` |
 | `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: `vertex-quota/` | `XDG_CACHE_HOME` | `~/.cache/workbench` |
 
 `install.yml` sits under state despite the name: `lib/state.sh` owns every write to it, and it is what the old `installed.components` file migrated into. It records what a sync found or installed, not anything a user chose to type.
@@ -45,16 +45,23 @@ Its own module rather than part of `constants.sh` because two other consumers ne
 
 Two definitions outside `lib/` express the same chain, and `tests/workbench_roots.bats` cross-validates all three:
 
-- [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python owner. Exposes `config_dir()`, `state_dir()`, `cache_dir(consumer=None)`, `logs_dir(tool=None)`, and `reviews_dir()`, resolved per call rather than frozen at import. The two that take a name return one consumer's subtree of the root, and reject anything but a bare directory name — a path would land outside the tree the root's owner globs over. `reviews_dir()` is the sole owner of the reviews join, so the review system and the tools that read its output — `otto-log` for the trails, `retro-scan` for the findings — cannot disagree about where a review is.
+- [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python owner. Exposes `config_dir()`, `state_dir()`, `cache_dir(consumer=None)`, `trail_dir()`, and `reviews_dir()`, resolved per call rather than frozen at import. `cache_dir` takes a consumer name and rejects anything but a bare directory name — a path would land outside the tree the root's owner globs over. `trail_dir()` takes nothing: every trail writer shares one root, `<state>/trail/`, with one file per month. `reviews_dir()` is the sole owner of the reviews join, so the review system and the tool that reads its output — `retro-scan` for the findings — cannot disagree about where a review is.
 - [`zsh/config.d/aliases/docker.zsh`](../zsh/config.d/aliases/docker.zsh) — spelled inline, because `WORKBENCH_DIR` is unknown at shell startup and sourcing would add a file read to every shell.
 
-#### The fourth root: per-worktree state
+#### Trails
 
-Data that belongs to one worktree rather than to the user — the `pr` scoreboard (`state.json`), its `trail.jsonl`, and the `run.lock` — lives in that worktree's own git dir, under `workbench/`. `workbench_paths.worktree_state_dir(root)` resolves it via `git rev-parse --absolute-git-dir`, which answers `<repo>/.git` for the main worktree and `<common>/worktrees/<name>` for a linked one; that is what scopes the state to a worktree instead of to the repository. It raises `NotAWorktree` when the path has no git dir to hang state from — callers that read catch it, callers that were told to write should not.
+Every AI script appends to `trail_dir()`, in a file named for the emitting
+event's UTC month. The layout mirrors `ai_usage.LEDGER_DIR`: rotation falls out
+of the filename, `--since` drops whole files without opening them, and nothing
+needs a pruning job. `_emit` takes an `fcntl.flock` on the open handle inside
+the module's thread lock — one file now takes appends from concurrent
+processes (`pr` and the script it spawned), and a short write (NFS, a signal,
+an rlimit boundary) can split a record across two `write()` calls, letting the
+other process's append land in the gap.
 
-Python-only, so it has no shell twin and no entry in `tests/workbench_roots.bats`. Two consequences make it worth the git dir over a directory in the working tree: `wt remove` deletes the state along with the worktree it describes, and nothing is written where the consumer repo can see it, so there is no `.gitignore` entry to maintain in every repo the tools touch. A pre-#624 `.workbench/` found in the working tree is moved into place on the first resolve.
-
-`trail_dir(root, tool)` is the same path for callers writing a trail, falling back to `logs_dir(tool)` when the directory is not a worktree — the other place `otto-log` looks.
+The `20260814-unify-trail-root` migration carried the pre-cutover review trails
+into `trail/legacy.jsonl`. `otto-log` always reads a file whose stem does not
+name a month, which is what keeps it visible under `--since`.
 
 ### output.sh
 

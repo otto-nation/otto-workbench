@@ -2,8 +2,8 @@
 
 import argparse
 import json
+import re
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 import importlib.machinery
@@ -18,7 +18,7 @@ sys.path.insert(0, str(BIN_DIR))
 
 import ai_usage
 import workbench_paths
-from trail import TRAIL_FILENAME, Trail
+from trail import Trail
 
 _spec = importlib.util.spec_from_loader(
     "otto_log",
@@ -28,9 +28,9 @@ otto_log = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(otto_log)
 
 
-def _make_trail(d: str, script: str, events: list[tuple[str, str]]) -> str:
+def _make_trail(script: str, events: list[tuple[str, str]]) -> str:
     """Write a trail with the given action/detail pairs, return invocation ID."""
-    trail = Trail.start(script=script, artifact_dir=d, context={"repo": "org/repo", "pr": 42})
+    trail = Trail.start(script=script, context={"repo": "org/repo", "pr": 42})
     for action, detail in events:
         trail.info(action, detail)
     trail.finish()
@@ -38,58 +38,120 @@ def _make_trail(d: str, script: str, events: list[tuple[str, str]]) -> str:
 
 
 class TestTrailDiscovery:
-    def test_discover_worktree_trail(self, worktree):
-        wb_dir = workbench_paths.worktree_state_dir(worktree)
-        wb_dir.mkdir(parents=True, exist_ok=True)
-        _make_trail(str(wb_dir), "ci-check", [("fetch", "fetched")])
-        trails = otto_log.discover_trails(worktree_root=str(worktree))
-        assert len(trails) >= 1
-        assert any(str(wb_dir / TRAIL_FILENAME) in str(t) for t in trails)
+    def test_finds_the_month_file_every_writer_appends_to(self):
+        _make_trail("ci-check", [("fetch", "fetched")])
+        trails = otto_log.discover_trails()
+        assert len(trails) == 1
+        assert trails[0].parent == workbench_paths.trail_dir()
 
-    def test_a_directory_that_is_not_a_worktree_has_no_trail(self, tmp_path):
-        """otto-log runs wherever the user is, which need not be a worktree."""
-        empty = tmp_path / "empty"
-        empty.mkdir()
-        assert otto_log.discover_trails(
-            worktree_root=str(tmp_path),
-            reviews_dir=str(empty), logs_dir=str(empty),
-        ) == []
+    def test_an_empty_root_has_no_trails(self):
+        assert otto_log.discover_trails() == []
 
-    def test_discover_review_trails(self):
-        with tempfile.TemporaryDirectory() as d:
-            review_dir = Path(d) / "reviews" / "repo-42"
-            review_dir.mkdir(parents=True)
-            _make_trail(str(review_dir), "claude-review", [("review", "reviewed")])
-            trails = otto_log.discover_trails(reviews_dir=str(Path(d) / "reviews"))
-            assert len(trails) >= 1
+    def test_every_script_lands_in_the_same_file(self):
+        _make_trail("ci-check", [("a", "first")])
+        _make_trail("claude-review", [("b", "second")])
+        assert len(otto_log.discover_trails()) == 1
 
 
 class TestQueryFiltering:
     def test_filter_by_script(self):
-        with tempfile.TemporaryDirectory() as d:
-            _make_trail(d, "ci-check", [("a", "first")])
-            _make_trail(d, "pr-rebase", [("b", "second")])
-            events = otto_log.load_events([str(Path(d) / TRAIL_FILENAME)])
-            filtered = otto_log.filter_events(events, script="ci-check")
-            assert all(e["script"] == "ci-check" for e in filtered)
+        _make_trail("ci-check", [("a", "first")])
+        _make_trail("pr-rebase", [("b", "second")])
+        events = otto_log.load_events(otto_log.discover_trails())
+        filtered = otto_log.filter_events(events, script="ci-check")
+        assert filtered
+        assert all(e["script"] == "ci-check" for e in filtered)
 
     def test_filter_by_level(self):
-        with tempfile.TemporaryDirectory() as d:
-            trail = Trail.start(script="test", artifact_dir=d, context={})
-            trail.info("ok", "fine")
-            trail.error("bad", "broken")
-            trail.finish()
-            events = otto_log.load_events([str(Path(d) / TRAIL_FILENAME)])
-            filtered = otto_log.filter_events(events, level="error")
-            assert all(e["level"] == "error" for e in filtered)
+        trail = Trail.start(script="test", context={})
+        trail.info("ok", "fine")
+        trail.error("bad", "broken")
+        trail.finish()
+        events = otto_log.load_events(otto_log.discover_trails())
+        filtered = otto_log.filter_events(events, level="error")
+        assert filtered
+        assert all(e["level"] == "error" for e in filtered)
 
     def test_filter_by_invocation(self):
-        with tempfile.TemporaryDirectory() as d:
-            inv1 = _make_trail(d, "test", [("a", "first")])
-            _make_trail(d, "test", [("b", "second")])
-            events = otto_log.load_events([str(Path(d) / TRAIL_FILENAME)])
-            filtered = otto_log.filter_events(events, invocation=inv1)
-            assert all(e["invocation"] == inv1 for e in filtered)
+        inv1 = _make_trail("test", [("a", "first")])
+        _make_trail("test", [("b", "second")])
+        events = otto_log.load_events(otto_log.discover_trails())
+        filtered = otto_log.filter_events(events, invocation=inv1)
+        assert filtered
+        assert all(e["invocation"] == inv1 for e in filtered)
+
+    def test_a_pre_cutover_narrow_invocation_still_resolves(self):
+        """IDs minted before the width grew are 8 hex characters and live in the
+        same root forever. The match is on the whole field, so both widths select
+        their own run and neither one prefix-matches the other."""
+        new_inv = _make_trail("test", [("a", "first")])
+        root = workbench_paths.trail_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "legacy.jsonl").write_text(json.dumps({
+            "ts": "2026-01-01T00:00:00Z", "script": "old-run",
+            "invocation": new_inv[:8], "level": "info", "event_type": "action",
+            "action": "x", "detail": "", "context": {},
+        }) + "\n")
+
+        events = otto_log.load_events(otto_log.discover_trails())
+        old = otto_log.filter_events(events, invocation=new_inv[:8])
+        assert [e["script"] for e in old] == ["old-run"]
+        assert all(e["script"] == "test" for e in
+                   otto_log.filter_events(events, invocation=new_inv))
+
+
+class TestSinceSkipsFilesByName:
+    def _write(self, name: str, script: str):
+        root = workbench_paths.trail_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(json.dumps({
+            "ts": "2026-01-01T00:00:00Z", "script": script, "invocation": "a1b2c3d4",
+            "level": "info", "event_type": "action", "action": "x", "detail": "",
+            "context": {},
+        }) + "\n")
+
+    def test_drops_a_month_below_the_cutoff(self):
+        self._write("2026-01.jsonl", "old")
+        self._write("2026-08.jsonl", "new")
+        names = [p.name for p in otto_log.discover_trails(
+            since=datetime(2026, 8, 1, tzinfo=timezone.utc))]
+        assert names == ["2026-08.jsonl"]
+
+    def test_always_reads_a_stem_that_is_not_a_month(self):
+        """`legacy.jsonl` holds every pre-cutover record; its stem names no month."""
+        self._write("legacy.jsonl", "carried")
+        self._write("2026-01.jsonl", "old")
+        names = [p.name for p in otto_log.discover_trails(
+            since=datetime(2026, 8, 1, tzinfo=timezone.utc))]
+        assert names == ["legacy.jsonl"]
+
+    def test_no_cutoff_reads_everything(self):
+        self._write("2026-01.jsonl", "old")
+        self._write("legacy.jsonl", "carried")
+        assert len(otto_log.discover_trails()) == 2
+
+
+class TestRepoScoping:
+    def _trail(self, repo: str):
+        trail = Trail.start(script="pr", context={"repo": repo, "pr": 1})
+        trail.info("act", "did")
+        trail.finish()
+
+    def test_recent_narrows_to_one_repo(self, capsys):
+        self._trail("org/alpha")
+        self._trail("org/beta")
+        otto_log.cmd_recent(argparse.Namespace(since="1d", repo="org/alpha", json=True))
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert rows
+        assert all(r["context"]["repo"] == "org/alpha" for r in rows)
+
+    def test_list_narrows_to_one_repo(self, capsys):
+        self._trail("org/alpha")
+        self._trail("org/beta")
+        otto_log.cmd_list(argparse.Namespace(
+            script=None, since=None, repo="org/alpha", json=True))
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert len(rows) == 1
 
 
 # ── stats ─────────────────────────────────────────────────────────────────────
@@ -239,3 +301,29 @@ class TestStatsCommand:
         out = capsys.readouterr().out
         assert "fresh" in out
         assert "stale" not in out
+
+
+class TestSummaryIsNotAlwaysFinish:
+    def test_show_reports_the_runs_duration(self, capsys):
+        trail = Trail.start(script="pr", context={"repo": "org/repo"})
+        trail.info("act", "did")
+        trail.finish()
+        otto_log.cmd_show(argparse.Namespace(invocation=trail.invocation, json=False))
+        # A duration, not merely a line that happens to end in "s" — the point of
+        # the test is that `finish` is found and its duration_ms rendered.
+        assert re.search(r"\d+\.\d+s", capsys.readouterr().out)
+
+    def test_show_survives_a_summary_with_no_duration(self, capsys):
+        """A terminal `pr_outcome` event carries no duration and must not raise."""
+        trail = Trail.start(script="pr", context={"repo": "org/repo"})
+        trail.summary("pr_outcome", "org/repo#7 merged", data={"outcome": "MERGED"})
+        otto_log.cmd_show(argparse.Namespace(invocation=trail.invocation, json=False))
+        assert "pr_outcome" in capsys.readouterr().out
+
+    def test_list_survives_a_summary_with_no_duration(self, capsys):
+        trail = Trail.start(script="pr", context={"repo": "org/repo"})
+        trail.summary("pr_outcome", "org/repo#7 merged")
+        otto_log.cmd_list(argparse.Namespace(
+            script=None, since=None, repo=None, json=True))
+        rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert rows[0]["duration_ms"] is None

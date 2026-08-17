@@ -49,6 +49,11 @@ from trail import Trail, add_trail_args
 # the user expected to be instant, so the ceiling stays low.
 VALUE_FLAGS_TIMEOUT = 5.0
 
+# What the pre-cutover layout called its worktree-local trail. Spelled here
+# rather than imported: trail.py no longer names this file, because no trail is
+# written to a worktree any more. It exists only as something to sweep.
+_LEGACY_TRAIL_FILENAME = "trail.jsonl"
+
 _COMMANDS = {
     "create":   {"help": "Create a PR (wraps task pr:create)"},
     "status":   {"help": "Show CI, review, and comment status dashboard"},
@@ -314,7 +319,8 @@ def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> st
 
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_pr: str | None = None,
-               original_branch: str | None = None) -> int:
+               original_branch: str | None = None,
+               **_kw) -> int:
     """Delegate to claude-review, or handle --post/--repair/--summary/--recover locally."""
     flags = set(argv)
     mode_flags = flags & {"--post", "--repair", "--summary", "--recover"}
@@ -477,7 +483,8 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
 
 def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                  original_pr: str | None = None,
-                 original_branch: str | None = None) -> int:
+                 original_branch: str | None = None,
+                 **_kw) -> int:
     """Delegate to review-threads, routing --triage, --fix and --finish flags."""
     return _run_delegate(_COMMANDS["comments"], list(argv), ctx,
                          original_pr=original_pr,
@@ -490,23 +497,33 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
 # once the target-scoped layout has shipped long enough that no worktree
 # still carries the legacy files, delete this function and its call site.
 def _sweep_legacy_state(worktree_root: Path) -> int:
-    """Remove state and lock files the pre-target layout left in a worktree.
+    """Remove what the pre-target layout left in a worktree.
 
     Returns 1 if anything was removed. No migration carries these: they are
     gitignored, worktree-local, and rebuilt by the next command that writes
-    them. `trail.jsonl` and the directory itself stay — the trail still lives
-    there.
+    them. The trail goes with them now that every trail is written to the user's
+    own state root — a `trail.jsonl` sitting in a working tree is litter.
+
+    The directory itself is removed only when nothing else is in it: an entry
+    this layout never wrote is not ours to delete.
     """
     legacy = worktree_root / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
     removed = 0
-    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE):
+    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE, _LEGACY_TRAIL_FILENAME):
         path = legacy / name
         if path.is_file():
             path.unlink(missing_ok=True)
             removed = 1
-    if removed:
-        log.info(f"GC: removed legacy worktree state in {legacy}")
-    return removed
+    if not removed:
+        return 0
+    try:
+        legacy.rmdir()
+    except OSError:
+        # Something else is in there, or it is gone already. Either way the
+        # files this layout owns are the only thing this sweep promised.
+        pass
+    log.info(f"GC: removed legacy worktree state in {legacy}")
+    return 1
 
 
 def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -520,14 +537,14 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return subprocess.run(cmd).returncode
 
 
-def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail: Trail, **_kw) -> int:
     """Clean up stale PR artifacts across all domains."""
     # Everything but the legacy sweep is user-scoped and works from a bare repo.
     # Our own target is skipped: we are holding its lock right now.
     total = (
         review_gc.gc_reviews()
         + review_gc.prune_merged_reviews()
-        + review_gc.prune_merged_targets(skip=ctx.target_dir)
+        + review_gc.prune_merged_targets(skip=ctx.target_dir, trail=trail)
     )
     if ctx.worktree_root:
         total += _sweep_legacy_state(ctx.worktree_root)
@@ -610,14 +627,8 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
               original_pr: str | None,
               original_branch: str | None) -> int:
     """Start the trail and route to the command's handler or backing script."""
-    # A command that runs without a worktree — `pr status` from a bare repo —
-    # has no state for its trail to sit beside, so it goes to pr's own logs.
-    trail_root = workbench_paths.logs_dir(SCRIPT)
-    if ctx.worktree_root:
-        trail_root = workbench_paths.trail_dir(ctx.worktree_root, SCRIPT)
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(trail_root),
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=getattr(global_args, "debug", False),
     )
@@ -632,6 +643,7 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
         handler = _CUSTOM.get(args.command)
         if handler:
             return handler(extra, ctx,
+                           trail=trail,
                            original_pr=original_pr,
                            original_branch=original_branch)
         assert "script" in _COMMANDS[args.command], \

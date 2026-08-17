@@ -457,6 +457,99 @@ class PRState:
     updated_at: str = ""
 
 
+# ── PR outcome ──────────────────────────────────────────────────────────────
+
+
+class PRCloseState(Enum):
+    """A PR's lifecycle state as ``gh`` reports it, with the field that dates it.
+
+    ``ended_at_field`` is the ``gh pr view --json`` key holding when the PR
+    reached this state. OPEN has none — an open PR has not ended — and that is
+    what ``is_terminal`` reads, so no caller restates which states retire a
+    review cycle.
+
+    OPEN is a member rather than an absence because a sweep has to tell "gh
+    said the PR is open" from "gh answered with a state this code does not
+    know". The first is a real answer; the second is a renamed or added state,
+    which would otherwise read as still-open forever and quietly retire the
+    prune.
+    """
+
+    OPEN = ("OPEN", None)
+    MERGED = ("MERGED", "mergedAt")
+    CLOSED = ("CLOSED", "closedAt")
+
+    def __new__(cls, value: str, ended_at_field: str | None) -> PRCloseState:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.ended_at_field = ended_at_field
+        return obj
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether this state ends the PR, and with it the cycle's artifacts."""
+        return self.ended_at_field is not None
+
+    @classmethod
+    def parse(cls, raw: str | None) -> PRCloseState | None:
+        """The state ``gh`` named, or None for one this code does not know."""
+        try:
+            return cls(raw)
+        except ValueError:
+            return None
+
+
+# What ``gh pr view --json`` has to fetch to build a PRClosure: the state, plus
+# the timestamp field every terminal state dates itself with. Derived from the
+# enum so a state added there is asked for without also editing the query.
+GH_STATE_JSON_FIELDS = ",".join(
+    ["state", *(s.ended_at_field for s in PRCloseState if s.is_terminal)]
+)
+
+
+@dataclass(frozen=True)
+class PRClosure:
+    """How a PR ended, and when.
+
+    Only ever built for a terminal state: "still open" and "we could not ask"
+    are both the absence of a closure rather than a member of one, which is what
+    lets a sweep decide on the closure's presence alone.
+
+    ``ended_at`` is GitHub's timestamp, not the sweep's clock. It is empty when
+    gh has not filled the field in yet — a missing timestamp, not a PR that has
+    not ended — so it never stands in for the state.
+    """
+
+    state: PRCloseState
+    ended_at: str = ""
+
+
+# The action on the trail's terminal event. `pr_state` owns it because it owns
+# the payload's shape; `review_gc` owns the emit.
+TERMINAL_SUMMARY_ACTION = "pr_outcome"
+
+
+def terminal_summary(state: PRState, closure: PRClosure) -> dict:
+    """How a review cycle ended, for the trail's terminal event.
+
+    Read straight off the domains rather than recomputed: this is the last
+    reading of state that is about to be deleted, not a fresh measurement.
+
+    The closure's ``ended_at`` comes from GitHub rather than from the clock —
+    the scheduled maintenance sweep is what usually runs gc, so the event's own
+    ``ts`` says when that sweep noticed, up to a cycle after the merge.
+    """
+    return {
+        "outcome": closure.state.value,
+        "ended_at": closure.ended_at,
+        "cost_usd": state.review.cost_usd,
+        "total_tokens": state.review.total_tokens,
+        "verdict": state.review.verdict,
+        "finding_counts": dict(state.review.finding_counts),
+        "rebase_conflicts": state.rebase.conflicts_resolved,
+    }
+
+
 # ── Serialization ───────────────────────────────────────────────────────────
 
 

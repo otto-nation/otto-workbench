@@ -189,6 +189,63 @@ def test_bats_test_blocks_reset_depth():
     assert _check(code) == []
 
 
+def test_embedded_awk_program_is_not_bash_nesting():
+    """An awk program's control flow is data to the shell, not nesting.
+
+    The single quote holding it spans lines, so a line-at-a-time strip used to
+    read every `if` and `while` in it as bash and count depth that is not
+    there — and see no `fi` to bring the depth back down.
+    """
+    code = '''\
+#!/usr/bin/env bash
+parse() {
+  awk '
+    /^#/ {
+      if (in_block) {
+        while (n > 0) {
+          print block[n--]
+        }
+      }
+    }
+  ' "$1"
+}
+'''
+    assert _check(code) == []
+
+
+def test_multi_line_double_quoted_string_is_not_bash_nesting():
+    """A double-quoted string carries across lines just as a single-quoted one does."""
+    code = '''\
+#!/usr/bin/env bash
+message="Hello
+  if while for keywords inside the string
+  more text"
+echo "$message"
+'''
+    assert _check(code) == []
+
+
+def test_nesting_after_an_embedded_awk_program_is_still_counted():
+    code = '''\
+#!/usr/bin/env bash
+parse() {
+  awk '
+    { if (x) print }
+  ' "$1"
+  if true; then
+    if true; then
+      if true; then
+        echo "too deep"
+      fi
+    fi
+  fi
+}
+'''
+    violations = _check(code)
+    assert violations
+    assert max(v.depth for v in violations) == 3
+
+
 def test_violation_reports_function_name():
     code = '''\
 #!/usr/bin/env bash

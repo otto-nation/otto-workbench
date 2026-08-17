@@ -66,7 +66,7 @@ def config_dir() -> Path:
 
 
 def state_dir() -> Path:
-    """Generated, machine-local data: reviews/, trail/, usage/, install.yml.
+    """Generated, machine-local data: reviews/, trail/, usage/, install.yml, migrations.applied.
 
     The move off the old ``~/.config/workbench`` default is a hard cut: nothing
     falls back to the legacy path, and ``lib/migrations.sh`` carries the data

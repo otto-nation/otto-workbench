@@ -32,9 +32,9 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 <!-- LIB-ROOTS-START -->
 | Constant | Holds | XDG rung | Default |
 |----------|-------|----------|---------|
-| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `config.yml`, `overrides/`, `mcp-tools.json` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
-| `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `trail/`, `usage/`, `install.yml`, applied migrations | `XDG_STATE_HOME` | `~/.local/state/workbench` |
-| `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: `vertex-quota/` | `XDG_CACHE_HOME` | `~/.cache/workbench` |
+| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: config.yml, overrides/, mcp-tools.json | `XDG_CONFIG_HOME` | `~/.config/workbench` |
+| `WORKBENCH_STATE_DIR` | Generated, machine-local data: reviews/, trail/, usage/, install.yml, migrations.applied | `XDG_STATE_HOME` | `~/.local/state/workbench` |
+| `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: vertex-quota/ | `XDG_CACHE_HOME` | `~/.cache/workbench` |
 <!-- LIB-ROOTS-END -->
 
 `install.yml` sits under state despite the name: `lib/state.sh` owns every write to it, and it is what the old `installed.components` file migrated into. It records what a sync found or installed, not anything a user chose to type.

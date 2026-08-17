@@ -141,6 +141,67 @@ adopt_in_fake() {
   done <<< "$names"
 }
 
+@test "adoption leaves behind an entry no root claims" {
+  # #730 deletes <state>/logs/ on purpose. Adoption runs before any migration
+  # reads its bookkeeping, so carrying logs/ across would reinstate a directory
+  # the migration that removed it is already recorded as applied for, and that
+  # migration will never run again to take it back out (#732).
+  mkdir -p "$FAKE_LEGACY/logs/dream-scan"
+  printf '{"ts":"2026-01-01T00:00:00Z"}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
+  echo "applied" > "$FAKE_LEGACY/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"belong to no root"* ]]
+
+  [ ! -e "$FAKE_STATE/logs" ]
+  [ -f "$FAKE_LEGACY/logs/dream-scan/trail.jsonl" ]
+  # An unclaimed entry is skipped, not a reason to stop: everything a root
+  # does own still moves in the same pass.
+  [ "$(cat "$FAKE_STATE/migrations.applied")" = "applied" ]
+}
+
+@test "adoption skips every name in _LEGACY_UNCLAIMED_ENTRIES" {
+  # Mirrors the config-entry test above: the list is the whole classification
+  # on its side, so anything dropped from it silently becomes state again.
+  local names entry
+  names=$(
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$FAKE_ROOT/lib/constants.sh"
+    . "$FAKE_ROOT/lib/migrations.sh"
+    printf '%s\n' "${_LEGACY_UNCLAIMED_ENTRIES[@]}"
+  )
+  [ -n "$names" ]
+
+  mkdir -p "$FAKE_LEGACY"
+  while IFS= read -r entry; do
+    echo "$entry" > "$FAKE_LEGACY/$entry"
+  done <<< "$names"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  while IFS= read -r entry; do
+    [ "$(cat "$FAKE_LEGACY/$entry")" = "$entry" ]
+    [ ! -e "$FAKE_STATE/$entry" ]
+    [ ! -e "$FAKE_CONFIG/$entry" ]
+  done <<< "$names"
+}
+
+@test "skipping an unclaimed entry is idempotent" {
+  # The legacy root survives while it still holds one, so adoption keeps
+  # running — it has to reach the same decision every time.
+  mkdir -p "$FAKE_LEGACY/logs"
+  echo "leftover" > "$FAKE_LEGACY/logs/dream-scan.jsonl"
+
+  adopt_in_fake
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"belong to no root"* ]]
+  [ "$(cat "$FAKE_LEGACY/logs/dream-scan.jsonl")" = "leftover" ]
+  [ ! -e "$FAKE_STATE/logs" ]
+}
+
 @test "adoption is idempotent across repeated runs" {
   mkdir -p "$FAKE_LEGACY"
   echo "applied" > "$FAKE_LEGACY/migrations.applied"
@@ -184,32 +245,33 @@ adopt_in_fake() {
 
 @test "adoption merges a trail both roots hold rather than keeping both" {
   # One history in two files: keeping both would hide the older from otto-log,
-  # which globs for the exact name.
-  mkdir -p "$FAKE_LEGACY/logs/dream-scan" "$FAKE_STATE/logs/dream-scan"
-  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
-  printf '{"ts":"2026-08-01T00:00:00Z","n":2}\n' > "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  # which globs for the exact name. Staged under reviews/, not the logs/ this
+  # used to use — logs/ belongs to no root since #730, so adoption skips it.
+  mkdir -p "$FAKE_LEGACY/reviews/repo-42" "$FAKE_STATE/reviews/repo-42"
+  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/reviews/repo-42/trail.jsonl"
+  printf '{"ts":"2026-08-01T00:00:00Z","n":2}\n' > "$FAKE_STATE/reviews/repo-42/trail.jsonl"
 
   run adopt_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" != *"kept the new one"* ]]
 
-  [ "$(wc -l < "$FAKE_STATE/logs/dream-scan/trail.jsonl")" -eq 2 ]
-  grep -q '"n":1' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
-  grep -q '"n":2' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  [ "$(wc -l < "$FAKE_STATE/reviews/repo-42/trail.jsonl")" -eq 2 ]
+  grep -q '"n":1' "$FAKE_STATE/reviews/repo-42/trail.jsonl"
+  grep -q '"n":2' "$FAKE_STATE/reviews/repo-42/trail.jsonl"
   [ ! -d "$FAKE_LEGACY" ]
 }
 
 @test "merging a trail onto a file with no trailing newline keeps both records whole" {
-  mkdir -p "$FAKE_LEGACY/logs/dream-scan" "$FAKE_STATE/logs/dream-scan"
-  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
-  printf '{"ts":"2026-08-01T00:00:00Z","n":2}' > "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  mkdir -p "$FAKE_LEGACY/reviews/repo-42" "$FAKE_STATE/reviews/repo-42"
+  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/reviews/repo-42/trail.jsonl"
+  printf '{"ts":"2026-08-01T00:00:00Z","n":2}' > "$FAKE_STATE/reviews/repo-42/trail.jsonl"
 
   run adopt_in_fake
   [ "$status" -eq 0 ]
 
-  [ "$(wc -l < "$FAKE_STATE/logs/dream-scan/trail.jsonl")" -eq 2 ]
-  grep -qx '{"ts":"2026-08-01T00:00:00Z","n":2}' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
-  grep -qx '{"ts":"2026-01-01T00:00:00Z","n":1}' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  [ "$(wc -l < "$FAKE_STATE/reviews/repo-42/trail.jsonl")" -eq 2 ]
+  grep -qx '{"ts":"2026-08-01T00:00:00Z","n":2}' "$FAKE_STATE/reviews/repo-42/trail.jsonl"
+  grep -qx '{"ts":"2026-01-01T00:00:00Z","n":1}' "$FAKE_STATE/reviews/repo-42/trail.jsonl"
 }
 
 @test "adoption merges a monthly usage ledger" {

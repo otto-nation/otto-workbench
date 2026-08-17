@@ -183,6 +183,21 @@ readonly _LEGACY_CONFIG_ENTRIES=(
   config.yml config.schema.json
 )
 
+# What no root holds any more. A completed migration removed these on purpose,
+# and adoption runs ahead of the framework, before any migration reads its own
+# bookkeeping — so an entry carried into the state root here is one the
+# migration that deleted it is already recorded as applied for, and will never
+# run again to clean up after. #730 deletes <state>/logs/ deliberately; without
+# this list, a legacy root still holding logs/ would put it back (#732).
+#
+# Skipped rather than deleted: adoption moves data, it does not decide data is
+# worthless, and a legacy root left holding only these says plainly what was
+# passed over. It is the counterpart to the list above, and the two together
+# are the whole classification — see adopt_legacy_workbench_root.
+readonly _LEGACY_UNCLAIMED_ENTRIES=(
+  logs
+)
+
 # _path_exists PATH — true for anything on disk, a broken symlink included.
 _path_exists() {
   [[ -e "$1" || -L "$1" ]]
@@ -333,14 +348,28 @@ adopt_legacy_workbench_root() {
   # failed top-level entry.
   _ADOPT_MOVED=0
   _ADOPT_STAYED=0
+  _ADOPT_UNCLAIMED=0
   # Dotfiles are left where they are: the only ones that turn up are the
   # filesystem's own (.DS_Store), and they belong to no root.
   for entry in "$legacy"/*; do
     _path_exists "$entry" || continue
     name="${entry##*/}"
-    target="$WORKBENCH_STATE_DIR"
+    # All three destinations are named, none of them left to fall out of the
+    # others. The state root is still where an unlisted entry goes, and that is
+    # deliberate — #624's inventory found four state files that no manifest
+    # written in advance had thought to list, so the list that has to be
+    # exhaustive is the config one. What it must not also absorb is a name no
+    # root holds any more, because the state root is one other code prunes.
     if _array_contains "$name" "${_LEGACY_CONFIG_ENTRIES[@]}"; then
       target="$WORKBENCH_CONFIG_DIR"
+    elif _array_contains "$name" "${_LEGACY_UNCLAIMED_ENTRIES[@]}"; then
+      target=""
+    else
+      target="$WORKBENCH_STATE_DIR"
+    fi
+    if [[ -z "$target" ]]; then
+      _ADOPT_UNCLAIMED=$(( _ADOPT_UNCLAIMED + 1 ))
+      continue
     fi
     if [[ "$target" == "$legacy" ]]; then
       continue
@@ -358,6 +387,13 @@ adopt_legacy_workbench_root() {
   # itself rather than be inferred from the warnings scattered above it.
   if (( _ADOPT_STAYED > 0 )); then
     warn "$_ADOPT_STAYED entries could not be adopted — $legacy still holds them"
+  fi
+  # Said every run, for the same reason as the line above: the operator reading
+  # a sync log is the only one who can decide these are finished with, and the
+  # notice is what stops $legacy from lingering unexplained. It ends the moment
+  # they delete them.
+  if (( _ADOPT_UNCLAIMED > 0 )); then
+    warn "$_ADOPT_UNCLAIMED entries in $legacy belong to no root — left in place; delete them when you no longer want them"
   fi
   rmdir "$legacy" 2>/dev/null || true
   return 0

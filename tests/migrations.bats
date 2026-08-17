@@ -465,3 +465,142 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"duplicate migration filename"* ]]
 }
+
+# ─── Config unification (#626) ───────────────────────────────────────────────
+
+unify_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    . "$FAKE_ROOT/lib/ui.sh"
+    # The real constants and config.sh, not the stubs: the migration writes to
+    # WORKBENCH_CONFIG_FILE and seeds it through wb_config_ensure_file, which is
+    # where the schema modeline comes from. The real ui.sh sources both the same
+    # way, and constants.sh builds the file path from the root exported above.
+    . "$REPO_ROOT/lib/constants.sh"
+    . "$REPO_ROOT/lib/config.sh"
+    . "$REPO_ROOT/bin/migrations/20260814-unify-workbench-config.sh"
+    migration_20260814_unify_workbench_config
+  )
+}
+
+@test "unification is a no-op when no legacy file exists" {
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ ! -f "$FAKE_CONFIG/config.yml" ]
+}
+
+@test "unification folds every legacy file into config.yml" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+  echo "lite" > "$FAKE_CONFIG/reuse-default"
+  printf 'issue_tracker:\n  provider: github\n  team: ENG\n' > "$FAKE_CONFIG/review.yml"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+  [ "$(yq -r '.reuse.default' "$FAKE_CONFIG/config.yml")" = "lite" ]
+  [ "$(yq -r '.review.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+  [ "$(yq -r '.review.issue_tracker.team' "$FAKE_CONFIG/config.yml")" = "ENG" ]
+
+  [ ! -f "$FAKE_CONFIG/reuse-level" ]
+  [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
+  [ -f "$FAKE_CONFIG/reuse-default.migrated" ]
+  [ -f "$FAKE_CONFIG/review.yml.migrated" ]
+}
+
+@test "unification folds a partial set of legacy files" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+  [ "$(yq -r '.reuse.default // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "unification leaves a key config.yml already holds" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'reuse:\n  level: lite\n' > "$FAKE_CONFIG/config.yml"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "lite" ]
+  [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
+}
+
+@test "unification still folds keys an existing config.yml lacks" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'reuse:\n  level: lite\n' > "$FAKE_CONFIG/config.yml"
+  echo "full" > "$FAKE_CONFIG/reuse-default"
+  printf 'issue_tracker:\n  provider: jira\n' > "$FAKE_CONFIG/review.yml"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "lite" ]
+  [ "$(yq -r '.reuse.default' "$FAKE_CONFIG/config.yml")" = "full" ]
+  [ "$(yq -r '.review.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "jira" ]
+}
+
+@test "unification renames a review.yml with nothing to carry" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'unrelated: true\n' > "$FAKE_CONFIG/review.yml"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ -f "$FAKE_CONFIG/review.yml.migrated" ]
+  [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "unification seeds a new config.yml with the schema modeline" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+
+  run head -1 "$FAKE_CONFIG/config.yml"
+  [[ "$output" == "# yaml-language-server: \$schema="* ]]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+}
+
+@test "unification leaves a config.yml the user already wrote unseeded" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'reuse:\n  default: lite\n' > "$FAKE_CONFIG/config.yml"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  run head -1 "$FAKE_CONFIG/config.yml"
+  [[ "$output" != *"yaml-language-server"* ]]
+}
+
+@test "unification re-run after a fold is a no-op" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  run unify_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+}
+
+@test "a mid-fold yq failure surfaces non-zero and leaves the source un-renamed" {
+  mkdir -p "$FAKE_CONFIG"
+  echo "ultra" > "$FAKE_CONFIG/reuse-level"
+  # Malformed YAML makes the fold's `yq` read fail rather than parse.
+  printf 'issue_tracker: [unclosed\n' > "$FAKE_CONFIG/review.yml"
+
+  run unify_in_fake
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not fold every setting into config.yml"* ]]
+
+  # The failing fold's source is left in place, not renamed.
+  [ -f "$FAKE_CONFIG/review.yml" ]
+  [ ! -f "$FAKE_CONFIG/review.yml.migrated" ]
+  # A fold that succeeded before the failure still carried its value over.
+  [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
+  [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
+}

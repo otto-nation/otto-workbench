@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from enum import Enum
 from typing import get_type_hints
 
 from serde import HintKind, classify
@@ -119,6 +120,10 @@ def _dict_schema(hint, args) -> dict:
     schema = {"type": "object", "additionalProperties": _hint_to_schema(args[1])}
     if args[0] is int:
         schema["propertyNames"] = {"pattern": _INT_KEY_PATTERN}
+    # An enum key type is a closed set, so it constrains which property names
+    # are valid, not only what their values look like.
+    elif isinstance(args[0], type) and issubclass(args[0], Enum):
+        schema["propertyNames"] = {"enum": [m.value for m in args[0]]}
     return schema
 
 

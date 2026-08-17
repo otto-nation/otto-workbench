@@ -597,6 +597,202 @@ _readme_workbench_commands() {
   done
 }
 
+# ── docs/libraries.md tables ─────────────────────────────────────────────────
+#
+# The lib sources are the single definition of what each module offers: every
+# function carries a doc comment naming it, and docs/libraries.md used to copy
+# those out by hand. It drifted — two dozen functions went unlisted and one was
+# filed under the module it had moved away from. The tables are rendered from
+# the comments instead; the prose around them stays hand-written.
+
+# _lib_files ARRAY_REF — every lib module, facade modules first, then lib/ai/.
+_lib_files() {
+  local -n __out=$1
+  local f
+  __out=()
+  for f in "$LIB_DIR"/*.sh "$LIB_DIR"/ai/*.sh; do
+    if [[ -f "$f" ]]; then
+      __out+=("$f")
+    fi
+  done
+}
+
+# _lib_doc_rows FILE — "signature<TAB>purpose" per public function in FILE.
+#
+# The convention the sources already follow: a comment block above the
+# definition whose first line names the function. The purpose is the text after
+# the em dash on that line, or the first following comment line when the
+# signature stands alone. A function whose purpose comes out empty is
+# undocumented, which _lib_check_docs turns into a failure.
+#
+# The block is matched by name rather than by adjacency, so declarations
+# between the comment and the definition (lib/install.sh has two) still pair up.
+# shellcheck disable=SC2016  # awk program, not shell expansion
+_lib_doc_rows() {
+  awk '
+    /^[[:space:]]*#/ {
+      line = $0
+      sub(/^[[:space:]]*#[[:space:]]?/, "", line)
+      if (line ~ /^shellcheck/) next
+      if (!in_block) { in_block = 1; n = 0 }
+      block[++n] = line
+      next
+    }
+    { in_block = 0 }
+    /^[A-Za-z][A-Za-z0-9_]*\(\)/ {
+      name = $0
+      sub(/\(\).*/, "", name)
+      if (n == 0 || substr(block[1], 1, length(name)) != name) { print name "\t"; next }
+      sig = block[1]
+      start = 2
+      dash = index(sig, "—")
+      if (dash > 0) {
+        purpose = substr(sig, dash + length("—"))
+        sig = substr(sig, 1, dash - 1)
+      } else {
+        purpose = ""
+        while (start <= n && block[start] == "") start++
+        purpose = block[start++]
+      }
+      # A purpose wrapped across comment lines keeps going until the sentence
+      # closes, taking only as much of the line that closes it as the sentence
+      # needs. What follows is detail the table has no room for — the reader
+      # who wants it opens the file.
+      while (purpose !~ /[.:!?]"?$/ && start <= n && block[start] != "") {
+        cont = block[start++]
+        stop = index(cont, ". ")
+        if (stop > 0) cont = substr(cont, 1, stop)
+        purpose = purpose " " cont
+      }
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", sig)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", purpose)
+      sub(/:$/, "", purpose)
+      print sig "\t" purpose
+    }
+  ' "$1"
+}
+
+# _lib_functions_table FILE — the Function/Purpose table for one module.
+_lib_functions_table() {
+  local file="$1" sig purpose
+  printf '| Function | Purpose |\n'
+  printf '|----------|---------|\n'
+  while IFS=$'\t' read -r sig purpose; do
+    [[ -n "$sig" && -n "$purpose" ]] || continue
+    [[ "$sig" == _* ]] && continue
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    printf '| `%s` | %s |\n' "${sig//|/\\|}" "${purpose//|/\\|}"
+  done < <(_lib_doc_rows "$file")
+}
+
+# _lib_roots_table — the three workbench roots, read from lib/roots.sh.
+# Constant, XDG variable and default all come off the assignment; what the root
+# holds is the comment above it, so the doc cannot claim a default the resolver
+# does not use.
+# shellcheck disable=SC2016  # awk program, not shell expansion
+_lib_roots_table() {
+  if [[ ! -f "$LIB_DIR/roots.sh" ]]; then
+    err "lib/roots.sh is missing — cannot render the roots table"
+    return 1
+  fi
+  printf '| Constant | Holds | XDG rung | Default |\n'
+  printf '|----------|-------|----------|---------|\n'
+  awk '
+    /^[[:space:]]*#/ {
+      line = $0
+      sub(/^[[:space:]]*#[[:space:]]?/, "", line)
+      if (line ~ /^shellcheck/) next
+      if (!in_block) { in_block = 1; n = 0 }
+      block[++n] = line
+      next
+    }
+    { in_block = 0 }
+    /^WORKBENCH_[A-Z]+_DIR=/ {
+      if (n == 0) next
+      name = $0
+      sub(/=.*/, "", name)
+      holds = block[1]
+      sub(/[.[:space:]]+$/, "", holds)
+      xdg = "—"
+      if (match($0, /XDG_[A-Z]+_HOME/)) xdg = substr($0, RSTART, RLENGTH)
+      def = "—"
+      if (match($0, /\$HOME\/[^"]+/)) {
+        def = substr($0, RSTART, RLENGTH)
+        sub(/^\$HOME/, "~", def)
+      }
+      printf "| `%s` | %s | `%s` | `%s` |\n", name, holds, xdg, def
+      n = 0
+    }
+  ' "$LIB_DIR/roots.sh"
+}
+
+# _lib_has_public FILE — whether FILE offers anything the doc should list.
+_lib_has_public() {
+  local sig purpose
+  while IFS=$'\t' read -r sig purpose; do
+    if [[ -n "$sig" && "$sig" != _* ]]; then
+      return 0
+    fi
+  done < <(_lib_doc_rows "$1")
+  return 1
+}
+
+# _lib_check_purposes FILE REL — fails, naming each one, when a public function
+# in FILE has no documented purpose.
+_lib_check_purposes() {
+  local file="$1" rel="$2" sig purpose ok=true
+  while IFS=$'\t' read -r sig purpose; do
+    [[ -n "$sig" && "$sig" != _* && -z "$purpose" ]] || continue
+    err "lib/$rel: ${sig%% *} has no doc comment — add '# ${sig%% *} ARGS — purpose.' above it"
+    ok=false
+  done < <(_lib_doc_rows "$file")
+  [[ "$ok" == true ]]
+}
+
+# _lib_check_section FILE REL — fails when a module holding public functions has
+# nowhere in the doc to render its table.
+_lib_check_section() {
+  local file="$1" rel="$2"
+  _lib_has_public "$file" || return 0
+  if grep -qF "<!-- LIB-FUNCTIONS:$rel-START -->" "$LIBRARIES_DOC_PATH"; then
+    return 0
+  fi
+  err "$LIBRARIES_DOC_PATH: no section for lib/$rel — add <!-- LIB-FUNCTIONS:$rel-START/END --> markers"
+  return 1
+}
+
+# _lib_check_docs — fails when the doc cannot be complete: an undocumented
+# public function, or a module with no section to render into.
+#
+# Both are silent otherwise: an undocumented function would render as a blank
+# row, and _splice_readme leaves a file without markers untouched, so a new
+# module would simply never appear. The doc is only trustworthy if being
+# incomplete is an error.
+_lib_check_docs() {
+  local -a files=()
+  _lib_files files
+  local file rel ok=true
+  for file in "${files[@]}"; do
+    rel="${file#"$LIB_DIR"/}"
+    _lib_check_purposes "$file" "$rel" || ok=false
+    _lib_check_section "$file" "$rel" || ok=false
+  done
+  [[ "$ok" == true ]]
+}
+
+# _splice_libraries_doc — renders every module table into docs/libraries.md.
+_splice_libraries_doc() {
+  local -a files=()
+  _lib_files files
+  local file rel
+  for file in "${files[@]}"; do
+    rel="${file#"$LIB_DIR"/}"
+    grep -qF "<!-- LIB-FUNCTIONS:$rel-START -->" "$LIBRARIES_DOC_PATH" || continue
+    _lib_functions_table "$file" | _splice_readme "$LIBRARIES_DOC_PATH" "LIB-FUNCTIONS:$rel"
+  done
+  _lib_roots_table | _splice_readme "$LIBRARIES_DOC_PATH" "LIB-ROOTS"
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
@@ -637,6 +833,8 @@ EOF
   TOOLS_DOC_PATH="${TOOLS_DOC_PATH:-"$DOCS_DIR/tools.md"}"
   AI_DOC_PATH="${AI_DOC_PATH:-"$DOCS_DIR/ai-automation.md"}"
   COMPONENTS_DOC_PATH="${COMPONENTS_DOC_PATH:-"$DOCS_DIR/components.md"}"
+  LIBRARIES_DOC_PATH="${LIBRARIES_DOC_PATH:-"$DOCS_DIR/libraries.md"}"
+  LIB_DIR="${LIB_DIR:-"$REPO_ROOT/lib"}"
 
   _gen_success() { $QUIET || success "$*"; }
 
@@ -725,6 +923,12 @@ EOF
   if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$AI_DOC_PATH" "TASKS-BLOCK";         _gen_success "Updated docs/ai-automation.md tasks";    fi
                                        _readme_core_components     | _splice_readme "$COMPONENTS_DOC_PATH" "CORE-COMPONENTS";     _gen_success "Updated docs/components.md core"
                                        _readme_optional_components | _splice_readme "$COMPONENTS_DOC_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated docs/components.md optional"
+
+  if [[ -f "$LIBRARIES_DOC_PATH" && -d "$LIB_DIR" ]]; then
+    _lib_check_docs || return 1
+    _splice_libraries_doc
+    _gen_success "Updated docs/libraries.md module tables"
+  fi
 
   # ── Project settings permissions ─────────────────────────────────────────────
 

@@ -83,6 +83,27 @@ INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 # into. The hand-authored settings are overrides/ under the config root.
 INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 
+# ─── Workbench config ─────────────────────────────────────────────────────────
+# Hand-authored settings, one file per scope: the global file under the config
+# root and one per repo at its toplevel. lib/config.sh reads them;
+# ai/lib/workbench_config.py is the typed owner and the source
+# config.schema.json is generated from. Every name below is spelled a second
+# time there, and tests/config.bats fails when the two sets drift.
+WORKBENCH_CONFIG_NAME="config.yml"
+WORKBENCH_CONFIG_FILE="$WORKBENCH_CONFIG_DIR/$WORKBENCH_CONFIG_NAME"
+WORKBENCH_PROJECT_CONFIG_NAME=".workbench.yml"
+
+# The generated JSON Schema, and the raw URL that serves it. Pinned to main
+# rather than a release tag: the config on a machine tracks whatever workbench
+# is installed, and main is where the schema is regenerated.
+WORKBENCH_CONFIG_SCHEMA_NAME="config.schema.json"
+WORKBENCH_REPO_RAW_URL="https://raw.githubusercontent.com/otto-nation/otto-workbench/main"
+WORKBENCH_CONFIG_SCHEMA_URL="$WORKBENCH_REPO_RAW_URL/$WORKBENCH_CONFIG_SCHEMA_NAME"
+
+# The modeline a config file is born with, so an editor's YAML language server
+# validates the file against that schema as the user hand-edits it.
+WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHEMA_URL"
+
 # ─── Review state ─────────────────────────────────────────────────────────────
 # The shell half of two joins the Python side also spells out — this file for
 # bash, ai/lib/workbench_paths.py's reviews_dir() and retro-scan's

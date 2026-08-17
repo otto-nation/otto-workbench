@@ -15,6 +15,7 @@ shellcheck <file>.sh           # lint a script
 bin/local/validate-all               # run every validator (what pre-push and CI run)
 bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers
 bin/local/generate-tool-context      # regenerate tools.generated.md from registries
+bin/local/generate-config-schema     # regenerate config.schema.json + the docs key reference from WorkbenchConfig
 git/bin/local/generate-git-rules     # regenerate git.generated.md from lib/conventions.sh
 otto-workbench changelog       # show recent changes from conventional commits
 ```
@@ -25,7 +26,7 @@ otto-workbench changelog       # show recent changes from conventional commits
 - Dynamic discovery over hardcoded config — glob patterns, not individual entries. Test: "does adding a new item require editing this file?" If yes, use a convention-based alternative.
 - Adding a brew tool = add to Brewfile + registry.yml. No other config edits needed. Env vars go in a `.env.yml` next to the consumer, not in the brew registry.
 - Adding a migration = create `<component>/migrations/YYYYMMDD-slug.sh` with a `migration_YYYYMMDD_slug()` function. No registry edits needed. Migrations must not source `lib/ui.sh` or assign `WORKBENCH_DIR` — both are provided by the migration framework (`lib/migrations.sh`).
-- Generated files (`tools.generated*.md`, `git.generated.md`) are never edited directly — edit the source and regenerate.
+- Generated files (`tools.generated*.md`, `git.generated.md`, `config.schema.json`) are never edited directly — edit the source and regenerate.
 - Config files in `zsh/config.d/` use `# duplicate-check: <pattern>` headers to prevent overlapping concerns.
 - **Idempotency is required** — all setup scripts, sync functions, and migrations must be safe to re-run. Guard installs with presence checks, use `install_symlink` (not raw `ln`), and ensure repeated execution produces the same result with no side effects.
 - Migrations are state-tracked in `~/.local/state/workbench/migrations.applied` and auto-pruned when removed.

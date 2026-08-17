@@ -33,8 +33,8 @@ protocol before taking action. Agent files live at `~/.claude/agents/`.
 
 ## Reuse Level
 
-If `~/.config/workbench/reuse-level` exists, read it at session start — it controls
-how aggressively the reuse ladder (in `general.md`) is enforced:
+If `reuse.level` is set in `~/.config/workbench/config.yml`, read it at session
+start — it controls how aggressively the reuse ladder (in `general.md`) is enforced:
 
 | Level | Behavior |
 |---|---|
@@ -42,7 +42,9 @@ how aggressively the reuse ladder (in `general.md`) is enforced:
 | **full** | Enforce the reuse ladder. Stdlib and native first. Shortest diff (default) |
 | **ultra** | Challenge the requirement. Deletion before addition. Ship the one-liner |
 
-Default is `full` when no file exists. Change with `/reuse lite|full|ultra`.
+When `reuse.level` is unset, the level is the value of `reuse.default` in the
+same file, and `full` when that is unset too. Change either with
+`/reuse lite|full|ultra` or `/reuse default lite|full|ultra`.
 
 ## Ceiling Debt
 

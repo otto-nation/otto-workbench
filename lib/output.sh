@@ -39,16 +39,24 @@ fi
 # shellcheck disable=SC2145  # ${@: -1} extracts the last argument (the file), not a join
 sed_i() { sed -i.bak "$@" && rm -f "${@: -1}.bak"; }
 
+# info MESSAGE — blue info message with an arrow.
 info()    { echo -e "${BLUE}→${NC} $*"; }
+
+# success MESSAGE — green success message with a checkmark.
 success() { echo -e "${GREEN}✓${NC} $*"; }
+
+# warn MESSAGE — yellow warning; also logged to WORKBENCH_INSTALL_LOG.
 warn() {
   echo -e "${YELLOW}⚠${NC}  $*"
   [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]] && echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG" || true
 }
+# err MESSAGE — red error to stderr; also logged to WORKBENCH_INSTALL_LOG.
 err() {
   echo -e "${RED}✗${NC} $*" >&2
   [[ -n "${WORKBENCH_INSTALL_LOG:-}" ]] && echo "ERR:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG" || true
 }
+
+# title TEXT — bold blue section header.
 title()   { echo -e "\n${BOLD}${BLUE}$*${NC}"; }
 
 # skip [label] — print a skip line with optional label
@@ -82,7 +90,10 @@ summary_section() {
   [[ "${WORKBENCH_SYNC:-}" == true ]] && return
   echo; echo -e "  ${CYAN}$*${NC}"
 }
+# summary_ok MESSAGE — indented success line. Suppressed during sync.
 summary_ok() { [[ "${WORKBENCH_SYNC:-}" == true ]] && return; echo -e "  ${GREEN}✓${NC} $*"; }
+
+# summary_warn MESSAGE — indented warning; logged instead of printed during sync.
 summary_warn() {
   if [[ "${WORKBENCH_SYNC:-}" == true && -n "${WORKBENCH_INSTALL_LOG:-}" ]]; then
     echo "WARN:${WORKBENCH_CURRENT_COMPONENT:+[$WORKBENCH_CURRENT_COMPONENT] }$*" >> "$WORKBENCH_INSTALL_LOG"
@@ -90,5 +101,8 @@ summary_warn() {
     echo -e "  ${YELLOW}⚠${NC}  $*"
   fi
 }
+# summary_err MESSAGE — indented error line. Printed even during sync.
 summary_err()  { echo -e "  ${RED}✗${NC} $*"; }
+
+# summary_info MESSAGE — indented dim detail line. Suppressed during sync.
 summary_info() { [[ "${WORKBENCH_SYNC:-}" == true ]] && return; echo -e "  ${DIM}●${NC} $*"; }

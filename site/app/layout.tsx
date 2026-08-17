@@ -6,7 +6,9 @@ export default function Layout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
-        <RootProvider>{children}</RootProvider>
+        {/* Static export has no search server; point the search dialog at the
+            statically-exported index emitted by app/api/search/route.ts. */}
+        <RootProvider search={{ options: { type: 'static' } }}>{children}</RootProvider>
       </body>
     </html>
   );

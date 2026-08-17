@@ -646,8 +646,9 @@ scratch files ended up sitting beside unrelated reviews.
 
 `pr gc` collects loose files at the reviews root once they are a week old, prunes
 review directories and run-target directories for merged and closed PRs (skipping
-its own target), and sweeps the `state.json` and `run.lock` the pre-target layout
-left behind in a worktree's `.workbench/`. A flat `<name>.md` and its suffixed
+its own target), and sweeps the `state.json`, `run.lock`, and `trail.jsonl` the
+pre-target layout left behind in a worktree's `.workbench/`. The directory itself
+goes only when nothing else is in it. A flat `<name>.md` and its suffixed
 siblings are left alone: those are input to the startup migration that folds the
 old flat layout into directories.
 

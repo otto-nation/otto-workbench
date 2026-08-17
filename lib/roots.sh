@@ -36,7 +36,7 @@ _wb_root() {
 # Hand-authored settings: config.yml, overrides/, mcp-tools.json.
 WORKBENCH_CONFIG_DIR="$(_wb_root "${WORKBENCH_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
 
-# Generated, machine-local data: reviews/, trail/, usage/, applied migrations.
+# Generated, machine-local data: reviews/, trail/, usage/, install.yml, migrations.applied.
 # Written by setup scripts; read by zsh snippets and sync steps. Never committed.
 #
 # The move off the old ~/.config/workbench default is a hard cut — nothing falls

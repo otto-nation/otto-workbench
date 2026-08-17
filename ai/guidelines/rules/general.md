@@ -49,6 +49,13 @@ On failure, diagnose in this order — do NOT retry with variations:
 
 ## Code Style
 
+### Types over tuples
+- Never return a new tuple of more than one value — model it as a frozen dataclass, struct, or the language's equivalent. A tuple cannot gain a field without breaking every destructuring call site, and it forces callers to learn field order instead of reading names
+- Never widen an existing tuple return to carry another field. Converting it to a type is the fix; `(a, b)` → `(a, b, c)` is not
+- A fixed set of named states is an enum, not string literals. When those states are persisted or cross a wire, keep the string values stable so existing state files still load — the enum is for the code, not a format break
+- Give the type a predicate that reads honestly at the call site (`result.ok`) rather than making callers infer status from which fields came back empty
+- Pre-existing tuples you are not otherwise touching stay as they are — converting them is its own change
+
 ### Comments & Documentation
 - Comments should be production-ready; place them above the line, never inline
 - Do not add comments that exist only to explain what a prompt change did

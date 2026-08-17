@@ -14,6 +14,7 @@ sys.path.insert(0, str(LIB_DIR))
 import workbench_paths
 from trail import (
     FINISH_ACTION,
+    INVOCATION_HEX_WIDTH,
     SCHEMA_VERSION,
     EventType,
     Level,
@@ -86,7 +87,7 @@ class TestTrailRoot:
 
     def test_start_generates_invocation_id(self):
         trail = Trail.start(script="test-script", context={})
-        assert len(trail.invocation) == 8
+        assert len(trail.invocation) == INVOCATION_HEX_WIDTH
         assert all(c in "0123456789abcdef" for c in trail.invocation)
         trail.finish()
 

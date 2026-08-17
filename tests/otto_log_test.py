@@ -79,6 +79,25 @@ class TestQueryFiltering:
         assert filtered
         assert all(e["invocation"] == inv1 for e in filtered)
 
+    def test_a_pre_cutover_narrow_invocation_still_resolves(self):
+        """IDs minted before the width grew are 8 hex characters and live in the
+        same root forever. The match is on the whole field, so both widths select
+        their own run and neither one prefix-matches the other."""
+        new_inv = _make_trail("test", [("a", "first")])
+        root = workbench_paths.trail_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "legacy.jsonl").write_text(json.dumps({
+            "ts": "2026-01-01T00:00:00Z", "script": "old-run",
+            "invocation": new_inv[:8], "level": "info", "event_type": "action",
+            "action": "x", "detail": "", "context": {},
+        }) + "\n")
+
+        events = otto_log.load_events(otto_log.discover_trails())
+        old = otto_log.filter_events(events, invocation=new_inv[:8])
+        assert [e["script"] for e in old] == ["old-run"]
+        assert all(e["script"] == "test" for e in
+                   otto_log.filter_events(events, invocation=new_inv))
+
 
 class TestSinceSkipsFilesByName:
     def _write(self, name: str, script: str):

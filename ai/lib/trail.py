@@ -45,6 +45,15 @@ class EventType(str, Enum):
 
 SCHEMA_VERSION = 1
 
+# Hex characters of a uuid4 an invocation ID keeps. Every script on the machine
+# now writes into one root that nothing prunes, and `otto-log show` loads all of
+# it — so an ID has to stay unique across the machine's whole recorded history,
+# not just one worktree's file. 8 characters put the birthday bound around 65k
+# invocations, which one tool alone reached in two months; 48 bits moves it out
+# of reach. Readers match the field whole, so records minted at the old width
+# keep resolving.
+INVOCATION_HEX_WIDTH = 12
+
 # The action on the one summary event that reports a run's own duration.
 # `pr gc` writes a second kind of summary with no duration, so readers select
 # the run-end event by action rather than by type.
@@ -113,7 +122,7 @@ class Trail:
         return cls(
             script=script,
             context=context,
-            invocation=uuid4().hex[:8],
+            invocation=uuid4().hex[:INVOCATION_HEX_WIDTH],
             debug=debug,
             start_ns=time.monotonic_ns(),
         )

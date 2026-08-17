@@ -50,9 +50,9 @@ def read_level() -> str:
 
 def write_level(level: str) -> None:
     """Persist the active level. Raises ``ConfigError`` when the write fails."""
-    workbench_config.set_value("reuse.level", level)
+    workbench_config.set_value(workbench_config.REUSE_LEVEL_KEY, level)
 
 
 def write_default(level: str) -> None:
     """Persist the default level. Raises ``ConfigError`` when the write fails."""
-    workbench_config.set_value("reuse.default", level)
+    workbench_config.set_value(workbench_config.REUSE_DEFAULT_KEY, level)

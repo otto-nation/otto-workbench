@@ -471,11 +471,12 @@ EOF
 unify_in_fake() {
   (
     export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
-    export WORKBENCH_CONFIG_FILE="$FAKE_CONFIG/config.yml"
     . "$FAKE_ROOT/lib/ui.sh"
-    # The real config.sh, not the stub: the migration seeds config.yml through
-    # wb_config_ensure_file, which is where the schema modeline comes from. The
-    # real ui.sh sources it the same way.
+    # The real constants and config.sh, not the stubs: the migration writes to
+    # WORKBENCH_CONFIG_FILE and seeds it through wb_config_ensure_file, which is
+    # where the schema modeline comes from. The real ui.sh sources both the same
+    # way, and constants.sh builds the file path from the root exported above.
+    . "$REPO_ROOT/lib/constants.sh"
     . "$REPO_ROOT/lib/config.sh"
     . "$REPO_ROOT/bin/migrations/20260814-unify-workbench-config.sh"
     migration_20260814_unify_workbench_config

@@ -2,8 +2,8 @@
 """Track /reuse lite|full|ultra commands via UserPromptSubmit hook.
 
 Reads hook JSON from stdin, checks if the prompt matches /reuse <level>,
-writes the level to reuse.level in ~/.config/workbench/config.yml, and emits
-context.
+writes the level into the workbench config, and emits context. Which key and
+which file are ai/lib/workbench_config.py's to say; this only hands it a value.
 
 Usage (called by settings.json UserPromptSubmit hook):
   echo '{"prompt":"/reuse ultra"}' | reuse-mode-tracker

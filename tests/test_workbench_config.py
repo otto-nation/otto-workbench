@@ -35,6 +35,10 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text.lstrip("\n"))
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
 # ── Loading and merging ─────────────────────────────────────────────────────
 
 
@@ -166,10 +170,35 @@ def test_committed_schema_matches_the_generator():
     appear in two formats. This is that test: renaming a field or adding a
     Phase member fails here until `bin/local/generate-config-schema` is re-run.
     """
-    committed = json.loads(
-        (Path(__file__).resolve().parent.parent / "config.schema.json").read_text(),
-    )
+    committed = json.loads((_repo_root() / wc.SCHEMA_PATH).read_text())
     assert committed == json.loads(wc.schema_json())
+
+
+def test_committed_docs_reference_matches_the_generator():
+    """The key table in the docs is generated from the same dataclass.
+
+    The prose around it is hand-written; this covers the spliced block, which
+    is where a new key or a changed default would otherwise go unmentioned.
+    """
+    text = (_repo_root() / wc.DOCS_PATH).read_text()
+    start = f"<!-- {wc.DOCS_MARKER}-START -->\n"
+    end = f"\n<!-- {wc.DOCS_MARKER}-END -->"
+    assert start in text and end in text, f"{wc.DOCS_PATH} lost its splice markers"
+    block = text.split(start, 1)[1].split(end, 1)[0]
+    assert block == wc.docs_reference()
+
+
+def test_every_written_key_resolves_to_a_field():
+    """A dotted key nothing answers to writes a field `serde` then drops.
+
+    `set_value` does not check its argument, so the constants naming the keys
+    other modules write are checked here instead — against the same walk the
+    docs table is built from, so a renamed field fails rather than silently
+    stranding the value it used to hold.
+    """
+    keys = {key for key, _, _ in wc._reference_rows(wc.WorkbenchConfig)}
+    assert wc.REUSE_LEVEL_KEY in keys
+    assert wc.REUSE_DEFAULT_KEY in keys
 
 
 def test_schema_lists_every_phase_as_a_valid_key():
@@ -212,9 +241,8 @@ def test_the_schema_url_points_at_a_path_the_repo_actually_has():
     else's editor, months later. No network here, but neither a rename nor a
     move into a subdirectory gets past it.
     """
-    repo_root = Path(__file__).resolve().parent.parent
-    assert (repo_root / wc.SCHEMA_PATH).is_file()
-    assert wc.SCHEMA_URL.endswith("/" + wc.SCHEMA_PATH)
+    assert (_repo_root() / wc.SCHEMA_PATH).is_file()
+    assert wc.SCHEMA_URL == f"{wc.REPO_RAW_URL}/{wc.SCHEMA_PATH}"
 
 
 def test_a_new_config_file_is_born_with_the_modeline(roots):

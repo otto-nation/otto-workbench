@@ -22,6 +22,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# The directory the workbench claims inside each XDG home, and the built-in
+# default for each root when no XDG home is set. lib/constants.sh spells the
+# same four; tests/workbench_roots.bats fails when a pair drifts.
+WORKBENCH_DIRNAME = "workbench"
+DEFAULT_CONFIG_DIR = "~/.config/workbench"
+DEFAULT_STATE_DIR = "~/.local/state/workbench"
+DEFAULT_CACHE_DIR = "~/.cache/workbench"
+
+# Subtrees of the state root that more than one tool has to agree on.
+TRAIL_DIRNAME = "trail"
+REVIEWS_DIRNAME = "reviews"
+
 
 def _root(env_var: str, xdg_var: str, fallback: str) -> Path:
     override = os.environ.get(env_var)
@@ -29,7 +41,7 @@ def _root(env_var: str, xdg_var: str, fallback: str) -> Path:
         return Path(override)
     xdg_home = os.environ.get(xdg_var)
     if xdg_home:
-        return Path(xdg_home) / "workbench"
+        return Path(xdg_home) / WORKBENCH_DIRNAME
     return Path(os.path.expanduser(fallback))
 
 
@@ -50,7 +62,7 @@ def _subdir(base: Path, name: str | None) -> Path:
 
 def config_dir() -> Path:
     """Hand-authored settings: config.yml, overrides/, mcp-tools.json."""
-    return _root("WORKBENCH_CONFIG_DIR", "XDG_CONFIG_HOME", "~/.config/workbench")
+    return _root("WORKBENCH_CONFIG_DIR", "XDG_CONFIG_HOME", DEFAULT_CONFIG_DIR)
 
 
 def state_dir() -> Path:
@@ -60,7 +72,7 @@ def state_dir() -> Path:
     falls back to the legacy path, and ``lib/migrations.sh`` carries the data
     across once.
     """
-    return _root("WORKBENCH_STATE_DIR", "XDG_STATE_HOME", "~/.local/state/workbench")
+    return _root("WORKBENCH_STATE_DIR", "XDG_STATE_HOME", DEFAULT_STATE_DIR)
 
 
 def cache_dir(consumer: str | None = None) -> Path:
@@ -69,7 +81,7 @@ def cache_dir(consumer: str | None = None) -> Path:
     ``consumer`` selects one consumer's subtree. Without it this is the root
     itself, which is what a wipe-the-cache operation wants.
     """
-    root = _root("WORKBENCH_CACHE_DIR", "XDG_CACHE_HOME", "~/.cache/workbench")
+    root = _root("WORKBENCH_CACHE_DIR", "XDG_CACHE_HOME", DEFAULT_CACHE_DIR)
     return _subdir(root, consumer)
 
 
@@ -81,7 +93,7 @@ def trail_dir() -> Path:
     also lets ``otto-log --since`` skip whole files by name instead of
     opening every one of them.
     """
-    return state_dir() / "trail"
+    return state_dir() / TRAIL_DIRNAME
 
 
 def reviews_dir() -> Path:
@@ -93,7 +105,7 @@ def reviews_dir() -> Path:
     directory through ``REVIEWS_DIR`` in ``lib/constants.sh``, which
     ``tests/workbench_roots.bats`` holds to this value.
     """
-    return state_dir() / "reviews"
+    return state_dir() / REVIEWS_DIRNAME
 
 
 # Where per-worktree state lived before #624. Nothing writes it any more;

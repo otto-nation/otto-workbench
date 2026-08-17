@@ -17,13 +17,15 @@ so nothing here overrides a value a caller passed or exported.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
+from typing import get_type_hints
 
 import serde
 import workbench_paths
@@ -45,15 +47,24 @@ PROJECT_CONFIG_NAME = ".workbench.yml"
 # Pinned to main rather than a release tag: the config on a machine tracks
 # whatever workbench is installed, and main is where the schema is regenerated.
 SCHEMA_PATH = "config.schema.json"
-SCHEMA_URL = (
-    "https://raw.githubusercontent.com/otto-nation/otto-workbench/main/"
-    + SCHEMA_PATH
-)
+REPO_RAW_URL = "https://raw.githubusercontent.com/otto-nation/otto-workbench/main"
+SCHEMA_URL = f"{REPO_RAW_URL}/{SCHEMA_PATH}"
 # The modeline a config file is born with, so an editor's YAML language server
 # validates the file against that schema as the user hand-edits it.
-# lib/config.sh spells the same string for the files bash creates;
-# tests/config.bats cross-validates the pair.
+# lib/constants.sh spells the same names for the files bash creates;
+# tests/config.bats cross-validates every pair.
 CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
+
+# Where the generated key reference is spliced into the prose that surrounds it.
+DOCS_PATH = "docs/libraries.md"
+DOCS_MARKER = "CONFIG-REFERENCE"
+
+# The dotted keys written from outside this module. Spelled here rather than at
+# the call site so a rename of the dataclass field and a rename of the key are
+# the same edit; test_workbench_config.py resolves each one against
+# WorkbenchConfig and fails on a key no field answers to.
+REUSE_LEVEL_KEY = "reuse.level"
+REUSE_DEFAULT_KEY = "reuse.default"
 
 _YQ_TIMEOUT = 10
 
@@ -156,6 +167,111 @@ def schema_json() -> str:
         **schema_gen.dataclass_to_schema(WorkbenchConfig),
     }
     return json.dumps(schema, indent=2)
+
+
+def _is_enum(hint) -> bool:
+    return isinstance(hint, type) and issubclass(hint, Enum)
+
+
+def _values_column(hint) -> str:
+    """How the reference table describes what a key accepts."""
+    kind, args = serde.classify(hint)
+    if kind is serde.HintKind.OPTIONAL:
+        return _values_column(args[0])
+    if kind is serde.HintKind.ENUM:
+        return ", ".join(f"`{member.value}`" for member in hint)
+    if kind is serde.HintKind.SCALAR:
+        return {bool: "boolean", int: "integer", float: "number"}.get(hint, "string")
+    return "any"
+
+
+def _default_column(f: dataclasses.Field) -> str:
+    """A field's default as the table writes it, or an em dash for no value.
+
+    ``None`` and the empty string are both "nothing is set" to a reader — the
+    key is absent from a config file that leaves it alone either way.
+    """
+    if f.default is dataclasses.MISSING or f.default is None or f.default == "":
+        return "—"
+    return f"`{f.default}`"
+
+
+def _reference_rows(cls, prefix: str = "") -> list[tuple[str, str, str]]:
+    """``(key, values, default)`` for every leaf key under a dataclass.
+
+    Walks through ``serde.classify`` for the same reason ``schema_gen`` does:
+    what a hint means is one question with one owner, so the table and the
+    schema cannot disagree about which keys exist. A nested dataclass extends
+    the dotted prefix; a dict keyed by an enum contributes a ``<placeholder>``
+    segment and lists the names it accepts in the row's key.
+    """
+    rows: list[tuple[str, str, str]] = []
+    hints = get_type_hints(cls)
+    for f in dataclasses.fields(cls):
+        kind, args = serde.classify(hints[f.name])
+        key = f"{prefix}{f.name}"
+        if kind is serde.HintKind.DATACLASS:
+            rows += _reference_rows(hints[f.name], f"{key}.")
+        elif kind is serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
+            placeholder = f"<{args[0].__name__.lower()}>"
+            rows += _reference_rows(args[1], f"{key}.{placeholder}.")
+        else:
+            rows.append((key, _values_column(hints[f.name]), _default_column(f)))
+    return rows
+
+
+def _key_placeholders(cls) -> list[tuple[str, str]]:
+    """``(placeholder, accepted names)`` for each enum-keyed section."""
+    notes: list[tuple[str, str]] = []
+    hints = get_type_hints(cls)
+    for f in dataclasses.fields(cls):
+        kind, args = serde.classify(hints[f.name])
+        if kind is serde.HintKind.DATACLASS:
+            notes += _key_placeholders(hints[f.name])
+        elif kind is serde.HintKind.DICT and args and _is_enum(args[0]):
+            names = ", ".join(f"`{member.value}`" for member in args[0])
+            notes.append((f"<{args[0].__name__.lower()}>", names))
+    return notes
+
+
+def docs_reference() -> str:
+    """The generated half of the ``config.sh`` section in ``DOCS_PATH``.
+
+    Beside ``schema_json`` for the same reason: the write and the ``--check``
+    comparison in ``bin/local/generate-config-schema`` render through one code
+    path, and both derive from the dataclass rather than from a second listing
+    of the keys that someone has to remember to update. The prose around the
+    spliced block — what the reader is for, how the layers rank, the #626
+    migration — is hand-written and stays that way.
+    """
+    lines = [
+        "<!-- AUTO-GENERATED — do not edit directly -->",
+        "<!-- Regenerate: bin/local/generate-config-schema -->",
+        "",
+        "| Scope | File |",
+        "|-------|------|",
+        f"| Global | `{CONFIG_NAME}` under the [config root](#rootssh) |",
+        f"| Project | `{PROJECT_CONFIG_NAME}` at a repo toplevel |",
+        "",
+        f"A new config file is born holding one line, the modeline that points an "
+        f"editor's YAML language server at [`{SCHEMA_PATH}`](../{SCHEMA_PATH}):",
+        "",
+        "```yaml",
+        CONFIG_HEADER,
+        "```",
+        "",
+        "Every key both files accept:",
+        "",
+        "| Key | Values | Default |",
+        "|-----|--------|---------|",
+    ]
+    lines += [f"| `{key}` | {values} | {default} |" for key, values, default in
+              _reference_rows(WorkbenchConfig)]
+    placeholders = _key_placeholders(WorkbenchConfig)
+    if placeholders:
+        lines.append("")
+        lines += [f"`{name}` is one of: {values}" for name, values in placeholders]
+    return "\n".join(lines)
 
 
 def global_config_path() -> Path:

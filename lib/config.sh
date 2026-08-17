@@ -1,31 +1,24 @@
 #!/usr/bin/env bash
 # Hand-authored workbench settings, read from YAML.
 #
-# Two scopes, project first: <repo>/.workbench.yml then $WORKBENCH_CONFIG_FILE.
+# Two scopes, project first: <repo>/$WORKBENCH_PROJECT_CONFIG_NAME then
+# $WORKBENCH_CONFIG_FILE. Both names, the schema URL and the modeline are
+# declared in lib/constants.sh, which is the one place bash spells them.
 # ai/lib/workbench_config.py is the typed owner of the same files and the source
-# the committed config.schema.json is generated from; this is the reader for
-# bash callers, which want single keys rather than the whole document.
+# the committed schema is generated from; this is the reader for bash callers,
+# which want single keys rather than the whole document.
 #
 # Usage (from scripts that already source lib/ui.sh):
 #   wb_config_get "reuse.level"           # value, or nothing
 #   wb_config_get "reuse.level" "full"    # value, or the given default
 
-# Guard: constants must be loaded (provides WORKBENCH_CONFIG_FILE)
-if [[ -z "${WORKBENCH_CONFIG_FILE:-}" ]]; then
-  echo "ERROR: lib/config.sh requires WORKBENCH_CONFIG_FILE (source lib/ui.sh first)" >&2
+# Guard: the config constants must be loaded. WORKBENCH_CONFIG_HEADER is the
+# last of the block lib/constants.sh declares, so its presence proves the whole
+# block is in scope — the file paths, the schema URL and the modeline alike.
+if [[ -z "${WORKBENCH_CONFIG_HEADER:-}" ]]; then
+  echo "ERROR: lib/config.sh requires the config constants (source lib/ui.sh first)" >&2
   return 1 2>/dev/null || exit 1
 fi
-
-WORKBENCH_PROJECT_CONFIG_NAME=".workbench.yml"
-
-# The modeline a config file is born with, so an editor's YAML language server
-# validates the file against the committed schema as the user hand-edits it.
-# Pinned to main rather than a release tag: the file on disk tracks whatever
-# workbench is installed, and main is where the schema is regenerated.
-# ai/lib/workbench_config.py holds the same string for the files it creates;
-# tests/config.bats cross-validates the pair.
-WORKBENCH_CONFIG_SCHEMA_URL="https://raw.githubusercontent.com/otto-nation/otto-workbench/main/config.schema.json"
-WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHEMA_URL"
 
 # wb_config_ensure_file [FILE] — create FILE holding just the modeline, when it
 # does not already exist. `yq -i` needs a file to write into, and seeding it

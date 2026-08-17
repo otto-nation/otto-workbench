@@ -58,7 +58,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
-| `generate-config-schema` | Generates config.schema.json from the WorkbenchConfig dataclass |
+| `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |
 | `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |

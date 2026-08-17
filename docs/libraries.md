@@ -144,48 +144,52 @@ State file: `$INSTALL_YML_FILE` — `install.yml` under the [state root](#rootss
 
 ### config.sh
 
-Hand-authored settings, read from YAML. One file per scope:
-
-| Scope | Path | Constant |
-|-------|------|----------|
-| Global | `config.yml` under the [config root](#rootssh) | `WORKBENCH_CONFIG_FILE` |
-| Project | `<repo>/.workbench.yml` | `WORKBENCH_PROJECT_CONFIG_NAME` |
+Hand-authored settings, read from YAML — one file per scope, project first.
 
 | Function | Purpose |
 |----------|---------|
 | `wb_config_get KEY [DEFAULT]` | One dotted key, project scope first, then global, then the default |
 | `wb_config_ensure_file [FILE]` | Create FILE holding just the schema modeline, when it does not exist |
 
-A malformed file reads as absent — a bash caller wants its default, not a `yq` parse error on stdout. Reporting a bad file is the typed loader's job. Loaded via `ui.sh`.
+A malformed file reads as absent — a bash caller wants its default, not a `yq` parse error on stdout. Reporting a bad file is the typed loader's job. Loaded via `ui.sh`. Both filenames, the schema URL and the modeline are declared once in [`constants.sh`](#constantssh) — as `WORKBENCH_CONFIG_FILE`, `WORKBENCH_PROJECT_CONFIG_NAME`, `WORKBENCH_CONFIG_SCHEMA_URL` and `WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only.
 
-[`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed owner of the same two files: it deep-merges them into a `WorkbenchConfig` and rejects an unknown enum value or phase key rather than silently dropping it. [`config.schema.json`](../config.schema.json) is generated from that dataclass by `bin/local/generate-config-schema`; `tests/test_workbench_config.py` fails if the committed copy drifts from the generator.
+[`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed owner of the same two files: it deep-merges them into a `WorkbenchConfig` and rejects an unknown enum value or phase key rather than silently dropping it. It spells those same names a second time for Python, and `tests/config.bats` fails when a pair drifts. Everything below is generated from the dataclass by `bin/local/generate-config-schema`, alongside [`config.schema.json`](../config.schema.json); `tests/test_workbench_config.py` fails if either committed copy goes stale.
 
-A `config.yml` the workbench creates is born holding one line, the modeline that points an editor's YAML language server at that schema:
+<!-- CONFIG-REFERENCE-START -->
+<!-- AUTO-GENERATED — do not edit directly -->
+<!-- Regenerate: bin/local/generate-config-schema -->
+
+| Scope | File |
+|-------|------|
+| Global | `config.yml` under the [config root](#rootssh) |
+| Project | `.workbench.yml` at a repo toplevel |
+
+A new config file is born holding one line, the modeline that points an editor's YAML language server at [`config.schema.json`](../config.schema.json):
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/otto-nation/otto-workbench/main/config.schema.json
 ```
 
-Both writers seed it — `wb_config_ensure_file` in bash, `set_value` in Python — and `yq -i` carries it through every later write, so completion and enum validation work while the file is hand-edited. Paste it at the top of a `.workbench.yml` to get the same in a project. A file that already exists is never seeded: the modeline is a courtesy on creation, not something sync re-imposes.
+Every key both files accept:
 
-A complete file:
+| Key | Values | Default |
+|-----|--------|---------|
+| `reuse.level` | `lite`, `full`, `ultra` | — |
+| `reuse.default` | `lite`, `full`, `ultra` | `full` |
+| `review.model` | string | — |
+| `review.thinking` | `low`, `medium`, `high` | — |
+| `review.provider` | string | — |
+| `review.effort` | `low`, `medium`, `high` | — |
+| `review.phases.<phase>.model` | string | — |
+| `review.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
+| `review.issue_tracker.provider` | `linear`, `github`, `jira` | `linear` |
+| `review.issue_tracker.team` | string | — |
+| `review.issue_tracker.jira_url` | string | — |
 
-```yaml
-reuse:
-  level: ultra
-  default: full
-review:
-  model: sonnet
-  thinking: medium
-  effort: high
-  phases:
-    scout:
-      model: haiku
-      thinking: low
-  issue_tracker:
-    provider: linear
-    team: ENG
-```
+`<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`
+<!-- CONFIG-REFERENCE-END -->
+
+Both writers seed the modeline — `wb_config_ensure_file` in bash, `set_value` in Python — and `yq -i` carries it through every later write, so completion and enum validation work while the file is hand-edited. Paste it at the top of a `.workbench.yml` to get the same in a project. A file that already exists is never seeded: the modeline is a courtesy on creation, not something sync re-imposes.
 
 Five layers decide a review value, highest first:
 

@@ -10,7 +10,10 @@ setup() {
   FAKE_CONFIG="$TMPDIR/config"
   mkdir -p "$FAKE_CONFIG"
 
-  export WORKBENCH_CONFIG_FILE="$FAKE_CONFIG/config.yml"
+  # Point the config root at the sandbox and let constants.sh build the file
+  # path from it, so every test below runs against the real join rather than a
+  # hand-spelled one.
+  export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
 
   # Project scope resolves through `git rev-parse --show-toplevel`, so a test
   # left standing in the real checkout would read this repo's own
@@ -19,6 +22,8 @@ setup() {
   export GIT_CEILING_DIRECTORIES="$TMPDIR"
   cd "$TMPDIR" || return 1
 
+  # shellcheck source=../lib/constants.sh
+  . "$REPO_ROOT/lib/constants.sh"
   # shellcheck source=../lib/config.sh
   . "$REPO_ROOT/lib/config.sh"
 }
@@ -125,16 +130,34 @@ _make_project() {
   [ -f "$nested" ]
 }
 
-# The header is spelled in two languages, which CLAUDE.md allows only with a
-# test that fails when they drift. Both files create config.yml, so a mismatch
-# would mean an editor validating one machine's file and not another's.
-@test "the modeline matches the one ai/lib/workbench_config.py writes" {
-  local from_python
-  from_python="$(python3 -c "
+# ─── Cross-validation with the Python owner ──────────────────────────────────
+#
+# Every name below is spelled in two languages, which CLAUDE.md allows only
+# with a test that fails when they drift. Both sides create and read the same
+# two files, so a mismatch means one machine's config is written where the
+# other never looks, or validated against a schema the other does not serve.
+
+# resolve_python NAME — the value of ai/lib/workbench_config.NAME.
+resolve_python() {
+  python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
 import workbench_config
-print(workbench_config.CONFIG_HEADER, end='')
-")"
-  [ "$WORKBENCH_CONFIG_HEADER" = "$from_python" ]
+print(workbench_config.$1, end='')
+"
+}
+
+@test "the config constants match ai/lib/workbench_config.py" {
+  [ "$WORKBENCH_CONFIG_NAME" = "$(resolve_python CONFIG_NAME)" ]
+  [ "$WORKBENCH_PROJECT_CONFIG_NAME" = "$(resolve_python PROJECT_CONFIG_NAME)" ]
+  [ "$WORKBENCH_CONFIG_SCHEMA_NAME" = "$(resolve_python SCHEMA_PATH)" ]
+  [ "$WORKBENCH_REPO_RAW_URL" = "$(resolve_python REPO_RAW_URL)" ]
+  [ "$WORKBENCH_CONFIG_SCHEMA_URL" = "$(resolve_python SCHEMA_URL)" ]
+  [ "$WORKBENCH_CONFIG_HEADER" = "$(resolve_python CONFIG_HEADER)" ]
+}
+
+@test "lib/config.sh refuses to load without the constants" {
+  run bash -c ". '$REPO_ROOT/lib/config.sh'"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"requires the config constants"* ]]
 }

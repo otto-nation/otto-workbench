@@ -67,4 +67,4 @@ tools:
   - name: generate-config-schema
     permission: false
     visibility: brief
-    description: "Generates config.schema.json from the WorkbenchConfig dataclass"
+    description: "Generates config.schema.json and the docs key reference from WorkbenchConfig"

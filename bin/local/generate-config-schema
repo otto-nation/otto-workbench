@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Generate config.schema.json from the WorkbenchConfig dataclass.
+"""Generate the config schema and its docs reference from WorkbenchConfig.
 
 Usage: bin/local/generate-config-schema [--check]
 
 The dataclass in ai/lib/workbench_config.py is the single definition of what
 the workbench config holds; this renders it to the JSON Schema editors and
-validators read. tests/test_workbench_config.py fails when the committed file
+validators read, and to the key reference spliced into the prose in
+docs/libraries.md. tests/test_workbench_config.py fails when a committed file
 and the generator disagree.
 
 Options:
-  --check     Exit 1 if the committed file is stale, without rewriting it
+  --check     Exit 1 if a committed file is stale, without rewriting it
   -h, --help  Show this help
 """
 
@@ -30,6 +31,37 @@ sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 import workbench_config  # noqa: E402
 
 SCHEMA_FILE = REPO_ROOT / workbench_config.SCHEMA_PATH
+DOCS_FILE = REPO_ROOT / workbench_config.DOCS_PATH
+
+
+def splice(text: str, marker: str, body: str) -> str:
+    """``body`` between MARKER-START and MARKER-END, the rest of ``text`` intact.
+
+    The same marker convention generate-tool-context uses on README and
+    docs/tools.md, so a doc that is part prose and part generated reads the same
+    way whichever generator owns its block. A file missing the markers is a
+    mistake worth failing on rather than a no-op: the caller asked for the block
+    to be current and it would silently not be.
+    """
+    start, end = f"<!-- {marker}-START -->", f"<!-- {marker}-END -->"
+    head, sep, rest = text.partition(start)
+    if not sep:
+        raise SystemExit(f"{DOCS_FILE}: missing {start}")
+    _, sep, tail = rest.partition(end)
+    if not sep:
+        raise SystemExit(f"{DOCS_FILE}: missing {end}")
+    return f"{head}{start}\n{body}\n{end}{tail}"
+
+
+def render() -> list[tuple[Path, str]]:
+    """Every file this generator owns, paired with the text it should hold."""
+    docs = DOCS_FILE.read_text()
+    return [
+        (SCHEMA_FILE, workbench_config.schema_json() + "\n"),
+        (DOCS_FILE, splice(
+            docs, workbench_config.DOCS_MARKER, workbench_config.docs_reference(),
+        )),
+    ]
 
 
 def main(argv: list[str]) -> int:
@@ -41,21 +73,26 @@ def main(argv: list[str]) -> int:
         print(f"Unknown argument: {argv[0]}\n\n{__doc__.strip()}", file=sys.stderr)
         return 2
 
-    generated = workbench_config.schema_json() + "\n"
+    targets = render()
 
     if argv and argv[0] == "--check":
-        current = SCHEMA_FILE.read_text() if SCHEMA_FILE.is_file() else ""
-        if current != generated:
+        stale = [
+            path for path, text in targets
+            if (path.read_text() if path.is_file() else "") != text
+        ]
+        if stale:
+            names = ", ".join(str(p.relative_to(REPO_ROOT)) for p in stale)
             print(
-                "config.schema.json is stale — run bin/local/generate-config-schema",
+                f"{names} is stale — run bin/local/generate-config-schema",
                 file=sys.stderr,
             )
             return 1
-        print("config.schema.json is current")
+        print(f"{len(targets)} generated files are current")
         return 0
 
-    SCHEMA_FILE.write_text(generated)
-    print(f"Generated {SCHEMA_FILE.relative_to(REPO_ROOT)}")
+    for path, text in targets:
+        path.write_text(text)
+        print(f"Generated {path.relative_to(REPO_ROOT)}")
     return 0
 
 

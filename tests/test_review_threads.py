@@ -739,10 +739,29 @@ class TestRecoverAgentCommit:
     """Three distinct branches: no change, already pushed, push attempt."""
 
     def test_no_change_when_sha_unchanged(self, rt):
-        """head_after == head_before → no_changes, no push attempted."""
-        with patch.object(rt, "_get_head_sha", return_value="abc1234"):
+        """head_after == head_before, clean tree → no_changes, no push."""
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
+             patch.object(rt.review_common, "has_uncommitted_changes",
+                          return_value=False):
             result = rt._recover_agent_commit(Path("/fake"), "abc1234")
         assert result.status == "no_changes"
+        assert result.sha is None
+
+    def test_a_known_failure_is_never_downgraded(self, rt):
+        """#734: recovery adds information, it does not overwrite it."""
+        prior = rt.CommitPushResult(None, "commit_failed", "hook rejected")
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234", prior=prior)
+        assert result.status == "commit_failed"
+        assert result.error == "hook rejected"
+
+    def test_a_dirty_tree_is_a_refused_commit_not_an_empty_one(self, rt):
+        """Nothing committed with changes still there means something said no."""
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
+             patch.object(rt.review_common, "has_uncommitted_changes",
+                          return_value=True):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "commit_failed"
         assert result.sha is None
 
     def test_already_pushed_skips_push(self, rt):
@@ -804,10 +823,12 @@ class TestFixedStatusText:
         assert text == "Fix pending"
         assert "push failed" not in text
 
-    def test_no_changes(self, rt):
+    def test_no_changes_claims_nothing_about_why(self, rt):
+        """"Fixed" and "nothing committed" cannot both be true — #734."""
         cp = rt.CommitPushResult(None, "no_changes", "")
         text = rt._fixed_status_text(cp, "owner/repo")
-        assert "no commit needed" in text
+        assert text == rt._UNATTRIBUTED_STATUS_TEXT
+        assert "no commit needed" not in text
 
     def test_commit_failed(self, rt):
         cp = rt.CommitPushResult(None, "commit_failed", "hook error")
@@ -835,12 +856,13 @@ class TestBuildSummaryBody:
         assert "abc1234" in body
         assert "push failed" not in body
 
-    def test_no_changes_shows_no_commit_needed(self, rt):
+    def test_no_changes_shows_an_unattributed_fix(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
-        assert "no commit needed" in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert "no commit needed" not in body
 
     def test_commit_failed_shows_precommit_hint(self, rt):
         cp = rt.CommitPushResult(None, "commit_failed", "hook error")
@@ -1311,12 +1333,12 @@ class TestSummaryUsesPerThreadCommit:
         assert "deadbee" in body
         assert "no commit needed" not in body
 
-    def test_row_without_a_sha_still_says_no_commit_needed(self, rt):
+    def test_row_without_a_sha_claims_no_commit(self, rt):
         body = self._post(rt, ThreadOutcome(
             id="t1", summary="fix regex", file="p.py", line=10,
             action=ThreadAction.FIXED,
         ))
-        assert "no commit needed" in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT in body
 
     def test_each_round_keeps_its_own_attribution(self, rt):
         """The #2670 failure: one pass's envelope SHA relabelled every round."""
@@ -1354,6 +1376,124 @@ class TestSummaryUsesPerThreadCommit:
             commit_sha="def5678", commit_status="pushed",
         )
         assert "def5678" in body
+
+
+class TestFailedCommitIsNotReportedAsNoCommit:
+    """#734: a hook-rejected commit published as "no commit needed".
+
+    Two independent defects, one visible claim: recovery overwrote the known
+    failure on its way out of the fix pass, and the renderer then read the
+    status cell straight off a snapshot it never checked against the worktree.
+    """
+
+    @staticmethod
+    def _item(id, verification="valid"):
+        return CommentItem(
+            id=id, file="f.go", line=10, reviewer="kgn", summary=f"{id} summary",
+            classification="actionable_suggestion", verification=verification,
+            complexity="low", state=ThreadState.NEW,
+        )
+
+    def _fix_pass(self, rt, tmp_path):
+        """Drive a fix pass whose commit is rejected and whose HEAD never moves."""
+        threads = [self._item("t1"), self._item("t2")]
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[
+                ReportThread(id=t.id, file=t.file, line=t.line,
+                             comments=[{"databaseId": 100 + n}])
+                for n, t in enumerate(threads)
+            ],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+
+        def mock_run(cmd, **kwargs):
+            if "commit" in cmd:
+                return _make_completed(1, stderr="pre-commit hook failed\n")
+            return _make_completed(0, stdout="aaa1111\n")
+
+        batch = rt.FixBatchResult(
+            tracking=TrackingResult(fixed=threads),
+            unproductive=False, max_turns=10, max_budget=1.0,
+        )
+        with patch.object(rt, "_run_fix_batch", return_value=batch), \
+             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt, "_persist_fix_state") as persist, \
+             patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
+             patch.object(rt.subprocess, "run", side_effect=mock_run), \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.post_issue_comment", return_value="u"), \
+             patch("pr_comments.resolve_thread", return_value=True):
+            result = rt._run_comment_fix(
+                TriageResult(threads=threads), report, tmp_path, ctx,
+            )
+        return result, persist.call_args[0][0]
+
+    def test_the_failure_survives_recovery(self, rt, tmp_path, publishing_on):
+        """The persisted status is what --finish reads on the next run."""
+        result, persisted = self._fix_pass(rt, tmp_path)
+        assert result.commit_status == "commit_failed"
+        assert persisted.commit_status == "commit_failed"
+        assert persisted.commit_sha == ""
+
+    def test_a_hand_commit_gets_the_credit(self, rt):
+        """HEAD moved past the snapshot: attribute the fixes to what landed."""
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="t1 summary", file="f.go",
+                                   line=10, action=ThreadAction.FIXED)],
+            commit_status="commit_failed", head_sha="aaa1111",
+            summary_deferred=True,
+        )
+        with patch.object(rt, "_get_head_sha", return_value="bbb2222"), \
+             patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert "bbb2222" in body
+        assert "no commit needed" not in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT not in body
+
+    def test_an_unpushed_hand_commit_claims_nothing(self, rt):
+        """A SHA a reviewer cannot open is not worth naming."""
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="t1 summary", file="f.go",
+                                   line=10, action=ThreadAction.FIXED)],
+            commit_status="commit_failed", head_sha="aaa1111",
+            summary_deferred=True,
+        )
+        with patch.object(rt, "_get_head_sha", return_value="bbb2222"), \
+             patch.object(rt, "_is_pushed", return_value=False), \
+             patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert rt._RECONCILED_STATUS_TEXT in body
+        assert "bbb2222" not in body
+
+    def test_a_still_unmoved_head_keeps_the_failure(self, rt):
+        """Nothing was committed by anyone — the cell must not invent a commit."""
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="t1 summary", file="f.go",
+                                   line=10, action=ThreadAction.FIXED)],
+            commit_status="commit_failed", head_sha="aaa1111",
+            summary_deferred=True,
+        )
+        with patch.object(rt, "_get_head_sha", return_value="aaa1111"), \
+             patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert "commit failed" in body
+
+    def test_the_contradiction_is_reported(self, rt, capsys):
+        """N fixes and no commit is caught, not rendered quietly."""
+        cp = rt.CommitPushResult(None, "commit_failed", "hook")
+        rt._warn_unattributed_fixes(
+            [CommentItem(id="t1", summary="fix it", file="a.py", line=1)], cp,
+        )
+        assert "no commit to attribute" in capsys.readouterr().err
 
 
 class TestSummaryStillOwed:

@@ -1398,6 +1398,17 @@ _HANDLED_REPLY_PREFIXES = (
 # _fixed_status_for, which must not credit the pass's commit for it.
 _RECONCILED_REASON = "reconciled: handled outside the fix pass"
 
+# The two status cells that decline to name a commit. Both exist because the
+# alternative is a confident wrong claim: the pass either knows someone else
+# landed the work, or knows only that it cannot say who did.
+_RECONCILED_STATUS_TEXT = "Addressed outside the fix pass"
+_UNATTRIBUTED_STATUS_TEXT = "Fix applied (commit not recorded)"
+
+# Transient, never persisted: a render-time reading of "HEAD moved but the
+# commit that moved it is not one a reviewer can open". Set by
+# _reconciled_commit, consumed by _fixed_status_text.
+_RECONCILED_STATUS = "reconciled"
+
 
 def _thread_looks_handled(thread: ReportThread | None) -> bool:
     """True when GitHub shows this thread as dealt with, by anyone.
@@ -1663,7 +1674,7 @@ def _fixed_status_for(
     # commit that did it is not recorded anywhere. Falling through would credit
     # the pass's commit for work it never did.
     if getattr(entry, "reason", "") == _RECONCILED_REASON:
-        return "Addressed outside the fix pass"
+        return _RECONCILED_STATUS_TEXT
     return _fixed_status_text(cp, repo)
 
 
@@ -1673,10 +1684,37 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
         url = f"https://github.com/{repo}/commit/{cp.sha}"
         return f"Fixed in [`{cp.sha}`]({url})"
     if cp.status == "no_changes":
-        return "Fix applied (no commit needed)"
+        # "A fix was applied" and "nothing was committed" contradict each other,
+        # and which half is wrong is not knowable from here — a hook may have
+        # rejected the commit, or the edit may have been a no-op. #734 published
+        # the confident reading of that ("no commit needed") over a rejected
+        # commit, so the cell now states only what is certain.
+        return _UNATTRIBUTED_STATUS_TEXT
     if cp.status == "commit_failed":
         return "Fix applied (commit failed — pre-commit hook?)"
+    if cp.status == _RECONCILED_STATUS:
+        return _RECONCILED_STATUS_TEXT
     return "Fix pending"
+
+
+def _warn_unattributed_fixes(fixed: list, cp: CommitPushResult) -> None:
+    """Say so when rows claim fixes that no commit accounts for.
+
+    The contradiction is caught rather than rendered silently: the summary goes
+    out under the operator's name, and a row that asserts both halves is a claim
+    about their branch that nothing in the run supports.
+    """
+    if cp.sha or not fixed:
+        return
+    if cp.status not in ("no_changes", "commit_failed"):
+        return
+    orphans = [e for e in fixed if not getattr(e, "commit_sha", "")]
+    if not orphans:
+        return
+    log.warn(
+        f"{len(orphans)} fixed row(s) have no commit to attribute them to "
+        f"(commit status: {cp.status}) — rendering them without a claim"
+    )
 
 
 def _comment_item_permalink(
@@ -2128,6 +2166,33 @@ def _post_pending_fix_replies(
         fix.replies_pending = False
 
 
+def _reconciled_commit(
+    fix: pr_state.FixSummary, status: str, wt_path: Path | None,
+) -> CommitPushResult:
+    """The pass's commit as the worktree now shows it, not as it was recorded.
+
+    The permalinks in this summary already fall back to the identity HEAD when
+    the pass recorded no commit of its own; the status cell did not, so a
+    hook-rejected commit the operator then made by hand rendered as a flat
+    "no commit needed" beside a file link pointing at the very change it
+    denied (#734).
+
+    A moved HEAD with nothing recorded means someone committed outside the
+    pass. That commit is only worth naming if a reviewer can open it, so an
+    unpushed one falls back to the same non-committal cell a reconciled
+    outcome gets.
+    """
+    if fix.commit_sha or not wt_path or not fix.head_sha:
+        return CommitPushResult(fix.commit_sha or None, status, "")
+    current = _get_head_sha(wt_path)
+    if not current or current == fix.head_sha:
+        return CommitPushResult(None, status, "")
+    if _is_pushed(wt_path, current):
+        log.info(f"Attributing fixes to {current} — HEAD moved past the fix snapshot")
+        return CommitPushResult(current, "pushed", "")
+    return CommitPushResult(None, _RECONCILED_STATUS, "")
+
+
 def _render_deferred_summary(
     state: pr_state.PRState, report: PRReport, repo: str, pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -2171,11 +2236,8 @@ def _render_deferred_summary(
     dismissed = [t for t in fix.threads if t.action == FA.DISMISSED]
     already_addressed = [t for t in fix.threads if t.action == FA.ALREADY_ADDRESSED]
 
-    cp = CommitPushResult(
-        sha=fix.commit_sha or None,
-        status=status,
-        error="",
-    )
+    cp = _reconciled_commit(fix, status, wt_path)
+    _warn_unattributed_fixes(fixed, cp)
     url = _publish_summary(repo, pr_number, functools.partial(
         _build_summary_body,
         fixed, needs_human, deferred, cp, repo, pr_number, threads_by_id,
@@ -2186,7 +2248,7 @@ def _render_deferred_summary(
         deferred_issue_id=fix.deferred_issue_id,
         deferred_issue_url=fix.deferred_issue_url,
         has_comment_items=fix.has_comment_items,
-        head_sha=fix.commit_sha or state.identity.head_sha,
+        head_sha=cp.sha or state.identity.head_sha,
     ))
     if url:
         log.info(f"Posted deferred fix summary: {url}")
@@ -2237,6 +2299,7 @@ def _post_or_defer_summary(
     Returns the comment URL if posted, None if deferred or nothing to post.
     When deferred, the summary is re-rendered from FixSummary during --finish.
     """
+    _warn_unattributed_fixes(fixed, cp)
     if _commit_unpushed(cp.status):
         log.info("Deferred fix summary — commit not on the remote, will post after push lands")
         return None
@@ -2272,13 +2335,41 @@ def _is_pushed(wt_path: Path, sha: str) -> bool:
     return result.returncode == 0 and result.stdout.strip() != ""
 
 
+def _unrecovered_commit(
+    wt_path: Path, prior: CommitPushResult | None,
+) -> CommitPushResult:
+    """What the pass knows when recovery found no commit of the agent's.
+
+    Recovery exists to *add* information. When it finds none, whatever the
+    caller already established stands: overwriting a `commit_failed` with
+    `no_changes` here is how #734 published "Fix applied (no commit needed)"
+    over a commit a pre-commit hook had rejected.
+
+    With nothing prior to preserve, the tree itself distinguishes the two
+    remaining readings. Changes still sitting there after a commit was
+    attempted mean something refused it, not that there was nothing to commit.
+    """
+    if prior is not None and prior.status != "no_changes":
+        return prior
+    if review_common.has_uncommitted_changes(wt_path):
+        return CommitPushResult(
+            None, "commit_failed", "changes remain uncommitted in the worktree",
+        )
+    return CommitPushResult(None, "no_changes", "")
+
+
 def _recover_agent_commit(
     wt_path: Path, head_before: str, trail: Trail | None = None,
+    prior: CommitPushResult | None = None,
 ) -> CommitPushResult:
-    """Detect and push commits made directly by the fix agent."""
+    """Detect and push commits made directly by the fix agent.
+
+    `prior` is what the caller's own commit attempt concluded, and it is never
+    downgraded — see `_unrecovered_commit`.
+    """
     head_after = _get_head_sha(wt_path)
     if head_after == head_before:
-        return CommitPushResult(None, "no_changes", "")
+        return _unrecovered_commit(wt_path, prior)
 
     if _is_pushed(wt_path, head_after):
         return CommitPushResult(head_after, "pushed", "")
@@ -2661,7 +2752,7 @@ def _run_comment_fix(
     cp = _commit_and_push(wt_path, fixed_count, deferred_count, trail=trail)
 
     if cp.status in ("no_changes", "commit_failed"):
-        cp = _recover_agent_commit(wt_path, head_before, trail)
+        cp = _recover_agent_commit(wt_path, head_before, trail, prior=cp)
 
     replies_posted = triage_replies
     if tracking.fixed and cp.status == "pushed":

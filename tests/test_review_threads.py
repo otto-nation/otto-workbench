@@ -1728,6 +1728,137 @@ class TestPendingFixReplies:
         mock_reply.assert_not_called()
 
 
+class TestReplyAttributionAcrossRounds:
+    """#735: the reply cited the running pass's commit, whatever fixed the thread.
+
+    A single-round fixture cannot tell per-entry attribution from pass-level —
+    they agree — which is exactly why this went unnoticed. So every test here
+    drains a queue whose entries were fixed by different commits than the pass
+    that is now sending their replies.
+    """
+
+    def _drain(self, rt, *outcomes, pass_sha="9999999"):
+        """Send the deferred replies for `outcomes`; return body by thread id."""
+        fix = FixSummary(
+            threads=list(outcomes), commit_sha=pass_sha,
+            commit_status="pushed", replies_pending=True,
+        )
+        threads_by_id = {
+            o.id: ReportThread(id=o.id, is_resolved=False,
+                               comments=[{"databaseId": 100 + n}])
+            for n, o in enumerate(outcomes)
+        }
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True) as reply, \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(_make_state(fix), "owner/repo", 1, threads_by_id)
+        bodies = [call[0][3] for call in reply.call_args_list]
+        return dict(zip([o.id for o in outcomes], bodies))
+
+    @staticmethod
+    def _fixed(tid, sha, path):
+        return ThreadOutcome(id=tid, summary=f"{tid} summary", file=path, line=1,
+                             action=ThreadAction.FIXED, commit_sha=sha)
+
+    def test_each_reply_cites_the_commit_that_fixed_it(self, rt, publishing_on):
+        bodies = self._drain(
+            rt,
+            self._fixed("t1", "1111111", "a.py"),
+            self._fixed("t2", "2222222", "b.py"),
+        )
+        assert "1111111" in bodies["t1"]
+        assert "2222222" not in bodies["t1"]
+        assert "2222222" in bodies["t2"]
+        assert "9999999" not in bodies["t1"] + bodies["t2"]
+
+    def test_each_permalink_is_pinned_to_that_commit(self, rt, publishing_on):
+        """The blob link is evidence — pinned to the wrong SHA it shows the wrong code."""
+        bodies = self._drain(
+            rt,
+            self._fixed("t1", "1111111", "a.py"),
+            self._fixed("t2", "2222222", "b.py"),
+        )
+        assert "/blob/1111111/a.py" in bodies["t1"]
+        assert "/blob/2222222/b.py" in bodies["t2"]
+
+    def test_an_entry_with_no_commit_of_its_own_uses_the_pass(self, rt, publishing_on):
+        outcome = ThreadOutcome(id="t1", summary="t1 summary", file="a.py", line=1,
+                                action=ThreadAction.FIXED)
+        bodies = self._drain(rt, outcome)
+        assert "9999999" in bodies["t1"]
+
+    def test_the_summary_row_and_the_reply_agree(self, rt, publishing_on):
+        """One precedence rule, two renderers — they disagreed before #735."""
+        outcome = self._fixed("t1", "1111111", "a.py")
+        bodies = self._drain(rt, outcome)
+        cell = rt._fixed_status_for(outcome, rt.CommitPushResult("9999999", "pushed", ""),
+                                    "owner/repo")
+        assert "1111111" in cell
+        assert "1111111" in bodies["t1"]
+
+
+class TestHandWrittenRepliesSurvive:
+    """#735: re-draining the queue overwrote replies a human had rewritten."""
+
+    def _reply(self, rt, body):
+        """Run the fix-reply upsert against a thread whose standing reply is `body`."""
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1)
+        threads_by_id = {"t1": _standing_reply_thread(body=body)}
+        with patch("pr_comments.patch_thread_reply", return_value=True) as edit, \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            count = rt._post_fix_replies(
+                [entry], threads_by_id, "owner/repo", 42, "abc1234",
+            )
+        return count, edit, post
+
+    def test_a_rewritten_reply_is_left_alone(self, rt):
+        count, edit, post = self._reply(rt, (
+            "Applied: fix it\n\n"
+            "On reflection we are not doing this — the reviewer's premise "
+            "assumes a code path that was removed in #700."
+        ))
+        assert count == 0
+        edit.assert_not_called()
+        post.assert_not_called()
+
+    def test_a_reply_that_is_still_the_template_is_refreshed(self, rt):
+        """Pairs with the case above — proves that assertion is not vacuous."""
+        count, edit, _ = self._reply(rt, (
+            "Applied: fix it\n\n"
+            "Fixed in [`0000000`](https://github.com/owner/repo/commit/0000000)."
+        ))
+        assert count == 1
+        edit.assert_called_once()
+        assert "abc1234" in edit.call_args[0][2]
+
+    def test_a_reviewers_own_words_are_never_taken_for_ours(self, rt):
+        count, _, _ = self._reply(rt, "Thanks, that works for me.")
+        assert count == 0
+
+    @pytest.mark.parametrize("body", [
+        "Applied: fix it",
+        "Applied: fix it\n\nResult is in [`a.py`](https://github.com/o/r/blob/s/a.py).",
+        "Already addressed: fix it\n\nCurrent behaviour is at https://x/#L1.",
+        "Already addressed in the current implementation: fix it",
+        "Suggestion reviewed and determined to be inapplicable: nope",
+        "Suggestion reviewed and determined to be inapplicable.\n\nSee https://x/#L1.",
+        "Deferred: fix it\n\nTracked in [ENG-1](https://linear.app/i/ENG-1).",
+        "Deferred: fix it\n\nTracked in ENG-1.\n\nUnchanged at https://x/#L1.",
+    ])
+    def test_every_generated_shape_is_recognised(self, rt, body):
+        """A shape this misses is a reply the pass refuses to ever update again."""
+        assert rt._is_generated_reply(body) is True
+
+    @pytest.mark.parametrize("body", [
+        "",
+        "Sounds good to me.",
+        "Applied: fix it\n\nBut see the caveat below.",
+        "Deferred: fix it\n\nI disagree that this is deferrable.",
+    ])
+    def test_anything_else_is_treated_as_a_human_reply(self, rt, body):
+        assert rt._is_generated_reply(body) is False
+
+
 # ── _summarize_comment_body ─────────────────────────────────────────────────
 
 

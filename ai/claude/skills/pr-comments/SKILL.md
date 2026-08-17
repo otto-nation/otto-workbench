@@ -250,6 +250,12 @@ stacking under it. Do **not** call `gh api .../replies` directly: that path has
 no dedup, and it is what leaves a thread holding several of our comments that
 disagree.
 
+A reply that has been rewritten by hand is never replaced by a later pass. The
+fix queue re-drains every fixed thread on each round, and the templated body
+would otherwise overwrite the reasoning someone wrote in its place. The run
+names each thread it skipped for that reason; use `--reply` on one to replace it
+deliberately.
+
 Print summary: fixes applied, replies posted, threads resolved, threads still open.
 
 ---

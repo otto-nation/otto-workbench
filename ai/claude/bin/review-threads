@@ -82,6 +82,24 @@ _APPLIED_REPLY_PREFIX = "Applied:"
 _ADDRESSED_REPLY_PREFIX = "Already addressed"
 _DISMISSED_REPLY_PREFIX = "Suggestion reviewed and determined to be inapplicable"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
+# Every opening line a generated reply can have. Ordered by nothing — this is a
+# membership test, used to tell our own template apart from a reply someone
+# rewrote by hand.
+_GENERATED_REPLY_PREFIXES = (
+    _APPLIED_REPLY_PREFIX,
+    _ADDRESSED_REPLY_PREFIX,
+    _DISMISSED_REPLY_PREFIX,
+    _DEFERRED_REPLY_PREFIX,
+)
+# Every trailing paragraph a generated reply can have: one sentence naming a
+# commit, a file, or an issue. Kept in step with the four body_fn builders
+# below — a new trailing line there needs its opening added here, or the reply
+# it appears in stops being recognised as ours.
+_GENERATED_FOLLOWUP_RE = re.compile(
+    r"(?:Fixed in|Result is in|Current behaviour is at|Addressed in|See|"
+    r"Tracked in|Unchanged at) .+\.$",
+    re.DOTALL,
+)
 # Not agent_retry.FIX_RETRY_HINT, which scolds an agent that produced nothing.
 # This one addresses an agent that produced something and is being handed the
 # remainder, so it points at the checklist rather than at the write mechanism.
@@ -1028,6 +1046,31 @@ def _upsert_thread_reply(
     return pc.post_thread_reply(repo, pr_number, root_id, body)
 
 
+def _is_generated_reply(body: str) -> bool:
+    """Whether a standing reply is still one of ours, in template shape.
+
+    The upsert replaces our standing reply wholesale, and the fix queue
+    re-drains every fixed thread on later rounds — so a reply someone rewrote
+    by hand, with reasoning or an explicit decision not to do what the reviewer
+    asked, was overwritten by the three-line template with no undo but the edit
+    history (#735).
+
+    Divergence is measured against the template rather than tracked by round
+    number: the round a reply was written in says nothing about whether it is
+    still ours. Regenerating an identical body is harmless; replacing a
+    divergent one is not.
+
+    ceiling: a hand edit confined to the opening paragraph's prose still reads
+    as generated, because that paragraph is free text in the template too. Add
+    an HTML marker to generated bodies and key off that if the prose case ever
+    costs someone a reply.
+    """
+    paragraphs = [p.strip() for p in body.strip().split("\n\n") if p.strip()]
+    if not paragraphs or not paragraphs[0].startswith(_GENERATED_REPLY_PREFIXES):
+        return False
+    return all(_GENERATED_FOLLOWUP_RE.fullmatch(p) for p in paragraphs[1:])
+
+
 def _post_thread_replies(
     entries: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
@@ -1038,15 +1081,21 @@ def _post_thread_replies(
     """Leave one reply per thread, building each body with body_fn.
 
     Whichever verdict a round reaches, it lands in the same place: our standing
-    reply on that thread, replaced. Returns the number of threads replied to.
+    reply on that thread, replaced — unless a human has rewritten that reply,
+    in which case the thread is left alone. Returns the number replied to.
     """
     replied = 0
     edited = 0
+    kept = 0
     for entry in entries:
         thread = threads_by_id.get(entry.id)
         if not thread or not thread.comments:
             continue
         existing_id = _our_last_reply_id(thread)
+        if existing_id and not _is_generated_reply(str(thread.comments[-1].get("body", ""))):
+            log.warn(f"{entry.id}: standing reply was hand-written — leaving it alone")
+            kept += 1
+            continue
         # ceiling: thread.comments is not refreshed after a post, so two replies
         # to one thread within a single run would still stack. Unreachable while
         # the reply categories stay a partition of the triage verdicts; refetch
@@ -1057,6 +1106,11 @@ def _post_thread_replies(
         edited += existing_id is not None
     if edited:
         log.info(f"Edited {edited} standing repl{'y' if edited == 1 else 'ies'} in place")
+    if kept:
+        log.info(
+            f"Left {kept} hand-written repl{'y' if kept == 1 else 'ies'} untouched "
+            f"— use --reply <id> --body-file <f> to replace one deliberately"
+        )
     return replied
 
 
@@ -1067,19 +1121,23 @@ def _post_fix_replies(
     pr_number: int,
     commit_sha: str,
 ) -> int:
-    """Post replies to each fixed thread. Returns count of replies posted."""
-    commit_url = f"https://github.com/{repo}/commit/{commit_sha}"
+    """Post replies to each fixed thread. Returns count of replies posted.
 
+    `commit_sha` covers the entries this pass just fixed. An entry replayed from
+    state carries the commit that actually fixed it, which may be several rounds
+    old — see `_entry_commit_sha`.
+    """
     def body_fn(entry: CommentItem) -> str:
+        sha = _entry_commit_sha(entry, commit_sha)
         parts = [
             f"{_APPLIED_REPLY_PREFIX} {entry.summary}",
-            f"Fixed in [`{commit_sha}`]({commit_url}).",
+            f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha}).",
         ]
         # The file, not the line: the fix has just moved the lines around it,
         # and pointing a reviewer at the wrong line is worse than pointing them
         # at the file the change landed in.
         if entry.file:
-            url = _blob_permalink(repo, commit_sha, entry.file)
+            url = _blob_permalink(repo, sha, entry.file)
             parts.append(f"Result is in [`{entry.file}`]({url}).")
         return "\n\n".join(parts)
 
@@ -1087,6 +1145,23 @@ def _post_fix_replies(
     if posted:
         log.info(f"Replied on {posted} fixed thread(s)")
     return posted
+
+
+def _entry_commit_sha(
+    entry: CommentItem | pr_state.ThreadOutcome, pass_sha: str = "",
+) -> str:
+    """The commit that fixed this entry, preferring the entry's own record.
+
+    `pass_sha` describes the pass running now. An entry replayed from state may
+    have been fixed rounds ago by a different commit, so its own SHA wins and
+    the pass-level one is only a fallback for an entry that has none.
+
+    Shared by the summary row and the thread reply on purpose: they were two
+    implementations of the same attribution, and only the summary's was right —
+    the reply pinned every round's `Fixed in` line, and every blob permalink
+    beneath it, to whatever the latest pass had committed (#735).
+    """
+    return getattr(entry, "commit_sha", "") or pass_sha
 
 
 def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
@@ -1667,7 +1742,7 @@ def _fixed_status_for(
     Reachable only from `_render_deferred_summary`, which refuses to post while
     a recorded commit is still unpushed, so the commit link cannot 404.
     """
-    sha = getattr(entry, "commit_sha", "")
+    sha = _entry_commit_sha(entry)
     if sha:
         return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
     # Reconciled outcomes were handled by hand or by the reviewer, and the
@@ -2147,9 +2222,12 @@ def _post_pending_fix_replies(
     fixed_threads = [t for t in fix.threads if t.action == FA.FIXED]
 
     if fixed_threads:
+        # commit_sha carried, not dropped: this queue spans rounds, and an
+        # entry fixed two commits ago must still cite the commit that fixed it.
         items = [
             CommentItem(id=t.id, file=t.file, line=t.line,
-                        reviewer=t.reviewer, summary=t.summary)
+                        reviewer=t.reviewer, summary=t.summary,
+                        commit_sha=t.commit_sha)
             for t in fixed_threads
         ]
         # Accumulate rather than discard: these are the same round's replies
@@ -2410,7 +2488,7 @@ def _build_thread_outcomes(
     outcomes: list[pr_state.ThreadOutcome] = []
     for entry in fixed:
         outcome = entry.to_outcome(FA.FIXED)
-        outcome.commit_sha = commit_sha
+        outcome.commit_sha = _entry_commit_sha(entry, commit_sha)
         outcomes.append(outcome)
     for entry in deferred:
         outcomes.append(entry.to_outcome(FA.DEFERRED))

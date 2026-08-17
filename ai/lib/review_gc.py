@@ -268,6 +268,13 @@ def _pr_close_state(repo: str, pr_number: int) -> tuple[str, str]:
         return "", ""
     state = fields.get("state") or ""
     if state not in ("MERGED", "CLOSED"):
+        # OPEN is a real answer; anything else is gh answering with a state this
+        # code does not know, which is the JSONDecodeError case wearing a 0 exit
+        # — a renamed or added state would otherwise read as "still open"
+        # forever and quietly retire the prune.
+        if state != "OPEN":
+            detail = state or "no state field"
+            log.warn(f"GC: gh reported an unrecognized state for {repo}#{pr_number} ({detail}) — leaving it in place")
         return "", ""
     ended_at = fields.get("mergedAt") if state == "MERGED" else fields.get("closedAt")
     return state, ended_at or ""

@@ -22,7 +22,7 @@ sys.path.insert(0, str(LIB_DIR))
 import ai_usage
 import log
 import workbench_paths
-from trail import FINISH_ACTION
+from trail import FINISH_ACTION, INVOCATION_HEX_WIDTH
 
 
 ANSI_RESET = "\033[0m"
@@ -413,7 +413,9 @@ def cmd_list(args):
             ts = first.get("ts", "?")[:19]
             script = first.get("script", "?")
             n = len(inv_events)
-            print(f"{inv_id}  {script:<20} {ts}  {n:>3} events  {duration}")
+            # Padded to the current width so records minted before it widened
+            # do not shift every column to their right.
+            print(f"{inv_id:<{INVOCATION_HEX_WIDTH}}  {script:<20} {ts}  {n:>3} events  {duration}")
 
 
 def cmd_stats(args):

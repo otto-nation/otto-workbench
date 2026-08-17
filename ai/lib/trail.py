@@ -49,9 +49,9 @@ SCHEMA_VERSION = 1
 # now writes into one root that nothing prunes, and `otto-log show` loads all of
 # it — so an ID has to stay unique across the machine's whole recorded history,
 # not just one worktree's file. 8 characters put the birthday bound around 65k
-# invocations, which one tool alone reached in two months; 48 bits moves it out
-# of reach. Readers match the field whole, so records minted at the old width
-# keep resolving.
+# invocations, and one tool alone logged 9,134 in two months, so a machine
+# reaches that in about a year; 48 bits moves the bound to 16.7M. Readers match
+# the field whole, so records minted at the old width keep resolving.
 INVOCATION_HEX_WIDTH = 12
 
 # The action on the one summary event that reports a run's own duration.

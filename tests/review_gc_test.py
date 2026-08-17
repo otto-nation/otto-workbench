@@ -111,6 +111,38 @@ def test_pr_close_state_warns_when_gh_cannot_be_run(monkeypatch, capsys):
     assert "acme/widget#7" in capsys.readouterr().err
 
 
+def test_pr_close_state_says_nothing_about_an_open_pr(monkeypatch, capsys):
+    """OPEN is a real answer, not a failure to ask — warning on it would put a
+    line in the maintenance log for every PR still in flight, every cycle."""
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        returncode=0, stderr="",
+        stdout=json.dumps({"state": "OPEN", "mergedAt": None, "closedAt": None})))
+
+    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert capsys.readouterr().err == ""
+
+
+def test_pr_close_state_warns_when_gh_reports_a_state_it_does_not_know(monkeypatch, capsys):
+    """A renamed or added gh state exits 0 and parses cleanly, so it would read as
+    "still open" forever and quietly retire the prune."""
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        returncode=0, stderr="",
+        stdout=json.dumps({"state": "LOCKED", "mergedAt": None, "closedAt": None})))
+
+    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    err = capsys.readouterr().err
+    assert "acme/widget#7" in err
+    assert "LOCKED" in err
+
+
+def test_pr_close_state_warns_when_gh_omits_the_state_field(monkeypatch, capsys):
+    monkeypatch.setattr("review_gc.subprocess.run", lambda *a, **kw: MagicMock(
+        returncode=0, stderr="", stdout=json.dumps({"mergedAt": None})))
+
+    assert review_gc._pr_close_state("acme/widget", 7) == ("", "")
+    assert "no state field" in capsys.readouterr().err
+
+
 def test_prune_merged_targets_removes_a_merged_prs_dir(tmp_path, monkeypatch):
     target = _seed_target(tmp_path)
     monkeypatch.setattr(review_gc, "_pr_close_state", lambda repo, n: ("MERGED", ""))

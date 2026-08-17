@@ -74,11 +74,12 @@ fi
 # `cd /x && ls` inside one is not an invocation. Surviving lines are joined with
 # `; ` so the anchors below treat a new line as the new statement it is — and so
 # a lone `cd <dir>`, the sanctioned form, still has no separator to match on.
-re_heredoc="<<-?[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)"
+re_heredoc="<<(-?)[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)"
 scannable=""
 marker=""
+marker_re=""
 while IFS= read -r line; do
-  if [[ -n "$marker" && "$line" =~ ^[[:space:]]*${marker}[[:space:]]*$ ]]; then
+  if [[ -n "$marker" && "$line" =~ $marker_re ]]; then
     marker=""
     continue
   fi
@@ -87,7 +88,11 @@ while IFS= read -r line; do
   fi
   scannable+="${scannable:+; }$line"
   if [[ "$line" =~ $re_heredoc ]]; then
-    marker="${BASH_REMATCH[1]}"
+    # Only `<<-` lets the terminator be indented. Accepting indentation for a
+    # plain `<<` would end the heredoc early on a body line that happens to be
+    # the marker word, and scan the rest of the body as commands.
+    marker="${BASH_REMATCH[2]}"
+    marker_re="^${BASH_REMATCH[1]:+[[:space:]]*}${marker}[[:space:]]*$"
   fi
 done < <(printf '%s\n' "$cmd")
 
@@ -98,11 +103,19 @@ stripped=$(printf '%s' "$scannable" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
 # them; every other rule wants both kinds of quote gone.
 sq_stripped=$(printf '%s' "$scannable" | sed -e "s/'[^']*'//g")
 
+# A third variant that replaces each quoted span with a placeholder instead of
+# deleting it. The redirect rule below captures the token after `>`, and a
+# quoted destination would otherwise leave nothing there to capture — turning a
+# blockable write into a silent pass.
+placeheld=$(printf '%s' "$scannable" | sed -e "s/'[^']*'/QUOTEDARG/g" -e 's/"[^"]*"/QUOTEDARG/g')
+
 # Ahead of every rule below: a `-c` wrapper hides its payload from all of them,
 # and from the analyzer, so whatever is inside can only be judged once unwrapped.
-re_dashc='(^|[;&|][[:space:]]*)(sh|bash|zsh|dash)[[:space:]]+-[A-Za-z]*c([[:space:]]|$)'
+# The optional path prefix keeps `/bin/sh -c "..."` on this message rather than
+# the PATH-binary one below — the wrapper is the real problem, not the path.
+re_dashc='(^|[;&|][[:space:]]*)([^[:space:];&|]*/)?(sh|bash|zsh|dash)[[:space:]]+-[A-Za-z]*c([[:space:]]|$)'
 if [[ "$stripped" =~ $re_dashc ]]; then
-  block "A ${BASH_REMATCH[2]} -c \"...\" wrapper hides the real command, so the whole quoted string needs approval and no allow-list entry can match what is inside. Run the command directly, with a bare cd <dir> as its own call instead of embedding one. See bash-tool.md § Avoid Wrapping Commands in sh -c."
+  block "A ${BASH_REMATCH[3]} -c \"...\" wrapper hides the real command, so the whole quoted string needs approval and no allow-list entry can match what is inside. Run the command directly, with a bare cd <dir> as its own call instead of embedding one. See bash-tool.md § Avoid Wrapping Commands in sh -c."
 fi
 
 re_func='(^|[;&|][[:space:]]*)([A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\(\)|function[[:space:]])'
@@ -143,11 +156,17 @@ fi
 # there is the Write tool. Upgrade to reading the session's working directories
 # if a real logging use shows up.
 re_write='(^|[;&|][[:space:]]*)(echo|printf)[[:space:]][^;&|]*>>?[[:space:]]*([^[:space:];&|]+)'
-if [[ "$stripped" =~ $re_write ]]; then
-  case "${BASH_REMATCH[3]}" in
+if [[ "$placeheld" =~ $re_write ]]; then
+  target="${BASH_REMATCH[3]}"
+  # A quoted destination reads as the placeholder, so name it generically rather
+  # than echoing a token the caller never wrote.
+  if [[ "$target" == QUOTEDARG ]]; then
+    target="a quoted path"
+  fi
+  case "$target" in
     /dev/null | /tmp/* | /private/tmp/* | /var/folders/*) ;;
     *)
-      block "Redirecting echo/printf into ${BASH_REMATCH[3]} prompts for access to that path. Use the Write tool for a new file or the Edit tool to append to an existing one — both are allow-listed and show a diff. See bash-tool.md § Avoid Shell Redirects That Write Files."
+      block "Redirecting echo/printf into $target prompts for access to that path. Use the Write tool for a new file or the Edit tool to append to an existing one — both are allow-listed and show a diff. See bash-tool.md § Avoid Shell Redirects That Write Files."
       ;;
   esac
 fi

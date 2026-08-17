@@ -452,6 +452,17 @@ _init_test_repo() {
   [[ "$output" == *"VAR=value"* ]]
 }
 
+@test "scan: does not end a plain heredoc on an indented marker word" {
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\n  EOF\ntrue; FOO=bar\nEOF"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "scan: ends a dash heredoc on an indented marker" {
+  run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<-EOF\nbody\n  EOF\ntrue; FOO=bar"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"VAR=value"* ]]
+}
+
 @test "scan: still allows a bare cd as its own call" {
   run _run_guard '{"tool_input":{"command":"cd /Users/me/git/repo"}}'
   [ "$status" -eq 0 ]
@@ -482,6 +493,12 @@ _init_test_repo() {
 @test "dashc hook: blocks a combined flag form" {
   run _run_guard '{"tool_input":{"command":"sh -ec \"ls\""}}'
   [ "$status" -eq 2 ]
+}
+
+@test "dashc hook: blocks a path-prefixed shell and names the wrapper" {
+  run _run_guard '{"tool_input":{"command":"/bin/sh -c \"ls -la\""}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"sh -c"* ]]
 }
 
 @test "dashc hook: allows running a shell on a script file" {
@@ -530,6 +547,17 @@ _init_test_repo() {
 
 @test "write hook: allows capturing another command's output" {
   run _run_guard '{"tool_input":{"command":"jq -r .name /Users/me/pkg.json > /Users/me/out.txt"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "write hook: blocks a quoted destination path" {
+  run _run_guard "{\"tool_input\":{\"command\":\"echo hi > '/Users/me/my notes.md'\"}}"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"a quoted path"* ]]
+}
+
+@test "write hook: allows a quoted argument before a scratch destination" {
+  run _run_guard '{"tool_input":{"command":"echo \"hello world\" > /tmp/probe.log"}}'
   [ "$status" -eq 0 ]
 }
 

@@ -674,7 +674,10 @@ and its module docstring states the rule in full; a reimplementation should
 assert against both published fixtures in `tests/pr_target_test.py` —
 `SLUG_VECTORS` for the branch slug and `REPO_KEY_VECTORS` for the repo key.
 
-Trails stay worktree-local at `<worktree>/.workbench/trail.jsonl`.
+Every script's trail goes to one root — `~/.local/state/workbench/trail/YYYY-MM.jsonl`,
+one file per month. `otto-log recent --repo <org/repo>` narrows it to one repo;
+`otto-log query --pr <n>` finds every record for one PR, including the terminal
+`pr_outcome` event `pr gc` writes when the PR merges or closes.
 
 ### Drafts, and what it takes to publish
 

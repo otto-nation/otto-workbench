@@ -5,10 +5,10 @@ export const docs = defineDocs({
   dir: 'content/docs',
   docs: {
     files: ['*.md'],
-    // The default pageSchema requires `title`, but none of the ten docs carry
-    // frontmatter yet (Task 2 adds it). Relaxing it to optional lets this task's
-    // build succeed today; fumadocs-mdx falls back to the first heading as the
-    // title in its absence. An explicit `title` from Task 2 still validates fine.
+    // Temporary scaffolding: the default pageSchema requires `title`, but none of
+    // the ten docs carry frontmatter yet. The task that adds `title`/`description`
+    // frontmatter to all ten docs deletes this override, restoring the default
+    // pageSchema — do not carry it past that task.
     schema: pageSchema.extend({ title: pageSchema.shape.title.optional() }),
   },
 });

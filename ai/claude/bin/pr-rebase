@@ -120,6 +120,18 @@ class RunMode(StrEnum):
         """Whether the AI is allowed to resolve conflicts during the rebase."""
         return self in (RunMode.FIX, RunMode.FIX_ONLY)
 
+    @property
+    def reaches_remote(self) -> bool:
+        """Whether the run pushes at all, wherever the push is issued from.
+
+        Deliberately not the same question as "does this function push": FIX
+        pushes from the rebase-completion path and PUSH pushes from main() via
+        cmd_push, so a predicate for the latter reads False under PUSH even
+        though the run force-pushes seconds later. Conflating the two is what
+        printed a manual-push hint ahead of an automatic push.
+        """
+        return self in (RunMode.FIX, RunMode.PUSH)
+
 
 @dataclass(frozen=True)
 class Regenerator:
@@ -1971,11 +1983,12 @@ def _rebase_success(
             log.error("Force-push failed.")
         return push_rc
 
+    # The label holds in every mode that reaches here — the rebase finished.
     # Under FIX_ONLY the AI's work is the whole point of the run and the user is
     # about to push it by hand, so name it rather than reporting a bare "clean".
-    if tally.commits:
-        log.ok(label)
-    log.ok("Rebase clean — run `git push --force-with-lease` to push, or re-run without --no-push.")
+    log.ok(label)
+    if not mode.reaches_remote:
+        log.ok("Run `git push --force-with-lease` to push, or re-run without --no-push.")
     return 0
 
 

@@ -2887,6 +2887,34 @@ def test_rebase_success_in_fix_only_prints_the_push_command(capsys):
     assert "git push --force-with-lease" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("mode,hinted", [
+    (pr_rebase_cli.RunMode.REBASE_ONLY, True),
+    (pr_rebase_cli.RunMode.FIX_ONLY, True),
+    (pr_rebase_cli.RunMode.PUSH, False),
+    (pr_rebase_cli.RunMode.FIX, False),
+])
+def test_manual_push_hint_only_when_the_run_never_pushes(mode, hinted, capsys):
+    """The hint keyed on "pushes from here", so PUSH printed it then pushed.
+
+    RunMode.PUSH pushes from main() via cmd_push, which is invisible to the
+    rebase-completion path — the condition has to be whether the run reaches
+    the remote at all.
+    """
+    ctx = mock.MagicMock()
+
+    with mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=2), \
+         mock.patch.object(pr_rebase_cli, "_force_push", return_value=0), \
+         mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(pr_rebase_cli, "_emit_json"):
+        rc = pr_rebase_cli._rebase_success("/fake", ctx, mode)
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert ("git push --force-with-lease" in err) is hinted
+    assert ("--no-push" in err) is hinted
+    assert "Rebase complete" in err
+
+
 def test_fix_only_still_resolves_conflicts():
     """--no-push suppresses the push, not the AI — the two must stay separable."""
     ctx = mock.MagicMock()

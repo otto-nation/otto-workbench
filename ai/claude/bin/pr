@@ -492,24 +492,33 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
 # once the target-scoped layout has shipped long enough that no worktree
 # still carries the legacy files, delete this function and its call site.
 def _sweep_legacy_state(worktree_root: Path) -> int:
-    """Remove state and lock files the pre-target layout left in a worktree.
+    """Remove what the pre-target layout left in a worktree.
 
     Returns 1 if anything was removed. No migration carries these: they are
     gitignored, worktree-local, and rebuilt by the next command that writes
-    them. `trail.jsonl` and the directory itself stay untouched — nothing
-    reads a trail from here any more, but removing the directory is a
-    separate call this function does not make.
+    them. The trail goes with them now that every trail is written to the user's
+    own state root — a `trail.jsonl` sitting in a working tree is litter.
+
+    The directory itself is removed only when nothing else is in it: an entry
+    this layout never wrote is not ours to delete.
     """
     legacy = worktree_root / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
     removed = 0
-    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE):
+    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE, "trail.jsonl"):
         path = legacy / name
         if path.is_file():
             path.unlink(missing_ok=True)
             removed = 1
-    if removed:
-        log.info(f"GC: removed legacy worktree state in {legacy}")
-    return removed
+    if not removed:
+        return 0
+    try:
+        legacy.rmdir()
+    except OSError:
+        # Something else is in there, or it is gone already. Either way the
+        # files this layout owns are the only thing this sweep promised.
+        pass
+    log.info(f"GC: removed legacy worktree state in {legacy}")
+    return 1
 
 
 def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:

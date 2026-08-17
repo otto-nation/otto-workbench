@@ -957,8 +957,7 @@ def test_no_positional_candidate_skips_the_probe(mock_resolve, mock_run):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_status_needs_no_delegate_to_classify(mock_resolve, mock_run, worktree,
-                                              stub_state_dir):
+def test_status_needs_no_delegate_to_classify(mock_resolve, mock_run, worktree):
     """`pr status` is internal, has no delegate, and takes no positional."""
     mock_resolve.return_value = make_ctx(worktree_root=worktree)
     _probe_real_delegates(mock_run)
@@ -969,7 +968,7 @@ def test_status_needs_no_delegate_to_classify(mock_resolve, mock_run, worktree,
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
 def test_internal_command_still_classifies_a_positional(mock_resolve, mock_run,
-                                                        worktree, stub_state_dir):
+                                                        worktree):
     """`pr fix 3057` has no delegate to ask, but 3057 is still the target."""
     mock_resolve.return_value = make_ctx(worktree_root=worktree, pr_number=int(_TEST_PR))
     _probe_real_delegates(mock_run)
@@ -1209,24 +1208,10 @@ def _lock_file(target_dir):
     return Path(target_dir) / run_lock.LOCK_FILE
 
 
-@pytest.fixture
-def stub_state_dir(worktree, monkeypatch):
-    """Resolve the worktree's state dir without asking git.
-
-    The tests that take this also mock `pr_cli.subprocess.run` — which is the
-    subprocess module itself, so the resolver's own `git rev-parse` would be
-    answered by that mock and the state dir would land wherever a MagicMock
-    stringifies to. What they cover is the lock wiring, not the resolution.
-    """
-    path = worktree / ".git" / workbench_paths.WORKTREE_STATE_DIRNAME
-    monkeypatch.setattr(workbench_paths, "worktree_state_dir", lambda root: path)
-    return path
-
-
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
 def test_main_locks_the_target_for_a_mutating_command(
-        mock_resolve, mock_run, worktree, stub_state_dir):
+        mock_resolve, mock_run, worktree):
     """worktree_root and target_dir are different directories here on purpose:
     a lock keyed on worktree_root (the old bug) would land in the worktree, not
     in the target."""
@@ -1260,8 +1245,7 @@ def test_main_locks_a_bare_repo_run(mock_resolve, mock_run, tmp_path):
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
-def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree,
-                                       stub_state_dir):
+def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree):
     """status is read-only, so it must never block on a run in flight."""
     target = worktree / "target"
     mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
@@ -1277,9 +1261,9 @@ def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree,
 def test_main_locks_for_gc(mock_resolve, _gc, _prune, _prune_targets, worktree):
     """gc deletes the state directory, so it is not safe to run unlocked.
 
-    Takes no stub_state_dir, unlike its neighbours: nothing here mocks
-    `pr_cli.subprocess.run`, so the real `git rev-parse` answers for the
-    worktree and the state dir resolves on its own.
+    Unlike its neighbours, nothing here mocks `pr_cli.subprocess.run`, so the
+    real `git rev-parse` answers for the worktree and the state dir resolves
+    on its own.
     """
     target = worktree / "target"
     mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
@@ -1332,7 +1316,8 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
     assert "15461" in err
 
 
-def test_gc_sweeps_legacy_worktree_artifacts_but_keeps_the_trail(tmp_path):
+def test_gc_sweeps_every_legacy_worktree_artifact(tmp_path):
+    """Nothing writes into a working tree any more, so a leftover here is litter."""
     legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
     legacy.mkdir()
     (legacy / pr_state.STATE_FILE).write_text("{}")
@@ -1341,9 +1326,20 @@ def test_gc_sweeps_legacy_worktree_artifacts_but_keeps_the_trail(tmp_path):
 
     assert pr_cli._sweep_legacy_state(tmp_path) == 1
 
-    assert not (legacy / pr_state.STATE_FILE).exists()
-    assert not (legacy / "run.lock").exists()
-    assert (legacy / "trail.jsonl").is_file()
+    assert not legacy.exists()
+
+
+def test_gc_legacy_sweep_keeps_a_directory_holding_anything_else(tmp_path):
+    """Only files this layout is known to have written are ours to remove."""
+    legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
+    legacy.mkdir()
+    (legacy / "trail.jsonl").write_text('{"event":"x"}\n')
+    (legacy / "someone-elses.txt").write_text("keep")
+
+    assert pr_cli._sweep_legacy_state(tmp_path) == 1
+
+    assert legacy.is_dir()
+    assert (legacy / "someone-elses.txt").is_file()
 
 
 def test_gc_legacy_sweep_is_idempotent(tmp_path):

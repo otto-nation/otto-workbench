@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import os
 import re
@@ -10,23 +11,30 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import log
 import publishing
-import workbench_paths
+import workbench_config
+from workbench_config import yaml_dump
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
 _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
 _GITHUB_BASE_URL = "https://github.com"
-_PROVIDER_DEFAULT = "linear"
 
-_CONFIG_DIR = ".claude"
-_CONFIG_FILE = "review.yml"
+_LEGACY_CONFIG_DIR = ".claude"
+_LEGACY_CONFIG_FILE = "review.yml"
 
 
 @dataclass(frozen=True)
-class IssueProvider:
-    name: str = _PROVIDER_DEFAULT
+class IssueProviderInfo:
+    """The resolved tracker: which provider, plus its settings as strings.
+
+    Named apart from ``workbench_config.IssueProvider``, the enum of provider
+    names this carries in ``name`` — the two are in scope together here.
+    """
+
+    name: str = str(workbench_config.IssueProvider.LINEAR)
     options: dict = field(default_factory=dict)
 
 
@@ -42,79 +50,59 @@ class IssueContext:
     context: str = ""
 
 
-def _parse_opts_json(raw: str) -> dict:
-    """Parse JSON opts string, returning empty dict on failure."""
+def adopt_project_review_yml(wt_path: str) -> bool:
+    """Carry a repo's ``.claude/review.yml`` into ``.workbench.yml``, once.
+
+    The machine-wide migration cannot reach the project files in every repo the
+    user reviews, so the conversion happens where the file is found. Returns
+    True when it converted one.
+
+    The old file is left in place: it is typically tracked in the consumer
+    repo, and deleting a tracked file during an unrelated command is a
+    surprise, not a recovery. The message names it as removable instead.
+    Idempotent — the new file existing is what stops a second conversion.
+    """
+    legacy = Path(wt_path) / _LEGACY_CONFIG_DIR / _LEGACY_CONFIG_FILE
+    target = workbench_config.project_config_path(wt_path)
+    if not legacy.is_file() or target.exists():
+        return False
+
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
+        legacy_data = workbench_config.read_yaml(legacy)
+    except workbench_config.ConfigError as exc:
+        log.warn(f"{legacy} is unreadable ({exc}) — not converting it")
+        return False
+
+    tracker = legacy_data.get("issue_tracker")
+    if not isinstance(tracker, dict):
+        return False
+
+    try:
+        target.write_text(yaml_dump({"review": {"issue_tracker": tracker}}))
+    except OSError as exc:
+        # A read-only checkout still has the legacy file to fall back on, so a
+        # failed conversion costs nothing but the conversion.
+        log.dim(f"could not write {target} ({exc}) — leaving {legacy} in place")
+        return False
+
+    log.ok(f"Converted {legacy} to {target.name} — the old file can be removed")
+    return True
 
 
-def _parse_provider_from_file(config_file: str) -> str:
-    """Fallback: extract provider from YAML config by line scanning."""
-    with open(config_file) as f:
-        lines = f.readlines()
-    for line in lines:
-        m = re.match(r"\s*provider:\s*(.+)", line)
-        if m:
-            return m.group(1).strip().strip("'\"")
-    return _PROVIDER_DEFAULT
+def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
+    """The issue tracker for this scope, project config first.
 
-
-def load_issue_provider(wt_path: str | None = None) -> IssueProvider:
-    config_file = _find_config_file(wt_path)
-    if not config_file:
-        return IssueProvider()
-
-    provider, opts = _load_provider_via_yq(config_file)
-
-    if not provider:
-        provider = _PROVIDER_DEFAULT
-
-    return IssueProvider(name=provider, options=opts)
-
-
-def _find_config_file(wt_path: str | None) -> str:
-    """Locate the review.yml config file, or return empty string.
-
-    Hand-authored, so the machine-wide copy sits under the config root rather
-    than beside the reviews it configures.
+    A repo still holding the pre-#626 ``.claude/review.yml`` is converted on
+    the way through, so the answer comes from one place afterwards.
     """
     if wt_path:
-        project_cfg = os.path.join(wt_path, _CONFIG_DIR, _CONFIG_FILE)
-        if os.path.isfile(project_cfg):
-            return project_cfg
-
-    candidate = str(workbench_paths.config_dir() / _CONFIG_FILE)
-    if os.path.isfile(candidate):
-        return candidate
-
-    return ""
-
-
-def _load_provider_via_yq(config_file: str) -> tuple[str, dict]:
-    """Load provider and opts via yq, falling back to line scanning."""
-    provider = _PROVIDER_DEFAULT
-    opts: dict = {}
-
-    try:
-        r_provider = subprocess.run(
-            ["yq", "-r", ".issue_tracker.provider // \"linear\"", config_file],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r_provider.returncode == 0 and r_provider.stdout.strip():
-            provider = r_provider.stdout.strip()
-
-        r_opts = subprocess.run(
-            ["yq", "-r", ".issue_tracker // {}", config_file],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r_opts.returncode == 0 and r_opts.stdout.strip():
-            opts = _parse_opts_json(r_opts.stdout.strip())
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        provider = _parse_provider_from_file(config_file)
-
-    return provider, opts
+        adopt_project_review_yml(wt_path)
+    config = workbench_config.load_config_or_default(wt_path)
+    tracker = config.review.issue_tracker
+    # str() per value: asdict leaves an enum member as the member, and every
+    # consumer of options reads it as a string.
+    options = {k: str(v) for k, v in dataclasses.asdict(tracker).items() if v}
+    return IssueProviderInfo(name=str(tracker.provider), options=options)
 
 
 def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:

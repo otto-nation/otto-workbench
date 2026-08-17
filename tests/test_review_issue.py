@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review_issue import (
-    IssueContext, IssueProvider, CreatedIssue,
+    IssueContext, IssueProviderInfo, CreatedIssue,
     load_issue_provider, extract_issue_id,
     fetch_issue_context, create_issue, update_issue,
 )
@@ -81,73 +81,31 @@ def test_jira_falls_back_to_pr_body():
 # ── load_issue_provider ────────────────────────────────────────────────────
 
 
-def test_load_issue_provider_no_config_returns_linear():
-    with patch("os.path.isfile", return_value=False):
-        result = load_issue_provider("/nonexistent")
+def test_load_issue_provider_defaults_to_linear(tmp_path):
+    result = load_issue_provider(str(tmp_path))
     assert result.name == "linear"
-    assert result.options == {}
+    assert result.options == {"provider": "linear"}
 
 
-def test_load_issue_provider_reads_wt_path_config(tmp_path):
-    config = tmp_path / ".claude" / "review.yml"
-    config.parent.mkdir(parents=True)
-    config.write_text("issue_tracker:\n  provider: jira\n  jira_url: https://jira.example.com\n")
-
-    result = MagicMock()
-    result.returncode = 0
-
-    def fake_run(cmd, **kwargs):
-        r = MagicMock()
-        r.returncode = 0
-        if ".provider" in " ".join(cmd):
-            r.stdout = "jira"
-        else:
-            r.stdout = '{"provider":"jira","jira_url":"https://jira.example.com"}'
-        return r
-
-    with patch("subprocess.run", side_effect=fake_run):
-        result = load_issue_provider(str(tmp_path))
-
-    assert result.name == "jira"
-    assert result.options["jira_url"] == "https://jira.example.com"
-
-
-def test_load_issue_provider_falls_back_to_workbench_config(tmp_path):
-    wt_path = str(tmp_path / "worktree")
-    config_dir = str(tmp_path / "config")
-    Path(config_dir).mkdir(parents=True)
-    review_yml = Path(config_dir) / "review.yml"
-    review_yml.write_text("issue_tracker:\n  provider: github\n")
-
-    def fake_run(cmd, **kwargs):
-        r = MagicMock()
-        r.returncode = 0
-        if ".provider" in " ".join(cmd):
-            r.stdout = "github"
-        else:
-            r.stdout = '{"provider":"github"}'
-        return r
-
-    with patch("subprocess.run", side_effect=fake_run), \
-         patch.dict("os.environ", {"WORKBENCH_CONFIG_DIR": config_dir}):
-        result = load_issue_provider(wt_path)
-
+def test_load_issue_provider_reads_the_project_config(tmp_path):
+    (tmp_path / ".workbench.yml").write_text(
+        "review:\n  issue_tracker:\n    provider: github\n    team: ENG\n",
+    )
+    result = load_issue_provider(str(tmp_path))
     assert result.name == "github"
+    assert result.options["team"] == "ENG"
 
 
-def test_load_issue_provider_yq_failure_falls_back_to_regex(tmp_path):
-    config = tmp_path / ".claude" / "review.yml"
-    config.parent.mkdir(parents=True)
-    config.write_text("issue_tracker:\n  provider: jira\n  jira_url: https://jira.example.com\n")
-
-    def fake_run(cmd, **kwargs):
-        raise FileNotFoundError("yq not found")
-
-    with patch("subprocess.run", side_effect=fake_run):
-        result = load_issue_provider(str(tmp_path))
-
+def test_load_issue_provider_falls_back_to_the_global_config(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+    (config_dir / "config.yml").write_text(
+        "review:\n  issue_tracker:\n    provider: jira\n    jira_url: https://j.example\n",
+    )
+    result = load_issue_provider(str(tmp_path / "elsewhere"))
     assert result.name == "jira"
-    assert result.options == {}
+    assert result.options["jira_url"] == "https://j.example"
 
 
 # ── fetch_issue_context ────────────────────────────────────────────────────

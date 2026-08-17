@@ -63,3 +63,8 @@ tools:
     permission: false
     visibility: brief
     description: "Generates tools.generated*.md rule files from the domain registries"
+
+  - name: generate-config-schema
+    permission: false
+    visibility: brief
+    description: "Generates config.schema.json and the docs key reference from WorkbenchConfig"

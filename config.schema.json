@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "otto-workbench configuration",
+  "description": "Generated from WorkbenchConfig by bin/local/generate-config-schema. Do not edit by hand.",
+  "type": "object",
+  "properties": {
+    "reuse": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "lite",
+                "full",
+                "ultra"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default": {
+          "type": "string",
+          "enum": [
+            "lite",
+            "full",
+            "ultra"
+          ]
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thinking": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effort": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phases": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "thinking": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "propertyNames": {
+            "enum": [
+              "single",
+              "holistic",
+              "scout",
+              "group",
+              "synthesis",
+              "disprove",
+              "fix"
+            ]
+          }
+        },
+        "issue_tracker": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": [
+                "linear",
+                "github",
+                "jira"
+              ]
+            },
+            "team": {
+              "type": "string"
+            },
+            "jira_url": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

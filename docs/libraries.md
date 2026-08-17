@@ -29,11 +29,13 @@ The three user-level roots the workbench writes to, each resolved through the sa
 WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 ```
 
+<!-- LIB-ROOTS-START -->
 | Constant | Holds | XDG rung | Default |
 |----------|-------|----------|---------|
-| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `overrides/`, `mcp-tools.json`, `review.yml`, `reuse-level` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
+| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: `config.yml`, `overrides/`, `mcp-tools.json` | `XDG_CONFIG_HOME` | `~/.config/workbench` |
 | `WORKBENCH_STATE_DIR` | Generated machine-local data: `reviews/`, `trail/`, `usage/`, `install.yml`, applied migrations | `XDG_STATE_HOME` | `~/.local/state/workbench` |
 | `WORKBENCH_CACHE_DIR` | Recomputable data, safe to delete at any time: `vertex-quota/` | `XDG_CACHE_HOME` | `~/.cache/workbench` |
+<!-- LIB-ROOTS-END -->
 
 `install.yml` sits under state despite the name: `lib/state.sh` owns every write to it, and it is what the old `installed.components` file migrated into. It records what a sync found or installed, not anything a user chose to type.
 
@@ -67,31 +69,56 @@ name a month, which is what keeps it visible under `--since`.
 
 Output helpers: colors, logging, portable sed.
 
+<!-- LIB-FUNCTIONS:output.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `info` | Blue info message with arrow |
-| `success` | Green success message with checkmark |
-| `warn` | Yellow warning; logs to `WORKBENCH_INSTALL_LOG` |
-| `err` | Red error to stderr; logs to `WORKBENCH_INSTALL_LOG` |
-| `title` | Bold blue section header |
-| `skip` | Dim skip notice |
-| `sed_i` | Portable in-place sed (BSD/GNU) |
+| `sed_i EXPRESSION FILE` | portable in-place sed (macOS and Linux). |
+| `info MESSAGE` | blue info message with an arrow. |
+| `success MESSAGE` | green success message with a checkmark. |
+| `warn MESSAGE` | yellow warning; also logged to WORKBENCH_INSTALL_LOG. |
+| `err MESSAGE` | red error to stderr; also logged to WORKBENCH_INSTALL_LOG. |
+| `title TEXT` | bold blue section header. |
+| `skip [label]` | print a skip line with optional label |
+| `print_version SCRIPT_NAME [COMPONENT_KEY]` | print tool and workbench version. |
+| `sync_header LABEL` | section header for sync steps. Suppressed during sync. |
+| `summary_section LABEL` | cyan section header for summaries. Suppressed during sync. |
+| `summary_ok MESSAGE` | indented success line. Suppressed during sync. |
+| `summary_warn MESSAGE` | indented warning; logged instead of printed during sync. |
+| `summary_err MESSAGE` | indented error line. Printed even during sync. |
+| `summary_info MESSAGE` | indented dim detail line. Suppressed during sync. |
+<!-- LIB-FUNCTIONS:output.sh-END -->
 
 Loaded via `ui.sh`.
+
+### portable.sh
+
+File-metadata readers that work on both userlands. GNU and BSD `stat` spell the same fields with different flags, and a hand-rolled fallback prints a filesystem report before failing on GNU — so nothing outside this module calls `stat` with a format flag, and `bin/local/validate-stat-portability` enforces that.
+
+<!-- LIB-FUNCTIONS:portable.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `file_mtime PATH` | modification time in epoch seconds. |
+| `file_birth PATH` | birth (creation) time in epoch seconds. Prints 0 on filesystems that do not record one; callers must treat 0 as "unknown". |
+| `file_mode PATH` | permission bits as an octal string, e.g. 644. |
+<!-- LIB-FUNCTIONS:portable.sh-END -->
+
+Sourced directly, or through `ui.sh` for scripts that already load the facade.
 
 ### prompts.sh
 
 User interaction: confirmations, menus, config reading.
 
+<!-- LIB-FUNCTIONS:prompts.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `confirm` | [Y/n] prompt, returns 0 for yes |
-| `confirm_n` | [y/N] prompt, returns 0 for yes |
-| `confirm_step` | [Y/n/a] prompt, writes result to nameref |
-| `prompt_overwrite` | Overwrite/backup/skip menu for existing files |
-| `select_menu` | Numbered multi-select or single-select menu |
-| `select_subdirs` | Discover directories with setup.sh, present menu |
-| `conf_get` | Extract key=value from config files |
+| `confirm "msg"` | [Y/n]; returns 0 for yes (default), 1 for no |
+| `confirm_n "msg"` | [y/N]; returns 0 for yes, 1 for no (default) |
+| `confirm_step RESULT_VAR MSG` | [Y/n/a]; writes "yes", "no", or "all" to RESULT_VAR. |
+| `prompt_overwrite FILE` | warns that FILE already exists and presents a single combined prompt. |
+| `select_menu RESULT_VAR COUNT [--default all\|skip\|require] [--single]` | Displays a numbered selection prompt and writes the result back to RESULT_VAR. |
+| `select_subdirs RESULT_VAR PARENT_DIR PROMPT [SELECT_MENU_OPTS...]` | Discovers subdirectories in PARENT_DIR that contain setup.sh, presents a numbered menu with PROMPT, and writes space-separated selected names to RESULT_VAR. |
+| `conf_get FILE KEY` | reads a key = value line from a KEY = VALUE config file. |
+<!-- LIB-FUNCTIONS:prompts.sh-END -->
 
 Loaded via `ui.sh`.
 
@@ -99,17 +126,20 @@ Loaded via `ui.sh`.
 
 File operations with idempotency: symlinks, copies, directory operations, layer merging.
 
+<!-- LIB-FUNCTIONS:files.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `install_symlink` | Create/update symlink; prompt before overwriting real files |
-| `install_file` | Copy if content differs; remove stale symlinks |
-| `copy_dir` | Copy files matching glob, with optional pruning |
-| `symlink_dir` | Symlink files matching glob, with pruning and copy replacement |
-| `list_shell_scripts` | List files whose first line is a shell shebang (used by `task lint` and pre-push) |
-| `resolve_layers` | Merge base + user directories by basename (see [User Overrides](user-overrides.md)) |
-| `is_disabled` | Check for `.disabled` sentinel file |
-| `install_hook_dispatcher` | Write a runtime-resolving git hook dispatcher |
-| `apply_config_patch` | Replace old with new in file, idempotent |
+| `install_symlink SOURCE TARGET [LABEL] [--no-prompt]` | Creates or updates a symlink at TARGET pointing to SOURCE. |
+| `install_file SOURCE TARGET [LABEL]` | Copies SOURCE to TARGET if content differs. Removes stale symlinks at TARGET. |
+| `copy_dir SRC DST [GLOB] [--strip-ext] [--prune]` | Copies all files matching GLOB in SRC into DST, preserving filenames. |
+| `symlink_dir SRC DST [GLOB] [--strip-ext] [--prune] [--replace-copies]` | Symlinks all items matching GLOB in SRC into DST, preserving filenames. |
+| `sync_component_bin COMPONENT_DIR` | symlinks extensionless scripts from COMPONENT_DIR/bin/ into LOCAL_BIN_DIR. |
+| `list_shell_scripts ROOT` | prints every file under ROOT whose *first* line is a shell or bats shebang, one per line, sorted. |
+| `resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF` | Merges two directory layers into an associative array: basename -> source_path. |
+| `is_disabled USER_DIR NAME` | returns 0 if a .disabled sentinel exists. |
+| `install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]` | Writes a thin dispatcher script that execs the hook from the current worktree. |
+| `apply_config_patch FILE OLD NEW` | Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched or if FILE does not exist. |
+<!-- LIB-FUNCTIONS:files.sh-END -->
 
 Loaded via `ui.sh`.
 
@@ -117,12 +147,15 @@ Loaded via `ui.sh`.
 
 Install workflow helpers: step registration, requirement checks, cask installs.
 
+<!-- LIB-FUNCTIONS:setup.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `register_step` | Append step to global `STEPS` array |
-| `run_steps` | Run each registered step with [Y/n/a] confirmation |
-| `require_command` | Warn and return 1 if command not in PATH |
-| `install_cask` | Install via Homebrew cask if not present |
+| `register_step NAME FN` | appends a step to the STEPS array. |
+| `run_steps` | prints all registered steps upfront, then runs each with [Y/n/a] confirmation. |
+| `require_command NAME [MESSAGE]` | returns 1 with a warning if NAME is not in PATH. |
+| `install_cask CMD CASK LABEL MANUAL_URL` | Installs a tool via Homebrew cask if CMD is not already in PATH. |
+| `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. |
+<!-- LIB-FUNCTIONS:setup.sh-END -->
 
 Loaded via `ui.sh`.
 
@@ -130,26 +163,102 @@ Loaded via `ui.sh`.
 
 Component installation state tracking.
 
+<!-- LIB-FUNCTIONS:state.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `state_record` | Mark a component as installed (idempotent) |
-| `state_is_installed` | Check if component is installed |
-| `state_remove` | Remove component from state |
-| `state_file_exists` | Check if state file exists |
-| `state_list` | Print all installed components |
-| `state_prune_orphans` | Remove entries for deleted components |
-| `state_detect_installed` | Heuristic-based detection for bootstrapping |
+| `state_record ENTRY` | records a component or sub-tool in install.yml. Idempotent. |
+| `state_is_installed ENTRY` | returns 0 if entry is recorded in install.yml. |
+| `state_remove ENTRY` | removes a component or sub-tool from install.yml. |
+| `state_file_exists` | returns 0 if install.yml (or legacy state file) exists. |
+| `state_list` | prints all installed entries, one per line (flat format for compat). |
+| `state_prune_orphans` | removes YAML entries that have no matching steps.sh. |
+| `state_detect_installed` | detects currently installed components and records them. |
+| `state_set KEY VALUE` | sets an arbitrary YAML path under components. |
+| `state_clear_list KEY` | resets a YAML list to empty sequence. |
+| `state_append_list KEY VALUE` | appends VALUE to a YAML list (idempotent). |
+| `state_get KEY` | reads a YAML value. Returns empty string for missing/null keys. |
+| `state_get_list KEY` | reads a YAML list, one item per line. |
+| `state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]` | Loads saved selections from YAML, validates each against SCRIPT_DIR. |
+<!-- LIB-FUNCTIONS:state.sh-END -->
 
 State file: `$INSTALL_YML_FILE` — `install.yml` under the [state root](#rootssh). The flat `installed.components` it replaced survives only as the second half of `state_file_exists`. Loaded via `ui.sh`.
+
+### config.sh
+
+Hand-authored settings, read from YAML — one file per scope, project first.
+
+<!-- LIB-FUNCTIONS:config.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `wb_config_ensure_file [FILE]` | create FILE holding just the modeline, when it does not already exist. |
+| `wb_config_get KEY [DEFAULT]` | a dotted config key, project scope first. |
+<!-- LIB-FUNCTIONS:config.sh-END -->
+
+A malformed file reads as absent — a bash caller wants its default, not a `yq` parse error on stdout. Reporting a bad file is the typed loader's job. Loaded via `ui.sh`. Both filenames, the schema URL and the modeline are declared once in [`constants.sh`](#constantssh) — as `WORKBENCH_CONFIG_FILE`, `WORKBENCH_PROJECT_CONFIG_NAME`, `WORKBENCH_CONFIG_SCHEMA_URL` and `WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only.
+
+[`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed owner of the same two files: it deep-merges them into a `WorkbenchConfig` and rejects an unknown enum value or phase key rather than silently dropping it. It spells those same names a second time for Python, and `tests/config.bats` fails when a pair drifts. Everything below is generated from the dataclass by `bin/local/generate-config-schema`, alongside [`config.schema.json`](../config.schema.json); `tests/test_workbench_config.py` fails if either committed copy goes stale.
+
+<!-- CONFIG-REFERENCE-START -->
+<!-- AUTO-GENERATED — do not edit directly -->
+<!-- Regenerate: bin/local/generate-config-schema -->
+
+| Scope | File |
+|-------|------|
+| Global | `config.yml` under the [config root](#rootssh) |
+| Project | `.workbench.yml` at a repo toplevel |
+
+A new config file is born holding one line, the modeline that points an editor's YAML language server at [`config.schema.json`](../config.schema.json):
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/otto-nation/otto-workbench/main/config.schema.json
+```
+
+Every key both files accept:
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `reuse.level` | `lite`, `full`, `ultra` | — |
+| `reuse.default` | `lite`, `full`, `ultra` | `full` |
+| `review.model` | string | — |
+| `review.thinking` | `low`, `medium`, `high` | — |
+| `review.provider` | string | — |
+| `review.effort` | `low`, `medium`, `high` | — |
+| `review.phases.<phase>.model` | string | — |
+| `review.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
+| `review.issue_tracker.provider` | `linear`, `github`, `jira` | `linear` |
+| `review.issue_tracker.team` | string | — |
+| `review.issue_tracker.jira_url` | string | — |
+
+`<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`
+<!-- CONFIG-REFERENCE-END -->
+
+Both writers seed the modeline — `wb_config_ensure_file` in bash, `set_value` in Python — and `yq -i` carries it through every later write, so completion and enum validation work while the file is hand-edited. Paste it at the top of a `.workbench.yml` to get the same in a project. A file that already exists is never seeded: the modeline is a courtesy on creation, not something sync re-imposes.
+
+Five layers decide a review value, highest first:
+
+| # | Layer | Example |
+|---|-------|---------|
+| 1 | Explicit flag | `--model opus`, `--effort high` |
+| 2 | Phase env var | `CLAUDE_REVIEW_SCOUT_MODEL` |
+| 3 | Global env var | `CLAUDE_REVIEW_MODEL` |
+| 4 | Project config | `.workbench.yml` |
+| 5 | Global config | `config.yml` |
+
+Within one file a `review.phases.<phase>` entry outranks the `review.*` section it sits under. Layers 4 and 5 deep-merge, so a project file that sets one phase keeps every global sibling.
+
+A repo still holding the pre-#626 `.claude/review.yml` is converted to `.workbench.yml` the first time a review reads its issue tracker; the old file is left in place, since it is usually tracked in the consumer repo. The machine-wide files — `reuse-level`, `reuse-default`, `review.yml` — are folded into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 
 ### migrations.sh
 
 Migration framework with state tracking.
 
+<!-- LIB-FUNCTIONS:migrations.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `run_component_migrations` | Run migrations in a single component directory |
-| `run_all_migrations` | Discover and run migrations across all components, prune stale state |
+| `run_component_migrations DIR` | Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs each function, and records success. |
+| `adopt_legacy_workbench_root` | Move a pre-#624 ~/.config/workbench to whichever roots now own its contents. |
+| `run_all_migrations` | Discovers and runs migrations across all components, then prunes stale state. |
+<!-- LIB-FUNCTIONS:migrations.sh-END -->
 
 State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state root](#rootssh). Loaded via `ui.sh`. See [Execution Flow — Migrations](execution-flow.md#migrations).
 
@@ -157,12 +266,50 @@ State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state r
 
 Component discovery via convention-based glob patterns.
 
+<!-- LIB-FUNCTIONS:components.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `discover_step_files` | Find all `steps.sh` files (two-level glob) |
-| `discover_migration_dirs` | Find all `migrations/` directories |
+| `discover_step_files ARRAY_REF` | Populates the nameref array with paths to all steps.sh files |
+| `discover_migration_dirs ARRAY_REF` | Populates the nameref array with paths to all migration directories |
+<!-- LIB-FUNCTIONS:components.sh-END -->
 
 Sourced by `migrations.sh` and `install.sh`.
+
+### install.sh
+
+Component discovery, selection, and execution — the shared half of the install flow, so bootstrapping a machine and `otto-workbench install` walk the same steps.
+
+<!-- LIB-FUNCTIONS:install.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `update_path_in_shell_rc` | appends ~/.local/bin to PATH in the user's shell rc file (~/.zshrc or ~/.bashrc) if the entry is not already present. |
+| `platform_supported PLATFORMS` | returns 0 if the current OS matches PLATFORMS. |
+| `validate_components REGISTRY` | lightweight fast-fail guard before any side effects run. |
+| `discover_components REGISTRY` | reads component metadata in registry order. |
+| `select_components` | presents a numbered menu and populates SELECTED_COMPONENTS. |
+| `run_components` | executes setup.sh for each selected component. |
+| `resolve_known_components` | builds lookup sets of all known core and optional component names. |
+| `validate_install_targets TARGETS...` | checks that every target is a known component. |
+| `discover_core_components` | finds core component dirs and their descriptions. |
+| `select_core_components RESULT_ARRAY DIRS_ARRAY DESCS_ARRAY` | presents selection menu for core components. |
+| `run_core_component COMPONENT` | runs the install or sync function for a core component. |
+| `parse_install_flags ARGS...` | parses --all and component targets. |
+| `print_install_summary` | prints the final "All done" screen with a consolidated file listing, editable configs, and per-component summaries. |
+<!-- LIB-FUNCTIONS:install.sh-END -->
+
+Sourced by the top-level `install.sh` and by `bin/otto-workbench`. Requires `ui.sh` first. See [Execution Flow — Install Flow](execution-flow.md#install-flow).
+
+### commands.sh
+
+Subcommand documentation, declared once per script. A script lists its commands in a `COMMANDS` array of alternating usage form and description; the usage text and the dispatcher both read that array, so a new subcommand cannot ship undocumented.
+
+<!-- LIB-FUNCTIONS:commands.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `commands_usage [ARRAY_NAME]` | Print formatted command list from a COMMANDS-style array. |
+<!-- LIB-FUNCTIONS:commands.sh-END -->
+
+Bash-only — it uses arrays and namerefs. Sourced directly by the scripts that dispatch subcommands.
 
 ## Registry & Config Modules
 
@@ -170,13 +317,16 @@ Sourced by `migrations.sh` and `install.sh`.
 
 Registry discovery, install-check gating, and env/auth iteration.
 
+<!-- LIB-FUNCTIONS:registries.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `is_installed` | Check if command is in PATH |
-| `collect_registries` | Discover all registry files (deduplicated) |
-| `registry_passes_install_check` | Check if a registry should be rendered |
-| `iter_registry_env` | Call callback for each env var in a registry |
-| `iter_registry_auth` | Call callback for each auth block |
+| `is_installed NAME` | returns 0 if NAME is found in PATH |
+| `collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
+| `registry_passes_install_check FILE` | returns 0 if the registry should be rendered. |
+| `iter_registry_env FILE CALLBACK` | Calls CALLBACK var comment default_val setup_url prefix for each env[] entry. |
+| `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
+| `collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field. |
+<!-- LIB-FUNCTIONS:registries.sh-END -->
 
 Sourced directly by consumers (`generate-tool-context`, `summary.sh`). Not in the `ui.sh` facade.
 
@@ -192,11 +342,13 @@ No functions. Sourced directly by `lib/ai/core.sh` and git generation scripts.
 
 Post-run summary output for install and sync.
 
+<!-- LIB-FUNCTIONS:summary.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `print_workbench_summary` | Print managed files, editable configs, env setup, quick reference |
-| `print_warnings_summary` | Replay collected warnings/errors |
-| `run_component_summaries` | Auto-discover and call `print_<name>_summary()` |
+| `print_workbench_summary` | prints the consolidated summary of what the workbench manages and what the user can edit. |
+| `print_warnings_summary` | replays collected warnings and errors from the install log. |
+| `run_component_summaries [COMPONENT...]` | auto-discovers and calls print_<name>_summary() from */summary.sh files. |
+<!-- LIB-FUNCTIONS:summary.sh-END -->
 
 Sourced directly by `install.sh` and `bin/otto-workbench`.
 
@@ -208,58 +360,70 @@ These modules power the AI-driven git automation (commits, PRs, reviews). All ar
 
 Foundation module: AI command loading, GitHub token resolution with per-org routing, response handling.
 
+<!-- LIB-FUNCTIONS:ai/core.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `load_ai_command` | Find and validate AI command; set `AI_COMMAND` |
-| `load_gh_token` | Resolve `GH_TOKEN` with per-org routing (4-tier priority) |
-| `load_pr_context` | Load AI command + GH token + verify GitHub auth |
-| `run_ai` | Execute AI with prompt; set `AI_RESPONSE` |
+| `load_ai_command` | Finds the AI config and validates the binary exists. |
+| `load_gh_token` | Resolves GH_TOKEN with per-org routing support. |
+| `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. |
+<!-- LIB-FUNCTIONS:ai/core.sh-END -->
 
 ### ai/commit.sh
 
 Commit message generation with validation and automatic retry on length violations.
 
+<!-- LIB-FUNCTIONS:ai/commit.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `generate_commit_msg` | Generate commit message from diff; retry if header too long |
-| `validate_commit_msg` | Validate via commitlint or fallback checks |
-| `build_commit_rules` | Build rules from commitlint config or conventions |
+| `find_commitlint_config` | Sets COMMITLINT_CONFIG to the first config found, or empty string if none. |
+| `build_commit_rules` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). |
+| `generate_commit_msg DIFF [FILE_LIST]` | Requires AI_COMMAND and COMMIT_RULES. |
+| `validate_commit_msg MSG` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). |
+<!-- LIB-FUNCTIONS:ai/commit.sh-END -->
 
 ### ai/pr.sh
 
 PR content generation: title, description, issue linking, template loading.
 
+<!-- LIB-FUNCTIONS:ai/pr.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `load_pr` | Parse flags, load context, set branch info |
-| `push_branch` | Push branch with divergence handling |
-| `generate_pr_content` | Generate title and description from commits |
+| `push_branch BRANCH` | Pushes BRANCH to remote, handling first-push and divergence cases. |
+| `create_pr GH_ARGS...` | Runs `gh pr create` with the given arguments and reports the resulting PR URL. |
+| `load_pr_context` | Loads the AI command and resolves the current branch context. |
+| `parse_pr_flags ARGS` | Parses PR-specific flags from the CLI_ARGS string. |
+| `load_pr [ARGS]` | Parses PR flags from ARGS, then loads the PR context. |
+| `generate_pr_content BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set). |
+<!-- LIB-FUNCTIONS:ai/pr.sh-END -->
 
 ### ai/review.sh
 
 Code review generation for branch changes and existing PRs.
 
+<!-- LIB-FUNCTIONS:ai/review.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `generate_diff_review` | Review committed, staged, and unstaged changes |
-| `generate_pr_review` | Review an existing PR by number |
+| `generate_diff_review STAGED UNSTAGED COMMITS COMMITTED_DIFF BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND. |
+| `generate_pr_review PR_NUMBER PR_TITLE PR_BODY PR_DIFF` | Requires AI_COMMAND. |
+<!-- LIB-FUNCTIONS:ai/review.sh-END -->
 
 ### ai/compact_diff.sh
 
 Diff compaction: splits diffs into per-file chunks and greedily includes as many as fit within a character budget.
 
-| Function | Purpose |
-|----------|---------|
-| `_compact_diff` | Split diff, include smallest files first within budget |
+Its only entry point is `_compact_diff`.
 
 ### ai/prompts.sh
 
 Prompt templates for all AI automation — pure text generation, no side effects.
 
+<!-- LIB-FUNCTIONS:ai/prompts.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `prompt_commit` | Commit message prompt |
-| `prompt_pr_single_commit` | PR description for single-commit branches |
-| `prompt_pr_multi_commit` | PR title + description for multi-commit branches |
-| `prompt_diff_review` | Review prompt for local changes |
-| `prompt_pr_review` | Review prompt for existing PRs |
+| `prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE]` | Generates the commit message prompt. When RETRY_PREAMBLE is provided it is prepended with a blank line separator so the AI sees the failure context first. |
+| `prompt_commit_retry HEADER HEADER_LEN OVER PREFIX SUBJECT_BUDGET` | Outputs a retry preamble that gives the AI the exact character budget it needs. |
+| `prompt_pr_single_commit COMMIT_SUBJECT COMMIT_BODY CHANGED_FILES` | For single-commit branches where a PR template exists: asks the AI to fill the template using the commit message. |
+| `prompt_pr_multi_commit BRANCH ISSUE COMMITS COMMIT_COUNT CHANGED_FILES` | For multi-commit branches: asks the AI to generate a PR title and fill the template. |
+| `prompt_diff_review CONTEXT` | CONTEXT is a pre-built string of labelled diff sections (committed, staged, unstaged). |
+| `prompt_pr_review PR_NUMBER PR_TITLE PR_BODY COMPACT_DIFF` | Review instructions come from the reviewer agent — this prompt provides data only. |
+<!-- LIB-FUNCTIONS:ai/prompts.sh-END -->

@@ -45,7 +45,8 @@ def from_dict(cls, data: dict):
     - Extra keys are ignored
     - Enum fields are reconstructed from their string values
     - Nested dataclass fields are recursively reconstructed
-    - `dict[int, V]` keys are restored to ints from the strings JSON makes of them
+    - `dict[int, V]` and `dict[SomeEnum, V]` keys are restored from the strings
+      JSON makes of them; an unknown enum key raises rather than lingering
     - A nested dataclass defining `_from_raw` reconstructs itself through it,
       which is how a type stored in more than one shape stays readable
     - An explicit `null` on a field with no null form of its own (enum, scalar,
@@ -217,6 +218,20 @@ def _identity(value):
     return value
 
 
+def _key_coercer(hint):
+    """How a dict key comes back from the string JSON and YAML make of it.
+
+    An enum key is converted rather than passed through so an unknown one is
+    rejected at load. A StrEnum member and its own value hash alike, so a
+    stray key would otherwise sit in the map, valid-looking and never read.
+    """
+    if hint is int:
+        return int
+    if isinstance(hint, type) and issubclass(hint, Enum):
+        return hint
+    return _identity
+
+
 def _coerce(hint, value):
     """Coerce a raw value to match its type hint."""
     kind, args = classify(hint)
@@ -280,13 +295,13 @@ def _coerce_tuple(hint, args, value):
 
 
 def _coerce_dict(hint, args, value):
-    """dict[K, V] — coerce values, and int keys back from the strings JSON made
-    of them. Only int: every other key type survives the trip as itself."""
+    """dict[K, V] — coerce values, and keys back from the strings JSON made of
+    them. `_key_coercer` owns which key types need converting."""
     if not isinstance(value, dict):
         raise _Omitted
     if not args:
         return value
-    coerce_key = int if args[0] is int else _identity
+    coerce_key = _key_coercer(args[0])
     return {coerce_key(k): _coerce(args[1], v) for k, v in value.items()}
 
 

@@ -66,6 +66,20 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 
 
 @pytest.fixture(autouse=True)
+def _isolate_workbench_config(tmp_path, monkeypatch):
+    """Run every test against an empty config root.
+
+    ``workbench_config`` is layers 4 and 5 of the model, thinking, effort and
+    issue-tracker chains, so a developer with a populated
+    ``~/.config/workbench/config.yml`` would otherwise answer those tests'
+    assertions from their own settings. Same floor as ``_clear_review_env``,
+    for the file half of the same precedence chain. Tests that want a config
+    write one into this root.
+    """
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "workbench-config"))
+
+
+@pytest.fixture(autouse=True)
 def _clear_lock_env():
     """Never inherit a run lock marker across tests, or out of a real run.
 

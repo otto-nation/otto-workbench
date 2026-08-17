@@ -54,6 +54,11 @@ class Team:
     members: list[Person] = field(default_factory=list)
 
 
+@dataclass
+class Palette:
+    swatches: dict[Color, str] = field(default_factory=dict)
+
+
 # ── Tests ──────────────────────────────────────────────────────────────────
 
 
@@ -112,6 +117,18 @@ def test_dict():
     schema = dataclass_to_schema(Person)
     meta = schema["properties"]["metadata"]
     assert meta == {"type": "object", "additionalProperties": {"type": "integer"}}
+
+
+def test_enum_keyed_dict_constrains_property_names():
+    """An enum key type is a closed set, so the schema names which keys exist."""
+    swatches = dataclass_to_schema(Palette)["properties"]["swatches"]
+    assert swatches["propertyNames"] == {"enum": ["red", "green", "blue"]}
+    assert swatches["additionalProperties"] == {"type": "string"}
+
+
+def test_str_keyed_dict_has_no_property_names():
+    schema = dataclass_to_schema(Person)
+    assert "propertyNames" not in schema["properties"]["metadata"]
 
 
 def test_list_of_dataclasses():

@@ -976,7 +976,6 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
 
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(review_dir),
         context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "pr"},
         debug=getattr(args, "debug", False),
     )
@@ -1196,7 +1195,6 @@ def _run_self_review(args) -> None:
 
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(self_review_dir),
         context={"repo": repo, "pr": pr_number, "branch": ctx.branch, "mode": "self"},
         debug=getattr(args, "debug", False),
     )

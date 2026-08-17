@@ -36,7 +36,6 @@ import publishing
 from pr_comments import ThreadState
 import review_common
 import review_issue
-import workbench_paths
 from review_common import Diagnosis
 from pr_thread_models import (
     ClassificationResult,
@@ -3080,7 +3079,9 @@ def main():
     if args.reply:
         sys.exit(_run_reply(ctx, args.reply, args.body_file))
     branch = ctx.branch
-    toplevel = ctx.require_worktree()
+    # Called for its raise, not its value: a bare-repo run must fail here,
+    # before the lock and the trail.
+    ctx.require_worktree()
     head_sha = ctx.head_sha
 
     # A no-op when pr launched us — we resolve the same target and find its key
@@ -3094,7 +3095,6 @@ def main():
 
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(workbench_paths.trail_dir(toplevel, SCRIPT)),
         context={"repo": repo, "pr": pr_number, "branch": branch},
         debug=args.debug,
     )

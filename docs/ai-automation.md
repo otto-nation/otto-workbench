@@ -646,10 +646,17 @@ scratch files ended up sitting beside unrelated reviews.
 
 `pr gc` collects loose files at the reviews root once they are a week old, prunes
 review directories and run-target directories for merged and closed PRs (skipping
-its own target), and sweeps the `state.json` and `run.lock` the pre-target layout
-left behind in a worktree's `.workbench/`. A flat `<name>.md` and its suffixed
+its own target), and sweeps the `state.json`, `run.lock`, and `trail.jsonl` the
+pre-target layout left behind in a worktree's `.workbench/`. The directory itself
+goes only when nothing else is in it. A flat `<name>.md` and its suffixed
 siblings are left alone: those are input to the startup migration that folds the
 old flat layout into directories.
+
+The scheduled maintenance job (`otto-workbench maintenance start`) runs `pr gc`
+each cycle, alongside its sync and stale-worktree cleanup — so this sweep, and
+the terminal `pr_outcome` event it fires, no longer depends on someone typing
+`pr gc` by hand. The step is skipped on an install without the ai component,
+which is what puts `pr` on the path.
 
 ### Run target paths
 
@@ -674,7 +681,10 @@ and its module docstring states the rule in full; a reimplementation should
 assert against both published fixtures in `tests/pr_target_test.py` —
 `SLUG_VECTORS` for the branch slug and `REPO_KEY_VECTORS` for the repo key.
 
-Trails stay worktree-local at `<worktree>/.workbench/trail.jsonl`.
+Every script's trail goes to one root — `~/.local/state/workbench/trail/YYYY-MM.jsonl`,
+one file per month. `otto-log recent --repo <org/repo>` narrows it to one repo;
+`otto-log query --pr <n>` finds every record for one PR, including the terminal
+`pr_outcome` event `pr gc` writes when the PR merges or closes.
 
 ### Drafts, and what it takes to publish
 

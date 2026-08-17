@@ -247,7 +247,6 @@ def main():
 
     trail = Trail.start(
         script=SCRIPT,
-        artifact_dir=str(review_path.parent),
         context={"repo": repo, "pr": args.pr},
         debug=args.debug,
     )

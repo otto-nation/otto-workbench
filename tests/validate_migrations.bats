@@ -137,6 +137,51 @@ EOF
   [[ "$output" == *"expected function"* ]]
 }
 
+# ── Self-invocation (#731) ──────────────────────────────────────────────────
+
+@test "self-invocation at file scope fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+migration_20260417_test() { echo "hi"; }
+migration_20260417_test
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must not call migration_20260417_test at file scope"* ]]
+}
+
+@test "self-invocation guarded with || true still fails" {
+  # `|| true` keeps the sourcing pass from aborting, but the line still runs
+  # the migration a second time and the run whose status the framework reads
+  # is the other one — there is no version of this call that has a job to do.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() { echo "hi"; }
+migration_20260417_test || true
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"file scope"* ]]
+}
+
+@test "a spaced function definition is not read as a self-invocation" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test () {
+  echo "hi"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
 # ── Duplicate detection ─────────────────────────────────────────────────────
 
 @test "duplicate filename across components fails" {

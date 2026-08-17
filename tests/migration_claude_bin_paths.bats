@@ -20,11 +20,19 @@ teardown() {
 }
 
 # Runs the migration against FAKE_HOME with the ui.sh helpers stubbed out.
+# Sources the file and then calls its function, which is what the framework
+# does (lib/migrations.sh — _source_migration, then "$fn_name"). The file used
+# to invoke itself and this harness leaned on that; the call ran on the
+# sourcing pass, outside the `if` that turns a failure into warn-and-retry, so
+# a non-zero return there took the whole sync down (#731). Exit status is the
+# function's own, which is what the framework reads to decide whether to
+# record the migration as applied.
 _run_migration() {
   HOME="$FAKE_HOME" bash -c '
     success() { echo "OK $*"; }
     err()     { echo "ERR $*" >&2; }
-    source "$1"
+    . "$1"
+    migration_20260806_claude_bin_hook_paths
   ' _ "$MIGRATION"
 }
 

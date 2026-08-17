@@ -33,6 +33,41 @@ _array_contains() {
   return 1
 }
 
+# _source_migration FILE — load a migration's definitions without letting the
+# file take the sync down.
+#
+# A migration is sourced, so whatever it does at file scope runs in this shell.
+# Two shapes there would abort run_all_migrations outright instead of reaching
+# the warn-and-retry path below, which is the only place a failing migration is
+# supposed to land:
+#
+#   - a top-level statement that returns non-zero, which under the `set -e` most
+#     migration files carry exits the sync mid-component — a file that invokes
+#     its own function is the way that happens in practice (#731).
+#     validate-migrations rejects that shape now, but the framework must hold
+#     even for a file the validator never saw
+#   - the `set -e` itself, which outlives the source and would otherwise arm
+#     errexit for every component that syncs after this one
+#
+# `.` runs as the left side of an `||`, a context where errexit is ignored for
+# everything the sourced file executes, and the caller's own errexit setting is
+# put back afterwards. The source's own status is returned so a file that fails
+# to load is reported rather than silently treated as loaded.
+_source_migration() {
+  local migration="$1" status=0 errexit_on=false
+  [[ $- != *e* ]] || errexit_on=true
+
+  # shellcheck source=/dev/null
+  . "$migration" || status=$?
+
+  if [[ "$errexit_on" == true ]]; then
+    set -e
+  else
+    set +e
+  fi
+  return "$status"
+}
+
 # run_component_migrations DIR
 # Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs
 # each function, and records success. Failed migrations are not recorded and retry
@@ -65,8 +100,10 @@ run_component_migrations() {
     fn_name="migration_${basename_m%.sh}"
     fn_name="${fn_name//-/_}"
 
-    # shellcheck source=/dev/null
-    . "$migration"
+    if ! _source_migration "$migration"; then
+      warn "Migration $basename_m: could not be loaded — will retry on next run"
+      continue
+    fi
 
     if ! declare -f "$fn_name" > /dev/null 2>&1; then
       warn "Migration $basename_m: expected function $fn_name not found — skipping"

@@ -42,5 +42,3 @@ migration_20260806_claude_bin_hook_paths() {
     mv "$tmp" "$settings"
     success "Repointed Claude script paths from ~/.claude/bin to ~/.local/bin"
 }
-
-migration_20260806_claude_bin_hook_paths

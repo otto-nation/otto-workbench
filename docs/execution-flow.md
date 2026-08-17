@@ -64,6 +64,8 @@ Migrations handle breaking changes — renamed configs, deprecated symlinks, upd
 
 Migrations must be idempotent — a failed migration is not recorded, so it retries on next sync.
 
+**Dispatch:** the framework sources the file and then calls the function itself, so the file must define the function and nothing else — a file that also invokes its own function runs the migration twice, and the extra run happens on the sourcing pass, where its exit status decides nothing. `bin/local/validate-migrations` rejects that shape. `_source_migration` sources inside an errexit-ignoring context and restores the caller's own `set -e` afterwards, so neither a non-zero statement at file scope nor the `set -e` a migration file carries can escape the loop and abort the sync.
+
 **Timing:** migrations run before component syncs, ensuring old state is cleaned up before new config is applied.
 
 ## File Operations

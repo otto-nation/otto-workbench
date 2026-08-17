@@ -61,13 +61,19 @@ ${fn_name}() {
 EOF
 }
 
-# Helper: source the framework and run all migrations
+# Helper: source the framework and run all migrations.
+# Under `set -e`, matching the real caller (bin/otto-workbench). The marker
+# printed afterwards is what proves the run returned rather than taking its
+# caller down with it (#731) — a migration file's own `set -e` reaches this
+# subshell through the source, so the abort is not hypothetical here.
 run_migrations_in_fake() {
   (
+    set -e
     . "$FAKE_ROOT/lib/ui.sh"
     . "$FAKE_ROOT/lib/constants.sh"
     . "$FAKE_ROOT/lib/migrations.sh"
     run_all_migrations
+    echo "SYNC CONTINUED"
   )
 }
 
@@ -453,6 +459,87 @@ EOF
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" == *"no migrations found"* ]]
+}
+
+# ─── Failure isolation (#731) ────────────────────────────────────────────────
+
+# Helper: create a migration whose function returns non-zero, under the `set -e`
+# real migration files carry.
+create_failing_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+set -e
+${fn_name}() {
+  return 1
+}
+EOF
+}
+
+@test "a failing migration warns, is not recorded, and the sync keeps going" {
+  create_failing_migration "comp1" "20250101-fails.sh" "migration_20250101_fails"
+  create_migration "comp2" "20250201-later.sh" "migration_20250201_later"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration failed: 20250101-fails.sh"* ]]
+  [[ "$output" == *"will retry on next run"* ]]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+
+  run ! grep -qxF "comp1/20250101-fails.sh" "$FAKE_STATE/migrations.applied"
+  grep -qxF "comp2/20250201-later.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a self-invoking migration cannot abort the run on the sourcing pass" {
+  # The framework sources the file and then calls the function. A file that
+  # also calls itself runs on the sourcing pass too, where — under its own
+  # `set -e`, and outside the `if` that turns a failure into warn-and-retry —
+  # a non-zero return used to exit the whole sync (#731). validate-migrations
+  # rejects the shape now, but the framework has to hold for a file the
+  # validator never saw.
+  mkdir -p "$FAKE_ROOT/comp1/migrations"
+  cat > "$FAKE_ROOT/comp1/migrations/20250101-selfcall.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+migration_20250101_selfcall() {
+  return 1
+}
+migration_20250101_selfcall
+EOF
+  create_migration "comp2" "20250201-later.sh" "migration_20250201_later"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not be loaded"* ]]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+
+  run ! grep -qxF "comp1/20250101-selfcall.sh" "$FAKE_STATE/migrations.applied"
+  grep -qxF "comp2/20250201-later.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "sourcing a migration does not arm errexit for the rest of the sync" {
+  # A sourced `set -e` outlives the source. Left in place it would put every
+  # component that syncs after the migrations under errexit, which nothing
+  # downstream expects — so the framework restores the caller's own setting.
+  mkdir -p "$FAKE_ROOT/comp1/migrations"
+  cat > "$FAKE_ROOT/comp1/migrations/20250101-armed.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+migration_20250101_armed() {
+  :
+}
+EOF
+
+  run bash -c "
+    . '$FAKE_ROOT/lib/ui.sh'
+    . '$FAKE_ROOT/lib/constants.sh'
+    . '$FAKE_ROOT/lib/migrations.sh'
+    run_all_migrations > /dev/null
+    case \$- in *e*) echo 'ERREXIT ARMED' ;; *) echo 'ERREXIT CLEAR' ;; esac
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ERREXIT CLEAR"* ]]
 }
 
 # ─── Duplicate filename detection ───────────────────────────────────────────

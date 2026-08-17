@@ -64,6 +64,22 @@ teardown() {
   [ "$count" -eq 0 ]
 }
 
+# ── npm outward-facing subcommands ────────────────────────────────────────────
+# Bash(npm:*) is allowed because install/run/ci are local and reversible, the
+# same call the already-trusted pip3:* makes. The subcommands that publish to a
+# registry or write credentials are not, so each is denied by name — deny takes
+# precedence over allow. Dropping one silently re-permits it.
+
+@test "npm outward-facing subcommands are denied despite the npm wildcard" {
+  run jq -e '.permissions.allow | index("Bash(npm:*)")' "$SETTINGS"
+  [ "$status" -eq 0 ]
+  local sub
+  for sub in publish unpublish deprecate owner access dist-tag token login adduser "config set"; do
+    run jq -e --arg r "Bash(npm $sub:*)" '.permissions.deny | index($r)' "$SETTINGS"
+    [ "$status" -eq 0 ] || { echo "npm $sub not denied"; return 1; }
+  done
+}
+
 # ── gh permission-list via registry ───────────────────────────────────────────────
 
 @test "gh registry entry does not contain broad Bash(gh:*) wildcard" {

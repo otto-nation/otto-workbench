@@ -16,7 +16,9 @@ if str(LIB_DIR) not in sys.path:
 from conftest import assert_no_worktree_exit, make_ctx, write_thrash_log
 import pr_state
 from pr_comments import ThreadState
-from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
+from pr_state import (
+    CommitStatus, FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome,
+)
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
     TriageStats, triage_result_from_dict,
@@ -1528,6 +1530,70 @@ class TestSummaryStillOwed:
 
     def test_draft_with_nothing_to_say_owes_nothing(self, rt):
         assert self._owed(rt) is False
+
+
+class TestCommitHeldFixes:
+    """The other end of #703: what `--finish --post` does with withheld fixes."""
+
+    @staticmethod
+    def _state(status=CommitStatus.COMMIT_HELD, outcomes=None):
+        threads = outcomes if outcomes is not None else [
+            ThreadOutcome(id="t1", action=ThreadAction.FIXED, summary="s"),
+        ]
+        return _make_state(FixSummary(commit_status=status, threads=threads))
+
+    def test_lands_the_held_fixes(self, rt, publishing_on):
+        state = self._state()
+        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
+             patch.object(rt, "_commit_and_push",
+                          return_value=rt.CommitPushResult("def5678", "pushed", "")):
+            rt._commit_held_fixes(state, Path("/fake"))
+        assert state.fix.commit_sha == "def5678"
+        assert state.fix.commit_status == "pushed"
+
+    def test_stamps_the_outcomes_with_the_new_sha(self, rt, publishing_on):
+        """The outcomes predate the commit, so nothing else can attribute them."""
+        state = self._state()
+        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
+             patch.object(rt, "_commit_and_push",
+                          return_value=rt.CommitPushResult("def5678", "pushed", "")):
+            rt._commit_held_fixes(state, Path("/fake"))
+        assert state.fix.threads[0].commit_sha == "def5678"
+
+    def test_an_earlier_rounds_sha_is_left_alone(self, rt, publishing_on):
+        """Promoting this round must not relabel a round that already landed."""
+        state = self._state(outcomes=[
+            ThreadOutcome(id="t1", action=ThreadAction.FIXED, summary="s",
+                          commit_sha="aaa1111"),
+            ThreadOutcome(id="t2", action=ThreadAction.FIXED, summary="s"),
+        ])
+        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
+             patch.object(rt, "_commit_and_push",
+                          return_value=rt.CommitPushResult("def5678", "pushed", "")):
+            rt._commit_held_fixes(state, Path("/fake"))
+        assert [t.commit_sha for t in state.fix.threads] == ["aaa1111", "def5678"]
+
+    def test_a_draft_finish_leaves_them_uncommitted(self, rt):
+        state = self._state()
+        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
+             patch.object(rt, "_commit_and_push") as commit:
+            rt._commit_held_fixes(state, Path("/fake"))
+        commit.assert_not_called()
+        assert state.fix.commit_status == CommitStatus.COMMIT_HELD
+
+    def test_a_clean_tree_means_someone_committed_by_hand(self, rt, publishing_on):
+        state = self._state()
+        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=False), \
+             patch.object(rt, "_commit_and_push") as commit:
+            rt._commit_held_fixes(state, Path("/fake"))
+        commit.assert_not_called()
+        assert state.fix.commit_status == "no_changes"
+
+    def test_a_pass_that_was_never_held_is_untouched(self, rt, publishing_on):
+        state = self._state(status="pushed")
+        with patch.object(rt, "_commit_and_push") as commit:
+            rt._commit_held_fixes(state, Path("/fake"))
+        commit.assert_not_called()
 
 
 class TestPushHeldCommit:
@@ -3213,6 +3279,157 @@ class TestClassifyAlreadyAddressed:
         assert outcomes[0].commit_sha == ""
 
 
+_CLEAN_LOG = "1700000000 1700000000\n"
+_SKEWED_LOG = "1700000000 1700864000\n"
+_READDS_DIFF = "+++ b/ai/lib/foo.py\n+def dropped_helper(x):\n     pass\n"
+
+
+class TestHistoryPreflight:
+    """#703's other half: the branch was fixing code `main` had already deleted.
+
+    Each signal is driven on its own, because the value of the preflight is
+    that any one of them can fire — a branch can be superseded without having
+    been rebased, and a rebase is not on its own a reason to withhold anything.
+    """
+
+    @staticmethod
+    def _signals(rt, *, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
+                 gh_out="", gh_rc=0, calls=None):
+        def mock_run(cmd, **kwargs):
+            if calls is not None:
+                calls.append(cmd)
+            if cmd[0] == "gh":
+                return _make_completed(gh_rc, stdout=gh_out)
+            if "--reverse" in cmd:
+                return _make_completed(0, stdout=log_out)
+            if cmd[3] == "diff":
+                return _make_completed(0, stdout=diff)
+            if cmd[3] == "grep":
+                return _make_completed(grep_rc)
+            return _make_completed(0, stdout=pickaxe)
+
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt.subprocess, "run", side_effect=mock_run):
+            return rt._history_preflight(Path("/fake"), "owner/repo")
+
+    def test_a_healthy_branch_raises_nothing(self, rt):
+        assert self._signals(rt) == []
+
+    def test_rebase_skew_is_reported(self, rt):
+        signals = self._signals(rt, log_out=_SKEWED_LOG)
+        assert [s.kind for s in signals] == ["rebase_skew"]
+        assert "10 day(s)" in signals[0].detail
+
+    def test_rebase_skew_alone_does_not_hold(self, rt):
+        """Every long-lived branch has one. Holding on it would fire on health."""
+        assert self._signals(rt, log_out=_SKEWED_LOG)[0].holds is False
+
+    def test_a_same_week_rebase_is_not_skew(self, rt):
+        assert self._signals(rt, log_out="1700000000 1700100000\n") == []
+
+    def test_unreadable_dates_are_not_a_finding(self, rt):
+        """A hint that cannot be computed is not evidence of anything."""
+        assert self._signals(rt, log_out="not a timestamp\n") == []
+
+    def test_a_readded_symbol_is_reported(self, rt):
+        signals = self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n")
+        assert [s.kind for s in signals] == ["readds_removed_symbol"]
+        assert "dropped_helper" in signals[0].detail
+        assert "abc1234" in signals[0].detail
+
+    def test_a_readded_symbol_holds(self, rt):
+        signals = self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n")
+        assert signals[0].holds is True
+
+    def test_a_symbol_the_base_still_has_is_not_readded(self, rt):
+        assert self._signals(rt, diff=_READDS_DIFF, grep_rc=0) == []
+
+    def test_a_symbol_the_base_never_had_is_just_new(self, rt):
+        """Absent from the base with no history of it is what new code looks like."""
+        assert self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="") == []
+
+    def test_the_superseding_pr_is_surfaced(self, rt):
+        signals = self._signals(
+            rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n",
+            gh_out="#42 refactor: drop dropped_helper\n",
+        )
+        assert [s.kind for s in signals] == ["readds_removed_symbol", "superseding_pr"]
+        assert "#42 refactor: drop dropped_helper" in signals[1].detail
+
+    def test_a_failed_search_still_leaves_the_local_signal(self, rt):
+        """No network is a reason to say less, not a reason to say nothing."""
+        signals = self._signals(
+            rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n", gh_rc=1,
+        )
+        assert [s.kind for s in signals] == ["readds_removed_symbol"]
+
+    def test_nothing_is_searched_for_when_nothing_was_readded(self, rt):
+        """This is a preflight — the network call is earned, not routine."""
+        calls = []
+        self._signals(rt, diff=_READDS_DIFF, grep_rc=0, calls=calls)
+        assert [c for c in calls if c[0] == "gh"] == []
+
+    def test_the_symbol_scan_is_capped(self, rt):
+        diff = "+++ b/ai/lib/foo.py\n" + "".join(
+            f"+def helper_{n}(x):\n" for n in range(25)
+        )
+        signals = self._signals(rt, diff=diff, grep_rc=1, pickaxe="abc1234\n")
+        readded = [s for s in signals if s.kind == "readds_removed_symbol"]
+        assert len(readded) == rt._PREFLIGHT_SYMBOL_LIMIT
+
+    def test_the_search_is_capped_harder(self, rt):
+        diff = "+++ b/ai/lib/foo.py\n" + "".join(
+            f"+def helper_{n}(x):\n" for n in range(25)
+        )
+        calls = []
+        self._signals(rt, diff=diff, grep_rc=1, pickaxe="abc1234\n",
+                      gh_out="#42 t\n", calls=calls)
+        assert len([c for c in calls if c[0] == "gh"]) == rt._PREFLIGHT_SEARCH_LIMIT
+
+    def test_the_findings_reach_the_trail(self, rt):
+        trail = MagicMock()
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt.subprocess, "run",
+                          return_value=_make_completed(0, stdout=_SKEWED_LOG)):
+            rt._history_preflight(Path("/fake"), "owner/repo", trail)
+        assert trail.info.call_args.kwargs["data"]["signals"] == ["rebase_skew"]
+
+
+class TestHoldIfSuperseded:
+    """What the preflight's findings are allowed to do to the run."""
+
+    def test_evidence_shuts_the_gate(self, rt, publishing_on):
+        import publishing
+        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "d")])
+        assert publishing.enabled() is False
+        assert "history signal" in publishing.held()
+
+    def test_context_alone_leaves_it_open(self, rt, publishing_on):
+        """A rebase is how the problem becomes visible, not the problem."""
+        import publishing
+        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.REBASE_SKEW, "d", holds=False)])
+        assert publishing.enabled() is True
+
+    def test_nothing_found_says_nothing(self, rt, publishing_on, capsys):
+        rt._hold_if_superseded([])
+        assert capsys.readouterr().err == ""
+
+    def test_the_output_names_the_signal_that_fired(self, rt, publishing_on, capsys):
+        rt._hold_if_superseded([
+            rt.HistorySignal(rt.HistoryKind.REBASE_SKEW, "replayed onto a moved base", holds=False),
+            rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "`foo` is gone from origin/main"),
+        ])
+        err = capsys.readouterr().err
+        assert "[rebase_skew] replayed onto a moved base" in err
+        assert "[readds_removed_symbol] `foo` is gone from origin/main" in err
+
+    def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
+        trail = MagicMock()
+        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "d")], trail)
+        data = trail.decision.call_args.kwargs["data"]
+        assert data["signals"] == ["readds_removed_symbol"]
+
+
 class TestHoldWhileContested:
     """#703: 8 real fixes pushed to a branch a reviewer had said should not land."""
 
@@ -3293,10 +3510,13 @@ class TestFixPassHoldsWhenContested:
             target_dir=tmp_path,
         )
         pushes = []
+        commits = []
 
         def mock_run(cmd, **kwargs):
             if "push" in cmd:
                 pushes.append(cmd)
+            if "commit" in cmd:
+                commits.append(cmd)
             return _make_completed(0, stdout="abc1234\n")
 
         batch = rt.FixBatchResult(
@@ -3315,34 +3535,47 @@ class TestFixPassHoldsWhenContested:
             result = rt._run_comment_fix(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
-        return result, pushes
+        return SimpleNamespace(result=result, pushes=pushes, commits=commits)
 
     def test_a_contested_thread_stops_the_push(self, rt, tmp_path, publishing_on):
-        result, pushes = self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        assert result.commit_status == "push_held"
-        assert pushes == []
+        run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert run.result.commit_status == CommitStatus.COMMIT_HELD
+        assert run.pushes == []
 
-    def test_the_commit_is_still_made(self, rt, tmp_path, publishing_on):
-        """Holding must not cost the work — only its publication."""
-        result, _ = self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        assert result.commit_sha == "abc1234"
+    def test_a_contested_thread_stops_the_commit(self, rt, tmp_path, publishing_on):
+        """The commit asserts the fixes stand, so it waits with the rest."""
+        run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert run.commits == []
+
+    def test_the_fixes_are_still_applied(self, rt, tmp_path, publishing_on):
+        """Holding must not cost the work — only the acts that assert it."""
+        run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert [t.id for t in run.result.fixed] == ["t1"]
+
+    def test_the_hold_says_how_to_proceed(self, rt, tmp_path, publishing_on, capsys):
+        """A silent no-op would look like a crash. It must read as a decision."""
+        self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        err = capsys.readouterr().err
+        assert "NOT committed" in err
+        assert "pr comments --finish --post" in err
 
     def test_no_fixed_replies_go_out_while_held(self, rt, tmp_path, publishing_on):
-        result, _ = self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        assert result.replies_posted == 0
-        assert result.summary_url is None
-        assert result.summary_deferred is True
+        run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert run.result.replies_posted == 0
+        assert run.result.summary_url is None
+        assert run.result.summary_deferred is True
 
     def test_an_uncontested_pass_still_pushes(self, rt, tmp_path, publishing_on):
         """The gate must not have closed on the common case."""
-        result, pushes = self._run(rt, tmp_path, contested=False, publishing_on_=True)
-        assert result.commit_status == "pushed"
-        assert pushes
+        run = self._run(rt, tmp_path, contested=False, publishing_on_=True)
+        assert run.result.commit_status == CommitStatus.PUSHED
+        assert run.pushes
+        assert run.commits
 
     def test_an_uncontested_pass_still_replies(self, rt, tmp_path, publishing_on):
         """Pairs with the held case: proves that assertion is not vacuous."""
-        result, _ = self._run(rt, tmp_path, contested=False, publishing_on_=True)
-        assert result.replies_posted == 1
+        run = self._run(rt, tmp_path, contested=False, publishing_on_=True)
+        assert run.result.replies_posted == 1
 
 
 class TestTriagePromptVerificationValues:

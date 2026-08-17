@@ -691,8 +691,9 @@ one file per month. `otto-log recent --repo <org/repo>` narrows it to one repo;
 `pr comments` writes nothing outward unless you pass `--post`. Replies, the fix
 summary, thread resolutions, deferral tracking issues, and the push are all
 printed to stderr as drafts instead, prefixed `DRAFT (not published)`. Code fixes
-and the commit are unaffected: they are local and undoable, and they are what
-makes the work reviewable at all. The gate covers what leaves the machine.
+are unaffected: they are local and undoable, and they are what makes the work
+reviewable at all. The gate covers what leaves the machine — and, when a hold is
+in force rather than a plain missing `--post`, the commit too (see below).
 
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.
@@ -716,16 +717,22 @@ A draft run leaves state untouched, so nothing is recorded as posted and a later
 auto-fix — the fix pass *holds* publishing for the rest of the process, and the
 hold outranks `--post`. Nothing reopens it.
 
-The fixes still get applied and still get committed. What waits is everything
-that asserts the work is done: the push, the `Fixed in <sha>` replies, the thread
-resolutions, and the summary. The commit sits locally with status `push_held`,
-and `--finish --post` is what sends it:
+The fixes still get applied. What waits is everything that asserts they stand:
+the commit, the push, the `Fixed in <sha>` replies, the thread resolutions, and
+the summary. The commit is included because its subject asserts the work in the
+imperative and every later stage cites its SHA; the fixes sit in the worktree
+uncommitted, recorded with status `commit_held`, and the run prints how to read
+them, drop them, or land them. `--finish --post` is what commits and sends them:
 
 ```bash
-pr comments --fix --post   # commits; holds the push, one thread is contested
-# read the thread, answer the reviewer
-pr comments --finish --post   # pushes, then drains the replies and the summary
+pr comments --fix --post   # fixes; holds the commit, one thread is contested
+git -C <worktree> diff     # read what it did
+pr comments --finish --post   # commits, pushes, then drains replies and summary
 ```
+
+A wrong hold costs a `git checkout` in a worktree, not a rewritten history. If
+you commit the held fixes by hand between runs, `--finish` notices the clean tree,
+skips its own commit, and attributes the rows to real HEAD.
 
 This exists because threads are triaged independently. A reviewer saying "the
 root cause you describe does not exist" removes that one thread from the fixable
@@ -740,6 +747,26 @@ being wrong is asymmetric — a needless hold costs one extra command, while a
 missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both.
+
+### The history preflight
+
+The same hold can be triggered without any reviewer saying anything, by three
+cheap checks the fix pass runs before it fixes:
+
+| Signal | What it reads | Holds? |
+|---|---|---|
+| `rebase_skew` | author vs committer date on the branch's first commit, ≥ 7 days apart | no |
+| `readds_removed_symbol` | a definition in `git diff origin/<default>...HEAD` that the default branch no longer contains but once did | yes |
+| `superseding_pr` | a merged PR mentioning that symbol, via `gh api search/issues` | yes |
+
+Each finding is printed with its kind, so the output says which check fired.
+Only the last two hold: a branch replayed onto a base that has moved is what
+makes supersession visible, but on its own it describes every long-lived branch,
+and holding on it would withhold commits routinely.
+
+It is a preflight, not an investigation — the symbol scan stops at the first ten
+definitions and only the first two flagged symbols are searched for on GitHub, so
+a clean branch costs two local git commands and no network call at all.
 
 ### The summary comment is the record, not the state file
 

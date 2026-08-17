@@ -17,7 +17,9 @@ from pathlib import Path
 import log
 import publishing
 import serde
-from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
+from pr_state import (
+    CommentsSummary, CommitStatus, FixSummary, ThreadAction, TriageSummary,
+)
 from review_common import plural
 from review_github import PRData, fetch_review_threads
 
@@ -621,6 +623,10 @@ def render_fix_status(f: FixSummary) -> list[str]:
     lines = [f"**Fix**: {summary}"]
     if f.commit_sha:
         lines[0] += f" (commit: {f.commit_sha}, {f.commit_status})"
+    elif f.commit_status == CommitStatus.COMMIT_HELD:
+        # Withheld work has no SHA to name, and this dashboard is where someone
+        # finds out that fixes are sitting uncommitted in the worktree.
+        lines[0] += " (uncommitted — awaiting discussion)"
     if f.deferred_issue_id:
         lines.append(f"  tracked in {f.deferred_issue_id}")
     return lines

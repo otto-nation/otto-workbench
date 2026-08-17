@@ -245,6 +245,22 @@ _run_all_migrations_in_fake() {
   chmod 644 "$STATE/reviews/repo-1/trail.jsonl"
 }
 
+@test "every source failing leaves no empty legacy.jsonl behind" {
+  # legacy.jsonl is created before _append_ledger runs, because an existing
+  # destination is that call's precondition. When the only source cannot be
+  # read, that leaves an empty monthless file otto-log would open on every
+  # query forever — for a carry that never happened.
+  _seed_review_trail "repo-1" '{"ts":"a"}
+'
+  chmod 000 "$STATE/reviews/repo-1/trail.jsonl"
+
+  run _run_migration
+  [ "$status" -eq 1 ]
+  [ ! -e "$STATE/trail/legacy.jsonl" ]
+
+  chmod 644 "$STATE/reviews/repo-1/trail.jsonl"
+}
+
 @test "carries a trail through the framework's real discover-and-dispatch" {
   # _run_migration above calls the function itself, in a fresh bash -c under
   # errexit. The real framework (lib/migrations.sh) has to find the file by

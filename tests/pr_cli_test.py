@@ -1338,6 +1338,7 @@ def test_gc_legacy_sweep_keeps_a_directory_holding_anything_else(tmp_path):
 
     assert pr_cli._sweep_legacy_state(tmp_path) == 1
 
+    assert not (legacy / "trail.jsonl").exists()
     assert legacy.is_dir()
     assert (legacy / "someone-elses.txt").is_file()
 

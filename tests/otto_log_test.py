@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -308,7 +309,9 @@ class TestSummaryIsNotAlwaysFinish:
         trail.info("act", "did")
         trail.finish()
         otto_log.cmd_show(argparse.Namespace(invocation=trail.invocation, json=False))
-        assert "s\n" in capsys.readouterr().out
+        # A duration, not merely a line that happens to end in "s" — the point of
+        # the test is that `finish` is found and its duration_ms rendered.
+        assert re.search(r"\d+\.\d+s", capsys.readouterr().out)
 
     def test_show_survives_a_summary_with_no_duration(self, capsys):
         """A terminal `pr_outcome` event carries no duration and must not raise."""

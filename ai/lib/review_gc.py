@@ -372,7 +372,11 @@ def _emit_terminal_summary(
                 "branch": state.identity.branch,
             },
         )
-    except OSError as exc:
+    # OSError is the expected failure (an unwritable trail root). TypeError and
+    # ValueError cover a payload json.dumps cannot serialize, which a later
+    # change to terminal_summary could introduce: one unrecordable outcome must
+    # not abort the sweep for every target behind it.
+    except (OSError, TypeError, ValueError) as exc:
         log.warn(
             f"GC: could not record {state.identity.repo}#{state.identity.pr_number}'s "
             f"outcome ({exc}) — continuing the sweep")

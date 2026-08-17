@@ -56,6 +56,15 @@ migration_20260814_unify_trail_root() {
         fi
     done
 
+    # The touch above runs before _append_ledger is known to succeed, because it
+    # is that call's own precondition. If every source failed, it left an empty
+    # legacy.jsonl behind — and a file with no month in its name is one otto-log
+    # opens on every query, forever, for nothing. Drop it; the retry recreates it
+    # the moment a source actually carries.
+    if [[ -f "$legacy" && ! -s "$legacy" ]]; then
+        rm -f "$legacy"
+    fi
+
     # Measured against the real state root: 104,309 records across four tool
     # dirs — promote-scan (60,325 records, 60,320 test-tainted, 17M),
     # retro-scan (7,441 / 5,100 tainted, 2.4M), dream-scan (36,536 / 0

@@ -49,6 +49,11 @@ from trail import Trail, add_trail_args
 # the user expected to be instant, so the ceiling stays low.
 VALUE_FLAGS_TIMEOUT = 5.0
 
+# What the pre-cutover layout called its worktree-local trail. Spelled here
+# rather than imported: trail.py no longer names this file, because no trail is
+# written to a worktree any more. It exists only as something to sweep.
+_LEGACY_TRAIL_FILENAME = "trail.jsonl"
+
 _COMMANDS = {
     "create":   {"help": "Create a PR (wraps task pr:create)"},
     "status":   {"help": "Show CI, review, and comment status dashboard"},
@@ -504,7 +509,7 @@ def _sweep_legacy_state(worktree_root: Path) -> int:
     """
     legacy = worktree_root / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
     removed = 0
-    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE, "trail.jsonl"):
+    for name in (pr_state.STATE_FILE, run_lock.LOCK_FILE, _LEGACY_TRAIL_FILENAME):
         path = legacy / name
         if path.is_file():
             path.unlink(missing_ok=True)

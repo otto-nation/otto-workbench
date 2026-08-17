@@ -40,7 +40,7 @@ ANSI_LEVELS = {
 # A file whose stem names a month can be skipped by name. Any other stem —
 # `legacy.jsonl`, where the cutover migration parks the pre-cutover history —
 # cannot be placed in time from its name, so it is always read.
-_MONTH_STEM = re.compile(r"\d{4}-\d{2}$")
+_MONTH_STEM = re.compile(r"^\d{4}-\d{2}$")
 
 
 def discover_trails(since: datetime | None = None) -> list[Path]:
@@ -378,12 +378,8 @@ def cmd_show(args):
 
 def cmd_list(args):
     events = load_trail_events(args.since)
-    if args.since:
-        events = filter_events(events, since=args.since)
-    if args.repo:
-        events = filter_events(events, repo=args.repo)
-    if args.script:
-        events = filter_events(events, script=args.script)
+    events = filter_events(
+        events, since=args.since, repo=args.repo, script=args.script)
 
     # Group by invocation
     invocations: dict[str, list[dict]] = {}

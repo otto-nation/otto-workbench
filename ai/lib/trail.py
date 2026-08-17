@@ -181,7 +181,7 @@ class Trail:
             detail=detail,
             # Merged into a new dict rather than updated in place: the run's own
             # context has to survive an event that names a different subject.
-            context={**self._context, **context} if context else self._context,
+            context={**self._context, **context} if context is not None else self._context,
             reason=reason,
             span=span,
             duration_ms=duration_ms,

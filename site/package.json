@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "test": "node --test mdx/remark-doc-links.test.mjs && node --test mdx/remark-strip-title.test.mjs"
+    "test": "node --test"
   },
   "dependencies": {
     "fumadocs-core": "16.14.4",

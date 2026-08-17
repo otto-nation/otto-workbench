@@ -652,6 +652,11 @@ goes only when nothing else is in it. A flat `<name>.md` and its suffixed
 siblings are left alone: those are input to the startup migration that folds the
 old flat layout into directories.
 
+The scheduled maintenance job (`otto-workbench maintenance start`) runs `pr gc`
+on every cycle, alongside its sync and stale-worktree cleanup — so this sweep,
+and the terminal `pr_outcome` event it fires, no longer depends on someone
+typing `pr gc` by hand.
+
 ### Run target paths
 
 A `pr` run's bookkeeping is keyed on what it targets, not where it was launched:

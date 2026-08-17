@@ -705,7 +705,7 @@ _maintenance_usage() {
   cat <<EOF
 Usage: otto-workbench maintenance <command>
 
-Scheduled maintenance via $(if [[ "$OSTYPE" == "darwin"* ]]; then echo "launchd"; else echo "systemd"; fi). Pulls changes, runs sync, and cleans stale worktrees.
+Scheduled maintenance via $(if [[ "$OSTYPE" == "darwin"* ]]; then echo "launchd"; else echo "systemd"; fi). Pulls changes, runs sync, cleans stale worktrees, and collects stale PR artifacts.
 
 Commands:
 $(commands_usage COMMANDS_MAINTENANCE)

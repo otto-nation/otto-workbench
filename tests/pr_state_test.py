@@ -193,18 +193,18 @@ def test_commit_status_wire_values_are_the_strings_state_files_hold():
     """The enum is for the code. Changing a value breaks every saved state file."""
     assert [s.value for s in CommitStatus] == [
         "pushed", "no_changes", "commit_failed", "push_failed", "push_held",
-        "commit_held", "reconciled",
+        "reconciled",
     ]
 
 
 def test_a_commit_status_survives_a_state_roundtrip_as_a_plain_string():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    apply(state, FixSummary(commit_status=CommitStatus.COMMIT_HELD))
+    apply(state, FixSummary(commit_status=CommitStatus.PUSH_HELD))
 
     restored = state_from_dict(json.loads(json.dumps(state_to_dict(state))))
 
-    assert restored.fix.commit_status == CommitStatus.COMMIT_HELD
-    assert restored.fix.commit_status == "commit_held"
+    assert restored.fix.commit_status == CommitStatus.PUSH_HELD
+    assert restored.fix.commit_status == "push_held"
 
 
 def test_a_status_read_from_an_older_state_file_still_compares():

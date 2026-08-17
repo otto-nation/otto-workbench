@@ -109,13 +109,13 @@ The `fix_pass` object contains:
 
 | Field | Contents |
 |-------|----------|
-| `fixed` | Threads and items the agent auto-fixed (committed and pushed unless a hold is in force — see `commit_status`) |
+| `fixed` | Threads and items the agent auto-fixed (committed + pushed) |
 | `needs_human` | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) |
 | `dismissed` | Threads and items dismissed because the reviewer's premise was factually wrong |
 | `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection |
 | `deferred` | Threads the agent could not auto-fix in the current pass |
 | `commit_sha` | Short SHA of the fix commit, or null |
-| `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, or `commit_held` |
+| `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, or `push_held` |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
 | `summary_url` | URL of the summary issue comment, or null |
 | `summary_deferred` | `true` when summary was deferred because `needs_human` threads exist |
@@ -143,14 +143,13 @@ or `rb-`) are comment items; regular thread IDs are inline review threads.
 
 **Report auto-fixes:** "Fixed N threads/items (commit SHA). M need your input. K skipped."
 
-**If `commit_status` is `commit_held`:** the fixes are in the worktree and
-deliberately uncommitted — either a `needs_human` thread is open, or the history
-preflight found the branch re-adding code the default branch has already removed.
-Say so plainly and do not report the fixes as landed. The stderr output names the
-signal that fired. Show the user `git -C <worktree> diff`, settle the open thread
-or the supersession question with them, and only then run `--finish --post`,
-which makes the commit and pushes it. Never commit them by hand to route around
-the hold.
+**If `commit_status` is `push_held`:** the fixes are committed locally and
+nothing has been published — either a `needs_human` thread is open, or the
+history preflight found the branch re-adding code the default branch has already
+removed. Say so plainly and do not report the fixes as landed on the PR. The
+stderr output names the signal that fired. Settle the open thread or the
+supersession question with the user, and only then run `--finish --post`, which
+pushes the commit and drains the replies and the summary.
 
 **If `needs_human` and `deferred` are both empty and no unseen comments:**
 done — no further action needed.

@@ -396,11 +396,6 @@ class CommitStatus(StrEnum):
     PUSH_FAILED = "push_failed"
     # Committed locally; the push was withheld.
     PUSH_HELD = "push_held"
-    # Fixes applied and the commit withheld, because a thread was still awaiting
-    # discussion or the history preflight found the branch may already be
-    # superseded. The fixes are in the worktree, uncommitted; a deliberate
-    # `--finish --post` is what commits and pushes them.
-    COMMIT_HELD = "commit_held"
     # Render-time only, never persisted: HEAD has moved past the snapshot, but
     # the commit that moved it is not one a reviewer can open, so the summary
     # says the work was handled without naming a SHA for it.

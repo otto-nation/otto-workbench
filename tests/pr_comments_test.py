@@ -457,18 +457,6 @@ def test_render_fix_status_needs_human():
     assert "2 need discussion" in lines[0]
 
 
-def test_render_fix_status_says_when_the_commit_was_withheld():
-    """`pr status` must not read as "fixed and landed" while nothing is committed."""
-    f = pr_state.FixSummary(
-        threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED),
-        ],
-        commit_status=pr_state.CommitStatus.COMMIT_HELD,
-        updated_at="2026-07-14T00:00:00+00:00",
-    )
-    assert "uncommitted — awaiting discussion" in render_fix_status(f)[0]
-
-
 def test_render_fix_status_deferred_issue():
     f = pr_state.FixSummary(
         threads=[

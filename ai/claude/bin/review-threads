@@ -1013,52 +1013,18 @@ def _commit_and_push(
     return CommitPushResult(sha, CommitStatus.PUSH_FAILED, err)
 
 
-def _hold_commit(
-    wt_path: Path, fixed: int, deferred: int, reason: str,
-    trail: Trail | None = None,
-) -> CommitPushResult:
-    """Leave the fixes in the worktree, uncommitted, and say how to land them.
-
-    The commit is the pass's first assertion that the work stands: it names the
-    fixes in an imperative subject and every later stage cites it. #703 made
-    eight such assertions on a branch a reviewer had already said should not
-    exist. So while the premise is open, the edits stay where they can be read
-    and thrown away — a wrong hold costs a `git checkout`, not a rewrite.
-
-    Loud on purpose. Withholding a commit and saying nothing is
-    indistinguishable from a fix pass that did nothing.
-    """
-    if not review_common.has_uncommitted_changes(wt_path):
-        return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
-
-    log.warn(f"{fixed} fix(es) applied but NOT committed — {reason}")
-    log.info(f"  Read them:  git -C '{wt_path}' diff")
-    log.info(f"  Drop them:  git -C '{wt_path}' checkout -- .")
-    log.info("  Land them:  pr comments --finish --post, once the open thread is settled")
-    if trail:
-        trail.decision(
-            "commit_held", f"commit withheld — {reason}",
-            reason="a commit asserts the fixes stand; the premise for them is open",
-            data={"fixed": fixed, "deferred": deferred},
-        )
-    return CommitPushResult(None, CommitStatus.COMMIT_HELD, "")
-
-
-def _commit_or_hold(
+def _commit_fixes(
     wt_path: Path, fixed: int, deferred: int, head_before: str,
     trail: Trail | None = None,
 ) -> CommitPushResult:
-    """Commit the pass's work, unless something says the premise is in doubt.
+    """Commit the pass's work, and recover a commit the agent made itself.
 
-    A draft run is not that: it still commits, because `--post` governs what
-    leaves the machine and a local commit does not. Only a hold — an open
-    thread, or a history signal that the branch may be superseded — reaches
-    back this far.
+    A hold does not reach this far, and #718 settled that deliberately: a local
+    commit asserts nothing to a reviewer, because it only becomes visible on
+    push and the push is what the hold stops. Leaving the fixes uncommitted
+    instead would make them fragile, and would leave the next `--fix` round
+    reading its own dirty tree as a refused commit.
     """
-    reason = publishing.held()
-    if reason:
-        return _hold_commit(wt_path, fixed, deferred, reason, trail)
-
     cp = _commit_and_push(wt_path, fixed, deferred, trail=trail)
     if cp.status in (CommitStatus.NO_CHANGES, CommitStatus.COMMIT_FAILED):
         cp = _recover_agent_commit(wt_path, head_before, trail, prior=cp)
@@ -1611,7 +1577,6 @@ def _finish_deferred_work(
     if state is None:
         return
     threads_by_id = {t.id: t for t in report.threads}
-    _commit_held_fixes(state, wt_path, trail)
     _push_held_commit(state, wt_path, trail)
     _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
     _warn_if_snapshot_stale(state, wt_path)
@@ -1622,52 +1587,6 @@ def _finish_deferred_work(
         state, report, ctx.repo, ctx.pr_number, threads_by_id,
     )
     pr_state.save_state(ctx.target_dir, state)
-
-
-def _commit_held_fixes(
-    state: pr_state.PRState, wt_path: Path, trail: Trail | None = None,
-) -> None:
-    """Commit the fixes the fix pass withheld, now that a run says go.
-
-    One step earlier in the chain than `_push_held_commit`, and for the same
-    reason: the fix pass refuses to commit while a thread is unanswered or the
-    history looks superseded, so clearing that takes a second, deliberate
-    `--finish --post` from a human who has read the thread.
-
-    The commit only exists now, so the outcomes recorded before it are stamped
-    with it here — otherwise every row and reply for this round would fall back
-    to the pass-level SHA of whatever round comes next.
-    """
-    fix = state.fix
-    if fix.commit_status != CommitStatus.COMMIT_HELD:
-        return
-
-    if not review_common.has_uncommitted_changes(wt_path):
-        # Committed by hand between runs. The summary reconciles its rows
-        # against real HEAD, so the work is still attributed; there is just no
-        # commit left for this step to make.
-        log.info("Held fixes are already committed — nothing to land")
-        fix.commit_status = CommitStatus.NO_CHANGES
-        return
-
-    if not publishing.enabled():
-        log.info(
-            f"{len(fix.threads)} outcome(s) recorded with fixes still uncommitted "
-            f"— re-run with --post to commit and push them"
-        )
-        return
-
-    FA = pr_state.ThreadAction
-    fixed = [t for t in fix.threads if t.action == FA.FIXED]
-    deferred = sum(1 for t in fix.threads if t.action == FA.DEFERRED)
-    cp = _commit_and_push(wt_path, len(fixed), deferred, trail=trail)
-    fix.commit_sha = cp.sha or ""
-    fix.commit_status = cp.status
-    if not cp.sha:
-        return
-    for outcome in fixed:
-        if not outcome.commit_sha:
-            outcome.commit_sha = cp.sha
 
 
 def _push_held_commit(
@@ -1868,8 +1787,6 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
         return "Fix applied (commit failed — pre-commit hook?)"
     if cp.status == CommitStatus.RECONCILED:
         return _RECONCILED_STATUS_TEXT
-    if cp.status == CommitStatus.COMMIT_HELD:
-        return "Fix applied, not committed (discussion open)"
     return "Fix pending"
 
 
@@ -2945,6 +2862,10 @@ def _hold_if_superseded(
 
     Every signal is printed with its kind, so the output says which check
     fired rather than leaving the operator to guess why the run went quiet.
+
+    The hold is the same one an open thread places, and reaches the same acts:
+    the push, the `Fixed in <sha>` replies, the thread resolutions, and the
+    summary. The local commit is not one of them — see `_commit_fixes`.
     """
     if not signals:
         return
@@ -2981,11 +2902,9 @@ def _hold_while_contested(
     Telling a premise-invalidating question from a bikeshed is the hard problem,
     and getting it wrong in the permissive direction is what this exists to
     prevent. So the halt is deliberately blunt — any open thread — and cheap:
-    the fixes are still applied, and only the acts that assert they stand wait.
-    That includes the commit, whose subject asserts it in the imperative and
-    which every later stage cites. A wrong call costs a `git checkout` in a
-    worktree, not a rewritten history. The human clears it by answering the
-    thread and re-running `--finish --post`.
+    the fixes are still applied and still committed locally, and only the
+    outward acts wait. A wrong call costs a local commit, not a pushed one. The
+    human clears it by answering and re-running `--finish --post`.
     """
     if not needs_human:
         return
@@ -3149,7 +3068,7 @@ def _run_comment_fix(
     fixed_count = len(tracking.fixed) + len(tracking.fixed_items)
     deferred_count = len(tracking.deferred) + len(tracking.deferred_items)
 
-    cp = _commit_or_hold(wt_path, fixed_count, deferred_count, head_before, trail)
+    cp = _commit_fixes(wt_path, fixed_count, deferred_count, head_before, trail)
 
     replies_posted = triage_replies
     if tracking.fixed and cp.status == CommitStatus.PUSHED:

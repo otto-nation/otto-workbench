@@ -1532,70 +1532,6 @@ class TestSummaryStillOwed:
         assert self._owed(rt) is False
 
 
-class TestCommitHeldFixes:
-    """The other end of #703: what `--finish --post` does with withheld fixes."""
-
-    @staticmethod
-    def _state(status=CommitStatus.COMMIT_HELD, outcomes=None):
-        threads = outcomes if outcomes is not None else [
-            ThreadOutcome(id="t1", action=ThreadAction.FIXED, summary="s"),
-        ]
-        return _make_state(FixSummary(commit_status=status, threads=threads))
-
-    def test_lands_the_held_fixes(self, rt, publishing_on):
-        state = self._state()
-        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
-             patch.object(rt, "_commit_and_push",
-                          return_value=rt.CommitPushResult("def5678", "pushed", "")):
-            rt._commit_held_fixes(state, Path("/fake"))
-        assert state.fix.commit_sha == "def5678"
-        assert state.fix.commit_status == "pushed"
-
-    def test_stamps_the_outcomes_with_the_new_sha(self, rt, publishing_on):
-        """The outcomes predate the commit, so nothing else can attribute them."""
-        state = self._state()
-        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
-             patch.object(rt, "_commit_and_push",
-                          return_value=rt.CommitPushResult("def5678", "pushed", "")):
-            rt._commit_held_fixes(state, Path("/fake"))
-        assert state.fix.threads[0].commit_sha == "def5678"
-
-    def test_an_earlier_rounds_sha_is_left_alone(self, rt, publishing_on):
-        """Promoting this round must not relabel a round that already landed."""
-        state = self._state(outcomes=[
-            ThreadOutcome(id="t1", action=ThreadAction.FIXED, summary="s",
-                          commit_sha="aaa1111"),
-            ThreadOutcome(id="t2", action=ThreadAction.FIXED, summary="s"),
-        ])
-        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
-             patch.object(rt, "_commit_and_push",
-                          return_value=rt.CommitPushResult("def5678", "pushed", "")):
-            rt._commit_held_fixes(state, Path("/fake"))
-        assert [t.commit_sha for t in state.fix.threads] == ["aaa1111", "def5678"]
-
-    def test_a_draft_finish_leaves_them_uncommitted(self, rt):
-        state = self._state()
-        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
-             patch.object(rt, "_commit_and_push") as commit:
-            rt._commit_held_fixes(state, Path("/fake"))
-        commit.assert_not_called()
-        assert state.fix.commit_status == CommitStatus.COMMIT_HELD
-
-    def test_a_clean_tree_means_someone_committed_by_hand(self, rt, publishing_on):
-        state = self._state()
-        with patch.object(rt.review_common, "has_uncommitted_changes", return_value=False), \
-             patch.object(rt, "_commit_and_push") as commit:
-            rt._commit_held_fixes(state, Path("/fake"))
-        commit.assert_not_called()
-        assert state.fix.commit_status == "no_changes"
-
-    def test_a_pass_that_was_never_held_is_untouched(self, rt, publishing_on):
-        state = self._state(status="pushed")
-        with patch.object(rt, "_commit_and_push") as commit:
-            rt._commit_held_fixes(state, Path("/fake"))
-        commit.assert_not_called()
-
-
 class TestPushHeldCommit:
     """--finish --post is the human saying the held work may land."""
 
@@ -3539,25 +3475,23 @@ class TestFixPassHoldsWhenContested:
 
     def test_a_contested_thread_stops_the_push(self, rt, tmp_path, publishing_on):
         run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        assert run.result.commit_status == CommitStatus.COMMIT_HELD
+        assert run.result.commit_status == CommitStatus.PUSH_HELD
         assert run.pushes == []
 
-    def test_a_contested_thread_stops_the_commit(self, rt, tmp_path, publishing_on):
-        """The commit asserts the fixes stand, so it waits with the rest."""
+    def test_the_commit_is_still_made(self, rt, tmp_path, publishing_on):
+        """Holding must not cost the work — only its publication.
+
+        #718 settled this: a local commit asserts nothing to a reviewer, since
+        only the push makes it visible, and the push is what the hold stops.
+        """
         run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        assert run.commits == []
+        assert run.result.commit_sha == "abc1234"
+        assert run.commits
 
     def test_the_fixes_are_still_applied(self, rt, tmp_path, publishing_on):
         """Holding must not cost the work — only the acts that assert it."""
         run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
         assert [t.id for t in run.result.fixed] == ["t1"]
-
-    def test_the_hold_says_how_to_proceed(self, rt, tmp_path, publishing_on, capsys):
-        """A silent no-op would look like a crash. It must read as a decision."""
-        self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        err = capsys.readouterr().err
-        assert "NOT committed" in err
-        assert "pr comments --finish --post" in err
 
     def test_no_fixed_replies_go_out_while_held(self, rt, tmp_path, publishing_on):
         run = self._run(rt, tmp_path, contested=True, publishing_on_=True)

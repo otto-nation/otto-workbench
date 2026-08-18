@@ -10,8 +10,17 @@ const RINGS = [
   { r: 17.8, c: 'var(--ow-anil)' },
 ];
 
+// Intrinsic size, and the desktop size the `sm:` classes below restate. Only a
+// fallback: the classes win wherever the stylesheet loads.
 const SIZE = 290;
-const STROKE_WIDTH = 180 / SIZE;
+
+// In CSS pixels, not viewBox units. A plain stroke-width is expressed in the
+// 32-unit viewBox and so scales with the rendered box — the same value lands at
+// 5.6px on the 290px desktop render and 1.6px on the 80px mobile one, which is
+// why the rings went wispy below `sm`. `vector-effect: non-scaling-stroke`
+// takes the width in viewport pixels instead, so one constant holds the line
+// weight steady across both breakpoints.
+const STROKE_PX = 2.4;
 
 export function Rings() {
   return (
@@ -30,7 +39,8 @@ export function Rings() {
           cy="16"
           r={ring.r}
           stroke={ring.c}
-          strokeWidth={STROKE_WIDTH}
+          strokeWidth={STROKE_PX}
+          vectorEffect="non-scaling-stroke"
         />
       ))}
     </svg>

@@ -33,6 +33,7 @@ sys.modules.setdefault("pr_cli", pr_cli)
 
 import pr_state  # noqa: E402
 import run_lock  # noqa: E402
+import tool_parser  # noqa: E402
 import workbench_paths  # noqa: E402
 
 from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
@@ -1170,7 +1171,7 @@ class TestCmdCreate:
 def _forwarded_args(mock_run) -> list[str]:
     """What `pr create` put after the `--` separator for task pr:create."""
     cmd = mock_run.call_args[0][0]
-    assert cmd[0] == "task", f"create did not delegate to task: {cmd}"
+    assert cmd[:2] == ["task", "--global"], f"create did not delegate to task: {cmd}"
     assert "--" in cmd, f"no argv was forwarded: {cmd}"
     return cmd[cmd.index("--") + 1:]
 
@@ -1236,6 +1237,40 @@ def test_create_still_forwards_valueless_flags(mock_resolve, mock_run):
 def test_no_target_commands_are_registered_commands():
     """The set names commands, so a rename cannot leave a stale entry behind."""
     assert pr_cli._NO_TARGET_COMMANDS <= set(pr_cli._COMMANDS)
+
+
+# The commands whose scan is arity-blind by construction: no "script", so
+# _delegate_value_flags has no parser to probe, and not excused from the scan by
+# _NO_TARGET_COMMANDS. Derived from the registry so a new one is covered on the
+# commit that adds it.
+_ARITY_BLIND_COMMANDS = sorted(
+    name for name, entry in pr_cli._COMMANDS.items()
+    if "script" not in entry and name not in pr_cli._NO_TARGET_COMMANDS
+)
+
+
+@pytest.mark.parametrize("command", _ARITY_BLIND_COMMANDS)
+def test_a_command_with_no_delegate_declares_no_value_taking_flag(command):
+    """The guard on _NO_TARGET_COMMANDS being a hand-maintained list.
+
+    A command with no delegate has no parser for _delegate_value_flags to probe,
+    so its positional scan degrades to "first bare token wins" — exactly what ate
+    `pr create --title`. None of these declares an option that consumes a value
+    today, which is the only reason create was the only one broken. Asserting it
+    means the next one fails here rather than at a user's dangling flag.
+
+    Read off the same function the --value-flags probe answers with, so this
+    cannot drift from the arity the wrapper acts on.
+    """
+    subparser = pr_cli._build_parser()[1][command]
+    offenders = tool_parser.value_taking_options(subparser)
+    assert not offenders, (
+        f"pr {command} declares value-taking options ({', '.join(offenders)}), but "
+        f"{command} has no delegate to read arity from — the value would be classified "
+        f"as the command's target and dropped from the forwarded argv. Either add "
+        f"{command} to _NO_TARGET_COMMANDS if it takes no positional target, or give it "
+        f"a 'script' entry whose parser answers {pr_cli.VALUE_FLAGS_FLAG}."
+    )
 
 
 # ── worktree_root guards ───────────────────────────────────────────────────

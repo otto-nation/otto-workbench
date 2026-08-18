@@ -587,6 +587,31 @@ _NO_TARGET_COMMANDS = {"create"}
 _NO_LOCK_COMMANDS = {"status"}
 
 
+def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
+    """Build the command parser, returning it alongside each command's subparser.
+
+    A delegating command's subparser declares no flags of its own — its argv is
+    forwarded whole and `pr <command> --help` is answered by the delegate — so
+    add_help is left off for those. The subparsers are handed back rather than
+    dropped so the arity of what a command declares can be read off the parser
+    that declares it, which is what keeps _NO_TARGET_COMMANDS honest.
+    """
+    parser = argparse.ArgumentParser(
+        prog=SCRIPT,
+        description="PR lifecycle management",
+        add_help=False,
+    )
+    parser.add_argument("-h", "--help", action="store_true", dest="help")
+
+    sub = parser.add_subparsers(dest="command")
+    subparsers = {
+        name: sub.add_parser(name, help=entry["help"],
+                             add_help="script" not in entry)
+        for name, entry in _COMMANDS.items()
+    }
+    return parser, subparsers
+
+
 def _build_usage() -> str:
     max_name = max(len(n) for n in _COMMANDS)
     cmd_lines = "\n".join(
@@ -685,17 +710,7 @@ def main():
     add_trail_args(_global)
     global_args, remaining = _global.parse_known_args()
 
-    parser = argparse.ArgumentParser(
-        prog=SCRIPT,
-        description="PR lifecycle management",
-        add_help=False,
-    )
-    parser.add_argument("-h", "--help", action="store_true", dest="help")
-
-    sub = parser.add_subparsers(dest="command")
-    for name, entry in _COMMANDS.items():
-        sub.add_parser(name, help=entry["help"],
-                       add_help="script" not in entry)
+    parser = _build_parser()[0]
 
     args, extra = parser.parse_known_args(remaining)
     args.repo_dir = global_args.repo_dir

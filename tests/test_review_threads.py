@@ -1541,7 +1541,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
 
 
 class TestSummaryStillOwed:
-    """Whether --resolve has to re-render the fix summary."""
+    """Whether --finish has to re-render the fix summary."""
 
     def _owed(self, rt, **kw):
         args = {
@@ -1662,7 +1662,7 @@ class TestPushHeldCommit:
 
 
 class TestPendingFixReplies:
-    """--resolve is the second chance for fix replies the fix pass didn't send."""
+    """--finish is the second chance for fix replies the fix pass didn't send."""
 
     # id, summary, file, line, root comment databaseId
     _SEEDS = [
@@ -2488,19 +2488,27 @@ class TestStaleSnapshotIsAnnounced:
 
 
 class TestFinishFlag:
-    """`--resolve` shipped under the wrong name; it still has to work."""
+    """`--finish` is the one spelling.
+
+    It shipped as `--resolve-verified` on the removed `claude-review threads`
+    subcommand and carried both historical names as aliases. Nothing calls them
+    any more, and three spellings is three chances for a doc to pick a dead one
+    — so they are gone, and an unknown-flag error is the whole migration path.
+    """
 
     def test_finish_sets_finish(self, rt):
         assert rt._build_parser().parse_args(["--finish"]).finish
 
-    def test_resolve_is_an_alias(self, rt):
-        assert rt._build_parser().parse_args(["--resolve"]).finish
-
-    def test_resolve_verified_is_an_alias(self, rt):
-        assert rt._build_parser().parse_args(["--resolve-verified"]).finish
-
     def test_it_is_off_by_default(self, rt):
         assert not rt._build_parser().parse_args([]).finish
+
+    @pytest.mark.parametrize("alias", ["--resolve", "--resolve-verified"])
+    def test_the_old_aliases_are_rejected(self, rt, alias):
+        # Exit 2 specifically: argparse's unknown-flag code, not any SystemExit
+        # a broken parser might raise on the way past.
+        with pytest.raises(SystemExit) as exc:
+            rt._build_parser().parse_args([alias])
+        assert exc.value.code == 2
 
 
 # ── --reply ──────────────────────────────────────────────────────────────

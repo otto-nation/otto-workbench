@@ -418,7 +418,7 @@ class FixSummary(Domain):
     head_sha: str = ""
     replies_posted: int = 0
     # The fix pass produced per-thread replies but did not deliver them — the
-    # push failed, or the run was a draft. --resolve drains the queue.
+    # push failed, or the run was a draft. --finish drains the queue.
     replies_pending: bool = False
     summary_url: str = ""
     summary_deferred: bool = False

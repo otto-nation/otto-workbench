@@ -2130,8 +2130,12 @@ def test_fresh_refuses_to_rebase_the_default_branch():
     assert result == 1
 
 
-def test_fresh_checkout_failure_returns_error():
-    """Checkout failure aborts with return code 1."""
+# Whether the local ref exists picks between two different checkouts, so a
+# failure has to propagate from both — one blanket stub would only ever prove
+# whichever path its rev-parse answer happened to select.
+@pytest.mark.parametrize("local_ref_exists", [False, True])
+def test_fresh_checkout_failure_returns_error(local_ref_exists):
+    """Checkout failure aborts with return code 1, whichever checkout ran."""
     ctx = mock.MagicMock()
     ctx.branch = "feat/my-branch"
     ctx.current_branch = None
@@ -2139,6 +2143,8 @@ def test_fresh_checkout_failure_returns_error():
     def fake_run(cmd, **kwargs):
         if cmd[:2] == ["git", "checkout"]:
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error: pathspec")
+        if cmd[:3] == ["git", "rev-parse", "--verify"] and not local_ref_exists:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
@@ -2237,6 +2243,26 @@ def test_checkout_target_branch_refuses_when_diverged(tmp_path):
     assert rc == 1
     assert _git(repo, "rev-parse", _CHECKOUT_BRANCH) == local
     assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+
+
+def test_checkout_target_branch_names_the_commits_it_will_not_discard(tmp_path, capsys):
+    """The refusal has to be actionable, and truncation has to admit itself."""
+    repo = _repo_on_main(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", _CHECKOUT_BRANCH)
+    for i in range(pr_rebase_cli._UNPUSHED_SUBJECT_LIMIT + 2):
+        _commit(repo, f"local{i}.txt", f"local work {i}")
+    _git(repo, "checkout", "-q", "-b", "remote-side", base)
+    _git(repo, "update-ref", f"refs/remotes/origin/{_CHECKOUT_BRANCH}",
+         _commit(repo, "remote.txt", "remote only"))
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "branch", "-qD", "remote-side")
+
+    assert pr_rebase_cli._checkout_target_branch(str(repo), _checkout_ctx()) == 1
+
+    err = capsys.readouterr().err
+    assert "local work 11" in err
+    assert "... and 2 more" in err
 
 
 def test_checkout_target_branch_creates_from_origin_when_absent(tmp_path):

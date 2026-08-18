@@ -2153,6 +2153,10 @@ def _refuse_diverged(cwd: str, ctx: pr_context.ResolvedContext, div: RefDivergen
     )
     for subject in subjects:
         log.dim(f"  {subject}")
+    # A list that stops at the cap without saying so reads as the whole set,
+    # and the operator would go reconcile a branch they think they have seen.
+    if div.ahead > len(subjects):
+        log.dim(f"  ... and {div.ahead - len(subjects)} more")
     log.dim("Reconcile the two in that branch's own worktree, then retry.")
     return 1
 

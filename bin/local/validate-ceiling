@@ -25,6 +25,7 @@ Exit code: 0 if every marker resolves, 1 if any names neither.
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib.machinery
 import importlib.util
 import os
@@ -38,9 +39,14 @@ from ansi import DIM, GREEN, NC, RED  # noqa: E402
 SCANNER = _WORKBENCH_DIR / "ai" / "claude" / "bin" / "ceiling-scan"
 
 
-def load_scanner(path: Path = SCANNER):
-    """Import ceiling-scan by path — the filename is hyphenated, so it is not importable."""
-    loader = importlib.machinery.SourceFileLoader("ceiling_scan", str(path))
+@functools.cache
+def _scanner():
+    """Import ceiling-scan by path — the filename is hyphenated, so it is not importable.
+
+    Cached: the module is stateless, and re-executing it per call would make a
+    scan of several directories pay the import over and over.
+    """
+    loader = importlib.machinery.SourceFileLoader("ceiling_scan", str(SCANNER))
     spec = importlib.util.spec_from_loader("ceiling_scan", loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -49,7 +55,7 @@ def load_scanner(path: Path = SCANNER):
 
 def check_directory(root: Path) -> list[dict]:
     """The markers under *root* that name neither a trigger nor permanence."""
-    scanner = load_scanner()
+    scanner = _scanner()
     return [m for m in scanner.scan_directory(root) if scanner.is_untriggered(m)]
 
 

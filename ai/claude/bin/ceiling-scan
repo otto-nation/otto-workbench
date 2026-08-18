@@ -116,12 +116,16 @@ def _read_text(fpath: Path) -> str | None:
 
 
 def _is_candidate(line: str) -> bool:
-    """Cheap linear gate so only plausible lines reach the quadratic regexes."""
+    """Cheap linear gate so only plausible lines reach the marker regex."""
     return len(line) <= MAX_LINE_LEN and CEILING_TOKEN in line.lower()
 
 
 def _find_trigger(text: str) -> str | None:
-    """The clause naming the condition that ends the simplification, if any."""
+    """The clause of *text* naming the condition that ends the simplification.
+
+    Takes the marker body past its opening clause, not the whole body — see
+    `_marker`. Returns None when no clause names a condition.
+    """
     for sentence in _SENTENCE_RE.split(text):
         lead = _TRIGGER_LEAD_RE.match(sentence)
         if lead:
@@ -137,6 +141,10 @@ def _continuation(lines: list[str], start: int, indent: str, token: str) -> list
 
     Ends at the first line that leaves the comment — a blank comment line, a
     change of prefix or indent, the next marker, or code.
+
+    A `/*` marker gets no continuation: its later lines carry a ` * ` or no
+    prefix at all, which no line-prefix rule can tell from prose. Such a marker
+    must name its trigger before the closing delimiter.
     """
     if token not in BLOCK_COMMENT_TOKENS:
         return []
@@ -153,14 +161,20 @@ def _continuation(lines: list[str], start: int, indent: str, token: str) -> list
 
 
 def _marker(rel: str, lineno: int, text: str, permanent: bool) -> dict:
-    """One ledger entry: the opening clause is the tradeoff, the trigger a clause."""
+    """One ledger entry: the opening clause is the tradeoff, the trigger a later one."""
+    clauses = _CLAUSE_RE.split(text, 1)
+    rest = clauses[1] if len(clauses) > 1 else ""
     return {
         "file": rel,
         "line": lineno,
-        "ceiling": _CLAUSE_RE.split(text, 1)[0].strip().rstrip(".;"),
-        # A permanent marker is accepted rather than pending, so a condition read
-        # out of its prose would be a threshold nobody agreed to.
-        "trigger": None if permanent else _find_trigger(text),
+        "ceiling": clauses[0].strip().rstrip(".;"),
+        # The search starts after the tradeoff clause, which is prose about what
+        # the shortcut does: "skip the check when running in CI" would otherwise
+        # read as the condition that ends it.
+        #
+        # A permanent marker is accepted rather than pending, so any condition
+        # read out of its prose would be a threshold nobody agreed to.
+        "trigger": None if permanent else _find_trigger(rest),
         "permanent": permanent,
     }
 

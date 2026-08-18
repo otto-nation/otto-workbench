@@ -5,6 +5,8 @@ import importlib.util
 import time
 from pathlib import Path
 
+from conftest import write_marker_file as _write
+
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
 
 _spec = importlib.util.spec_from_loader(
@@ -17,17 +19,6 @@ _spec.loader.exec_module(ceiling_scan)
 
 def _scan(tmp_path: Path) -> list[dict]:
     return ceiling_scan.scan_directory(tmp_path)
-
-
-def _write(tmp_path: Path, name: str, *lines: str) -> None:
-    """Write a fixture file.
-
-    Lines are passed as separate arguments rather than one triple-quoted block
-    so that no line of *this* file begins with a marker — the scanner runs over
-    the whole repo, and a fixture it can read as real debt is exactly the bug
-    this suite is meant to catch.
-    """
-    (tmp_path / name).write_text("\n".join(lines) + "\n")
 
 
 class TestMarkerDetection:
@@ -85,6 +76,18 @@ class TestCommentBlock:
         markers = _scan(tmp_path)
         assert [m["ceiling"] for m in markers] == ["first", "second"]
 
+    def test_c_block_marker_is_read_to_its_closing_delimiter(self, tmp_path):
+        """A `/* ... */` marker is single-line only — its later lines are not continuation."""
+        _write(
+            tmp_path, "a.c",
+            "/* ceiling: one connection, reopen if a second caller appears */",
+            " * Unread: the continuation grammar covers #, // and -- only.",
+            " */",
+        )
+        marker = _scan(tmp_path)[0]
+        assert marker["ceiling"] == "one connection"
+        assert marker["trigger"] == "reopen if a second caller appears"
+
     def test_block_ends_when_the_indent_changes(self, tmp_path):
         _write(
             tmp_path, "a.py",
@@ -123,6 +126,13 @@ class TestTriggerGrammar:
         """An intent to upgrade names no condition, so nothing ever revisits it."""
         _write(tmp_path, "a.py", "# ceiling: the list is static. Upgrade only with a real fix.")
         assert _scan(tmp_path)[0]["trigger"] is None
+
+    def test_a_conditional_inside_the_tradeoff_clause_is_not_a_trigger(self, tmp_path):
+        """The tradeoff clause describes what the shortcut does, not when it ends."""
+        _write(tmp_path, "a.py", "# ceiling: skip the check when running in CI, no upgrade path")
+        marker = _scan(tmp_path)[0]
+        assert marker["ceiling"] == "skip the check when running in CI"
+        assert marker["trigger"] is None
 
 
 class TestPermanentMarkers:

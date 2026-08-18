@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Greca } from '@/components/greca';
+import { SearchButton } from '@/components/landing/search-button';
 
 export function Nav() {
   return (
@@ -11,6 +12,7 @@ export function Nav() {
       <span className="flex items-center gap-4 font-[family-name:var(--font-mono)] text-xs text-[var(--ow-ink-muted)]">
         <Link href="/docs/getting-started">docs</Link>
         <a href="https://github.com/otto-nation/otto-workbench">github</a>
+        <SearchButton />
       </span>
     </nav>
   );

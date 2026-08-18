@@ -623,7 +623,7 @@ def test_cmd_comments_plain_delegates_to_review_threads(mock_run):
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-threads")
     assert "--triage" not in cmd
-    assert "--resolve" not in cmd
+    assert "--finish" not in cmd
 
 
 @patch("pr_cli.subprocess.run")
@@ -637,13 +637,13 @@ def test_cmd_comments_triage_passes_flag(mock_run):
 
 
 @patch("pr_cli.subprocess.run")
-def test_cmd_comments_resolve_passes_flag(mock_run):
+def test_cmd_comments_finish_passes_flag(mock_run):
     mock_run.return_value = MagicMock(returncode=0)
     ctx = make_ctx()
-    pr_cli.cmd_comments(["--resolve"], ctx)
+    pr_cli.cmd_comments(["--finish"], ctx)
     cmd = mock_run.call_args[0][0]
     assert cmd[0].endswith("/review-threads")
-    assert "--resolve" in cmd
+    assert "--finish" in cmd
 
 
 # ── cmd_review --repair ────────────────────────────────────────────────────

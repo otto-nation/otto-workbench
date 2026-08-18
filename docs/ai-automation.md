@@ -840,6 +840,19 @@ the operator settled it outside the tool — answered the thread, fixed it by
 hand — `--finish` reconciles the snapshot against GitHub first and the row
 credits that work instead of reporting a discussion that already happened.
 
+**A decomposed comment item reconciles through the comment it came from.** An
+item split out of a top-level comment has a synthetic id and no review thread,
+so there is no thread state to read it from
+([#776](https://github.com/otto-nation/otto-workbench/issues/776)). `--finish`
+asks the same question of its source instead: a reply of ours further down the
+PR that opens `Applied:` / `Already addressed` / `Suggestion reviewed` and cites
+the source comment's permalink settles the item, exactly as the equivalent reply
+on a thread settles a thread. An item that restates an inline thread settles
+with that thread, and renders as one row rather than the same point twice under
+two outcomes — the thread is the copy that stays, since that is where the reply
+lands and where resolution is recorded. An item nothing on GitHub answers still
+renders as open and still holds the summary back.
+
 **Rows the local state file cannot account for are carried forward.** State is
 per-target and per-worktree, and a round routinely runs without the state that
 covered an earlier one: `pr gc`, a pruned state directory, a recreated worktree,

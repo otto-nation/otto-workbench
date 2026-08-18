@@ -1524,8 +1524,99 @@ def _thread_looks_handled(thread: ReportThread | None) -> bool:
     )
 
 
+def _finding_location(
+    entry: CommentItem | pr_state.ThreadOutcome | ReportThread,
+) -> str:
+    """Reviewer and code location of an entry, or "" when it has neither.
+
+    The join key between a review thread and a decomposed comment item that
+    restates it. Both halves are required: a file on its own is too coarse to
+    call two findings the same point, and two reviewers writing about one line
+    are writing about two different things.
+    """
+    line = getattr(entry, "line", 0) or 0
+    if not entry.file or not line:
+        return ""
+    return f"{entry.reviewer}|{entry.file}:{line}"
+
+
+# The id in a permalink back to a top-level comment. Capturing, unlike
+# _ROW_ANCHOR_RE below, because the id is the whole point here.
+_SOURCE_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-(\d+)")
+
+
+def _answered_comment_sources(
+    outcomes: list[pr_state.ThreadOutcome],
+    repo: str, pr_number: int, my_login: str,
+) -> frozenset[str]:
+    """Source comment ids our standing reply on the PR reports as handled.
+
+    A decomposed comment item has no review thread, so `_thread_looks_handled`
+    has nothing to read for one: the item is a fragment of a top-level comment,
+    and a top-level comment carries no thread of its own. What it does carry is
+    a reply of ours further down the PR citing its permalink — the same evidence
+    a thread reply is, on the only surface the source has.
+
+    Costs one listing, and only when the snapshot holds an unsettled item that
+    such a reply could settle.
+    """
+    FA = pr_state.ThreadAction
+    unsettled = (FA.DEFERRED, FA.NEEDS_HUMAN)
+    if not any(
+        o.action in unsettled and _comment_item_source(o).ok for o in outcomes
+    ):
+        return frozenset()
+    if not my_login:
+        # Without a login there is no telling our reply from the reviewer
+        # restating their own point, and reading theirs as an answer would
+        # settle the item on the strength of the complaint.
+        log.warn(
+            "Cannot identify our own comments — leaving comment items unreconciled"
+        )
+        return frozenset()
+    mine = my_login.lower()
+    # my_login="" so the listing keeps our own comments: the reply being looked
+    # for is ours, and that argument is the filter that would drop it.
+    answered: set[str] = set()
+    for comment in pc.fetch_issue_comments(repo, pr_number, ""):
+        if str(comment.get("user", "")).lower() != mine:
+            continue
+        body = str(comment.get("body", ""))
+        if not body.startswith(_HANDLED_REPLY_PREFIXES):
+            continue
+        answered.update(m.group(1) for m in _SOURCE_ANCHOR_RE.finditer(body))
+    return frozenset(answered)
+
+
+def _entry_looks_handled(
+    outcome: pr_state.ThreadOutcome,
+    threads_by_id: dict[str, ReportThread],
+    answered_sources: frozenset[str],
+    handled_locations: set[str],
+) -> bool:
+    """True when GitHub shows this snapshot row as dealt with, by anyone.
+
+    Two kinds of row reach here. A review thread carries its own evidence and is
+    read directly. A comment item has none to carry — looking its synthetic id
+    up among review threads can only ever miss — so it is settled either by its
+    source comment having been answered, or by a review thread saying the same
+    thing about the same line being settled: triage decomposes a top-level
+    comment without knowing which of its points an inline thread already covers.
+    """
+    thread = threads_by_id.get(outcome.id)
+    if thread:
+        return _thread_looks_handled(thread)
+    source = _comment_item_source(outcome)
+    if not source.ok:
+        return False
+    if source.id in answered_sources:
+        return True
+    return _finding_location(outcome) in handled_locations
+
+
 def _reconcile_fix_snapshot(
     state: pr_state.PRState, threads_by_id: dict[str, ReportThread],
+    answered_sources: frozenset[str] = frozenset(),
 ) -> int:
     """Flip snapshot outcomes that GitHub contradicts. Returns the flip count.
 
@@ -1540,14 +1631,25 @@ def _reconcile_fix_snapshot(
     operator, so the operator settling it is the expected ending, not an
     exception. Reporting it as still awaiting discussion after it has been
     answered and pushed is the claim this is here to prevent.
+
+    `answered_sources` is what GitHub said about the top-level comments behind
+    the decomposed items — see `_answered_comment_sources`. It defaults to
+    nothing asked, which is the honest reading for a caller that consulted only
+    the review threads.
     """
     FA = pr_state.ThreadAction
     unsettled = (FA.DEFERRED, FA.NEEDS_HUMAN)
+    handled_locations = {
+        _finding_location(t) for t in threads_by_id.values()
+        if _thread_looks_handled(t)
+    } - {""}
     flipped = 0
     for outcome in state.fix.threads:
         if outcome.action not in unsettled:
             continue
-        if not _thread_looks_handled(threads_by_id.get(outcome.id)):
+        if not _entry_looks_handled(
+            outcome, threads_by_id, answered_sources, handled_locations,
+        ):
             continue
         outcome.action = FA.FIXED
         outcome.reason = _RECONCILED_REASON
@@ -1584,7 +1686,9 @@ def _finish_deferred_work(
     _push_held_commit(state, wt_path, trail)
     _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
     _warn_if_snapshot_stale(state, wt_path)
-    _reconcile_fix_snapshot(state, threads_by_id)
+    _reconcile_fix_snapshot(state, threads_by_id, _answered_comment_sources(
+        state.fix.threads, ctx.repo, ctx.pr_number, report.my_login,
+    ))
     _finalize_deferred(state, ctx, threads_by_id, trail=trail, track=track)
     _report_unfiled_deferrals(state, track)
     _render_deferred_summary(
@@ -1822,11 +1926,39 @@ def _warn_unattributed_fixes(fixed: list, cp: CommitPushResult) -> None:
     )
 
 
-def _comment_item_permalink(
+@dataclass(frozen=True)
+class CommentSource:
+    """The top-level comment a decomposed item was split out of.
+
+    Empty for anything that is not such an item — a review thread's id parses to
+    no source at all — and `ok` is how a caller asks which it got. A type with a
+    predicate rather than a pair of strings because "is this a comment item"
+    and "which comment" are asked together everywhere they are asked.
+    """
+
+    type: str = ""
+    id: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.id)
+
+    def permalink(self, repo: str, pr_number: int) -> str | None:
+        """The anchor a reader follows back to the comment, or None."""
+        if not self.ok:
+            return None
+        base = f"https://github.com/{repo}/pull/{pr_number}"
+        if self.type == "issue_comment":
+            return f"{base}#issuecomment-{self.id}"
+        if self.type == "review_body":
+            return f"{base}#pullrequestreview-{self.id}"
+        return None
+
+
+def _comment_item_source(
     entry: CommentItem | pr_state.ThreadOutcome,
-    repo: str, pr_number: int,
-) -> str | None:
-    """Build a permalink for a decomposed comment item from its source comment."""
+) -> CommentSource:
+    """The comment a decomposed item came from, empty when it is not one."""
     source_id = getattr(entry, "source_id", "")
     source_type = getattr(entry, "source_type", "")
     if not source_id and not source_type:
@@ -1838,14 +1970,15 @@ def _comment_item_permalink(
         elif eid.startswith("rb-"):
             source_type = "review_body"
             source_id = "-".join(eid.split("-")[1:-1])
-    if not source_id:
-        return None
-    base = f"https://github.com/{repo}/pull/{pr_number}"
-    if source_type == "issue_comment":
-        return f"{base}#issuecomment-{source_id}"
-    if source_type == "review_body":
-        return f"{base}#pullrequestreview-{source_id}"
-    return None
+    return CommentSource(source_type, source_id)
+
+
+def _comment_item_permalink(
+    entry: CommentItem | pr_state.ThreadOutcome,
+    repo: str, pr_number: int,
+) -> str | None:
+    """Build a permalink for a decomposed comment item from its source comment."""
+    return _comment_item_source(entry).permalink(repo, pr_number)
 
 
 def _thread_permalink(
@@ -1933,6 +2066,35 @@ def _summarize_comment_body(body: str, max_len: int = 120) -> str:
 
 _SummaryEntry = CommentItem | pr_state.ThreadOutcome
 
+
+def _duplicate_item_ids(
+    entries: list[_SummaryEntry], threads_by_id: dict[str, ReportThread],
+) -> set[str]:
+    """Ids of comment items a review thread in the same table already covers.
+
+    Triage decomposes a top-level comment into items without knowing which of
+    its points an inline thread already carries, so one review finding can
+    arrive twice — once as a thread and once as a fragment of the comment that
+    restated it. Rendering both puts one point in the table under two outcomes
+    that need not agree, which reads as the summary contradicting itself. The
+    thread is the copy that stays: it is where the reply lands and where
+    resolution is recorded.
+    """
+    # ceiling: reviewer plus file:line is the whole test for "the same point",
+    # so two distinct findings by one reviewer on one line fold into one row.
+    # Upgrade trigger: once a reviewer's separate findings on a single line are
+    # seen collapsing, compare the summaries too rather than the location alone.
+    covered = {
+        _finding_location(e) for e in entries if e.id in threads_by_id
+    } - {""}
+    return {
+        e.id for e in entries
+        if e.id not in threads_by_id
+        and _comment_item_source(e).ok
+        and _finding_location(e) in covered
+    }
+
+
 _SUMMARY_TABLE_COLUMNS = ("Thread", "Reviewer", "File", "Action")
 _SUMMARY_TABLE_HEADER = f"| {' | '.join(_SUMMARY_TABLE_COLUMNS)} |"
 _SUMMARY_TABLE_DIVIDER = "|" + "|".join("-" * 8 for _ in _SUMMARY_TABLE_COLUMNS) + "|"
@@ -2013,6 +2175,17 @@ def _build_summary_body(
     issue_comments = issue_comments or []
     review_body_comments = review_body_comments or []
     carried_over = carried_over or []
+    # Ahead of the counts, not just the rows: a count with no row under it is a
+    # claim the table cannot show the reader.
+    folded = _duplicate_item_ids(
+        [*fixed, *already_addressed, *dismissed, *needs_human, *deferred],
+        threads_by_id,
+    )
+    fixed = [e for e in fixed if e.id not in folded]
+    already_addressed = [e for e in already_addressed if e.id not in folded]
+    dismissed = [e for e in dismissed if e.id not in folded]
+    needs_human = [e for e in needs_human if e.id not in folded]
+    deferred = [e for e in deferred if e.id not in folded]
     fixed_count = len(fixed)
     deferred_count = len(deferred)
     human_count = len(needs_human)
@@ -2127,6 +2300,10 @@ def _format_issue_comment_items(comments: list[dict]) -> list[str]:
 # only stable part: the summary text is regenerated per round and the file cell
 # is pinned to whichever SHA that round rendered against.
 _ROW_ANCHOR_RE = re.compile(r"#(?:discussion_r|issuecomment-|pullrequestreview-)\d+")
+# The two halves of the anchor set, for telling which surface a rendered row
+# came from once the entry behind it is out of reach.
+_ITEM_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-\d+")
+_THREAD_ANCHOR_RE = re.compile(r"#discussion_r\d+")
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 
@@ -2134,6 +2311,23 @@ _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 def _row_cells(row: str) -> list[str]:
     """Split a rendered row into cells, honouring the escape `_escape_cell` writes."""
     return [cell.strip() for cell in _CELL_SPLIT_RE.split(row.strip().strip("|"))]
+
+
+def _row_location_key(row: str) -> str:
+    """Reviewer and file cell of a rendered row, stripped of decoration.
+
+    The rendered counterpart of `_finding_location`: what two rows about one
+    point at one line still share once the anchors, the pinned SHAs and the
+    outcome cell are taken away. "" for a row naming no line, which can never
+    establish that two rows are the same finding.
+    """
+    cells = _row_cells(row)
+    if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
+        return ""
+    location = _MD_LINK_RE.sub(r"\1", cells[2]).replace("`", "").strip()
+    if ":" not in location:
+        return ""
+    return f"{cells[1]}|{location}"
 
 
 def _summary_row_key(row: str) -> str:
@@ -2184,13 +2378,25 @@ def _carried_over_rows(published: str, fresh: str) -> list[str]:
     table therefore only ever grows: a row no later render reproduces is carried
     forward for the life of the PR. That is the intended trade — a stale row a
     reader can see beats a round nobody can recover.
+
+    The one thing that is not a lost round is a row this render folded into
+    another: a comment item restating a review thread was published under its
+    own anchor before `_duplicate_item_ids` started collapsing the pair, and
+    carrying it forward would restore the duplicate this render just removed. A
+    fresh thread row at that location accounts for it.
     """
     if not published:
         return []
-    fresh_keys = {_summary_row_key(row) for row in _summary_table_rows(fresh)}
+    fresh_rows = _summary_table_rows(fresh)
+    fresh_keys = {_summary_row_key(row) for row in fresh_rows}
+    folded = {
+        _row_location_key(row) for row in fresh_rows
+        if _THREAD_ANCHOR_RE.search(row)
+    } - {""}
     return [
         row for row in _summary_table_rows(published)
         if _summary_row_key(row) not in fresh_keys
+        and not (_ITEM_ANCHOR_RE.search(row) and _row_location_key(row) in folded)
     ]
 
 

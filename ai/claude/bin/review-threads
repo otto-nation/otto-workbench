@@ -2263,10 +2263,13 @@ def _post_pending_fix_replies(
     def bucket(action: str) -> list[CommentItem]:
         # commit_sha carried, not dropped: this queue spans rounds, and an
         # entry fixed two commits ago must still cite the commit that fixed it.
+        # `reason` carries the dismissal's justification, which `to_outcome`
+        # folded in from `reasoning` — without it a drained dismissal tells a
+        # reviewer their premise fails and gives them nothing to argue with.
         return [
             CommentItem(id=t.id, file=t.file, line=t.line,
                         reviewer=t.reviewer, summary=t.summary,
-                        commit_sha=t.commit_sha)
+                        reasoning=t.reason, commit_sha=t.commit_sha)
             for t in fix.threads if t.action == action
         ]
 

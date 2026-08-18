@@ -1797,7 +1797,8 @@ class TestTriageOnlyPassQueue:
         fix = FixSummary(
             threads=[
                 ThreadOutcome(id=f"t-{action}", summary=f"the {action} one",
-                              file="x.py", line=1, action=action)
+                              file="x.py", line=1, action=action,
+                              reason=f"because the {action} premise says so")
                 for action in actions
             ],
             commit_status="no_changes",
@@ -1838,6 +1839,20 @@ class TestTriageOnlyPassQueue:
              patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert [c.args[0] for c in mock_resolve.call_args_list] == [self._ADDRESSED]
+
+    def test_a_drained_dismissal_still_carries_its_reasoning(self, rt, publishing_on):
+        """`to_outcome` folds `reasoning` into `reason`; the drain must fold it back.
+
+        Without that, the reply degrades to the bare "reviewed and determined to
+        be inapplicable" fallback — telling a reviewer their premise fails and
+        giving them nothing to argue with.
+        """
+        fix, threads_by_id = self._queue(ThreadAction.DISMISSED)
+        state = _make_state(fix)
+        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert "because the dismissed premise says so" in mock_reply.call_args.args[3]
 
     def test_a_commitless_queue_does_not_wait_on_a_push(self, rt, publishing_on):
         """These replies cite HEAD, not a fix commit, so there is nothing to wait for."""

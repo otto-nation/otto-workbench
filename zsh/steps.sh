@@ -257,9 +257,44 @@ _generate_env_section() {
   if [[ -n "$output" ]]; then printf '%s' "$output"; fi
 }
 
+# _env_local_collect_stray GENERATED_FILE — prints the lines inside the ENV
+# markers that the generator did not produce, i.e. values a user set by
+# uncommenting a catalogue line in place. Comments and blanks are the catalogue
+# itself; a line matching the freshly generated content is a generated default
+# (registry vars with a default are emitted as active exports), so it stays put
+# and re-running sync hoists nothing new.
+_env_local_collect_stray() {
+  local generated="$1"
+
+  awk -v gen="$generated" '
+    BEGIN { while ((getline line < gen) > 0) known[line] = 1 }
+    /# --- ENV-START ---/ { inside = 1; next }
+    /# --- ENV-END ---/   { inside = 0 }
+    !inside               { next }
+    /^[[:space:]]*(#|$)/  { next }
+    !($0 in known)        { print }
+  ' "$ENV_LOCAL_FILE"
+}
+
+# _env_local_report_stray HOIST_FILE — warns, by variable name, about values
+# relocated out of the generated section.
+_env_local_report_stray() {
+  local hoist_file="$1"
+  [[ -s "$hoist_file" ]] || return 0
+
+  warn "Values found inside the auto-generated section of $ENV_LOCAL_FILE — moved below ENV-END:"
+  local name rest
+  while read -r name rest; do
+    [[ "$name" == "export" ]] && name="$rest"
+    echo -e "  ${DIM}  • ${name%%=*}${NC}"
+  done < "$hoist_file"
+  echo -e "  ${DIM}  Set values below ENV-END — the section above is regenerated every sync.${NC}"
+}
+
 # step_env_local — ensures ~/.env.local exists and its ENV marker section
 # reflects the current registries. User values below ENV-END are never touched.
-# The marker section is read-only: fully regenerated from registries each sync.
+# The marker section is read-only: fully regenerated from registries each sync,
+# so any value set inside it is hoisted below ENV-END before the rewrite.
 step_env_local() {
   if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
     cp "$ENV_LOCAL_TEMPLATE" "$ENV_LOCAL_FILE"
@@ -277,17 +312,38 @@ step_env_local() {
   fi
 
   # Generate env content from registries and splice into ~/.env.local
-  local new_content_file tmp
+  local new_content_file hoist_file tmp
   new_content_file=$(mktemp)
+  hoist_file=$(mktemp)
   tmp=$(mktemp)
   _generate_env_section > "$new_content_file"
 
-  awk -v cf="$new_content_file" '
+  # Rescue values set inside the marker section before it is overwritten
+  _env_local_collect_stray "$new_content_file" > "$hoist_file"
+
+  # ceiling: hoisted lines are appended verbatim, so a variable the user set
+  # both inside and below the markers ends up assigned twice — harmless in a
+  # sourced shell file, where the hoisted copy comes last and wins. Upgrade to
+  # a merge that rewrites the existing assignment in place if ~/.env.local ever
+  # gains a reader that is not the shell (a dotenv parser rejects duplicates).
+  awk -v cf="$new_content_file" -v hf="$hoist_file" '
     /# --- ENV-START ---/ { print; while ((getline line < cf) > 0) print line; skip=1; next }
-    /# --- ENV-END ---/   { skip=0 }
+    /# --- ENV-END ---/ {
+      skip = 0
+      print
+      if ((getline line < hf) > 0) {
+        print ""
+        print "# Moved here by otto-workbench sync — the section above is regenerated each run."
+        print line
+        while ((getline line < hf) > 0) print line
+      }
+      next
+    }
     !skip                 { print }
   ' "$ENV_LOCAL_FILE" > "$tmp" && mv "$tmp" "$ENV_LOCAL_FILE"
-  rm -f "$new_content_file"
+
+  _env_local_report_stray "$hoist_file"
+  rm -f "$new_content_file" "$hoist_file"
 
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success ".env.local env section updated" || true
 }

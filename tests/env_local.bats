@@ -122,6 +122,137 @@ EOF
   rm -rf "$TMPDIR"
 }
 
+@test "step_env_local hoists a value set inside the markers and names it" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  FAKE_SCAN="$TMPDIR/scan"
+  mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
+
+  cat > "$FAKE_SCAN/test/test.env.yml" <<'EOF'
+meta:
+  section: "Test Tools"
+  validation: none
+env:
+  - var: ANTHROPIC_API_KEY
+    comment: Anthropic key
+  - var: WITH_DEFAULT
+    comment: has a default
+    default: "on"
+EOF
+
+  # The user uncommented the catalogue line in place and pasted a key
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# header
+# --- ENV-START ---
+# Anthropic key
+export ANTHROPIC_API_KEY=sk-ant-secret
+# has a default
+export WITH_DEFAULT=on
+# --- ENV-END ---
+# ─── Your values ───
+EOF
+
+  run env HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local"
+  [ "$status" -eq 0 ]
+
+  # The value survives, below ENV-END
+  grep -q 'export ANTHROPIC_API_KEY=sk-ant-secret' "$FAKE_HOME/.env.local"
+  local below
+  below=$(awk '/# --- ENV-END ---/{s=1;next} s' "$FAKE_HOME/.env.local")
+  grep -q 'export ANTHROPIC_API_KEY=sk-ant-secret' <<< "$below"
+
+  # The generated section no longer carries it
+  local inside
+  inside=$(awk '/# --- ENV-START ---/{s=1;next} /# --- ENV-END ---/{s=0} s' "$FAKE_HOME/.env.local")
+  run grep 'sk-ant-secret' <<< "$inside"
+  [ "$status" -ne 0 ]
+
+  # A generated default stays inside the markers — it is not a user value
+  inside=$(awk '/# --- ENV-START ---/{s=1;next} /# --- ENV-END ---/{s=0} s' "$FAKE_HOME/.env.local")
+  grep -q 'export WITH_DEFAULT=on' <<< "$inside"
+
+  rm -rf "$TMPDIR"
+}
+
+@test "step_env_local warns naming each relocated variable" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  FAKE_SCAN="$TMPDIR/scan"
+  mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
+
+  cat > "$FAKE_SCAN/test/test.env.yml" <<'EOF'
+meta:
+  section: "Test Tools"
+  validation: none
+env:
+  - var: TEST_VAR
+    comment: a test variable
+EOF
+
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# --- ENV-START ---
+export ANTHROPIC_API_KEY=sk-ant-secret
+PLAIN_ASSIGN=no-export
+# --- ENV-END ---
+EOF
+
+  run env HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ANTHROPIC_API_KEY"* ]]
+  [[ "$output" == *"PLAIN_ASSIGN"* ]]
+  [[ "$output" != *"sk-ant-secret"* ]]
+
+  grep -q 'PLAIN_ASSIGN=no-export' "$FAKE_HOME/.env.local"
+  rm -rf "$TMPDIR"
+}
+
+@test "step_env_local hoist is idempotent across repeated syncs" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  FAKE_SCAN="$TMPDIR/scan"
+  mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
+
+  cat > "$FAKE_SCAN/test/test.env.yml" <<'EOF'
+meta:
+  section: "Test Tools"
+  validation: none
+env:
+  - var: ANTHROPIC_API_KEY
+    comment: Anthropic key
+  - var: WITH_DEFAULT
+    comment: has a default
+    default: "on"
+EOF
+
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# --- ENV-START ---
+export ANTHROPIC_API_KEY=sk-ant-secret
+# --- ENV-END ---
+EOF
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" >/dev/null 2>&1
+  local first
+  first=$(cat "$FAKE_HOME/.env.local")
+
+  run env HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local"
+  [ "$status" -eq 0 ]
+
+  # Second run finds nothing to hoist and leaves the file byte-identical
+  [ "$first" = "$(cat "$FAKE_HOME/.env.local")" ]
+  [[ "$output" != *"ANTHROPIC_API_KEY"* ]]
+
+  run grep -c 'sk-ant-secret' "$FAKE_HOME/.env.local"
+  [ "$output" = "1" ]
+  rm -rf "$TMPDIR"
+}
+
 @test "step_env_local leaves file alone when no markers present" {
   load test_helper
   TMPDIR="$(mktemp -d)"

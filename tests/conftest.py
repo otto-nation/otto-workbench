@@ -269,6 +269,35 @@ def synthetic_review(
     )
 
 
+def supersession_verdict(*signals):
+    """A canned verdict, for the callers that decide what to do about one.
+
+    Shared because two entry points act on the same verdict in deliberately
+    different ways — `pr comments` holds, `pr review` refuses — so both suites
+    need to build one, and neither is testing detection.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import supersession
+    return supersession.Verdict(list(signals))
+
+
+def supersession_evidence(detail="`foo` is gone from origin/main"):
+    """A signal that argues the branch is superseded."""
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from pr_state import SupersessionKind, SupersessionSignal
+    return SupersessionSignal(SupersessionKind.READDS_REMOVED_SYMBOL, detail)
+
+
+def supersession_context(detail="replayed onto a moved base"):
+    """A signal that explains the branch without arguing anything about it."""
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from pr_state import SupersessionKind, SupersessionSignal
+    return SupersessionSignal(SupersessionKind.REBASE_SKEW, detail, holds=False)
+
+
 def write_thrash_log(path) -> str:
     """Write the session log of a clean completion that never wrote anything.
 

@@ -390,7 +390,7 @@ EOF
 
   run adopt_in_fake
   [ "$status" -eq 0 ]
-  [[ "$output" == *"running them again"* ]]
+  [[ "$output" == *"will run again"* ]]
 
   run cat "$FAKE_STATE/migrations.applied"
   [ "$output" = "mycomp/20250102-plain.sh" ]
@@ -407,7 +407,7 @@ EOF
 
   run adopt_in_fake
   [ "$status" -eq 0 ]
-  [[ "$output" != *"running them again"* ]]
+  [[ "$output" != *"will run again"* ]]
 
   [ "$(cat "$FAKE_STATE/migrations.applied")" = "mycomp/20250102-plain.sh" ]
 }
@@ -444,11 +444,44 @@ EOF
   [ ! -s "$FAKE_STATE/migrations.applied" ]
 }
 
-@test "the trail-root migration in this repo is marked and its key is derived correctly" {
+@test "forgetting keeps an unmarked entry on a state file's unterminated last line" {
+  # `read` reports EOF for a final line with no newline after it, so a loop
+  # without the `|| [[ -n "$line" ]]` guard never sees that entry and rewrites
+  # the file without it — a migration silently marked un-applied.
+  create_sensitive_migration mycomp 20250101-sensitive.sh migration_20250101_sensitive
+  create_migration mycomp 20250102-plain.sh migration_20250102_plain
+  mkdir -p "$FAKE_LEGACY"
+  printf 'mycomp/20250101-sensitive.sh\nmycomp/20250102-plain.sh' \
+    > "$FAKE_LEGACY/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250102-plain.sh" ]
+}
+
+@test "pruning keeps a live entry on a state file's unterminated last line" {
+  # A stale first entry is what makes prune rewrite the file at all; the live
+  # entry after it is unterminated, so an unguarded read never reaches it and
+  # the rewrite leaves it out.
+  create_migration mycomp 20250102-plain.sh migration_20250102_plain
+  printf 'mycomp/20250199-gone.sh\nmycomp/20250102-plain.sh' \
+    > "$FAKE_STATE/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250102-plain.sh" ]
+}
+
+@test "this repo's adoption-sensitive migrations are discovered by their real keys" {
   # Against the real tree, not the fake one: the marker has to be spelled the
   # way lib/migrations.sh greps for it, and the state key has to match what
   # run_component_migrations records — a rename of the file breaks the second
-  # even when the first still holds.
+  # even when the first still holds. Both marked migrations are named, since a
+  # typo in either one's marker line is invisible everywhere else.
   run bash -c "
     . '$REPO_ROOT/lib/ui.sh'
     . '$REPO_ROOT/lib/migrations.sh'
@@ -458,6 +491,7 @@ EOF
   "
   [ "$status" -eq 0 ]
   [[ "$output" == *"ai/claude/20260814-unify-trail-root.sh"* ]]
+  [[ "$output" == *"bin/20260814-unify-workbench-config.sh"* ]]
 }
 
 # ─── Component discovery under set -e ────────────────────────────────────────

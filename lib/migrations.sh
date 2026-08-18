@@ -197,7 +197,12 @@ _forget_adoption_sensitive_migrations() {
 
   local line forgotten=0
   local -a kept=()
-  while IFS= read -r line; do
+  # `|| [[ -n "$line" ]]`: read reports EOF for a final line with no newline
+  # after it, and the loop body would never see it — an entry silently dropped
+  # from the state file, which is the same class of loss this function exists
+  # to close. Every writer here terminates its lines; a hand-edited file does
+  # not have to.
+  while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
     if _array_contains "$line" "${sensitive_keys[@]}"; then
       forgotten=$(( forgotten + 1 ))
@@ -212,7 +217,7 @@ _forget_adoption_sensitive_migrations() {
   else
     : > "$state_file"
   fi
-  info "Adoption moved data into paths $forgotten migration(s) drain — running them again"
+  info "$forgotten adoption-sensitive migration(s) will run again — adoption moved data back into what they drain"
 }
 
 # _prune_stale_migration_state
@@ -228,7 +233,8 @@ _prune_stale_migration_state() {
   # Check each state entry against discovered keys
   local stale_found=false line
   local -a clean_lines=()
-  while IFS= read -r line; do
+  # Same unterminated-last-line guard as _forget_adoption_sensitive_migrations.
+  while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
     if _array_contains "$line" "${discovered_keys[@]}"; then
       clean_lines+=("$line")

@@ -1381,6 +1381,7 @@ def test_apply_fix_preserves_summary_url_across_quiet_rounds():
     ))
     assert state.fix.summary_url == "https://github.com/r/p/pull/1#issuecomment-1"
     assert state.fix.summary_deferred is False
+    assert [t.id for t in state.fix.threads] == ["t1"]
 
 
 def test_apply_fix_replaces_summary_url_when_supplied():

@@ -492,6 +492,10 @@ class FixSummary(Domain):
     def merge_into(self, prior: "FixSummary") -> "FixSummary":
         """Merge this fix pass into the accumulated summary.
 
+        Three things are cycle-scoped rather than per-round, for the same reason:
+        a review cycle spans several rounds, and a round that did not touch one
+        of them says nothing about it rather than clearing it.
+
         Thread outcomes accumulate across rounds, keyed by thread id — a later
         pass supersedes an earlier outcome for the same thread, but never drops
         threads it did not touch.  A review cycle spans several rounds and the

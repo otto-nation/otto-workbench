@@ -14,7 +14,8 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 
 - Never use `cd <path> && <command>` — compound commands containing `cd` trigger an unsuppressible security prompt in Claude Code. This applies wherever a statement begins, not just at the start of the command: `mkdir -p x; cd x && ls` counts. A newline is a statement separator too, so a `cd` on its own line followed by more lines is still compound — and when a later line writes a file, the prompt is the stricter "contains cd with write operation". Use these alternatives instead:
   - `git -C <path> ...` for git commands
-  - `gh --repo <owner/repo> ...` or `gh api repos/<owner>/<repo>/...` for GitHub CLI (no directory needed for API calls)
+  - `gh <subcommand> --repo <owner/repo> ...` for GitHub CLI — `--repo` must come *after* the subcommand. The allow list keys on per-subcommand prefixes (`Bash(gh pr:*)`, `Bash(gh issue:*)`, `Bash(gh run:*)`), so `gh --repo <owner/repo> pr view` matches none of them and prompts every time, while `gh pr view --repo <owner/repo>` matches `Bash(gh pr:*)`
+  - `gh api repos/<owner>/<repo>/...` for API calls (no directory needed, and `Bash(gh api:*)` covers it whatever the path)
   - Run the command directly with absolute paths when possible — `pytest /abs/path/tests/foo_test.py`, `bats /abs/path/tests/foo.bats` (both derive their root from the file paths, so they need no cwd change)
   - A bare `cd <dir>` on its own — no `&&`, no `;`, nothing after it — as its own call. The Bash tool keeps that working directory for later calls. This is the only reliable way to run a whole suite (`bats tests/`, `bin/local/validate-all`) that resolves paths from the repo root
 
@@ -26,7 +27,7 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 
 - Never define a shell function in a Bash tool command — both `name() { ...; }` and `function name { ...; }` make the parser classify the whole command as too complex to analyze ("Contains function_definition"), which skips the allow list entirely so no permission rule can match it. Write the command directly with absolute paths:
   - `grep -rn "pattern" /abs/path/tests/ | head -40` instead of `cd() { :; }; W=/abs/path; grep -rn "pattern" "$W/tests/" | head -40`
-- A no-op stub such as `cd() { :; }` is not a way around the compound-`cd` rule — it trades a rule you can satisfy for a prompt you cannot suppress. Use an absolute path, `git -C <path>`, or `gh --repo` instead
+- A no-op stub such as `cd() { :; }` is not a way around the compound-`cd` rule — it trades a rule you can satisfy for a prompt you cannot suppress. Use an absolute path, `git -C <path>`, or `gh <subcommand> --repo` instead
 
 ## Avoid Wrapping Commands in `sh -c`
 

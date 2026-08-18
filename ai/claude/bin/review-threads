@@ -20,7 +20,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
 from string import Template
 
@@ -1938,6 +1938,43 @@ _SUMMARY_TABLE_HEADER = f"| {' | '.join(_SUMMARY_TABLE_COLUMNS)} |"
 _SUMMARY_TABLE_DIVIDER = "|" + "|".join("-" * 8 for _ in _SUMMARY_TABLE_COLUMNS) + "|"
 
 
+class HumanReason(Enum):
+    """Why a thread was routed to a human, in both spellings it is written in.
+
+    `value` is the machine-readable token stamped on the entry's `reason`: it
+    is persisted in the state file, and read back by `--track`, the deferral
+    replies and the JSON report, so the values must stay stable. `prose` is
+    what the summary table's Action cell shows, alongside "Already addressed"
+    and "Dismissed (invalid)". One member owns both, so a token cannot reach
+    the published comment the way `needs_discussion` once did.
+    """
+
+    CONTESTED = ("contested", "Contested — needs discussion")
+    CONFLICTING = ("conflicting", "Conflicting reviewer feedback")
+    QUESTION = ("question", "Question for the author")
+    COMPLEX = ("complex", "Too complex to auto-fix")
+    NEEDS_DISCUSSION = ("needs_discussion", "Needs discussion")
+
+    def __new__(cls, value: str, prose: str) -> "HumanReason":
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.prose = prose
+        return obj
+
+    @classmethod
+    def prose_for(cls, reason: str) -> str:
+        """The Action cell text for `reason`, readable whatever it holds.
+
+        A reason no member claims — an older state file, a hand-edited entry —
+        falls back to the generic prose rather than being emitted raw, since an
+        unrecognised token in a published comment is the failure this maps away.
+        """
+        try:
+            return cls(reason).prose
+        except ValueError:
+            return cls.NEEDS_DISCUSSION.prose
+
+
 def _build_summary_body(
     fixed: list[_SummaryEntry],
     needs_human: list[_SummaryEntry],
@@ -2006,7 +2043,7 @@ def _build_summary_body(
     for entry in dismissed:
         rows.append(_build_row(entry, "Dismissed (invalid)", threads_by_id, repo, pr_number, link_sha))
     for entry in needs_human:
-        reason = entry.reason or "needs discussion"
+        reason = HumanReason.prose_for(entry.reason)
         rows.append(_build_row(entry, reason, threads_by_id, repo, pr_number, link_sha))
     if deferred_issue_id and deferred_issue_url:
         deferred_status = f"Deferred → [{deferred_issue_id}]({deferred_issue_url})"
@@ -2654,28 +2691,33 @@ def _classify_triage_entries(
 
     for tt in triage_entries:
         if tt.state == ThreadState.CONTESTED:
-            result.needs_human.append(dataclasses.replace(tt, reason="contested"))
+            result.needs_human.append(
+                dataclasses.replace(tt, reason=HumanReason.CONTESTED.value))
             continue
 
         if tt.classification == "conflicting":
-            result.needs_human.append(dataclasses.replace(tt, reason="conflicting"))
+            result.needs_human.append(
+                dataclasses.replace(tt, reason=HumanReason.CONFLICTING.value))
             continue
 
         if tt.classification == "question":
-            result.needs_human.append(dataclasses.replace(tt, reason="question"))
+            result.needs_human.append(
+                dataclasses.replace(tt, reason=HumanReason.QUESTION.value))
             continue
 
         if tt.classification != "actionable_suggestion":
             continue
 
         if tt.verification == "valid" and tt.complexity == "high":
-            result.needs_human.append(dataclasses.replace(tt, reason="complex"))
+            result.needs_human.append(
+                dataclasses.replace(tt, reason=HumanReason.COMPLEX.value))
             continue
 
         if tt.verification == "valid":
             result.fixable.append(tt)
         elif tt.verification == "needs_discussion":
-            result.needs_human.append(dataclasses.replace(tt, reason="needs_discussion"))
+            result.needs_human.append(
+                dataclasses.replace(tt, reason=HumanReason.NEEDS_DISCUSSION.value))
         elif tt.verification == "already_addressed":
             result.already_addressed.append(tt)
         elif tt.verification == "invalid":

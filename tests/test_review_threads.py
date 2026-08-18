@@ -914,7 +914,7 @@ class TestBuildSummaryBody:
             [], [CommentItem(summary="question", file="a.py", line=1, reason="contested")],
             [], cp, "owner/repo", 1, {},
         )
-        assert "contested" in body
+        assert rt.HumanReason.CONTESTED.prose in body
 
     def test_empty_returns_no_table(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
@@ -4498,3 +4498,61 @@ class TestPartitionBatches:
         ])
         assert retryable.deferred == []
         assert stalled.deferred == ["a"]
+
+
+# ── HumanReason ─────────────────────────────────────────────────────────────
+
+
+class TestHumanReason:
+    """The Action cell of a needs-human row reads as prose, never as a token."""
+
+    def _action_cell(self, rt, reason):
+        """The rendered Action cell for a needs-human entry with this reason."""
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        body = rt._build_summary_body(
+            [], [CommentItem(summary="s", file="a.py", line=1, reason=reason)],
+            [], cp, "owner/repo", 1, {},
+        )
+        rows = rt._summary_table_rows(body)
+        assert len(rows) == 1
+        return rt._row_cells(rows[0])[-1]
+
+    @pytest.mark.parametrize("reason", [
+        "contested", "conflicting", "question", "complex", "needs_discussion",
+    ])
+    def test_every_known_reason_renders_as_prose(self, rt, reason):
+        assert self._action_cell(rt, reason) == rt.HumanReason(reason).prose
+
+    def test_no_rendered_cell_holds_a_snake_case_token(self, rt):
+        for member in rt.HumanReason:
+            cell = self._action_cell(rt, member.value)
+            assert "_" not in cell
+            assert cell[0].isupper()
+
+    def test_an_unknown_reason_falls_back_to_readable_text(self, rt):
+        assert self._action_cell(rt, "wat_is_this") == "Needs discussion"
+
+    def test_an_empty_reason_falls_back_to_readable_text(self, rt):
+        assert self._action_cell(rt, "") == "Needs discussion"
+
+    def test_the_persisted_tokens_stay_stable(self, rt):
+        """State files written before the enum existed must still read back."""
+        assert [m.value for m in rt.HumanReason] == [
+            "contested", "conflicting", "question", "complex", "needs_discussion",
+        ]
+
+    def test_triage_stamps_the_token_not_the_prose(self, rt):
+        """`reason` stays machine-readable — --track and the JSON report read it."""
+        entries = [
+            CommentItem(id="t1", state=ThreadState.CONTESTED),
+            CommentItem(id="t2", classification="conflicting"),
+            CommentItem(id="t3", classification="question"),
+            CommentItem(id="t4", classification="actionable_suggestion",
+                        verification="valid", complexity="high"),
+            CommentItem(id="t5", classification="actionable_suggestion",
+                        verification="needs_discussion"),
+        ]
+        result = rt._classify_triage_entries(entries)
+        assert [e.reason for e in result.needs_human] == [
+            "contested", "conflicting", "question", "complex", "needs_discussion",
+        ]

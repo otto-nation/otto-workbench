@@ -12,6 +12,7 @@ import json
 import signal
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
@@ -587,14 +588,24 @@ _NO_TARGET_COMMANDS = {"create"}
 _NO_LOCK_COMMANDS = {"status"}
 
 
-def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
-    """Build the command parser, returning it alongside each command's subparser.
+@dataclass(frozen=True)
+class CommandParsers:
+    """The top-level parser and the subparser each command declares its flags on.
+
+    `by_command` is kept rather than dropped so the arity of what a command
+    declares can be read off the parser that declares it, which is what keeps
+    _NO_TARGET_COMMANDS honest.
+    """
+    root: argparse.ArgumentParser
+    by_command: dict[str, argparse.ArgumentParser]
+
+
+def _build_parser() -> CommandParsers:
+    """Build the command parser and every command's subparser.
 
     A delegating command's subparser declares no flags of its own — its argv is
     forwarded whole and `pr <command> --help` is answered by the delegate — so
-    add_help is left off for those. The subparsers are handed back rather than
-    dropped so the arity of what a command declares can be read off the parser
-    that declares it, which is what keeps _NO_TARGET_COMMANDS honest.
+    add_help is left off for those.
     """
     parser = argparse.ArgumentParser(
         prog=SCRIPT,
@@ -604,12 +615,14 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     parser.add_argument("-h", "--help", action="store_true", dest="help")
 
     sub = parser.add_subparsers(dest="command")
-    subparsers = {
-        name: sub.add_parser(name, help=entry["help"],
-                             add_help="script" not in entry)
-        for name, entry in _COMMANDS.items()
-    }
-    return parser, subparsers
+    return CommandParsers(
+        root=parser,
+        by_command={
+            name: sub.add_parser(name, help=entry["help"],
+                                 add_help="script" not in entry)
+            for name, entry in _COMMANDS.items()
+        },
+    )
 
 
 def _build_usage() -> str:
@@ -710,7 +723,7 @@ def main():
     add_trail_args(_global)
     global_args, remaining = _global.parse_known_args()
 
-    parser = _build_parser()[0]
+    parser = _build_parser().root
 
     args, extra = parser.parse_known_args(remaining)
     args.repo_dir = global_args.repo_dir

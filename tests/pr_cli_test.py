@@ -1262,7 +1262,7 @@ def test_a_command_with_no_delegate_declares_no_value_taking_flag(command):
     Read off the same function the --value-flags probe answers with, so this
     cannot drift from the arity the wrapper acts on.
     """
-    subparser = pr_cli._build_parser()[1][command]
+    subparser = pr_cli._build_parser().by_command[command]
     offenders = tool_parser.value_taking_options(subparser)
     assert not offenders, (
         f"pr {command} declares value-taking options ({', '.join(offenders)}), but "

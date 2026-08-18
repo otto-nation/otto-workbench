@@ -2,7 +2,7 @@
 name: pr-rebase
 description: "AI-assisted rebase onto origin/main with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against main, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead)."
 source: otto-workbench/ai/claude/skills/pr-rebase/SKILL.md
-invocation: "/pr-rebase [branch] [--no-fix] [--no-push]"
+invocation: "/pr-rebase [branch] [--no-fix] [--no-push] [--force]"
 trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against main, or fix merge conflicts during rebase."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead)."
 output_schema:
@@ -29,6 +29,9 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 - `--no-push` (optional): Do everything except push. Composes with `--no-fix`
   independently — under the default auto-fix mode the AI still resolves conflicts,
   and the force-push command is printed for the user to run.
+- `--force` (optional): Rebase a branch whose work already landed on
+  `origin/main`. Only pass it when the user has seen the exit-4 refusal and
+  asked for the rebase anyway — never add it speculatively.
 
 ---
 
@@ -99,6 +102,38 @@ pr rebase --fix --branch <branch>
 ```
 
 This resumes the in-progress rebase with AI conflict resolution and force-pushes.
+
+**Exit 4 — branch already landed, nothing was rebased or pushed.** Parse the JSON:
+
+```json
+{
+  "branch": "isaac/626/unified_workbench_config",
+  "signal": "pr_merged",
+  "detail": "PR #726 is merged (https://github.com/owner/repo/pull/726)",
+  "commits_ahead": null,
+  "pr_number": 726,
+  "status": "already_landed",
+  "override": "--force"
+}
+```
+
+`signal` names the evidence: `pr_merged` (GitHub reports the PR merged),
+`empty_diff` (the branch has commits but no diff against `origin/main` — what a
+squash merge leaves behind), or `commits_upstream` (every commit already has an
+equivalent upstream by patch id).
+
+`commits_ahead` is a count on the two git signals and `null` on `pr_merged`: the
+tracker is asked before the branch is checked out, so there is no honest count
+to report there. `pr_number` is set on `pr_merged` only.
+
+Report `detail` and stop. Rebasing here would replay landed work and force-push
+a branch the merge deleted. Suggest deleting the worktree and branch instead. If
+the user confirms the branch was deliberately reopened for follow-up work, re-run
+with the flag in `override`:
+
+```bash
+pr rebase --fix --force --branch <branch>
+```
 
 **Exit 1 — error.** Report the error from stderr.
 

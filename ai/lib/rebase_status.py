@@ -17,6 +17,9 @@ def render_status(r: RebaseSummary) -> list[str]:
         return ["**Rebase**: conflicts — resolve manually or run `pr rebase --fix`"]
     if r.status == RebaseStatus.ABORTED.value:
         return ["**Rebase**: aborted"]
+    if r.status == RebaseStatus.ALREADY_LANDED.value:
+        return ["**Rebase**: refused — branch already landed "
+                "(rerun with `pr rebase --force` to override)"]
     if r.conflicts_resolved == 0:
         desc = f"clean rebase — {r.commits_replayed} commit(s) replayed"
     else:

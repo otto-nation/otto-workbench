@@ -33,6 +33,65 @@ _array_contains() {
   return 1
 }
 
+# _source_migration FILE — load a migration's definitions without letting the
+# file take the sync down.
+#
+# A migration is sourced, so whatever it does at file scope runs in this shell.
+# Two shapes there would abort run_all_migrations outright instead of reaching
+# the warn-and-retry path below, which is the only place a failing migration is
+# supposed to land:
+#
+#   - a top-level statement that returns non-zero, which under the `set -e` most
+#     migration files carry exits the sync mid-component — a file that invokes
+#     its own function is the way that happens in practice (#731).
+#     validate-migrations rejects that shape now, but the framework must hold
+#     even for a file the validator never saw
+#   - the `set -e` itself, which outlives the source and would otherwise arm
+#     errexit for every component that syncs after this one
+#
+# So the file is read twice, and the two passes answer different questions.
+#
+# The verdict pass runs the file in a fresh `bash -e`. Nothing else in this
+# shell can reach it: bash ignores errexit for everything a compound command or
+# function runs when the caller's own context ignores it, and that suppression
+# is inherited through function calls and subshells alike — so an in-process
+# `( set -e; . "$migration" )` is silently disarmed the moment any caller up the
+# chain is an `if`, a `!`, or an `||`, which is exactly the call shape below. A
+# separate process starts from its own errexit state and cannot be disarmed that
+# way, so a file-scope statement that fails stops the file there and is reported
+# here. An ERR trap is not an alternative: the same rule suppresses it.
+#
+# The load pass then sources the file for real, for its definitions. Its `set -e`
+# is neutralised by the `||`, and the caller's own setting is put back exactly as
+# found afterwards, so nothing the file does at file scope changes how the rest
+# of the sync runs. A file that got this far already ran clean once, so the `||`
+# is not swallowing a verdict — it only covers the case where the two passes
+# disagree because the fresh process lacked this shell's variables. The caller
+# checks that the expected function exists, which catches that.
+#
+# ceiling: a file with real work at file scope does that work twice. Only files
+# the validator would reject can be in that shape, and migrations must be
+# idempotent anyway; revisit if file-scope work ever becomes legitimate.
+_source_migration() {
+  local migration="$1" status=0 errexit_on=false
+  [[ $- != *e* ]] || errexit_on=true
+
+  "${BASH:-bash}" -e -c '. "$1"' _ "$migration"
+  status=$?
+
+  if (( status == 0 )); then
+    # shellcheck source=/dev/null
+    . "$migration" || true
+  fi
+
+  if [[ "$errexit_on" == true ]]; then
+    set -e
+  else
+    set +e
+  fi
+  return "$status"
+}
+
 # run_component_migrations DIR
 # Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs
 # each function, and records success. Failed migrations are not recorded and retry
@@ -65,8 +124,10 @@ run_component_migrations() {
     fn_name="migration_${basename_m%.sh}"
     fn_name="${fn_name//-/_}"
 
-    # shellcheck source=/dev/null
-    . "$migration"
+    if ! _source_migration "$migration"; then
+      warn "Migration $basename_m: could not be loaded — will retry on next run"
+      continue
+    fi
 
     if ! declare -f "$fn_name" > /dev/null 2>&1; then
       warn "Migration $basename_m: expected function $fn_name not found — skipping"
@@ -144,6 +205,21 @@ _prune_stale_migration_state() {
 readonly _LEGACY_CONFIG_ENTRIES=(
   overrides reuse-level reuse-default review.yml mcp-tools.json
   config.yml config.schema.json
+)
+
+# What no root holds any more. A completed migration removed these on purpose,
+# and adoption runs ahead of the framework, before any migration reads its own
+# bookkeeping — so an entry carried into the state root here is one the
+# migration that deleted it is already recorded as applied for, and will never
+# run again to clean up after. #730 deletes <state>/logs/ deliberately; without
+# this list, a legacy root still holding logs/ would put it back (#732).
+#
+# Skipped rather than deleted: adoption moves data, it does not decide data is
+# worthless, and a legacy root left holding only these says plainly what was
+# passed over. It is the counterpart to the list above, and the two together
+# are the whole classification — see adopt_legacy_workbench_root.
+readonly _LEGACY_UNCLAIMED_ENTRIES=(
+  logs
 )
 
 # _path_exists PATH — true for anything on disk, a broken symlink included.
@@ -296,14 +372,28 @@ adopt_legacy_workbench_root() {
   # failed top-level entry.
   _ADOPT_MOVED=0
   _ADOPT_STAYED=0
+  _ADOPT_UNCLAIMED=0
   # Dotfiles are left where they are: the only ones that turn up are the
   # filesystem's own (.DS_Store), and they belong to no root.
   for entry in "$legacy"/*; do
     _path_exists "$entry" || continue
     name="${entry##*/}"
-    target="$WORKBENCH_STATE_DIR"
+    # All three destinations are named, none of them left to fall out of the
+    # others. The state root is still where an unlisted entry goes, and that is
+    # deliberate — #624's inventory found four state files that no manifest
+    # written in advance had thought to list, so the list that has to be
+    # exhaustive is the config one. What it must not also absorb is a name no
+    # root holds any more, because the state root is one other code prunes.
     if _array_contains "$name" "${_LEGACY_CONFIG_ENTRIES[@]}"; then
       target="$WORKBENCH_CONFIG_DIR"
+    elif _array_contains "$name" "${_LEGACY_UNCLAIMED_ENTRIES[@]}"; then
+      target=""
+    else
+      target="$WORKBENCH_STATE_DIR"
+    fi
+    if [[ -z "$target" ]]; then
+      _ADOPT_UNCLAIMED=$(( _ADOPT_UNCLAIMED + 1 ))
+      continue
     fi
     if [[ "$target" == "$legacy" ]]; then
       continue
@@ -321,6 +411,13 @@ adopt_legacy_workbench_root() {
   # itself rather than be inferred from the warnings scattered above it.
   if (( _ADOPT_STAYED > 0 )); then
     warn "$_ADOPT_STAYED entries could not be adopted — $legacy still holds them"
+  fi
+  # Said every run, for the same reason as the line above: the operator reading
+  # a sync log is the only one who can decide these are finished with, and the
+  # notice is what stops $legacy from lingering unexplained. It ends the moment
+  # they delete them.
+  if (( _ADOPT_UNCLAIMED > 0 )); then
+    warn "$_ADOPT_UNCLAIMED entries in $legacy belong to no root — left in place; delete them when you no longer want them"
   fi
   rmdir "$legacy" 2>/dev/null || true
   return 0

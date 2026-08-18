@@ -9,6 +9,8 @@
 #   - Each file defines a function matching migration_YYYYMMDD_slug (derived from filename)
 #   - No duplicate filenames across components
 #   - No redundant WORKBENCH_DIR assignment or lib/ui.sh sourcing (provided by framework)
+#   - Nothing that runs at file scope — only the shebang, comments, blanks, `set`
+#     lines, and function definitions (the framework sources the file, then calls it)
 #
 # Exit code: 0 if all checks pass (or no migrations found), 1 if any fail.
 
@@ -49,6 +51,71 @@ ALL_BASENAMES=()
 _migration_dirs=()
 discover_migration_dirs _migration_dirs
 
+# _file_scope_statements FILE — print "LINENO<TAB>TEXT" for every line of FILE
+# that would run when the file is sourced.
+#
+# docs/execution-flow.md gives a migration file one job: define
+# migration_YYYYMMDD_slug(). Everything else in the file is either inert or a
+# statement the framework never asked for, executed on the sourcing pass ahead
+# of the call the framework makes itself — which is how a self-invoking file
+# used to take a whole sync down (#731).
+#
+# Function bodies come out by brace-counting, not by indentation, so a call
+# written flush against the left margin inside a helper is still recognised as
+# being inside that helper. Quoted spans, comments, and heredoc bodies are
+# removed before the braces are counted, so a brace inside a string or a
+# heredoc cannot shift the depth and expose a body as file scope.
+_file_scope_statements() {
+  awk '
+    function trim(line) {
+      sub(/^[ \t]+/, "", line)
+      sub(/[ \t]+$/, "", line)
+      return line
+    }
+    function inert(line) {
+      if (line ~ /^[ \t]*$/) return 1
+      if (line ~ /^[ \t]*#/) return 1
+      if (line ~ /^[ \t]*set[ \t]+[-+]/) return 1
+      if (line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)/) return 1
+      if (line ~ /^[ \t]*function[ \t]+[A-Za-z_]/) return 1
+      return 0
+    }
+    function code(line,   out, i, c, n) {
+      out = ""
+      n = length(line)
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (quote != "") { if (c == "\\" && quote == DQ) i++; else if (c == quote) quote = ""; continue }
+        if (c == "\\") { i++; continue }
+        if (c == SQ || c == DQ) { quote = c; continue }
+        if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t;&|(]/)) break
+        out = out c
+      }
+      return out
+    }
+    function delta(line,   opened, closed, t) {
+      t = line; opened = gsub(/\{/, "&", t)
+      t = line; closed = gsub(/\}/, "&", t)
+      return opened - closed
+    }
+    BEGIN { SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); depth = 0; quote = ""; heredoc = "" }
+    heredoc != "" { if (trim($0) == heredoc) heredoc = ""; next }
+    {
+      if (depth == 0 && !inert($0)) printf "%d\t%s\n", NR, trim($0)
+      stripped = code($0)
+      marker = $0
+      gsub(SQ, "", marker)
+      gsub(DQ, "", marker)
+      if (match(marker, /<<-?[ \t]*[A-Za-z_][A-Za-z0-9_]*/)) {
+        heredoc = substr(marker, RSTART, RLENGTH)
+        sub(/^<<-?[ \t]*/, "", heredoc)
+      }
+      depth += delta(stripped)
+      if (depth < 0) depth = 0
+    }
+  ' "$1"
+}
+
 _validate_migration() {
   local migration="$1" display="$2"
   local basename_m
@@ -86,6 +153,19 @@ _validate_migration() {
     _fail "$display: must not source lib/ui.sh (provided by migration framework)"
   else
     _pass "$display: no redundant lib/ui.sh sourcing"
+  fi
+
+  # Nothing may run at file scope — the framework sources the file for its
+  # definitions and then calls the function itself. A statement here runs on the
+  # sourcing pass instead, where its status decides nothing; a call to the
+  # migration's own function is how that goes wrong in practice (#731).
+  local scope_hits first_hit
+  scope_hits="$(_file_scope_statements "$migration")"
+  if [[ -n "$scope_hits" ]]; then
+    first_hit="${scope_hits%%$'\n'*}"
+    _fail "$display:${first_hit%%$'\t'*}: file scope must only define ${expected_fn}() — '${first_hit#*$'\t'}' runs when the framework sources the file"
+  else
+    _pass "$display: nothing runs at file scope"
   fi
 }
 

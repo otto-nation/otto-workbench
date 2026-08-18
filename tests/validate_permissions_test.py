@@ -61,12 +61,17 @@ def test_the_reason_names_prefix_matching():
 def test_a_leading_tilde_in_a_prefix_rule_is_dead():
     """Both faults at once: the tilde stays literal and the ** never globs."""
     assert _dead("Bash(~/.claude/skills/**:*)") == [
-        ("Bash(~/.claude/skills/**:*)", "Bash(*/.claude/skills/*)")
+        ("Bash(~/.claude/skills/**:*)", "Bash(/*/.claude/skills/*)")
     ]
 
 
 def test_a_leading_tilde_in_a_wildcard_rule_is_dead():
-    assert _dead("Bash(~/.local/bin/*)") == [("Bash(~/.local/bin/*)", "Bash(*/.local/bin/*)")]
+    assert _dead("Bash(~/.local/bin/*)") == [("Bash(~/.local/bin/*)", "Bash(/*/.local/bin/*)")]
+
+
+def test_the_suggested_fix_stays_anchored_at_the_root():
+    """A bare leading * would also match the path after a pipe into a shell."""
+    assert _dead("Bash(~/bin/x:*)")[0][1].startswith("Bash(/*/")
 
 
 def test_an_empty_prefix_is_dead():
@@ -76,7 +81,7 @@ def test_an_empty_prefix_is_dead():
 
 def test_a_suggested_fix_gains_a_trailing_star():
     """Wildcard rules are anchored, so the bare form would reject any argument."""
-    assert _dead("Bash(~/bin/deploy:*)") == [("Bash(~/bin/deploy:*)", "Bash(*/bin/deploy*)")]
+    assert _dead("Bash(~/bin/deploy:*)") == [("Bash(~/bin/deploy:*)", "Bash(/*/bin/deploy*)")]
 
 
 def test_every_dead_rule_in_a_list_is_reported():

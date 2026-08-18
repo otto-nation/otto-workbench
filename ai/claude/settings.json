@@ -123,9 +123,9 @@
     "allow": [
       "Bash(* --help *)",
       "Bash(* --help)",
-      "Bash(*/.claude/plugins/cache/claude-plugins-official/*)",
-      "Bash(*/.claude/skills/*)",
       "Bash(./gradlew:*)",
+      "Bash(/*/.claude/plugins/cache/claude-plugins-official/*)",
+      "Bash(/*/.claude/skills/*)",
       "Bash([:*)",
       "Bash([[:*)",
       "Bash(awk:*)",

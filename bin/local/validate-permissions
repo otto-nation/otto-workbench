@@ -12,12 +12,18 @@ are not interchangeable:
 The `:*` suffix is tested first, so a `*` written inside the prefix buys
 nothing: `Bash(bin/local/*:*)` asks for commands beginning with the eleven
 characters `bin/local/*`, which nobody types.  The Bash matcher also never
-expands `~` — that helper is reached only from path-rule handling — so
-`Bash(~/.claude/skills/**:*)` is inert twice over.
+expands `~` — the tilde helpers are reached only from path-rule handling — so
+`Bash(~/.claude/skills/**:*)` matches nothing but a command someone spelled
+with a literal tilde, and the absolute path that tools actually emit misses it.
 
 Neither mistake is an error anywhere.  The rule simply never matches, and the
 permission prompt it was written to prevent keeps appearing; the usual repair
 is a one-off entry in settings.local.json, which hides the dead rule for good.
+
+Both facts were read off the matcher in the shipped Claude Code bundle rather
+than documentation: the rule classifier tests `/^(.+):\\*$/` before it looks for
+an unescaped `*`, and the wildcard branch compiles the pattern to a `^…$`
+regex.  Re-derive them the same way if a release ever changes the behaviour.
 
 Registry `permission:` entries reach the template through
 _generated_permissions (tests/claude_settings.bats enforces that they all
@@ -46,11 +52,11 @@ BASH_RULE = re.compile(r'^Bash\((.*)\)$', re.DOTALL)
 # record of the registry-derived entries — a dead rule is just as dead there.
 RULE_BUCKETS = ('allow', 'deny', 'ask')
 
-TILDE = 'the Bash matcher never expands ~, so the tilde is matched literally'
+TILDE = 'the Bash matcher never expands ~, so only a literally tilde-spelled command matches'
 LITERAL_STAR = ':* is prefix matching, so the * inside the prefix never globs'
 EMPTY_PREFIX = 'nothing precedes :*, so the rule names no command'
 
-NAME_THE_COMMAND = 'name the command the rule is for'
+NAME_THE_COMMAND = 'a rule that names the command it is for'
 
 
 @dataclasses.dataclass(frozen=True)
@@ -69,10 +75,14 @@ def _live_form(body: str) -> str:
     Wildcard rules are anchored at both ends, so a pattern that does not
     already end in `*` gains one — otherwise it would match the bare command
     and reject every invocation carrying an argument.
+
+    A leading `~` becomes `/*` rather than a bare `*`: the home directory it
+    stood for is an absolute path, and an unanchored pattern would also match
+    the same text buried mid-command, after a pipe into a shell.
     """
     pattern = body[:-2] if body.endswith(':*') else body
     if pattern.startswith('~'):
-        pattern = '*' + pattern[1:]
+        pattern = '/*' + pattern[1:]
     # GLOBSTAR only means anything between slashes; elsewhere ** is just *.
     pattern = pattern.replace('**', '*')
     if not pattern.endswith('*'):

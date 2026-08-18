@@ -84,13 +84,22 @@ _commands() {
 # _config_entries — prints "config:<dotted.key>" and "config:<key>=<enum>".
 # Reads the generated schema rather than re-deriving from WorkbenchConfig:
 # config.schema.json already owns that derivation.
+#
+# Recurses through additionalProperties (dynamic keys, rendered as a literal
+# "*" segment — e.g. review.phases.*.model) and items (array element schemas),
+# alongside properties/oneOf/anyOf, so a dynamic-key or array-valued section
+# is not silently dropped. propertyNames.enum (the allowed dynamic-key names,
+# e.g. review.phases' single/holistic/scout/...) is emitted with the same
+# "key=value" shape as a value enum.
 _config_entries() {
   jq -r '
     def props($prefix):
       ((.properties // {}) | to_entries[] |
          ($prefix + .key) as $p |
          $p, (.value | props($p + "."))),
-      (((.oneOf // []) + (.anyOf // []))[] | props($prefix));
+      (((.oneOf // []) + (.anyOf // []))[] | props($prefix)),
+      ((.items // empty) | objects | props($prefix)),
+      ((.additionalProperties // empty) | objects | props($prefix + "*."));
     props("")
   ' "$REPO_ROOT/config.schema.json" | sed 's/^/config:/'
 
@@ -100,7 +109,10 @@ _config_entries() {
          ($prefix + .key) as $p |
          (.value | enums($p + "."))),
       (((.oneOf // []) + (.anyOf // []))[] | enums($prefix)),
-      ((.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)");
+      ((.items // empty) | objects | enums($prefix)),
+      ((.additionalProperties // empty) | objects | enums($prefix + "*.")),
+      ((.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)"),
+      ((.propertyNames.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)");
     enums("")
   ' "$REPO_ROOT/config.schema.json" | grep -v '^=' | sed 's/^/config:/'
 }
@@ -124,13 +136,36 @@ _claude_artifacts() {
   jq -r 'keys[]' "$REPO_ROOT/ai/claude/settings.json" | sed 's/^/setting:/'
 }
 
-# _write_snapshot PACKAGE RELATIVE_PATH ENTRIES...
+# _collect LABEL FUNC [ARGS...] — captures FUNC's stdout, failing loudly instead
+# of silently truncating the snapshot. The previous implementation fed
+# multiple category functions into one `while read < <(...)` process
+# substitution, which swallows the substitution's exit status even under
+# set -e: one broken jq call in an earlier category turned the whole snapshot
+# into zero entries with a clean exit, and later categories never ran either.
+_collect() {
+  local label="$1"; shift
+  local out
+  out="$("$@")" || { err "$label failed"; exit 1; }
+  [[ -n "$out" ]] || { err "$label produced no entries"; exit 1; }
+  printf '%s\n' "$out"
+}
+
+# _write_snapshot PACKAGE RELATIVE_PATH ENTRIES — ENTRIES is a single
+# newline-delimited string, not an argument list, so an empty category never
+# collapses to a stray "" element (printf '%s\n' "$@" with zero args prints
+# one blank line, which jq -R then turns into entries: [""]).
 _write_snapshot() {
-  local package="$1" relpath="$2"
-  shift 2
+  local package="$1" relpath="$2" entries="$3"
   local target="$OUT_DIR/$relpath"
+
+  [[ -n "$entries" ]] || { err "$relpath: no entries collected — refusing to write an empty snapshot"; return 1; }
+
   local rendered
-  rendered=$(printf '%s\n' "$@" | sort -u | jq -R . | jq -s \
+  # LC_ALL=C pins byte-order sorting regardless of the caller's locale — under
+  # a glibc en_US.UTF-8 locale, sort collates "-" differently than under C or
+  # macOS's (always-C) BSD sort, reordering entries like pr-describe vs.
+  # pr-rebase vs. promote-scan and making the committed snapshot irreproducible.
+  rendered=$(printf '%s\n' "$entries" | LC_ALL=C sort -u | jq -R 'select(length > 0)' | jq -s \
     --arg pkg "$package" '{package: $pkg, entries: .}')
 
   if $CHECK; then
@@ -145,19 +180,16 @@ _write_snapshot() {
   echo "$rendered" > "$target"
 }
 
-_wb_entries=()
-while IFS= read -r line; do
-  [[ -n "$line" ]] && _wb_entries+=("$line")
-done < <(_commands "otto-workbench"; _config_entries; _component_entries)
+_wb_entries="$(_collect "otto-workbench commands" _commands "otto-workbench")"
+_wb_entries="$_wb_entries"$'\n'"$(_collect "config entries" _config_entries)"
+_wb_entries="$_wb_entries"$'\n'"$(_collect "component entries" _component_entries)"
 
-_ai_entries=()
-while IFS= read -r line; do
-  [[ -n "$line" ]] && _ai_entries+=("$line")
-done < <(_commands "otto-ai-tools"; _claude_artifacts)
+_ai_entries="$(_collect "otto-ai-tools commands" _commands "otto-ai-tools")"
+_ai_entries="$_ai_entries"$'\n'"$(_collect "claude artifacts" _claude_artifacts)"
 
 _failed=false
-_write_snapshot "otto-workbench" "public-surface.json" "${_wb_entries[@]}" || _failed=true
-_write_snapshot "otto-ai-tools" "ai/claude/public-surface.json" "${_ai_entries[@]}" || _failed=true
+_write_snapshot "otto-workbench" "public-surface.json" "$_wb_entries" || _failed=true
+_write_snapshot "otto-ai-tools" "ai/claude/public-surface.json" "$_ai_entries" || _failed=true
 
 if $_failed; then
   exit 1

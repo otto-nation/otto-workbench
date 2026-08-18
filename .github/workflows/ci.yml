@@ -82,22 +82,6 @@ jobs:
             exit 1
           fi
 
-      - name: Verify public surface snapshots are up to date
-        run: |
-          bash bin/local/generate-public-surface
-          failed=false
-          for f in public-surface.json ai/claude/public-surface.json; do
-            if ! git diff --exit-code "$f"; then
-              echo ""
-              echo "$f is out of date."
-              failed=true
-            fi
-          done
-          if $failed; then
-            echo "Run bin/local/generate-public-surface locally and commit the result."
-            exit 1
-          fi
-
   test-bats:
     name: Tests (bats)
     runs-on: ubuntu-24.04

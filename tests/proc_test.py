@@ -31,9 +31,6 @@ class TestCmdResult:
         assert not CmdResult(1).ok
         assert not CmdResult(-9).ok
 
-    def test_out_strips_the_trailing_newline(self):
-        assert CmdResult(0, "main\n").out == "main"
-
     def test_detail_folds_stderr_onto_one_line(self):
         r = CmdResult(1, "", "gh: could not\n  reach github.com\n")
         assert r.detail == "gh: could not reach github.com"
@@ -81,6 +78,18 @@ class TestFailureMessage:
         assert "retry later" in msg
         assert "HTTP 503" in msg
 
+    def test_a_server_error_on_stdout_is_annotated_too(self):
+        # CmdResult.server_error reads both streams; the message must agree
+        # with it or the retryable case renders as an ordinary failure.
+        r = CmdResult(1, "HTTP 502 Bad Gateway")
+        msg = proc.failure_message("Failed to fetch the PR", r)
+        assert "retry later" in msg
+        assert "HTTP 502 Bad Gateway" in msg
+
+    def test_a_stdout_only_cause_is_capped(self):
+        r = CmdResult(1, "HTTP 503 " + "x" * 500)
+        assert len(proc.failure_message("Failed", r)) < 300
+
     def test_accepts_a_raw_completed_process(self):
         # Most of ai/ still calls subprocess.run directly; those call sites
         # report failures without converting first.
@@ -92,17 +101,17 @@ class TestRun:
     def test_captures_both_streams_and_the_exit_code(self):
         r = proc.run(["sh", "-c", "echo out; echo err >&2; exit 3"])
         assert r.returncode == 3
-        assert r.out == "out"
+        assert r.stdout == "out\n"
         assert r.detail == "err"
 
     def test_does_not_raise_on_a_non_zero_exit(self):
         assert proc.run(["sh", "-c", "exit 1"]).returncode == 1
 
     def test_runs_in_the_given_directory(self, tmp_path):
-        assert proc.run(["pwd"], cwd=tmp_path).out == str(Path(tmp_path).resolve())
+        assert proc.run(["pwd"], cwd=tmp_path).stdout.strip() == str(Path(tmp_path).resolve())
 
     def test_feeds_input_to_the_command(self):
-        assert proc.run(["cat"], input_text="hello").out == "hello"
+        assert proc.run(["cat"], input_text="hello").stdout == "hello"
 
     def test_a_timeout_still_propagates(self):
         with pytest.raises(subprocess.TimeoutExpired):

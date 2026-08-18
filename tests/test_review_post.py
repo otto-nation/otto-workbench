@@ -16,6 +16,21 @@ from proc import CmdResult
 from serde import from_dict as serde_from_dict
 
 
+# A GitHub outage as gh reports it: nothing on stdout, the status line on
+# stderr. Shared so a failure-path test never has to restate the shape.
+_API_UNAVAILABLE = CmdResult(1, "", "gh: Service unavailable (HTTP 503)")
+
+
+def _completed(returncode, stdout, stderr=""):
+    """Stand in for what subprocess.run hands back.
+
+    All three streams every time — a MagicMock left without `stderr` yields a
+    mock where CmdResult expects a string, and the failure is a TypeError deep
+    inside the code under test rather than a readable assertion.
+    """
+    return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
 def _make_sections(rp, **kwargs):
     """Build a ReviewSections from keyword args for test convenience."""
     entries = {}
@@ -1059,7 +1074,7 @@ class TestIsRateLimited:
 
 class TestGhApi:
     def test_get_request(self, rp):
-        mock_result = MagicMock(returncode=0, stdout='{"ok": true}', stderr="")
+        mock_result = _completed(0, '{"ok": true}')
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             r = rp._gh_api("repos/org/repo/pulls/1")
             mock_run.assert_called_once()
@@ -1068,7 +1083,7 @@ class TestGhApi:
             assert r.ok
 
     def test_post_request(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="{}", stderr="")
+        mock_result = _completed(0, "{}")
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             rp._gh_api("repos/org/repo/pulls/1/reviews", method="POST")
             cmd = mock_run.call_args[0][0]
@@ -1076,7 +1091,7 @@ class TestGhApi:
             assert "POST" in cmd
 
     def test_input_file(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="{}", stderr="")
+        mock_result = _completed(0, "{}")
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             rp._gh_api("endpoint", method="POST", input_file="/tmp/payload.json")
             cmd = mock_run.call_args[0][0]
@@ -1086,10 +1101,8 @@ class TestGhApi:
     def test_returns_both_streams(self, rp):
         # The point of #740: the API error body lands on stdout while gh's own
         # status line lands on stderr, and a caller needs to see both.
-        mock_result = MagicMock(
-            returncode=1, stdout='{"message": "Bad gateway"}',
-            stderr="gh: Bad gateway (HTTP 502)",
-        )
+        mock_result = _completed(
+            1, '{"message": "Bad gateway"}', "gh: Bad gateway (HTTP 502)")
         with patch.object(rp.subprocess, "run", return_value=mock_result):
             r = rp._gh_api("endpoint")
             assert not r.ok
@@ -1098,7 +1111,7 @@ class TestGhApi:
             assert r.server_error
 
     def test_headers(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="diff text", stderr="")
+        mock_result = _completed(0, "diff text")
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             rp._gh_api("endpoint", headers={"Accept": "application/vnd.github.v3.diff"})
             cmd = mock_run.call_args[0][0]
@@ -1136,7 +1149,7 @@ class TestHandleApiAttempt:
         # #740: gh reports a 5xx on stderr and leaves stdout empty, so a
         # stdout-only classifier saw an unknown error with nothing to print and
         # took the flat non-rate delay instead of backing off.
-        r = CmdResult(1, "", "gh: Service unavailable (HTTP 503)")
+        r = _API_UNAVAILABLE
         with patch.object(rp.time, "sleep") as mock_sleep:
             assert rp._handle_api_attempt(0, r) is None
             assert mock_sleep.call_args[0][0] == rp.RATE_LIMIT_WAIT
@@ -1199,7 +1212,7 @@ class TestCheckExistingPending:
     def test_api_failure_warns_with_the_cause(self, rp, capsys):
         # None also means "no pending review", and a caller that reads it that
         # way opens a second one — so the failure has to be audible.
-        failure = CmdResult(1, "", "gh: Service unavailable (HTTP 503)")
+        failure = _API_UNAVAILABLE
         with patch("review_github._gh_api", return_value=failure):
             assert rp._check_existing_pending("org/repo", "1") is None
         assert "HTTP 503" in capsys.readouterr().err
@@ -1207,14 +1220,14 @@ class TestCheckExistingPending:
 
 class TestPostWithRetries:
     def test_success_on_first_attempt(self, rp):
-        mock_result = MagicMock(returncode=0, stdout='{"id": 42}', stderr="")
+        mock_result = _completed(0, '{"id": 42}')
         with patch.object(rp.subprocess, "run", return_value=mock_result):
             result = rp._post_with_retries("repos/org/repo/pulls/1/reviews", "/tmp/payload.json")
             assert result == {"id": 42}
 
     def test_success_after_retry(self, rp):
-        fail = MagicMock(returncode=1, stdout='{"message": "error"}', stderr="")
-        success = MagicMock(returncode=0, stdout='{"id": 99}', stderr="")
+        fail = _completed(1, '{"message": "error"}')
+        success = _completed(0, '{"id": 99}')
         with (
             patch.object(rp.subprocess, "run", side_effect=[fail, success]),
             patch.object(rp.time, "sleep"),
@@ -1223,7 +1236,7 @@ class TestPostWithRetries:
             assert result == {"id": 99}
 
     def test_all_attempts_fail_returns_none(self, rp):
-        fail = MagicMock(returncode=1, stdout='{"message": "error"}', stderr="")
+        fail = _completed(1, '{"message": "error"}')
         with (
             patch.object(rp.subprocess, "run", return_value=fail),
             patch.object(rp.time, "sleep"),
@@ -1232,8 +1245,8 @@ class TestPostWithRetries:
             assert result is None
 
     def test_rate_limited_then_success(self, rp):
-        rate_limited = MagicMock(returncode=1, stdout='{"message": "secondary rate limit"}', stderr="")
-        success = MagicMock(returncode=0, stdout='{"id": 1}', stderr="")
+        rate_limited = _completed(1, '{"message": "secondary rate limit"}')
+        success = _completed(0, '{"id": 1}')
         with (
             patch.object(rp.subprocess, "run", side_effect=[rate_limited, success]),
             patch.object(rp.time, "sleep") as mock_sleep,
@@ -1285,14 +1298,14 @@ class TestPostReview:
 
 class TestSubmitReview:
     def test_success(self, rp):
-        mock_result = MagicMock(returncode=0, stdout='{"ok": true}', stderr="")
+        mock_result = _completed(0, '{"ok": true}')
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             assert rp._submit_review("org/repo", "1", 42) is True
             cmd = mock_run.call_args[0][0]
             assert "repos/org/repo/pulls/1/reviews/42/events" in " ".join(cmd)
 
     def test_failure_warns(self, rp, capsys):
-        fail = MagicMock(returncode=1, stdout='{"message": "bad request"}', stderr="")
+        fail = _completed(1, '{"message": "bad request"}')
         with (
             patch.object(rp.subprocess, "run", return_value=fail),
             patch.object(rp.time, "sleep"),

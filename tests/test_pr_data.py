@@ -19,6 +19,11 @@ from review_github import (
 )
 
 
+# What gh reports when the far end drops the call: nothing on stdout, the
+# status line on stderr. Shared so a failure-path test never has to restate it.
+_GQL_FAILED = CmdResult(1, stderr="gh: Bad gateway (HTTP 502)")
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 def _make_review(
@@ -439,7 +444,7 @@ class TestFetchPrData:
 
     @patch("review_github._gh_graphql")
     def test_graphql_failure_exits(self, mock_gql):
-        mock_gql.return_value = CmdResult(1, stderr="gh: Bad gateway (HTTP 502)")
+        mock_gql.return_value = _GQL_FAILED
         with pytest.raises(SystemExit):
             fetch_pr_data("owner/repo", "1")
 
@@ -556,7 +561,7 @@ class TestFetchReviewThreads:
     def test_failed_page_warns_and_keeps_earlier_threads(self, mock_gql, capsys):
         mock_gql.side_effect = [
             CmdResult(0, _threads_response([_make_thread("PRT_1")], has_next=True, cursor="c1")),
-            CmdResult(1, stderr="gh: Bad gateway (HTTP 502)"),
+            _GQL_FAILED,
         ]
         threads = fetch_review_threads("owner/repo", 7)
         assert [t["id"] for t in threads] == ["PRT_1"]
@@ -564,5 +569,5 @@ class TestFetchReviewThreads:
 
     @patch("review_github._gh_graphql")
     def test_first_page_failure_returns_empty(self, mock_gql):
-        mock_gql.return_value = CmdResult(1, stderr="gh: Bad gateway (HTTP 502)")
+        mock_gql.return_value = _GQL_FAILED
         assert fetch_review_threads("owner/repo", 7) == []

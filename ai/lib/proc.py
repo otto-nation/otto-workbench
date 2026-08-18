@@ -31,6 +31,11 @@ from pathlib import Path
 # misconfiguration.
 _SERVER_ERROR_RE = re.compile(r"\bHTTP 5\d\d\b")
 
+# How much of a stream to quote when it is the only account of a failure there
+# is. stdout is a payload rather than a sentence, so it needs a bound; stderr is
+# quoted whole because a command that writes an essay there is the exception.
+_DETAIL_LIMIT = 200
+
 
 @dataclass(frozen=True)
 class CmdResult:
@@ -48,11 +53,6 @@ class CmdResult:
     def ok(self) -> bool:
         """The command exited cleanly."""
         return self.returncode == 0
-
-    @property
-    def out(self) -> str:
-        """stdout with surrounding whitespace removed — the usual read."""
-        return self.stdout.strip()
 
     @property
     def detail(self) -> str:
@@ -97,12 +97,18 @@ def failure_message(action: str, r: CmdResult | subprocess.CompletedProcess) -> 
     `subprocess.run` directly, and those call sites should not have to convert
     before they can report a failure.
     """
-    detail = " ".join((r.stderr or "").split())
-    if not detail:
-        return action
-    if _SERVER_ERROR_RE.search(detail):
+    if not isinstance(r, CmdResult):
+        r = CmdResult(r.returncode, r.stdout or "", r.stderr or "")
+    if r.server_error:
+        # `server_error` reads both streams, so this branch is reached by a 5xx
+        # that arrived on stdout with nothing on stderr — the shape of #740
+        # itself. Quote stdout in that case rather than annotate a retry and
+        # then say nothing about it.
+        detail = r.detail or " ".join(r.stdout.split())[:_DETAIL_LIMIT]
         return f"{action} — server error, retry later: {detail}"
-    return f"{action}: {detail}"
+    if not r.detail:
+        return action
+    return f"{action}: {r.detail}"
 
 
 def run(

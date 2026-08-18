@@ -895,7 +895,6 @@ needs by name rather than by position.
 | Read | What it gives you |
 |---|---|
 | `r.ok` | The command exited cleanly. |
-| `r.out` | `stdout` stripped — the usual read for a one-line answer. |
 | `r.detail` | `stderr` folded onto one line — what to quote in an error. |
 | `r.combined_output` | Both streams, for classifying a failure by what it said. |
 | `r.server_error` | The failure was a 5xx, so the remedy is to wait and retry. |
@@ -903,9 +902,11 @@ needs by name rather than by position.
 `proc.failure_message(action, r)` renders a failure without asserting a cause the
 code has not established: it names the action, appends whatever the command said,
 and calls out a 5xx separately because that is the one case where the answer is to
-wait rather than to change anything. It accepts a raw `subprocess.CompletedProcess`
-too, so the call sites still running `subprocess.run` directly can report a failure
-without converting first.
+wait rather than to change anything. It decides that from `server_error`, so the
+rendered message and the classifier can never disagree about which stream the
+evidence was on. It accepts a raw `subprocess.CompletedProcess` too, so the call
+sites still running `subprocess.run` directly can report a failure without
+converting first.
 
 `proc` is stdlib-only on purpose — it is the module the rest of `ai/lib` should be
 free to depend on. The name is not `cmd` because `ai/lib` goes on `sys.path` ahead

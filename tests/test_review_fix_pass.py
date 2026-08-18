@@ -126,7 +126,7 @@ class TestCommitFixes:
         ]
         review_fix._commit_fixes(job, {"b.go", "a.go"}, fixed=1, skipped=0)
         add_call = mock_run.call_args_list[0][0][0]
-        assert add_call[-3:] == ["--", "a.go", "b.go"]
+        assert add_call[-3:] == ["--", ":(literal)a.go", ":(literal)b.go"]
         assert "-A" not in add_call
         assert mock_run.call_count == 2
 
@@ -171,6 +171,26 @@ class TestCommitFixesStaging:
 
         assert _committed_paths(git_wt) == {"fixture.json"}
         assert _git(git_wt, "show", "HEAD:src.py") == "original\n"
+
+    @patch("review_fix._push_fixes")
+    def test_a_glob_metacharacter_in_a_name_matches_only_itself(
+        self, mock_push, git_wt,
+    ):
+        """git reads the staged names as pathspecs, so a bracket is a glob.
+
+        `report[1].md` as a pattern matches `report1.md` and not the file it was
+        spelled from — so the decoy here is what a non-literal pathspec commits,
+        while the file the agent actually changed is left behind.
+        """
+        (git_wt / "report[1].md").write_text("the agent's work\n")
+        (git_wt / "report1.md").write_text("unrelated, still in progress\n")
+
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"report[1].md"}, fixed=1, skipped=0,
+        )
+
+        assert _committed_paths(git_wt) == {"report[1].md"}
+        assert "report1.md" in _git(git_wt, "status", "--porcelain")
 
     @patch("review_fix.log")
     @patch("review_fix._push_fixes")

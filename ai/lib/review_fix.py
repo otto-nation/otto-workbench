@@ -52,8 +52,13 @@ def _commit_fixes(
         return
 
     ordered = sorted(paths)
+    # `:(literal)` because git reads these as pathspecs, not filenames. A file
+    # actually named `report[1].md` would otherwise match as a character class
+    # and stage whichever unrelated paths it happened to glob — the opposite of
+    # what staging by name is here to guarantee.
+    pathspecs = [f":(literal){path}" for path in ordered]
     subprocess.run(
-        ["git", "-C", job.wt_path, "add", "--", *ordered],
+        ["git", "-C", job.wt_path, "add", "--", *pathspecs],
         capture_output=True, check=True,
     )
 
@@ -66,7 +71,7 @@ def _commit_fixes(
     # Pathspec commit, so content the operator staged before the pass started
     # stays staged instead of riding along in the index.
     result = subprocess.run(
-        ["git", "-C", job.wt_path, "commit", "-m", msg, "--", *ordered],
+        ["git", "-C", job.wt_path, "commit", "-m", msg, "--", *pathspecs],
         capture_output=True, text=True,
     )
     if result.returncode != 0:

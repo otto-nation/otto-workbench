@@ -3,10 +3,12 @@
 The config guard compares the repo's git config around every test, so anything
 that writes to that file from outside the test process fails whichever test
 happened to be running. worktrunk does exactly that — restamping per-branch
-markers and hint counters — and so does any concurrent git operation, through
-the branch tracking entries it adds and prunes. These cover both, along with
-the lines the exemption draws: worktrunk's user config in the same namespace
-stays guarded, and a leaked test is still caught by the identity it writes.
+markers, hint counters and the recently-used branch list — and so does any
+concurrent git operation, through the branch tracking entries it adds and
+prunes. These cover both, along with the lines the exemption draws: worktrunk's
+user config in the same section stays guarded, the same key name in another
+section stays guarded, and a leaked test is still caught by the identity it
+writes.
 
 The review-env guard covers the other direction — config arriving from the
 developer's shell rather than from another process.
@@ -28,6 +30,7 @@ _CONFIG = b"""[core]
 \temail = dev@example.com
 [worktrunk]
 \tdefault-branch = main
+\thistory = main
 [worktrunk "hints"]
 \tshell-integration = 4
 [worktrunk "state.main"]
@@ -59,6 +62,15 @@ class TestExternalWritesAreIgnored:
             b'[worktrunk "state.main"]\n\tsticky = true\n',
         )
         assert _guarded_lines(after) == _guarded_lines(_CONFIG)
+
+    def test_a_rewritten_branch_history_reads_as_no_change(self):
+        """`wt switch` in any worktree of this repo rewrites it, mid-run included."""
+        after = _rewritten(b"\thistory = main", b"\thistory = feat,main")
+        assert _guarded_lines(after) == _guarded_lines(_CONFIG)
+
+    def test_a_branch_history_appearing_reads_as_no_change(self):
+        after = _rewritten(b"\thistory = main\n", b"")
+        assert _guarded_lines(_CONFIG) == _guarded_lines(after)
 
     def test_a_bumped_hint_counter_reads_as_no_change(self):
         after = _rewritten(b"shell-integration = 4", b"shell-integration = 5")
@@ -96,8 +108,13 @@ class TestRealWritesAreStillCaught:
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
     def test_worktrunk_user_config_is_a_change(self):
-        """`default-branch` is user config in the same namespace as the state."""
+        """`default-branch` is user config in the same section as `history`."""
         after = _rewritten(b"default-branch = main", b"default-branch = trunk")
+        assert _guarded_lines(after) != _guarded_lines(_CONFIG)
+
+    def test_the_same_key_in_another_section_is_a_change(self):
+        """The exemption is a `(section, key)` pair, not a key name anywhere."""
+        after = _CONFIG + b"[fetch]\n\thistory = 1\n"
         assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
     def test_a_section_merely_starting_with_worktrunk_is_a_change(self):

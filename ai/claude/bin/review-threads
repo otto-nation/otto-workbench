@@ -2165,12 +2165,12 @@ def _newest_reviewer_activity(report: PRReport) -> str:
     mine = report.my_login.lower()
     stamps = [
         v.get("submitted_at", "") for v in report.verdicts
-        if (v.get("user") or "").lower() != mine
+        if not mine or (v.get("user") or "").lower() != mine
     ]
     stamps += [
         c.get("createdAt", "")
         for thread in report.threads for c in thread.comments
-        if ((c.get("author") or {}).get("login") or "").lower() != mine
+        if not mine or ((c.get("author") or {}).get("login") or "").lower() != mine
     ]
     return max((s for s in stamps if s), default="")
 

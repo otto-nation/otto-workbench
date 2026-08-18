@@ -3890,6 +3890,17 @@ class TestNewestReviewerActivity:
         ])
         assert rt._newest_reviewer_activity(report) == _AFTER_THE_SUMMARY
 
+    def test_an_unresolved_identity_counts_everything_as_somebody_else(self, rt):
+        """An empty `my_login` must not make an equally-empty author match it."""
+        report = self._report(
+            my_login="",
+            threads=[ReportThread(id="t1", comments=[
+                {"createdAt": _AFTER_THE_SUMMARY},
+            ])],
+            verdicts=[{"state": "COMMENTED", "submitted_at": _BEFORE_THE_SUMMARY}],
+        )
+        assert rt._newest_reviewer_activity(report) == _AFTER_THE_SUMMARY
+
     def test_a_quiet_pr_reports_nothing(self, rt):
         assert rt._newest_reviewer_activity(self._report()) == ""
 

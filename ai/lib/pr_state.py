@@ -202,6 +202,7 @@ class RebaseStatus(Enum):
     COMPLETED = "completed"
     CONFLICTS = "conflicts"
     ABORTED = "aborted"
+    ALREADY_LANDED = "already_landed"
 
 
 @dataclass

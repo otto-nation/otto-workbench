@@ -169,6 +169,20 @@ def _is_external_key(section: tuple[bytes, bytes], line: bytes) -> bool:
     )
 
 
+def _without_empty_sections(lines: list[bytes]) -> list[bytes]:
+    """The lines with headers that hold nothing dropped.
+
+    A key exemption removes a value line but not the header above it, so an
+    external write that opens a section — `wt switch` writing `history` into a
+    repo with no `[worktrunk]` yet — would otherwise leave a bare header behind
+    and read as a change. Nothing is lost: a leaked test is caught by the keys
+    it writes, and a header with no keys says nothing on its own.
+    """
+    followed_by = [*lines[1:], b"["]
+    return [line for line, following in zip(lines, followed_by)
+            if _section_of(line.strip()) is None or _section_of(following.strip()) is None]
+
+
 def _guarded_lines(raw: bytes | None) -> list[bytes] | None:
     """The config's lines with the externally-owned state dropped."""
     if raw is None:
@@ -180,7 +194,7 @@ def _guarded_lines(raw: bytes | None) -> list[bytes] | None:
             section, external = opened, _is_external(*opened)
         if not external and not _is_external_key(section, line):
             kept.append(line)
-    return kept
+    return _without_empty_sections(kept)
 
 
 def _describe_config_change(before: list[bytes], after: list[bytes]) -> str:

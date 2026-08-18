@@ -68,9 +68,15 @@ class TestExternalWritesAreIgnored:
         after = _rewritten(b"\thistory = main", b"\thistory = feat,main")
         assert _guarded_lines(after) == _guarded_lines(_CONFIG)
 
-    def test_a_branch_history_appearing_reads_as_no_change(self):
+    def test_a_branch_history_disappearing_reads_as_no_change(self):
         after = _rewritten(b"\thistory = main\n", b"")
-        assert _guarded_lines(_CONFIG) == _guarded_lines(after)
+        assert _guarded_lines(after) == _guarded_lines(_CONFIG)
+
+    def test_a_history_opening_its_own_section_reads_as_no_change(self):
+        """The first `wt switch` in a repo writes the section and the key at once."""
+        before = _rewritten(b"[worktrunk]\n\tdefault-branch = main\n\thistory = main\n", b"")
+        after = before + b"[worktrunk]\n\thistory = feat\n"
+        assert _guarded_lines(after) == _guarded_lines(before)
 
     def test_a_bumped_hint_counter_reads_as_no_change(self):
         after = _rewritten(b"shell-integration = 4", b"shell-integration = 5")
@@ -141,6 +147,11 @@ class TestRealWritesAreStillCaught:
 
     def test_a_config_that_appears_is_a_change(self):
         assert _guarded_lines(_CONFIG) != _guarded_lines(None)
+
+    def test_a_section_opened_for_a_guarded_key_is_a_change(self):
+        """Only headers left empty by an exemption are dropped, not headers as such."""
+        after = _CONFIG + b"[gc]\n\tauto = 0\n"
+        assert _guarded_lines(after) != _guarded_lines(_CONFIG)
 
 
 class TestTheFailureNamesTheKey:

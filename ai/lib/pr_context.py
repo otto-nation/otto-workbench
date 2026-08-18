@@ -2,7 +2,7 @@
 
 Resolves repo, branch, PR number, worktree root, and HEAD SHA once
 per invocation. Replaces the duplicated discovery logic in ci-check,
-review-threads, and review_common.detect_repo().
+review-threads, and the former review_common.detect_repo().
 """
 
 from __future__ import annotations
@@ -19,6 +19,12 @@ import pr_target
 
 _PR_URL_RE = re.compile(r"/pull/(\d+)")
 _PR_NUMBER_RE = re.compile(r"^\d+$")
+
+# gh reports a transport failure as "HTTP 503: ..." on stderr, whether it came
+# from REST or GraphQL, and git over https reports one as "HTTP 502" too.
+# Matching the status line is enough to tell a server outage from a local
+# misconfiguration.
+_SERVER_ERROR_RE = re.compile(r"\bHTTP 5\d\d\b")
 
 RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent / "bin" / "resolve-branch"
 
@@ -37,6 +43,45 @@ def classify_target(target: str) -> tuple[str | None, str | None]:
     if is_pr_ref(target):
         return target, None
     return None, target
+
+
+def failure_message(action: str, r: subprocess.CompletedProcess) -> str:
+    """Error text for a failed subprocess, quoting what the command said.
+
+    Asserting a cause the code has not established — "cannot determine the repo
+    from the git remote" — sends the operator to the wrong place whenever the
+    real fault is auth, the network, or a GitHub outage. So name the action that
+    failed and let the command's own stderr name the cause. A 5xx is called out
+    separately because it is the one case where the answer is to wait rather
+    than to change anything.
+    """
+    detail = " ".join((r.stderr or "").split())
+    if not detail:
+        return action
+    if _SERVER_ERROR_RE.search(detail):
+        return f"{action} — server error, retry later: {detail}"
+    return f"{action}: {detail}"
+
+
+@dataclass(frozen=True)
+class PRHead:
+    """A PR's head branch and SHA, or the reason ``gh`` could not report them.
+
+    Both halves come from one API call because the SHA is what a PR target's
+    state must be stamped with — reading it from the caller's HEAD is how
+    #2973's state ended up carrying the repo root's SHA.
+    """
+    branch: str = ""
+    sha: str = ""
+    # Ready-to-print reason the call did not answer, quoting gh's stderr. The
+    # caller decides an unresolved head is fatal, so the caller is the one that
+    # has to be able to say why. Empty when the head resolved.
+    reason: str = ""
+
+    @property
+    def resolved(self) -> bool:
+        """True only with both halves in hand — a partial answer is a failure."""
+        return bool(self.branch and self.sha)
 
 
 @dataclass(frozen=True)
@@ -97,21 +142,24 @@ def resolve(
 
     worktree_root, cwd = _resolve_worktree(cwd, pr=pr, branch=branch)
 
-    repo = _detect_repo(cwd)
+    repo = detect_repo(cwd)
 
     if pr:
         pr_number = _parse_pr_input(pr)
-        branch_name, pr_sha = _pr_head(repo, pr_number)
-        if not branch_name or not pr_sha:
-            log.error(
-                f"Cannot resolve the head branch of {repo}#{pr_number} — "
-                f"pr keys a run's state and lock on its target branch and "
-                f"stamps state with its head SHA"
-            )
+        head = _pr_head(repo, pr_number)
+        if not head.resolved:
+            # PRHead's contract says an unresolved head carries a reason, but
+            # the guard outlives the contract: a partial result must never fall
+            # through to the caller's own branch, reason or no reason.
+            log.error(head.reason
+                      or f"Cannot resolve the head branch of {repo}#{pr_number}")
+            log.dim("pr keys a run's state and lock on its target branch and "
+                    "stamps state with its head SHA")
             sys.exit(1)
+        branch_name = head.branch
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
-        head_sha = pr_sha
+        head_sha = head.sha
     elif branch:
         branch_name = _resolve_branch(branch, cwd)
         pr_number = _pr_from_branch(repo, branch_name)
@@ -138,7 +186,7 @@ def resolve(
 def _target_repo_key(cwd: str | None) -> str:
     """The repo half of the target key, or exit 1.
 
-    Fatal rather than falling back, and affordable because it is: _detect_repo
+    Fatal rather than falling back, and affordable because it is: detect_repo
     has already exited 1 above if this is not a repo `gh` can name.
     """
     key = pr_target.repo_key_from_origin(cwd)
@@ -278,7 +326,8 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         capture_output=True, text=True,
     )
     if r.returncode != 0:
-        log.warn(f"reset --hard failed — keeping existing worktree state")
+        log.warn(failure_message(f"git reset --hard origin/{ctx.branch} failed", r))
+        log.dim("keeping the existing worktree state")
         return ctx
 
     log.info(f"Updated worktree to origin/{ctx.branch}")
@@ -369,13 +418,18 @@ def _resolve_bare(
     return None, cwd
 
 
-def _detect_repo(cwd: str | None = None) -> str:
+def detect_repo(cwd: str | None = None) -> str:
+    """Detect ``owner/repo`` via ``gh``, or exit 1 quoting why gh could not.
+
+    Single owner for repo detection: review_common and the review scripts call
+    through here rather than running their own ``gh repo view``.
+    """
     r = subprocess.run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0 or not r.stdout.strip():
-        log.error("Cannot determine repository from git remote")
+        log.error(failure_message("Cannot determine repository via `gh repo view`", r))
         sys.exit(1)
     return r.stdout.strip()
 
@@ -387,7 +441,7 @@ def _current_branch(cwd: str | None = None) -> str:
     )
     branch = r.stdout.strip()
     if r.returncode != 0 or not branch:
-        log.error("Cannot determine current branch")
+        log.error(failure_message("Cannot determine current branch", r))
         sys.exit(1)
     if branch == "HEAD":
         log.error("Cannot determine current branch — HEAD is detached")
@@ -405,7 +459,8 @@ def _resolve_branch(hint: str, cwd: str | None = None) -> str:
             return r.stdout.strip()
         # resolve-branch exited non-zero or returned nothing — use hint as-is
         # rather than silently discarding the user's explicit --branch value
-        log.warn(f"resolve-branch: could not resolve {hint!r}, using as-is")
+        log.warn(failure_message(f"resolve-branch could not resolve {hint!r}", r))
+        log.dim(f"using {hint!r} as-is")
         return hint
     except FileNotFoundError:
         return hint if hint else _current_branch(cwd)
@@ -468,25 +523,19 @@ def _pr_from_branch(repo: str, branch: str) -> int | None:
         return None
 
 
-def _pr_head(repo: str, pr_number: int) -> tuple[str | None, str]:
-    """The PR's head branch and head SHA, in one API call.
-
-    Both in one request because the SHA is what a PR target's state must be
-    stamped with — reading it from the caller's HEAD is how #2973's state ended
-    up carrying the repo root's SHA.
-    """
+def _pr_head(repo: str, pr_number: int) -> PRHead:
+    """The PR's head branch and head SHA, in one API call."""
     r = subprocess.run(
         ["gh", "pr", "view", str(pr_number), "--repo", repo,
          "--json", "headRefName,headRefOid",
          "-q", '.headRefName + " " + .headRefOid'],
         capture_output=True, text=True,
     )
-    if r.returncode != 0:
-        return None, ""
     parts = r.stdout.split()
-    if len(parts) != 2:
-        return None, ""
-    return parts[0], parts[1]
+    if r.returncode != 0 or len(parts) != 2:
+        return PRHead(reason=failure_message(
+            f"`gh pr view` could not read the head of {repo}#{pr_number}", r))
+    return PRHead(branch=parts[0], sha=parts[1])
 
 
 # ── Bare-repo helpers ──────────────────────────────────────────────────────
@@ -592,7 +641,8 @@ def create_worktree_for_branch(
     """
     path = wt_switch(branch, cwd)
     if not path:
-        log.warn(f"Could not create a worktree for {branch}")
+        # wt_switch names the cause on every failure path it has; a second,
+        # vaguer line here would only bury the one that says something.
         return None
     log.info(f"Created worktree for {branch} at {path}")
     return Path(path)
@@ -610,10 +660,16 @@ def wt_switch(ref: str, cwd: str | None = None) -> str | None:
             + (["-C", cwd] if cwd else []),
             capture_output=True, text=True,
         )
-    except Exception:
-        log.warn("worktrunk (wt) is not available — cannot switch worktrees")
+    except FileNotFoundError:
+        log.warn("worktrunk (wt) is not installed — cannot switch worktrees")
         return None
-    return parse_wt_switch_path(r.stdout)
+    except OSError as e:
+        log.warn(f"Cannot run worktrunk (wt) — cannot switch worktrees: {e}")
+        return None
+    path = parse_wt_switch_path(r.stdout)
+    if not path:
+        log.warn(failure_message(f"wt switch {ref} reported no worktree path", r))
+    return path
 
 
 def parse_wt_switch_path(stdout: str) -> str | None:

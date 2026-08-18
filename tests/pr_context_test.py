@@ -16,7 +16,7 @@ import pr_context
 import pr_target
 from pr_context import (
     _parse_pr_input, _resolve_branch, default_branch, resolve_bare_repo_worktree,
-    find_worktree_for_branch, ResolvedContext, update_to_remote,
+    find_worktree_for_branch, PRHead, ResolvedContext, update_to_remote,
     fetch_and_reset, create_worktree_for_branch,
 )
 
@@ -535,9 +535,9 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
     """No borrowing the caller's branch — that is the bug this issue is about."""
     monkeypatch.setattr(pr_context, "_resolve_worktree",
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: (None, ""))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead())
     monkeypatch.setattr(pr_context, "_current_branch",
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
@@ -552,9 +552,9 @@ def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsy
     """A branch with no SHA is a partial result too — never stamp the caller's."""
     monkeypatch.setattr(pr_context, "_resolve_worktree",
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/x", ""))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/x"))
     monkeypatch.setattr(pr_context, "_current_branch",
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
@@ -569,10 +569,10 @@ def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr_context, "_resolve_worktree",
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "other")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/login", "pr-sha"))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/login", sha="pr-sha"))
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
 
     ctx = pr_context.resolve(pr="2973")
@@ -586,20 +586,20 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr_context, "_resolve_worktree",
                         lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
-    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
 
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/a", "sha-a"))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha-a"))
     first = pr_context.resolve(pr="1")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/b", "sha-b"))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/b", sha="sha-b"))
     second = pr_context.resolve(pr="2")
 
     assert first.target_dir != second.target_dir
     assert first.worktree_root == second.worktree_root
     # Pins the composed value, not just its distinctness: a regression that
-    # keyed the path on _detect_repo's "owner/name" instead of the origin-derived
+    # keyed the path on detect_repo's "owner/name" instead of the origin-derived
     # repo name would still make the two dirs differ, while violating "repo name
     # comes from git remote get-url origin".
     assert first.target_dir == tmp_path / "pr" / "widget-feat-a"
@@ -611,7 +611,7 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
     from inside the PR's own worktree and `pr review 2973` run from the repo
     root take the same lock instead of two independent ones."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "feat/login")
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
@@ -638,10 +638,10 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
 def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr_context, "_resolve_worktree",
                         lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "_detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(pr_context, "_current_branch_quiet", lambda cwd=None: "main")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: ("feat/a", "sha"))
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha"))
     monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: None)
 
     with pytest.raises(SystemExit) as excinfo:
@@ -675,3 +675,281 @@ def test_update_to_remote_preserves_the_target_dir(monkeypatch, tmp_path):
 
     assert updated.head_sha == "new-sha"
     assert updated.target_dir == ctx.target_dir
+
+
+# ── Repo detection ─────────────────────────────────────────────────────────
+
+
+def _stub_run(monkeypatch, returncode, stdout="", stderr=""):
+    """Make the next ``gh repo view`` return a canned result."""
+    monkeypatch.setattr(
+        pr_context.subprocess, "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout, stderr),
+    )
+
+
+def test_detect_repo_returns_name_with_owner(monkeypatch):
+    _stub_run(monkeypatch, 0, stdout="acme/widget\n")
+    assert pr_context.detect_repo() == "acme/widget"
+
+
+def test_detect_repo_quotes_what_gh_said(monkeypatch, capsys):
+    """Regression: every gh failure was rendered as a bad git remote."""
+    _stub_run(monkeypatch, 1, stderr="gh: Bad credentials (HTTP 401)")
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context.detect_repo()
+
+    err = capsys.readouterr().err
+    assert excinfo.value.code == 1
+    assert "Bad credentials" in err
+    assert "git remote" not in err
+
+
+def test_detect_repo_calls_a_5xx_transient(monkeypatch, capsys):
+    """A GitHub outage means wait, not reconfigure — say so, and fold the banner."""
+    _stub_run(monkeypatch, 1, stderr=(
+        "HTTP 503: No server is currently available to service your\n"
+        "request. (https://api.github.com/graphql)\n"
+    ))
+
+    with pytest.raises(SystemExit):
+        pr_context.detect_repo()
+
+    err = capsys.readouterr().err
+    assert "retry later" in err
+    assert "HTTP 503: No server is currently available to service your request." in err
+    assert err.strip().count("\n") == 0
+
+
+def test_detect_repo_degrades_when_gh_says_nothing(monkeypatch, capsys):
+    _stub_run(monkeypatch, 1)
+
+    with pytest.raises(SystemExit):
+        pr_context.detect_repo()
+
+    assert capsys.readouterr().err.strip().endswith("via `gh repo view`")
+
+
+def test_detect_repo_rejects_an_empty_name_from_a_zero_exit(monkeypatch, capsys):
+    """gh can exit 0 having printed nothing; that is still not a repo."""
+    _stub_run(monkeypatch, 0, stdout="\n", stderr="no git remotes found")
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context.detect_repo()
+
+    assert excinfo.value.code == 1
+    assert "no git remotes found" in capsys.readouterr().err
+
+
+def test_current_branch_quotes_git_stderr(monkeypatch, capsys):
+    _stub_run(monkeypatch, 128, stderr=(
+        "fatal: not a git repository (or any of the parent directories): .git"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context._current_branch()
+
+    assert excinfo.value.code == 1
+    assert "not a git repository" in capsys.readouterr().err
+
+
+# ── PR head resolution ─────────────────────────────────────────────────────
+
+
+def test_pr_head_resolves_both_halves(monkeypatch):
+    _stub_run(monkeypatch, 0, stdout="feat/login abc123\n")
+
+    head = pr_context._pr_head("acme/widget", 42)
+
+    assert head == PRHead(branch="feat/login", sha="abc123")
+    assert head.resolved
+
+
+def test_pr_head_carries_the_reason_gh_gave(monkeypatch):
+    """The caller decides this is fatal, so the caller must be able to say why."""
+    _stub_run(monkeypatch, 1, stderr="HTTP 503: No server is currently available")
+
+    head = pr_context._pr_head("acme/widget", 42)
+
+    assert not head.resolved
+    assert "acme/widget#42" in head.reason
+    assert "retry later" in head.reason
+    assert "HTTP 503" in head.reason
+
+
+def test_pr_head_reports_a_partial_answer_from_a_zero_exit(monkeypatch):
+    """gh answered, but not with both fields — say so rather than going quiet."""
+    _stub_run(monkeypatch, 0, stdout="feat/x\n")
+
+    head = pr_context._pr_head("acme/widget", 42)
+
+    assert not head.resolved
+    assert "acme/widget#42" in head.reason
+
+
+def test_pr_head_with_a_branch_but_no_sha_is_not_resolved():
+    """A half-answer must not read as success — that is what the guard turns on."""
+    assert not PRHead(branch="feat/x").resolved
+    assert not PRHead(sha="abc123").resolved
+
+
+def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, capsys):
+    monkeypatch.setattr(pr_context, "_resolve_worktree",
+                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
+    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(
+        reason="`gh pr view` could not read the head of acme/widget#2973 — "
+               "server error, retry later: HTTP 503"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context.resolve(pr="2973")
+
+    err = capsys.readouterr().err
+    assert excinfo.value.code == 1
+    assert "HTTP 503" in err
+    # The consequence still gets stated, under the cause rather than instead of it.
+    assert "keys a run's state and lock" in err
+
+
+# ── wt switch ──────────────────────────────────────────────────────────────
+
+
+def _stub_raise(monkeypatch, exc):
+    def boom(*args, **kwargs):
+        raise exc
+    monkeypatch.setattr(pr_context.subprocess, "run", boom)
+
+
+def test_wt_switch_says_not_installed_when_wt_is_missing(monkeypatch, capsys):
+    _stub_raise(monkeypatch, FileNotFoundError(2, "No such file or directory", "wt"))
+
+    assert pr_context.wt_switch("feat/x") is None
+    assert "not installed" in capsys.readouterr().err
+
+
+def test_wt_switch_does_not_call_a_permission_error_a_missing_binary(monkeypatch, capsys):
+    """Regression: every exception rendered as "worktrunk is not available"."""
+    _stub_raise(monkeypatch, PermissionError(13, "Permission denied", "wt"))
+
+    assert pr_context.wt_switch("feat/x") is None
+    err = capsys.readouterr().err
+    assert "not installed" not in err
+    assert "Permission denied" in err
+
+
+def test_wt_switch_reports_a_failed_run_rather_than_returning_none_silently(
+        monkeypatch, capsys):
+    _stub_run(monkeypatch, 1, stderr="error: no branch named feat/x")
+
+    assert pr_context.wt_switch("feat/x") is None
+    assert "no branch named feat/x" in capsys.readouterr().err
+
+
+def test_wt_switch_stays_quiet_when_it_lands_on_a_worktree(monkeypatch, capsys):
+    _stub_run(monkeypatch, 0, stdout='{"path": "/repo/feat-x"}\n')
+
+    assert pr_context.wt_switch("feat/x") == "/repo/feat-x"
+    assert capsys.readouterr().err == ""
+
+
+def _reset_run_sequence(reset_result):
+    """The subprocess results update_to_remote consumes before reset --hard."""
+    return [
+        MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
+        MagicMock(returncode=0),                        # fetch
+        MagicMock(returncode=0, stdout="new222\n"),     # rev-parse origin/branch
+        MagicMock(returncode=0, stdout="0\n"),          # rev-list (0 unpushed)
+        reset_result,
+    ]
+
+
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("pr_context._head_sha", return_value="old111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_quotes_why_the_reset_failed(
+        mock_run, _mock_sha, _mock_branch, capsys):
+    """Regression: git's own reason for refusing the reset was thrown away."""
+    mock_run.side_effect = _reset_run_sequence(MagicMock(
+        returncode=1, stdout="",
+        stderr="error: Entry 'docs/a.md' not uptodate. Cannot merge.\n"))
+
+    ctx = _make_ctx(head_sha="old111")
+    assert update_to_remote(ctx) is ctx
+    err = capsys.readouterr().err
+    assert "Entry 'docs/a.md' not uptodate. Cannot merge." in err
+    assert "keeping the existing worktree state" in err
+
+
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("pr_context._head_sha", return_value="old111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_degrades_when_reset_says_nothing(
+        mock_run, _mock_sha, _mock_branch, capsys):
+    """No stderr leaves the bare action — never a dangling separator."""
+    mock_run.side_effect = _reset_run_sequence(
+        MagicMock(returncode=1, stdout="", stderr=""))
+
+    ctx = _make_ctx(head_sha="old111")
+    assert update_to_remote(ctx) is ctx
+    warning = capsys.readouterr().err.splitlines()[0]
+    assert warning.endswith("git reset --hard origin/feat/x failed")
+
+
+@patch("pr_context.subprocess.run")
+@patch("pr_context._current_branch", return_value="fallback-branch")
+def test_resolve_branch_quotes_what_resolve_branch_said(
+        _mock_current, mock_run, capsys):
+    """Regression: resolve-branch's diagnosis was dropped for a generic line."""
+    mock_run.return_value = MagicMock(
+        returncode=1, stdout="",
+        stderr="error: no branch matches 'bad-hint'\n")
+
+    assert _resolve_branch("bad-hint") == "bad-hint"
+    err = capsys.readouterr().err
+    assert "no branch matches 'bad-hint'" in err
+    assert "as-is" in err
+
+
+@patch("pr_context.subprocess.run")
+@patch("pr_context._current_branch", return_value="fallback-branch")
+def test_resolve_branch_degrades_when_the_script_says_nothing(
+        _mock_current, mock_run, capsys):
+    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+
+    assert _resolve_branch("bad-hint") == "bad-hint"
+    warning = capsys.readouterr().err.splitlines()[0]
+    assert warning.endswith("resolve-branch could not resolve 'bad-hint'")
+
+
+# Every wt_switch failure path already names its own cause, so
+# create_worktree_for_branch must add nothing: the count is the assertion, since
+# a second generic line reads as a second, unrelated failure.
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run",
+       side_effect=FileNotFoundError(2, "No such file or directory", "wt"))
+def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log):
+    assert create_worktree_for_branch("feat/x") is None
+    assert mock_log.warn.call_count == 1
+    assert "not installed" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run",
+       side_effect=PermissionError(13, "Permission denied", "wt"))
+def test_create_worktree_warns_once_when_wt_cannot_run(_mock_run, mock_log):
+    assert create_worktree_for_branch("feat/x") is None
+    assert mock_log.warn.call_count == 1
+    assert "Permission denied" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_create_worktree_warns_once_when_wt_reports_no_path(mock_run, mock_log):
+    mock_run.return_value = MagicMock(
+        returncode=1, stdout="", stderr="error: branch feat/x is checked out")
+
+    assert create_worktree_for_branch("feat/x") is None
+    assert mock_log.warn.call_count == 1
+    assert "branch feat/x is checked out" in mock_log.warn.call_args.args[0]

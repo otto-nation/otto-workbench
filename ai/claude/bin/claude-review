@@ -37,7 +37,7 @@ from review_common import (
     SEVERITY_COUNT_RE_FMT,
     SEVERITIES,
     Mode, ReviewMeta, ReviewType, aggregate_session_usage, build_failure_detail,
-    count_severities, detect_repo, json_summary, resolve_review_verdict,
+    count_severities, json_summary, resolve_review_verdict,
     read_pipeline_status, read_pipeline_warnings, read_review_meta,
     review_file_path, review_meta_from_dict,
 )

@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 set -e
 
+# The help below describes the schema flag without naming it. This launcher
+# sits in the directory discovery scans by default, and the source scan in
+# ai/claude/mcps/server.py would read a literal here as a protocol
+# implementation — probing it re-execs the server, which then blocks on stdin
+# until the discovery timeout. Same reasoning as build-otto-ai-tools-tarball.
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
 otto-mcp-server — dynamic MCP server for otto-workbench tools
 
-Discovers scripts with --tool-schema support and exposes them via MCP stdio transport.
+Discovers scripts that declare a tool schema and exposes them via MCP stdio transport.
+
+Scans ~/.local/bin unless tool_dirs is set in ~/.config/workbench/mcp-tools.json.
 
 Usage: otto-mcp-server
 

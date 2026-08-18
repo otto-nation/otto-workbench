@@ -30,6 +30,13 @@ DEFAULT_CONFIG_DIR = "~/.config/workbench"
 DEFAULT_STATE_DIR = "~/.local/state/workbench"
 DEFAULT_CACHE_DIR = "~/.cache/workbench"
 
+# Where setup symlinks the workbench's own scripts. Not a root — it takes no
+# override and holds nothing the workbench generates — but it is a path both
+# languages spell, so it belongs here rather than in each consumer.
+# `LOCAL_BIN_DIR` in lib/constants.sh is the shell half; the two are
+# cross-validated in tests/workbench_roots.bats.
+DEFAULT_LOCAL_BIN_DIR = "~/.local/bin"
+
 # Subtrees of the state root that more than one tool has to agree on.
 TRAIL_DIRNAME = "trail"
 REVIEWS_DIRNAME = "reviews"
@@ -63,6 +70,16 @@ def _subdir(base: Path, name: str | None) -> Path:
 def config_dir() -> Path:
     """Hand-authored settings: config.yml, overrides/, mcp-tools.json."""
     return _root("WORKBENCH_CONFIG_DIR", "XDG_CONFIG_HOME", DEFAULT_CONFIG_DIR)
+
+
+def local_bin_dir() -> Path:
+    """Where the workbench's installed scripts live: ``~/.local/bin``.
+
+    Resolved per call for the same reason the roots are — ``HOME`` is routinely
+    re-pointed after import, and a module constant would freeze whichever value
+    the first importer saw.
+    """
+    return Path(os.path.expanduser(DEFAULT_LOCAL_BIN_DIR))
 
 
 def state_dir() -> Path:

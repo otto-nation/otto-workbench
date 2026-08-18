@@ -110,6 +110,19 @@ class TestArgsToCLI:
 # ── Tool Discovery ────────────────────────────────────────────────────────
 
 
+def _write_tool_script(path: Path, name: str) -> None:
+    """Write an executable script that answers --tool-schema with *name*."""
+    path.write_text(textwrap.dedent(f"""\
+        #!/usr/bin/env python3
+        import json, sys
+        if "--tool-schema" in sys.argv:
+            json.dump({{"name": "{name}",
+                       "input_schema": {{"type": "object", "properties": {{}}}}}}, sys.stdout)
+            sys.exit(0)
+    """))
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
 class TestDiscovery:
     def test_discovers_tool_schema_scripts(self, tmp_path):
         script = tmp_path / "my-tool"
@@ -173,6 +186,21 @@ class TestDiscovery:
             pytest.skip("builder not found")
 
         assert _declares_tool_schema(builder) is False
+
+    def test_launcher_is_not_a_probe_candidate(self):
+        """Probing the launcher would exec the server and hang until the timeout.
+
+        It sits in the directory the default scans, so like the tarball builder
+        its help text describes the protocol without spelling the literal.
+        """
+        launcher = (
+            Path(__file__).resolve().parent.parent
+            / "ai" / "claude" / "bin" / "otto-mcp-server"
+        )
+        if not launcher.exists():
+            pytest.skip("launcher not found")
+
+        assert _declares_tool_schema(launcher) is False
 
     def test_skips_unreadable_script(self, tmp_path):
         script = tmp_path / "unreadable"
@@ -246,3 +274,45 @@ class TestDiscovery:
         assert tools["pr-rebase"]["output_schema"]["type"] == "object"
         assert "output_schema" in tools["ci-check"]
         assert "output_schema" in tools["pr"]
+
+
+class TestDefaultToolDirs:
+    """A machine with no mcp-tools.json still gets the installed tools.
+
+    Nothing in the workbench ever writes that file, so an absent ``tool_dirs``
+    is the ordinary case rather than the exceptional one. Without a default it
+    resolved to no directories at all, and every install ran a registered
+    server that exposed nothing.
+    """
+
+    def test_absent_tool_dirs_scans_the_installed_bin_dir(self, monkeypatch, tmp_path):
+        bin_dir = tmp_path / ".local" / "bin"
+        bin_dir.mkdir(parents=True)
+        _write_tool_script(bin_dir / "installed-tool", "installed-tool")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert "installed-tool" in discover_tools({})
+
+    def test_explicit_tool_dirs_replaces_the_default(self, monkeypatch, tmp_path):
+        """The key is an override, not an addition — matching serde defaults."""
+        bin_dir = tmp_path / ".local" / "bin"
+        bin_dir.mkdir(parents=True)
+        _write_tool_script(bin_dir / "installed-tool", "installed-tool")
+        project_dir = tmp_path / "project-tools"
+        project_dir.mkdir()
+        _write_tool_script(project_dir / "project-tool", "project-tool")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        tools = discover_tools({"tool_dirs": [str(project_dir)]})
+
+        assert "project-tool" in tools
+        assert "installed-tool" not in tools
+
+    def test_an_empty_tool_dirs_list_is_not_an_absent_one(self, monkeypatch, tmp_path):
+        """``tool_dirs: []`` is how discovery is turned off deliberately."""
+        bin_dir = tmp_path / ".local" / "bin"
+        bin_dir.mkdir(parents=True)
+        _write_tool_script(bin_dir / "installed-tool", "installed-tool")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert discover_tools({"tool_dirs": []}) == {}

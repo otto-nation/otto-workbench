@@ -83,9 +83,23 @@ def _scan_plugin_dir(plugin_dir: Path) -> list[Path]:
     return results
 
 
+def _default_tool_dirs() -> list[str]:
+    """Where to look when the config names no directories.
+
+    Nothing writes ``mcp-tools.json``, so an absent ``tool_dirs`` is the
+    ordinary case: without this the server resolved to no directories and
+    exposed no tools on every install. ``~/.local/bin`` is where setup
+    symlinks the workbench's own scripts, which is what the server is for.
+
+    An explicit ``tool_dirs`` replaces this rather than extending it, so the
+    key keeps the meaning a typed default will give it in #724.
+    """
+    return [str(workbench_paths.local_bin_dir())]
+
+
 def _resolve_dirs(config: dict) -> list[Path]:
     dirs = []
-    for d in config.get("tool_dirs", []):
+    for d in config.get("tool_dirs", _default_tool_dirs()):
         p = Path(d).expanduser()
         if p.is_dir():
             dirs.append(p)

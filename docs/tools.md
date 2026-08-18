@@ -414,6 +414,50 @@ The Push verdict appears in the dashboard and gates the **Merge readiness** line
 | Commits ahead | `**Push**: N commit(s) not pushed` | Blocks: "N unpushed commit(s)" |
 | Up to date | `**Push**: up to date` | No block |
 
+### `otto-mcp-server`
+
+Dynamic MCP server. Discovers workbench scripts and exposes them to any MCP client over
+stdio. Registered in `~/.claude.json` as `otto-workbench` by `otto-workbench ai sync`.
+
+```
+otto-mcp-server
+```
+
+A script is discovered when it is executable, not hidden, and answers `--tool-schema`
+with JSON carrying at least `name` and `input_schema`. Scripts built on `ToolParser`
+([`ai/lib/tool_parser.py`](../ai/lib/tool_parser.py)) inherit the flag for free.
+
+**Where it looks.** `~/.config/workbench/mcp-tools.json`, which is optional:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tool_dirs` | list of paths | `["~/.local/bin"]` | Directories scanned for tool scripts |
+| `plugin_dirs` | list of paths | `[]` | Directories of `*.json` files, each naming one `tool_dir` |
+
+With no file present the workbench's own installed scripts are scanned, which is what
+the default is for. Setting `tool_dirs` **replaces** that default rather than adding to
+it — list `~/.local/bin` explicitly to keep the workbench tools alongside your own. An
+empty list turns discovery off.
+
+```json
+{
+  "tool_dirs": ["~/.local/bin", "~/work/project/bin"],
+  "plugin_dirs": ["~/.config/workbench/mcp-plugins"]
+}
+```
+
+A plugin file points at a directory to scan, letting a project register its tools
+without editing the config:
+
+```json
+{ "name": "my-project", "tool_dir": "~/work/project/tools" }
+```
+
+Discovery reads each candidate's source before running it, and only executes the ones
+carrying a protocol marker — a script that ignores unknown flags would otherwise do its
+real work when probed. Scripts that mention the flag in prose without implementing it
+must word around the literal to stay out of the probe path.
+
 ### `serena-mcp`
 
 Scaffolds Serena MCP into a project's `.mcp.json` for project-scoped code intelligence.

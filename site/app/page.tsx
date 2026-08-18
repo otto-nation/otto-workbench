@@ -1,12 +1,21 @@
-import Link from 'next/link';
+import { GrecaDivider } from '@/components/greca';
+import { Footer } from '@/components/landing/footer';
+import { Hero } from '@/components/landing/hero';
+import { HowItWorks } from '@/components/landing/how-it-works';
+import { Included } from '@/components/landing/included';
+import { Install } from '@/components/landing/install';
+import { Nav } from '@/components/landing/nav';
 
 export default function Home() {
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-4">
-      <h1 className="text-2xl font-bold">otto-workbench</h1>
-      <Link href="/docs/getting-started" className="underline">
-        Read the docs
-      </Link>
+    <main className="flex-1">
+      <Nav />
+      <Hero />
+      <Install />
+      <GrecaDivider />
+      <Included />
+      <HowItWorks />
+      <Footer />
     </main>
   );
 }

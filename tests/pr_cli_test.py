@@ -175,6 +175,47 @@ def test_merge_readiness_review_error():
     assert "review incomplete" in result
 
 
+def _green_state():
+    """Everything checked and clean — anything blocked here is the closeout."""
+    import pr_state
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.apply(state, pr_state.CIDomain(conclusion="success", updated_at="t"))
+    pr_state.apply(state, pr_state.ReviewSummary(
+        finding_counts={"S": 1}, verdict=pr_state.ReviewVerdict.APPROVE.value, updated_at="t",
+    ))
+    pr_state.apply(state, pr_state.CommentsSummary(blocking_reviewers=[], updated_at="t"))
+    return state
+
+
+def test_merge_readiness_blocked_by_a_deferred_summary():
+    import pr_state
+    state = _green_state()
+    pr_state.apply(state, pr_state.FixSummary(summary_deferred=True, updated_at="t"))
+    result = pr_cli._merge_readiness(state)
+    assert "blocked" in result
+    assert "closeout not delivered" in result
+    assert "pr comments --finish --post" in result
+
+
+def test_merge_readiness_blocked_by_a_pending_reply_queue():
+    import pr_state
+    state = _green_state()
+    pr_state.apply(state, pr_state.FixSummary(replies_pending=True, updated_at="t"))
+    assert "closeout not delivered" in pr_cli._merge_readiness(state)
+
+
+def test_merge_readiness_ignores_a_drained_closeout():
+    import pr_state
+    state = _green_state()
+    pr_state.apply(state, pr_state.FixSummary(
+        threads=[pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED)],
+        summary_url="https://example.test/c/1", replies_posted=1, updated_at="t",
+    ))
+    result = pr_cli._merge_readiness(state)
+    assert "closeout" not in result
+    assert "ready" in result.lower()
+
+
 # ── _COMMANDS registry ────────────────────────────────────────────────────
 
 

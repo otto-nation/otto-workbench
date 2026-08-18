@@ -288,10 +288,15 @@ def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> st
     has_must_fix = state.review.finding_counts.get("M", 0) > 0 if state.review.updated_at else None
     has_blockers = bool(state.comments.blocking_reviewers) if state.comments.updated_at else None
     review_incomplete = state.review.status in ("partial", "error") if state.review.updated_at else False
+    # A summary or a reply queue the fix pass rendered and never sent. The PR
+    # reads as un-reviewed until --finish drains it, so merging on it merges
+    # work no reviewer was told about (#774).
+    closeout_owed = pr_comments.closeout_debt(state.fix).owed
 
     pushed = unpushed == 0
 
-    if ci_green is True and has_must_fix is False and has_blockers is False and pushed and not review_incomplete:
+    if (ci_green is True and has_must_fix is False and has_blockers is False
+            and pushed and not review_incomplete and not closeout_owed):
         return "**Merge readiness**: ready"
     issues = []
     if ci_green is False:
@@ -306,6 +311,8 @@ def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> st
         issues.append(desc)
     if review_incomplete:
         issues.append("review incomplete")
+    if closeout_owed:
+        issues.append(f"closeout not delivered (run: {pr_comments.CLOSEOUT_COMMAND})")
     if ci_green is None or has_must_fix is None or has_blockers is None:
         unchecked = []
         if ci_green is None:

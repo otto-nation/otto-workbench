@@ -40,7 +40,6 @@ from ansi import RED, GREEN, DIM, NC  # noqa: E402
 
 import pr_state  # noqa: E402
 import pr_target  # noqa: E402
-import review_common  # noqa: E402
 import run_lock  # noqa: E402
 import workbench_paths  # noqa: E402
 
@@ -257,8 +256,7 @@ def build_artifact():
             'targets_dir': pr_target.TARGETS_DIR,
             'state_file': pr_state.STATE_FILE,
             'lock_file': run_lock.LOCK_FILE,
-            'reviews_dir': review_common.REVIEWS_DIR.name,
-            'worktree_state_dir': workbench_paths.WORKTREE_STATE_DIRNAME,
+            'reviews_dir': workbench_paths.REVIEWS_DIRNAME,
             'legacy_worktree_state_dir': workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME,
         },
         'state_root': [

@@ -16,7 +16,6 @@
     "state_file": "state.json",
     "lock_file": "run.lock",
     "reviews_dir": "reviews",
-    "worktree_state_dir": "workbench",
     "legacy_worktree_state_dir": ".workbench"
   },
   "state_root": [

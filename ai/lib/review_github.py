@@ -7,12 +7,13 @@ exponential backoff.  Used by review_posting and review_dedup.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 
 import log
+import proc
+from proc import CmdResult
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -52,8 +53,14 @@ class LineResolutionError(Exception):
 def _gh_api(
     endpoint: str, method: str = "GET", input_file: str | None = None,
     headers: dict[str, str] | None = None,
-) -> tuple[int, str]:
-    """Call gh api and return (exit_code, stdout)."""
+) -> CmdResult:
+    """Call gh api and return everything it said.
+
+    Both streams, not just stdout: gh writes an API error body to stdout but
+    reports a transport failure — the 5xx that is worth retrying — only on
+    stderr, and a wrapper returning `(returncode, stdout)` had nowhere to put
+    it (#740).
+    """
     cmd = ["gh", "api", endpoint]
     if method != "GET":
         cmd.extend(["--method", method])
@@ -62,12 +69,11 @@ def _gh_api(
     for key, val in (headers or {}).items():
         cmd.extend(["--header", f"{key}: {val}"])
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_API_TIMEOUT)
-    return result.returncode, result.stdout
+    return proc.run(cmd, timeout=GH_API_TIMEOUT)
 
 
-def _gh_graphql(query: str, variables: dict) -> tuple[int, str]:
-    """Call gh api graphql and return (exit_code, stdout).
+def _gh_graphql(query: str, variables: dict) -> CmdResult:
+    """Call gh api graphql and return everything it said.
 
     The query string is passed as a raw field (-f); all variables are passed
     as typed fields (-F) so gh auto-detects integers and booleans.
@@ -75,16 +81,15 @@ def _gh_graphql(query: str, variables: dict) -> tuple[int, str]:
     cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
     for key, val in variables.items():
         cmd.extend(["-F", f"{key}={val}"])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_API_TIMEOUT)
-    return result.returncode, result.stdout
+    return proc.run(cmd, timeout=GH_API_TIMEOUT)
 
 
 def _fetch_json_list(endpoint: str) -> list:
-    code, out = _gh_api(endpoint)
-    if code != 0:
+    r = _gh_api(endpoint)
+    if not r.ok:
         return []
     try:
-        return json.loads(out)
+        return json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
         return []
 
@@ -95,12 +100,12 @@ def _fetch_pr_metadata(repo: str, pr: str, pr_data: PRData | None = None) -> dic
     """Fetch PR metadata (head SHA, head ref, base ref) in one call."""
     if pr_data is not None:
         return {"head_sha": pr_data.head_sha, "head_ref": pr_data.head_ref, "base_ref": pr_data.base_ref}
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}")
-    if code != 0:
-        log.error("Failed to fetch PR metadata")
+    r = _gh_api(f"repos/{repo}/pulls/{pr}")
+    if not r.ok:
+        log.error(proc.failure_message(f"Failed to fetch metadata for {repo}#{pr}", r))
         sys.exit(1)
     try:
-        data = json.loads(out)
+        data = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
         log.error("Failed to parse PR metadata from API response")
         sys.exit(1)
@@ -114,30 +119,36 @@ def _fetch_pr_metadata(repo: str, pr: str, pr_data: PRData | None = None) -> dic
 def _get_diff(repo: str, pr: str) -> str:
     """Get the PR diff. Returns empty string if the diff is unavailable
     (e.g. PRs exceeding GitHub's 300-file limit)."""
-    code, out = _gh_api(
+    r = _gh_api(
         f"repos/{repo}/pulls/{pr}",
         headers={"Accept": "application/vnd.github.v3.diff"},
     )
-    if code != 0:
-        log.warn("Failed to get diff from API — inline positioning unavailable")
+    if not r.ok:
+        log.warn(proc.failure_message(
+            "Failed to get diff from API — inline positioning unavailable", r))
         return ""
-    return out
+    return r.stdout
 
 
 def _check_existing_pending(repo: str, pr: str, pr_data: PRData | None = None) -> int | None:
     """Check for existing PENDING review and return its ID."""
     if pr_data is not None:
         return pr_data.pending_review_id
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/reviews")
-    if code != 0:
+    r = _gh_api(f"repos/{repo}/pulls/{pr}/reviews")
+    if not r.ok:
+        # Warned rather than silent: a caller that reads None as "no pending
+        # review" opens a second one, and the reason it could not look is the
+        # only thing that explains the duplicate.
+        log.warn(proc.failure_message(
+            f"Could not check {repo}#{pr} for an existing pending review", r))
         return None
     try:
-        reviews = json.loads(out)
+        reviews = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
         return None
-    for r in reviews:
-        if r.get("state") == REVIEW_STATE_PENDING:
-            return int(r.get("id", 0)) or None
+    for review in reviews:
+        if review.get("state") == REVIEW_STATE_PENDING:
+            return int(review.get("id", 0)) or None
     return None
 
 
@@ -145,11 +156,14 @@ def _count_new_commits(repo: str, pr: str, review_sha: str, pr_data: PRData | No
     """Count commits on the PR since the review SHA."""
     if pr_data is not None:
         return pr_data.new_commit_count(review_sha)
-    code, out = _gh_api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
-    if code != 0:
+    r = _gh_api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
+    if not r.ok:
+        # 0 is also the answer for "nothing new since the review", so the
+        # warning is what tells those two apart.
+        log.warn(proc.failure_message(f"Could not count new commits on {repo}#{pr}", r))
         return 0
     try:
-        commits = json.loads(out)
+        commits = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
         return 0
     for i, c in enumerate(commits):
@@ -161,9 +175,14 @@ def _count_new_commits(repo: str, pr: str, review_sha: str, pr_data: PRData | No
 
 # ── Rate limiting & retries ─────────────────────────────────────────────────
 
-def _is_rate_limited(stdout: str) -> bool:
+# Classification reads both streams. gh puts an API error body on stdout and
+# its own status line on stderr, so which one carries the evidence depends on
+# how the call failed — a 403 explains itself in the body, a 503 or a dropped
+# connection leaves the body empty (#740).
+
+def _is_rate_limited(output: str) -> bool:
     """Check if the API response indicates rate limiting."""
-    lower = stdout.lower()
+    lower = output.lower()
     return (
         "secondary rate limit" in lower
         or '"message": "forbidden"' in lower
@@ -172,38 +191,57 @@ def _is_rate_limited(stdout: str) -> bool:
     )
 
 
-def _is_line_resolution_error(stdout: str) -> bool:
+def _is_line_resolution_error(output: str) -> bool:
     """Check if the API response indicates unresolvable line positions."""
-    return "line could not be resolved" in stdout.lower()
+    return "line could not be resolved" in output.lower()
 
 
-def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
+def _api_error_message(r: CmdResult) -> str:
+    """The most specific account of a failed call the response supports.
+
+    GitHub's error body is the best of the three, when there is one: it names
+    the field that was rejected. Falling back to stderr rather than to a slice
+    of an empty stdout is the difference between naming HTTP 503 and printing
+    nothing after the colon.
+    """
+    try:
+        parsed = json.loads(r.stdout)
+        message = parsed.get("message", "")
+        errors = parsed.get("errors", [])
+    except (json.JSONDecodeError, AttributeError):
+        message, errors = "", []
+    if not message:
+        return (r.detail or r.combined_output.strip())[:200]
+    if errors:
+        message += " — " + "; ".join(str(e) for e in errors)
+    return message
+
+
+def _handle_api_attempt(attempt: int, r: CmdResult) -> dict | None:
     """Handle a single API attempt result. Returns parsed JSON on success, None to retry."""
-    if rc == 0:
+    if r.ok:
         try:
-            return json.loads(stdout)
+            return json.loads(r.stdout)
         except json.JSONDecodeError:
             log.error(f"Invalid JSON in response (attempt {attempt + 1}/{MAX_RETRIES})")
             return None
 
-    if _is_line_resolution_error(stdout):
-        raise LineResolutionError(stdout[:200])
+    said = r.combined_output
+    if _is_line_resolution_error(said):
+        raise LineResolutionError(said[:200])
 
-    if _is_rate_limited(stdout):
+    # A 5xx is the far end's, and waiting is the whole remedy — the same
+    # treatment a secondary rate limit gets, and the case that used to fall
+    # through to the flat 5-second delay because the evidence for it is on
+    # stderr, where nothing was looking.
+    if _is_rate_limited(said) or r.server_error:
+        cause = "Server error" if r.server_error else "Rate limited"
         wait = int(min(RATE_LIMIT_WAIT * (RATE_LIMIT_BACKOFF ** attempt), RATE_LIMIT_MAX_WAIT))
-        log.warn(f"Rate limited (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait}s...")
+        log.warn(f"{cause} (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait}s: {_api_error_message(r)}")
         time.sleep(wait)
         return None
 
-    try:
-        parsed = json.loads(stdout)
-        error_msg = parsed.get("message", stdout[:200])
-        errors = parsed.get("errors", [])
-        if errors:
-            error_msg += " — " + "; ".join(str(e) for e in errors)
-    except (json.JSONDecodeError, AttributeError):
-        error_msg = stdout[:200]
-    log.error(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {error_msg}")
+    log.error(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {_api_error_message(r)}")
     if attempt < MAX_RETRIES - 1:
         time.sleep(NON_RATE_LIMIT_DELAY)
     return None
@@ -212,8 +250,8 @@ def _handle_api_attempt(attempt: int, rc: int, stdout: str) -> dict | None:
 def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
     """Post to GitHub API with retry logic. Returns parsed response or None."""
     for attempt in range(MAX_RETRIES):
-        rc, stdout = _gh_api(endpoint, method="POST", input_file=tmp_path)
-        result = _handle_api_attempt(attempt, rc, stdout)
+        r = _gh_api(endpoint, method="POST", input_file=tmp_path)
+        result = _handle_api_attempt(attempt, r)
         if result is not None:
             return result
 
@@ -279,12 +317,13 @@ def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict:
     variables: dict = {"owner": owner, "name": name, "pr": pr}
     if cursor:
         variables["endCursor"] = cursor
-    rc, stdout = _gh_graphql(_THREADS_PAGE_QUERY, variables)
-    if rc != 0:
-        log.warn("Failed to fetch a page of review threads (fetch) — the thread set is incomplete")
+    r = _gh_graphql(_THREADS_PAGE_QUERY, variables)
+    if not r.ok:
+        log.warn(proc.failure_message(
+            "Failed to fetch a page of review threads (fetch) — the thread set is incomplete", r))
         return {}
     try:
-        data = json.loads(stdout)
+        data = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
         log.warn("Failed to fetch a page of review threads (parse) — the thread set is incomplete")
         return {}
@@ -519,14 +558,15 @@ class PRData:
 def fetch_pr_data(repo: str, pr: str) -> PRData:
     """Fetch all PR review data in a single GraphQL query."""
     owner, name = repo.split("/", 1)
-    rc, stdout = _gh_graphql(
+    r = _gh_graphql(
         _PR_DATA_QUERY, {"owner": owner, "name": name, "pr": int(pr)},
     )
-    if rc != 0:
-        log.error("Failed to fetch PR data via GraphQL")
+    if not r.ok:
+        log.error(proc.failure_message(
+            f"Failed to fetch data for {repo}#{pr} via GraphQL", r))
         sys.exit(1)
     try:
-        data = json.loads(stdout)
+        data = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
         log.error("Failed to parse PR data from GraphQL response")
         sys.exit(1)

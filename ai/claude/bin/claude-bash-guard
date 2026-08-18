@@ -171,6 +171,20 @@ if [[ "$placeheld" =~ $re_write ]]; then
   esac
 fi
 
+# Also a consequence rather than a static-analysis failure: a shell backgrounded
+# with `&` outlives the call, and the only way left to stop it is pkill, which is
+# not on the allow list. The tool's own run_in_background parameter keeps the
+# shell reachable, so nothing has to be hunted down by pattern later.
+#
+# `&` is only the background operator when it stands alone: `&&` is a conjunction,
+# `2>&1` and `&>` are redirects, and `|&` is a pipe. Each is excluded by the
+# character on one side of the match, which is why both sides are tested.
+re_background='(^|[^&>|])&([^&>]|$)'
+re_nohup='(^|[;&|][[:space:]]*)nohup[[:space:]]'
+if [[ "$stripped" =~ $re_background || "$stripped" =~ $re_nohup ]]; then
+  block 'Backgrounding with & or nohup leaves a shell the tool cannot see, so stopping it later takes a pkill that prompts every time. Pass run_in_background instead, and make the request against it in a separate call. See bash-tool.md § Avoid Backgrounding with &.'
+fi
+
 # Below the rules above because it matches a wider range of commands than any of
 # them — a `$VAR` in a compound cd or an env -C should get that rule's message.
 # Reads sq_stripped, not stripped: `"$f"` expands, so double-quoted spans have

@@ -82,6 +82,39 @@ Pass the resolved branch name via `--branch` so the `pr` wrapper can
 route it to context resolution. `pr review` handles bare repos, worktree
 resolution, and fresh-vs-existing review detection internally.
 
+**Exit 4 — the branch may already be superseded, and nothing was reviewed.**
+Parse the JSON:
+
+```json
+{
+  "branch": "isaac/703/fix_the_thing",
+  "status": "superseded",
+  "signals": [
+    {
+      "kind": "readds_removed_symbol",
+      "detail": "`dropped_helper` is added by this branch but absent from origin/main, which last touched it in abc1234 (ai/lib/foo.py)",
+      "holds": true
+    }
+  ],
+  "override": "--force"
+}
+```
+
+`kind` names the check that fired: `readds_removed_symbol` (the branch adds a
+definition the default branch has deleted), `superseding_pr` (a merged PR
+mentions that definition), or `rebase_skew` (the branch was replayed onto a base
+that moved — reported for context, never the reason for the refusal).
+
+Report every `detail` and stop. Do not re-run with the override on your own
+judgment: reviewing a branch that re-adds deleted code produces findings about
+code that should not exist, and they read as ordinary review comments. Read the
+merged PR the `superseding_pr` signal names, present it, and let the user decide.
+If they confirm the branch is still wanted, re-run with the flag in `override`:
+
+```bash
+pr review --self --fix --force --branch <branch_name>
+```
+
 ### Step 4: Report results
 
 Fixes are automatically committed by `pr review` — no manual commit needed.
@@ -108,3 +141,5 @@ what is auto-fixable; trust its judgment.
 - **Idempotent.** Running twice on the same review skips already-fixed findings.
 - **Review preserved.** The review file is kept in `~/.local/state/workbench/reviews/`
   for retro analysis — it is not deleted after fixing.
+- **Superseded branches are refused, not reviewed.** A branch that re-adds code
+  the default branch has deleted exits 4 before the first agent call. See Step 3.

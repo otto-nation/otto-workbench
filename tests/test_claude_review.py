@@ -2165,3 +2165,104 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
         # Passed through: the parent's ownership record is untouched.
         record = json.loads((target / run_lock.LOCK_FILE).read_text())
         assert record["command"] == "pr review --self --fix"
+
+
+# ── the supersession refusal ─────────────────────────────────────────────────
+
+
+def _verdict(*signals):
+    import supersession
+    return supersession.Verdict(list(signals))
+
+
+def _evidence(detail="`foo` is gone from origin/main"):
+    from pr_state import SupersessionKind, SupersessionSignal
+    return SupersessionSignal(SupersessionKind.READDS_REMOVED_SYMBOL, detail)
+
+
+def _context(detail="replayed onto a moved base"):
+    from pr_state import SupersessionKind, SupersessionSignal
+    return SupersessionSignal(SupersessionKind.REBASE_SKEW, detail, holds=False)
+
+
+def _refuse(cr, monkeypatch, verdict, *, force=False, trail=None):
+    """Run the refusal against a canned verdict, detection already answered."""
+    monkeypatch.setattr(cr.supersession, "detect_cached",
+                        MagicMock(return_value=verdict))
+    cr._refuse_if_superseded(
+        "/wt", "acme/widget", Path("/target"), "feat/x",
+        force=force, trail=trail or MagicMock(),
+    )
+
+
+def test_a_clean_branch_is_reviewed(cr, monkeypatch, capsys):
+    _refuse(cr, monkeypatch, _verdict())
+    assert capsys.readouterr().err == ""
+
+
+def test_context_alone_does_not_refuse(cr, monkeypatch, capsys):
+    """A rebase over a moved base is how the problem becomes visible, not the problem."""
+    _refuse(cr, monkeypatch, _verdict(_context()))
+    assert "[rebase_skew] replayed onto a moved base" in capsys.readouterr().err
+
+
+def test_evidence_refuses_before_the_first_agent_call(cr, monkeypatch, capsys):
+    """The whole point of refusing here: a review is the largest spend in the repo."""
+    import supersession
+
+    with pytest.raises(SystemExit) as exc:
+        _refuse(cr, monkeypatch, _verdict(_evidence()))
+    assert exc.value.code == supersession.EXIT_SUPERSEDED
+
+    out = capsys.readouterr()
+    assert "Refusing to review feat/x" in out.err
+    assert supersession.OVERRIDE_FLAG in out.err
+    payload = json.loads(out.out)
+    assert payload["status"] == "superseded"
+    assert payload["branch"] == "feat/x"
+    assert payload["override"] == supersession.OVERRIDE_FLAG
+    assert payload["signals"] == [{
+        "kind": "readds_removed_symbol",
+        "detail": "`foo` is gone from origin/main",
+        "holds": True,
+    }]
+
+
+def test_the_refusal_reaches_the_trail(cr, monkeypatch):
+    trail = MagicMock()
+    with pytest.raises(SystemExit):
+        _refuse(cr, monkeypatch, _verdict(_evidence()), trail=trail)
+    data = trail.decision.call_args.kwargs["data"]
+    assert data["signals"] == ["readds_removed_symbol"]
+
+
+def test_force_skips_the_check_entirely(cr, monkeypatch):
+    """The override has to cost nothing, or it is not an override."""
+    detect = MagicMock()
+    monkeypatch.setattr(cr.supersession, "detect_cached", detect)
+    cr._refuse_if_superseded(
+        "/wt", "acme/widget", Path("/target"), "feat/x",
+        force=True, trail=MagicMock(),
+    )
+    assert not detect.called
+
+
+def test_self_review_refuses_before_it_fetches_anything(cr, tmp_path, monkeypatch):
+    """Ordering, not just presence: the check has to precede the issue lookup."""
+    import supersession
+
+    monkeypatch.setattr(cr.supersession, "detect_cached",
+                        MagicMock(return_value=_verdict(_evidence())))
+    monkeypatch.setattr(
+        cr.review_issue, "load_issue_provider",
+        MagicMock(side_effect=AssertionError("fetched issue context anyway")),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cr._run_self_review_body(
+            "acme/widget", None, str(tmp_path), "", 1,
+            False, None, None, False, _self_review_args(),
+            tmp_path, "feat/x",
+            ctx=make_ctx(branch="feat/x", pr_number=None), trail=MagicMock(),
+        )
+    assert exc.value.code == supersession.EXIT_SUPERSEDED

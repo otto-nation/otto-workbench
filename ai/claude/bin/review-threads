@@ -51,6 +51,7 @@ from pr_thread_models import (
 )
 from review_github import fetch_pr_data
 from review_issue import CreatedIssue
+import supersession
 from tool_parser import handle_value_flags
 from trail import Trail, add_trail_args
 
@@ -863,40 +864,6 @@ def _parse_tracking_results(
             (result.deferred_items if is_item else result.deferred).append(deferred)
 
     return result
-
-
-class HistoryKind(StrEnum):
-    """Which preflight check produced a finding. Printed, and sent to the trail."""
-
-    # The branch's first commit was written long before it was committed.
-    REBASE_SKEW = "rebase_skew"
-    # The branch adds a definition the default branch has removed.
-    READDS_REMOVED_SYMBOL = "readds_removed_symbol"
-    # A merged PR mentions that definition.
-    SUPERSEDING_PR = "superseding_pr"
-
-
-@dataclasses.dataclass(frozen=True)
-class HistorySignal:
-    """One cheap reading of the branch's history that argues against fixing it.
-
-    `holds` separates evidence from context. Re-adding something the default
-    branch deleted is evidence the branch is superseded; a rebase over a moved
-    base is only what makes that legible, and every long-lived branch has one —
-    withholding a commit on it alone would fire on the healthy case.
-    """
-
-    kind: HistoryKind
-    detail: str
-    holds: bool = True
-
-
-@dataclasses.dataclass(frozen=True)
-class AddedSymbol:
-    """A definition the branch adds, and the file it adds it in."""
-
-    name: str
-    path: str
 
 
 @dataclass
@@ -2711,189 +2678,32 @@ def _retry_fix_pass(
     return result
 
 
-# Author-vs-committer drift on the first commit, in days, before the branch is
-# plainly sitting on a base that moved under it. Days, not hours: a same-day
-# rebase is just a push after `wt merge`.
-_REBASE_SKEW_DAYS = 7
-# This is a preflight, not an investigation. Whether the branch re-adds anything
-# the default branch removed is answered as well by the first few symbols as by
-# all of them, and each one costs two git calls.
-_PREFLIGHT_SYMBOL_LIMIT = 10
-# ...and each flagged one costs a network round trip on top.
-_PREFLIGHT_SEARCH_LIMIT = 2
-# A definition line, in the languages this repo and its neighbours are written
-# in. Deliberately shallow: a missed symbol costs one unfired signal, and a
-# wrong one costs a search that finds nothing.
-_SYMBOL_DEF_RE = re.compile(
-    r"^\+\s*(?:export\s+|pub\s+|public\s+|private\s+)?(?:async\s+)?"
-    r"(?:func|def|class|type|interface|struct|fn)\s+"
-    r"(?:\([^)]*\)\s*)?"
-    r"([A-Za-z_]\w{3,})",
-)
-
-
-def _rebase_skew_days(wt_path: Path, base: str) -> int:
-    """Days between when the branch's first commit was written and committed.
-
-    Non-zero means the commit was replayed — a rebase, a cherry-pick — and a
-    large value means it was replayed onto a base that had moved a long way.
-    Unreadable output reads as no skew: this is a hint, and a hint that cannot
-    be computed is not a finding.
-    """
-    result = subprocess.run(
-        ["git", "-C", str(wt_path), "log", "--reverse", "--format=%at %ct",
-         f"{base}..HEAD"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return 0
-    parts = result.stdout.strip().splitlines()[0].split()
-    if len(parts) != 2 or not all(p.isdigit() for p in parts):
-        return 0
-    return max(0, (int(parts[1]) - int(parts[0])) // 86400)
-
-
-def _branch_added_symbols(wt_path: Path, base: str) -> list[AddedSymbol]:
-    """Definitions this branch adds.
-
-    Three-dot: what the branch adds relative to the merge base. A brand-new
-    definition and one re-added over a deletion are indistinguishable here —
-    `_removed_from_base` is what tells them apart.
-    """
-    result = subprocess.run(
-        ["git", "-C", str(wt_path), "diff", f"{base}...HEAD"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return []
-    found: dict[str, str] = {}
-    path = ""
-    for line in result.stdout.splitlines():
-        if line.startswith("+++ b/"):
-            path = line[len("+++ b/"):]
-            continue
-        match = _SYMBOL_DEF_RE.match(line)
-        if match and path and len(found) < _PREFLIGHT_SYMBOL_LIMIT:
-            found.setdefault(match.group(1), path)
-    return [AddedSymbol(name, path) for name, path in found.items()]
-
-
-def _removed_from_base(wt_path: Path, base: str, symbol: str, path: str) -> str:
-    """The base commit that last touched `symbol`, if the base no longer has it.
-
-    Absent from the base plus a history that once contained it is the whole
-    signal: a symbol the base never had is simply new. Pinned to the file the
-    branch adds it in, which keeps the pickaxe off the full history.
-    """
-    present = subprocess.run(
-        ["git", "-C", str(wt_path), "grep", "-q", "-F", symbol, base],
-        capture_output=True, text=True,
-    )
-    if present.returncode == 0:
-        return ""
-    log_out = subprocess.run(
-        ["git", "-C", str(wt_path), "log", "--format=%h", "--max-count=1",
-         f"-S{symbol}", base, "--", path],
-        capture_output=True, text=True,
-    )
-    lines = log_out.stdout.strip().splitlines()
-    return lines[0] if lines else ""
-
-
-def _superseding_prs(repo: str, symbols: list[str]) -> list[HistorySignal]:
-    """Merged PRs that mention a re-added symbol.
-
-    The PR that removed it is the thing worth reading before fixing anything on
-    this branch, and its title usually says so.
-    """
-    found = []
-    for symbol in symbols[:_PREFLIGHT_SEARCH_LIMIT]:
-        result = subprocess.run(
-            ["gh", "api", f"search/issues?q=repo:{repo}+{symbol}+is:merged",
-             "--jq", '.items[0] // empty | "#\\(.number) \\(.title)"'],
-            capture_output=True, text=True,
-        )
-        title = result.stdout.strip()
-        if result.returncode == 0 and title:
-            found.append(HistorySignal(
-                HistoryKind.SUPERSEDING_PR,
-                f"a merged PR mentioning `{symbol}`: {title}",
-            ))
-    return found
-
-
-def _history_preflight(
-    wt_path: Path, repo: str, trail: Trail | None = None,
-) -> list[HistorySignal]:
-    """Cheap checks for a branch whose reason to exist may already be gone.
-
-    #703's branch had been rebased over a `main` that had deleted the code it
-    was fixing, and the reviewer's "this does not exist any more" was one
-    thread among ten. None of that needs an AI call to notice — the skew is in
-    the commit dates, the re-addition is in the diff, and the PR that removed
-    it is one search away. Run before the fix pass, so what it finds can reach
-    the same side-effect hold an open thread does.
-    """
-    base = f"origin/{_resolve_default_branch(wt_path)}"
-    signals = []
-
-    skew = _rebase_skew_days(wt_path, base)
-    if skew >= _REBASE_SKEW_DAYS:
-        signals.append(HistorySignal(
-            HistoryKind.REBASE_SKEW,
-            f"the first commit was written {skew} day(s) before it was committed "
-            f"— this branch has been replayed onto a base that moved",
-            holds=False,
-        ))
-
-    readded = []
-    for symbol in _branch_added_symbols(wt_path, base):
-        removed_in = _removed_from_base(wt_path, base, symbol.name, symbol.path)
-        if not removed_in:
-            continue
-        readded.append(symbol.name)
-        signals.append(HistorySignal(
-            HistoryKind.READDS_REMOVED_SYMBOL,
-            f"`{symbol.name}` is added by this branch but absent from {base}, "
-            f"which last touched it in {removed_in} ({symbol.path})",
-        ))
-
-    signals.extend(_superseding_prs(repo, readded))
-
-    if trail and signals:
-        trail.info("history_preflight", f"{len(signals)} signal(s)",
-                   data={"signals": [s.kind for s in signals]})
-    return signals
-
-
 def _hold_if_superseded(
-    signals: list[HistorySignal], trail: Trail | None = None,
+    verdict: supersession.Verdict, trail: Trail | None = None,
 ) -> None:
     """Report what the preflight found, and hold if any of it is evidence.
 
-    Every signal is printed with its kind, so the output says which check
-    fired rather than leaving the operator to guess why the run went quiet.
+    A hold rather than the refusal `pr review` and `pr rebase` answer with: by
+    the time this runs the triage pass has already been paid for, so there is
+    nothing left to save by stopping, and the fixes themselves are worth having
+    locally either way. What must not happen is asserting outward that
+    superseded code was fixed.
 
     The hold is the same one an open thread places, and reaches the same acts:
     the push, the `Fixed in <sha>` replies, the thread resolutions, and the
     summary. The local commit is not one of them — see `_commit_fixes`.
     """
-    if not signals:
+    supersession.report(verdict)
+    if not verdict.superseded:
         return
-    log.warn("History preflight — this branch may already be superseded:")
-    for signal in signals:
-        log.warn(f"  [{signal.kind}] {signal.detail}")
-
-    holding = [s for s in signals if s.holds]
-    if not holding:
-        return
+    holding = verdict.holding
     publishing.hold(
-        f"{len(holding)} history signal(s) suggest this branch is superseded"
+        f"{len(holding)} supersession signal(s) suggest this branch is superseded"
     )
     if trail:
         trail.decision(
             "publishing_hold",
-            f"held publishing — {len(holding)} history signal(s)",
+            f"held publishing — {len(holding)} supersession signal(s)",
             reason="fixing code the default branch has already removed asserts it should exist",
             data={"signals": [s.kind for s in holding]},
         )
@@ -2956,7 +2766,13 @@ def _run_comment_fix(
     all_dismissed = dismissed + items_dismissed
     all_addressed = thread_cls.already_addressed + items_already_addressed
 
-    _hold_if_superseded(_history_preflight(wt_path, ctx.repo, trail), trail)
+    _hold_if_superseded(
+        supersession.detect_cached(
+            wt_path, ctx.repo, ctx.target_dir,
+            base=f"origin/{_resolve_default_branch(wt_path)}", trail=trail,
+        ),
+        trail,
+    )
     _hold_while_contested(all_needs_human, trail)
 
     non_resolved_ids = {t.id for t in report.threads if t.state != ThreadState.RESOLVED}

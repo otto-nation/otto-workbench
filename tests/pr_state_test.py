@@ -18,6 +18,7 @@ from pr_state import (
     ReviewSummary, ReviewVerdict, ReviewStatus,
     CommentsSummary, TriageSummary, RebaseSummary,
     ThreadAction, ThreadOutcome, FixSummary, CommitStatus,
+    SupersessionDomain, SupersessionKind, SupersessionSignal,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
     apply, _domains,
     state_to_dict, state_from_dict,
@@ -1051,6 +1052,57 @@ def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(worktree):
     del raw["fix"]["threads"][0]["commit_sha"]
     path.write_text(json.dumps(raw))
     assert load_state(worktree).fix.threads[0].commit_sha == ""
+
+
+# ── SupersessionDomain ──────────────────────────────────────────────────────
+
+
+def _superseded_state(worktree, **overrides):
+    fields = dict(
+        head_sha="a" * 40, base_sha="b" * 40,
+        signals=[SupersessionSignal(
+            SupersessionKind.READDS_REMOVED_SYMBOL, "`foo` is gone",
+        )],
+    )
+    fields.update(overrides)
+    return PRState(
+        identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
+                            head_sha="a" * 40, worktree_root=str(worktree)),
+        supersession=SupersessionDomain(**fields),
+    )
+
+
+def test_supersession_round_trips_its_signals(worktree):
+    """The verdict is only worth caching if it survives the write."""
+    save_state(worktree, _superseded_state(worktree))
+    stored = load_state(worktree).supersession
+    assert stored.signals == [SupersessionSignal(
+        SupersessionKind.READDS_REMOVED_SYMBOL, "`foo` is gone",
+    )]
+    assert stored.matches("a" * 40, "b" * 40)
+
+
+def test_supersession_defaults_empty_on_legacy_state(worktree):
+    """State written before this domain must still load."""
+    save_state(worktree, _superseded_state(worktree))
+    path = worktree / "state.json"
+    raw = json.loads(path.read_text())
+    del raw["supersession"]
+    path.write_text(json.dumps(raw))
+    assert load_state(worktree).supersession == SupersessionDomain()
+
+
+def test_a_verdict_matches_only_the_commits_it_was_computed_from():
+    domain = SupersessionDomain(head_sha="a" * 40, base_sha="b" * 40)
+    assert domain.matches("a" * 40, "b" * 40)
+    assert not domain.matches("c" * 40, "b" * 40)
+    assert not domain.matches("a" * 40, "c" * 40)
+
+
+def test_a_verdict_keyed_on_an_empty_sha_matches_nothing():
+    """An unresolvable ref records nothing that can later be keyed on."""
+    assert not SupersessionDomain(head_sha="", base_sha="").matches("", "")
+    assert not SupersessionDomain(head_sha="a" * 40).matches("a" * 40, "")
 
 
 def test_legacy_thread_id_key_loads_as_id():

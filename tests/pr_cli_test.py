@@ -776,6 +776,28 @@ def _first_call_containing(mock_run, script: str) -> list[str]:
 
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_state.load_state")
+def test_cmd_fix_stops_when_the_review_refuses_the_branch(mock_load, mock_run):
+    """A branch not worth reviewing is not worth running the CI fix pass on either."""
+    import supersession
+    state = pr_state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr_state.apply(state, pr_state.ReviewSummary(
+        finding_counts={"M": 1}, verdict=pr_state.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
+    ))
+    pr_state.apply(state, pr_state.CIDomain(failure_count=3, updated_at="t"))
+    mock_load.return_value = state
+    mock_run.return_value = MagicMock(returncode=supersession.EXIT_SUPERSEDED)
+
+    rc = pr_cli.cmd_fix([], ctx=make_ctx())
+
+    assert rc == supersession.EXIT_SUPERSEDED
+    # Not even pr-describe: nothing after the refusal gets to act on the branch.
+    assert [Path(call[0][0][0]).name for call in mock_run.call_args_list] == [
+        "claude-review",
+    ]
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_state.load_state")
 def test_cmd_fix_describes_last(mock_load, mock_run):
     """The description must reflect the branch state after all fix passes complete."""
     import pr_state

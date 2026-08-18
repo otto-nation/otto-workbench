@@ -44,6 +44,7 @@ from review_common import (
 from ai_usage import SessionUsage, parse_session_log
 import review_issue
 import review_worktree
+import supersession
 from pr_state import PostTracking
 from serde import load_file as serde_load_file, to_dict as serde_to_dict
 
@@ -709,6 +710,58 @@ def _fail_orchestration(msg: str, session_log: str) -> None:
     sys.exit(1)
 
 
+# ── Supersession preflight ──────────────────────────────────────────────────
+
+
+def _refuse_if_superseded(
+    wt_path: str, repo: str, target_dir: Path, branch: str, *,
+    force: bool, trail: Trail,
+) -> None:
+    """Stop before the review spends anything on a branch that may be superseded.
+
+    A refusal rather than the hold `pr comments` places, because of where the
+    money is. A review is the largest model spend in the repo and this runs
+    before the first agent call, so refusing costs nothing and saves all of it;
+    holding the posting at the end would save nothing that had not already been
+    spent. That is the behavioural difference between the two callers, and it
+    is deliberate.
+
+    Findings about code the default branch has already deleted are worse than
+    no findings: they read as ordinary review comments, and #703 is what
+    happens when someone acts on them.
+    """
+    if force:
+        return
+    verdict = supersession.detect_cached(
+        Path(wt_path), repo, target_dir, trail=trail,
+    )
+    supersession.report(verdict)
+    if not verdict.superseded:
+        return
+
+    log.error(f"Refusing to review {branch} — it may already be superseded.")
+    log.dim("Reviewing a branch that re-adds code the default branch removed "
+            "produces findings about code that should not exist.")
+    log.dim(f"Pass {supersession.OVERRIDE_FLAG} to review it anyway.")
+    trail.decision(
+        "supersession_refusal",
+        f"refused review — {len(verdict.holding)} supersession signal(s)",
+        reason="reviewing code the default branch has already removed asserts it should exist",
+        data={"signals": [s.kind for s in verdict.holding]},
+    )
+    json.dump({
+        "branch": branch,
+        "status": "superseded",
+        "signals": [
+            {"kind": str(s.kind), "detail": s.detail, "holds": s.holds}
+            for s in verdict.signals
+        ],
+        "override": supersession.OVERRIDE_FLAG,
+    }, sys.stdout, indent=2)
+    print()
+    sys.exit(supersession.EXIT_SUPERSEDED)
+
+
 def _build_orchestrate_args(
     *,
     pr_number: str, repo: str, review_file: Path, wt_path: str,
@@ -921,6 +974,11 @@ def _run_review_pr(
             recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
         )
 
+        # Inside the try, so a refusal still cleans up the worktree it read.
+        _refuse_if_superseded(
+            wt_path, repo, ctx.target_dir, ctx.branch, force=force, trail=trail,
+        )
+
         session_log = str(review_dir / FILENAME_SESSION)
         prior_review_path = _resolve_prior_review(review_file, session_log, has_pipeline_state)
 
@@ -1024,6 +1082,13 @@ def _run_self_review_body(
 ) -> None:
     review_file = self_review_dir / f"review{REVIEW_EXT}"
     session_log = str(self_review_dir / FILENAME_SESSION)
+
+    # First thing in the body, ahead of the issue-context fetch below: this is
+    # the cheapest point at which the run can still cost nothing.
+    _refuse_if_superseded(
+        wt_path, repo, ctx.target_dir, branch_name,
+        force=args.force, trail=trail,
+    )
 
     if recover:
         recover_sha = _resolve_recover_sha(self_review_dir, head_sha)

@@ -741,27 +741,73 @@ missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both.
 
-### The history preflight
+### The supersession preflight
 
-The same hold can be triggered without any reviewer saying anything, by three
-cheap checks the fix pass runs before it fixes:
+The same conclusion can be reached without any reviewer saying anything, by
+three cheap checks in `supersession.py` that every branch-acting command runs
+before it acts:
 
-| Signal | What it reads | Holds? |
+| Signal | What it reads | Evidence? |
 |---|---|---|
 | `rebase_skew` | author vs committer date on the branch's first commit, ≥ 7 days apart | no |
 | `readds_removed_symbol` | a definition in `git diff origin/<default>...HEAD` that the default branch no longer contains but once did | yes |
 | `superseding_pr` | a merged PR mentioning that symbol, via `gh api search/issues` | yes |
 
 Each finding is printed with its kind, so the output says which check fired.
-Only the last two hold: a branch replayed onto a base that has moved is what
-makes supersession visible, but on its own it describes every long-lived branch,
-and holding on it would withhold every push routinely. A holding signal places
-the same hold a contested thread does, and reaches the same acts — the push, the
-replies, the resolutions, and the summary, but not the local commit.
+Only the last two count as evidence: a branch replayed onto a base that has
+moved is what makes supersession visible, but on its own it describes every
+long-lived branch, and acting on it would fire on the healthy case.
 
 It is a preflight, not an investigation — the symbol scan stops at the first ten
 definitions and only the first two flagged symbols are searched for on GitHub, so
-a clean branch costs two local git commands and no network call at all.
+a clean branch costs two local git commands and no network call at all. The
+verdict is cached in the state file against the HEAD *and* base SHAs it was
+computed from, so the next command on the same branch reuses it rather than
+repeating the search; a moved base invalidates it just as a moved HEAD does,
+because a branch re-adds nothing until the hour the default branch deletes
+something.
+
+**One detection, two policies.** What a positive verdict does depends on where
+the money is:
+
+| Command | Response | Why |
+|---|---|---|
+| `pr comments --fix` | holds publishing | The triage pass is already paid for by the time this could stop it. Stopping saves nothing; what must not happen is asserting outward that superseded code was fixed. |
+| `pr review` / `pr review --self` | refuses, exit 4 | A review is the largest model spend in the repo and the check runs before the first agent call, so refusing costs nothing and saves all of it. |
+
+The hold in `pr comments` reaches the same acts a contested thread's hold does —
+the push, the replies, the resolutions, and the summary, but not the local
+commit.
+
+The refusal in `pr review` prints the signals and writes the same JSON shape
+`pr rebase` uses for its already-landed refusal, on the same exit code:
+
+```json
+{
+  "branch": "isaac/703/fix_the_thing",
+  "status": "superseded",
+  "signals": [
+    {
+      "kind": "readds_removed_symbol",
+      "detail": "`dropped_helper` is added by this branch but absent from origin/main, which last touched it in abc1234 (ai/lib/foo.py)",
+      "holds": true
+    }
+  ],
+  "override": "--force"
+}
+```
+
+Read the merged PR the `superseding_pr` signal names before doing anything else.
+If the branch really is still wanted, re-run with `--force`, which skips the
+check entirely. `pr fix` stops on the refusal rather than continuing to its CI
+pass: every remaining pass acts on the same branch, so one refusal answers for
+all of them.
+
+This is distinct from `pr rebase`'s already-landed check, which asks whether the
+work has *landed* rather than whether it has been *superseded* — work can land
+without the branch being superseded, and a branch can be superseded without its
+commits having landed anywhere, because someone solved the problem differently.
+They share the exit code and the override flag, and nothing else.
 
 ### The summary comment is the record, not the state file
 

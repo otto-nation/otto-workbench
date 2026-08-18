@@ -2229,48 +2229,77 @@ def _post_pending_fix_replies(
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
 ) -> None:
-    """Send the fix replies the fix pass produced but did not deliver.
+    """Send the replies the fix pass produced but did not deliver.
 
-    Three ways a reply ends up here: the push failed, the push was held because
-    discussion was open, or the run was a draft — in each case there was no
-    commit on the remote for the reply to cite. Called during --finish, which is
-    the second chance for all three. A reply may not go out until its commit is
-    actually on the remote.
+    Four ways a reply ends up here: the push failed, the push was held because
+    discussion was open, the run was a draft, or the pass had nothing to commit
+    because the operator landed the same fixes by hand first. Called during
+    --finish, which is the second chance for all four.
+
+    All three reply buckets are drained, not just the fixed one. The
+    already-addressed and dismissed replies are sent eagerly during triage,
+    before any fix work runs, so a drafted pass renders them and then drops
+    them — and the triage-only pass, where nothing was fixable, is exactly the
+    shape that leaves no fixed entry to carry them back (#3055).
     """
     fix = state.fix
-    if not fix.commit_sha:
-        return
     if not _commit_unpushed(fix.commit_status) and not fix.replies_pending:
         return
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
-    if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
+    if not wt_path:
+        return
+
+    # Only a pass that made its own commit has to wait for it. One that
+    # committed nothing leaves entries citing the commits that did — already on
+    # the remote — and the triage buckets cite HEAD rather than a fix commit,
+    # so there is nothing for either to wait on.
+    if fix.commit_sha and not _is_pushed(wt_path, fix.commit_sha):
         log.info("Push still pending — skipping deferred replies")
         return
 
     FA = pr_state.ThreadAction
-    fixed_threads = [t for t in fix.threads if t.action == FA.FIXED]
 
-    if fixed_threads:
+    def bucket(action: str) -> list[CommentItem]:
         # commit_sha carried, not dropped: this queue spans rounds, and an
         # entry fixed two commits ago must still cite the commit that fixed it.
-        items = [
+        return [
             CommentItem(id=t.id, file=t.file, line=t.line,
                         reviewer=t.reviewer, summary=t.summary,
                         commit_sha=t.commit_sha)
-            for t in fixed_threads
+            for t in fix.threads if t.action == action
         ]
-        # Accumulate rather than discard: these are the same round's replies
-        # finally going out, and the fix pass already counted any it sent
-        # itself. A draft returns 0 here, so a drafted drain adds nothing.
+
+    # Accumulate rather than discard: these are the same round's replies
+    # finally going out, and the fix pass already counted any it sent
+    # itself. A draft returns 0 here, so a drafted drain adds nothing.
+    fixed = bucket(FA.FIXED)
+    if fixed:
         fix.replies_posted += _post_fix_replies(
-            items, threads_by_id, repo, pr_number, fix.commit_sha,
+            fixed, threads_by_id, repo, pr_number, fix.commit_sha,
         )
-        _resolve_fixed_threads(items, threads_by_id)
+        _resolve_fixed_threads(fixed, threads_by_id)
+
+    addressed = bucket(FA.ALREADY_ADDRESSED)
+    if addressed:
+        fix.replies_posted += _post_already_addressed_replies(
+            addressed, threads_by_id, repo, pr_number, wt_path,
+        )
+        _resolve_fixed_threads(addressed, threads_by_id)
+
+    # Not resolved, unlike the other two: telling a reviewer their premise does
+    # not hold is the reply most likely to be argued with, so the thread stays
+    # open for them to answer. Mirrors the triage phase.
+    dismissed = bucket(FA.DISMISSED)
+    if dismissed:
+        fix.replies_posted += _post_dismissed_replies(
+            dismissed, threads_by_id, repo, pr_number, wt_path,
+        )
 
     # A draft delivered nothing, so the queue has to survive for the next run.
     if publishing.enabled():
-        fix.commit_status = CommitStatus.PUSHED
+        if _commit_unpushed(fix.commit_status):
+            fix.commit_status = CommitStatus.PUSHED
         fix.replies_pending = False
 
 
@@ -2739,6 +2768,20 @@ def _hold_while_contested(
         )
 
 
+def _triage_replies_drafted(
+    already_addressed: list[CommentItem], dismissed: list[CommentItem],
+) -> bool:
+    """Whether this pass rendered triage replies it did not send.
+
+    The already-addressed and dismissed replies go out during triage, before
+    the pass knows whether anything is fixable. A draft renders them to stderr
+    and sends nothing, so the queue has to say they are still owed — otherwise
+    `--finish --post` finds a drained queue and publishes nothing, which is how
+    a whole approved round went missing (#3055).
+    """
+    return bool(already_addressed or dismissed) and not publishing.enabled()
+
+
 def _run_comment_fix(
     triage_result: TriageResult,
     report: PRReport,
@@ -2835,6 +2878,7 @@ def _run_comment_fix(
             commit_status=no_commit.status,
             head_sha=_get_head_sha(wt_path),
             replies_posted=triage_replies,
+            replies_pending=_triage_replies_drafted(all_addressed, all_dismissed),
             summary_url=summary_url or "",
             summary_deferred=summary_url is None and early_deferred,
             updated_at=pr_state.now_iso(),
@@ -2941,7 +2985,10 @@ def _run_comment_fix(
         # snapshot must name the commit its outcomes were measured against.
         head_sha=_get_head_sha(wt_path),
         replies_posted=replies_posted,
-        replies_pending=bool(tracking.fixed) and not publishing.enabled(),
+        replies_pending=(
+            bool(tracking.fixed) and not publishing.enabled()
+            or _triage_replies_drafted(all_addressed, all_dismissed)
+        ),
         summary_url=summary_url or "",
         summary_deferred=summary_url is None and pending_deferred,
         has_comment_items=has_items,

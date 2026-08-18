@@ -1,3 +1,8 @@
+---
+title: AI Automation
+description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
+---
+
 # AI Automation
 
 Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.

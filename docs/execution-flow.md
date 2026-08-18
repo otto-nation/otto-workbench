@@ -1,3 +1,8 @@
+---
+title: Execution Flow
+description: What happens when you run install.sh or otto-workbench sync, step by step.
+---
+
 # Execution Flow
 
 What happens when you run `install.sh` or `otto-workbench sync`, step by step.

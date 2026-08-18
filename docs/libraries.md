@@ -1,3 +1,8 @@
+---
+title: Libraries
+description: All shared code in lib/ — the modules loaded through the ui.sh facade and those sourced directly.
+---
+
 # Libraries
 
 All shared code lives in `lib/`. Most modules are loaded through the `ui.sh` facade; some are sourced directly by specific consumers.

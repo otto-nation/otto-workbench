@@ -1,0 +1,90 @@
+/*
+ * otto-nation palette — the single owner of these values in this repo.
+ *
+ * Origin: otto-stack's docs-site/assets/scss/common/_variables-custom.scss
+ * ($theme-base-color and the $dark-* ramp). Drift between the two repos is
+ * accepted for two consumers; extract to a shared token set if a third appears.
+ *
+ * Contrast rules, which are not optional:
+ *   --ow-amarillo  1.65:1 on canvas. Never text on light. Rules, borders, prompts,
+ *                  SVG line-work. It reaches 9.73:1 on the dark terminal block.
+ *   --ow-rosa      4.42:1 on canvas — below the 4.5:1 AA floor for normal text, above
+ *                  the 3:1 large-text floor. UI and large text only, never inline prose.
+ *   Body copy is always --ow-ink or --ow-ink-muted on --ow-canvas.
+ *   --ow-block-*   the fixed dark surfaces, measured against --ow-block, not canvas.
+ */
+
+:root {
+  --ow-canvas: #f7f2e9;
+  --ow-surface: #fbf6ea;
+  --ow-ink: #1a1712;
+  --ow-ink-muted: #5c5447;
+  --ow-hairline: #e4dac6;
+  --ow-amarillo: #e5ba41;
+  --ow-rosa: #d81e5b;
+  --ow-barro: #c4552f;
+  --ow-anil: #2b4ba8;
+
+  /* The install block and the footer stay dark in both themes — a shell prompt
+   * has to read as a terminal, and the footer closes the page on a solid band.
+   * They cannot follow the theme-dependent ramp, so they own fixed tokens whose
+   * contrast is measured against --ow-block rather than --ow-canvas:
+   *   --ow-block-ink        13.96:1 on the block. Body copy.
+   *   --ow-block-ink-muted   4.61:1 on the block. Labels and buttons, AA.
+   *   --ow-block-hairline    never text. Dividers and borders only. */
+  --ow-block: #1a1712;
+  --ow-block-ink: #e8e3d8;
+  --ow-block-ink-muted: #8a8073;
+  --ow-block-hairline: #3d3420;
+
+  --color-fd-background: var(--ow-canvas);
+  --color-fd-foreground: var(--ow-ink);
+  --color-fd-muted: var(--ow-surface);
+  --color-fd-muted-foreground: var(--ow-ink-muted);
+  --color-fd-popover: var(--ow-surface);
+  --color-fd-popover-foreground: var(--ow-ink);
+  --color-fd-card: var(--ow-surface);
+  --color-fd-card-foreground: var(--ow-ink);
+  --color-fd-border: var(--ow-hairline);
+  --color-fd-primary: var(--ow-rosa);
+  --color-fd-primary-foreground: var(--ow-canvas);
+  --color-fd-secondary: var(--ow-surface);
+  --color-fd-secondary-foreground: var(--ow-ink);
+  --color-fd-accent: var(--ow-surface);
+  --color-fd-accent-foreground: var(--ow-ink);
+  --color-fd-ring: var(--ow-amarillo);
+}
+
+.dark {
+  --ow-canvas: #0f0e13;
+  --ow-surface: #1f1c14;
+  --ow-ink: #e8e3d8;
+  --ow-ink-muted: #8a8073;
+  --ow-hairline: #3d3420;
+
+  /* Every other --color-fd-* role is derived: it references an --ow-* token
+   * redefined above, and var() resolves against this element's own cascaded
+   * value of that token, so the :root declaration already picks up the dark
+   * ramp once .dark is active. --color-fd-primary is the one exception — it
+   * swaps to a different token (amarillo instead of rosa) rather than
+   * following a redefined one, so it must be restated here. */
+  --color-fd-primary: var(--ow-amarillo);
+}
+
+body {
+  font-family: var(--font-display), system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: -0.02em;
+}

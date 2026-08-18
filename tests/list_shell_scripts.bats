@@ -81,3 +81,14 @@ teardown() {
   [[ "${lines[0]}" == "$ROOT/a.sh" ]]
   [[ "${lines[1]}" == "$ROOT/b.sh" ]]
 }
+
+@test "list_shell_scripts: ignores node_modules" {
+  mkdir -p "$ROOT/node_modules/pkg"
+  printf '#!/usr/bin/env bash\necho vendored\n' > "$ROOT/node_modules/pkg/install.sh"
+  printf '#!/usr/bin/env bash\necho ours\n' > "$ROOT/ours.sh"
+
+  run list_shell_scripts "$ROOT"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == "$ROOT/ours.sh" ]]
+}

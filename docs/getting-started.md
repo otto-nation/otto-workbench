@@ -1,3 +1,8 @@
+---
+title: Getting Started
+description: Install the workbench, run your first sync, and find your way around the docs.
+---
+
 # Getting Started
 
 ## Prerequisites

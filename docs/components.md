@@ -1,3 +1,8 @@
+---
+title: Component Framework
+description: The two-tier component model for organizing setup and sync operations.
+---
+
 # Component Framework
 
 The workbench uses a two-tier component model for organizing setup and sync operations.

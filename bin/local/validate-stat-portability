@@ -114,7 +114,7 @@ def _discover_by_extension(repo_root: str, shebang_re: re.Pattern) -> set[str]:
     scripts: set[str] = set()
 
     for dirpath, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = [d for d in dirnames if d != '.git']
+        dirnames[:] = [d for d in dirnames if d not in ('.git', 'node_modules')]
         scripts.update(os.path.join(dirpath, f) for f in filenames if f.endswith('.bats'))
         paths = [os.path.join(dirpath, f) for f in filenames if f.endswith(('.sh', '.bash'))]
         scripts.update(p for p in paths if _has_bash_shebang(p, shebang_re))

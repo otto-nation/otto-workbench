@@ -239,7 +239,7 @@ def detect(
     signals.extend(_superseding_prs(repo, readded))
 
     if trail and signals:
-        trail.info("supersession", f"{len(signals)} signal(s)",
+        trail.info("supersession_detect", f"{len(signals)} signal(s)",
                    data={"signals": [s.kind for s in signals]})
     return Verdict(
         signals=signals,
@@ -262,8 +262,10 @@ def detect_cached(
     would never cross from `pr review` to `pr comments`; the state file is the
     only place a verdict survives between them.
 
-    A run with no state file yet computes and does not store — writing one would
-    mean inventing a `PRIdentity` this module has no business deciding, and the
+    Two cases compute without storing, for the same reason from two directions:
+    no `target_dir` at all (the caller has not resolved a run target), and a
+    `target_dir` with no state file in it yet. Writing either would mean
+    inventing a `PRIdentity` this module has no business deciding, and the
     command that owns the state writes it moments later anyway.
     """
     base = base or f"origin/{pr_context.default_branch(wt_path)}"
@@ -272,7 +274,7 @@ def detect_cached(
     state = pr_state.load_state(target_dir) if target_dir else None
     if state and state.supersession.matches(head_sha, base_sha):
         if trail:
-            trail.info("supersession", "reused cached verdict",
+            trail.info("supersession_cache_hit", "reused cached verdict",
                        data={"head_sha": head_sha, "base_sha": base_sha})
         return Verdict(
             signals=list(state.supersession.signals),

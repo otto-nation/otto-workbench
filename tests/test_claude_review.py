@@ -25,7 +25,9 @@ from review_common import (
 )
 import review_gc
 
-from conftest import make_ctx
+from conftest import (
+    make_ctx, supersession_context, supersession_evidence, supersession_verdict,
+)
 
 
 @pytest.fixture(scope="session")
@@ -2170,39 +2172,24 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
 # ── the supersession refusal ─────────────────────────────────────────────────
 
 
-def _verdict(*signals):
-    import supersession
-    return supersession.Verdict(list(signals))
-
-
-def _evidence(detail="`foo` is gone from origin/main"):
-    from pr_state import SupersessionKind, SupersessionSignal
-    return SupersessionSignal(SupersessionKind.READDS_REMOVED_SYMBOL, detail)
-
-
-def _context(detail="replayed onto a moved base"):
-    from pr_state import SupersessionKind, SupersessionSignal
-    return SupersessionSignal(SupersessionKind.REBASE_SKEW, detail, holds=False)
-
-
-def _refuse(cr, monkeypatch, verdict, *, force=False, trail=None):
+def _refuse(cr, monkeypatch, verdict, *, override=False, trail=None):
     """Run the refusal against a canned verdict, detection already answered."""
     monkeypatch.setattr(cr.supersession, "detect_cached",
                         MagicMock(return_value=verdict))
     cr._refuse_if_superseded(
         "/wt", "acme/widget", Path("/target"), "feat/x",
-        force=force, trail=trail or MagicMock(),
+        override=override, trail=trail or MagicMock(),
     )
 
 
 def test_a_clean_branch_is_reviewed(cr, monkeypatch, capsys):
-    _refuse(cr, monkeypatch, _verdict())
+    _refuse(cr, monkeypatch, supersession_verdict())
     assert capsys.readouterr().err == ""
 
 
 def test_context_alone_does_not_refuse(cr, monkeypatch, capsys):
     """A rebase over a moved base is how the problem becomes visible, not the problem."""
-    _refuse(cr, monkeypatch, _verdict(_context()))
+    _refuse(cr, monkeypatch, supersession_verdict(supersession_context()))
     assert "[rebase_skew] replayed onto a moved base" in capsys.readouterr().err
 
 
@@ -2211,7 +2198,7 @@ def test_evidence_refuses_before_the_first_agent_call(cr, monkeypatch, capsys):
     import supersession
 
     with pytest.raises(SystemExit) as exc:
-        _refuse(cr, monkeypatch, _verdict(_evidence()))
+        _refuse(cr, monkeypatch, supersession_verdict(supersession_evidence()))
     assert exc.value.code == supersession.EXIT_SUPERSEDED
 
     out = capsys.readouterr()
@@ -2231,28 +2218,48 @@ def test_evidence_refuses_before_the_first_agent_call(cr, monkeypatch, capsys):
 def test_the_refusal_reaches_the_trail(cr, monkeypatch):
     trail = MagicMock()
     with pytest.raises(SystemExit):
-        _refuse(cr, monkeypatch, _verdict(_evidence()), trail=trail)
+        _refuse(cr, monkeypatch, supersession_verdict(supersession_evidence()),
+                trail=trail)
     data = trail.decision.call_args.kwargs["data"]
     assert data["signals"] == ["readds_removed_symbol"]
 
 
-def test_force_skips_the_check_entirely(cr, monkeypatch):
+def test_the_override_skips_the_check_entirely(cr, monkeypatch):
     """The override has to cost nothing, or it is not an override."""
     detect = MagicMock()
     monkeypatch.setattr(cr.supersession, "detect_cached", detect)
     cr._refuse_if_superseded(
         "/wt", "acme/widget", Path("/target"), "feat/x",
-        force=True, trail=MagicMock(),
+        override=True, trail=MagicMock(),
     )
     assert not detect.called
+
+
+def test_only_the_users_own_force_overrides_the_refusal(cr):
+    """An unattended run is the one this refusal most has to survive.
+
+    `--post` and `--no-post` set the `force` local that suppresses the
+    confirmation prompts, because nobody is there to answer one. Letting that
+    reach here would disarm the check on exactly the runs that post findings to
+    a PR with no operator reading them first.
+    """
+    assert cr._supersession_override(False, False) is False
+    assert cr._supersession_override(True, False) is True
+
+
+def test_recover_overrides_the_refusal_on_both_paths(cr):
+    """Recovery finishes a run whose spend was already made."""
+    assert cr._supersession_override(False, True) is True
 
 
 def test_self_review_refuses_before_it_fetches_anything(cr, tmp_path, monkeypatch):
     """Ordering, not just presence: the check has to precede the issue lookup."""
     import supersession
 
-    monkeypatch.setattr(cr.supersession, "detect_cached",
-                        MagicMock(return_value=_verdict(_evidence())))
+    monkeypatch.setattr(
+        cr.supersession, "detect_cached",
+        MagicMock(return_value=supersession_verdict(supersession_evidence())),
+    )
     monkeypatch.setattr(
         cr.review_issue, "load_issue_provider",
         MagicMock(side_effect=AssertionError("fetched issue context anyway")),
@@ -2266,3 +2273,22 @@ def test_self_review_refuses_before_it_fetches_anything(cr, tmp_path, monkeypatc
             ctx=make_ctx(branch="feat/x", pr_number=None), trail=MagicMock(),
         )
     assert exc.value.code == supersession.EXIT_SUPERSEDED
+
+
+def test_self_review_recovery_is_not_refused(cr, tmp_path, monkeypatch):
+    """A recovery run must not be stranded by a signal that appeared after it started."""
+    monkeypatch.setattr(
+        cr.supersession, "detect_cached",
+        MagicMock(side_effect=AssertionError("checked a recovery run")),
+    )
+    monkeypatch.setattr(cr, "_resolve_recover_sha",
+                        MagicMock(side_effect=SystemExit(99)))
+
+    with pytest.raises(SystemExit) as exc:
+        cr._run_self_review_body(
+            "acme/widget", None, str(tmp_path), "", 1,
+            False, None, None, False, _self_review_args(recover=True),
+            tmp_path, "feat/x", recover=True,
+            ctx=make_ctx(branch="feat/x", pr_number=None), trail=MagicMock(),
+        )
+    assert exc.value.code == 99

@@ -713,9 +713,25 @@ def _fail_orchestration(msg: str, session_log: str) -> None:
 # ── Supersession preflight ──────────────────────────────────────────────────
 
 
+def _supersession_override(user_force: bool, recover: bool) -> bool:
+    """Whether this run is exempt from the supersession refusal, and why.
+
+    `user_force` is the raw `--force` flag, deliberately not the `force` local
+    the confirmation prompts use. That one also absorbs `--post` and
+    `--no-post` as "nobody is here to answer a prompt", and an unattended run
+    is the one this refusal most has to survive: there is no operator to notice
+    that the findings describe deleted code before they are posted to the PR.
+
+    `--recover` is exempt, on both entry points. It finishes a run whose spend
+    has already been made, so refusing it saves nothing and strands the
+    artifacts of the run it was asked to complete.
+    """
+    return bool(user_force or recover)
+
+
 def _refuse_if_superseded(
     wt_path: str, repo: str, target_dir: Path, branch: str, *,
-    force: bool, trail: Trail,
+    override: bool, trail: Trail,
 ) -> None:
     """Stop before the review spends anything on a branch that may be superseded.
 
@@ -730,7 +746,7 @@ def _refuse_if_superseded(
     no findings: they read as ordinary review comments, and #703 is what
     happens when someone acts on them.
     """
-    if force:
+    if override:
         return
     verdict = supersession.detect_cached(
         Path(wt_path), repo, target_dir, trail=trail,
@@ -753,7 +769,7 @@ def _refuse_if_superseded(
         "branch": branch,
         "status": "superseded",
         "signals": [
-            {"kind": str(s.kind), "detail": s.detail, "holds": s.holds}
+            {"kind": s.kind, "detail": s.detail, "holds": s.holds}
             for s in verdict.signals
         ],
         "override": supersession.OVERRIDE_FLAG,
@@ -889,7 +905,7 @@ def _run_review_pr(
     force, repo_dir, max_parallel, no_holistic, max_cost, model,
     effort=None, max_groups=None,
     no_scout=False, disprove=None, generated=False,
-    recover=False,
+    recover=False, supersession_override=False,
 ) -> None:
     trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
                data={"pr": pr_number, "repo": repo, "branch": ctx.branch})
@@ -975,8 +991,11 @@ def _run_review_pr(
         )
 
         # Inside the try, so a refusal still cleans up the worktree it read.
+        # Its own flag rather than the `force` above, which by here has
+        # absorbed --post/--no-post — see _supersession_override.
         _refuse_if_superseded(
-            wt_path, repo, ctx.target_dir, ctx.branch, force=force, trail=trail,
+            wt_path, repo, ctx.target_dir, ctx.branch,
+            override=supersession_override, trail=trail,
         )
 
         session_log = str(review_dir / FILENAME_SESSION)
@@ -1048,6 +1067,7 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
             effort=effort, max_groups=max_groups,
             no_scout=no_scout, disprove=disprove, generated=generated,
             recover=recover,
+            supersession_override=_supersession_override(args.force, recover),
         )
         # Inside the trail's scope, so a failed write has somewhere to report.
         _update_pr_state(ctx, str(review_file), Mode.PR, trail=trail)
@@ -1087,7 +1107,7 @@ def _run_self_review_body(
     # the cheapest point at which the run can still cost nothing.
     _refuse_if_superseded(
         wt_path, repo, ctx.target_dir, branch_name,
-        force=args.force, trail=trail,
+        override=_supersession_override(args.force, recover), trail=trail,
     )
 
     if recover:

@@ -13,12 +13,16 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from conftest import assert_no_worktree_exit, make_ctx, write_thrash_log
+from conftest import (
+    assert_no_worktree_exit, make_ctx,
+    supersession_context, supersession_evidence, supersession_verdict,
+    write_thrash_log,
+)
 import pr_state
 from pr_comments import ThreadState
 from pr_state import (
     CommitStatus, FixSummary, PRIdentity, PRState, SupersessionKind,
-    SupersessionSignal, ThreadAction, ThreadOutcome,
+    ThreadAction, ThreadOutcome,
 )
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
@@ -36,7 +40,6 @@ from review_prompt import (
     _build_reply_threads_section, _strip_internal_sections,
     _format_general_comments, _format_review_comments, _format_reviews,
 )
-import supersession
 
 
 def _lookup_returns(comment):
@@ -3322,18 +3325,6 @@ class TestClassifyAlreadyAddressed:
         assert outcomes[0].commit_sha == ""
 
 
-def _verdict(*signals):
-    return supersession.Verdict(list(signals))
-
-
-def _evidence(detail="d"):
-    return SupersessionSignal(SupersessionKind.READDS_REMOVED_SYMBOL, detail)
-
-
-def _context(detail="d"):
-    return SupersessionSignal(SupersessionKind.REBASE_SKEW, detail, holds=False)
-
-
 class TestHoldIfSuperseded:
     """What the preflight's findings are allowed to do to this run.
 
@@ -3345,24 +3336,24 @@ class TestHoldIfSuperseded:
 
     def test_evidence_shuts_the_gate(self, rt, publishing_on):
         import publishing
-        rt._hold_if_superseded(_verdict(_evidence()))
+        rt._hold_if_superseded(supersession_verdict(supersession_evidence()))
         assert publishing.enabled() is False
         assert "supersession signal" in publishing.held()
 
     def test_context_alone_leaves_it_open(self, rt, publishing_on):
         """A rebase is how the problem becomes visible, not the problem."""
         import publishing
-        rt._hold_if_superseded(_verdict(_context()))
+        rt._hold_if_superseded(supersession_verdict(supersession_context()))
         assert publishing.enabled() is True
 
     def test_nothing_found_says_nothing(self, rt, publishing_on, capsys):
-        rt._hold_if_superseded(_verdict())
+        rt._hold_if_superseded(supersession_verdict())
         assert capsys.readouterr().err == ""
 
     def test_the_output_names_the_signal_that_fired(self, rt, publishing_on, capsys):
-        rt._hold_if_superseded(_verdict(
-            _context("replayed onto a moved base"),
-            _evidence("`foo` is gone from origin/main"),
+        rt._hold_if_superseded(supersession_verdict(
+            supersession_context("replayed onto a moved base"),
+            supersession_evidence("`foo` is gone from origin/main"),
         ))
         err = capsys.readouterr().err
         assert "[rebase_skew] replayed onto a moved base" in err
@@ -3370,7 +3361,7 @@ class TestHoldIfSuperseded:
 
     def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
         trail = MagicMock()
-        rt._hold_if_superseded(_verdict(_evidence()), trail)
+        rt._hold_if_superseded(supersession_verdict(supersession_evidence()), trail)
         data = trail.decision.call_args.kwargs["data"]
         assert data["signals"] == [SupersessionKind.READDS_REMOVED_SYMBOL]
 

@@ -764,8 +764,8 @@ a clean branch costs two local git commands and no network call at all. The
 verdict is cached in the state file against the HEAD *and* base SHAs it was
 computed from, so the next command on the same branch reuses it rather than
 repeating the search; a moved base invalidates it just as a moved HEAD does,
-because a branch re-adds nothing until the hour the default branch deletes
-something.
+because there is nothing to re-add until the default branch deletes it — a
+branch whose own HEAD never moves becomes superseded the moment `main` does.
 
 **One detection, two policies.** What a positive verdict does depends on where
 the money is:
@@ -802,6 +802,14 @@ If the branch really is still wanted, re-run with `--force`, which skips the
 check entirely. `pr fix` stops on the refusal rather than continuing to its CI
 pass: every remaining pass acts on the same branch, so one refusal answers for
 all of them.
+
+Two flags do *not* override it, and one does. `--post` and `--no-post` set the
+same internal flag `--force` does — they suppress the confirmation prompts,
+because nobody is present to answer one — but an unattended run is the one this
+refusal most has to survive, so the check reads the raw `--force` instead.
+`--recover` is exempt on both entry points: it finishes a run whose spend was
+already made, so refusing it saves nothing and strands the artifacts of the run
+it was asked to complete.
 
 This is distinct from `pr rebase`'s already-landed check, which asks whether the
 work has *landed* rather than whether it has been *superseded* — work can land

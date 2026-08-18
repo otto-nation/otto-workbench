@@ -115,6 +115,7 @@ The `fix_pass` object contains:
 | `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection |
 | `deferred` | Threads the agent could not auto-fix in the current pass |
 | `commit_sha` | Short SHA of the fix commit, or null |
+| `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, or `push_held` |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
 | `summary_url` | URL of the summary issue comment, or null |
 | `summary_deferred` | `true` when summary was deferred because `needs_human` threads exist |
@@ -141,6 +142,14 @@ fix/needs_human/dismissed pipeline. Items with synthetic IDs (prefixed `ic-`
 or `rb-`) are comment items; regular thread IDs are inline review threads.
 
 **Report auto-fixes:** "Fixed N threads/items (commit SHA). M need your input. K skipped."
+
+**If `commit_status` is `push_held`:** the fixes are committed locally and
+nothing has been published, because something in the run judged the branch not
+safe to assert progress on. Say so plainly and do not report the fixes as landed
+on the PR. The stderr output states the reason the hold carries — read it back
+to the user rather than guessing, since new hold sources are added over time.
+Settle that reason with the user, and only then run `--finish --post`, which
+pushes the commit and drains the replies and the summary.
 
 **If `needs_human` and `deferred` are both empty and no unseen comments:**
 done — no further action needed.
@@ -249,6 +258,12 @@ a reviewer has answered, so a revised position replaces the old one instead of
 stacking under it. Do **not** call `gh api .../replies` directly: that path has
 no dedup, and it is what leaves a thread holding several of our comments that
 disagree.
+
+A reply that has been rewritten by hand is never replaced by a later pass. The
+fix queue re-drains every fixed thread on each round, and the templated body
+would otherwise overwrite the reasoning someone wrote in its place. The run
+names each thread it skipped for that reason; use `--reply` on one to replace it
+deliberately.
 
 Print summary: fixes applied, replies posted, threads resolved, threads still open.
 

@@ -20,6 +20,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from string import Template
 
@@ -34,6 +35,7 @@ import pr_state
 import run_lock
 import publishing
 from pr_comments import ThreadState
+from pr_state import CommitStatus
 import review_common
 import review_issue
 from review_common import Diagnosis
@@ -82,6 +84,24 @@ _APPLIED_REPLY_PREFIX = "Applied:"
 _ADDRESSED_REPLY_PREFIX = "Already addressed"
 _DISMISSED_REPLY_PREFIX = "Suggestion reviewed and determined to be inapplicable"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
+# Every opening line a generated reply can have. Ordered by nothing — this is a
+# membership test, used to tell our own template apart from a reply someone
+# rewrote by hand.
+_GENERATED_REPLY_PREFIXES = (
+    _APPLIED_REPLY_PREFIX,
+    _ADDRESSED_REPLY_PREFIX,
+    _DISMISSED_REPLY_PREFIX,
+    _DEFERRED_REPLY_PREFIX,
+)
+# Every trailing paragraph a generated reply can have: one sentence naming a
+# commit, a file, or an issue. Kept in step with the four body_fn builders
+# below — a new trailing line there needs its opening added here, or the reply
+# it appears in stops being recognised as ours.
+_GENERATED_FOLLOWUP_RE = re.compile(
+    r"(?:Fixed in|Result is in|Current behaviour is at|Addressed in|See|"
+    r"Tracked in|Unchanged at) .+\.$",
+    re.DOTALL,
+)
 # Not agent_retry.FIX_RETRY_HINT, which scolds an agent that produced nothing.
 # This one addresses an agent that produced something and is being handed the
 # remainder, so it points at the checklist rather than at the write mechanism.
@@ -845,10 +865,47 @@ def _parse_tracking_results(
     return result
 
 
+class HistoryKind(StrEnum):
+    """Which preflight check produced a finding. Printed, and sent to the trail."""
+
+    # The branch's first commit was written long before it was committed.
+    REBASE_SKEW = "rebase_skew"
+    # The branch adds a definition the default branch has removed.
+    READDS_REMOVED_SYMBOL = "readds_removed_symbol"
+    # A merged PR mentions that definition.
+    SUPERSEDING_PR = "superseding_pr"
+
+
+@dataclasses.dataclass(frozen=True)
+class HistorySignal:
+    """One cheap reading of the branch's history that argues against fixing it.
+
+    `holds` separates evidence from context. Re-adding something the default
+    branch deleted is evidence the branch is superseded; a rebase over a moved
+    base is only what makes that legible, and every long-lived branch has one —
+    withholding a commit on it alone would fire on the healthy case.
+    """
+
+    kind: HistoryKind
+    detail: str
+    holds: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
+class AddedSymbol:
+    """A definition the branch adds, and the file it adds it in."""
+
+    name: str
+    path: str
+
+
 @dataclass
 class CommitPushResult:
     sha: str | None
-    status: str  # see _UNPUSHED_STATUSES; also "pushed", "no_changes", "commit_failed"
+    # A pr_state.CommitStatus. Typed as `str` because a status read back out
+    # of a state file is a plain string, and CommitStatus is a StrEnum
+    # precisely so the two compare equal.
+    status: str
     error: str
 
 
@@ -856,7 +913,7 @@ class CommitPushResult:
 # `push_held` is us refusing, because the gate was shut when the pass ran.
 # Either way the SHA is local-only, so nothing may cite it outward yet — the
 # commit link would 404 for the reviewer reading it.
-_UNPUSHED_STATUSES = frozenset({"push_failed", "push_held"})
+_UNPUSHED_STATUSES = frozenset({CommitStatus.PUSH_FAILED, CommitStatus.PUSH_HELD})
 
 
 def _commit_unpushed(status: str) -> bool:
@@ -866,7 +923,7 @@ def _commit_unpushed(status: str) -> bool:
 def _hold_push(wt_path: Path, sha: str | None) -> CommitPushResult:
     """Keep a commit local because the gate is shut."""
     publishing.draft("push", f"git -C '{wt_path}' push")
-    return CommitPushResult(sha, "push_held", "")
+    return CommitPushResult(sha, CommitStatus.PUSH_HELD, "")
 
 
 def _report_diverged_push(
@@ -931,7 +988,7 @@ def _commit_regen_and_retry_push(
         return None
 
     log.info("Pushed fixes (with regenerated files)")
-    return CommitPushResult(sha, "pushed", "")
+    return CommitPushResult(sha, CommitStatus.PUSHED, "")
 
 
 def _commit_and_push(
@@ -939,7 +996,7 @@ def _commit_and_push(
 ) -> CommitPushResult:
     """Commit and push fixes. Returns structured result with status."""
     if not review_common.has_uncommitted_changes(wt_path):
-        return CommitPushResult(None, "no_changes", "")
+        return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
 
     subprocess.run(
         ["git", "-C", str(wt_path), "add", "-A"],
@@ -959,7 +1016,7 @@ def _commit_and_push(
         log.error(f"commit failed: {err}")
         if trail:
             trail.error("commit", "commit failed", data={"error": err[:500]})
-        return CommitPushResult(None, "commit_failed", err)
+        return CommitPushResult(None, CommitStatus.COMMIT_FAILED, err)
 
     sha = _get_head_sha(wt_path)
 
@@ -977,7 +1034,7 @@ def _commit_and_push(
     )
     if push.returncode == 0:
         log.info("Pushed fixes")
-        return CommitPushResult(sha, "pushed", "")
+        return CommitPushResult(sha, CommitStatus.PUSHED, "")
 
     # Pre-push hooks may regenerate files (e.g. proto → .pb.go, OpenAPI specs),
     # leaving uncommitted changes that cause the push to fail. Commit and retry.
@@ -987,7 +1044,25 @@ def _commit_and_push(
 
     err = push.stderr.strip()
     _report_diverged_push(wt_path, sha, err, trail)
-    return CommitPushResult(sha, "push_failed", err)
+    return CommitPushResult(sha, CommitStatus.PUSH_FAILED, err)
+
+
+def _commit_fixes(
+    wt_path: Path, fixed: int, deferred: int, head_before: str,
+    trail: Trail | None = None,
+) -> CommitPushResult:
+    """Commit the pass's work, and recover a commit the agent made itself.
+
+    A hold does not reach this far, and #718 settled that deliberately: a local
+    commit asserts nothing to a reviewer, because it only becomes visible on
+    push and the push is what the hold stops. Leaving the fixes uncommitted
+    instead would make them fragile, and would leave the next `--fix` round
+    reading its own dirty tree as a refused commit.
+    """
+    cp = _commit_and_push(wt_path, fixed, deferred, trail=trail)
+    if cp.status in (CommitStatus.NO_CHANGES, CommitStatus.COMMIT_FAILED):
+        cp = _recover_agent_commit(wt_path, head_before, trail, prior=cp)
+    return cp
 
 
 def _our_last_reply_id(thread: ReportThread | None) -> int | None:
@@ -1028,6 +1103,34 @@ def _upsert_thread_reply(
     return pc.post_thread_reply(repo, pr_number, root_id, body)
 
 
+def _is_generated_reply(body: str) -> bool:
+    """Whether a standing reply is still one of ours, in template shape.
+
+    The upsert replaces our standing reply wholesale, and the fix queue
+    re-drains every fixed thread on later rounds — so a reply someone rewrote
+    by hand, with reasoning or an explicit decision not to do what the reviewer
+    asked, was overwritten by the three-line template with no undo but the edit
+    history (#735).
+
+    Divergence is measured against the template rather than tracked by round
+    number: the round a reply was written in says nothing about whether it is
+    still ours. Regenerating an identical body is harmless; replacing a
+    divergent one is not.
+
+    ceiling: a hand edit still reads as generated when it stays inside the
+    template's own free text — prose in the opening paragraph, or a trailing
+    sentence that happens to start with one of the followup openings. Tightening
+    the followup pattern is not the fix, since the linkless generated shapes
+    would stop matching and their replies could never be updated again. Add an
+    HTML marker to generated bodies and key off that if either case ever costs
+    someone a reply.
+    """
+    paragraphs = [p.strip() for p in body.strip().split("\n\n") if p.strip()]
+    if not paragraphs or not paragraphs[0].startswith(_GENERATED_REPLY_PREFIXES):
+        return False
+    return all(_GENERATED_FOLLOWUP_RE.fullmatch(p) for p in paragraphs[1:])
+
+
 def _post_thread_replies(
     entries: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
@@ -1038,15 +1141,21 @@ def _post_thread_replies(
     """Leave one reply per thread, building each body with body_fn.
 
     Whichever verdict a round reaches, it lands in the same place: our standing
-    reply on that thread, replaced. Returns the number of threads replied to.
+    reply on that thread, replaced — unless a human has rewritten that reply,
+    in which case the thread is left alone. Returns the number replied to.
     """
     replied = 0
     edited = 0
+    kept = 0
     for entry in entries:
         thread = threads_by_id.get(entry.id)
         if not thread or not thread.comments:
             continue
         existing_id = _our_last_reply_id(thread)
+        if existing_id and not _is_generated_reply(str(thread.comments[-1].get("body", ""))):
+            log.warn(f"{entry.id}: standing reply was hand-written — leaving it alone")
+            kept += 1
+            continue
         # ceiling: thread.comments is not refreshed after a post, so two replies
         # to one thread within a single run would still stack. Unreachable while
         # the reply categories stay a partition of the triage verdicts; refetch
@@ -1057,6 +1166,11 @@ def _post_thread_replies(
         edited += existing_id is not None
     if edited:
         log.info(f"Edited {edited} standing repl{'y' if edited == 1 else 'ies'} in place")
+    if kept:
+        log.info(
+            f"Left {kept} hand-written repl{'y' if kept == 1 else 'ies'} untouched "
+            f"— use --reply <id> --body-file <f> to replace one deliberately"
+        )
     return replied
 
 
@@ -1067,19 +1181,23 @@ def _post_fix_replies(
     pr_number: int,
     commit_sha: str,
 ) -> int:
-    """Post replies to each fixed thread. Returns count of replies posted."""
-    commit_url = f"https://github.com/{repo}/commit/{commit_sha}"
+    """Post replies to each fixed thread. Returns count of replies posted.
 
+    `commit_sha` covers the entries this pass just fixed. An entry replayed from
+    state carries the commit that actually fixed it, which may be several rounds
+    old — see `_entry_commit_sha`.
+    """
     def body_fn(entry: CommentItem) -> str:
+        sha = _entry_commit_sha(entry, commit_sha)
         parts = [
             f"{_APPLIED_REPLY_PREFIX} {entry.summary}",
-            f"Fixed in [`{commit_sha}`]({commit_url}).",
+            f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha}).",
         ]
         # The file, not the line: the fix has just moved the lines around it,
         # and pointing a reviewer at the wrong line is worse than pointing them
         # at the file the change landed in.
         if entry.file:
-            url = _blob_permalink(repo, commit_sha, entry.file)
+            url = _blob_permalink(repo, sha, entry.file)
             parts.append(f"Result is in [`{entry.file}`]({url}).")
         return "\n\n".join(parts)
 
@@ -1087,6 +1205,23 @@ def _post_fix_replies(
     if posted:
         log.info(f"Replied on {posted} fixed thread(s)")
     return posted
+
+
+def _entry_commit_sha(
+    entry: CommentItem | pr_state.ThreadOutcome, pass_sha: str = "",
+) -> str:
+    """The commit that fixed this entry, preferring the entry's own record.
+
+    `pass_sha` describes the pass running now. An entry replayed from state may
+    have been fixed rounds ago by a different commit, so its own SHA wins and
+    the pass-level one is only a fallback for an entry that has none.
+
+    Shared by the summary row and the thread reply on purpose: they were two
+    implementations of the same attribution, and only the summary's was right —
+    the reply pinned every round's `Fixed in` line, and every blob permalink
+    beneath it, to whatever the latest pass had committed (#735).
+    """
+    return getattr(entry, "commit_sha", "") or pass_sha
 
 
 def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
@@ -1398,6 +1533,12 @@ _HANDLED_REPLY_PREFIXES = (
 # _fixed_status_for, which must not credit the pass's commit for it.
 _RECONCILED_REASON = "reconciled: handled outside the fix pass"
 
+# The two status cells that decline to name a commit. Both exist because the
+# alternative is a confident wrong claim: the pass either knows someone else
+# landed the work, or knows only that it cannot say who did.
+_RECONCILED_STATUS_TEXT = "Addressed outside the fix pass"
+_UNATTRIBUTED_STATUS_TEXT = "Fix applied (commit not recorded)"
+
 
 def _thread_looks_handled(thread: ReportThread | None) -> bool:
     """True when GitHub shows this thread as dealt with, by anyone.
@@ -1502,7 +1643,7 @@ def _push_held_commit(
         return
 
     if _is_pushed(wt_path, fix.commit_sha):
-        fix.commit_status = "pushed"
+        fix.commit_status = CommitStatus.PUSHED
         return
 
     if not publishing.enabled():
@@ -1515,11 +1656,11 @@ def _push_held_commit(
     )
     if push.returncode != 0:
         _report_diverged_push(wt_path, fix.commit_sha, push.stderr.strip(), trail)
-        fix.commit_status = "push_failed"
+        fix.commit_status = CommitStatus.PUSH_FAILED
         return
 
     log.info(f"Pushed held fixes ({fix.commit_sha})")
-    fix.commit_status = "pushed"
+    fix.commit_status = CommitStatus.PUSHED
 
 
 def _resolve_fixed_threads(
@@ -1656,27 +1797,62 @@ def _fixed_status_for(
     Reachable only from `_render_deferred_summary`, which refuses to post while
     a recorded commit is still unpushed, so the commit link cannot 404.
     """
-    sha = getattr(entry, "commit_sha", "")
+    sha = _entry_commit_sha(entry)
     if sha:
         return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
     # Reconciled outcomes were handled by hand or by the reviewer, and the
     # commit that did it is not recorded anywhere. Falling through would credit
     # the pass's commit for work it never did.
     if getattr(entry, "reason", "") == _RECONCILED_REASON:
-        return "Addressed outside the fix pass"
+        return _RECONCILED_STATUS_TEXT
     return _fixed_status_text(cp, repo)
 
 
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     """Human-readable status for fixed threads in the summary table."""
-    if cp.sha and cp.status == "pushed":
+    if cp.sha and cp.status == CommitStatus.PUSHED:
         url = f"https://github.com/{repo}/commit/{cp.sha}"
         return f"Fixed in [`{cp.sha}`]({url})"
-    if cp.status == "no_changes":
-        return "Fix applied (no commit needed)"
-    if cp.status == "commit_failed":
+    if cp.status == CommitStatus.NO_CHANGES:
+        # "A fix was applied" and "nothing was committed" contradict each other,
+        # and which half is wrong is not knowable from here — a hook may have
+        # rejected the commit, or the edit may have been a no-op. #734 published
+        # the confident reading of that ("no commit needed") over a rejected
+        # commit, so the cell now states only what is certain.
+        return _UNATTRIBUTED_STATUS_TEXT
+    if cp.status == CommitStatus.COMMIT_FAILED:
         return "Fix applied (commit failed — pre-commit hook?)"
+    if cp.status == CommitStatus.RECONCILED:
+        return _RECONCILED_STATUS_TEXT
+    # Both callers refuse to render an unpushed commit, so these two are not
+    # reachable today. They are spelled out anyway: the fallback below reads as
+    # "not done yet", which would be a false claim about a commit that exists
+    # and is only waiting to be published.
+    if cp.status == CommitStatus.PUSH_HELD:
+        return "Fix committed locally (push held pending discussion)"
+    if cp.status == CommitStatus.PUSH_FAILED:
+        return "Fix committed locally (push failed)"
     return "Fix pending"
+
+
+def _warn_unattributed_fixes(fixed: list, cp: CommitPushResult) -> None:
+    """Say so when rows claim fixes that no commit accounts for.
+
+    The contradiction is caught rather than rendered silently: the summary goes
+    out under the operator's name, and a row that asserts both halves is a claim
+    about their branch that nothing in the run supports.
+    """
+    if cp.sha or not fixed:
+        return
+    if cp.status not in (CommitStatus.NO_CHANGES, CommitStatus.COMMIT_FAILED):
+        return
+    orphans = [e for e in fixed if not getattr(e, "commit_sha", "")]
+    if not orphans:
+        return
+    log.warn(
+        f"{len(orphans)} fixed row(s) have no commit to attribute them to "
+        f"(commit status: {cp.status}) — rendering them without a claim"
+    )
 
 
 def _comment_item_permalink(
@@ -2109,9 +2285,12 @@ def _post_pending_fix_replies(
     fixed_threads = [t for t in fix.threads if t.action == FA.FIXED]
 
     if fixed_threads:
+        # commit_sha carried, not dropped: this queue spans rounds, and an
+        # entry fixed two commits ago must still cite the commit that fixed it.
         items = [
             CommentItem(id=t.id, file=t.file, line=t.line,
-                        reviewer=t.reviewer, summary=t.summary)
+                        reviewer=t.reviewer, summary=t.summary,
+                        commit_sha=t.commit_sha)
             for t in fixed_threads
         ]
         # Accumulate rather than discard: these are the same round's replies
@@ -2124,8 +2303,35 @@ def _post_pending_fix_replies(
 
     # A draft delivered nothing, so the queue has to survive for the next run.
     if publishing.enabled():
-        fix.commit_status = "pushed"
+        fix.commit_status = CommitStatus.PUSHED
         fix.replies_pending = False
+
+
+def _reconciled_commit(
+    fix: pr_state.FixSummary, status: str, wt_path: Path | None,
+) -> CommitPushResult:
+    """The pass's commit as the worktree now shows it, not as it was recorded.
+
+    The permalinks in this summary already fall back to the identity HEAD when
+    the pass recorded no commit of its own; the status cell did not, so a
+    hook-rejected commit the operator then made by hand rendered as a flat
+    "no commit needed" beside a file link pointing at the very change it
+    denied (#734).
+
+    A moved HEAD with nothing recorded means someone committed outside the
+    pass. That commit is only worth naming if a reviewer can open it, so an
+    unpushed one falls back to the same non-committal cell a reconciled
+    outcome gets.
+    """
+    if fix.commit_sha or not wt_path or not fix.head_sha:
+        return CommitPushResult(fix.commit_sha or None, status, "")
+    current = _get_head_sha(wt_path)
+    if not current or current == fix.head_sha:
+        return CommitPushResult(None, status, "")
+    if _is_pushed(wt_path, current):
+        log.info(f"Attributing fixes to {current} — HEAD moved past the fix snapshot")
+        return CommitPushResult(current, CommitStatus.PUSHED, "")
+    return CommitPushResult(None, CommitStatus.RECONCILED, "")
 
 
 def _render_deferred_summary(
@@ -2150,7 +2356,7 @@ def _render_deferred_summary(
         if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
             log.info("Push still pending — keeping summary deferred")
             return
-        status = "pushed"
+        status = CommitStatus.PUSHED
         # Same reason as the deferred-reply queue: only a run that actually
         # publishes may retire an unpushed status, or the queue is lost silently.
         if publishing.enabled():
@@ -2171,11 +2377,8 @@ def _render_deferred_summary(
     dismissed = [t for t in fix.threads if t.action == FA.DISMISSED]
     already_addressed = [t for t in fix.threads if t.action == FA.ALREADY_ADDRESSED]
 
-    cp = CommitPushResult(
-        sha=fix.commit_sha or None,
-        status=status,
-        error="",
-    )
+    cp = _reconciled_commit(fix, status, wt_path)
+    _warn_unattributed_fixes(fixed, cp)
     url = _publish_summary(repo, pr_number, functools.partial(
         _build_summary_body,
         fixed, needs_human, deferred, cp, repo, pr_number, threads_by_id,
@@ -2186,7 +2389,7 @@ def _render_deferred_summary(
         deferred_issue_id=fix.deferred_issue_id,
         deferred_issue_url=fix.deferred_issue_url,
         has_comment_items=fix.has_comment_items,
-        head_sha=fix.commit_sha or state.identity.head_sha,
+        head_sha=cp.sha or state.identity.head_sha,
     ))
     if url:
         log.info(f"Posted deferred fix summary: {url}")
@@ -2237,6 +2440,7 @@ def _post_or_defer_summary(
     Returns the comment URL if posted, None if deferred or nothing to post.
     When deferred, the summary is re-rendered from FixSummary during --finish.
     """
+    _warn_unattributed_fixes(fixed, cp)
     if _commit_unpushed(cp.status):
         log.info("Deferred fix summary — commit not on the remote, will post after push lands")
         return None
@@ -2272,16 +2476,44 @@ def _is_pushed(wt_path: Path, sha: str) -> bool:
     return result.returncode == 0 and result.stdout.strip() != ""
 
 
+def _unrecovered_commit(
+    wt_path: Path, prior: CommitPushResult | None,
+) -> CommitPushResult:
+    """What the pass knows when recovery found no commit of the agent's.
+
+    Recovery exists to *add* information. When it finds none, whatever the
+    caller already established stands: overwriting a `commit_failed` with
+    `no_changes` here is how #734 published "Fix applied (no commit needed)"
+    over a commit a pre-commit hook had rejected.
+
+    With nothing prior to preserve, the tree itself distinguishes the two
+    remaining readings. Changes still sitting there after a commit was
+    attempted mean something refused it, not that there was nothing to commit.
+    """
+    if prior is not None and prior.status != CommitStatus.NO_CHANGES:
+        return prior
+    if review_common.has_uncommitted_changes(wt_path):
+        return CommitPushResult(
+            None, CommitStatus.COMMIT_FAILED, "changes remain uncommitted in the worktree",
+        )
+    return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
+
+
 def _recover_agent_commit(
     wt_path: Path, head_before: str, trail: Trail | None = None,
+    prior: CommitPushResult | None = None,
 ) -> CommitPushResult:
-    """Detect and push commits made directly by the fix agent."""
+    """Detect and push commits made directly by the fix agent.
+
+    `prior` is what the caller's own commit attempt concluded, and it is never
+    downgraded — see `_unrecovered_commit`.
+    """
     head_after = _get_head_sha(wt_path)
     if head_after == head_before:
-        return CommitPushResult(None, "no_changes", "")
+        return _unrecovered_commit(wt_path, prior)
 
     if _is_pushed(wt_path, head_after):
-        return CommitPushResult(head_after, "pushed", "")
+        return CommitPushResult(head_after, CommitStatus.PUSHED, "")
 
     if not publishing.enabled():
         return _hold_push(wt_path, head_after)
@@ -2292,14 +2524,14 @@ def _recover_agent_commit(
     )
     if push.returncode == 0:
         log.info("Pushed agent-committed fixes")
-        return CommitPushResult(head_after, "pushed", "")
+        return CommitPushResult(head_after, CommitStatus.PUSHED, "")
 
     err = push.stderr.strip()
     log.error("push failed after agent commit")
     if trail:
         trail.error("push", "push failed after agent commit",
                     data={"sha": head_after, "error": err[:500]})
-    return CommitPushResult(head_after, "push_failed", err)
+    return CommitPushResult(head_after, CommitStatus.PUSH_FAILED, err)
 
 
 def _build_thread_outcomes(
@@ -2319,7 +2551,7 @@ def _build_thread_outcomes(
     outcomes: list[pr_state.ThreadOutcome] = []
     for entry in fixed:
         outcome = entry.to_outcome(FA.FIXED)
-        outcome.commit_sha = commit_sha
+        outcome.commit_sha = _entry_commit_sha(entry, commit_sha)
         outcomes.append(outcome)
     for entry in deferred:
         outcomes.append(entry.to_outcome(FA.DEFERRED))
@@ -2479,6 +2711,194 @@ def _retry_fix_pass(
     return result
 
 
+# Author-vs-committer drift on the first commit, in days, before the branch is
+# plainly sitting on a base that moved under it. Days, not hours: a same-day
+# rebase is just a push after `wt merge`.
+_REBASE_SKEW_DAYS = 7
+# This is a preflight, not an investigation. Whether the branch re-adds anything
+# the default branch removed is answered as well by the first few symbols as by
+# all of them, and each one costs two git calls.
+_PREFLIGHT_SYMBOL_LIMIT = 10
+# ...and each flagged one costs a network round trip on top.
+_PREFLIGHT_SEARCH_LIMIT = 2
+# A definition line, in the languages this repo and its neighbours are written
+# in. Deliberately shallow: a missed symbol costs one unfired signal, and a
+# wrong one costs a search that finds nothing.
+_SYMBOL_DEF_RE = re.compile(
+    r"^\+\s*(?:export\s+|pub\s+|public\s+|private\s+)?(?:async\s+)?"
+    r"(?:func|def|class|type|interface|struct|fn)\s+"
+    r"(?:\([^)]*\)\s*)?"
+    r"([A-Za-z_]\w{3,})",
+)
+
+
+def _rebase_skew_days(wt_path: Path, base: str) -> int:
+    """Days between when the branch's first commit was written and committed.
+
+    Non-zero means the commit was replayed — a rebase, a cherry-pick — and a
+    large value means it was replayed onto a base that had moved a long way.
+    Unreadable output reads as no skew: this is a hint, and a hint that cannot
+    be computed is not a finding.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "log", "--reverse", "--format=%at %ct",
+         f"{base}..HEAD"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return 0
+    parts = result.stdout.strip().splitlines()[0].split()
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return 0
+    return max(0, (int(parts[1]) - int(parts[0])) // 86400)
+
+
+def _branch_added_symbols(wt_path: Path, base: str) -> list[AddedSymbol]:
+    """Definitions this branch adds.
+
+    Three-dot: what the branch adds relative to the merge base. A brand-new
+    definition and one re-added over a deletion are indistinguishable here —
+    `_removed_from_base` is what tells them apart.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "diff", f"{base}...HEAD"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return []
+    found: dict[str, str] = {}
+    path = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("+++ b/"):
+            path = line[len("+++ b/"):]
+            continue
+        match = _SYMBOL_DEF_RE.match(line)
+        if match and path and len(found) < _PREFLIGHT_SYMBOL_LIMIT:
+            found.setdefault(match.group(1), path)
+    return [AddedSymbol(name, path) for name, path in found.items()]
+
+
+def _removed_from_base(wt_path: Path, base: str, symbol: str, path: str) -> str:
+    """The base commit that last touched `symbol`, if the base no longer has it.
+
+    Absent from the base plus a history that once contained it is the whole
+    signal: a symbol the base never had is simply new. Pinned to the file the
+    branch adds it in, which keeps the pickaxe off the full history.
+    """
+    present = subprocess.run(
+        ["git", "-C", str(wt_path), "grep", "-q", "-F", symbol, base],
+        capture_output=True, text=True,
+    )
+    if present.returncode == 0:
+        return ""
+    log_out = subprocess.run(
+        ["git", "-C", str(wt_path), "log", "--format=%h", "--max-count=1",
+         f"-S{symbol}", base, "--", path],
+        capture_output=True, text=True,
+    )
+    lines = log_out.stdout.strip().splitlines()
+    return lines[0] if lines else ""
+
+
+def _superseding_prs(repo: str, symbols: list[str]) -> list[HistorySignal]:
+    """Merged PRs that mention a re-added symbol.
+
+    The PR that removed it is the thing worth reading before fixing anything on
+    this branch, and its title usually says so.
+    """
+    found = []
+    for symbol in symbols[:_PREFLIGHT_SEARCH_LIMIT]:
+        result = subprocess.run(
+            ["gh", "api", f"search/issues?q=repo:{repo}+{symbol}+is:merged",
+             "--jq", '.items[0] // empty | "#\\(.number) \\(.title)"'],
+            capture_output=True, text=True,
+        )
+        title = result.stdout.strip()
+        if result.returncode == 0 and title:
+            found.append(HistorySignal(
+                HistoryKind.SUPERSEDING_PR,
+                f"a merged PR mentioning `{symbol}`: {title}",
+            ))
+    return found
+
+
+def _history_preflight(
+    wt_path: Path, repo: str, trail: Trail | None = None,
+) -> list[HistorySignal]:
+    """Cheap checks for a branch whose reason to exist may already be gone.
+
+    #703's branch had been rebased over a `main` that had deleted the code it
+    was fixing, and the reviewer's "this does not exist any more" was one
+    thread among ten. None of that needs an AI call to notice — the skew is in
+    the commit dates, the re-addition is in the diff, and the PR that removed
+    it is one search away. Run before the fix pass, so what it finds can reach
+    the same side-effect hold an open thread does.
+    """
+    base = f"origin/{_resolve_default_branch(wt_path)}"
+    signals = []
+
+    skew = _rebase_skew_days(wt_path, base)
+    if skew >= _REBASE_SKEW_DAYS:
+        signals.append(HistorySignal(
+            HistoryKind.REBASE_SKEW,
+            f"the first commit was written {skew} day(s) before it was committed "
+            f"— this branch has been replayed onto a base that moved",
+            holds=False,
+        ))
+
+    readded = []
+    for symbol in _branch_added_symbols(wt_path, base):
+        removed_in = _removed_from_base(wt_path, base, symbol.name, symbol.path)
+        if not removed_in:
+            continue
+        readded.append(symbol.name)
+        signals.append(HistorySignal(
+            HistoryKind.READDS_REMOVED_SYMBOL,
+            f"`{symbol.name}` is added by this branch but absent from {base}, "
+            f"which last touched it in {removed_in} ({symbol.path})",
+        ))
+
+    signals.extend(_superseding_prs(repo, readded))
+
+    if trail and signals:
+        trail.info("history_preflight", f"{len(signals)} signal(s)",
+                   data={"signals": [s.kind for s in signals]})
+    return signals
+
+
+def _hold_if_superseded(
+    signals: list[HistorySignal], trail: Trail | None = None,
+) -> None:
+    """Report what the preflight found, and hold if any of it is evidence.
+
+    Every signal is printed with its kind, so the output says which check
+    fired rather than leaving the operator to guess why the run went quiet.
+
+    The hold is the same one an open thread places, and reaches the same acts:
+    the push, the `Fixed in <sha>` replies, the thread resolutions, and the
+    summary. The local commit is not one of them — see `_commit_fixes`.
+    """
+    if not signals:
+        return
+    log.warn("History preflight — this branch may already be superseded:")
+    for signal in signals:
+        log.warn(f"  [{signal.kind}] {signal.detail}")
+
+    holding = [s for s in signals if s.holds]
+    if not holding:
+        return
+    publishing.hold(
+        f"{len(holding)} history signal(s) suggest this branch is superseded"
+    )
+    if trail:
+        trail.decision(
+            "publishing_hold",
+            f"held publishing — {len(holding)} history signal(s)",
+            reason="fixing code the default branch has already removed asserts it should exist",
+            data={"signals": [s.kind for s in holding]},
+        )
+
+
 def _hold_while_contested(
     needs_human: list[CommentItem], trail: Trail | None = None,
 ) -> None:
@@ -2536,6 +2956,7 @@ def _run_comment_fix(
     all_dismissed = dismissed + items_dismissed
     all_addressed = thread_cls.already_addressed + items_already_addressed
 
+    _hold_if_superseded(_history_preflight(wt_path, ctx.repo, trail), trail)
     _hold_while_contested(all_needs_human, trail)
 
     non_resolved_ids = {t.id for t in report.threads if t.state != ThreadState.RESOLVED}
@@ -2547,7 +2968,7 @@ def _run_comment_fix(
     )
     has_unaccounted = bool(non_resolved_ids - accounted_ids)
 
-    no_commit = CommitPushResult(None, "no_changes", "")
+    no_commit = CommitPushResult(None, CommitStatus.NO_CHANGES, "")
 
     triage_replies = 0
     if dismissed:
@@ -2569,7 +2990,7 @@ def _run_comment_fix(
     empty_result = CommentFixResult(
         needs_human=all_needs_human, dismissed=all_dismissed,
         already_addressed=all_addressed,
-        commit_status="no_changes", replies_posted=triage_replies,
+        commit_status=CommitStatus.NO_CHANGES, replies_posted=triage_replies,
     )
 
     if not all_fixable:
@@ -2658,13 +3079,10 @@ def _run_comment_fix(
     fixed_count = len(tracking.fixed) + len(tracking.fixed_items)
     deferred_count = len(tracking.deferred) + len(tracking.deferred_items)
 
-    cp = _commit_and_push(wt_path, fixed_count, deferred_count, trail=trail)
-
-    if cp.status in ("no_changes", "commit_failed"):
-        cp = _recover_agent_commit(wt_path, head_before, trail)
+    cp = _commit_fixes(wt_path, fixed_count, deferred_count, head_before, trail)
 
     replies_posted = triage_replies
-    if tracking.fixed and cp.status == "pushed":
+    if tracking.fixed and cp.status == CommitStatus.PUSHED:
         if cp.sha:
             replies_posted += _post_fix_replies(
                 tracking.fixed, threads_by_id, ctx.repo, report.pr_number,

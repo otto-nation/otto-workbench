@@ -17,7 +17,7 @@ from pr_state import (
     PRIdentity, CIDomain, PRCloseState, PRClosure,
     ReviewSummary, ReviewVerdict, ReviewStatus,
     CommentsSummary, TriageSummary, RebaseSummary,
-    ThreadAction, ThreadOutcome, FixSummary,
+    ThreadAction, ThreadOutcome, FixSummary, CommitStatus,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
     apply, _domains,
     state_to_dict, state_from_dict,
@@ -187,6 +187,37 @@ def test_state_roundtrip_with_data():
     assert restored.comments.blocking_reviewers == ["alice"]
     assert restored.comments.has_approvals is True
     assert restored.comments.seen_issue_comment_ids == []
+
+
+def test_commit_status_wire_values_are_the_strings_state_files_hold():
+    """The enum is for the code. Changing a value breaks every saved state file."""
+    assert [s.value for s in CommitStatus] == [
+        "pushed", "no_changes", "commit_failed", "push_failed", "push_held",
+        "reconciled",
+    ]
+
+
+def test_a_commit_status_survives_a_state_roundtrip_as_a_plain_string():
+    state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
+    apply(state, FixSummary(commit_status=CommitStatus.PUSH_HELD))
+
+    restored = state_from_dict(json.loads(json.dumps(state_to_dict(state))))
+
+    assert restored.fix.commit_status == CommitStatus.PUSH_HELD
+    assert restored.fix.commit_status == "push_held"
+
+
+def test_a_status_read_from_an_older_state_file_still_compares():
+    """Loaded values are plain strings; the code compares them against members."""
+    state = state_from_dict({
+        "version": STATE_VERSION,
+        "identity": {
+            "repo": "owner/repo", "branch": "feat", "pr_number": 42,
+            "head_sha": "def", "worktree_root": "/wt",
+        },
+        "fix": {"commit_status": "push_held"},
+    })
+    assert state.fix.commit_status == CommitStatus.PUSH_HELD
 
 
 def test_state_roundtrip_with_seen_issue_comment_ids():

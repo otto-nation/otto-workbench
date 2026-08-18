@@ -377,11 +377,39 @@ class ThreadOutcome:
         }
 
 
+class CommitStatus(StrEnum):
+    """How the fix pass left the commit — the state everything downstream reads.
+
+    A `StrEnum`, so the persisted values and the JSON payload are the same
+    strings they have always been: a state file written before this existed
+    still loads, and its plain strings still compare equal to these members.
+    The enum is for the code. #734 was two of these values being confused for
+    one another, which is the argument for naming them in one place.
+    """
+
+    # Committed and on the remote.
+    PUSHED = "pushed"
+    # Nothing to commit: the fix pass changed no files.
+    NO_CHANGES = "no_changes"
+    # A commit was attempted and refused — a hook, or a dirty tree left behind.
+    COMMIT_FAILED = "commit_failed"
+    # Committed locally; the push was attempted and failed.
+    PUSH_FAILED = "push_failed"
+    # Committed locally; the push was withheld.
+    PUSH_HELD = "push_held"
+    # Render-time only, never persisted: HEAD has moved past the snapshot, but
+    # the commit that moved it is not one a reviewer can open, so the summary
+    # says the work was handled without naming a SHA for it.
+    RECONCILED = "reconciled"
+
+
 @dataclass
 class FixSummary(Domain):
     """Snapshot written by comment fix pass."""
     threads: list[ThreadOutcome] = field(default_factory=list)
     commit_sha: str = ""
+    # Loaded from JSON as a plain string, written as one, and compared against
+    # `CommitStatus` members — which are strings, so both directions work.
     commit_status: str = ""
     # The HEAD this snapshot describes. --finish compares it against current
     # HEAD: outcomes recorded against a commit that is no longer checked out

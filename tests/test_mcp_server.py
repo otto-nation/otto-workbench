@@ -355,3 +355,28 @@ class TestWorkbenchToolDirs:
     def test_an_empty_tool_dirs_list_adds_nothing(self):
         """``tool_dirs: []`` is the absent case, not a way to scan nothing."""
         assert discover_tools({"tool_dirs": []}) == discover_tools({})
+
+    def test_a_repeated_directory_is_scanned_once(self, tmp_path):
+        """An additive key makes overlap easy, and probing means executing.
+
+        A ``tool_dirs`` entry naming a component bin, or two plugins pointing at
+        one directory, would otherwise run every script in it twice for a result
+        the duplicate-name check then discards.
+        """
+        log = tmp_path / "probes.log"
+        script = tmp_path / "counting-tool"
+        script.write_text(textwrap.dedent(f"""\
+            #!/usr/bin/env python3
+            import json, sys
+            with open({str(log)!r}, "a") as f:
+                f.write("probed\\n")
+            if "--tool-schema" in sys.argv:
+                json.dump({{"name": "counting-tool",
+                           "input_schema": {{"type": "object", "properties": {{}}}}}}, sys.stdout)
+                sys.exit(0)
+        """))
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        discover_tools({"tool_dirs": [str(tmp_path), str(tmp_path)]})
+
+        assert log.read_text() == "probed\n"

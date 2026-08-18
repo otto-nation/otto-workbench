@@ -119,7 +119,12 @@ def _resolve_dirs(config: dict) -> list[Path]:
 
     for d in config.get("plugin_dirs", []):
         dirs.extend(_scan_plugin_dir(Path(d).expanduser()))
-    return dirs
+
+    # Now that the config adds to the derived set rather than replacing it, a
+    # path can arrive twice — a tool_dirs entry naming a component bin, or two
+    # plugins pointing at one directory. Scanning it twice means probing every
+    # script in it twice for a result the name check then discards.
+    return list(dict.fromkeys(dirs))
 
 
 def _is_executable(path: Path) -> bool:

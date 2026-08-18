@@ -4607,6 +4607,12 @@ class TestAnsweredCommentSources:
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset({"77"})
 
+    def test_the_listing_is_asked_to_keep_our_own_comments(self, rt):
+        """The reply being looked for is ours, so the self filter has to be off."""
+        with _fetches([_our_reply("#issuecomment-77")]) as fetch:
+            rt._answered_comment_sources(self._outcomes(), "owner/repo", 42, "me")
+        assert fetch.call_args.kwargs["include_self"] is True
+
     def test_a_review_body_is_answered_through_its_own_anchor(self, rt):
         with _fetches([_our_reply("#pullrequestreview-88")]):
             answered = rt._answered_comment_sources(
@@ -4638,7 +4644,8 @@ class TestAnsweredCommentSources:
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == frozenset()
 
-    def test_a_snapshot_with_no_open_item_is_not_worth_a_listing(self, rt):
+    def test_a_non_comment_item_is_not_worth_a_listing(self, rt):
+        """`t1` is open, but a thread-shaped id has no source comment to read."""
         with _fetches([]) as fetch:
             answered = rt._answered_comment_sources(
                 [ThreadOutcome(id="t1", action=ThreadAction.DEFERRED)],

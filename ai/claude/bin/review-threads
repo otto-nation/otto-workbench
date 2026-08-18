@@ -1533,7 +1533,18 @@ def _finding_location(
     restates it. Both halves are required: a file on its own is too coarse to
     call two findings the same point, and two reviewers writing about one line
     are writing about two different things.
+
+    Every use of the heuristic reads the tradeoff below: `_duplicate_item_ids`
+    folds the pair out of a fresh render, and `_row_location_key` recovers the
+    same key from an already-rendered row so `_carried_over_rows` does not
+    reinstate a row this render folded.
     """
+    # ceiling: reviewer plus file:line is the whole test for "the same point",
+    # so two distinct findings by one reviewer on one line fold into one row —
+    # and, read off a published row instead of an entry, a colliding row is
+    # dropped from the carried-over set rather than preserved.
+    # Upgrade trigger: once a reviewer's separate findings on a single line are
+    # seen collapsing, compare the summaries too rather than the location alone.
     line = getattr(entry, "line", 0) or 0
     if not entry.file or not line:
         return ""
@@ -1575,10 +1586,12 @@ def _answered_comment_sources(
         )
         return frozenset()
     mine = my_login.lower()
-    # my_login="" so the listing keeps our own comments: the reply being looked
-    # for is ours, and that argument is the filter that would drop it.
+    # include_self, because the reply being looked for is ours and the listing
+    # drops our own comments by default.
     answered: set[str] = set()
-    for comment in pc.fetch_issue_comments(repo, pr_number, ""):
+    for comment in pc.fetch_issue_comments(
+        repo, pr_number, my_login, include_self=True,
+    ):
         if str(comment.get("user", "")).lower() != mine:
             continue
         body = str(comment.get("body", ""))
@@ -2079,11 +2092,10 @@ def _duplicate_item_ids(
     that need not agree, which reads as the summary contradicting itself. The
     thread is the copy that stays: it is where the reply lands and where
     resolution is recorded.
+
+    What counts as "the same point" is `_finding_location`, whose ceiling
+    comment names what that coarsening costs.
     """
-    # ceiling: reviewer plus file:line is the whole test for "the same point",
-    # so two distinct findings by one reviewer on one line fold into one row.
-    # Upgrade trigger: once a reviewer's separate findings on a single line are
-    # seen collapsing, compare the summaries too rather than the location alone.
     covered = {
         _finding_location(e) for e in entries if e.id in threads_by_id
     } - {""}
@@ -2320,6 +2332,11 @@ def _row_location_key(row: str) -> str:
     point at one line still share once the anchors, the pinned SHAs and the
     outcome cell are taken away. "" for a row naming no line, which can never
     establish that two rows are the same finding.
+
+    Same coarsening, same tradeoff — see the ceiling comment on
+    `_finding_location` — and one step coarser again, because a published row
+    is markdown rather than a typed entry: the reviewer and file cells are all
+    that survive to match on.
     """
     cells = _row_cells(row)
     if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
@@ -2383,7 +2400,10 @@ def _carried_over_rows(published: str, fresh: str) -> list[str]:
     another: a comment item restating a review thread was published under its
     own anchor before `_duplicate_item_ids` started collapsing the pair, and
     carrying it forward would restore the duplicate this render just removed. A
-    fresh thread row at that location accounts for it.
+    fresh thread row at that location accounts for it — "that location" being
+    `_row_location_key`, so the ceiling on `_finding_location` bounds this too:
+    an item row that collides with an unrelated fresh thread row is dropped
+    rather than carried.
     """
     if not published:
         return []

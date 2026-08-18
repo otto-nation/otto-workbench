@@ -373,10 +373,20 @@ def fetch_reviewer_verdicts(
 def fetch_issue_comments(
     repo: str, pr_number: int, my_login: str,
     pr_data: PRData | None = None,
+    include_self: bool = False,
 ) -> list[dict]:
-    """Fetch issue-level comments (general discussion). Returns non-self ones."""
+    """Fetch issue-level comments (general discussion). Returns non-self ones.
+
+    Bot comments are always dropped, and so are ``my_login``'s own — the caller
+    is normally reading what reviewers said, and our replies are noise in that.
+    ``include_self`` keeps them, for the caller whose subject is our own
+    standing reply on the PR rather than the review it answers.
+    """
     if pr_data is not None:
-        return pr_data.non_self_issue_comments(my_login)
+        # `non_self_issue_comments` names the login to leave out, so naming no
+        # login leaves nobody out. Kept here rather than at the call sites so
+        # the sentinel has one home and one contract.
+        return pr_data.non_self_issue_comments("" if include_self else my_login)
 
     code, out = _gh_rest(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
     if code != 0:
@@ -390,7 +400,7 @@ def fetch_issue_comments(
     for c in comments:
         user_obj = c.get("user", {})
         user = user_obj.get("login", "")
-        if user.lower() == my_login_lower:
+        if not include_self and user.lower() == my_login_lower:
             continue
         if user_obj.get("type") == "Bot":
             continue

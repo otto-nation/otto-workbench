@@ -42,6 +42,50 @@ def test_fetch_threads_prefers_prefetched_pr_data():
     fetcher.assert_not_called()
 
 
+# ── fetch_issue_comments ────────────────────────────────────────────────────
+
+_ISSUE_COMMENTS = json.dumps([
+    {"id": 1, "user": {"login": "me"}, "body": "Applied: drop the retry"},
+    {"id": 2, "user": {"login": "kgn"}, "body": "drop the retry"},
+    {"id": 3, "user": {"login": "bot", "type": "Bot"}, "body": "coverage fell"},
+])
+
+
+def _rest_listing():
+    return patch.object(pr_comments, "_gh_rest", return_value=(0, _ISSUE_COMMENTS))
+
+
+def test_fetch_issue_comments_drops_our_own_by_default():
+    with _rest_listing():
+        got = pr_comments.fetch_issue_comments("owner/repo", 42, "me")
+    assert [c["user"] for c in got] == ["kgn"]
+
+
+def test_fetch_issue_comments_keeps_our_own_when_asked():
+    """`include_self` is the contract `review-threads` reads its reply through."""
+    with _rest_listing():
+        got = pr_comments.fetch_issue_comments(
+            "owner/repo", 42, "me", include_self=True)
+    assert [c["user"] for c in got] == ["me", "kgn"]
+
+
+def test_fetch_issue_comments_drops_bots_either_way():
+    with _rest_listing():
+        got = pr_comments.fetch_issue_comments(
+            "owner/repo", 42, "me", include_self=True)
+    assert "bot" not in [c["user"] for c in got]
+
+
+@pytest.mark.parametrize("include_self,expected", [(False, "me"), (True, "")])
+def test_fetch_issue_comments_passes_the_exclusion_on_to_pr_data(
+        include_self, expected):
+    """Prefetched data takes the same filter, so both paths answer alike."""
+    pr_data = SimpleNamespace(non_self_issue_comments=lambda login: [{"user": login}])
+    got = pr_comments.fetch_issue_comments(
+        "owner/repo", 42, "me", pr_data, include_self=include_self)
+    assert got == [{"user": expected}]
+
+
 def test_empty_state_has_required_fields():
     state = empty_state("otto-nation/maximum", 142, "isaacg-otto")
     assert state["repo"] == "otto-nation/maximum"

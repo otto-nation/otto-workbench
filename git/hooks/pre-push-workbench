@@ -128,7 +128,7 @@ fi
 if command -v yamllint >/dev/null 2>&1; then
   _step "Linting YAML"
   if _yl_output=$(yamllint "$REPO_ROOT" 2>&1); then
-    _yl_count=$(find "$REPO_ROOT" \( -name '*.yml' -o -name '*.yaml' \) -not -path '*/.git/*' | wc -l | tr -d ' ')
+    _yl_count=$(find "$REPO_ROOT" \( -name '*.yml' -o -name '*.yaml' \) -not -path '*/.git/*' -not -path '*/node_modules/*' | wc -l | tr -d ' ')
     _pass "${_yl_count} files"
   else
     _fail "$_yl_output"

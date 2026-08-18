@@ -50,11 +50,14 @@ On failure, diagnose in this order — do NOT retry with variations:
 ## Code Style
 
 ### Types over tuples
-- Never return a new tuple of more than one value — model it as a frozen dataclass, struct, or the language's equivalent. A tuple cannot gain a field without breaking every destructuring call site, and it forces callers to learn field order instead of reading names
+- Never return a new tuple carrying more than one piece of business data — model it as a frozen dataclass, struct, or the language's equivalent. A tuple cannot gain a field without breaking every destructuring call site, and it forces callers to learn field order instead of reading names
+- The language's error convention is not a tuple in this sense. Go's `(T, error)`, comma-ok map reads and type assertions, and their equivalents in other languages are the idiom — keep them. This rule governs a return carrying two pieces of *data*, not a value paired with a failure channel
 - Never widen an existing tuple return to carry another field. Converting it to a type is the fix; `(a, b)` → `(a, b, c)` is not
-- A fixed set of named states is an enum, not string literals. When those states are persisted or cross a wire, keep the string values stable so existing state files still load — the enum is for the code, not a format break
 - Give the type a predicate that reads honestly at the call site (`result.ok`) rather than making callers infer status from which fields came back empty
 - Pre-existing tuples you are not otherwise touching stay as they are — converting them is its own change
+
+### Enums over string literals
+- A fixed set of named states is an enum, not string literals. When those states are persisted or cross a wire, keep the string values stable so existing state files still load — the enum is for the code, not a format break
 
 ### Comments & Documentation
 - Comments should be production-ready; place them above the line, never inline

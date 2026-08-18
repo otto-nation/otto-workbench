@@ -12,7 +12,6 @@ import json
 import signal
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
@@ -588,24 +587,14 @@ _NO_TARGET_COMMANDS = {"create"}
 _NO_LOCK_COMMANDS = {"status"}
 
 
-@dataclass(frozen=True)
-class CommandParsers:
-    """The top-level parser and the subparser each command declares its flags on.
-
-    `by_command` is kept rather than dropped so the arity of what a command
-    declares can be read off the parser that declares it, which is what keeps
-    _NO_TARGET_COMMANDS honest.
-    """
-    root: argparse.ArgumentParser
-    by_command: dict[str, argparse.ArgumentParser]
-
-
-def _build_parser() -> CommandParsers:
-    """Build the command parser and every command's subparser.
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the command parser.
 
     A delegating command's subparser declares no flags of its own — its argv is
     forwarded whole and `pr <command> --help` is answered by the delegate — so
-    add_help is left off for those.
+    add_help is left off for those. The subparsers are not returned alongside:
+    what a command declares is read back off the built parser with
+    tool_parser.subparsers, which is what keeps _NO_TARGET_COMMANDS honest.
     """
     parser = argparse.ArgumentParser(
         prog=SCRIPT,
@@ -615,14 +604,9 @@ def _build_parser() -> CommandParsers:
     parser.add_argument("-h", "--help", action="store_true", dest="help")
 
     sub = parser.add_subparsers(dest="command")
-    return CommandParsers(
-        root=parser,
-        by_command={
-            name: sub.add_parser(name, help=entry["help"],
-                                 add_help="script" not in entry)
-            for name, entry in _COMMANDS.items()
-        },
-    )
+    for name, entry in _COMMANDS.items():
+        sub.add_parser(name, help=entry["help"], add_help="script" not in entry)
+    return parser
 
 
 def _build_usage() -> str:
@@ -723,7 +707,7 @@ def main():
     add_trail_args(_global)
     global_args, remaining = _global.parse_known_args()
 
-    parser = _build_parser().root
+    parser = _build_parser()
 
     args, extra = parser.parse_known_args(remaining)
     args.repo_dir = global_args.repo_dir

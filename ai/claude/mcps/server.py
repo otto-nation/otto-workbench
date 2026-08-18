@@ -1,7 +1,8 @@
 """Dynamic MCP server for otto-workbench tools.
 
-Discovers tools by scanning configured directories for scripts that
-support ``--tool-schema``. A candidate is only executed if its source
+Discovers tools by scanning the workbench's own component script directories,
+plus any the config adds, for scripts that support ``--tool-schema``. A
+candidate is only executed if its source
 carries one of ``DECLARATION_MARKERS`` — probing runs the script, and
 scripts that ignore unknown flags would do their real work instead of
 answering. Any MCP client can connect via stdio transport.
@@ -29,6 +30,15 @@ logger = logging.getLogger("otto-mcp")
 
 # Hand-authored, so it belongs to the config root rather than the state root.
 CONFIG_PATH = workbench_paths.config_dir() / "mcp-tools.json"
+
+# ai/claude/mcps/server.py — three levels down from the checkout root.
+WORKBENCH_DIR = Path(__file__).resolve().parents[3]
+COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
+
+# ceiling: candidates are probed one at a time, so the worst case is this
+# timeout times the number of marker-bearing scripts. Four of them today, well
+# under a second — probe concurrently if a component ever adds enough that
+# server startup becomes noticeable.
 DISCOVERY_TIMEOUT = 2.0
 TOOL_SCHEMA_FLAG = "--tool-schema"
 
@@ -62,7 +72,7 @@ def _load_plugin_dir(plugin_file: Path) -> Path | None:
     """Read a plugin JSON file and return its tool directory, or None."""
     try:
         plugin = json.loads(plugin_file.read_text())
-        td = Path(plugin["tool_dir"]).expanduser()
+        td = Path(plugin["tool_dir"]).expanduser().resolve()
         return td if td.is_dir() else None
     except (json.JSONDecodeError, KeyError, OSError):
         logger.warning("Skipping invalid plugin: %s", plugin_file)
@@ -83,16 +93,44 @@ def _scan_plugin_dir(plugin_dir: Path) -> list[Path]:
     return results
 
 
+def discover_tool_dirs() -> list[Path]:
+    """Return the workbench's own script directories.
+
+    A component keeps its scripts in ``<component>/bin`` and the root ``bin/``
+    holds the workbench's own — so the directories are derived from the layout
+    rather than listed. The glob is the two-level one ``lib/components.sh``
+    uses for ``steps.sh`` and ``migrations``, plus the root, which means a new
+    component tier such as ``editors/zed/bin`` is picked up without editing
+    this file or hand-authoring config.
+
+    These are always scanned: nothing in the workbench writes
+    ``mcp-tools.json``, so a server that only looked at that file exposed no
+    tools on any install. ``tool_dirs`` names directories to scan *in
+    addition*.
+    """
+    dirs = {d for pattern in COMPONENT_BIN_GLOBS for d in WORKBENCH_DIR.glob(pattern) if d.is_dir()}
+    return sorted(dirs)
+
+
 def _resolve_dirs(config: dict) -> list[Path]:
-    dirs = []
+    dirs = discover_tool_dirs()
+    # Additive rather than an override: the workbench's own directories come
+    # from its layout, so the config only says what *else* to scan.
     for d in config.get("tool_dirs", []):
-        p = Path(d).expanduser()
+        p = Path(d).expanduser().resolve()
         if p.is_dir():
             dirs.append(p)
 
     for d in config.get("plugin_dirs", []):
         dirs.extend(_scan_plugin_dir(Path(d).expanduser()))
-    return dirs
+
+    # Now that the config adds to the derived set rather than replacing it, a
+    # path can arrive twice — a tool_dirs entry naming a component bin, or two
+    # plugins pointing at one directory. Scanning it twice means probing every
+    # script in it twice for a result the name check then discards. Config
+    # paths are resolved above so a symlink or a `..` segment dedups too; the
+    # derived ones already are.
+    return list(dict.fromkeys(dirs))
 
 
 def _is_executable(path: Path) -> bool:
@@ -120,7 +158,14 @@ def _declares_tool_schema(script: Path) -> bool:
 
 
 def _probe_tool(script: Path) -> dict | None:
-    """Run ``script --tool-schema`` and return the JSON, or None."""
+    """Run ``script --tool-schema`` and return the JSON, or None.
+
+    A script that carries a marker meant to be a tool, so every way it can then
+    fail to answer is logged at warning level. Silence here reads as "no tool
+    here" and leaves nothing to debug — the scan covers every component's
+    ``bin/``, so the author of a broken tool is rarely the person reading these
+    logs. Candidates with no marker are not tools and stay quiet.
+    """
     if not _declares_tool_schema(script):
         return None
     try:
@@ -132,14 +177,23 @@ def _probe_tool(script: Path) -> dict | None:
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
         if result.returncode != 0:
+            logger.warning(
+                "Skipping %s: %s exited %d: %s",
+                script, TOOL_SCHEMA_FLAG, result.returncode,
+                result.stderr.strip() or "(no stderr)",
+            )
             return None
         schema = json.loads(result.stdout)
-        if any(key not in schema for key in REQUIRED_SCHEMA_KEYS):
+        missing = [key for key in REQUIRED_SCHEMA_KEYS if key not in schema]
+        if missing:
+            logger.warning("Skipping %s: schema is missing %s", script, ", ".join(missing))
             return None
         schema["_script"] = str(script)
         return schema
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
-        logger.debug("Skipping %s: %s", script, exc)
+        # Name the exception type rather than trusting its str() to say which
+        # of the three it was — docs/tools.md tells readers these are distinct.
+        logger.warning("Skipping %s: %s: %s", script, type(exc).__name__, exc)
         return None
 
 

@@ -409,17 +409,25 @@ def _detect_mise(target_dir: str, repo_root: str) -> bool:
         d = d.parent
 
 
-def _try_run(cmd: list[str], *, cwd: str) -> subprocess.CompletedProcess | None:
-    """Run a command, returning None if it could not be launched.
+def _try_run(
+    cmd: list[str], *, cwd: str, timeout: float | None = None,
+) -> subprocess.CompletedProcess | None:
+    """Run a command, returning None if it could not be launched or finished.
 
     subprocess.run raises instead of exiting 127 when the executable is absent,
     not executable, or cwd is unusable. All of these mean the command never
-    ran, so the caller should fall back or report the file as stale.
+    ran, so the caller should fall back or report the file as stale. An expired
+    ``timeout`` is the same answer for the same reason: no usable output.
     """
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+        return subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+        )
     except OSError as exc:
         log.dim(f"Could not launch {' '.join(cmd)}: {exc}")
+        return None
+    except subprocess.TimeoutExpired:
+        log.dim(f"Timed out after {timeout}s: {' '.join(cmd)}")
         return None
 
 
@@ -1678,6 +1686,11 @@ class RebaseOutcome:
 _LANDED_EXIT = 4
 _LANDED_OVERRIDE_FLAG = "--force"
 
+# The tracker probe is the only network call on the rebase path. Bounded so a
+# hung or throttled gh cannot stall every rebase: an expired timeout degrades to
+# "the tracker has nothing to say", which the git signals already handle.
+_GH_TIMEOUT = 10
+
 
 @dataclass(frozen=True)
 class LandedReport:
@@ -1685,7 +1698,10 @@ class LandedReport:
     branch: str
     signal: str
     detail: str
-    commits_ahead: int
+    # None on the tracker path, which runs before the branch is checked out:
+    # HEAD is someone else's there, so any count would describe the wrong
+    # branch. Null says "not measured" rather than reporting a wrong number.
+    commits_ahead: int | None = None
     pr_number: int | None = None
     status: str = RebaseStatus.ALREADY_LANDED.value
     override: str = _LANDED_OVERRIDE_FLAG
@@ -1721,7 +1737,7 @@ def _merged_pr(cwd: str, ctx: pr_context.ResolvedContext) -> MergedPR | None:
     if ctx.repo:
         cmd += ["--repo", ctx.repo]
 
-    r = _try_run(cmd, cwd=cwd)
+    r = _try_run(cmd, cwd=cwd, timeout=_GH_TIMEOUT)
     if r is None or r.returncode != 0:
         return None
     try:
@@ -1763,26 +1779,43 @@ def _all_commits_upstream(cwd: str) -> bool:
     return bool(lines) and all(ln.startswith("-") for ln in lines)
 
 
-def _landed_check(
+def _tracker_landed_check(
     cwd: str, ctx: pr_context.ResolvedContext,
 ) -> LandedReport | None:
-    """Evidence that the branch's work is already in the target ref, or None.
+    """Evidence from GitHub that the branch's PR merged, or None.
 
-    Signals are combined most-authoritative first: GitHub saying the PR merged,
-    then an empty diff (squash merges), then matching patch ids (rebase and
-    merge-commit landings). Each stands alone — the tracker is unreachable in
-    some repos, and neither git signal survives every merge style.
+    Split from the git signals because it asks about ``ctx``, not HEAD, which
+    is what lets it run before the branch is checked out. That ordering is the
+    whole point: for a branch whose PR merged and whose remote was deleted,
+    ``fetch --prune`` removes ``origin/<branch>``, so a checkout from that ref
+    fails — the refusal has to come first or it never comes at all.
+
+    The most authoritative signal, and the only one that survives a squash
+    merge once the target ref has moved on with unrelated work.
+    """
+    merged = _merged_pr(cwd, ctx)
+    if merged is None:
+        return None
+    where = f" ({merged.url})" if merged.url else ""
+    return LandedReport(
+        branch=ctx.branch, signal=LandedSignal.PR_MERGED.value,
+        detail=f"PR #{merged.number} is merged{where}",
+        pr_number=merged.number,
+    )
+
+
+def _git_landed_check(
+    cwd: str, ctx: pr_context.ResolvedContext,
+) -> LandedReport | None:
+    """Evidence from git that the branch's work is in the target ref, or None.
+
+    Every signal here compares HEAD, so this only means anything once the
+    branch is checked out. Tried in order: an empty diff (squash merges), then
+    matching patch ids (rebase and merge-commit landings). Each stands alone —
+    neither survives every merge style — and both are tracker-agnostic, so they
+    are what answers in a repo where gh cannot.
     """
     ahead = _commits_ahead(cwd)
-
-    merged = _merged_pr(cwd, ctx)
-    if merged is not None:
-        where = f" ({merged.url})" if merged.url else ""
-        return LandedReport(
-            branch=ctx.branch, signal=LandedSignal.PR_MERGED.value,
-            detail=f"PR #{merged.number} is merged{where}",
-            commits_ahead=ahead, pr_number=merged.number,
-        )
 
     # A branch with no commits of its own has nothing that could have landed,
     # and both git signals below read as "already upstream" for it — vacuously
@@ -2061,6 +2094,15 @@ def _fresh(
         if fetch.stderr.strip():
             log.dim(fetch.stderr.strip())
 
+    # Before the checkout, deliberately: --prune has just dropped
+    # origin/<branch> for a branch whose PR merged and whose remote was
+    # deleted, and the checkout below starts from exactly that ref. Asking the
+    # tracker first is what turns "Cannot checkout feat/x" into the refusal
+    # this preflight exists to give.
+    landed = None if force else _tracker_landed_check(cwd, ctx)
+    if landed is not None:
+        return _refuse_landed(ctx, landed)
+
     if ctx.current_branch != ctx.branch:
         display = ctx.current_branch or "detached HEAD"
         # Defense in depth: pr_context now creates a worktree per branch, but
@@ -2089,9 +2131,9 @@ def _fresh(
                 reason="worktree was on wrong branch or detached HEAD",
             )
 
-    # After the checkout, so HEAD is the branch the signals are asked about,
+    # After the checkout, so HEAD is the branch these signals are asked about,
     # and after the fetch, so the target ref they compare against is current.
-    landed = None if force else _landed_check(cwd, ctx)
+    landed = None if force else _git_landed_check(cwd, ctx)
     if landed is not None:
         return _refuse_landed(ctx, landed)
 

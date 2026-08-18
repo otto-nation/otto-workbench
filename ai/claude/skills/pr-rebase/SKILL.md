@@ -110,7 +110,7 @@ This resumes the in-progress rebase with AI conflict resolution and force-pushes
   "branch": "isaac/626/unified_workbench_config",
   "signal": "pr_merged",
   "detail": "PR #726 is merged (https://github.com/owner/repo/pull/726)",
-  "commits_ahead": 18,
+  "commits_ahead": null,
   "pr_number": 726,
   "status": "already_landed",
   "override": "--force"
@@ -121,6 +121,10 @@ This resumes the in-progress rebase with AI conflict resolution and force-pushes
 `empty_diff` (the branch has commits but no diff against `origin/main` — what a
 squash merge leaves behind), or `commits_upstream` (every commit already has an
 equivalent upstream by patch id).
+
+`commits_ahead` is a count on the two git signals and `null` on `pr_merged`: the
+tracker is asked before the branch is checked out, so there is no honest count
+to report there. `pr_number` is set on `pr_merged` only.
 
 Report `detail` and stop. Rebasing here would replay landed work and force-push
 a branch the merge deleted. Suggest deleting the worktree and branch instead. If

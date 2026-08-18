@@ -2145,6 +2145,11 @@ def test_fresh_checkout_failure_returns_error():
 # ── already-landed preflight ────────────────────────────────────────────────
 
 
+_LANDED_BRANCH = "feat/landed"
+_LANDED_PR = 726
+_LANDED_URL = "https://x/pull/726"
+
+
 def _completed(cmd, returncode=0, stdout=""):
     return subprocess.CompletedProcess(args=cmd, returncode=returncode, stdout=stdout, stderr="")
 
@@ -2157,27 +2162,60 @@ def _gh_response(payload: str, returncode: int = 0):
     )
 
 
+def _landed_ctx(**overrides):
+    """A context for the branch every preflight test asks about."""
+    defaults = dict(branch=_LANDED_BRANCH, pr_number=_LANDED_PR)
+    defaults.update(overrides)
+    return make_ctx(**defaults)
+
+
 def test_merged_pr_reports_a_merged_pull_request():
-    ctx = make_ctx(branch="feat/landed", pr_number=726, repo="owner/repo")
-    payload = '{"state": "MERGED", "number": 726, "url": "https://x/pull/726"}'
+    ctx = _landed_ctx(repo="owner/repo")
+    payload = f'{{"state": "MERGED", "number": {_LANDED_PR}, "url": "{_LANDED_URL}"}}'
 
     with _gh_response(payload) as mock_try:
         answer = pr_rebase_cli._merged_pr("/fake", ctx)
 
-    assert answer == pr_rebase_cli.MergedPR(number=726, url="https://x/pull/726")
+    assert answer == pr_rebase_cli.MergedPR(number=_LANDED_PR, url=_LANDED_URL)
 
     cmd = mock_try.call_args[0][0]
-    assert cmd[:4] == ["gh", "pr", "view", "726"]
+    assert cmd[:4] == ["gh", "pr", "view", str(_LANDED_PR)]
     assert cmd[-2:] == ["--repo", "owner/repo"]
 
 
 def test_merged_pr_falls_back_to_the_branch_without_a_pr_number():
-    ctx = make_ctx(branch="feat/landed", pr_number=None)
+    ctx = _landed_ctx(pr_number=None)
 
     with _gh_response('{"state": "MERGED", "number": 1, "url": ""}') as mock_try:
         assert pr_rebase_cli._merged_pr("/fake", ctx) == pr_rebase_cli.MergedPR(number=1)
 
-    assert mock_try.call_args[0][0][3] == "feat/landed"
+    assert mock_try.call_args[0][0][3] == _LANDED_BRANCH
+
+
+def test_merged_pr_omits_repo_when_the_context_has_none():
+    """gh infers the repo from the remote — an empty --repo value would not."""
+    ctx = _landed_ctx(repo="")
+
+    with _gh_response('{"state": "MERGED", "number": 1, "url": ""}') as mock_try:
+        pr_rebase_cli._merged_pr("/fake", ctx)
+
+    assert "--repo" not in mock_try.call_args[0][0]
+
+
+def test_merged_pr_bounds_the_gh_call():
+    """The only network call on the rebase path — a stall must not hang it."""
+    with _gh_response('{"state": "OPEN"}') as mock_try:
+        pr_rebase_cli._merged_pr("/fake", _landed_ctx())
+
+    assert mock_try.call_args.kwargs["timeout"] == pr_rebase_cli._GH_TIMEOUT
+
+
+def test_merged_pr_degrades_when_gh_times_out():
+    """A timeout is "the tracker has nothing to say", not a crash."""
+    expired = subprocess.TimeoutExpired(cmd=["gh"], timeout=pr_rebase_cli._GH_TIMEOUT)
+
+    with mock.patch("subprocess.run", side_effect=expired):
+        assert pr_rebase_cli._merged_pr("/fake", _landed_ctx()) is None
 
 
 @pytest.mark.parametrize("payload,returncode", [
@@ -2189,18 +2227,14 @@ def test_merged_pr_falls_back_to_the_branch_without_a_pr_number():
 ])
 def test_merged_pr_stays_silent_unless_github_says_merged(payload, returncode):
     """Anything short of MERGED is "the tracker has nothing to say"."""
-    ctx = make_ctx(branch="feat/landed")
-
     with _gh_response(payload, returncode=returncode):
-        assert pr_rebase_cli._merged_pr("/fake", ctx) is None
+        assert pr_rebase_cli._merged_pr("/fake", _landed_ctx()) is None
 
 
 def test_merged_pr_survives_gh_being_absent():
     """_try_run returns None when gh cannot be launched — not an exception."""
-    ctx = make_ctx(branch="feat/landed")
-
     with mock.patch.object(pr_rebase_cli, "_try_run", return_value=None):
-        assert pr_rebase_cli._merged_pr("/fake", ctx) is None
+        assert pr_rebase_cli._merged_pr("/fake", _landed_ctx()) is None
 
 
 @pytest.mark.parametrize("returncode,expected", [(0, True), (1, False)])
@@ -2234,76 +2268,101 @@ def test_all_commits_upstream_is_false_when_git_cherry_fails():
         assert pr_rebase_cli._all_commits_upstream("/fake") is False
 
 
-def _run_landed_check(*, ahead=3, merged=None, empty_diff=False, upstream=False, ctx=None):
-    """Run _landed_check with each signal forced to a known answer."""
-    ctx = ctx or make_ctx(branch="feat/landed", pr_number=726)
+def _run_tracker_check(merged=None, ctx=None):
+    """Run the tracker half of the preflight with gh's answer forced."""
+    with mock.patch.object(pr_rebase_cli, "_merged_pr", return_value=merged):
+        return pr_rebase_cli._tracker_landed_check("/fake", ctx or _landed_ctx())
+
+
+def _run_git_check(*, ahead=3, empty_diff=False, upstream=False, ctx=None):
+    """Run the git half of the preflight with each signal forced."""
     with mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=ahead), \
-         mock.patch.object(pr_rebase_cli, "_merged_pr", return_value=merged), \
          mock.patch.object(pr_rebase_cli, "_diff_is_empty", return_value=empty_diff), \
          mock.patch.object(pr_rebase_cli, "_all_commits_upstream", return_value=upstream):
-        return pr_rebase_cli._landed_check("/fake", ctx)
+        return pr_rebase_cli._git_landed_check("/fake", ctx or _landed_ctx())
 
 
-def test_landed_check_reports_a_merged_pr():
-    report = _run_landed_check(
-        merged=pr_rebase_cli.MergedPR(number=726, url="https://x/pull/726"),
+def test_tracker_check_reports_a_merged_pr():
+    report = _run_tracker_check(
+        pr_rebase_cli.MergedPR(number=_LANDED_PR, url=_LANDED_URL),
     )
 
     assert report.signal == pr_rebase_cli.LandedSignal.PR_MERGED.value
-    assert report.pr_number == 726
-    assert report.detail == "PR #726 is merged (https://x/pull/726)"
-    assert report.commits_ahead == 3
+    assert report.pr_number == _LANDED_PR
+    assert report.detail == f"PR #{_LANDED_PR} is merged ({_LANDED_URL})"
 
 
-def test_landed_check_omits_the_link_when_gh_reports_no_url():
+def test_tracker_check_leaves_commits_ahead_unmeasured():
+    """It runs before the checkout, so HEAD is another branch — null, not wrong."""
+    report = _run_tracker_check(pr_rebase_cli.MergedPR(number=_LANDED_PR))
+
+    assert report.commits_ahead is None
+
+
+def test_tracker_check_omits_the_link_when_gh_reports_no_url():
     """The detail sentence is documented in SKILL.md — no empty parentheses."""
-    report = _run_landed_check(merged=pr_rebase_cli.MergedPR(number=726))
+    report = _run_tracker_check(pr_rebase_cli.MergedPR(number=_LANDED_PR))
 
-    assert report.detail == "PR #726 is merged"
+    assert report.detail == f"PR #{_LANDED_PR} is merged"
 
 
-def test_landed_check_catches_a_squash_merge_by_empty_diff():
+def test_tracker_check_never_reads_head():
+    """The whole split rests on this: it must be safe before the checkout.
+
+    Every HEAD-dependent signal moved to _git_landed_check, so reaching for one
+    here would reintroduce the ordering bug the split fixes.
+    """
+    with mock.patch.object(pr_rebase_cli, "_merged_pr",
+                           return_value=pr_rebase_cli.MergedPR(number=_LANDED_PR)), \
+         mock.patch.object(pr_rebase_cli, "_commits_ahead") as ahead, \
+         mock.patch.object(pr_rebase_cli, "_diff_is_empty") as diff, \
+         mock.patch.object(pr_rebase_cli, "_all_commits_upstream") as cherry:
+        pr_rebase_cli._tracker_landed_check("/fake", _landed_ctx())
+
+    ahead.assert_not_called()
+    diff.assert_not_called()
+    cherry.assert_not_called()
+
+
+def test_tracker_check_passes_when_github_has_no_answer():
+    assert _run_tracker_check(None) is None
+
+
+def test_git_check_catches_a_squash_merge_by_empty_diff():
     """The squash-merge case: the commits are unreachable, the tree matches."""
-    report = _run_landed_check(empty_diff=True)
+    report = _run_git_check(empty_diff=True)
 
     assert report.signal == pr_rebase_cli.LandedSignal.EMPTY_DIFF.value
     assert report.pr_number is None
+    assert report.commits_ahead == 3
 
 
-def test_landed_check_catches_a_rebase_merge_by_patch_id():
-    report = _run_landed_check(upstream=True)
+def test_git_check_catches_a_rebase_merge_by_patch_id():
+    report = _run_git_check(upstream=True)
 
     assert report.signal == pr_rebase_cli.LandedSignal.COMMITS_UPSTREAM.value
+    assert report.commits_ahead == 3
 
 
-def test_landed_check_prefers_the_tracker_over_the_git_signals():
-    """Signals are ordered most authoritative first, and stop at the first hit."""
-    report = _run_landed_check(
-        merged=pr_rebase_cli.MergedPR(number=726), empty_diff=True, upstream=True,
-    )
-
-    assert report.signal == pr_rebase_cli.LandedSignal.PR_MERGED.value
+def test_git_check_passes_an_unlanded_branch():
+    assert _run_git_check() is None
 
 
-def test_landed_check_passes_an_unlanded_branch():
-    assert _run_landed_check() is None
-
-
-def test_landed_check_ignores_a_branch_with_no_commits_of_its_own():
+def test_git_check_ignores_a_branch_with_no_commits_of_its_own():
     """Regression: both git signals read as landed for a freshly cut branch.
 
     An empty diff and an empty `git cherry` are vacuously true there, so
     without the guard every new worktree would be refused before its first
     rebase.
     """
-    assert _run_landed_check(ahead=0, empty_diff=True, upstream=True) is None
+    assert _run_git_check(ahead=0, empty_diff=True, upstream=True) is None
 
 
 def test_refuse_landed_emits_the_exit_4_payload(capsys):
-    ctx = make_ctx(branch="feat/landed")
+    ctx = _landed_ctx()
     report = pr_rebase_cli.LandedReport(
-        branch="feat/landed", signal="pr_merged",
-        detail="PR #726 is merged", commits_ahead=18, pr_number=726,
+        branch=_LANDED_BRANCH, signal="pr_merged",
+        detail=f"PR #{_LANDED_PR} is merged", commits_ahead=18, pr_number=_LANDED_PR,
     )
 
     with mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None):
@@ -2312,18 +2371,36 @@ def test_refuse_landed_emits_the_exit_4_payload(capsys):
     captured = capsys.readouterr()
     assert rc == 4
     assert json.loads(captured.out) == {
-        "branch": "feat/landed", "signal": "pr_merged",
-        "detail": "PR #726 is merged", "commits_ahead": 18,
-        "pr_number": 726, "status": "already_landed", "override": "--force",
+        "branch": _LANDED_BRANCH, "signal": "pr_merged",
+        "detail": f"PR #{_LANDED_PR} is merged", "commits_ahead": 18,
+        "pr_number": _LANDED_PR, "status": "already_landed", "override": "--force",
     }
-    assert "Refusing to rebase feat/landed" in captured.err
+    assert f"Refusing to rebase {_LANDED_BRANCH}" in captured.err
     assert "--force" in captured.err
 
 
-def test_refuse_landed_records_the_status_for_the_dashboard():
-    ctx = make_ctx(branch="feat/landed")
+def test_refuse_landed_keeps_every_documented_key_when_unmeasured(capsys):
+    """SKILL.md documents the key set — the tracker path nulls, never drops."""
     report = pr_rebase_cli.LandedReport(
-        branch="feat/landed", signal="empty_diff", detail="no diff", commits_ahead=2,
+        branch=_LANDED_BRANCH, signal="pr_merged",
+        detail=f"PR #{_LANDED_PR} is merged", pr_number=_LANDED_PR,
+    )
+
+    with mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None):
+        pr_rebase_cli._refuse_landed(_landed_ctx(), report)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {
+        "branch", "signal", "detail", "commits_ahead",
+        "pr_number", "status", "override",
+    }
+    assert payload["commits_ahead"] is None
+
+
+def test_refuse_landed_records_the_status_for_the_dashboard():
+    ctx = _landed_ctx()
+    report = pr_rebase_cli.LandedReport(
+        branch=_LANDED_BRANCH, signal="empty_diff", detail="no diff", commits_ahead=2,
     )
 
     with mock.patch.object(pr_rebase_cli, "_emit_json"):
@@ -2333,70 +2410,201 @@ def test_refuse_landed_records_the_status_for_the_dashboard():
     assert state.rebase.status == pr_state.RebaseStatus.ALREADY_LANDED.value
 
 
-def _fresh_with_landed(landed, force=False):
-    """Run _fresh on an on-branch worktree. Returns (rc, commands run)."""
+def _run_fresh(*, tracker=None, git=None, force=False, current_branch=_LANDED_BRANCH):
+    """Run _fresh with both halves of the preflight forced.
+
+    Returns (exit code, commands run, checkout-seen-by-each-half), the last of
+    which is what pins the ordering: the tracker probe must run before the
+    checkout and the git signals after it.
+    """
     ctx = mock.MagicMock()
-    ctx.branch = "feat/landed"
-    ctx.current_branch = "feat/landed"
-    commands = []
+    ctx.branch = _LANDED_BRANCH
+    ctx.current_branch = current_branch
+    commands, saw_checkout = [], {}
 
     def fake_run(cmd, **kwargs):
         commands.append(list(cmd))
         return _completed(cmd)
 
+    def record(half, report):
+        saw_checkout[half] = any(c[:2] == ["git", "checkout"] for c in commands)
+        return report
+
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli, "_landed_check", return_value=landed), \
+         mock.patch.object(pr_rebase_cli, "_tracker_landed_check",
+                           side_effect=lambda *_: record("tracker", tracker)), \
+         mock.patch.object(pr_rebase_cli, "_git_landed_check",
+                           side_effect=lambda *_: record("git", git)), \
          mock.patch.object(pr_rebase_cli, "_refuse_landed", return_value=4), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
         rc = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH, force=force)
 
-    return rc, commands
+    return rc, commands, saw_checkout
 
 
-def _landed_report():
+def _landed_report(signal="pr_merged"):
     return pr_rebase_cli.LandedReport(
-        branch="feat/landed", signal="pr_merged",
-        detail="PR #726 is merged", commits_ahead=18, pr_number=726,
+        branch=_LANDED_BRANCH, signal=signal,
+        detail=f"PR #{_LANDED_PR} is merged", pr_number=_LANDED_PR,
     )
 
 
 def test_fresh_refuses_a_landed_branch_before_touching_the_remote():
     """Regression: rebasing a merged branch force-pushed the deleted remote back."""
-    rc, commands = _fresh_with_landed(_landed_report())
+    rc, commands, _ = _run_fresh(tracker=_landed_report())
 
     assert rc == 4
     assert not any(cmd[:2] == ["git", "rebase"] for cmd in commands)
     assert not any(cmd[:2] == ["git", "push"] for cmd in commands)
 
 
+def test_fresh_asks_the_tracker_before_the_checkout():
+    """--prune has just deleted origin/<branch>; the checkout starts from it."""
+    rc, commands, saw_checkout = _run_fresh(
+        tracker=_landed_report(), current_branch="other",
+    )
+
+    assert rc == 4
+    assert saw_checkout["tracker"] is False
+    assert not any(cmd[:2] == ["git", "checkout"] for cmd in commands)
+
+
+def test_fresh_probes_the_tracker_even_when_already_on_the_branch():
+    """The common case takes the same path — no checkout, same probe."""
+    rc, commands, saw_checkout = _run_fresh()
+
+    assert rc == 0
+    assert saw_checkout["tracker"] is False
+    assert not any(cmd[:2] == ["git", "checkout"] for cmd in commands)
+
+
+def test_fresh_runs_the_git_signals_after_the_checkout():
+    """They compare HEAD, so they mean nothing until the branch is checked out."""
+    rc, _, saw_checkout = _run_fresh(
+        git=_landed_report("empty_diff"), current_branch="other",
+    )
+
+    assert rc == 4
+    assert saw_checkout["git"] is True
+
+
+def test_fresh_skips_both_halves_of_the_preflight_under_force():
+    """--force must not spend a gh round trip only to ignore the answer."""
+    ctx = mock.MagicMock()
+    ctx.branch = _LANDED_BRANCH
+    ctx.current_branch = _LANDED_BRANCH
+
+    with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
+         mock.patch.object(pr_rebase_cli, "_tracker_landed_check") as mock_tracker, \
+         mock.patch.object(pr_rebase_cli, "_git_landed_check") as mock_git, \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH, force=True)
+
+    mock_tracker.assert_not_called()
+    mock_git.assert_not_called()
+
+
 def test_fresh_rebases_a_landed_branch_under_force():
-    rc, commands = _fresh_with_landed(_landed_report(), force=True)
+    rc, commands, _ = _run_fresh(tracker=_landed_report(), force=True)
 
     assert rc == 0
     assert ["git", "rebase", "origin/main"] in commands
 
 
-def test_fresh_skips_the_preflight_entirely_under_force():
-    """--force must not spend a gh round trip only to ignore the answer."""
-    ctx = mock.MagicMock()
-    ctx.branch = "feat/landed"
-    ctx.current_branch = "feat/landed"
-
-    with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
-         mock.patch.object(pr_rebase_cli, "_landed_check") as mock_check, \
-         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
-         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
-        pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH, force=True)
-
-    mock_check.assert_not_called()
-
-
 def test_fresh_prunes_on_fetch():
     """Without --prune the stale remote-tracking ref satisfies --force-with-lease."""
-    _, commands = _fresh_with_landed(None)
+    _, commands, _ = _run_fresh()
 
     assert ["git", "fetch", "--prune", "origin"] in commands
+
+
+def test_fresh_falls_back_to_the_git_signals_when_the_tracker_is_unreachable():
+    """A gh that cannot answer must not disarm the preflight."""
+    ctx = mock.MagicMock()
+    ctx.branch = _LANDED_BRANCH
+    ctx.current_branch = _LANDED_BRANCH
+    seen = []
+
+    with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
+         mock.patch.object(pr_rebase_cli, "_try_run", return_value=None), \
+         mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=2), \
+         mock.patch.object(pr_rebase_cli, "_diff_is_empty", return_value=True), \
+         mock.patch.object(pr_rebase_cli, "_refuse_landed",
+                           side_effect=lambda c, r: (seen.append(r), 4)[1]), \
+         mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
+         mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
+        rc = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
+
+    assert rc == 4
+    assert seen[0].signal == pr_rebase_cli.LandedSignal.EMPTY_DIFF.value
+
+
+def _merged_and_deleted_remote(tmp_path) -> Path:
+    """A clone whose feature branch merged and whose remote branch is gone.
+
+    Built against real git rather than a stubbed subprocess because the bug is
+    in the interaction between `fetch --prune` and the checkout that follows:
+    prune drops origin/<branch>, and the checkout starts from that exact ref.
+    The worktree is left on an unrelated branch so _fresh has to check out.
+    """
+    origin = tmp_path / "origin"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)],
+                   check=True, capture_output=True)
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", str(origin), str(work)],
+                   check=True, capture_output=True)
+
+    git = ["git", "-C", str(work)]
+    subprocess.run(git + ["config", "user.email", "t@example.com"],
+                   check=True, capture_output=True)
+    subprocess.run(git + ["config", "user.name", "Test"], check=True, capture_output=True)
+    (work / "base.txt").write_text("base\n")
+    subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+    subprocess.run(git + ["commit", "-m", "base"], check=True, capture_output=True)
+    subprocess.run(git + ["push", "-u", "origin", "main"], check=True, capture_output=True)
+
+    subprocess.run(git + ["checkout", "-b", _LANDED_BRANCH], check=True, capture_output=True)
+    (work / "feature.txt").write_text("feature\n")
+    subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+    subprocess.run(git + ["commit", "-m", "feature"], check=True, capture_output=True)
+    subprocess.run(git + ["push", "-u", "origin", _LANDED_BRANCH],
+                   check=True, capture_output=True)
+
+    # The merge, as GitHub leaves it: the remote branch is deleted and the
+    # worktree is sitting on something else by the time anyone rebases.
+    subprocess.run(git + ["checkout", "-b", "other", "main"], check=True, capture_output=True)
+    subprocess.run(git + ["push", "origin", "--delete", _LANDED_BRANCH],
+                   check=True, capture_output=True)
+    return work
+
+
+def test_fresh_refuses_a_merged_branch_whose_remote_was_pruned(tmp_path, capsys):
+    """Regression: prune deleted origin/<branch>, so the checkout failed first.
+
+    The refusal never reached the exact input it exists for — a merged branch —
+    because `git checkout -B <branch> origin/<branch>` errored out with a
+    generic message and exit 1 before any signal was consulted.
+    """
+    work = _merged_and_deleted_remote(tmp_path)
+    ctx = _landed_ctx(
+        worktree_root=work, current_branch="other",
+        target_dir=tmp_path / "target",
+    )
+
+    with mock.patch.object(pr_rebase_cli, "_merged_pr",
+                           return_value=pr_rebase_cli.MergedPR(number=_LANDED_PR)):
+        rc = pr_rebase_cli._fresh(str(work), ctx, pr_rebase_cli.RunMode.PUSH)
+
+    captured = capsys.readouterr()
+    assert rc == 4
+    assert json.loads(captured.out)["signal"] == pr_rebase_cli.LandedSignal.PR_MERGED.value
+    assert "Cannot checkout" not in captured.err
+    # The prune really happened, so the old order really would have failed here.
+    refs = subprocess.run(["git", "-C", str(work), "branch", "-r"],
+                          capture_output=True, text=True)
+    assert f"origin/{_LANDED_BRANCH}" not in refs.stdout
 
 
 def _tool_schema(capsys) -> dict:

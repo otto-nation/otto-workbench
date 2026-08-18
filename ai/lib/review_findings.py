@@ -81,6 +81,14 @@ PATH_SECTION_RE = re.compile(
 _PATH_CHAR = r"[^\s:*`—]"
 _SEGMENT_CHAR = r"[^\s/:*`—]"
 
+# The `:12` or `:12-18` a location may carry after its filename.
+_LINE_SUFFIX = r"(?::\d+(?:[-–]\d+)?)?"
+
+# A filename holding spaces. It has no character class to stop it, so every
+# use has to bound it: the extension ends it, and whatever follows has to be
+# the end of the span it was found in.
+_SPACED_FILE = rf"{_PATH_CHAR}+(?: {_PATH_CHAR}+)+\.\w+"
+
 # Three shapes, tried in this order:
 #
 #   1. pkg/handler.go            — an extension ends the filename
@@ -109,7 +117,7 @@ FIRST_FILE_RE = re.compile(
     r"("
     rf"{_PATH_CHAR}+\.\w+"
     r"|"
-    rf"{_PATH_CHAR}+(?: {_PATH_CHAR}+)+\.\w+(?=(?::\d+(?:[-–]\d+)?)?\s*$)"
+    rf"{_SPACED_FILE}(?={_LINE_SUFFIX}\s*$)"
     r"|"
     rf"{_SEGMENT_CHAR}+(?:/{_SEGMENT_CHAR}+)+"
     r")"
@@ -789,13 +797,27 @@ def _verify_finding(path: str, evidence: str | None, wt_path: str) -> bool:
     return _match_evidence(path, evidence, wt_path)["match_result"]
 
 
+# This pattern selects as well as reads: a finding line it does not match is
+# appended to the previous finding's body, so the previous finding is then
+# evidence-checked against text that is not its own. That is why the
+# space-free class stays exactly as it was — anything the delimiters cannot
+# hold, line suffix included, which `rsplit` strips below — and why the spaced
+# shape is added beside it rather than replacing it. Every location that
+# parsed before parses the same way, since a space-free span never reaches
+# the second alternative at all.
+#
+# `_SPACED_FILE` needs the same bound it has in FIRST_FILE_RE, where a
+# lookahead makes the filename account for the whole span. Here the closing
+# delimiter is that bound: the extension and its optional line suffix have to
+# run right up to it, so "the fix lands in v2.0 of the tool" is still no path
+# and a greedy space run cannot walk past the real filename.
 _VERIFY_FINDING_RE = re.compile(
     r"^- (?:\[ \] )?"
     r"\*\*\[([MSNI])(\d+)\]\*\*"
     r"\s+(?:<!-- sid:\w+ -->\s+)?"
-    r"(?:\*\*[`]?([^`*\s]+?)[`]?\*\*"
-    r"|[`]([^`\s]+?)[`])"
-    r"(?::\d+(?:[-–]\d+)?)?"
+    rf"(?:\*\*[`]?([^`*\s]+?|{_SPACED_FILE}{_LINE_SUFFIX})[`]?\*\*"
+    rf"|[`]([^`\s]+?|{_SPACED_FILE}{_LINE_SUFFIX})[`])"
+    rf"{_LINE_SUFFIX}"
     r"\s*—\s*(.*)"
 )
 

@@ -13,6 +13,9 @@ This module also provides ``handle_value_flags``, a lighter probe that answers
 which of a parser's options take a value.  ToolParser scripts inherit it;
 plain-``argparse`` scripts opt in with one call.  See its docstring for why the
 arity question is not answered out of ``--tool-schema``.
+
+Argparse introspection that reaches past the public API is collected here —
+``value_taking_options`` and ``subparsers`` — so a caller never has to.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from argparse import SUPPRESS, ArgumentParser
+from argparse import SUPPRESS, ArgumentParser, _SubParsersAction
 
 
 # Args that are injected by the pr dispatcher / context system, not user-facing.
@@ -158,6 +161,31 @@ def value_taking_options(parser: ArgumentParser) -> list[str]:
             )
         options.update(action.option_strings)
     return sorted(options)
+
+
+def subparsers(parser: ArgumentParser) -> dict[str, ArgumentParser]:
+    """Every subcommand of *parser*, keyed by the name it is invoked as.
+
+    A dispatcher that wants to introspect what one of its subcommands declares
+    (``ai/claude/bin/pr`` asking whether a command takes a value-consuming
+    option) needs the subparser that declares it, and ``add_subparsers`` hands
+    that back only at construction time.  Reading it off the built parser
+    instead means the answer cannot drift from the parser that is actually
+    parsing argv, and spares every caller a bespoke return type.
+
+    Aliases appear under each name they answer to, because that is how argparse
+    stores them and a caller matching a raw argv token needs all of them.
+    Returns empty for a parser with no subcommands.
+
+    ``_SubParsersAction`` is private, as is the ``_actions`` list this walks —
+    the same list ``value_taking_options`` above reads.  Both are stable across
+    every Python argparse has shipped with, and keeping the two reads in one
+    module is why this lives here rather than at its call site.
+    """
+    for action in parser._actions:
+        if isinstance(action, _SubParsersAction):
+            return dict(action.choices)
+    return {}
 
 
 def handle_value_flags(parser: ArgumentParser, args=None) -> None:

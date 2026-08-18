@@ -201,6 +201,7 @@ list_shell_scripts() {
   local shebang_re='^#!.*(/(ba)?sh|/env (ba)?sh|/bats|/env bats)'
   grep -rlE "$shebang_re" "$root" \
     --exclude-dir='.git' --exclude-dir='ignore' --exclude-dir='__pycache__' \
+    --exclude-dir='node_modules' \
     --exclude='*.py' \
     | sort \
     | xargs awk -v re="$shebang_re" 'FNR == 1 && $0 ~ re { print FILENAME }'

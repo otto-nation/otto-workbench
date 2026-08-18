@@ -50,8 +50,9 @@ same file, and `full` when that is unset too. Change either with
 
 If `.claude/ceiling-debt.md` exists in the project, read it at session start — it
 lists deliberate simplifications marked with `// ceiling:` comments. Each entry names
-the tradeoff and (ideally) the upgrade trigger. Entries flagged **no-trigger** are rot
-risk. Auto-regenerated via Stop hook; run `/ceiling-debt` to force a refresh.
+the tradeoff and the upgrade trigger. Entries flagged **no-trigger** are rot risk;
+entries flagged **permanent** are accepted for good and are not debt. Auto-regenerated
+via Stop hook; run `/ceiling-debt` to force a refresh.
 
 ## Output
 

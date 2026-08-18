@@ -318,6 +318,19 @@ def write_thrash_log(path) -> str:
     return str(path)
 
 
+def write_marker_file(directory, name: str, *lines: str) -> Path:
+    """Write a ceiling-marker fixture, one line per argument.
+
+    Never a triple-quoted block: the scanner reads every file in the repo, so a
+    marker at the start of a line in a test file is a marker in the repo. Both
+    the scanner's suite and the validator's need this, and the shape is the
+    whole point of it — so it lives here rather than once per module.
+    """
+    path = Path(directory) / name
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
 # Session-scoped: the module is loaded once and shared across all tests.
 # Tests must not mutate module-level state.
 @pytest.fixture(scope="session")

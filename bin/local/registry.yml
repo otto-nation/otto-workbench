@@ -54,6 +54,11 @@ tools:
     visibility: brief
     description: "Validates that stat format flags are confined to the lib/portable.sh helpers"
 
+  - name: validate-ceiling
+    permission: false
+    visibility: brief
+    description: "Validates that every ceiling marker names an upgrade trigger or is marked permanent"
+
   - name: validate-eval-baselines
     permission: false
     visibility: brief

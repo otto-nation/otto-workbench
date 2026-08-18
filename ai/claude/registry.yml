@@ -106,7 +106,7 @@ tools:
   - name: ceiling-scan
     permission: true
     visibility: brief
-    description: "Scan for ceiling: markers and produce a structured debt ledger"
+    description: "Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger"
 
   - name: reuse-mode-tracker
     permission: false

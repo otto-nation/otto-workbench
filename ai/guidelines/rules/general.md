@@ -64,6 +64,9 @@ On failure, diagnose in this order — do NOT retry with variations:
 - Do not add comments that exist only to explain what a prompt change did
 - Silent fallbacks and defense-in-depth patterns require a comment explaining intent
 - Mark deliberate simplifications with a `// ceiling:` comment naming the tradeoff and upgrade trigger — e.g. `// ceiling: global lock, upgrade to per-account locks if throughput matters`
+- A trigger is a *condition*, not an intention. Write the clause that says when the shortcut stops being acceptable — one turning on `if`, `once`, `when`, `unless`, or `until`, or an explicit `Upgrade trigger:` sentence. "Upgrade when we get around to it" names nothing and reads as no trigger at all
+- When a simplification genuinely has no upgrade path, write `// ceiling-permanent:` and say why the alternative is worse. It is counted apart from the pending ones — inventing a fake threshold to satisfy the gate is the outcome this form exists to prevent
+- The marker opens its own comment line and may run to the end of the comment block below it, so the trigger does not have to fit on the first line. `bin/local/validate-ceiling` fails on any `ceiling:` marker with neither a trigger nor the permanent form
 - When adding docs, extend existing files rather than creating new ones
 - When adding CLI commands or changing command signatures, update `docs/ai-automation.md` and/or `README.md`
 

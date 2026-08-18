@@ -27,11 +27,13 @@ ceiling-scan
 
 2. If no markers found (output shows `0 marker(s)`): report "No ceiling markers. Clean ledger." and stop.
 
-3. Present the ledger grouped by file. Highlight entries with **no-trigger** as rot risk — these are deliberate simplifications with no documented upgrade condition.
+3. Present the ledger grouped by file. Highlight entries with **no-trigger** as rot risk — these are deliberate simplifications with no documented upgrade condition. Entries marked **permanent** are accepted for good and are not debt; report the count but do not push to resolve them.
 
 4. For each **no-trigger** entry, suggest adding an upgrade trigger using `git blame` to identify the author:
 ```bash
 git blame -L <line>,<line> <file>
 ```
+
+The trigger must name a condition — a clause turning on `if`, `once`, `when`, `unless`, or `until`, or an explicit `Upgrade trigger:` sentence. It may live on any line of the marker's comment block, not just the first. When the simplification has no upgrade path at all, the fix is to change the marker to the `ceiling-permanent:` form and say why the alternative is worse — never to invent a threshold nobody agreed to.
 
 5. If `.claude/ceiling-debt.md` exists and is stale (different from scan output), note it will be refreshed on session exit.

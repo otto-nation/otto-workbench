@@ -209,11 +209,13 @@ fi
 # bins are where an agent lands after resolving a shim by hand. Both reach the
 # same binary the bare name does.
 #
-# ceiling: the list is still static, so a tool installed somewhere else on PATH
-# costs one prompt per call — a Homebrew formula's own bin (/opt/homebrew/opt/
-# node/bin) is the remaining known gap. Resolving the basename against PATH at
-# hook time would end the list, but the hook's PATH is not the session's, so it
-# would trade these misses for wrong suggestions. Upgrade only with a real fix.
+# ceiling-permanent: the list is static, so a tool installed somewhere else on
+# PATH costs one prompt per call — a Homebrew formula's own bin
+# (/opt/homebrew/opt/node/bin) is the remaining known gap. Resolving the
+# basename against PATH at hook time would end the list, but the hook's PATH is
+# not the session's, so it would trade these misses for wrong suggestions. There
+# is no condition under which the dynamic version becomes the better trade; a
+# new gap is a new entry here.
 re_pathbin='(^|[;&|][[:space:]]*)(/opt/homebrew/s?bin|/usr/local/bin|/usr/bin|/bin|/[^[:space:]]*/(\.local/bin|\.local/share/mise/shims|\.local/share/mise/installs/[^[:space:]]*/bin|\.asdf/shims|\.asdf/installs/[^[:space:]]*/bin))/([A-Za-z0-9_.-]+)'
 if [[ "$stripped" =~ $re_pathbin ]]; then
   block "Use '${BASH_REMATCH[4]}' instead of its absolute path — the allow list keys on the bare command name, so a ${BASH_REMATCH[2]}/ path prompts every time. See bash-tool.md § Avoid Absolute Paths to PATH Binaries."

@@ -13,7 +13,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from server import _args_to_cli, _declares_tool_schema, _extract_json, discover_tools
+from server import (
+    _args_to_cli,
+    _declares_tool_schema,
+    _default_tool_dirs,
+    _extract_json,
+    discover_tools,
+)
 
 
 # ── JSON Extraction ───────────────────────────────────────────────────────
@@ -277,7 +283,7 @@ class TestDiscovery:
 
 
 class TestDefaultToolDirs:
-    """A machine with no mcp-tools.json still gets the installed tools.
+    """A machine with no mcp-tools.json still gets the workbench's tools.
 
     Nothing in the workbench ever writes that file, so an absent ``tool_dirs``
     is the ordinary case rather than the exceptional one. Without a default it
@@ -285,34 +291,32 @@ class TestDefaultToolDirs:
     server that exposed nothing.
     """
 
-    def test_absent_tool_dirs_scans_the_installed_bin_dir(self, monkeypatch, tmp_path):
-        bin_dir = tmp_path / ".local" / "bin"
-        bin_dir.mkdir(parents=True)
-        _write_tool_script(bin_dir / "installed-tool", "installed-tool")
-        monkeypatch.setenv("HOME", str(tmp_path))
+    def test_default_is_the_workbench_bin_dir(self):
+        """Narrower than the ~/.local/bin those scripts are symlinked into.
 
-        assert "installed-tool" in discover_tools({})
+        Discovery probes by executing, so the default must not reach a
+        directory holding executables the workbench did not put there.
+        """
+        expected = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
 
-    def test_explicit_tool_dirs_replaces_the_default(self, monkeypatch, tmp_path):
+        assert _default_tool_dirs() == [str(expected)]
+
+    def test_absent_tool_dirs_still_discovers_tools(self):
+        """The regression guard: an empty config used to yield no tools at all."""
+        if not (Path(_default_tool_dirs()[0]) / "pr-rebase").exists():
+            pytest.skip("scripts not found")
+
+        assert "pr-rebase" in discover_tools({})
+
+    def test_explicit_tool_dirs_replaces_the_default(self, tmp_path):
         """The key is an override, not an addition — matching serde defaults."""
-        bin_dir = tmp_path / ".local" / "bin"
-        bin_dir.mkdir(parents=True)
-        _write_tool_script(bin_dir / "installed-tool", "installed-tool")
-        project_dir = tmp_path / "project-tools"
-        project_dir.mkdir()
-        _write_tool_script(project_dir / "project-tool", "project-tool")
-        monkeypatch.setenv("HOME", str(tmp_path))
+        _write_tool_script(tmp_path / "project-tool", "project-tool")
 
-        tools = discover_tools({"tool_dirs": [str(project_dir)]})
+        tools = discover_tools({"tool_dirs": [str(tmp_path)]})
 
         assert "project-tool" in tools
-        assert "installed-tool" not in tools
+        assert "pr-rebase" not in tools
 
-    def test_an_empty_tool_dirs_list_is_not_an_absent_one(self, monkeypatch, tmp_path):
+    def test_an_empty_tool_dirs_list_is_not_an_absent_one(self):
         """``tool_dirs: []`` is how discovery is turned off deliberately."""
-        bin_dir = tmp_path / ".local" / "bin"
-        bin_dir.mkdir(parents=True)
-        _write_tool_script(bin_dir / "installed-tool", "installed-tool")
-        monkeypatch.setenv("HOME", str(tmp_path))
-
         assert discover_tools({"tool_dirs": []}) == {}

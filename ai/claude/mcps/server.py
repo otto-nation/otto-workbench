@@ -87,14 +87,20 @@ def _default_tool_dirs() -> list[str]:
     """Where to look when the config names no directories.
 
     Nothing writes ``mcp-tools.json``, so an absent ``tool_dirs`` is the
-    ordinary case: without this the server resolved to no directories and
-    exposed no tools on every install. ``~/.local/bin`` is where setup
-    symlinks the workbench's own scripts, which is what the server is for.
+    ordinary case: without a default the server resolved to no directories and
+    exposed no tools on any install.
+
+    The default is the workbench's own script directory rather than the
+    ``~/.local/bin`` those scripts are symlinked into. Both hold the same tools,
+    but ``~/.local/bin`` also holds everything else a user has installed, and
+    discovery probes by *executing* a candidate — narrowing the default keeps
+    that off third-party binaries whose help text happens to carry a marker.
+    Reaching them through ``~/.local/bin`` is a ``tool_dirs`` away.
 
     An explicit ``tool_dirs`` replaces this rather than extending it, so the
     key keeps the meaning a typed default will give it in #724.
     """
-    return [str(workbench_paths.local_bin_dir())]
+    return [str(Path(__file__).resolve().parent.parent / "bin")]
 
 
 def _resolve_dirs(config: dict) -> list[Path]:

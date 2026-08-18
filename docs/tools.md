@@ -423,21 +423,25 @@ stdio. Registered in `~/.claude.json` as `otto-workbench` by `otto-workbench ai 
 otto-mcp-server
 ```
 
-A script is discovered when it is executable, not hidden, and answers `--tool-schema`
-with JSON carrying at least `name` and `input_schema`. Scripts built on `ToolParser`
+A script is discovered when it is executable, its name starts with neither `.` nor `_`,
+and it answers `--tool-schema` with JSON carrying at least `name` and `input_schema`.
+Scripts built on `ToolParser`
 ([`ai/lib/tool_parser.py`](../ai/lib/tool_parser.py)) inherit the flag for free.
 
 **Where it looks.** `~/.config/workbench/mcp-tools.json`, which is optional:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `tool_dirs` | list of paths | `["~/.local/bin"]` | Directories scanned for tool scripts |
+| `tool_dirs` | list of paths | `ai/claude/bin` in the workbench checkout | Directories scanned for tool scripts |
 | `plugin_dirs` | list of paths | `[]` | Directories of `*.json` files, each naming one `tool_dir` |
 
-With no file present the workbench's own installed scripts are scanned, which is what
-the default is for. Setting `tool_dirs` **replaces** that default rather than adding to
-it — list `~/.local/bin` explicitly to keep the workbench tools alongside your own. An
-empty list turns discovery off.
+With no file present the workbench's own scripts are scanned, which is what the default
+is for. It deliberately points at the checkout rather than the `~/.local/bin` those
+scripts are symlinked into: discovery probes a candidate by running it, and `~/.local/bin`
+also holds everything else you have installed.
+
+Setting `tool_dirs` **replaces** the default rather than adding to it, so list the
+workbench directory alongside your own to keep both. An empty list turns discovery off.
 
 ```json
 {

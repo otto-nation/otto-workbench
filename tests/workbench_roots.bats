@@ -262,15 +262,6 @@ print(workbench_paths.state_dir() / mod.CONSUMED_REVIEWS_NAME, end='')
   [ "$(resolve_python_retro_consumed)" = "$consumed" ]
 }
 
-@test "bash and Python agree on the installed-scripts bin dir" {
-  # Setup symlinks the workbench's scripts into this directory from bash, and
-  # MCP discovery defaults to scanning it from Python. A divergence points the
-  # server at a directory nothing was ever installed into, and it finds nothing
-  # — which is the failure the default was added to end.
-  [ "$(resolve_constants LOCAL_BIN_DIR)" = "$HOME/.local/bin" ]
-  [ "$(resolve_python local_bin_dir)" = "$HOME/.local/bin" ]
-}
-
 # ─── Registry root expansion ────────────────────────────────────────────────
 
 @test "install_check_symlink expands the workbench roots" {

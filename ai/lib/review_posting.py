@@ -15,6 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import proc
 import review_dedup
 import review_format
 import review_github
@@ -379,12 +380,13 @@ def _mark_orphan_review(repo: str, pr: str, review_id: int) -> None:
         json.dump({"body": "~~Duplicate — review reposted due to prior partial post.~~"}, tmp)
         tmp_path = tmp.name
     try:
-        code, _ = review_github._gh_api(
+        r = review_github._gh_api(
             f"repos/{repo}/pulls/{pr}/reviews/{review_id}",
             method="PUT", input_file=tmp_path,
         )
-        if code != 0:
-            log.warn(f"Failed to mark review #{review_id} as duplicate (exit code {code})")
+        if not r.ok:
+            log.warn(proc.failure_message(
+                f"Failed to mark review #{review_id} as duplicate", r))
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

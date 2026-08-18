@@ -293,7 +293,7 @@ def test_resolve_branch_falls_back_on_missing_script_no_hint(mock_current, mock_
 @patch("pr_context.subprocess.run")
 @patch("pr_context._current_branch", return_value="fallback-branch")
 def test_resolve_branch_returns_hint_on_failure(mock_current, mock_run):
-    mock_run.return_value = MagicMock(returncode=1, stdout="")
+    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
     assert _resolve_branch("bad-hint") == "bad-hint"
     mock_current.assert_not_called()
 
@@ -524,7 +524,7 @@ def test_create_worktree_for_branch_returns_none_when_wt_fails(mock_run):
 
 @patch("pr_context.subprocess.run")
 def test_create_worktree_for_branch_survives_malformed_json(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout="{not json}\n")
+    mock_run.return_value = MagicMock(returncode=0, stdout="{not json}\n", stderr="")
     assert create_worktree_for_branch("feat/x") is None
 
 

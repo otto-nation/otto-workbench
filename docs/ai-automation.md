@@ -894,6 +894,40 @@ wrong arity — it names the offending option on stderr, exits 2, and `pr` repri
 message before degrading. Positionals are unconstrained (`claude-review` declares
 `args` with `nargs='*'`).
 
+### What a failed command is allowed to say
+
+A wrapper that returns `(returncode, stdout)` has no slot for stderr, and stderr is
+where a command explains itself. Everything downstream inherits that gap: the
+renderer has no cause to print, and a classifier reading stdout alone misses a
+failure the command reported on the other stream. `gh api` is the sharp case — it
+writes an API error body to stdout and its own status line (`gh: ... (HTTP 503)`) to
+stderr, so a 404 is legible from stdout while a 5xx or a dropped connection leaves
+stdout empty.
+
+[`ai/lib/proc.py`](../ai/lib/proc.py) is the answer: `proc.run(cmd)` returns a frozen
+`CmdResult` carrying `returncode`, `stdout`, and `stderr`, and a caller reads what it
+needs by name rather than by position.
+
+| Read | What it gives you |
+|---|---|
+| `r.ok` | The command exited cleanly. |
+| `r.detail` | `stderr` folded onto one line — what to quote in an error. |
+| `r.combined_output` | Both streams, for classifying a failure by what it said. |
+| `r.server_error` | The failure was a 5xx, so the remedy is to wait and retry. |
+
+`proc.failure_message(action, r)` renders a failure without asserting a cause the
+code has not established: it names the action, appends whatever the command said,
+and calls out a 5xx separately because that is the one case where the answer is to
+wait rather than to change anything. It decides that from `server_error`, so the
+rendered message and the classifier can never disagree about which stream the
+evidence was on. It accepts a raw `subprocess.CompletedProcess` too, so the call
+sites still running `subprocess.run` directly can report a failure without
+converting first.
+
+`proc` is stdlib-only on purpose — it is the module the rest of `ai/lib` should be
+free to depend on. The name is not `cmd` because `ai/lib` goes on `sys.path` ahead
+of the standard library, where a `cmd` module would shadow the one `pdb` imports.
+
 ## Guidelines & Rules
 
 The workbench installs a layered rule system into Claude Code:

@@ -6,9 +6,10 @@
  * accepted for two consumers; extract to a shared token set if a third appears.
  *
  * Contrast rules, which are not optional:
- *   --ow-amarillo  ~1.9:1 on canvas. Never text on light. Rules, borders, prompts,
- *                  SVG line-work. It reaches ~9:1 on the dark terminal block.
- *   --ow-rosa      ~5.3:1 on canvas. UI and large text only, never inline prose.
+ *   --ow-amarillo  1.65:1 on canvas. Never text on light. Rules, borders, prompts,
+ *                  SVG line-work. It reaches 9.73:1 on the dark terminal block.
+ *   --ow-rosa      4.42:1 on canvas — below the 4.5:1 AA floor for normal text, above
+ *                  the 3:1 large-text floor. UI and large text only, never inline prose.
  *   Body copy is always --ow-ink or --ow-ink-muted on --ow-canvas.
  */
 

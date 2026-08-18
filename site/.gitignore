@@ -2,3 +2,8 @@ node_modules/
 .next/
 out/
 .source/
+
+# Written by `next dev` on startup, not by the build. Committing them would put
+# agent instructions inside site/ that shadow the repo's own CLAUDE.md.
+AGENTS.md
+CLAUDE.md

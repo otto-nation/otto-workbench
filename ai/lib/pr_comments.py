@@ -250,10 +250,21 @@ class MarkerComment:
     as "no prior comment": the caller would post a duplicate, and one that
     reconciles against ``body`` would conclude the published comment was empty
     and drop everything already in it.
+
+    The two timestamps answer whether the target is still the last word in the
+    conversation, which the same listing already knows. An edit does not move a
+    comment or notify anyone, so a caller whose comment has to be read needs to
+    know whether anything was said below it. ``created_at`` is the marker's own
+    place in the timeline — not ``updated_at``, which each edit bumps without
+    moving the comment. ``newest_other_at`` is the newest issue comment that is
+    not itself a marker comment, so an earlier round's superseded summary does
+    not read as someone answering.
     """
     found: bool = False
     comment_id: int | None = None
     body: str = ""
+    created_at: str = ""
+    newest_other_at: str = ""
 
 
 def post_issue_comment(
@@ -305,10 +316,18 @@ def find_marker_comment(repo: str, pr_number: int, marker: str) -> MarkerComment
     if not isinstance(pages, list):
         return MarkerComment()
     comments = [c for page in pages for c in page] if pages and isinstance(pages[0], list) else pages
+    newest_other = max(
+        (c.get("created_at", "") or "" for c in comments if marker not in (c.get("body") or "")),
+        default="",
+    )
     for c in reversed(comments):
         if marker in (c.get("body") or ""):
-            return MarkerComment(True, c.get("id"), c.get("body") or "")
-    return MarkerComment(found=True)
+            return MarkerComment(
+                True, c.get("id"), c.get("body") or "",
+                created_at=c.get("created_at", "") or "",
+                newest_other_at=newest_other,
+            )
+    return MarkerComment(found=True, newest_other_at=newest_other)
 
 
 def _patch_issue_comment(repo: str, comment_id: int, body: str) -> str | None:

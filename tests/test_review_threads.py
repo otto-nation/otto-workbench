@@ -3768,6 +3768,132 @@ class TestPublishedRowsSurviveTheEdit:
             True, 11, _published_summary(rt, ROUND_ONE_ROW))
 
 
+# ── reposting a summary the PR has moved past ──────────────────────────────
+
+
+_SUMMARY_POSTED_AT = "2026-01-02T00:00:00Z"
+_AFTER_THE_SUMMARY = "2026-01-03T00:00:00Z"
+_BEFORE_THE_SUMMARY = "2026-01-01T00:00:00Z"
+
+
+class TestAnsweredSummariesArePostedAgain:
+    """An edit notifies nobody, so a summary spoken over is reposted, not patched."""
+
+    def _marker(self, **overrides):
+        import pr_comments
+        defaults = dict(found=True, comment_id=11, body="",
+                        created_at=_SUMMARY_POSTED_AT)
+        defaults.update(overrides)
+        return pr_comments.MarkerComment(**defaults)
+
+    def _publish(self, rt, marker, activity_at=""):
+        with _lookup_returns(marker), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._publish_summary("owner/repo", 1, lambda carried_over: "body",
+                                activity_at=activity_at)
+        return post.call_args
+
+    def test_a_round_that_still_has_the_last_word_edits_in_place(self, rt):
+        call = self._publish(rt, self._marker())
+        assert call.kwargs["marker"] == rt._SUMMARY_MARKER
+
+    def test_a_later_issue_comment_forces_a_fresh_one(self, rt):
+        call = self._publish(rt, self._marker(newest_other_at=_AFTER_THE_SUMMARY))
+        assert "marker" not in call.kwargs
+
+    def test_a_later_review_forces_a_fresh_one(self, rt):
+        call = self._publish(rt, self._marker(), activity_at=_AFTER_THE_SUMMARY)
+        assert "marker" not in call.kwargs
+
+    def test_activity_from_before_the_summary_changes_nothing(self, rt):
+        call = self._publish(
+            rt, self._marker(newest_other_at=_BEFORE_THE_SUMMARY),
+            activity_at=_BEFORE_THE_SUMMARY,
+        )
+        assert call.kwargs["marker"] == rt._SUMMARY_MARKER
+
+    def test_a_target_with_no_timestamp_is_still_edited(self, rt):
+        """Guessing "buried" here would append a duplicate summary every round."""
+        call = self._publish(rt, self._marker(created_at=""),
+                             activity_at=_AFTER_THE_SUMMARY)
+        assert call.kwargs["marker"] == rt._SUMMARY_MARKER
+
+    def test_the_fresh_comment_carries_what_the_old_one_held(self, rt):
+        """A repost that lost the earlier rounds would be worse than the edit."""
+        import pr_comments
+        state = _make_state(FixSummary(
+            threads=[ThreadOutcome(id="t2", summary="round two work", file="new.go",
+                                   line=1, action=ThreadAction.FIXED)],
+            commit_status="no_changes", summary_deferred=True,
+        ))
+        marker = pr_comments.MarkerComment(
+            True, 11, _published_summary(rt, ROUND_ONE_ROW),
+            created_at=_SUMMARY_POSTED_AT, newest_other_at=_AFTER_THE_SUMMARY,
+        )
+        with _lookup_returns(marker), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert "marker" not in post.call_args.kwargs
+        assert rt._SUMMARY_MARKER in body
+        assert "drop the guard" in body
+        assert "round two work" in body
+
+
+class TestNewestReviewerActivity:
+    """What counts as somebody else having spoken since the summary went up."""
+
+    def _report(self, **overrides):
+        defaults = dict(my_login="me")
+        defaults.update(overrides)
+        return PRReport(**defaults)
+
+    def _thread(self, login, created_at):
+        return ReportThread(
+            id="t1", my_login="me",
+            comments=[{"author": {"login": login}, "createdAt": created_at}],
+        )
+
+    def test_a_reviewer_reply_counts(self, rt):
+        report = self._report(threads=[self._thread("kgn", _AFTER_THE_SUMMARY)])
+        assert rt._newest_reviewer_activity(report) == _AFTER_THE_SUMMARY
+
+    def test_our_own_replies_do_not(self, rt):
+        """The fix pass replies before it publishes — counting those never settles."""
+        report = self._report(threads=[self._thread("me", _AFTER_THE_SUMMARY)])
+        assert rt._newest_reviewer_activity(report) == ""
+
+    def test_a_verdict_with_no_body_counts(self, rt):
+        report = self._report(verdicts=[
+            {"user": "kgn", "state": "APPROVED", "submitted_at": _AFTER_THE_SUMMARY},
+        ])
+        assert rt._newest_reviewer_activity(report) == _AFTER_THE_SUMMARY
+
+    def test_our_own_verdict_does_not(self, rt):
+        report = self._report(verdicts=[
+            {"user": "Me", "state": "COMMENTED", "submitted_at": _AFTER_THE_SUMMARY},
+        ])
+        assert rt._newest_reviewer_activity(report) == ""
+
+    def test_the_newest_of_several_wins(self, rt):
+        report = self._report(
+            threads=[self._thread("kgn", _BEFORE_THE_SUMMARY)],
+            verdicts=[{"user": "kgn", "state": "APPROVED",
+                       "submitted_at": _AFTER_THE_SUMMARY}],
+        )
+        assert rt._newest_reviewer_activity(report) == _AFTER_THE_SUMMARY
+
+    def test_an_unknown_author_counts_as_somebody_else(self, rt):
+        """An author this cannot identify is not evidence the comment is ours."""
+        report = self._report(threads=[
+            ReportThread(id="t1", comments=[{"createdAt": _AFTER_THE_SUMMARY}]),
+        ])
+        assert rt._newest_reviewer_activity(report) == _AFTER_THE_SUMMARY
+
+    def test_a_quiet_pr_reports_nothing(self, rt):
+        assert rt._newest_reviewer_activity(self._report()) == ""
+
+
 # ── default-branch resolution in commit lookups ────────────────────────────
 
 

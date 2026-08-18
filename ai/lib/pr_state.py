@@ -508,12 +508,15 @@ class FixSummary(Domain):
         "cleared" — dropping it would make the next deferred round open a
         duplicate issue.
 
-        The summary comment is cycle-scoped for the same reason: one marker
-        comment, upserted every round.  A round that posts nothing — no fixables,
-        nothing dismissed, no discussion pending — carries an empty summary_url
-        meaning "not posted this round", so overwriting with it would leave state
-        claiming a summary that is live on the PR was never posted, and
-        summary_deferred false leaves --finish with nothing to re-render.
+        The summary comment is cycle-scoped for the same reason.  A round that
+        posts nothing — no fixables, nothing dismissed, no discussion pending —
+        carries an empty summary_url meaning "not posted this round", so
+        overwriting with it would leave state claiming a summary that is live on
+        the PR was never posted, and summary_deferred false leaves --finish with
+        nothing to re-render.  A round that does post replaces the url, which is
+        not always the same comment: a summary a reviewer has answered below is
+        reposted rather than edited, so the url names the live summary rather
+        than the first one the cycle wrote.
 
         Every other field is per-round and comes from this pass.
         """

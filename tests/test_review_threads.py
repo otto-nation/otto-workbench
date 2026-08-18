@@ -13,11 +13,16 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from conftest import assert_no_worktree_exit, make_ctx, write_thrash_log
+from conftest import (
+    assert_no_worktree_exit, make_ctx,
+    supersession_context, supersession_evidence, supersession_verdict,
+    write_thrash_log,
+)
 import pr_state
 from pr_comments import ThreadState
 from pr_state import (
-    CommitStatus, FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome,
+    CommitStatus, FixSummary, PRIdentity, PRState, SupersessionKind,
+    ThreadAction, ThreadOutcome,
 )
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
@@ -3320,155 +3325,45 @@ class TestClassifyAlreadyAddressed:
         assert outcomes[0].commit_sha == ""
 
 
-_CLEAN_LOG = "1700000000 1700000000\n"
-_SKEWED_LOG = "1700000000 1700864000\n"
-_READDS_DIFF = "+++ b/ai/lib/foo.py\n+def dropped_helper(x):\n     pass\n"
-
-
-class TestHistoryPreflight:
-    """#703's other half: the branch was fixing code `main` had already deleted.
-
-    Each signal is driven on its own, because the value of the preflight is
-    that any one of them can fire — a branch can be superseded without having
-    been rebased, and a rebase is not on its own a reason to withhold anything.
-    """
-
-    @staticmethod
-    def _signals(rt, *, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
-                 gh_out="", gh_rc=0, calls=None):
-        def mock_run(cmd, **kwargs):
-            if calls is not None:
-                calls.append(cmd)
-            if cmd[0] == "gh":
-                return _make_completed(gh_rc, stdout=gh_out)
-            if "--reverse" in cmd:
-                return _make_completed(0, stdout=log_out)
-            if cmd[3] == "diff":
-                return _make_completed(0, stdout=diff)
-            if cmd[3] == "grep":
-                return _make_completed(grep_rc)
-            return _make_completed(0, stdout=pickaxe)
-
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
-             patch.object(rt.subprocess, "run", side_effect=mock_run):
-            return rt._history_preflight(Path("/fake"), "owner/repo")
-
-    def test_a_healthy_branch_raises_nothing(self, rt):
-        assert self._signals(rt) == []
-
-    def test_rebase_skew_is_reported(self, rt):
-        signals = self._signals(rt, log_out=_SKEWED_LOG)
-        assert [s.kind for s in signals] == ["rebase_skew"]
-        assert "10 day(s)" in signals[0].detail
-
-    def test_rebase_skew_alone_does_not_hold(self, rt):
-        """Every long-lived branch has one. Holding on it would fire on health."""
-        assert self._signals(rt, log_out=_SKEWED_LOG)[0].holds is False
-
-    def test_a_same_week_rebase_is_not_skew(self, rt):
-        assert self._signals(rt, log_out="1700000000 1700100000\n") == []
-
-    def test_unreadable_dates_are_not_a_finding(self, rt):
-        """A hint that cannot be computed is not evidence of anything."""
-        assert self._signals(rt, log_out="not a timestamp\n") == []
-
-    def test_a_readded_symbol_is_reported(self, rt):
-        signals = self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n")
-        assert [s.kind for s in signals] == ["readds_removed_symbol"]
-        assert "dropped_helper" in signals[0].detail
-        assert "abc1234" in signals[0].detail
-
-    def test_a_readded_symbol_holds(self, rt):
-        signals = self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n")
-        assert signals[0].holds is True
-
-    def test_a_symbol_the_base_still_has_is_not_readded(self, rt):
-        assert self._signals(rt, diff=_READDS_DIFF, grep_rc=0) == []
-
-    def test_a_symbol_the_base_never_had_is_just_new(self, rt):
-        """Absent from the base with no history of it is what new code looks like."""
-        assert self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="") == []
-
-    def test_the_superseding_pr_is_surfaced(self, rt):
-        signals = self._signals(
-            rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n",
-            gh_out="#42 refactor: drop dropped_helper\n",
-        )
-        assert [s.kind for s in signals] == ["readds_removed_symbol", "superseding_pr"]
-        assert "#42 refactor: drop dropped_helper" in signals[1].detail
-
-    def test_a_failed_search_still_leaves_the_local_signal(self, rt):
-        """No network is a reason to say less, not a reason to say nothing."""
-        signals = self._signals(
-            rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n", gh_rc=1,
-        )
-        assert [s.kind for s in signals] == ["readds_removed_symbol"]
-
-    def test_nothing_is_searched_for_when_nothing_was_readded(self, rt):
-        """This is a preflight — the network call is earned, not routine."""
-        calls = []
-        self._signals(rt, diff=_READDS_DIFF, grep_rc=0, calls=calls)
-        assert [c for c in calls if c[0] == "gh"] == []
-
-    def test_the_symbol_scan_is_capped(self, rt):
-        diff = "+++ b/ai/lib/foo.py\n" + "".join(
-            f"+def helper_{n}(x):\n" for n in range(25)
-        )
-        signals = self._signals(rt, diff=diff, grep_rc=1, pickaxe="abc1234\n")
-        readded = [s for s in signals if s.kind == "readds_removed_symbol"]
-        assert len(readded) == rt._PREFLIGHT_SYMBOL_LIMIT
-
-    def test_the_search_is_capped_harder(self, rt):
-        diff = "+++ b/ai/lib/foo.py\n" + "".join(
-            f"+def helper_{n}(x):\n" for n in range(25)
-        )
-        calls = []
-        self._signals(rt, diff=diff, grep_rc=1, pickaxe="abc1234\n",
-                      gh_out="#42 t\n", calls=calls)
-        assert len([c for c in calls if c[0] == "gh"]) == rt._PREFLIGHT_SEARCH_LIMIT
-
-    def test_the_findings_reach_the_trail(self, rt):
-        trail = MagicMock()
-        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
-             patch.object(rt.subprocess, "run",
-                          return_value=_make_completed(0, stdout=_SKEWED_LOG)):
-            rt._history_preflight(Path("/fake"), "owner/repo", trail)
-        assert trail.info.call_args.kwargs["data"]["signals"] == ["rebase_skew"]
-
-
 class TestHoldIfSuperseded:
-    """What the preflight's findings are allowed to do to the run."""
+    """What the preflight's findings are allowed to do to this run.
+
+    A hold, not the refusal `pr review` answers with: by the time this runs the
+    triage pass is already paid for, so stopping saves nothing — what must not
+    happen is asserting outward that superseded code was fixed. Detection
+    itself is `supersession`'s, and tested there.
+    """
 
     def test_evidence_shuts_the_gate(self, rt, publishing_on):
         import publishing
-        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "d")])
+        rt._hold_if_superseded(supersession_verdict(supersession_evidence()))
         assert publishing.enabled() is False
-        assert "history signal" in publishing.held()
+        assert "supersession signal" in publishing.held()
 
     def test_context_alone_leaves_it_open(self, rt, publishing_on):
         """A rebase is how the problem becomes visible, not the problem."""
         import publishing
-        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.REBASE_SKEW, "d", holds=False)])
+        rt._hold_if_superseded(supersession_verdict(supersession_context()))
         assert publishing.enabled() is True
 
     def test_nothing_found_says_nothing(self, rt, publishing_on, capsys):
-        rt._hold_if_superseded([])
+        rt._hold_if_superseded(supersession_verdict())
         assert capsys.readouterr().err == ""
 
     def test_the_output_names_the_signal_that_fired(self, rt, publishing_on, capsys):
-        rt._hold_if_superseded([
-            rt.HistorySignal(rt.HistoryKind.REBASE_SKEW, "replayed onto a moved base", holds=False),
-            rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "`foo` is gone from origin/main"),
-        ])
+        rt._hold_if_superseded(supersession_verdict(
+            supersession_context("replayed onto a moved base"),
+            supersession_evidence("`foo` is gone from origin/main"),
+        ))
         err = capsys.readouterr().err
         assert "[rebase_skew] replayed onto a moved base" in err
         assert "[readds_removed_symbol] `foo` is gone from origin/main" in err
 
     def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
         trail = MagicMock()
-        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "d")], trail)
+        rt._hold_if_superseded(supersession_verdict(supersession_evidence()), trail)
         data = trail.decision.call_args.kwargs["data"]
-        assert data["signals"] == ["readds_removed_symbol"]
+        assert data["signals"] == [SupersessionKind.READDS_REMOVED_SYMBOL]
 
 
 class TestHoldWhileContested:

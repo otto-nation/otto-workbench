@@ -294,6 +294,69 @@ class DescribeSummary(Domain):
     changed: bool = False
 
 
+class SupersessionKind(StrEnum):
+    """Which supersession check produced a finding. Printed, and sent to the trail.
+
+    A `StrEnum` for the same reason `CommitStatus` is one: these strings are
+    persisted in the state file and read back by a later process, so the values
+    are the contract and the enum is for the code.
+    """
+
+    # The branch's first commit was written long before it was committed.
+    REBASE_SKEW = "rebase_skew"
+    # The branch adds a definition the default branch has removed.
+    READDS_REMOVED_SYMBOL = "readds_removed_symbol"
+    # A merged PR mentions that definition.
+    SUPERSEDING_PR = "superseding_pr"
+
+
+@dataclass
+class SupersessionSignal:
+    """One cheap reading of a branch's history that argues against working on it.
+
+    `holds` separates evidence from context. Re-adding something the default
+    branch deleted is evidence the branch is superseded; a rebase over a moved
+    base is only what makes that legible, and every long-lived branch has one —
+    acting on it alone would fire on the healthy case.
+    """
+
+    kind: SupersessionKind = SupersessionKind.READDS_REMOVED_SYMBOL
+    detail: str = ""
+    holds: bool = True
+
+
+@dataclass
+class SupersessionDomain(Domain):
+    """The supersession verdict, cached against the commits it was computed from.
+
+    Written by whichever branch-acting command ran the check first, and read by
+    the next one instead of repeating it. The saving that matters is the
+    `gh api search/issues` call per re-added symbol: `pr` runs its delegates as
+    separate subprocesses, so an in-memory cache never crosses from `pr review`
+    to `pr comments` and this file is the only place a verdict can survive.
+
+    Keyed by both SHAs because the verdict is a function of both. `head_sha`
+    alone would go stale the moment the default branch moved: a branch that
+    re-adds nothing today re-adds something the hour after `main` deletes it,
+    with its own HEAD untouched.
+    """
+
+    head_sha: str = ""
+    base_sha: str = ""
+    signals: list[SupersessionSignal] = field(default_factory=list)
+
+    def matches(self, head_sha: str, base_sha: str) -> bool:
+        """Whether this cache entry describes the commits being asked about.
+
+        Empty SHAs never match. A verdict computed where one of the two could
+        not be resolved records nothing it can later be keyed on, so it is a
+        result to use once and not one to reuse.
+        """
+        return bool(head_sha) and bool(base_sha) and (
+            self.head_sha == head_sha and self.base_sha == base_sha
+        )
+
+
 class ThreadAction(StrEnum):
     FIXED = "fixed"
     DEFERRED = "deferred"
@@ -481,6 +544,7 @@ class PRState:
     rebase: RebaseSummary = field(default_factory=RebaseSummary)
     describe: DescribeSummary = field(default_factory=DescribeSummary)
     fix: FixSummary = field(default_factory=FixSummary)
+    supersession: SupersessionDomain = field(default_factory=SupersessionDomain)
     pending_comments: list[PendingComment] = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""

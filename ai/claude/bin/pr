@@ -28,6 +28,7 @@ import rebase_status
 import review_gc
 import log
 import review_common
+import supersession
 import workbench_paths
 import run_lock
 from review_common import (
@@ -444,6 +445,15 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         review_args += ["--repo-dir", str(wt)]
         review_args += list(argv)
         r = subprocess.run(review_args)
+        if r.returncode == supersession.EXIT_SUPERSEDED:
+            # Every remaining pass acts on the same branch, so a refusal that
+            # says "this branch may not be worth working on" answers for all of
+            # them. Continuing would spend the CI fix pass on the question the
+            # review just declined to spend on.
+            log.error("Stopping — the review refused this branch as superseded.")
+            log.dim(f"Resolve it, or re-run with {supersession.OVERRIDE_FLAG} "
+                    f"to override.")
+            return supersession.EXIT_SUPERSEDED
         if r.returncode != 0:
             exit_code = 1
 

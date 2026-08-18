@@ -604,6 +604,90 @@ EOF
   [[ "$output" == *"ERREXIT CLEAR"* ]]
 }
 
+# Helper: a migration whose file scope fails before the definition it exists for.
+# The definition succeeds, so the source's own exit status is 0 and says nothing
+# about the failure — the framework has to look somewhere else to see it.
+create_scope_failing_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+set -e
+_precondition() {
+  return 1
+}
+_precondition
+${fn_name}() {
+  touch "$FAKE_ROOT/${fn_name}.ran"
+}
+EOF
+}
+
+@test "a file-scope failure before a good definition is a load failure" {
+  create_scope_failing_migration "comp1" "20250101-scoped.sh" "migration_20250101_scoped"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not be loaded"* ]]
+
+  [ ! -e "$FAKE_ROOT/migration_20250101_scoped.ran" ]
+  run ! grep -qxF "comp1/20250101-scoped.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a file that fails to load stops neither the next migration nor the next component" {
+  create_scope_failing_migration "comp1" "20250101-scoped.sh" "migration_20250101_scoped"
+  create_migration "comp1" "20250102-sibling.sh" "migration_20250102_sibling"
+  create_migration "comp2" "20250201-later.sh" "migration_20250201_later"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+
+  grep -qxF "comp1/20250102-sibling.sh" "$FAKE_STATE/migrations.applied"
+  grep -qxF "comp2/20250201-later.sh" "$FAKE_STATE/migrations.applied"
+  run ! grep -qxF "comp1/20250101-scoped.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a clean migration still loads and applies alongside one that cannot" {
+  create_scope_failing_migration "comp1" "20250101-scoped.sh" "migration_20250101_scoped"
+  mkdir -p "$FAKE_ROOT/comp2/migrations"
+  cat > "$FAKE_ROOT/comp2/migrations/20250201-good.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+migration_20250201_good() {
+  touch "$FAKE_ROOT/good.ran"
+}
+EOF
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250201-good.sh"* ]]
+
+  [ -e "$FAKE_ROOT/good.ran" ]
+  grep -qxF "comp2/20250201-good.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "the caller's errexit setting survives a migration that fails to load" {
+  # Both directions matter: the sync must not come back armed when it started
+  # clear, and must not come back disarmed when its caller relies on errexit.
+  create_scope_failing_migration "comp1" "20250101-scoped.sh" "migration_20250101_scoped"
+
+  run bash -c "
+    . '$FAKE_ROOT/lib/ui.sh'
+    . '$FAKE_ROOT/lib/constants.sh'
+    . '$FAKE_ROOT/lib/migrations.sh'
+    set -e
+    run_all_migrations > /dev/null
+    case \$- in *e*) echo 'ARMED-STAYED-ARMED' ;; *) echo 'ARMED-WENT-CLEAR' ;; esac
+    set +e
+    run_all_migrations > /dev/null
+    case \$- in *e*) echo 'CLEAR-WENT-ARMED' ;; *) echo 'CLEAR-STAYED-CLEAR' ;; esac
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ARMED-STAYED-ARMED"* ]]
+  [[ "$output" == *"CLEAR-STAYED-CLEAR"* ]]
+}
+
 # ─── Duplicate filename detection ───────────────────────────────────────────
 
 @test "validator detects duplicate filenames across components" {

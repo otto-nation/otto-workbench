@@ -49,16 +49,40 @@ _array_contains() {
 #   - the `set -e` itself, which outlives the source and would otherwise arm
 #     errexit for every component that syncs after this one
 #
-# `.` runs as the left side of an `||`, a context where errexit is ignored for
-# everything the sourced file executes, and the caller's own errexit setting is
-# put back afterwards. The source's own status is returned so a file that fails
-# to load is reported rather than silently treated as loaded.
+# So the file is read twice, and the two passes answer different questions.
+#
+# The verdict pass runs the file in a fresh `bash -e`. Nothing else in this
+# shell can reach it: bash ignores errexit for everything a compound command or
+# function runs when the caller's own context ignores it, and that suppression
+# is inherited through function calls and subshells alike — so an in-process
+# `( set -e; . "$migration" )` is silently disarmed the moment any caller up the
+# chain is an `if`, a `!`, or an `||`, which is exactly the call shape below. A
+# separate process starts from its own errexit state and cannot be disarmed that
+# way, so a file-scope statement that fails stops the file there and is reported
+# here. An ERR trap is not an alternative: the same rule suppresses it.
+#
+# The load pass then sources the file for real, for its definitions. Its `set -e`
+# is neutralised by the `||`, and the caller's own setting is put back exactly as
+# found afterwards, so nothing the file does at file scope changes how the rest
+# of the sync runs. A file that got this far already ran clean once, so the `||`
+# is not swallowing a verdict — it only covers the case where the two passes
+# disagree because the fresh process lacked this shell's variables. The caller
+# checks that the expected function exists, which catches that.
+#
+# ceiling: a file with real work at file scope does that work twice. Only files
+# the validator would reject can be in that shape, and migrations must be
+# idempotent anyway; revisit if file-scope work ever becomes legitimate.
 _source_migration() {
   local migration="$1" status=0 errexit_on=false
   [[ $- != *e* ]] || errexit_on=true
 
-  # shellcheck source=/dev/null
-  . "$migration" || status=$?
+  "${BASH:-bash}" -e -c '. "$1"' _ "$migration"
+  status=$?
+
+  if (( status == 0 )); then
+    # shellcheck source=/dev/null
+    . "$migration" || true
+  fi
 
   if [[ "$errexit_on" == true ]]; then
     set -e

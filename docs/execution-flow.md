@@ -64,7 +64,9 @@ Migrations handle breaking changes — renamed configs, deprecated symlinks, upd
 
 Migrations must be idempotent — a failed migration is not recorded, so it retries on next sync.
 
-**Dispatch:** the framework sources the file and then calls the function itself, so the file must define the function and nothing else — a file that also invokes its own function runs the migration twice, and the extra run happens on the sourcing pass, where its exit status decides nothing. `bin/local/validate-migrations` rejects that shape. `_source_migration` sources inside an errexit-ignoring context and restores the caller's own `set -e` afterwards, so neither a non-zero statement at file scope nor the `set -e` a migration file carries can escape the loop and abort the sync.
+**Dispatch:** the framework sources the file and then calls the function itself, so the file must define the function and nothing else — a statement at file scope runs on the sourcing pass, ahead of the call the framework makes, where its exit status decides nothing. A file that invokes its own function is the usual way that happens. `bin/local/validate-migrations` rejects anything at file scope but the shebang, comments, blanks, `set` lines, and function definitions, stripping function bodies by brace-counting so a call inside a helper is not mistaken for one.
+
+`_source_migration` reads each file twice. A verdict pass runs it in a fresh `bash -e`, where a failing file-scope statement stops the file and is reported; this cannot be done in-process, because bash suppresses errexit — and the `ERR` trap with it — for everything a subshell or function runs when a caller up the chain is an `if`, a `!`, or an `||`, which the framework's own call site is. A load pass then sources the file for its definitions, neutralising its `set -e` and restoring the caller's own setting exactly as found. A file that fails the verdict pass is warned about and retried on the next run; neither it nor the `set -e` a migration file carries can abort the sync.
 
 **Timing:** migrations run before component syncs, ensuring old state is cleaned up before new config is applied.
 

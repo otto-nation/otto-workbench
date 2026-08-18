@@ -96,7 +96,20 @@ SKIP_REASON_RE = re.compile(r"\*\(skipped\s*[—–-]+\s*(.+?)\)\*")
 # stripped before the file is finished, so the verdict has to survive on the
 # finding line itself or the next `--fix` sees an ordinary open finding. The
 # reason is optional so a decline written without one still registers.
-DECLINED_RE = re.compile(r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*", re.IGNORECASE)
+_DECLINED = r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*"
+
+# An annotation, not prose. Matched anywhere in the line, a finding that merely
+# quotes the annotation — which any review of this parser writes — reads as
+# declined and is silently dropped from the fix pass's work set with no warning
+# anywhere. So the match is anchored to the two places the templates put an
+# annotation: at the head of the finding body, and at the end of the line.
+DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
+DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
+
+
+def match_decline(body: str, line: str) -> re.Match[str] | None:
+    """The decline annotation a finding line carries, if it carries one."""
+    return DECLINED_HEAD_RE.match(body) or DECLINED_TAIL_RE.search(line)
 
 
 def _extract_path(after_id: str) -> tuple[str, int | None, int | None]:
@@ -138,7 +151,7 @@ def _parse_finding_line(stripped: str) -> Finding | None:
         body = _extract_body_text(stripped)
     else:
         body = after_id.strip()
-    declined = DECLINED_RE.search(stripped)
+    declined = match_decline(body, stripped)
     return Finding(
         id=f"{sev}{seq}", severity=sev, seq=seq,
         path=path, line=line_num, end_line=end_line, body=body,

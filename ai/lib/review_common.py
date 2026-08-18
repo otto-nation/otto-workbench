@@ -73,6 +73,9 @@ class PriorDisposition(StrEnum):
     parsed for, so the two cannot drift apart. `FIXED` and `STILL_OPEN` keep
     their original spellings: a review file written before `DECLINED` existed
     still parses.
+
+    Declaration order is load-bearing: `precedence` reads it, so a member
+    declared later outranks every member above it.
     """
 
     FIXED = "Fixed"
@@ -110,10 +113,11 @@ class PriorDisposition(StrEnum):
         return _DISPOSITION_PRECEDENCE[self]
 
 
+# Derived from the enum's declaration order rather than restated, so a member
+# added to `PriorDisposition` is ranked by where it is declared instead of
+# raising a `KeyError` from `precedence` the first time two groups disagree.
 _DISPOSITION_PRECEDENCE = {
-    PriorDisposition.FIXED: 1,
-    PriorDisposition.STILL_OPEN: 2,
-    PriorDisposition.DECLINED: 3,
+    member: rank for rank, member in enumerate(PriorDisposition, 1)
 }
 
 # An entry whose wording the parser could not read a verdict from. It loses to

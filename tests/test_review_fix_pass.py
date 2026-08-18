@@ -22,8 +22,16 @@ _AGENT_ERROR = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded")
 def _git(wt: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(wt), *args],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True,
     )
+    # Raised rather than `check=True`: a CalledProcessError renders as its exit
+    # code alone, so a broken fixture arrives without the git error that says
+    # what broke.
+    if result.returncode != 0:
+        raise AssertionError(
+            f"git {' '.join(args)} failed ({result.returncode}) in {wt}\n"
+            f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"
+        )
     return result.stdout
 
 
@@ -32,10 +40,16 @@ def git_wt(tmp_path):
     """A real repo with one commit — the fix pass's staging is git behaviour."""
     wt = tmp_path / "worktree"
     wt.mkdir()
+    # Empty hooks dir: the developer's own `core.hooksPath` is global, so
+    # without this the fixture runs their pre-commit hook and the suite passes
+    # or fails on whatever that machine has installed.
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
     _git(wt, "init", "-q", "-b", "main")
     _git(wt, "config", "user.email", "test@example.com")
     _git(wt, "config", "user.name", "Test")
     _git(wt, "config", "commit.gpgsign", "false")
+    _git(wt, "config", "core.hooksPath", str(hooks))
     (wt / "src.py").write_text("original\n")
     (wt / ".gitignore").write_text("*.cache\n")
     _git(wt, "add", "-A")
@@ -43,8 +57,21 @@ def git_wt(tmp_path):
     return wt
 
 
+def _install_failing_pre_commit(tmp_path, message: str = "gate refused") -> None:
+    """Make every later `git commit` in `git_wt` fail, the way a hook does."""
+    hook = tmp_path / "hooks" / "pre-commit"
+    hook.write_text(f"#!/bin/sh\necho '{message}' >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+
 def _committed_paths(wt: Path) -> set[str]:
-    out = _git(wt, "show", "--name-only", "--pretty=format:", "HEAD")
+    # quotePath=false for the same reason `_changed_source_files` sets it: git
+    # escapes a non-ASCII name by default, and the assertion would compare the
+    # escaped spelling against the real one.
+    out = _git(
+        wt, "-c", "core.quotePath=false",
+        "show", "--name-only", "--pretty=format:", "HEAD",
+    )
     return {line for line in out.strip().splitlines() if line}
 
 
@@ -145,10 +172,27 @@ class TestCommitFixesStaging:
         assert _committed_paths(git_wt) == {"fixture.json"}
         assert _git(git_wt, "show", "HEAD:src.py") == "original\n"
 
+    @patch("review_fix.log")
     @patch("review_fix._push_fixes")
-    def test_nothing_is_pushed_when_the_commit_fails(self, mock_push, git_wt):
-        review_fix._commit_fixes(self._make_job(git_wt), set(), fixed=0, skipped=0)
+    def test_nothing_is_pushed_when_the_commit_fails(
+        self, mock_push, mock_log, git_wt, tmp_path,
+    ):
+        """A commit git refused must not reach the push — there is nothing there.
+
+        Driven by a real pre-commit hook rather than an empty path set: the
+        empty set returns at the guard above, never reaching the commit whose
+        failure this is about.
+        """
+        _install_failing_pre_commit(tmp_path)
+        (git_wt / "fixture.json").write_text("{}\n")
+
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"fixture.json"}, fixed=1, skipped=0,
+        )
+
         mock_push.assert_not_called()
+        assert _git(git_wt, "log", "--oneline").count("\n") == 1
+        assert "gate refused" in mock_log.warn.call_args[0][0]
 
 
 class TestParseCheckboxState:
@@ -242,6 +286,31 @@ class TestParseDeclinedFindings:
         text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(declined)* — Body\n"
         findings = review_findings.parse_findings(text)
         assert findings[0].declined is True
+        assert findings[0].decline_reason == ""
+
+    def test_a_trailing_annotation_registers(self):
+        """The templates also let the annotation close the line."""
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `a.go:1` — Global lock *(declined — by design)*\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is True
+        assert findings[0].decline_reason == "by design"
+
+    def test_a_finding_that_only_describes_the_annotation_is_not_declined(self):
+        """Reviewing this parser writes the annotation into a finding's prose.
+
+        Read as a decline, the finding leaves `run_fix_pass`'s work set and
+        `_reconcile_checkboxes` permanently, and nothing warns that it did.
+        """
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `review_findings.py:99` — The `*(declined — reason)*` "
+            "annotation is matched anywhere in the line, so prose trips it\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is False
         assert findings[0].decline_reason == ""
 
     def test_a_skip_is_not_a_decline(self):
@@ -933,6 +1002,122 @@ class TestRunFixPassOnADirtyWorktree:
         assert "- [ ] **[M1]**" in review
         assert "- [x] **[M2]**" in review
         mock_push.assert_called_once()
+
+
+class TestSnapshotDiffStagesEveryShapeOfChange:
+    """What the snapshot diff must survive besides a plain edit — #782.
+
+    Attribution is a set of path strings, so each case below is a different way
+    the two snapshots can disagree about what a path is: gone, moved, or
+    spelled with bytes git escapes before it prints them.
+    """
+
+    def _make_job(self, git_wt, tmp_path=None, review_content=""):
+        job = MagicMock()
+        job.wt_path = str(git_wt)
+        job.model = None
+        job.effort = Effort.MEDIUM
+        if tmp_path is not None:
+            review_file = tmp_path / "review.md"
+            review_file.write_text(review_content)
+            job.review_file = str(review_file)
+        return job
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_file_the_agent_deletes_is_committed_as_a_deletion(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        (git_wt / "dead_code.py").write_text("unused = 1\n")
+        _git(git_wt, "add", "dead_code.py")
+        _git(git_wt, "commit", "-qm", "add dead code")
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "dead_code.py").unlink()
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Nit\n- [ ] **[N1]** `dead_code.py:1` — Dead code, delete it\n",
+        )
+        review_fix.run_fix_pass(job)
+
+        assert _committed_paths(git_wt) == {"dead_code.py"}
+        assert _git(git_wt, "status", "--porcelain").strip() == ""
+        assert "- [x] **[N1]**" in Path(job.review_file).read_text()
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_rename_commits_both_halves(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        """The old path leaves via the diff, the new one via the untracked list."""
+        def agent_run(*args, **kwargs):
+            (git_wt / "src.py").rename(git_wt / "renamed.py")
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Nit\n- [ ] **[N1]** `src.py:1` — Misnamed module\n",
+        )
+        review_fix.run_fix_pass(job)
+
+        tracked = _git(git_wt, "ls-tree", "--name-only", "HEAD").split()
+        assert "renamed.py" in tracked
+        assert "src.py" not in tracked
+        assert _git(git_wt, "status", "--porcelain").strip() == ""
+        assert "- [x] **[N1]**" in Path(job.review_file).read_text()
+
+    @patch("review_fix._push_fixes")
+    def test_a_path_git_would_escape_is_staged_verbatim(self, mock_push, git_wt):
+        """`core.quotePath=false` is what keeps the name a pathspec git resolves.
+
+        Escaped, the name reaches `git add` as `caf\\303\\251...`, which matches
+        nothing — and that `add` runs under `check=True`, so the whole pass dies
+        on a file whose only crime is an accent.
+        """
+        before = review_fix._changed_source_files(str(git_wt))
+        (git_wt / "café brûlé.py").write_text("crème\n")
+        agent_changed = review_fix._changed_source_files(str(git_wt)) - before
+
+        assert agent_changed == {"café brûlé.py"}
+        review_fix._commit_fixes(
+            self._make_job(git_wt), paths=agent_changed, fixed=1, skipped=0,
+        )
+        assert _committed_paths(git_wt) == {"café brûlé.py"}
+
+    @patch("review_fix._push_fixes")
+    @patch("review_fix.diagnose_missing_output", return_value=_AGENT_ERROR)
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_path_dirty_before_the_pass_is_not_credited_even_when_edited(
+        self, mock_prompt, mock_invoke, mock_diag, mock_push, git_wt, tmp_path,
+    ):
+        """The `ceiling:` in `run_fix_pass`, asserted rather than only described.
+
+        Attribution is by path, so a path in both snapshots is in neither
+        delta — the agent's edit to it is left uncommitted and the finding on
+        it is left unchecked. The day attribution compares content across the
+        snapshot, this test is what says the tradeoff is gone.
+        """
+        (git_wt / "src.py").write_text("hand edit in progress\n")
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "src.py").write_text("hand edit in progress\nagent fix\n")
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Must fix\n- [ ] **[M1]** `src.py:1` — Missing guard\n",
+        )
+        review_fix.run_fix_pass(job)
+
+        assert _git(git_wt, "log", "--oneline").strip().count("\n") == 0
+        assert " M src.py" in _git(git_wt, "status", "--porcelain")
+        assert "- [ ] **[M1]**" in Path(job.review_file).read_text()
+        mock_push.assert_not_called()
 
 
 class TestRunFixPassLeavesDeclinedFindingsAlone:

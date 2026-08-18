@@ -39,7 +39,9 @@ the prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`,
 
 Because the ledger is stripped, `Declined` also has to survive on the finding
 line itself: a declined finding is carried forward annotated
-`*(declined — reason)*`, which `DECLINED_RE` parses into `Finding.declined`.
+`*(declined — reason)*`, which `match_decline()` parses into `Finding.declined`
+— anchored to the head of the finding body or the end of the line, so a
+finding whose prose quotes the annotation is not silently adjudicated.
 That flag is what keeps the finding out of `run_fix_pass`'s work set, out of
 `_reconcile_checkboxes`, and in `FixPassResult.declined` rather than
 `.skipped`. The templates ask for the same annotation, and treat a `ceiling:`

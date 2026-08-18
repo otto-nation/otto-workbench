@@ -210,6 +210,143 @@ EOF
   rm -rf "$TMPDIR"
 }
 
+@test "step_env_local hoisted value wins over a stale copy below ENV-END" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  FAKE_SCAN="$TMPDIR/scan"
+  mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
+
+  cat > "$FAKE_SCAN/test/test.env.yml" <<'EOF'
+meta:
+  section: "Test Tools"
+  validation: none
+env:
+  - var: ANTHROPIC_API_KEY
+    comment: Anthropic key
+EOF
+
+  # The same var is set in both places: freshly pasted inside the markers, and
+  # left over below ENV-END from an earlier sync.
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# header
+# --- ENV-START ---
+# Anthropic key
+export ANTHROPIC_API_KEY=new-secret
+# --- ENV-END ---
+# ─── Your values ───
+export ANTHROPIC_API_KEY=old-secret
+EOF
+
+  run env HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local"
+  [ "$status" -eq 0 ]
+
+  # Both assignments are present, and the rescued one comes last
+  local new_line old_line
+  new_line=$(grep -n 'ANTHROPIC_API_KEY=new-secret' "$FAKE_HOME/.env.local" | cut -d: -f1)
+  old_line=$(grep -n 'ANTHROPIC_API_KEY=old-secret' "$FAKE_HOME/.env.local" | cut -d: -f1)
+  [ -n "$new_line" ]
+  [ -n "$old_line" ]
+  [ "$new_line" -gt "$old_line" ]
+
+  # Sourcing the file therefore yields the rescued value, not the stale one
+  run env -i bash -c ". '$FAKE_HOME/.env.local'; printf '%s' \"\$ANTHROPIC_API_KEY\""
+  [ "$output" = "new-secret" ]
+
+  rm -rf "$TMPDIR"
+}
+
+@test "step_env_local hoists a generated default the user annotated" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  FAKE_SCAN="$TMPDIR/scan"
+  mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
+
+  cat > "$FAKE_SCAN/test/test.env.yml" <<'EOF'
+meta:
+  section: "Test Tools"
+  validation: none
+env:
+  - var: WITH_DEFAULT
+    comment: has a default
+    default: "on"
+EOF
+
+  # Matching is exact string equality by design: the generated default carries
+  # an inline comment the generator did not write, so it counts as a stray.
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# --- ENV-START ---
+# has a default
+export WITH_DEFAULT=on # keep this on
+# --- ENV-END ---
+EOF
+
+  run env HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WITH_DEFAULT"* ]]
+
+  # The annotated line survives below ENV-END; the pristine default is restored
+  # inside the markers.
+  local below inside
+  below=$(awk '/# --- ENV-END ---/{s=1;next} s' "$FAKE_HOME/.env.local")
+  grep -q 'export WITH_DEFAULT=on # keep this on' <<< "$below"
+  inside=$(awk '/# --- ENV-START ---/{s=1;next} /# --- ENV-END ---/{s=0} s' "$FAKE_HOME/.env.local")
+  grep -q '^export WITH_DEFAULT=on$' <<< "$inside"
+
+  rm -rf "$TMPDIR"
+}
+
+@test "step_env_local accumulates repeated hoists under one header" {
+  load test_helper
+  TMPDIR="$(mktemp -d)"
+  FAKE_HOME="$TMPDIR/home"
+  FAKE_SCAN="$TMPDIR/scan"
+  mkdir -p "$FAKE_HOME" "$FAKE_SCAN/test"
+
+  cat > "$FAKE_SCAN/test/test.env.yml" <<'EOF'
+meta:
+  section: "Test Tools"
+  validation: none
+env:
+  - var: VAR_A
+    comment: first
+  - var: VAR_B
+    comment: second
+EOF
+
+  cat > "$FAKE_HOME/.env.local" <<'EOF'
+# --- ENV-START ---
+export VAR_A=aaa
+# --- ENV-END ---
+EOF
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" >/dev/null 2>&1
+
+  # A second hoist event: the user uncomments VAR_B inside the markers
+  sed 's/^# export VAR_B=$/export VAR_B=bbb/' "$FAKE_HOME/.env.local" > "$TMPDIR/edited"
+  mv "$TMPDIR/edited" "$FAKE_HOME/.env.local"
+  grep -q '^export VAR_B=bbb$' "$FAKE_HOME/.env.local"
+
+  HOME="$FAKE_HOME" WORKBENCH_DIR="$REPO_ROOT" REGISTRY_SCAN_DIR="$FAKE_SCAN" NO_COLOR=1 \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/steps.sh'; step_env_local" >/dev/null 2>&1
+
+  # One header, not one per hoist event
+  run grep -c 'Moved here by otto-workbench sync' "$FAKE_HOME/.env.local"
+  [ "$output" = "1" ]
+
+  # Oldest hoist first — new ones append after, never above
+  local a_line b_line
+  a_line=$(grep -n '^export VAR_A=aaa$' "$FAKE_HOME/.env.local" | cut -d: -f1)
+  b_line=$(grep -n '^export VAR_B=bbb$' "$FAKE_HOME/.env.local" | cut -d: -f1)
+  [ "$b_line" -gt "$a_line" ]
+
+  rm -rf "$TMPDIR"
+}
+
 @test "step_env_local hoist is idempotent across repeated syncs" {
   load test_helper
   TMPDIR="$(mktemp -d)"

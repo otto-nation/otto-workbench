@@ -257,12 +257,23 @@ _generate_env_section() {
   if [[ -n "$output" ]]; then printf '%s' "$output"; fi
 }
 
+# Label written above relocated values. Matched verbatim on the next sync so
+# repeated hoist events accumulate under a single header instead of stacking
+# copies of it.
+ENV_LOCAL_HOIST_HEADER="# Moved here by otto-workbench sync — the section above is regenerated each run."
+
 # _env_local_collect_stray GENERATED_FILE — prints the lines inside the ENV
 # markers that the generator did not produce, i.e. values a user set by
 # uncommenting a catalogue line in place. Comments and blanks are the catalogue
 # itself; a line matching the freshly generated content is a generated default
 # (registry vars with a default are emitted as active exports), so it stays put
 # and re-running sync hoists nothing new.
+#
+# The comparison is exact string equality, deliberately: a generated default the
+# user edited in any way — a changed value, an appended inline comment, extra
+# trailing whitespace — is treated as a stray and hoisted. Anything that is not
+# byte-identical to what the generator just produced is something the user
+# typed, and the regenerated section would otherwise erase it.
 _env_local_collect_stray() {
   local generated="$1"
 
@@ -321,25 +332,26 @@ step_env_local() {
   # Rescue values set inside the marker section before it is overwritten
   _env_local_collect_stray "$new_content_file" > "$hoist_file"
 
-  # ceiling: hoisted lines are appended verbatim, so a variable the user set
-  # both inside and below the markers ends up assigned twice — harmless in a
-  # sourced shell file, where the hoisted copy comes last and wins. Upgrade to
-  # a merge that rewrites the existing assignment in place if ~/.env.local ever
-  # gains a reader that is not the shell (a dotenv parser rejects duplicates).
-  awk -v cf="$new_content_file" -v hf="$hoist_file" '
+  # ceiling: hoisted lines are appended verbatim at end-of-file, so a variable
+  # the user set both inside and below the markers ends up assigned twice —
+  # harmless in a sourced shell file, where the hoisted copy comes last and
+  # wins. Upgrade to a merge that rewrites the existing assignment in place if
+  # ~/.env.local ever gains a reader that is not the shell (a dotenv parser
+  # rejects duplicates, and order stops deciding the winner).
+  awk -v cf="$new_content_file" -v hf="$hoist_file" -v hdr="$ENV_LOCAL_HOIST_HEADER" '
     /# --- ENV-START ---/ { print; while ((getline line < cf) > 0) print line; skip=1; next }
-    /# --- ENV-END ---/ {
-      skip = 0
-      print
+    /# --- ENV-END ---/   { skip = 0 }
+    skip                  { next }
+    $0 == hdr             { seen_header = 1 }
+                          { print }
+    END {
       if ((getline line < hf) > 0) {
         print ""
-        print "# Moved here by otto-workbench sync — the section above is regenerated each run."
+        if (!seen_header) print hdr
         print line
         while ((getline line < hf) > 0) print line
       }
-      next
     }
-    !skip                 { print }
   ' "$ENV_LOCAL_FILE" > "$tmp" && mv "$tmp" "$ENV_LOCAL_FILE"
 
   _env_local_report_stray "$hoist_file"

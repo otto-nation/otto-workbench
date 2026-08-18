@@ -191,7 +191,9 @@ def _probe_tool(script: Path) -> dict | None:
         schema["_script"] = str(script)
         return schema
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
-        logger.warning("Skipping %s: %s", script, exc)
+        # Name the exception type rather than trusting its str() to say which
+        # of the three it was — docs/tools.md tells readers these are distinct.
+        logger.warning("Skipping %s: %s: %s", script, type(exc).__name__, exc)
         return None
 
 

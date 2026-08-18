@@ -343,6 +343,9 @@ class TestDiscovery:
             assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
 
         assert "garbled-tool" in caplog.text
+        # One except branch covers three failure modes, so the log has to name
+        # which one rather than leave it to the exception's str().
+        assert "JSONDecodeError" in caplog.text
 
     def test_a_script_with_no_marker_is_skipped_quietly(self, tmp_path, caplog):
         """Most executables are not tools — warning on each would drown the rest."""

@@ -25,6 +25,11 @@ _spec = importlib.util.spec_from_loader(
     importlib.machinery.SourceFileLoader("otto_log", str(BIN_DIR / "otto-log")),
 )
 otto_log = importlib.util.module_from_spec(_spec)
+# Registered before execution: @dataclass resolves a string annotation through
+# sys.modules[cls.__module__], which is how `from __future__ import annotations`
+# leaves them. Without this line that lookup misses and the class body raises
+# AttributeError inside dataclasses._is_type, so the whole module fails to load.
+sys.modules["otto_log"] = otto_log
 _spec.loader.exec_module(otto_log)
 
 
@@ -169,7 +174,7 @@ def _usage(**overrides):
 
 
 def _by_group(rows):
-    return {r["group"]: r for r in rows}
+    return {r.group: r for r in rows}
 
 
 class TestStatsAggregation:
@@ -180,35 +185,35 @@ class TestStatsAggregation:
             by="script",
         )
         groups = _by_group(rows)
-        assert groups["pr"]["calls"] == 2
-        assert groups["pr"]["cost"] == pytest.approx(3.0)
-        assert groups["ci-check"]["calls"] == 1
+        assert groups["pr"].calls == 2
+        assert groups["pr"].cost == pytest.approx(3.0)
+        assert groups["ci-check"].calls == 1
 
     def test_sorts_by_cost_descending(self):
         rows = otto_log.aggregate_usage(
             [_usage(script="cheap", cost=0.1), _usage(script="pricey", cost=9.0)],
             by="script",
         )
-        assert [r["group"] for r in rows] == ["pricey", "cheap"]
+        assert [r.group for r in rows] == ["pricey", "cheap"]
 
     def test_groups_by_task(self):
         rows = otto_log.aggregate_usage(
             [_usage(task="pr-review"), _usage(task="pr-review"), _usage(task="ci-fix")],
             by="task",
         )
-        assert _by_group(rows)["pr-review"]["calls"] == 2
+        assert _by_group(rows)["pr-review"].calls == 2
 
     def test_records_without_the_group_field_land_in_one_bucket(self):
         rows = otto_log.aggregate_usage([_usage(), _usage()], by="task")
         assert len(rows) == 1
-        assert rows[0]["calls"] == 2
+        assert rows[0].calls == 2
 
     def test_groups_by_day_chronologically(self):
         rows = otto_log.aggregate_usage(
             [_usage(ts="2026-08-20T01:00:00Z"), _usage(ts="2026-08-18T01:00:00Z")],
             by="day",
         )
-        assert [r["group"] for r in rows] == ["2026-08-18", "2026-08-20"]
+        assert [r.group for r in rows] == ["2026-08-18", "2026-08-20"]
 
     def test_by_model_splits_cost_across_models(self):
         rows = otto_log.aggregate_usage(
@@ -216,39 +221,58 @@ class TestStatsAggregation:
             by="model",
         )
         groups = _by_group(rows)
-        assert groups["opus-5"]["cost"] == pytest.approx(2.0)
-        assert groups["haiku-4-5"]["cost"] == pytest.approx(1.0)
+        assert groups["opus-5"].cost == pytest.approx(2.0)
+        assert groups["haiku-4-5"].cost == pytest.approx(1.0)
 
     def test_by_model_leaves_tokens_unattributed(self):
         """The CLI reports cost per model but tokens per session — don't invent a split."""
         rows = otto_log.aggregate_usage(
             [_usage(cost_by_model={"opus-5": 1.0})], by="model",
         )
-        assert rows[0]["billed_input"] is None
-        assert rows[0]["cache_read_ratio"] is None
+        assert rows[0].billed_input is None
+        assert rows[0].cache_read_ratio is None
 
     def test_by_model_falls_back_to_requested_model(self):
         rows = otto_log.aggregate_usage([_usage(model="sonnet-5")], by="model")
-        assert rows[0]["group"] == "sonnet-5"
+        assert rows[0].group == "sonnet-5"
 
     def test_billed_input_sums_input_and_cache(self):
         rows = otto_log.aggregate_usage(
             [_usage(input_tokens=100, cache_read_tokens=900, cache_write_tokens=50)],
             by="script",
         )
-        assert rows[0]["billed_input"] == 1050
-        assert rows[0]["cache_read_ratio"] == pytest.approx(900 / 1050)
+        assert rows[0].billed_input == 1050
+        assert rows[0].cache_read_ratio == pytest.approx(900 / 1050)
 
     def test_median_duration_ignores_unmeasured_calls(self):
         rows = otto_log.aggregate_usage(
             [_usage(duration_ms=1000), _usage(duration_ms=3000), _usage(duration_ms=0)],
             by="script",
         )
-        assert rows[0]["median_duration_ms"] == 2000
+        assert rows[0].median_duration_ms == 2000
 
     def test_median_duration_is_none_when_nothing_measured(self):
         rows = otto_log.aggregate_usage([_usage(duration_ms=0)], by="script")
-        assert rows[0]["median_duration_ms"] is None
+        assert rows[0].median_duration_ms is None
+
+
+class TestStatsTable:
+    def _rows(self):
+        return otto_log.aggregate_usage(
+            [_usage(script="pr", cost=1.5), _usage(script="a-much-longer-name", cost=0.5)],
+            by="script",
+        )
+
+    def test_the_total_row_sums_the_groups(self):
+        assert "$2.0000" in otto_log.format_stats_table(self._rows()).splitlines()[-1]
+
+    def test_columns_line_up_across_rows(self):
+        """Every cell is padded to its column's width, so the body lines match.
+
+        The header is excluded because its bold escape adds invisible bytes.
+        """
+        body = otto_log.format_stats_table(self._rows()).splitlines()[1:]
+        assert len({len(line) for line in body}) == 1
 
 
 class TestStatsCommand:
@@ -283,6 +307,19 @@ class TestStatsCommand:
         rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
         assert rows[0]["group"] == "pr"
         assert rows[0]["cost"] == pytest.approx(1.5)
+
+    def test_json_keys_are_the_stable_wire_format(self, ledger, monkeypatch, capsys):
+        """The row is serialized field-by-field, so its declaration order is the schema.
+
+        Consumers read these keys; a rename or a reorder is a break they see.
+        """
+        self._write(ledger, _usage(script="pr"))
+        self._run(monkeypatch, as_json=True)
+        row = json.loads(capsys.readouterr().out.splitlines()[0])
+        assert list(row) == [
+            "group", "calls", "cost", "billed_input", "output_tokens",
+            "cache_read_tokens", "cache_read_ratio", "median_duration_ms",
+        ]
 
     def test_empty_ledger_says_so(self, ledger, monkeypatch, capsys):
         self._run(monkeypatch)

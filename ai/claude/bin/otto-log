@@ -13,7 +13,10 @@ import json
 import re
 import statistics
 import sys
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone, timedelta
+from enum import Enum, auto
 from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parent.parent.parent / "lib"
@@ -251,7 +254,6 @@ _UNATTRIBUTED_TOKENS = "model"
 
 _NO_GROUP = "—"
 _BILLED_KEYS = ("input_tokens", "cache_read_tokens", "cache_write_tokens")
-_STATS_HEADER = ("GROUP", "CALLS", "COST", "BILLED IN", "OUTPUT", "CACHE", "MED TIME")
 
 # The day a ledger record is grouped under. `ai_usage` stamps its `ts` in the
 # same format the trail uses, so the date is the stamp's leading field.
@@ -263,16 +265,43 @@ _TOKENS_PER_M = 1_000_000
 _TOKENS_PER_K = 1_000
 
 
-def _cost_shares(rec: dict, by: str) -> list[tuple[str, float]]:
-    """Return the (group, cost) pairs one ledger record contributes to."""
+@dataclass(frozen=True)
+class CostShare:
+    """The cost one ledger record contributes to one group."""
+
+    group: str
+    cost: float
+
+
+@dataclass(frozen=True)
+class UsageRow:
+    """One group's rolled-up usage — a row of the stats table and of `--json`.
+
+    The field order is the JSON key order, so it is a wire format: append to the
+    end, do not reorder. A None token count means the grouping cannot attribute
+    tokens (see `_UNATTRIBUTED_TOKENS`), which is not the same as a zero.
+    """
+
+    group: str
+    calls: int
+    cost: float
+    billed_input: int | None
+    output_tokens: int | None
+    cache_read_tokens: int | None
+    cache_read_ratio: float | None
+    median_duration_ms: int | None
+
+
+def _cost_shares(rec: dict, by: str) -> list[CostShare]:
+    """The shares one ledger record contributes, one per group it lands in."""
     cost = rec.get("cost") or 0.0
     if by != _UNATTRIBUTED_TOKENS:
         group = rec.get("ts", "")[_LEDGER_TS_DATE] if by == "day" else rec.get(by)
-        return [(group or _NO_GROUP, cost)]
+        return [CostShare(group or _NO_GROUP, cost)]
     by_model = rec.get("cost_by_model") or {}
     if by_model:
-        return list(by_model.items())
-    return [(rec.get("model") or _NO_GROUP, cost)]
+        return [CostShare(model, model_cost) for model, model_cost in by_model.items()]
+    return [CostShare(rec.get("model") or _NO_GROUP, cost)]
 
 
 def _new_group() -> dict:
@@ -295,33 +324,36 @@ def _accumulate(group: dict, rec: dict, cost: float, attribute_tokens: bool) -> 
     group["cache_read_tokens"] += rec.get("cache_read_tokens") or 0
 
 
-def _finalize_group(name: str, group: dict, attribute_tokens: bool) -> dict:
+def _finalize_group(name: str, group: dict, attribute_tokens: bool) -> UsageRow:
     durations = group["durations"]
     billed = group["billed_input"] if attribute_tokens else None
     cache_read = group["cache_read_tokens"] if attribute_tokens else None
-    return {
-        "group": name,
-        "calls": group["calls"],
-        "cost": group["cost"],
-        "billed_input": billed,
-        "output_tokens": group["output_tokens"] if attribute_tokens else None,
-        "cache_read_tokens": cache_read,
-        "cache_read_ratio": (cache_read / billed) if billed else None,
-        "median_duration_ms": int(statistics.median(durations)) if durations else None,
-    }
+    return UsageRow(
+        group=name,
+        calls=group["calls"],
+        cost=group["cost"],
+        billed_input=billed,
+        output_tokens=group["output_tokens"] if attribute_tokens else None,
+        cache_read_tokens=cache_read,
+        cache_read_ratio=(cache_read / billed) if billed else None,
+        median_duration_ms=int(statistics.median(durations)) if durations else None,
+    )
 
 
-def aggregate_usage(records: list[dict], by: str) -> list[dict]:
+def aggregate_usage(records: list[dict], by: str) -> list[UsageRow]:
     """Roll ledger records into one row per group, most expensive first."""
     attribute_tokens = by != _UNATTRIBUTED_TOKENS
     groups: dict[str, dict] = {}
     for rec in records:
-        for name, cost in _cost_shares(rec, by):
-            _accumulate(groups.setdefault(name, _new_group()), rec, cost, attribute_tokens)
+        for share in _cost_shares(rec, by):
+            _accumulate(
+                groups.setdefault(share.group, _new_group()),
+                rec, share.cost, attribute_tokens,
+            )
     rows = [_finalize_group(name, g, attribute_tokens) for name, g in groups.items()]
     if by == "day":
-        return sorted(rows, key=lambda r: r["group"])
-    return sorted(rows, key=lambda r: r["cost"], reverse=True)
+        return sorted(rows, key=lambda r: r.group)
+    return sorted(rows, key=lambda r: r.cost, reverse=True)
 
 
 def _fmt_tokens(n: int | None) -> str:
@@ -342,47 +374,73 @@ def _fmt_duration(ms: int | None) -> str:
     return f"{ms / _MS_PER_SECOND:.1f}s"
 
 
-def _stats_cells(row: dict) -> tuple[str, ...]:
-    ratio = row["cache_read_ratio"]
-    return (
-        str(row["group"]),
-        str(row["calls"]),
-        f"${row['cost']:.4f}",
-        _fmt_tokens(row["billed_input"]),
-        _fmt_tokens(row["output_tokens"]),
-        _NO_GROUP if ratio is None else f"{ratio * 100:.0f}%",
-        _fmt_duration(row["median_duration_ms"]),
+def _fmt_ratio(ratio: float | None) -> str:
+    if ratio is None:
+        return _NO_GROUP
+    return f"{ratio * 100:.0f}%"
+
+
+class Align(Enum):
+    """Which side of its column a cell is padded on."""
+
+    LEFT = auto()
+    RIGHT = auto()
+
+
+@dataclass(frozen=True)
+class Column:
+    """One column of the stats table: its heading, its cell, and its padding."""
+
+    label: str
+    render: Callable[[UsageRow], str]
+    align: Align = Align.RIGHT
+
+
+# The table's schema. Heading and cell come from the same entry, so a column
+# cannot be added to one and forgotten in the other, and the order here is the
+# order printed. Numbers read right-aligned; the group name is the only prose.
+_STATS_COLUMNS = (
+    Column("GROUP", lambda r: r.group, Align.LEFT),
+    Column("CALLS", lambda r: str(r.calls)),
+    Column("COST", lambda r: f"${r.cost:.4f}"),
+    Column("BILLED IN", lambda r: _fmt_tokens(r.billed_input)),
+    Column("OUTPUT", lambda r: _fmt_tokens(r.output_tokens)),
+    Column("CACHE", lambda r: _fmt_ratio(r.cache_read_ratio)),
+    Column("MED TIME", lambda r: _fmt_duration(r.median_duration_ms)),
+)
+
+
+def _totals_row(rows: list[UsageRow]) -> UsageRow:
+    billed = sum(r.billed_input or 0 for r in rows)
+    cache_read = sum(r.cache_read_tokens or 0 for r in rows)
+    return UsageRow(
+        group="TOTAL",
+        calls=sum(r.calls for r in rows),
+        cost=sum(r.cost for r in rows),
+        billed_input=billed or None,
+        output_tokens=sum(r.output_tokens or 0 for r in rows) or None,
+        cache_read_tokens=cache_read or None,
+        cache_read_ratio=(cache_read / billed) if billed else None,
+        # A median of per-group medians is not a median of anything.
+        median_duration_ms=None,
     )
 
 
-def _sum_column(rows: list[dict], key: str) -> int:
-    return sum(r[key] or 0 for r in rows)
+def _pad(cell: str, width: int, align: Align) -> str:
+    return cell.ljust(width) if align is Align.LEFT else cell.rjust(width)
 
 
-def _totals_row(rows: list[dict]) -> dict:
-    billed = _sum_column(rows, "billed_input")
-    cache_read = _sum_column(rows, "cache_read_tokens")
-    return {
-        "group": "TOTAL",
-        "calls": _sum_column(rows, "calls"),
-        "cost": sum(r["cost"] for r in rows),
-        "billed_input": billed or None,
-        "output_tokens": _sum_column(rows, "output_tokens") or None,
-        "cache_read_tokens": cache_read or None,
-        "cache_read_ratio": (cache_read / billed) if billed else None,
-        # A median of per-group medians is not a median of anything.
-        "median_duration_ms": None,
-    }
-
-
-def format_stats_table(rows: list[dict]) -> str:
-    cells = [_STATS_HEADER, *(_stats_cells(r) for r in rows), _stats_cells(_totals_row(rows))]
+def format_stats_table(rows: list[UsageRow]) -> str:
+    header = tuple(col.label for col in _STATS_COLUMNS)
+    body = [tuple(col.render(row) for col in _STATS_COLUMNS)
+            for row in (*rows, _totals_row(rows))]
+    cells = [header, *body]
     widths = [max(len(c) for c in column) for column in zip(*cells)]
-    lines = []
-    for cell_row in cells:
-        head = cell_row[0].ljust(widths[0])
-        rest = "  ".join(c.rjust(w) for c, w in zip(cell_row[1:], widths[1:]))
-        lines.append(f"{head}  {rest}")
+    lines = [
+        "  ".join(_pad(cell, width, col.align)
+                  for cell, width, col in zip(cell_row, widths, _STATS_COLUMNS))
+        for cell_row in cells
+    ]
     lines[0] = f"{ANSI_BOLD}{lines[0]}{ANSI_RESET}"
     return "\n".join(lines)
 
@@ -478,7 +536,7 @@ def cmd_stats(args):
         return
     if args.json:
         for row in rows:
-            print(json.dumps(row, separators=(",", ":")))
+            print(json.dumps(asdict(row), separators=(",", ":")))
         return
     print(f"AI usage — last {args.since}, by {args.by}")
     print(format_stats_table(rows))

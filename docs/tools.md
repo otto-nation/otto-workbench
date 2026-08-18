@@ -413,6 +413,65 @@ The Push verdict appears in the dashboard and gates the **Merge readiness** line
 | Commits ahead | `**Push**: N commit(s) not pushed` | Blocks: "N unpushed commit(s)" |
 | Up to date | `**Push**: up to date` | No block |
 
+### `otto-mcp-server`
+
+Dynamic MCP server. Discovers workbench scripts and exposes them to any MCP client over
+stdio. Registered in `~/.claude.json` as `otto-workbench` by `otto-workbench ai sync`.
+
+```
+otto-mcp-server
+```
+
+A script is discovered when it is executable, its name starts with neither `.` nor `_`,
+and it answers `--tool-schema` with JSON carrying at least `name` and `input_schema`.
+Scripts built on `ToolParser`
+([`ai/lib/tool_parser.py`](../ai/lib/tool_parser.py)) inherit the flag for free.
+
+**Where it looks.** The workbench's own script directories, always. They are derived from
+the component layout rather than listed — the root `bin/`, plus every `<component>/bin`
+and `<component>/<sub>/bin` in the checkout. That is the same two-level glob
+[`lib/components.sh`](../lib/components.sh) uses for `steps.sh` and `migrations`, so a new
+component tier such as `editors/zed/bin/` is scanned the moment it exists, with no config
+to write. Note it scans the checkout, not the `~/.local/bin` those scripts are symlinked
+into: discovery probes a candidate by running it, and `~/.local/bin` also holds everything
+else you have installed.
+
+To reach anything outside the workbench, add `~/.config/workbench/mcp-tools.json`, which
+is optional:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tool_dirs` | list of paths | `[]` | Directories scanned **in addition** to the workbench's own |
+| `plugin_dirs` | list of paths | `[]` | Directories of `*.json` files, each naming one `tool_dir` |
+
+Both keys add to the derived set rather than replacing it, so an empty list and an absent
+key mean the same thing. The workbench's own directories are always scanned.
+
+```json
+{
+  "tool_dirs": ["~/work/project/bin"],
+  "plugin_dirs": ["~/.config/workbench/mcp-plugins"]
+}
+```
+
+A plugin file points at a directory to scan, letting a project register its tools
+without editing the config:
+
+```json
+{ "name": "my-project", "tool_dir": "~/work/project/tools" }
+```
+
+Discovery reads each candidate's source before running it, and only executes the ones
+carrying a protocol marker — a script that ignores unknown flags would otherwise do its
+real work when probed. Scripts that mention the flag in prose without implementing it
+must word around the literal to stay out of the probe path.
+
+Carrying a marker is a claim to be a tool, so a candidate that then fails to answer — a
+non-zero exit, malformed JSON, a schema missing `name` or `input_schema`, or a probe that
+outruns the timeout — is logged at warning level on stderr with the reason. A tool you
+added that never appears in an MCP client is explained there. Executables with no marker
+are not tools and are skipped without comment.
+
 ### `serena-mcp`
 
 Scaffolds Serena MCP into a project's `.mcp.json` for project-scoped code intelligence.

@@ -12,6 +12,12 @@ set -e
 # is lost, which is the property that matters for a carry, and otto-log sorts
 # every record by ts, so the duplicates render as duplicate lines rather than
 # as a corrupted timeline.
+#
+# adoption-sensitive: drains <state>/reviews/*/trail.jsonl, which is exactly
+# where adopt_legacy_workbench_root puts a legacy root's reviews/. Without the
+# marker an adoption running after this migration is recorded re-seeds those
+# trails for good — otto-log globs the trail root flat and never looks in
+# reviews/ (#741).
 
 migration_20260814_unify_trail_root() {
     # Defensive only: the framework always exports WORKBENCH_STATE_DIR, but

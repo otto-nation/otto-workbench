@@ -68,7 +68,7 @@ def _load_plugin_dir(plugin_file: Path) -> Path | None:
     """Read a plugin JSON file and return its tool directory, or None."""
     try:
         plugin = json.loads(plugin_file.read_text())
-        td = Path(plugin["tool_dir"]).expanduser()
+        td = Path(plugin["tool_dir"]).expanduser().resolve()
         return td if td.is_dir() else None
     except (json.JSONDecodeError, KeyError, OSError):
         logger.warning("Skipping invalid plugin: %s", plugin_file)
@@ -113,7 +113,7 @@ def _resolve_dirs(config: dict) -> list[Path]:
     # Additive rather than an override: the workbench's own directories come
     # from its layout, so the config only says what *else* to scan.
     for d in config.get("tool_dirs", []):
-        p = Path(d).expanduser()
+        p = Path(d).expanduser().resolve()
         if p.is_dir():
             dirs.append(p)
 
@@ -123,7 +123,9 @@ def _resolve_dirs(config: dict) -> list[Path]:
     # Now that the config adds to the derived set rather than replacing it, a
     # path can arrive twice — a tool_dirs entry naming a component bin, or two
     # plugins pointing at one directory. Scanning it twice means probing every
-    # script in it twice for a result the name check then discards.
+    # script in it twice for a result the name check then discards. Config
+    # paths are resolved above so a symlink or a `..` segment dedups too; the
+    # derived ones already are.
     return list(dict.fromkeys(dirs))
 
 

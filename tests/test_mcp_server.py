@@ -133,6 +133,28 @@ def _write_tool_script(path: Path, name: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def _write_counting_tool(directory: Path) -> Path:
+    """Write a tool into *directory* that records each probe; return the log.
+
+    Probing is execution, so a directory scanned twice appends twice — which is
+    what makes a double scan assertable at all.
+    """
+    log = directory.parent / "probes.log"
+    script = directory / "counting-tool"
+    script.write_text(textwrap.dedent(f"""\
+        #!/usr/bin/env python3
+        import json, sys
+        with open({str(log)!r}, "a") as f:
+            f.write("probed\\n")
+        if "--tool-schema" in sys.argv:
+            json.dump({{"name": "counting-tool",
+                       "input_schema": {{"type": "object", "properties": {{}}}}}}, sys.stdout)
+            sys.exit(0)
+    """))
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return log
+
+
 class TestDiscovery:
     """What a scan of a given directory turns up.
 
@@ -363,20 +385,26 @@ class TestWorkbenchToolDirs:
         one directory, would otherwise run every script in it twice for a result
         the duplicate-name check then discards.
         """
-        log = tmp_path / "probes.log"
-        script = tmp_path / "counting-tool"
-        script.write_text(textwrap.dedent(f"""\
-            #!/usr/bin/env python3
-            import json, sys
-            with open({str(log)!r}, "a") as f:
-                f.write("probed\\n")
-            if "--tool-schema" in sys.argv:
-                json.dump({{"name": "counting-tool",
-                           "input_schema": {{"type": "object", "properties": {{}}}}}}, sys.stdout)
-                sys.exit(0)
-        """))
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        tools_dir = tmp_path / "tools"
+        tools_dir.mkdir()
+        log = _write_counting_tool(tools_dir)
 
-        discover_tools({"tool_dirs": [str(tmp_path), str(tmp_path)]})
+        discover_tools({"tool_dirs": [str(tools_dir), str(tools_dir)]})
+
+        assert log.read_text() == "probed\n"
+
+    def test_a_directory_reached_by_two_paths_is_scanned_once(self, tmp_path):
+        """Dedup keys on the resolved path, so a symlink is not a second entry.
+
+        The derived directories come from a resolved root, so a config entry has
+        to be resolved too or it never matches one textually.
+        """
+        tools_dir = tmp_path / "tools"
+        tools_dir.mkdir()
+        log = _write_counting_tool(tools_dir)
+        link = tmp_path / "link-to-tools"
+        link.symlink_to(tools_dir)
+
+        discover_tools({"tool_dirs": [str(tools_dir), str(link)]})
 
         assert log.read_text() == "probed\n"

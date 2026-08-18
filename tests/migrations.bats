@@ -61,13 +61,19 @@ ${fn_name}() {
 EOF
 }
 
-# Helper: source the framework and run all migrations
+# Helper: source the framework and run all migrations.
+# Under `set -e`, matching the real caller (bin/otto-workbench). The marker
+# printed afterwards is what proves the run returned rather than taking its
+# caller down with it (#731) — a migration file's own `set -e` reaches this
+# subshell through the source, so the abort is not hypothetical here.
 run_migrations_in_fake() {
   (
+    set -e
     . "$FAKE_ROOT/lib/ui.sh"
     . "$FAKE_ROOT/lib/constants.sh"
     . "$FAKE_ROOT/lib/migrations.sh"
     run_all_migrations
+    echo "SYNC CONTINUED"
   )
 }
 
@@ -135,6 +141,67 @@ adopt_in_fake() {
   done <<< "$names"
 }
 
+@test "adoption leaves behind an entry no root claims" {
+  # #730 deletes <state>/logs/ on purpose. Adoption runs before any migration
+  # reads its bookkeeping, so carrying logs/ across would reinstate a directory
+  # the migration that removed it is already recorded as applied for, and that
+  # migration will never run again to take it back out (#732).
+  mkdir -p "$FAKE_LEGACY/logs/dream-scan"
+  printf '{"ts":"2026-01-01T00:00:00Z"}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
+  echo "applied" > "$FAKE_LEGACY/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"belong to no root"* ]]
+
+  [ ! -e "$FAKE_STATE/logs" ]
+  [ -f "$FAKE_LEGACY/logs/dream-scan/trail.jsonl" ]
+  # An unclaimed entry is skipped, not a reason to stop: everything a root
+  # does own still moves in the same pass.
+  [ "$(cat "$FAKE_STATE/migrations.applied")" = "applied" ]
+}
+
+@test "adoption skips every name in _LEGACY_UNCLAIMED_ENTRIES" {
+  # Mirrors the config-entry test above: the list is the whole classification
+  # on its side, so anything dropped from it silently becomes state again.
+  local names entry
+  names=$(
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$FAKE_ROOT/lib/constants.sh"
+    . "$FAKE_ROOT/lib/migrations.sh"
+    printf '%s\n' "${_LEGACY_UNCLAIMED_ENTRIES[@]}"
+  )
+  [ -n "$names" ]
+
+  mkdir -p "$FAKE_LEGACY"
+  while IFS= read -r entry; do
+    echo "$entry" > "$FAKE_LEGACY/$entry"
+  done <<< "$names"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  while IFS= read -r entry; do
+    [ "$(cat "$FAKE_LEGACY/$entry")" = "$entry" ]
+    [ ! -e "$FAKE_STATE/$entry" ]
+    [ ! -e "$FAKE_CONFIG/$entry" ]
+  done <<< "$names"
+}
+
+@test "skipping an unclaimed entry is idempotent" {
+  # The legacy root survives while it still holds one, so adoption keeps
+  # running — it has to reach the same decision every time.
+  mkdir -p "$FAKE_LEGACY/logs"
+  echo "leftover" > "$FAKE_LEGACY/logs/dream-scan.jsonl"
+
+  adopt_in_fake
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"belong to no root"* ]]
+  [ "$(cat "$FAKE_LEGACY/logs/dream-scan.jsonl")" = "leftover" ]
+  [ ! -e "$FAKE_STATE/logs" ]
+}
+
 @test "adoption is idempotent across repeated runs" {
   mkdir -p "$FAKE_LEGACY"
   echo "applied" > "$FAKE_LEGACY/migrations.applied"
@@ -178,32 +245,33 @@ adopt_in_fake() {
 
 @test "adoption merges a trail both roots hold rather than keeping both" {
   # One history in two files: keeping both would hide the older from otto-log,
-  # which globs for the exact name.
-  mkdir -p "$FAKE_LEGACY/logs/dream-scan" "$FAKE_STATE/logs/dream-scan"
-  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
-  printf '{"ts":"2026-08-01T00:00:00Z","n":2}\n' > "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  # which globs for the exact name. Staged under reviews/, not the logs/ this
+  # used to use — logs/ belongs to no root since #730, so adoption skips it.
+  mkdir -p "$FAKE_LEGACY/reviews/repo-42" "$FAKE_STATE/reviews/repo-42"
+  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/reviews/repo-42/trail.jsonl"
+  printf '{"ts":"2026-08-01T00:00:00Z","n":2}\n' > "$FAKE_STATE/reviews/repo-42/trail.jsonl"
 
   run adopt_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" != *"kept the new one"* ]]
 
-  [ "$(wc -l < "$FAKE_STATE/logs/dream-scan/trail.jsonl")" -eq 2 ]
-  grep -q '"n":1' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
-  grep -q '"n":2' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  [ "$(wc -l < "$FAKE_STATE/reviews/repo-42/trail.jsonl")" -eq 2 ]
+  grep -q '"n":1' "$FAKE_STATE/reviews/repo-42/trail.jsonl"
+  grep -q '"n":2' "$FAKE_STATE/reviews/repo-42/trail.jsonl"
   [ ! -d "$FAKE_LEGACY" ]
 }
 
 @test "merging a trail onto a file with no trailing newline keeps both records whole" {
-  mkdir -p "$FAKE_LEGACY/logs/dream-scan" "$FAKE_STATE/logs/dream-scan"
-  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
-  printf '{"ts":"2026-08-01T00:00:00Z","n":2}' > "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  mkdir -p "$FAKE_LEGACY/reviews/repo-42" "$FAKE_STATE/reviews/repo-42"
+  printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/reviews/repo-42/trail.jsonl"
+  printf '{"ts":"2026-08-01T00:00:00Z","n":2}' > "$FAKE_STATE/reviews/repo-42/trail.jsonl"
 
   run adopt_in_fake
   [ "$status" -eq 0 ]
 
-  [ "$(wc -l < "$FAKE_STATE/logs/dream-scan/trail.jsonl")" -eq 2 ]
-  grep -qx '{"ts":"2026-08-01T00:00:00Z","n":2}' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
-  grep -qx '{"ts":"2026-01-01T00:00:00Z","n":1}' "$FAKE_STATE/logs/dream-scan/trail.jsonl"
+  [ "$(wc -l < "$FAKE_STATE/reviews/repo-42/trail.jsonl")" -eq 2 ]
+  grep -qx '{"ts":"2026-08-01T00:00:00Z","n":2}' "$FAKE_STATE/reviews/repo-42/trail.jsonl"
+  grep -qx '{"ts":"2026-01-01T00:00:00Z","n":1}' "$FAKE_STATE/reviews/repo-42/trail.jsonl"
 }
 
 @test "adoption merges a monthly usage ledger" {
@@ -453,6 +521,171 @@ EOF
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" == *"no migrations found"* ]]
+}
+
+# ─── Failure isolation (#731) ────────────────────────────────────────────────
+
+# Helper: create a migration whose function returns non-zero, under the `set -e`
+# real migration files carry.
+create_failing_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+set -e
+${fn_name}() {
+  return 1
+}
+EOF
+}
+
+@test "a failing migration warns, is not recorded, and the sync keeps going" {
+  create_failing_migration "comp1" "20250101-fails.sh" "migration_20250101_fails"
+  create_migration "comp2" "20250201-later.sh" "migration_20250201_later"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration failed: 20250101-fails.sh"* ]]
+  [[ "$output" == *"will retry on next run"* ]]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+
+  run ! grep -qxF "comp1/20250101-fails.sh" "$FAKE_STATE/migrations.applied"
+  grep -qxF "comp2/20250201-later.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a self-invoking migration cannot abort the run on the sourcing pass" {
+  # The framework sources the file and then calls the function. A file that
+  # also calls itself runs on the sourcing pass too, where — under its own
+  # `set -e`, and outside the `if` that turns a failure into warn-and-retry —
+  # a non-zero return used to exit the whole sync (#731). validate-migrations
+  # rejects the shape now, but the framework has to hold for a file the
+  # validator never saw.
+  mkdir -p "$FAKE_ROOT/comp1/migrations"
+  cat > "$FAKE_ROOT/comp1/migrations/20250101-selfcall.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+migration_20250101_selfcall() {
+  return 1
+}
+migration_20250101_selfcall
+EOF
+  create_migration "comp2" "20250201-later.sh" "migration_20250201_later"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not be loaded"* ]]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+
+  run ! grep -qxF "comp1/20250101-selfcall.sh" "$FAKE_STATE/migrations.applied"
+  grep -qxF "comp2/20250201-later.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "sourcing a migration does not arm errexit for the rest of the sync" {
+  # A sourced `set -e` outlives the source. Left in place it would put every
+  # component that syncs after the migrations under errexit, which nothing
+  # downstream expects — so the framework restores the caller's own setting.
+  mkdir -p "$FAKE_ROOT/comp1/migrations"
+  cat > "$FAKE_ROOT/comp1/migrations/20250101-armed.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+migration_20250101_armed() {
+  :
+}
+EOF
+
+  run bash -c "
+    . '$FAKE_ROOT/lib/ui.sh'
+    . '$FAKE_ROOT/lib/constants.sh'
+    . '$FAKE_ROOT/lib/migrations.sh'
+    run_all_migrations > /dev/null
+    case \$- in *e*) echo 'ERREXIT ARMED' ;; *) echo 'ERREXIT CLEAR' ;; esac
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ERREXIT CLEAR"* ]]
+}
+
+# Helper: a migration whose file scope fails before the definition it exists for.
+# The definition succeeds, so the source's own exit status is 0 and says nothing
+# about the failure — the framework has to look somewhere else to see it.
+create_scope_failing_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+set -e
+_precondition() {
+  return 1
+}
+_precondition
+${fn_name}() {
+  touch "$FAKE_ROOT/${fn_name}.ran"
+}
+EOF
+}
+
+@test "a file-scope failure before a good definition is a load failure" {
+  create_scope_failing_migration "comp1" "20250101-scoped.sh" "migration_20250101_scoped"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not be loaded"* ]]
+
+  [ ! -e "$FAKE_ROOT/migration_20250101_scoped.ran" ]
+  run ! grep -qxF "comp1/20250101-scoped.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a file that fails to load stops neither the next migration nor the next component" {
+  create_scope_failing_migration "comp1" "20250101-scoped.sh" "migration_20250101_scoped"
+  create_migration "comp1" "20250102-sibling.sh" "migration_20250102_sibling"
+  create_migration "comp2" "20250201-later.sh" "migration_20250201_later"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+
+  grep -qxF "comp1/20250102-sibling.sh" "$FAKE_STATE/migrations.applied"
+  grep -qxF "comp2/20250201-later.sh" "$FAKE_STATE/migrations.applied"
+  run ! grep -qxF "comp1/20250101-scoped.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a clean migration still loads and applies alongside one that cannot" {
+  create_scope_failing_migration "comp1" "20250101-scoped.sh" "migration_20250101_scoped"
+  mkdir -p "$FAKE_ROOT/comp2/migrations"
+  cat > "$FAKE_ROOT/comp2/migrations/20250201-good.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+migration_20250201_good() {
+  touch "$FAKE_ROOT/good.ran"
+}
+EOF
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250201-good.sh"* ]]
+
+  [ -e "$FAKE_ROOT/good.ran" ]
+  grep -qxF "comp2/20250201-good.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "the caller's errexit setting survives a migration that fails to load" {
+  # Both directions matter: the sync must not come back armed when it started
+  # clear, and must not come back disarmed when its caller relies on errexit.
+  create_scope_failing_migration "comp1" "20250101-scoped.sh" "migration_20250101_scoped"
+
+  run bash -c "
+    . '$FAKE_ROOT/lib/ui.sh'
+    . '$FAKE_ROOT/lib/constants.sh'
+    . '$FAKE_ROOT/lib/migrations.sh'
+    set -e
+    run_all_migrations > /dev/null
+    case \$- in *e*) echo 'ARMED-STAYED-ARMED' ;; *) echo 'ARMED-WENT-CLEAR' ;; esac
+    set +e
+    run_all_migrations > /dev/null
+    case \$- in *e*) echo 'CLEAR-WENT-ARMED' ;; *) echo 'CLEAR-STAYED-CLEAR' ;; esac
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ARMED-STAYED-ARMED"* ]]
+  [[ "$output" == *"CLEAR-STAYED-CLEAR"* ]]
 }
 
 # ─── Duplicate filename detection ───────────────────────────────────────────

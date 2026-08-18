@@ -137,6 +137,112 @@ EOF
   [[ "$output" == *"expected function"* ]]
 }
 
+# ── File scope (#731) ───────────────────────────────────────────────────────
+
+@test "self-invocation at file scope fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+migration_20260417_test() { echo "hi"; }
+migration_20260417_test
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"file scope must only define migration_20260417_test()"* ]]
+  [[ "$output" == *"20260417-test.sh:4"* ]]
+}
+
+@test "any executable statement at file scope fails, not just a self-call" {
+  # The framework sources the file before it calls anything, so a statement out
+  # here runs on that pass. Under the file's own `set -e` a failing one used to
+  # take the sync with it; the shape is the problem, not the name being called.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+_precondition() { return 1; }
+_precondition
+migration_20260417_test() { echo "hi"; }
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"file scope must only define migration_20260417_test()"* ]]
+  [[ "$output" == *"_precondition"* ]]
+}
+
+@test "a self-call from inside a helper body is not a file-scope statement" {
+  # Function bodies are stripped by brace-counting, so the call below is inside
+  # _dispatch however it is indented. A line-shape check reads it as file scope.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+_dispatch() {
+case "$1" in
+again)
+migration_20260417_test
+;;
+esac
+}
+migration_20260417_test() { _dispatch skip; }
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "braces inside heredocs and quotes do not expose a function body" {
+  # A stray brace in a heredoc or a string would unbalance a naive count and
+  # make the rest of the body look like file scope.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+set -e
+migration_20260417_test() {
+  cat <<'TXT'
+} not a closing brace {
+TXT
+  local stray='} nor this {'
+  echo "$stray"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "self-invocation guarded with || true still fails" {
+  # `|| true` keeps the sourcing pass from aborting, but the line still runs
+  # the migration a second time and the run whose status the framework reads
+  # is the other one — there is no version of this call that has a job to do.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() { echo "hi"; }
+migration_20260417_test || true
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"file scope"* ]]
+}
+
+@test "a spaced function definition is not read as a self-invocation" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test () {
+  echo "hi"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
 # ── Duplicate detection ─────────────────────────────────────────────────────
 
 @test "duplicate filename across components fails" {

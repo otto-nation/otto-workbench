@@ -49,5 +49,3 @@ migration_20260624_workbench_state_dir() {
         success "No worktree state to migrate"
     fi
 }
-
-migration_20260624_workbench_state_dir

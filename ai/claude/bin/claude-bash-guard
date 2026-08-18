@@ -177,9 +177,10 @@ fi
 # shell reachable, so nothing has to be hunted down by pattern later.
 #
 # `&` is only the background operator when it stands alone: `&&` is a conjunction,
-# `2>&1` and `&>` are redirects, and `|&` is a pipe. Each is excluded by the
-# character on one side of the match, which is why both sides are tested.
-re_background='(^|[^&>|])&([^&>]|$)'
+# `2>&1` and `&>` are redirects, `|&` is a pipe, and `;&`/`;;&` fall through to
+# the next branch of a case. Each is excluded by the character on one side of the
+# match, which is why both sides are tested.
+re_background='(^|[^&>|;])&([^&>]|$)'
 re_nohup='(^|[;&|][[:space:]]*)nohup[[:space:]]'
 if [[ "$stripped" =~ $re_background || "$stripped" =~ $re_nohup ]]; then
   block 'Backgrounding with & or nohup leaves a shell the tool cannot see, so stopping it later takes a pkill that prompts every time. Pass run_in_background instead, and make the request against it in a separate call. See bash-tool.md § Avoid Backgrounding with &.'

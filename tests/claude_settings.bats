@@ -628,6 +628,11 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+@test "background hook: allows a case statement fallthrough" {
+  run _run_guard '{"tool_input":{"command":"case release in r*) echo tag ;& *) echo done ;; esac"}}'
+  [ "$status" -eq 0 ]
+}
+
 @test "background hook: allows an ampersand inside a quoted argument" {
   run _run_guard "{\"tool_input\":{\"command\":\"grep -n 'a & b' /tmp/probe.txt\"}}"
   [ "$status" -eq 0 ]

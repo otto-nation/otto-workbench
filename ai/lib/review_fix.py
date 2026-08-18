@@ -2,7 +2,13 @@
 
 Runs after a review is written and `--fix` is set: hands the review document to
 an agent that applies what it can, reconciles the checkboxes against the files
-that actually changed, then commits and pushes the result.
+the agent changed, then commits and pushes the result.
+
+What the agent changed is a snapshot difference: the worktree's dirty set is
+recorded before the agent runs and again after, and only the paths that appear
+in the second and not the first are attributed to it. Without that first
+snapshot the pass cannot tell its own work from whatever was already sitting in
+the worktree, and it both commits and takes credit for the difference.
 
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
@@ -20,7 +26,6 @@ from review_agent import diagnose_missing_output
 from review_common import (
     Phase,
     TEMPLATE_FIX,
-    has_uncommitted_changes,
     preserve_log, restore_preserved,
 )
 from review_findings import Finding, extract_skip_reasons, parse_findings
@@ -33,15 +38,22 @@ MAX_TURNS_FIX_CAP = 60
 RETRY_MAX_TURNS_FIX = 40
 
 
-def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
-    """Commit source-file fixes applied by the fix-pass agent."""
-    if not has_uncommitted_changes(job.wt_path):
+def _commit_fixes(
+    job: ReviewJob, paths: set[str], fixed: int, skipped: int, summary: str = "",
+):
+    """Commit the source files the fix-pass agent changed.
+
+    `paths` is the snapshot difference, so a file the agent created is in it and
+    anything that was already dirty is not. Staging it by name rather than with
+    `git add -A` is what keeps a build artifact or unrelated work in progress
+    out of a commit the pass then pushes.
+    """
+    if not paths:
         return
 
-    # -A, not -u: the fix agent creates new files (tests, fixtures) that -u
-    # drops from the commit while the summary still reports them as fixed.
+    ordered = sorted(paths)
     subprocess.run(
-        ["git", "-C", job.wt_path, "add", "-A"],
+        ["git", "-C", job.wt_path, "add", "--", *ordered],
         capture_output=True, check=True,
     )
 
@@ -51,8 +63,10 @@ def _commit_fixes(job: ReviewJob, fixed: int, skipped: int, summary: str = ""):
     if summary:
         msg += f"\n\n{summary}"
 
+    # Pathspec commit, so content the operator staged before the pass started
+    # stays staged instead of riding along in the index.
     result = subprocess.run(
-        ["git", "-C", job.wt_path, "commit", "-m", msg],
+        ["git", "-C", job.wt_path, "commit", "-m", msg, "--", *ordered],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -161,14 +175,21 @@ def _push_fixes(job: ReviewJob):
 
 
 def _changed_source_files(wt_path: str) -> set[str]:
-    """Return set of changed files (staged, unstaged, and untracked)."""
+    """Return set of changed files (staged, unstaged, and untracked).
+
+    Called on both sides of the fix agent's run. `--exclude-standard` keeps
+    gitignored paths out of either snapshot, so they cannot reach the
+    difference and cannot be staged from it.
+    """
     changed: set[str] = set()
     # Untracked files count: a fix that only adds a test file still fixed the
     # finding, and diff-only detection would report it as skipped.
     for args in (["diff", "HEAD", "--name-only"],
                  ["ls-files", "--others", "--exclude-standard"]):
+        # quotePath=false: git escapes non-ASCII names by default, and an
+        # escaped name is not a pathspec `git add` can resolve.
         result = subprocess.run(
-            ["git", "-C", wt_path, *args],
+            ["git", "-C", wt_path, "-c", "core.quotePath=false", *args],
             capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -192,13 +213,16 @@ class FixPassResult:
         return len(self.skipped)
 
 
-def _reconcile_checkboxes(review_file: str, wt_path: str) -> None:
+def _reconcile_checkboxes(review_file: str, changed: set[str]) -> None:
     """Auto-check findings whose files were modified but checkboxes weren't updated.
 
     The fix agent sometimes edits source files without updating the review
     markdown.  This reconciles by matching changed file paths to finding paths.
+
+    `changed` is the agent's own delta, not the worktree's dirty set: a finding
+    on a path that was already dirty when the pass started would otherwise be
+    checked off as fixed by a pass that never touched it.
     """
-    changed = _changed_source_files(wt_path)
     if not changed:
         return
 
@@ -294,10 +318,17 @@ def run_fix_pass(job: ReviewJob):
     fix_log = runner.session_log
     log.info("Fix pass — applying review findings...")
     log.blank()
+    # ceiling: attribution is by path, so a file already dirty when the pass
+    # starts is never credited to the agent — edits it makes to that file are
+    # neither staged nor auto-checked. Upgrade to comparing each path's content
+    # hash across the snapshot once fix passes routinely run against trees that
+    # are dirty in the very files the review has findings on.
+    before_changed = _changed_source_files(job.wt_path)
     runner.invoke(prompt, max_turns)
     log.blank()
 
-    _reconcile_checkboxes(job.review_file, job.wt_path)
+    agent_changed = _changed_source_files(job.wt_path) - before_changed
+    _reconcile_checkboxes(job.review_file, agent_changed)
 
     after_text = Path(job.review_file).read_text()
     after_findings = parse_findings(after_text)
@@ -319,7 +350,10 @@ def run_fix_pass(job: ReviewJob):
             runner.invoke(retry_prompt, retry_turns)
             restore_preserved(fix_log, prior_log)
             log.blank()
-            _reconcile_checkboxes(job.review_file, job.wt_path)
+            # Still measured against the pre-pass snapshot: the retry's work and
+            # the first attempt's are both the agent's, and both must commit.
+            agent_changed = _changed_source_files(job.wt_path) - before_changed
+            _reconcile_checkboxes(job.review_file, agent_changed)
             after_text = Path(job.review_file).read_text()
             after_findings = parse_findings(after_text)
             extract_skip_reasons(after_findings)
@@ -331,6 +365,6 @@ def run_fix_pass(job: ReviewJob):
         for line in summary.splitlines():
             print(f"  {line}", file=sys.stderr)
 
-    _commit_fixes(job, fixed=result.fixed_count, skipped=result.skipped_count,
-                  summary=summary)
+    _commit_fixes(job, agent_changed, fixed=result.fixed_count,
+                  skipped=result.skipped_count, summary=summary)
 

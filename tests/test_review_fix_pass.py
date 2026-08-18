@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -18,6 +19,35 @@ _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
 _AGENT_ERROR = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded")
 
 
+def _git(wt: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(wt), *args],
+        capture_output=True, text=True, check=True,
+    )
+    return result.stdout
+
+
+@pytest.fixture
+def git_wt(tmp_path):
+    """A real repo with one commit — the fix pass's staging is git behaviour."""
+    wt = tmp_path / "worktree"
+    wt.mkdir()
+    _git(wt, "init", "-q", "-b", "main")
+    _git(wt, "config", "user.email", "test@example.com")
+    _git(wt, "config", "user.name", "Test")
+    _git(wt, "config", "commit.gpgsign", "false")
+    (wt / "src.py").write_text("original\n")
+    (wt / ".gitignore").write_text("*.cache\n")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-qm", "initial")
+    return wt
+
+
+def _committed_paths(wt: Path) -> set[str]:
+    out = _git(wt, "show", "--name-only", "--pretty=format:", "HEAD")
+    return {line for line in out.strip().splitlines() if line}
+
+
 class TestCommitFixes:
     def _make_job(self, tmp_path):
         job = MagicMock()
@@ -25,58 +55,100 @@ class TestCommitFixes:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_fix.has_uncommitted_changes", return_value=False)
     @patch("review_fix.subprocess.run")
-    def test_no_diff_returns_early(self, mock_run, mock_dirty, tmp_path):
-        review_fix._commit_fixes(self._make_job(tmp_path), fixed=3, skipped=1)
+    def test_no_agent_changes_returns_early(self, mock_run, tmp_path):
+        review_fix._commit_fixes(self._make_job(tmp_path), set(), fixed=3, skipped=1)
         mock_run.assert_not_called()
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
-    def test_commits_with_counts(self, mock_run, mock_push, mock_dirty, tmp_path):
+    def test_commits_with_counts(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_fix._commit_fixes(job, fixed=3, skipped=1)
+        review_fix._commit_fixes(job, {"a.go"}, fixed=3, skipped=1)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "3 fixed, 1 skipped" in msg
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
     def test_zero_fixed_omits_count_from_message(
-        self, mock_run, mock_push, mock_dirty, tmp_path,
+        self, mock_run, mock_push, tmp_path,
     ):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_fix._commit_fixes(job, fixed=0, skipped=2)
+        review_fix._commit_fixes(job, {"a.go"}, fixed=0, skipped=2)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert msg == "fix: self-review findings"
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
-    def test_untracked_only_changes_are_staged(
-        self, mock_run, mock_push, mock_dirty, tmp_path,
-    ):
-        """A fix agent that only adds new files must still get them committed."""
+    def test_stages_only_the_named_paths(self, mock_run, mock_push, tmp_path):
+        """`git add -A` swept up whatever else was sitting in the worktree."""
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_fix._commit_fixes(job, fixed=1, skipped=0)
+        review_fix._commit_fixes(job, {"b.go", "a.go"}, fixed=1, skipped=0)
         add_call = mock_run.call_args_list[0][0][0]
-        assert add_call[-2:] == ["add", "-A"]
+        assert add_call[-3:] == ["--", "a.go", "b.go"]
+        assert "-A" not in add_call
         assert mock_run.call_count == 2
+
+
+class TestCommitFixesStaging:
+    """End-to-end against a real repo — the leak was in what git ended up with."""
+
+    def _make_job(self, wt):
+        job = MagicMock()
+        job.wt_path = str(wt)
+        return job
+
+    @patch("review_fix._push_fixes")
+    def test_pre_existing_untracked_file_stays_out(self, mock_push, git_wt):
+        (git_wt / "tsconfig.tsbuildinfo").write_text("stale cache\n")
+        (git_wt / "tests_new.py").write_text("def test_x(): pass\n")
+
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"tests_new.py"}, fixed=1, skipped=0,
+        )
+
+        assert _committed_paths(git_wt) == {"tests_new.py"}
+        assert "tsconfig.tsbuildinfo" in _git(git_wt, "status", "--porcelain")
+
+    @patch("review_fix._push_fixes")
+    def test_agent_created_file_is_committed(self, mock_push, git_wt):
+        (git_wt / "fixture.json").write_text("{}\n")
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"fixture.json"}, fixed=1, skipped=0,
+        )
+        assert _committed_paths(git_wt) == {"fixture.json"}
+
+    @patch("review_fix._push_fixes")
+    def test_content_staged_before_the_pass_is_not_committed(self, mock_push, git_wt):
+        (git_wt / "src.py").write_text("operator work in progress\n")
+        _git(git_wt, "add", "src.py")
+        (git_wt / "fixture.json").write_text("{}\n")
+
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"fixture.json"}, fixed=1, skipped=0,
+        )
+
+        assert _committed_paths(git_wt) == {"fixture.json"}
+        assert _git(git_wt, "show", "HEAD:src.py") == "original\n"
+
+    @patch("review_fix._push_fixes")
+    def test_nothing_is_pushed_when_the_commit_fails(self, mock_push, git_wt):
+        review_fix._commit_fixes(self._make_job(git_wt), set(), fixed=0, skipped=0)
+        mock_push.assert_not_called()
 
 
 class TestParseCheckboxState:
@@ -250,33 +322,31 @@ class TestCommitFixesWithSummary:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
-    def test_commit_includes_summary(self, mock_run, mock_push, mock_dirty, tmp_path):
+    def test_commit_includes_summary(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
         summary = "Fixed:\n  - [M1] corrected condition\nSkipped:\n  - [S1] needs design"
-        review_fix._commit_fixes(job, fixed=1, skipped=1, summary=summary)
+        review_fix._commit_fixes(job, {"a.go"}, fixed=1, skipped=1, summary=summary)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "1 fixed, 1 skipped" in msg
         assert "corrected condition" in msg
         assert "needs design" in msg
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
-    def test_commit_without_summary(self, mock_run, mock_push, mock_dirty, tmp_path):
+    def test_commit_without_summary(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_fix._commit_fixes(job, fixed=2, skipped=0, summary="")
+        review_fix._commit_fixes(job, {"a.go"}, fixed=2, skipped=0, summary="")
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "2 fixed, 0 skipped" in msg
@@ -458,9 +528,7 @@ class TestHeadSha:
 
 
 class TestReconcileCheckboxes:
-    @patch("review_fix._changed_source_files")
-    def test_checks_matching_findings(self, mock_changed, tmp_path):
-        mock_changed.return_value = {"src/auth.go", "src/config.go"}
+    def test_checks_matching_findings(self, tmp_path):
         review = tmp_path / "review.md"
         review.write_text(
             "## Must fix\n"
@@ -468,39 +536,35 @@ class TestReconcileCheckboxes:
             "## Nit\n"
             "- [ ] **[N1]** **`src/unrelated.go:5`** — Style issue\n"
         )
-        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(
+            str(review), {"src/auth.go", "src/config.go"},
+        )
         text = review.read_text()
         assert "- [x] **[M1]**" in text
         assert "- [ ] **[N1]**" in text
 
-    @patch("review_fix._changed_source_files")
-    def test_no_changes_is_noop(self, mock_changed, tmp_path):
-        mock_changed.return_value = set()
+    def test_no_changes_is_noop(self, tmp_path):
         review = tmp_path / "review.md"
         original = "- [ ] **[M1]** **`src/auth.go:10`** — Bug\n"
         review.write_text(original)
-        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), set())
         assert review.read_text() == original
 
-    @patch("review_fix._changed_source_files")
-    def test_already_checked_not_modified(self, mock_changed, tmp_path):
-        mock_changed.return_value = {"src/auth.go"}
+    def test_already_checked_not_modified(self, tmp_path):
         review = tmp_path / "review.md"
         original = "- [x] **[M1]** **`src/auth.go:10`** — Already fixed\n"
         review.write_text(original)
-        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
         assert review.read_text() == original
 
-    @patch("review_fix._changed_source_files")
-    def test_checks_findings_on_extensionless_scripts(self, mock_changed, tmp_path):
+    def test_checks_findings_on_extensionless_scripts(self, tmp_path):
         """A finding on a bin script must reconcile, or it reports as skipped."""
-        mock_changed.return_value = {"ai/claude/bin/ci-check"}
         review = tmp_path / "review.md"
         review.write_text(
             "## Must fix\n"
             "- [ ] **[M1]** `ai/claude/bin/ci-check:777` — No session_log\n"
         )
-        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), {"ai/claude/bin/ci-check"})
         assert "- [x] **[M1]**" in review.read_text()
 
 
@@ -532,6 +596,11 @@ class TestChangedSourceFiles:
             MagicMock(returncode=0, stdout="tests/new.bats\n"),
         ]
         assert review_fix._changed_source_files("/wt") == {"tests/new.bats"}
+
+    def test_gitignored_paths_are_in_neither_snapshot(self, git_wt):
+        (git_wt / "build.cache").write_text("artifact\n")
+        (git_wt / "real.py").write_text("x = 1\n")
+        assert review_fix._changed_source_files(str(git_wt)) == {"real.py"}
 
 
 class TestTurnBudgetScaling:
@@ -729,3 +798,57 @@ class TestRunFixPassRetry:
         assert mock_invoke.call_count == 2
         agents = [c.args[0].agent for c in mock_invoke.call_args_list]
         assert agents == [None, None]
+
+
+class TestRunFixPassOnADirtyWorktree:
+    """The pass must attribute only its own work — #782.
+
+    A `tsc` run before the review left a 272KB incremental cache untracked in
+    the worktree; `git add -A` committed and pushed it, and the post-hoc scan
+    checked off a finding on a file that was dirty before the agent started.
+    """
+
+    REVIEW_CONTENT = (
+        "## Must fix\n"
+        "- [ ] **[M1]** `src.py:1` — Was already being edited by hand\n"
+        "- [ ] **[M2]** `helper.py:1` — Missing helper\n"
+    )
+
+    def _make_job(self, git_wt, tmp_path):
+        review_file = tmp_path / "review.md"
+        review_file.write_text(self.REVIEW_CONTENT)
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(git_wt)
+        job.model = None
+        job.effort = Effort.MEDIUM
+        return job
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_only_the_agents_own_changes_are_committed_and_credited(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        (git_wt / "tsconfig.tsbuildinfo").write_text("272KB of cache\n")
+        (git_wt / "src.py").write_text("hand-edited, not by the fix agent\n")
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "helper.py").write_text("def helper(): pass\n")
+            (git_wt / "build.cache").write_text("artifact\n")
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(git_wt, tmp_path)
+        review_fix.run_fix_pass(job)
+
+        assert _committed_paths(git_wt) == {"helper.py"}
+
+        status = _git(git_wt, "status", "--porcelain")
+        assert "tsconfig.tsbuildinfo" in status
+        assert " M src.py" in status
+        assert "build.cache" not in status
+
+        review = Path(job.review_file).read_text()
+        assert "- [ ] **[M1]**" in review
+        assert "- [x] **[M2]**" in review
+        mock_push.assert_called_once()

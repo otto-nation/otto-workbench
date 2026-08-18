@@ -134,6 +134,14 @@ _EXTERNAL_STATE = (
     (b"worktrunk", b"state."), (b"worktrunk", b"hints"), (b"branch", b""),
 )
 
+# `(section, key)` pairs of the same kind, for state that shares a section with
+# user config so the section itself cannot be exempted:
+#
+#   `worktrunk.history` — the recently-used branch list `wt switch` rewrites,
+#     which lands mid-run whenever any worktree of this repo switches. It sits
+#     in `[worktrunk]` beside `default-branch`, which stays guarded.
+_EXTERNAL_KEYS = ((b"worktrunk", b"history"),)
+
 
 def _section_of(line: bytes) -> tuple[bytes, bytes] | None:
     """The `(section, subsection)` a `[header]` line opens, else None."""
@@ -148,18 +156,45 @@ def _is_external(section: bytes, subsection: bytes) -> bool:
                for name, prefix in _EXTERNAL_STATE)
 
 
+def _is_external_key(section: tuple[bytes, bytes], line: bytes) -> bool:
+    """True for a value line naming a key that tooling outside this process owns.
+
+    Only in a section with no subsection: the pairs name `[worktrunk]`, and a
+    `[worktrunk "state.x"]` is already exempt as a whole.
+    """
+    name, subsection = section
+    key = line.split(b"=", 1)[0].strip()
+    return subsection == b"" and any(
+        name == owner and key == owned for owner, owned in _EXTERNAL_KEYS
+    )
+
+
+def _without_empty_sections(lines: list[bytes]) -> list[bytes]:
+    """The lines with headers that hold nothing dropped.
+
+    A key exemption removes a value line but not the header above it, so an
+    external write that opens a section — `wt switch` writing `history` into a
+    repo with no `[worktrunk]` yet — would otherwise leave a bare header behind
+    and read as a change. Nothing is lost: a leaked test is caught by the keys
+    it writes, and a header with no keys says nothing on its own.
+    """
+    followed_by = [*lines[1:], b"["]
+    return [line for line, following in zip(lines, followed_by)
+            if _section_of(line.strip()) is None or _section_of(following.strip()) is None]
+
+
 def _guarded_lines(raw: bytes | None) -> list[bytes] | None:
     """The config's lines with the externally-owned state dropped."""
     if raw is None:
         return None
-    kept, external = [], False
+    kept, section, external = [], (b"", b""), False
     for line in raw.splitlines():
         opened = _section_of(line.strip())
         if opened is not None:
-            external = _is_external(*opened)
-        if not external:
+            section, external = opened, _is_external(*opened)
+        if not external and not _is_external_key(section, line):
             kept.append(line)
-    return kept
+    return _without_empty_sections(kept)
 
 
 def _describe_config_change(before: list[bytes], after: list[bytes]) -> str:
@@ -201,10 +236,11 @@ def _guard_repo_config():
     share one config file, the damage is repo-wide and permanent: every later
     commit inherits the test identity.
 
-    The state in `_EXTERNAL_STATE` is exempt: it is written concurrently by
-    tooling this process does not control — worktrunk restamps its per-branch
-    state whenever a session hook fires, including mid-test-run — and blaming
-    the running test for those writes turns every long test run into a coin
+    The state in `_EXTERNAL_STATE` and `_EXTERNAL_KEYS` is exempt: it is written
+    concurrently by tooling this process does not control — worktrunk restamps
+    its per-branch state whenever a session hook fires, and rewrites its branch
+    history on any switch, mid-test-run included — and blaming the running test
+    for those writes turns every long test run into a coin
     flip. Parsing is deferred until the bytes actually differ, so the common
     case stays two reads.
     """

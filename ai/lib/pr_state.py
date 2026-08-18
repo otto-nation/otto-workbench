@@ -481,7 +481,10 @@ class FixSummary(Domain):
     head_sha: str = ""
     replies_posted: int = 0
     # The fix pass produced per-thread replies but did not deliver them — the
-    # push failed, or the run was a draft. --finish drains the queue.
+    # push failed, or the run was a draft. --finish drains the queue. Covers
+    # the already-addressed and dismissed replies too, not just the fixed ones:
+    # those are sent during triage, so a pass with nothing fixable still owes
+    # them and has no fixed entry to carry them back.
     replies_pending: bool = False
     summary_url: str = ""
     summary_deferred: bool = False

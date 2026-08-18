@@ -12,6 +12,3 @@ config.schema.json linguist-generated=true
 # release-please
 CHANGELOG.md linguist-generated=true
 .github/.release-please-manifest.json linguist-generated=true
-
-# uv
-uv.lock linguist-generated=true

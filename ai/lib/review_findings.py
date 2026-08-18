@@ -72,13 +72,46 @@ PATH_SECTION_RE = re.compile(
     r"|"
     r"`(.+?)`"
 )
-# Second alternative matches extensionless scripts (ai/claude/bin/ci-check).
-# A slash is required so prose in a code span is not mistaken for a path.
+# What a path may hold, now that PATH_SECTION_RE has already delimited the
+# span. The class says what a path is not: whitespace, the `:` that introduces
+# the line suffix, the `*` and backtick that close the span, and the em dash
+# that separates a location from its body. Everything else is an ordinary
+# filename character — non-ASCII included, because `src/café.py` names a file
+# the same way `src/cafe.py` does.
+_PATH_CHAR = r"[^\s:*`—]"
+_SEGMENT_CHAR = r"[^\s/:*`—]"
+
+# Three shapes, tried in this order:
+#
+#   1. pkg/handler.go            — an extension ends the filename
+#   2. src/café brûlé.py         — a filename holding spaces
+#   3. ai/claude/bin/ci-check    — an extensionless script, slash required
+#
+# Shapes 1 and 3 keep prose out by starting at the span's first character and
+# stopping at the first space: a sentence only passes if its opening word is
+# already shaped like a file. A slash is what shape 3 has instead of an
+# extension, and prose is full of slashes, so that shape cannot be allowed to
+# reach across a space either.
+#
+# Shape 2 has no such boundary, so it earns the space a different way: it must
+# end in an extension and, per the lookahead, account for the whole span, line
+# suffix included. "the fix lands in v2.0 of the tool" fails that — the words
+# after the dotted token are left over — while "src/café brûlé.py:12-18"
+# satisfies it. The same lookahead is what stops a greedy space run from
+# walking past the real filename, since anything it swallowed would have to be
+# part of the span's final extension.
+#
+# Shape 2 is tried after shape 1 so it only runs where the space-free shapes
+# found nothing: every location a review already parsed still parses the same
+# way, and a span naming one path before some prose still yields that path
+# rather than the whole span.
 FIRST_FILE_RE = re.compile(
     r"("
-    r"[a-zA-Z0-9_/().:-]+\.\w+"
+    rf"{_PATH_CHAR}+\.\w+"
     r"|"
-    r"[a-zA-Z0-9_.()-]+(?:/[a-zA-Z0-9_.()-]+)+"
+    rf"{_PATH_CHAR}+(?: {_PATH_CHAR}+)+\.\w+(?=(?::\d+(?:[-–]\d+)?)?\s*$)"
+    r"|"
+    rf"{_SEGMENT_CHAR}+(?:/{_SEGMENT_CHAR}+)+"
     r")"
     r"(?::(\d+)(?:[-–](\d+))?)?"
 )

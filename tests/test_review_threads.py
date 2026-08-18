@@ -1777,6 +1777,144 @@ class TestPendingFixReplies:
         mock_reply.assert_not_called()
 
 
+class TestTriageOnlyPassQueue:
+    """#3055: a pass with nothing to fix dropped every reply it drafted.
+
+    The already-addressed and dismissed replies are sent during triage, before
+    the pass knows whether anything is fixable, so a drafted run rendered them
+    to stderr and kept no record. When the same pass then found nothing fixable
+    it took the early return, which recorded neither a commit nor a pending
+    queue — and `--finish --post` exited 0 having published nothing.
+
+    Every test here therefore carries no fixed entry and no commit SHA, which
+    is precisely the shape the old `if not fix.commit_sha: return` swallowed.
+    """
+
+    _ADDRESSED = f"t-{ThreadAction.ALREADY_ADDRESSED}"
+
+    def _queue(self, *actions, **fix_kw):
+        fix_kw.setdefault("replies_pending", True)
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id=f"t-{action}", summary=f"the {action} one",
+                              file="x.py", line=1, action=action,
+                              reason=f"because the {action} premise says so")
+                for action in actions
+            ],
+            commit_status="no_changes",
+            **fix_kw,
+        )
+        threads_by_id = {
+            f"t-{action}": ReportThread(id=f"t-{action}", is_resolved=False,
+                                        comments=[{"databaseId": 100 + n}])
+            for n, action in enumerate(actions)
+        }
+        return fix, threads_by_id
+
+    def test_drains_replies_a_pass_that_committed_nothing_left_behind(
+        self, rt, publishing_on,
+    ):
+        fix, threads_by_id = self._queue(
+            ThreadAction.ALREADY_ADDRESSED, ThreadAction.DISMISSED,
+        )
+        state = _make_state(fix)
+        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
+             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert mock_reply.call_count == 2
+        assert fix.replies_posted == 2
+        assert fix.replies_pending is False
+
+    def test_only_the_already_addressed_thread_is_resolved(self, rt, publishing_on):
+        """A dismissal is the reply most likely to be argued with — leave it open."""
+        fix, threads_by_id = self._queue(
+            ThreadAction.ALREADY_ADDRESSED, ThreadAction.DISMISSED,
+        )
+        state = _make_state(fix)
+        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
+             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert [c.args[0] for c in mock_resolve.call_args_list] == [self._ADDRESSED]
+
+    def test_a_drained_dismissal_still_carries_its_reasoning(self, rt, publishing_on):
+        """`to_outcome` folds `reasoning` into `reason`; the drain must fold it back.
+
+        Without that, the reply degrades to the bare "reviewed and determined to
+        be inapplicable" fallback — telling a reviewer their premise fails and
+        giving them nothing to argue with.
+        """
+        fix, threads_by_id = self._queue(ThreadAction.DISMISSED)
+        state = _make_state(fix)
+        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply:
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert "because the dismissed premise says so" in mock_reply.call_args.args[3]
+
+    def test_a_commitless_queue_does_not_wait_on_a_push(self, rt, publishing_on):
+        """These replies cite HEAD, not a fix commit, so there is nothing to wait for."""
+        fix, threads_by_id = self._queue(ThreadAction.ALREADY_ADDRESSED)
+        state = _make_state(fix)
+        with patch.object(rt, "_is_pushed", return_value=False) as mock_pushed, \
+             patch.object(rt, "_get_head_sha", return_value="deadbee"), \
+             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        mock_pushed.assert_not_called()
+        assert mock_reply.call_count == 1
+
+    def test_no_changes_is_not_rewritten_as_pushed(self, rt, publishing_on):
+        """The pass committed nothing; saying it pushed would invent a commit."""
+        fix, threads_by_id = self._queue(ThreadAction.ALREADY_ADDRESSED)
+        state = _make_state(fix)
+        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
+             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert fix.commit_status == "no_changes"
+
+    def test_a_draft_drain_keeps_the_queue(self, rt):
+        """post_thread_reply is left real here — the draft gate lives inside it."""
+        fix, threads_by_id = self._queue(ThreadAction.ALREADY_ADDRESSED)
+        state = _make_state(fix)
+        with patch.object(rt, "_get_head_sha", return_value="deadbee"), \
+             patch.object(rt, "_find_addressing_commit", return_value=None):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        assert fix.replies_posted == 0
+        assert fix.replies_pending is True
+
+    def test_a_settled_queue_is_left_alone(self, rt, publishing_on):
+        fix, threads_by_id = self._queue(
+            ThreadAction.ALREADY_ADDRESSED, replies_pending=False,
+        )
+        state = _make_state(fix)
+        with patch("pr_comments.post_thread_reply") as mock_reply:
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        mock_reply.assert_not_called()
+
+
+class TestTriageQueueIsRecorded:
+    """The flag the drain turns on: a drafted triage owes its replies."""
+
+    def _item(self):
+        return CommentItem(id="t1", summary="s", file="x.py", line=1)
+
+    def test_a_drafted_triage_records_what_it_did_not_send(self, rt):
+        assert rt._triage_replies_drafted([self._item()], []) is True
+        assert rt._triage_replies_drafted([], [self._item()]) is True
+
+    def test_a_published_triage_owes_nothing(self, rt, publishing_on):
+        assert rt._triage_replies_drafted([self._item()], [self._item()]) is False
+
+    def test_a_triage_with_no_replies_owes_nothing(self, rt):
+        assert rt._triage_replies_drafted([], []) is False
+
+
 class TestReplyAttributionAcrossRounds:
     """#735: the reply cited the running pass's commit, whatever fixed the thread.
 

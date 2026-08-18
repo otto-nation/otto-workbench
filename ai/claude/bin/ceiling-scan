@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Scan for ceiling: markers and produce a structured ledger.
+"""Scan for deliberate-simplification markers and produce a structured ledger.
 
 Usage:
-  ceiling-scan [--summary-only] [--output PATH] [DIR]
+  ceiling-scan [--summary-only] [--json] [--output PATH] [DIR]
 
-Scans for deliberate simplification markers (// ceiling:, # ceiling:, etc.)
-across comment styles. Groups by file, flags missing upgrade triggers.
+A marker opens its own comment line, in any of the supported comment styles, and
+runs to the end of the comment block below it. Two forms:
+
+  ceiling:            a simplification that should end at some named condition
+  ceiling-permanent:  one accepted for good, counted apart from the first
+
+The trigger is the clause naming that condition — an explicit "Upgrade trigger:"
+sentence, or the first clause turning on if / once / when / unless / until. A
+`ceiling:` marker with no such clause is reported as **no-trigger**, which is
+what bin/local/validate-ceiling rejects.
 
 Work is bounded per file and per line: MAX_FILE_BYTES caps size, BINARY_SNIFF_BYTES
 sniffs for NUL, and MAX_LINE_LEN skips minified and generated lines.
@@ -46,22 +54,44 @@ SKIP_EXTENSIONS = {
 MAX_FILE_BYTES = 2 * 1024 * 1024
 BINARY_SNIFF_BYTES = 8192
 
-# Both regexes below backtrack quadratically in line length, so a single minified
-# or generated line can cost seconds. Real markers live on hand-written source
-# lines; anything longer than this is generated output and is skipped.
+# Real markers live on hand-written source lines. Anything longer than this is
+# minified or generated output, and running the regexes over a megabyte-long
+# line costs more than the line could ever be worth.
 MAX_LINE_LEN = 2000
 
-CEILING_TOKEN = "ceiling:"
+CEILING_TOKEN = "ceiling"
 
-CEILING_FULL_RE = re.compile(
-    r"^\s*(?:#|//|--|/\*)\s*ceiling:\s*(.+?)(?:\s*\*/)?$",
+# The marker must open its own comment line. Only requiring the token somewhere
+# on the line would match this scanner's own fixtures and documentation, where
+# the marker appears inside a string literal or mid-sentence — and the repo bans
+# trailing comments anyway (ai/guidelines/rules/general.md, Comments &
+# Documentation), so a marker sharing a line with code should not exist.
+CEILING_RE = re.compile(
+    r"^(\s*)(#|//|--|/\*)\s*ceiling(-permanent)?:\s*(.+?)(?:\s*\*/)?$",
     re.IGNORECASE,
 )
 
-CEILING_INLINE_RE = re.compile(
-    r"\S.*\s{2,}(?://|#|--)\s*ceiling:\s*(.+)$",
-    re.IGNORECASE,
-)
+# A marker owns the rest of the comment block it opens. Triggers routinely land
+# two or three lines in, so reading only the first line reports a marker that
+# names one as having none.
+COMMENT_RE = re.compile(r"^(\s*)(#|//|--)\s?(.*)$")
+BLOCK_COMMENT_TOKENS = frozenset({"#", "//", "--"})
+
+# Clause boundaries: a sentence break, a semicolon, a spaced em dash, or a comma.
+_CLAUSE_RE = re.compile(r"(?<=[.;])\s+|\s+—\s+|,\s+")
+
+# The same, minus the comma. An explicit trigger sentence runs to the end of the
+# sentence, because the condition and the action it licenses are routinely
+# separated by a comma: "if these accumulate enough to matter, add a signal".
+_SENTENCE_RE = re.compile(r"(?<=[.;])\s+|\s+—\s+")
+
+_TRIGGER_LEAD_RE = re.compile(r"^upgrade trigger:\s*", re.IGNORECASE)
+
+# A trigger names a condition, so the vocabulary is the conditional conjunctions
+# and nothing else. Trigger verbs are deliberately excluded: "Upgrade only with
+# a real fix" would satisfy a verb-keyed parser while naming nothing that would
+# ever prompt the upgrade, which is the failure the trigger exists to prevent.
+_CONDITIONAL_RE = re.compile(r"\b(?:if|once|when|unless|until)\b", re.IGNORECASE)
 
 
 def _should_skip_dir(name: str) -> bool:
@@ -90,26 +120,66 @@ def _is_candidate(line: str) -> bool:
     return len(line) <= MAX_LINE_LEN and CEILING_TOKEN in line.lower()
 
 
-def _parse_marker(text: str) -> tuple[str, str | None]:
-    parts = text.split(",", 1)
-    ceiling = parts[0].strip()
-    trigger = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
-    return ceiling, trigger
+def _find_trigger(text: str) -> str | None:
+    """The clause naming the condition that ends the simplification, if any."""
+    for sentence in _SENTENCE_RE.split(text):
+        lead = _TRIGGER_LEAD_RE.match(sentence)
+        if lead:
+            return sentence[lead.end():].strip().rstrip(".") or None
+    for clause in _CLAUSE_RE.split(text):
+        if _CONDITIONAL_RE.search(clause):
+            return clause.strip().rstrip(".") or None
+    return None
+
+
+def _continuation(lines: list[str], start: int, indent: str, token: str) -> list[str]:
+    """The comment lines after `start` that belong to the same marker.
+
+    Ends at the first line that leaves the comment — a blank comment line, a
+    change of prefix or indent, the next marker, or code.
+    """
+    if token not in BLOCK_COMMENT_TOKENS:
+        return []
+    bodies: list[str] = []
+    for line in lines[start:]:
+        m = COMMENT_RE.match(line)
+        if not m or m.group(1) != indent or m.group(2) != token:
+            break
+        body = m.group(3).strip()
+        if not body or CEILING_RE.match(line):
+            break
+        bodies.append(body)
+    return bodies
+
+
+def _marker(rel: str, lineno: int, text: str, permanent: bool) -> dict:
+    """One ledger entry: the opening clause is the tradeoff, the trigger a clause."""
+    return {
+        "file": rel,
+        "line": lineno,
+        "ceiling": _CLAUSE_RE.split(text, 1)[0].strip().rstrip(".;"),
+        # A permanent marker is accepted rather than pending, so a condition read
+        # out of its prose would be a threshold nobody agreed to.
+        "trigger": None if permanent else _find_trigger(text),
+        "permanent": permanent,
+    }
 
 
 def _scan_file(fpath: Path, rel: str) -> list[dict]:
     text = _read_text(fpath)
     if text is None:
         return []
+    lines = text.splitlines()
     markers: list[dict] = []
-    for lineno, line in enumerate(text.splitlines(), 1):
+    for lineno, line in enumerate(lines, 1):
         if not _is_candidate(line):
             continue
-        m = CEILING_FULL_RE.match(line) or CEILING_INLINE_RE.search(line)
+        m = CEILING_RE.match(line)
         if not m:
             continue
-        ceiling, trigger = _parse_marker(m.group(1))
-        markers.append({"file": rel, "line": lineno, "ceiling": ceiling, "trigger": trigger})
+        indent, token, permanent, head = m.groups()
+        body = " ".join([head.strip(), *_continuation(lines, lineno, indent, token)])
+        markers.append(_marker(rel, lineno, body, bool(permanent)))
     return markers
 
 
@@ -131,24 +201,35 @@ def scan_directory(root: Path) -> list[dict]:
     return markers
 
 
+def is_untriggered(marker: dict) -> bool:
+    """True for a marker that neither names a trigger nor claims permanence."""
+    return marker["trigger"] is None and not marker["permanent"]
+
+
+def _status(marker: dict) -> str:
+    if marker["permanent"]:
+        return "**permanent**"
+    return marker["trigger"] or "**no-trigger**"
+
+
 def format_ledger(markers: list[dict]) -> str:
     by_file: dict[str, list[dict]] = {}
     for m in markers:
         by_file.setdefault(m["file"], []).append(m)
 
+    counts = marker_counts(markers)
     lines: list[str] = ["# Ceiling Debt Ledger", ""]
-    no_trigger = sum(1 for m in markers if m["trigger"] is None)
-    lines.append(f"{len(markers)} marker(s), {no_trigger} with no trigger")
+    lines.append(
+        f"{counts['total']} marker(s), {counts['no_trigger']} with no trigger, "
+        f"{counts['permanent']} permanent"
+    )
     lines.append("")
 
     for filepath in sorted(by_file):
         lines.append(f"## {filepath}")
         lines.append("")
         for m in sorted(by_file[filepath], key=lambda x: x["line"]):
-            trigger_str = m["trigger"] if m["trigger"] else "**no-trigger**"
-            lines.append(
-                f"- L{m['line']}: {m['ceiling']} — {trigger_str}"
-            )
+            lines.append(f"- L{m['line']}: {m['ceiling']} — {_status(m)}")
         lines.append("")
 
     return "\n".join(lines) + "\n"
@@ -156,12 +237,18 @@ def format_ledger(markers: list[dict]) -> str:
 
 def format_summary(markers: list[dict]) -> str:
     counts = marker_counts(markers)
-    return f"{counts['total']} ceiling marker(s), {counts['no_trigger']} with no trigger"
+    return (
+        f"{counts['total']} ceiling marker(s), {counts['no_trigger']} with no trigger, "
+        f"{counts['permanent']} permanent"
+    )
 
 
 def marker_counts(markers: list[dict]) -> dict:
-    no_trigger = sum(1 for m in markers if m["trigger"] is None)
-    return {"total": len(markers), "no_trigger": no_trigger}
+    return {
+        "total": len(markers),
+        "no_trigger": sum(1 for m in markers if is_untriggered(m)),
+        "permanent": sum(1 for m in markers if m["permanent"]),
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -183,7 +270,7 @@ def main(argv: list[str] | None = None) -> None:
         "--json",
         action="store_true",
         dest="json_output",
-        help="Output counts as JSON: {\"total\": N, \"no_trigger\": M}",
+        help="Output counts as JSON: {\"total\": N, \"no_trigger\": M, \"permanent\": P}",
     )
     parser.add_argument(
         "--output",

@@ -244,13 +244,14 @@ def _repo_key(url: str) -> str | None:
     # one machine keys repos, a collision needs no more, and the readable part
     # still leads the directory name.
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
-    # ceiling: the readable prefix is truncated at 64 characters, so two long
-    # paths can share it. Harmless — the digest still separates them — and the
-    # note is here so nobody "fixes" the truncation. What the cap buys is a
-    # bound on the key's half of the directory name (73 characters: 64 + "-" +
-    # 8), not a bound on the name: target_dir appends slug(branch), which is
-    # uncapped, so a long enough branch still overruns a filesystem's component
-    # limit. That half is the branch slug's shape, fixed by the approved spec.
+    # ceiling-permanent: the readable prefix is truncated at 64 characters, so
+    # two long paths can share it. Harmless — the digest still separates them —
+    # and the note is here so nobody "fixes" the truncation. What the cap buys
+    # is a bound on the key's half of the directory name (73 characters: 64 +
+    # "-" + 8), not a bound on the name: target_dir appends slug(branch), which
+    # is uncapped, so a long enough branch still overruns a filesystem's
+    # component limit. That half is the branch slug's shape, fixed by the
+    # approved spec.
     readable = slug(canonical)[:64].rstrip("-")
     return f"{readable}-{digest}" if readable else digest
 

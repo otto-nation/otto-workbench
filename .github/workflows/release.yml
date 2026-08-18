@@ -56,13 +56,13 @@ jobs:
       cr_version: ${{ steps.release.outputs['ai/claude--version'] }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Create or update release
         id: release
-        uses: googleapis/release-please-action@v5
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .github/.release-please-config.json
@@ -106,7 +106,7 @@ jobs:
     if: needs.release.outputs.wb_release_created == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Load release configuration
         id: release-config
@@ -191,7 +191,7 @@ jobs:
     if: needs.release.outputs.cr_release_created == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Load release configuration
         id: release-config
@@ -293,7 +293,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.deploy_homebrew_tag != ''
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Deploy formula
         env:

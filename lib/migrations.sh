@@ -148,6 +148,78 @@ run_component_migrations() {
   fi
 }
 
+# _migration_carries_marker FILE [MARKER_RE]
+# True when no marker was asked for, or when FILE's text carries it.
+_migration_carries_marker() {
+  [[ -z "$2" ]] && return 0
+  grep -qE "$2" "$1"
+}
+
+# _discover_migration_keys OUT_ARRAY [MARKER_RE]
+# Collect the state keys of every discovered migration, in the same
+# "<component>/<basename>.sh" form run_component_migrations records. With
+# MARKER_RE given, only the migrations whose file matches it are collected.
+_discover_migration_keys() {
+  local -n __keys="$1"
+  local marker_re="${2:-}"
+  __keys=()
+
+  local -a _migration_dirs=()
+  discover_migration_dirs _migration_dirs
+  local dir migration component_rel
+  for dir in "${_migration_dirs[@]}"; do
+    component_rel="$(dirname "$dir")"
+    component_rel="${component_rel#"$WORKBENCH_DIR/"}"
+    for migration in "$dir"/*.sh; do
+      [[ -f "$migration" ]] || continue
+      _migration_carries_marker "$migration" "$marker_re" || continue
+      __keys+=("$component_rel/${migration##*/}")
+    done
+  done
+}
+
+# _forget_adoption_sensitive_migrations
+# Drop the state entries of every migration marked adoption-sensitive, so the
+# framework runs them again over the data adoption has just moved into place.
+#
+# Scoped to the marked migrations rather than clearing the file: a migration
+# that removed something on purpose (an MCP entry, ~/.kiro) is idempotent in the
+# sense the framework asks for — re-running it produces the same result — but
+# that result is "gone again", which would undo an operator who deliberately put
+# it back. Only a migration that says adoption can undo it gets another pass.
+_forget_adoption_sensitive_migrations() {
+  local state_file="$MIGRATIONS_STATE_FILE"
+  [[ -f "$state_file" ]] || return 0
+
+  local -a sensitive_keys=()
+  _discover_migration_keys sensitive_keys "$_ADOPTION_SENSITIVE_MARKER"
+  (( ${#sensitive_keys[@]} > 0 )) || return 0
+
+  local line forgotten=0
+  local -a kept=()
+  # `|| [[ -n "$line" ]]`: read reports EOF for a final line with no newline
+  # after it, and the loop body would never see it — an entry silently dropped
+  # from the state file, which is the same class of loss this function exists
+  # to close. Every writer here terminates its lines; a hand-edited file does
+  # not have to.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    if _array_contains "$line" "${sensitive_keys[@]}"; then
+      forgotten=$(( forgotten + 1 ))
+      continue
+    fi
+    kept+=("$line")
+  done < "$state_file"
+
+  (( forgotten > 0 )) || return 0
+  if (( ${#kept[@]} > 0 )); then
+    printf '%s\n' "${kept[@]}" > "$state_file"
+  else
+    : > "$state_file"
+  fi
+  info "$forgotten adoption-sensitive migration(s) will run again — adoption moved data back into what they drain"
+}
+
 # _prune_stale_migration_state
 # Removes entries from the state file that no longer match any discovered migration file.
 # This handles direction changes within a PR or cleaned-up old migrations.
@@ -155,24 +227,14 @@ _prune_stale_migration_state() {
   local state_file="$MIGRATIONS_STATE_FILE"
   [[ -f "$state_file" ]] || return 0
 
-  # Collect all discovered migration state keys
-  local -a discovered_keys=() _migration_dirs=()
-  discover_migration_dirs _migration_dirs
-  local dir migration basename_m component_rel
-  for dir in "${_migration_dirs[@]}"; do
-    component_rel="$(dirname "$dir")"
-    component_rel="${component_rel#"$WORKBENCH_DIR/"}"
-    for migration in "$dir"/*.sh; do
-      [[ -f "$migration" ]] || continue
-      basename_m="$(basename "$migration")"
-      discovered_keys+=("$component_rel/$basename_m")
-    done
-  done
+  local -a discovered_keys=()
+  _discover_migration_keys discovered_keys
 
   # Check each state entry against discovered keys
   local stale_found=false line
   local -a clean_lines=()
-  while IFS= read -r line; do
+  # Same unterminated-last-line guard as _forget_adoption_sensitive_migrations.
+  while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
     if _array_contains "$line" "${discovered_keys[@]}"; then
       clean_lines+=("$line")
@@ -221,6 +283,23 @@ readonly _LEGACY_CONFIG_ENTRIES=(
 readonly _LEGACY_UNCLAIMED_ENTRIES=(
   logs
 )
+
+# The header line a migration writes to say adoption can put its work back.
+#
+# The two lists above classify a legacy entry by name; this classifies the
+# *migrations* by what they drain. A migration that empties a path under a root
+# adoption writes into is undone by an adoption that runs later: the entry lands
+# in that path again, and the state file already records the migration as
+# applied, so nothing ever drains it a second time. #741 is that shape —
+# reviews/<x>/trail.jsonl re-seeded under the state root after
+# 20260814-unify-trail-root drained it, where otto-log's flat glob of the trail
+# root cannot see it. The trail is not lost, it is permanently invisible.
+#
+# Declared by the migration rather than listed here so the two cannot drift: a
+# list of state keys would go stale the moment a migration file is renamed, and
+# the marker travels with the file. Adding one is the whole opt-in — no registry
+# and no edit to this file.
+readonly _ADOPTION_SENSITIVE_MARKER='^# adoption-sensitive:'
 
 # _path_exists PATH — true for anything on disk, a broken symlink included.
 _path_exists() {
@@ -405,6 +484,10 @@ adopt_legacy_workbench_root() {
     # No destination named: config entries and state entries went to different
     # roots, and on an overridden machine both of those moved.
     success "Adopted $_ADOPT_MOVED entries from $legacy"
+    # Here rather than in run_all_migrations: migrations.applied is itself one
+    # of the entries the loop above may have just moved, so this is the first
+    # point at which the state root holds the file that has to be edited.
+    _forget_adoption_sensitive_migrations
   fi
   # The sync that runs this is usually the unattended one from the maintenance
   # agent, whose output goes to a log file. A partial adoption has to state

@@ -467,6 +467,12 @@ carrying a protocol marker — a script that ignores unknown flags would otherwi
 real work when probed. Scripts that mention the flag in prose without implementing it
 must word around the literal to stay out of the probe path.
 
+Carrying a marker is a claim to be a tool, so a candidate that then fails to answer — a
+non-zero exit, malformed JSON, a schema missing `name` or `input_schema`, or a probe that
+outruns the timeout — is logged at warning level on stderr with the reason. A tool you
+added that never appears in an MCP client is explained there. Executables with no marker
+are not tools and are skipped without comment.
+
 ### `serena-mcp`
 
 Scaffolds Serena MCP into a project's `.mcp.json` for project-scoped code intelligence.

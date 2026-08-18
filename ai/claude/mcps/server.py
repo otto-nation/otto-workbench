@@ -35,6 +35,10 @@ CONFIG_PATH = workbench_paths.config_dir() / "mcp-tools.json"
 WORKBENCH_DIR = Path(__file__).resolve().parents[3]
 COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
 
+# ceiling: candidates are probed one at a time, so the worst case is this
+# timeout times the number of marker-bearing scripts. Four of them today, well
+# under a second — probe concurrently if a component ever adds enough that
+# server startup becomes noticeable.
 DISCOVERY_TIMEOUT = 2.0
 TOOL_SCHEMA_FLAG = "--tool-schema"
 
@@ -154,7 +158,14 @@ def _declares_tool_schema(script: Path) -> bool:
 
 
 def _probe_tool(script: Path) -> dict | None:
-    """Run ``script --tool-schema`` and return the JSON, or None."""
+    """Run ``script --tool-schema`` and return the JSON, or None.
+
+    A script that carries a marker meant to be a tool, so every way it can then
+    fail to answer is logged at warning level. Silence here reads as "no tool
+    here" and leaves nothing to debug — the scan covers every component's
+    ``bin/``, so the author of a broken tool is rarely the person reading these
+    logs. Candidates with no marker are not tools and stay quiet.
+    """
     if not _declares_tool_schema(script):
         return None
     try:
@@ -166,14 +177,21 @@ def _probe_tool(script: Path) -> dict | None:
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
         if result.returncode != 0:
+            logger.warning(
+                "Skipping %s: %s exited %d: %s",
+                script, TOOL_SCHEMA_FLAG, result.returncode,
+                result.stderr.strip() or "(no stderr)",
+            )
             return None
         schema = json.loads(result.stdout)
-        if any(key not in schema for key in REQUIRED_SCHEMA_KEYS):
+        missing = [key for key in REQUIRED_SCHEMA_KEYS if key not in schema]
+        if missing:
+            logger.warning("Skipping %s: schema is missing %s", script, ", ".join(missing))
             return None
         schema["_script"] = str(script)
         return schema
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
-        logger.debug("Skipping %s: %s", script, exc)
+        logger.warning("Skipping %s: %s", script, exc)
         return None
 
 

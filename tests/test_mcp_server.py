@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import stat
 import subprocess
@@ -297,6 +298,62 @@ class TestDiscovery:
 
         assert "project-tool" in tools
         assert tools["project-tool"]["description"] == "From plugin"
+
+    def test_a_tool_that_exits_nonzero_is_reported(self, tmp_path, caplog):
+        """Carrying a marker means it meant to be a tool, so failing is news.
+
+        The scan covers every component's bin/, so whoever reads these logs is
+        rarely the person who broke the script — a silent skip is indexed under
+        "no tool here" and leaves nothing to debug.
+        """
+        script = tmp_path / "broken-tool"
+        script.write_text("#!/bin/bash\n# answers --tool-schema\necho boom >&2\nexit 3\n")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
+            assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
+
+        assert "broken-tool" in caplog.text
+        assert "exited 3" in caplog.text
+        assert "boom" in caplog.text
+
+    def test_a_tool_with_an_incomplete_schema_names_the_missing_key(self, tmp_path, caplog):
+        script = tmp_path / "partial-tool"
+        script.write_text(textwrap.dedent("""\
+            #!/usr/bin/env python3
+            import json, sys
+            if "--tool-schema" in sys.argv:
+                json.dump({"name": "partial-tool"}, sys.stdout)
+                sys.exit(0)
+        """))
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
+            assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
+
+        assert "partial-tool" in caplog.text
+        assert "input_schema" in caplog.text
+
+    def test_a_tool_emitting_invalid_json_is_reported(self, tmp_path, caplog):
+        script = tmp_path / "garbled-tool"
+        script.write_text("#!/bin/bash\n# answers --tool-schema\necho not json\n")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
+            assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
+
+        assert "garbled-tool" in caplog.text
+
+    def test_a_script_with_no_marker_is_skipped_quietly(self, tmp_path, caplog):
+        """Most executables are not tools — warning on each would drown the rest."""
+        script = tmp_path / "plain-script"
+        script.write_text("#!/bin/bash\necho hello\n")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
+            assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
+
+        assert caplog.text == ""
 
     def test_no_directories_yields_no_tools(self):
         tools = discover_tools({"tool_dirs": [], "plugin_dirs": []})

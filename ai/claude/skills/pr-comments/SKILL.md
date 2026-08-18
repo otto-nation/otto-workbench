@@ -144,11 +144,11 @@ or `rb-`) are comment items; regular thread IDs are inline review threads.
 **Report auto-fixes:** "Fixed N threads/items (commit SHA). M need your input. K skipped."
 
 **If `commit_status` is `push_held`:** the fixes are committed locally and
-nothing has been published — either a `needs_human` thread is open, or the
-history preflight found the branch re-adding code the default branch has already
-removed. Say so plainly and do not report the fixes as landed on the PR. The
-stderr output names the signal that fired. Settle the open thread or the
-supersession question with the user, and only then run `--finish --post`, which
+nothing has been published, because something in the run judged the branch not
+safe to assert progress on. Say so plainly and do not report the fixes as landed
+on the PR. The stderr output states the reason the hold carries — read it back
+to the user rather than guessing, since new hold sources are added over time.
+Settle that reason with the user, and only then run `--finish --post`, which
 pushes the commit and drains the replies and the summary.
 
 **If `needs_human` and `deferred` are both empty and no unseen comments:**

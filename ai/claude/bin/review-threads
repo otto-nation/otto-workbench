@@ -865,6 +865,40 @@ def _parse_tracking_results(
     return result
 
 
+class HistoryKind(StrEnum):
+    """Which preflight check produced a finding. Printed, and sent to the trail."""
+
+    # The branch's first commit was written long before it was committed.
+    REBASE_SKEW = "rebase_skew"
+    # The branch adds a definition the default branch has removed.
+    READDS_REMOVED_SYMBOL = "readds_removed_symbol"
+    # A merged PR mentions that definition.
+    SUPERSEDING_PR = "superseding_pr"
+
+
+@dataclasses.dataclass(frozen=True)
+class HistorySignal:
+    """One cheap reading of the branch's history that argues against fixing it.
+
+    `holds` separates evidence from context. Re-adding something the default
+    branch deleted is evidence the branch is superseded; a rebase over a moved
+    base is only what makes that legible, and every long-lived branch has one —
+    withholding a commit on it alone would fire on the healthy case.
+    """
+
+    kind: HistoryKind
+    detail: str
+    holds: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
+class AddedSymbol:
+    """A definition the branch adds, and the file it adds it in."""
+
+    name: str
+    path: str
+
+
 @dataclass
 class CommitPushResult:
     sha: str | None
@@ -1083,10 +1117,13 @@ def _is_generated_reply(body: str) -> bool:
     still ours. Regenerating an identical body is harmless; replacing a
     divergent one is not.
 
-    ceiling: a hand edit confined to the opening paragraph's prose still reads
-    as generated, because that paragraph is free text in the template too. Add
-    an HTML marker to generated bodies and key off that if the prose case ever
-    costs someone a reply.
+    ceiling: a hand edit still reads as generated when it stays inside the
+    template's own free text — prose in the opening paragraph, or a trailing
+    sentence that happens to start with one of the followup openings. Tightening
+    the followup pattern is not the fix, since the linkless generated shapes
+    would stop matching and their replies could never be updated again. Add an
+    HTML marker to generated bodies and key off that if either case ever costs
+    someone a reply.
     """
     paragraphs = [p.strip() for p in body.strip().split("\n\n") if p.strip()]
     if not paragraphs or not paragraphs[0].startswith(_GENERATED_REPLY_PREFIXES):
@@ -1787,6 +1824,14 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
         return "Fix applied (commit failed — pre-commit hook?)"
     if cp.status == CommitStatus.RECONCILED:
         return _RECONCILED_STATUS_TEXT
+    # Both callers refuse to render an unpushed commit, so these two are not
+    # reachable today. They are spelled out anyway: the fallback below reads as
+    # "not done yet", which would be a false claim about a commit that exists
+    # and is only waiting to be published.
+    if cp.status == CommitStatus.PUSH_HELD:
+        return "Fix committed locally (push held pending discussion)"
+    if cp.status == CommitStatus.PUSH_FAILED:
+        return "Fix committed locally (push failed)"
     return "Fix pending"
 
 
@@ -2664,40 +2709,6 @@ def _retry_fix_pass(
                           "still_deferred": len(result.deferred) + len(result.deferred_items)})
 
     return result
-
-
-class HistoryKind(StrEnum):
-    """Which preflight check produced a finding. Printed, and sent to the trail."""
-
-    # The branch's first commit was written long before it was committed.
-    REBASE_SKEW = "rebase_skew"
-    # The branch adds a definition the default branch has removed.
-    READDS_REMOVED_SYMBOL = "readds_removed_symbol"
-    # A merged PR mentions that definition.
-    SUPERSEDING_PR = "superseding_pr"
-
-
-@dataclasses.dataclass(frozen=True)
-class HistorySignal:
-    """One cheap reading of the branch's history that argues against fixing it.
-
-    `holds` separates evidence from context. Re-adding something the default
-    branch deleted is evidence the branch is superseded; a rebase over a moved
-    base is only what makes that legible, and every long-lived branch has one —
-    withholding a commit on it alone would fire on the healthy case.
-    """
-
-    kind: HistoryKind
-    detail: str
-    holds: bool = True
-
-
-@dataclasses.dataclass(frozen=True)
-class AddedSymbol:
-    """A definition the branch adds, and the file it adds it in."""
-
-    name: str
-    path: str
 
 
 # Author-vs-committer drift on the first commit, in days, before the branch is

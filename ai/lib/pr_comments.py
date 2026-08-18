@@ -644,8 +644,11 @@ class CloseoutDebt:
 
     summary: bool = False
     replies: bool = False
-    # Derived from the recorded outcomes, not counted by the fix pass, so it is
-    # advisory: `replies` alone decides whether anything is owed.
+    # How many replies are owed, recounted here from the recorded outcomes
+    # rather than read off a number the fix pass stored. That makes it advisory
+    # only — a queue whose outcome list was pruned still owes its replies via
+    # `replies` while this reads 0. `replies` alone decides whether anything is
+    # owed; this only sharpens the wording when the outcomes are still around.
     reply_count: int = 0
 
     @property

@@ -37,6 +37,7 @@ import tool_parser  # noqa: E402
 import workbench_paths  # noqa: E402
 
 from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
+from pr_comments import CLOSEOUT_COMMAND  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
@@ -194,7 +195,7 @@ def test_merge_readiness_blocked_by_a_deferred_summary():
     result = pr_cli._merge_readiness(state)
     assert "blocked" in result
     assert "closeout not delivered" in result
-    assert "pr comments --finish --post" in result
+    assert CLOSEOUT_COMMAND in result
 
 
 def test_merge_readiness_blocked_by_a_pending_reply_queue():

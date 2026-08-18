@@ -22,6 +22,7 @@ from pr_comments import (
     load_state, save_state, empty_state, compute_thread_state, sync_threads,
     fetch_threads, render_dashboard, render_status, render_triage_status,
     render_fix_status,
+    CLOSEOUT_COMMAND,
     STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED,
 )
 
@@ -515,21 +516,21 @@ def test_render_fix_status_warns_when_summary_and_replies_are_owed():
         _fix_with_closeout(summary_deferred=True, replies_pending=True),
     )
     assert _closeout_line(lines) == (
-        "  ⚠ closeout owed: summary + 3 replies — run: pr comments --finish --post"
+        f"  ⚠ closeout owed: summary + 3 replies — run: {CLOSEOUT_COMMAND}"
     )
 
 
 def test_render_fix_status_warns_for_a_deferred_summary_alone():
     lines = render_fix_status(_fix_with_closeout(summary_deferred=True))
     assert _closeout_line(lines) == (
-        "  ⚠ closeout owed: summary — run: pr comments --finish --post"
+        f"  ⚠ closeout owed: summary — run: {CLOSEOUT_COMMAND}"
     )
 
 
 def test_render_fix_status_warns_for_a_pending_reply_queue_alone():
     lines = render_fix_status(_fix_with_closeout(replies_pending=True))
     assert _closeout_line(lines) == (
-        "  ⚠ closeout owed: 3 replies — run: pr comments --finish --post"
+        f"  ⚠ closeout owed: 3 replies — run: {CLOSEOUT_COMMAND}"
     )
 
 
@@ -540,7 +541,7 @@ def test_render_fix_status_singularises_a_one_reply_queue():
         updated_at="2026-07-14T00:00:00+00:00",
     )
     assert _closeout_line(render_fix_status(f)) == (
-        "  ⚠ closeout owed: 1 reply — run: pr comments --finish --post"
+        f"  ⚠ closeout owed: 1 reply — run: {CLOSEOUT_COMMAND}"
     )
 
 
@@ -550,7 +551,7 @@ def test_render_fix_status_says_replies_when_no_outcome_carries_the_count():
         threads=[], replies_pending=True, updated_at="2026-07-14T00:00:00+00:00",
     )
     assert _closeout_line(render_fix_status(f)) == (
-        "  ⚠ closeout owed: replies — run: pr comments --finish --post"
+        f"  ⚠ closeout owed: replies — run: {CLOSEOUT_COMMAND}"
     )
 
 

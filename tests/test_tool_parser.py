@@ -13,7 +13,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from tool_parser import (
-    VALUE_FLAGS_FLAG, ToolParser, handle_value_flags, value_taking_options,
+    VALUE_FLAGS_FLAG, ToolParser, handle_value_flags, subparsers,
+    value_taking_options,
 )
 
 
@@ -192,6 +193,47 @@ def test_value_taking_options_ignores_positionals():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("args", nargs="*")
     assert value_taking_options(parser) == []
+
+
+# ── subparser lookup ───────────────────────────────────────────────────────
+
+
+def test_subparsers_returns_each_command_by_name():
+    parser = argparse.ArgumentParser(add_help=False)
+    sub = parser.add_subparsers(dest="command")
+    review = sub.add_parser("review")
+    create = sub.add_parser("create", add_help=False)
+    assert subparsers(parser) == {"review": review, "create": create}
+
+
+def test_subparsers_returns_the_parser_that_declares_the_flags():
+    """The point of the lookup: arity is read off the declaring subparser."""
+    parser = argparse.ArgumentParser(add_help=False)
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser("status", add_help=False).add_argument("--draft", action="store_true")
+    sub.add_parser("create", add_help=False).add_argument("--title")
+    assert value_taking_options(subparsers(parser)["status"]) == []
+    assert value_taking_options(subparsers(parser)["create"]) == ["--title"]
+
+
+def test_subparsers_lists_every_alias():
+    parser = argparse.ArgumentParser(add_help=False)
+    sub = parser.add_subparsers(dest="command")
+    comments = sub.add_parser("comments", aliases=["threads"])
+    assert subparsers(parser) == {"comments": comments, "threads": comments}
+
+
+def test_subparsers_is_empty_for_a_parser_with_no_commands():
+    assert subparsers(_make_parser()) == {}
+
+
+def test_subparsers_is_a_copy_the_caller_cannot_corrupt():
+    """The result is handed out, so mutating it must not unregister a command."""
+    parser = argparse.ArgumentParser(add_help=False)
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser("status", add_help=False)
+    subparsers(parser).clear()
+    assert parser.parse_args(["status"]).command == "status"
 
 
 def test_handle_value_flags_prints_and_exits(capsys):

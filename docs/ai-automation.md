@@ -853,6 +853,22 @@ consumes a following value. `pr` asks a delegate this before deciding whether a 
 token is the command's target or some other flag's argument. Without it,
 `pr comments --reply 3777767789` reads the reply ID as a PR number and swallows it.
 
+A subcommand with no delegate has no parser to probe, and one of them needs none.
+`pr create` shells out to `task pr:create`, whose flags are parsed in bash by
+`parse_pr_flags` ([`lib/ai/pr.sh`](../lib/ai/pr.sh)); it always operates on the
+current branch, and `task pr:create` has no way to accept a target. So `create` is
+listed in `_NO_TARGET_COMMANDS` and the positional scan is skipped for it entirely —
+every bare token in `pr create --title "…" --body-file …` belongs to the flag before
+it. Mirroring `parse_pr_flags`'s arity in `pr` would have been a third copy of a list
+that already exists twice in the file that parses it.
+
+That leaves `_NO_TARGET_COMMANDS` a hand-maintained exclusion, so the commands it does
+*not* excuse are guarded: `status`, `fix` and `gc` have no delegate either, and their
+scan is arity-blind for the same reason. A test reads `value_taking_options` off each
+of their subparsers — the same function the probe answers with — and fails the build
+the day one of them declares an option that consumes a value, naming the two ways out:
+list the command as taking no target, or give it a delegate to ask.
+
 The two stay separate on purpose. `--tool-schema` is keyed by `dest`, drops
 `help=SUPPRESS` actions, and loses option aliases, so arity cannot be recovered from
 it faithfully — and declaring it also enrolls a script in MCP discovery, which is not

@@ -17,7 +17,6 @@
   --ow-surface: #fbf6ea;
   --ow-ink: #1a1712;
   --ow-ink-muted: #5c5447;
-  --ow-ink-faint: #a89b84;
   --ow-hairline: #e4dac6;
   --ow-amarillo: #e5ba41;
   --ow-rosa: #d81e5b;
@@ -47,7 +46,6 @@
   --ow-surface: #1f1c14;
   --ow-ink: #e8e3d8;
   --ow-ink-muted: #8a8073;
-  --ow-ink-faint: #6b6357;
   --ow-hairline: #3d3420;
 
   /* Every other --color-fd-* role is derived: it references an --ow-* token

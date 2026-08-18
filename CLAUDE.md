@@ -18,6 +18,9 @@ bin/local/generate-tool-context      # regenerate tools.generated.md from regist
 bin/local/generate-config-schema     # regenerate config.schema.json + the docs key reference from WorkbenchConfig
 git/bin/local/generate-git-rules     # regenerate git.generated.md from lib/conventions.sh
 otto-workbench changelog       # show recent changes from conventional commits
+npm --prefix site run dev      # preview the docs site — localhost:3000/otto-workbench
+npm --prefix site test         # run the site's remark plugin tests
+npm --prefix site run build    # static-export the site to site/out (what CI's Site job runs)
 ```
 
 ## Conventions

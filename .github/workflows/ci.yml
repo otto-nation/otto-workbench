@@ -12,13 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Run ShellCheck
-        # Auto-discover scripts by shebang so new files are checked automatically
+        # Discovery lives in lib/files.sh so CI and the pre-push hook agree
         run: |
-          grep -rlE '^#!.*(/(ba)?sh|/env (ba)?sh)' . \
-            | grep -v '^\./\.git/' \
-            | grep -v '\.py$' \
-            | sort \
-            | xargs shellcheck --severity=warning
+          source lib/files.sh
+          list_shell_scripts . | xargs shellcheck --severity=warning
 
   lint:
     name: Lint
@@ -139,3 +136,28 @@ jobs:
 
       - name: Run pytest
         run: pytest tests/ -v
+
+  site:
+    name: Site
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: site/.node-version
+          cache: "npm"
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install dependencies
+        working-directory: site
+        run: npm ci
+
+      - name: Test remark plugins
+        working-directory: site
+        run: npm test
+
+      - name: Build
+        working-directory: site
+        run: npm run build

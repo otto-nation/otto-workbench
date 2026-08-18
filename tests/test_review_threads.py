@@ -2504,8 +2504,11 @@ class TestFinishFlag:
 
     @pytest.mark.parametrize("alias", ["--resolve", "--resolve-verified"])
     def test_the_old_aliases_are_rejected(self, rt, alias):
-        with pytest.raises(SystemExit):
+        # Exit 2 specifically: argparse's unknown-flag code, not any SystemExit
+        # a broken parser might raise on the way past.
+        with pytest.raises(SystemExit) as exc:
             rt._build_parser().parse_args([alias])
+        assert exc.value.code == 2
 
 
 # ── --reply ──────────────────────────────────────────────────────────────

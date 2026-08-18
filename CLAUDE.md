@@ -4,15 +4,17 @@ Dotfiles and developer environment manager. Installs shell config, brew packages
 
 ## Stack
 
-bash, zsh, bats-core (tests), brew (packages), jq/yq (YAML/JSON), shellcheck (lint)
+bash, zsh, python (the `ai/` subsystem — `ai/lib/` and most of `ai/claude/bin/`), bats-core + pytest (tests), brew (packages), jq/yq (YAML/JSON), shellcheck (lint)
 
 ## Commands
 
 ```bash
-bats tests/                    # run all tests
-bats tests/<file>.bats         # run one test suite
+bats tests/                    # run all bats tests
+bats tests/<file>.bats         # run one bats suite
+pytest tests/                  # run all Python tests
+pytest tests/<file>.py         # run one Python suite
 shellcheck <file>.sh           # lint a script
-bin/local/validate-all               # run every validator (what pre-push and CI run)
+bin/local/validate-all               # run every validator
 bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers
 bin/local/generate-tool-context      # regenerate tools.generated.md from registries
 bin/local/generate-config-schema     # regenerate config.schema.json + the docs key reference from WorkbenchConfig
@@ -22,6 +24,9 @@ npm --prefix site run dev      # preview the docs site — localhost:3000/otto-w
 npm --prefix site test         # run the site's remark plugin tests
 npm --prefix site run build    # static-export the site to site/out (what CI's Site job runs)
 ```
+
+Pre-push and CI run three gates independently — `bin/local/validate-all`, `bats tests/`,
+and `pytest tests/`. Passing one is not passing the gate.
 
 ## Conventions
 

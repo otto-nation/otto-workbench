@@ -826,10 +826,10 @@ They share the exit code and the override flag, and nothing else.
 
 The `Review Comments Addressed` comment is what a reviewer reads to confirm
 their feedback was accounted for, and it is the one place a whole cycle is
-tallied. A cycle edits one comment rather than appending a summary per round,
-so every round has to leave it at least as complete as it found it.
+tallied. A cycle keeps editing one comment rather than appending a summary per
+round, so every round has to leave it at least as complete as it found it.
 
-Two things follow, and both were bugs first —
+Three things follow, and the first two were bugs —
 [#714](https://github.com/otto-nation/otto-workbench/issues/714) and
 [#712](https://github.com/otto-nation/otto-workbench/issues/712):
 
@@ -852,6 +852,17 @@ The table therefore only grows. A row no later round reproduces is carried for
 the life of the PR, so a thread that legitimately stops appearing keeps its last
 rendered state rather than vanishing. That is the trade being made on purpose: a
 stale row a reviewer can still read beats a round nobody can recover.
+
+**A summary that has been answered is reposted, not edited.** GitHub leaves an
+edited comment where it was and notifies nobody, so once a reviewer has
+commented, submitted a review, or replied on a thread below the summary, editing
+it writes the round's outcome somewhere the reader has already scrolled past.
+Each round compares the summary's `created_at` against the newest activity that
+is not ours — our own thread replies do not count, or the fix pass would trip
+the check on itself every round — and posts a fresh comment when it lost the
+last word. The fresh body carries the marker and every row the published one
+held, so the newest summary is always the complete one and the next round finds
+it; the superseded comment is left untouched as that round's record.
 
 ### Running from a different directory
 

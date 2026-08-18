@@ -495,6 +495,10 @@ class FixSummary(Domain):
     def merge_into(self, prior: "FixSummary") -> "FixSummary":
         """Merge this fix pass into the accumulated summary.
 
+        Three things are cycle-scoped rather than per-round, for the same reason:
+        a review cycle spans several rounds, and a round that did not touch one
+        of them says nothing about it rather than clearing it.
+
         Thread outcomes accumulate across rounds, keyed by thread id — a later
         pass supersedes an earlier outcome for the same thread, but never drops
         threads it did not touch.  A review cycle spans several rounds and the
@@ -505,7 +509,19 @@ class FixSummary(Domain):
         and updated on later rounds.  A fix pass builds its FixSummary before
         knowing about it, so an empty id/url means "not set this round", not
         "cleared" — dropping it would make the next deferred round open a
-        duplicate issue.  Every other field is per-round and comes from this pass.
+        duplicate issue.
+
+        The summary comment is cycle-scoped for the same reason.  A round that
+        posts nothing — no fixables, nothing dismissed, no discussion pending —
+        carries an empty summary_url meaning "not posted this round", so
+        overwriting with it would leave state claiming a summary that is live on
+        the PR was never posted, and summary_deferred false leaves --finish with
+        nothing to re-render.  A round that does post replaces the url, which is
+        not always the same comment: a summary a reviewer has answered below is
+        reposted rather than edited, so the url names the live summary rather
+        than the first one the cycle wrote.
+
+        Every other field is per-round and comes from this pass.
         """
         merged = {t.id: t for t in prior.threads if t.id}
         no_id: list[ThreadOutcome] = [t for t in prior.threads if not t.id]
@@ -525,6 +541,7 @@ class FixSummary(Domain):
             threads=list(merged.values()) + no_id,
             deferred_issue_id=self.deferred_issue_id or prior.deferred_issue_id,
             deferred_issue_url=self.deferred_issue_url or prior.deferred_issue_url,
+            summary_url=self.summary_url or prior.summary_url,
         )
 
 

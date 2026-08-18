@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Validate that every Bash permission rule can actually match a command.
+
+Usage: bin/local/validate-permissions [--quiet] [file...]
+
+Claude Code classifies a permission rule before matching it, and the two forms
+are not interchangeable:
+
+    Bash(npm run:*)    prefix rule   — literal startsWith, no globbing
+    Bash(npm run *)    wildcard rule — compiled to a regex
+
+The `:*` suffix is tested first, so a `*` written inside the prefix buys
+nothing: `Bash(bin/local/*:*)` asks for commands beginning with the eleven
+characters `bin/local/*`, which nobody types.  The Bash matcher also never
+expands `~` — that helper is reached only from path-rule handling — so
+`Bash(~/.claude/skills/**:*)` is inert twice over.
+
+Neither mistake is an error anywhere.  The rule simply never matches, and the
+permission prompt it was written to prevent keeps appearing; the usual repair
+is a one-off entry in settings.local.json, which hides the dead rule for good.
+
+Registry `permission:` entries reach the template through
+_generated_permissions (tests/claude_settings.bats enforces that they all
+appear there), so scanning the settings files covers the registries too.
+
+When no files are given, discovers every settings JSON in the repo that
+declares Bash rules.
+
+Exit code: 0 if every rule is live, 1 if any are dead.
+"""
+
+import argparse
+import dataclasses
+import json
+import os
+import re
+import sys
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
+BASH_RULE = re.compile(r'^Bash\((.*)\)$', re.DOTALL)
+
+# Buckets holding rule strings. _generated_permissions is the workbench's own
+# record of the registry-derived entries — a dead rule is just as dead there.
+RULE_BUCKETS = ('allow', 'deny', 'ask')
+
+TILDE = 'the Bash matcher never expands ~, so the tilde is matched literally'
+LITERAL_STAR = ':* is prefix matching, so the * inside the prefix never globs'
+EMPTY_PREFIX = 'nothing precedes :*, so the rule names no command'
+
+NAME_THE_COMMAND = 'name the command the rule is for'
+
+
+@dataclasses.dataclass(frozen=True)
+class Violation:
+    """A rule that no command can ever match."""
+
+    rule: str
+    reason: str
+    fix: str
+    line: int = 0
+
+
+def _live_form(body: str) -> str:
+    """Rewrite a rule body into the closest wildcard form that can match.
+
+    Wildcard rules are anchored at both ends, so a pattern that does not
+    already end in `*` gains one — otherwise it would match the bare command
+    and reject every invocation carrying an argument.
+    """
+    pattern = body[:-2] if body.endswith(':*') else body
+    if pattern.startswith('~'):
+        pattern = '*' + pattern[1:]
+    # GLOBSTAR only means anything between slashes; elsewhere ** is just *.
+    pattern = pattern.replace('**', '*')
+    if not pattern.endswith('*'):
+        pattern += '*'
+    return f'Bash({pattern})'
+
+
+def _diagnose(rule: str) -> Violation | None:
+    """Return a Violation if the rule can never match, else None."""
+    match = BASH_RULE.match(rule)
+    if not match:
+        return None
+
+    body = match.group(1)
+    if not body.endswith(':*'):
+        return Violation(rule, TILDE, _live_form(body)) if body.startswith('~') else None
+
+    prefix = body[:-2]
+    if not prefix:
+        return Violation(rule, EMPTY_PREFIX, NAME_THE_COMMAND)
+    if prefix.startswith('~'):
+        return Violation(rule, TILDE, _live_form(body))
+    if '*' in prefix:
+        return Violation(rule, LITERAL_STAR, _live_form(body))
+    return None
+
+
+def rules_in(settings: dict) -> list[str]:
+    """Collect every permission rule string declared by a settings object."""
+    permissions = settings.get('permissions') or {}
+    rules = [r for bucket in RULE_BUCKETS for r in permissions.get(bucket) or []]
+    rules += settings.get('_generated_permissions') or []
+    # A rule repeated across buckets is one mistake, reported once.
+    return list(dict.fromkeys(rules))
+
+
+def check_rules(rules: list[str]) -> list[Violation]:
+    """Return a Violation for every rule that can never match a command."""
+    return [v for v in (_diagnose(rule) for rule in rules) if v is not None]
+
+
+def _line_of(lines: list[str], rule: str) -> int:
+    """1-based line the rule is written on, or 0 if it cannot be located."""
+    quoted = json.dumps(rule)
+    matches = (i for i, line in enumerate(lines, 1) if quoted in line)
+    return next(matches, 0)
+
+
+def check_file(filepath: str) -> list[Violation]:
+    """Return every dead permission rule in a settings JSON file."""
+    with open(filepath) as f:
+        text = f.read()
+
+    lines = text.splitlines()
+    violations = check_rules(rules_in(json.loads(text)))
+    return [dataclasses.replace(v, line=_line_of(lines, v.rule)) for v in violations]
+
+
+# ── Discovery ───────────────────────────────────────────────────────────────
+
+def _declares_bash_rules(path: str) -> bool:
+    with open(path, errors='replace') as f:
+        return 'Bash(' in f.read()
+
+
+def discover_settings(repo_root: str) -> list[str]:
+    """Find every settings JSON in the repo that declares Bash rules."""
+    found: list[str] = []
+
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d not in ('.git', 'node_modules')]
+        names = [f for f in filenames if f.startswith('settings') and f.endswith('.json')]
+        found.extend(os.path.join(dirpath, f) for f in names)
+
+    return sorted(p for p in found if _declares_bash_rules(p))
+
+
+# ── Reporting ───────────────────────────────────────────────────────────────
+
+def _report_violations(relpath: str, violations: list[Violation]) -> None:
+    print(f'{RED}✗{NC} {relpath}: {len(violations)} permission rule(s) can never match',
+          file=sys.stderr)
+    for violation in violations:
+        where = f'line {violation.line}: ' if violation.line else ''
+        print(f'      {where}{violation.rule}', file=sys.stderr)
+        print(f'        {violation.reason}', file=sys.stderr)
+        print(f'        {DIM}use {violation.fix}{NC}', file=sys.stderr)
+
+
+def _print_summary(files_checked: int, errors: int) -> None:
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, every permission rule is live')
+    else:
+        print(f'{RED}✗{NC} {errors} of {files_checked} files declare a rule that can never match',
+              file=sys.stderr)
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate that every Bash permission rule can match a command.')
+    parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
+    parser.add_argument('files', nargs='*', help='Settings files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = _WORKBENCH_DIR
+    files = args.files if args.files else discover_settings(repo_root)
+
+    errors = 0
+
+    for filepath in files:
+        relpath = os.path.relpath(filepath, repo_root)
+        violations = check_file(filepath)
+
+        if violations:
+            errors += 1
+            _report_violations(relpath, violations)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    _print_summary(len(files), errors)
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

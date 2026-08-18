@@ -14,6 +14,12 @@ WORKBENCH_DIR="$REPO_ROOT"
 # shellcheck source=../../lib/ui.sh
 . "$WORKBENCH_DIR/lib/ui.sh"
 
+# Directories every `find` sweep below skips. Kept in one place because a
+# missed exclusion here means the hook walks vendored trees that no linter in
+# it can parse — node_modules alone was already patched in once after being
+# added to only some of the sweeps.
+_FIND_SKIP=(-not -path '*/.git/*' -not -path '*/node_modules/*')
+
 # ── Output helpers ───────────────────────────────────────────────────────────
 
 # _step LABEL — prints "→ LABEL..." without a newline. Follow with _pass or _fail.
@@ -128,7 +134,7 @@ fi
 if command -v yamllint >/dev/null 2>&1; then
   _step "Linting YAML"
   if _yl_output=$(yamllint "$REPO_ROOT" 2>&1); then
-    _yl_count=$(find "$REPO_ROOT" \( -name '*.yml' -o -name '*.yaml' \) -not -path '*/.git/*' -not -path '*/node_modules/*' | wc -l | tr -d ' ')
+    _yl_count=$(find "$REPO_ROOT" \( -name '*.yml' -o -name '*.yaml' \) "${_FIND_SKIP[@]}" | wc -l | tr -d ' ')
     _pass "${_yl_count} files"
   else
     _fail "$_yl_output"
@@ -142,7 +148,7 @@ if command -v zsh >/dev/null 2>&1; then
   _zsh_files=()
   while IFS= read -r -d '' f; do
     _zsh_files+=("$f")
-  done < <(find "$REPO_ROOT" -name '*.zsh' -not -path '*/.git/*' -not -path '*/node_modules/*' -print0)
+  done < <(find "$REPO_ROOT" -name '*.zsh' "${_FIND_SKIP[@]}" -print0)
   if [[ ${#_zsh_files[@]} -gt 0 ]]; then
     if _zsh_output=$(zsh -n "${_zsh_files[@]}" 2>&1); then
       _pass "${#_zsh_files[@]} files"
@@ -164,7 +170,7 @@ while IFS= read -r -d '' f; do
   if ! jq -e '.' "$f" > /dev/null 2>&1; then
     _json_errors+="  Invalid JSON: $f"$'\n'
   fi
-done < <(find "$REPO_ROOT" -name '*.json' -not -path '*/.git/*' -not -path '*/.claude/*' -not -path '*/node_modules/*' -print0)
+done < <(find "$REPO_ROOT" -name '*.json' "${_FIND_SKIP[@]}" -not -path '*/.claude/*' -print0)
 if [[ -n "$_json_errors" ]]; then
   _fail "$_json_errors"
 else

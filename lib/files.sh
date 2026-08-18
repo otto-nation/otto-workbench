@@ -192,8 +192,9 @@ sync_component_bin() {
 
 # list_shell_scripts ROOT — prints every file under ROOT whose *first* line is a
 # shell or bats shebang, one per line, sorted. Skips .git, ignore/, __pycache__,
-# and .py. The awk pass is what anchors to line 1: `grep -r` is line-based, so a
-# shebang inside a heredoc (as in a bats fixture) would otherwise select the file.
+# node_modules/, and .py. The awk pass is what anchors to line 1: `grep -r` is
+# line-based, so a shebang inside a heredoc (as in a bats fixture) would
+# otherwise select the file.
 # bats suites are included deliberately — ShellCheck parses them natively, and
 # its bats-specific checks catch assertions that silently never fail.
 list_shell_scripts() {

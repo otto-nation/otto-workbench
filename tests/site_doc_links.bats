@@ -17,7 +17,7 @@ teardown() {
   while read -r target; do
     local slug="${target%%#*}"
     [ -f "$REPO_ROOT/docs/$slug" ] || broken+=("$target")
-  done < <(grep -ohE '\]\((\./)?[A-Za-z0-9-]+\.md(#[^)"]*)?( +"[^"]*")?\)' "$REPO_ROOT"/docs/*.md \
+  done < <(grep -ohE '\]\((\./)?[A-Za-z0-9_-]+\.md(#[^)"]*)?( +"[^"]*")?\)' "$REPO_ROOT"/docs/*.md \
     | sed -E 's/^\]\((\.\/)?//; s/ +"[^"]*"\)$/)/; s/\)$//')
   [ "${#broken[@]}" -eq 0 ] || {
     echo "link target has no doc file: ${broken[*]}"

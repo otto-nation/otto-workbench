@@ -11,6 +11,7 @@
  *   --ow-rosa      4.42:1 on canvas — below the 4.5:1 AA floor for normal text, above
  *                  the 3:1 large-text floor. UI and large text only, never inline prose.
  *   Body copy is always --ow-ink or --ow-ink-muted on --ow-canvas.
+ *   --ow-block-*   the fixed dark surfaces, measured against --ow-block, not canvas.
  */
 
 :root {
@@ -23,6 +24,18 @@
   --ow-rosa: #d81e5b;
   --ow-barro: #c4552f;
   --ow-anil: #2b4ba8;
+
+  /* The install block and the footer stay dark in both themes — a shell prompt
+   * has to read as a terminal, and the footer closes the page on a solid band.
+   * They cannot follow the theme-dependent ramp, so they own fixed tokens whose
+   * contrast is measured against --ow-block rather than --ow-canvas:
+   *   --ow-block-ink        13.96:1 on the block. Body copy.
+   *   --ow-block-ink-muted   4.61:1 on the block. Labels and buttons, AA.
+   *   --ow-block-hairline    never text. Dividers and borders only. */
+  --ow-block: #1a1712;
+  --ow-block-ink: #e8e3d8;
+  --ow-block-ink-muted: #8a8073;
+  --ow-block-hairline: #3d3420;
 
   --color-fd-background: var(--ow-canvas);
   --color-fd-foreground: var(--ow-ink);

@@ -9,7 +9,7 @@ export function Nav() {
         <Greca size={17} />
         otto-workbench
       </span>
-      <span className="flex items-center gap-4 font-[family-name:var(--font-mono)] text-xs text-[var(--ow-ink-muted)]">
+      <span className="flex items-center gap-4 font-mono text-xs text-[var(--ow-ink-muted)]">
         <Link href="/docs/getting-started">docs</Link>
         <a href="https://github.com/otto-nation/otto-workbench">github</a>
         <SearchButton />

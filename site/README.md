@@ -44,3 +44,19 @@ Both are SIL OFL. The published site makes no third-party font request.
 
 `npm run build` needs network access — `next/font/google` fetches League Spartan at
 build time. Offline builds fail on fonts alone.
+
+## Tests
+
+    npm test
+
+The `test` script is bare `node --test` on purpose. Node's runner recurses from the
+working directory and already skips `node_modules/`, so every `*.test.mjs` under
+`site/` is picked up by adding the file. Naming files explicitly has twice been the
+cause of a suite that silently ran nothing — do not reintroduce a path list.
+
+## Colors
+
+`app/tokens.css` is the only place a hex literal belongs. Components reference
+`var(--ow-*)`; `tests/site_palette_ssot.bats` fails the push if one grows its own.
+The `--ow-block-*` group is the fixed dark band used by the install block and the
+footer, which stay dark in both themes and so cannot follow the light/dark ramp.

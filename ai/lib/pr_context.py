@@ -326,7 +326,8 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
         capture_output=True, text=True,
     )
     if r.returncode != 0:
-        log.warn(f"reset --hard failed — keeping existing worktree state")
+        log.warn(failure_message(f"git reset --hard origin/{ctx.branch} failed", r))
+        log.dim("keeping the existing worktree state")
         return ctx
 
     log.info(f"Updated worktree to origin/{ctx.branch}")
@@ -458,7 +459,8 @@ def _resolve_branch(hint: str, cwd: str | None = None) -> str:
             return r.stdout.strip()
         # resolve-branch exited non-zero or returned nothing — use hint as-is
         # rather than silently discarding the user's explicit --branch value
-        log.warn(f"resolve-branch: could not resolve {hint!r}, using as-is")
+        log.warn(failure_message(f"resolve-branch could not resolve {hint!r}", r))
+        log.dim(f"using {hint!r} as-is")
         return hint
     except FileNotFoundError:
         return hint if hint else _current_branch(cwd)
@@ -639,7 +641,8 @@ def create_worktree_for_branch(
     """
     path = wt_switch(branch, cwd)
     if not path:
-        log.warn(f"Could not create a worktree for {branch}")
+        # wt_switch names the cause on every failure path it has; a second,
+        # vaguer line here would only bury the one that says something.
         return None
     log.info(f"Created worktree for {branch} at {path}")
     return Path(path)

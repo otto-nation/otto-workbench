@@ -852,3 +852,104 @@ def test_wt_switch_stays_quiet_when_it_lands_on_a_worktree(monkeypatch, capsys):
 
     assert pr_context.wt_switch("feat/x") == "/repo/feat-x"
     assert capsys.readouterr().err == ""
+
+
+def _reset_run_sequence(reset_result):
+    """The subprocess results update_to_remote consumes before reset --hard."""
+    return [
+        MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
+        MagicMock(returncode=0),                        # fetch
+        MagicMock(returncode=0, stdout="new222\n"),     # rev-parse origin/branch
+        MagicMock(returncode=0, stdout="0\n"),          # rev-list (0 unpushed)
+        reset_result,
+    ]
+
+
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("pr_context._head_sha", return_value="old111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_quotes_why_the_reset_failed(
+        mock_run, _mock_sha, _mock_branch, capsys):
+    """Regression: git's own reason for refusing the reset was thrown away."""
+    mock_run.side_effect = _reset_run_sequence(MagicMock(
+        returncode=1, stdout="",
+        stderr="error: Entry 'docs/a.md' not uptodate. Cannot merge.\n"))
+
+    ctx = _make_ctx(head_sha="old111")
+    assert update_to_remote(ctx) is ctx
+    err = capsys.readouterr().err
+    assert "Entry 'docs/a.md' not uptodate. Cannot merge." in err
+    assert "keeping the existing worktree state" in err
+
+
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("pr_context._head_sha", return_value="old111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_degrades_when_reset_says_nothing(
+        mock_run, _mock_sha, _mock_branch, capsys):
+    """No stderr leaves the bare action — never a dangling separator."""
+    mock_run.side_effect = _reset_run_sequence(
+        MagicMock(returncode=1, stdout="", stderr=""))
+
+    ctx = _make_ctx(head_sha="old111")
+    assert update_to_remote(ctx) is ctx
+    warning = capsys.readouterr().err.splitlines()[0]
+    assert warning.endswith("git reset --hard origin/feat/x failed")
+
+
+@patch("pr_context.subprocess.run")
+@patch("pr_context._current_branch", return_value="fallback-branch")
+def test_resolve_branch_quotes_what_resolve_branch_said(
+        _mock_current, mock_run, capsys):
+    """Regression: resolve-branch's diagnosis was dropped for a generic line."""
+    mock_run.return_value = MagicMock(
+        returncode=1, stdout="",
+        stderr="error: no branch matches 'bad-hint'\n")
+
+    assert _resolve_branch("bad-hint") == "bad-hint"
+    err = capsys.readouterr().err
+    assert "no branch matches 'bad-hint'" in err
+    assert "as-is" in err
+
+
+@patch("pr_context.subprocess.run")
+@patch("pr_context._current_branch", return_value="fallback-branch")
+def test_resolve_branch_degrades_when_the_script_says_nothing(
+        _mock_current, mock_run, capsys):
+    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+
+    assert _resolve_branch("bad-hint") == "bad-hint"
+    warning = capsys.readouterr().err.splitlines()[0]
+    assert warning.endswith("resolve-branch could not resolve 'bad-hint'")
+
+
+# Every wt_switch failure path already names its own cause, so
+# create_worktree_for_branch must add nothing: the count is the assertion, since
+# a second generic line reads as a second, unrelated failure.
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run",
+       side_effect=FileNotFoundError(2, "No such file or directory", "wt"))
+def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log):
+    assert create_worktree_for_branch("feat/x") is None
+    assert mock_log.warn.call_count == 1
+    assert "not installed" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run",
+       side_effect=PermissionError(13, "Permission denied", "wt"))
+def test_create_worktree_warns_once_when_wt_cannot_run(_mock_run, mock_log):
+    assert create_worktree_for_branch("feat/x") is None
+    assert mock_log.warn.call_count == 1
+    assert "Permission denied" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_create_worktree_warns_once_when_wt_reports_no_path(mock_run, mock_log):
+    mock_run.return_value = MagicMock(
+        returncode=1, stdout="", stderr="error: branch feat/x is checked out")
+
+    assert create_worktree_for_branch("feat/x") is None
+    assert mock_log.warn.call_count == 1
+    assert "branch feat/x is checked out" in mock_log.warn.call_args.args[0]

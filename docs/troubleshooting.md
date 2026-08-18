@@ -132,7 +132,9 @@ Run the same command by hand to see the untruncated output:
 gh repo view --json nameWithOwner -q .nameWithOwner
 ```
 
-The same treatment applies to every fatal in `ai/lib/pr_context.py` — `Cannot determine current branch`, `` `gh pr view` could not read the head of <repo>#<n> ``, and the `wt switch` failures all quote the underlying command's stderr through one helper, `pr_context.failure_message()`. If one of them ever prints a bare action with no cause, the command wrote nothing to stderr; re-run it by hand.
+The same treatment applies to every message in `ai/lib/pr_context.py` that reports a *command* failing — `Cannot determine current branch`, `` `gh pr view` could not read the head of <repo>#<n> ``, `git reset --hard origin/<branch> failed`, `resolve-branch could not resolve <hint>`, and the `wt switch` failures all quote the underlying command's stderr through one helper, `pr_context.failure_message()`. If one of them ever prints a bare action with no cause, the command wrote nothing to stderr; re-run it by hand.
+
+Messages that report the *repository's shape* rather than a command's exit — `Not in a git repository`, `Bare repository — pass --branch or --repo-dir`, `Cannot read the origin remote`, `No worktree for <branch>` — have nothing to quote: the condition is what the code checked, not what a subprocess said, so the message already names the whole cause.
 
 ## "another pr run already owns this target"
 

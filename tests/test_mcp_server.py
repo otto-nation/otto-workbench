@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 import stat
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -13,11 +15,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import server
 from server import (
+    WORKBENCH_DIR,
     _args_to_cli,
     _declares_tool_schema,
-    _default_tool_dirs,
     _extract_json,
+    discover_tool_dirs,
     discover_tools,
 )
 
@@ -130,6 +134,18 @@ def _write_tool_script(path: Path, name: str) -> None:
 
 
 class TestDiscovery:
+    """What a scan of a given directory turns up.
+
+    Which directories get scanned is TestWorkbenchToolDirs' subject, so the
+    always-scanned workbench ones are stubbed out here — otherwise every
+    "nothing was discovered" assertion would also be asserting the workbench
+    ships no tools.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _only_configured_dirs(self, monkeypatch):
+        monkeypatch.setattr(server, "discover_tool_dirs", lambda: [])
+
     def test_discovers_tool_schema_scripts(self, tmp_path):
         script = tmp_path / "my-tool"
         script.write_text(textwrap.dedent("""\
@@ -196,8 +212,9 @@ class TestDiscovery:
     def test_launcher_is_not_a_probe_candidate(self):
         """Probing the launcher would exec the server and hang until the timeout.
 
-        It sits in the directory the default scans, so like the tarball builder
-        its help text describes the protocol without spelling the literal.
+        It sits in one of the directories always scanned, so like the tarball
+        builder its help text describes the protocol without spelling the
+        literal.
         """
         launcher = (
             Path(__file__).resolve().parent.parent
@@ -259,7 +276,7 @@ class TestDiscovery:
         assert "project-tool" in tools
         assert tools["project-tool"]["description"] == "From plugin"
 
-    def test_empty_config(self):
+    def test_no_directories_yields_no_tools(self):
         tools = discover_tools({"tool_dirs": [], "plugin_dirs": []})
         assert tools == {}
 
@@ -282,41 +299,59 @@ class TestDiscovery:
         assert "output_schema" in tools["pr"]
 
 
-class TestDefaultToolDirs:
+class TestWorkbenchToolDirs:
     """A machine with no mcp-tools.json still gets the workbench's tools.
 
-    Nothing in the workbench ever writes that file, so an absent ``tool_dirs``
-    is the ordinary case rather than the exceptional one. Without a default it
-    resolved to no directories at all, and every install ran a registered
-    server that exposed nothing.
+    Nothing in the workbench ever writes that file, so a config-only server
+    resolved to no directories at all and every install ran a registered server
+    that exposed nothing. The directories now come from the component layout.
     """
 
-    def test_default_is_the_workbench_bin_dir(self):
-        """Narrower than the ~/.local/bin those scripts are symlinked into.
+    def test_derived_dirs_span_every_component_level(self):
+        """The root, a one-level component, and a nested one."""
+        dirs = discover_tool_dirs()
 
-        Discovery probes by executing, so the default must not reach a
-        directory holding executables the workbench did not put there.
+        assert WORKBENCH_DIR / "bin" in dirs
+        assert WORKBENCH_DIR / "git" / "bin" in dirs
+        assert WORKBENCH_DIR / "terminals" / "ghostty" / "bin" in dirs
+
+    def test_every_tracked_bin_dir_is_covered(self):
+        """Drift guard: a component tier deeper than the glob reaches fails here.
+
+        The two-level glob mirrors lib/components.sh. If a bin/ ever lands at a
+        depth it does not reach, its tools go silently undiscovered — so make
+        that a test failure rather than an absence nobody notices.
         """
-        expected = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
+        listing = subprocess.run(
+            ["git", "ls-files", "--", "*bin/*"],
+            cwd=WORKBENCH_DIR,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        tracked = {
+            WORKBENCH_DIR / re.sub(r"(^|/)bin/.*", r"\1bin", line)
+            for line in listing.stdout.splitlines()
+        }
 
-        assert _default_tool_dirs() == [str(expected)]
+        assert tracked <= set(discover_tool_dirs())
 
     def test_absent_tool_dirs_still_discovers_tools(self):
         """The regression guard: an empty config used to yield no tools at all."""
-        if not (Path(_default_tool_dirs()[0]) / "pr-rebase").exists():
+        if not (WORKBENCH_DIR / "ai" / "claude" / "bin" / "pr-rebase").exists():
             pytest.skip("scripts not found")
 
         assert "pr-rebase" in discover_tools({})
 
-    def test_explicit_tool_dirs_replaces_the_default(self, tmp_path):
-        """The key is an override, not an addition — matching serde defaults."""
+    def test_tool_dirs_adds_to_the_derived_dirs(self, tmp_path):
+        """The key names what else to scan, not what to scan instead."""
         _write_tool_script(tmp_path / "project-tool", "project-tool")
 
         tools = discover_tools({"tool_dirs": [str(tmp_path)]})
 
         assert "project-tool" in tools
-        assert "pr-rebase" not in tools
+        assert "pr-rebase" in tools
 
-    def test_an_empty_tool_dirs_list_is_not_an_absent_one(self):
-        """``tool_dirs: []`` is how discovery is turned off deliberately."""
-        assert discover_tools({"tool_dirs": []}) == {}
+    def test_an_empty_tool_dirs_list_adds_nothing(self):
+        """``tool_dirs: []`` is the absent case, not a way to scan nothing."""
+        assert discover_tools({"tool_dirs": []}) == discover_tools({})

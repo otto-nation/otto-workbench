@@ -1,7 +1,8 @@
 """Dynamic MCP server for otto-workbench tools.
 
-Discovers tools by scanning configured directories for scripts that
-support ``--tool-schema``. A candidate is only executed if its source
+Discovers tools by scanning the workbench's own component script directories,
+plus any the config adds, for scripts that support ``--tool-schema``. A
+candidate is only executed if its source
 carries one of ``DECLARATION_MARKERS`` — probing runs the script, and
 scripts that ignore unknown flags would do their real work instead of
 answering. Any MCP client can connect via stdio transport.
@@ -29,6 +30,11 @@ logger = logging.getLogger("otto-mcp")
 
 # Hand-authored, so it belongs to the config root rather than the state root.
 CONFIG_PATH = workbench_paths.config_dir() / "mcp-tools.json"
+
+# ai/claude/mcps/server.py — three levels down from the checkout root.
+WORKBENCH_DIR = Path(__file__).resolve().parents[3]
+COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
+
 DISCOVERY_TIMEOUT = 2.0
 TOOL_SCHEMA_FLAG = "--tool-schema"
 
@@ -83,32 +89,30 @@ def _scan_plugin_dir(plugin_dir: Path) -> list[Path]:
     return results
 
 
-def _default_tool_dirs() -> list[str]:
-    """Where to look when the config names no directories.
+def discover_tool_dirs() -> list[Path]:
+    """Return the workbench's own script directories.
 
-    Nothing writes ``mcp-tools.json``, so an absent ``tool_dirs`` is the
-    ordinary case: without a default the server resolved to no directories and
-    exposed no tools on any install.
+    A component keeps its scripts in ``<component>/bin`` and the root ``bin/``
+    holds the workbench's own — so the directories are derived from the layout
+    rather than listed. The glob is the two-level one ``lib/components.sh``
+    uses for ``steps.sh`` and ``migrations``, plus the root, which means a new
+    component tier such as ``editors/zed/bin`` is picked up without editing
+    this file or hand-authoring config.
 
-    The default is the workbench's own script directory rather than the
-    ``~/.local/bin`` those scripts are symlinked into. Both hold the same tools,
-    but ``~/.local/bin`` also holds everything else a user has installed, and
-    discovery probes by *executing* a candidate — narrowing the default keeps
-    that off third-party binaries whose help text happens to carry a marker.
-    Reaching them through ``~/.local/bin`` is a ``tool_dirs`` away.
-
-    An explicit ``tool_dirs`` replaces this rather than extending it, so the
-    key keeps the meaning a typed default will give it in #724.
+    These are always scanned: nothing in the workbench writes
+    ``mcp-tools.json``, so a server that only looked at that file exposed no
+    tools on any install. ``tool_dirs`` names directories to scan *in
+    addition*.
     """
-    return [str(Path(__file__).resolve().parent.parent / "bin")]
+    dirs = {d for pattern in COMPONENT_BIN_GLOBS for d in WORKBENCH_DIR.glob(pattern) if d.is_dir()}
+    return sorted(dirs)
 
 
 def _resolve_dirs(config: dict) -> list[Path]:
-    dirs = []
-    # `get(key, default)` and not `get(key) or default`: an empty list is a
-    # deliberate "discover nothing", and the `or` form would read it as absent
-    # and scan the default instead.
-    for d in config.get("tool_dirs", _default_tool_dirs()):
+    dirs = discover_tool_dirs()
+    # Additive rather than an override: the workbench's own directories come
+    # from its layout, so the config only says what *else* to scan.
+    for d in config.get("tool_dirs", []):
         p = Path(d).expanduser()
         if p.is_dir():
             dirs.append(p)

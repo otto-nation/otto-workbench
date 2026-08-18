@@ -830,8 +830,8 @@ and any script built on `ToolParser` supports both for free.
 
 `--tool-schema` prints the tool's JSON contract — name, description, an input schema
 derived from the argparse actions, and an annotated output schema. It is how the MCP
-server discovers tools — it probes every executable in the directories `tool_dirs`
-names, defaulting to `ai/claude/bin` (see [`tools.md`](tools.md#otto-mcp-server)) — and
+server discovers tools — it probes every executable in the workbench's component `bin/`
+directories, plus any `tool_dirs` adds (see [`tools.md`](tools.md#otto-mcp-server)) — and
 it is what the skill reference above cites for `ci-check` and `pr-rebase`.
 
 The output schema is generated from the tool's dataclass by

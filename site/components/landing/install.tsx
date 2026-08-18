@@ -14,17 +14,22 @@ export function Install() {
           <span className="font-[family-name:var(--font-mono)] text-[9px] text-[#6b6357]">zsh</span>
           <button
             type="button"
-            onClick={() => {
-              void navigator.clipboard.writeText(COMMAND);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
+            aria-live="polite"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(COMMAND);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              } catch (error) {
+                console.error('Failed to copy install command', error);
+              }
             }}
-            className="font-[family-name:var(--font-mono)] text-[9px] text-[#6b6357]"
+            className="font-[family-name:var(--font-mono)] text-[9px] text-[#8a8073]"
           >
             {copied ? 'copied' : 'copy'}
           </button>
         </div>
-        <pre className="px-4 py-4 font-[family-name:var(--font-mono)] text-xs leading-7 text-[#e8e3d8]">
+        <pre className="overflow-x-auto px-4 py-4 font-[family-name:var(--font-mono)] text-xs leading-7 text-[#e8e3d8]">
           <span className="text-[var(--ow-amarillo)]">$ </span>
           {COMMAND}
           {'\n'}

@@ -5,8 +5,8 @@ export function Hero() {
   return (
     <section className="relative overflow-hidden px-6 pb-9 pt-11">
       <Rings />
-      <div className="relative max-w-[62%]">
-        <p className="mb-4 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.16em] text-[var(--ow-barro)]">
+      <div className="relative max-w-full sm:max-w-[62%]">
+        <p className="mb-4 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.16em] text-[var(--ow-ink-muted)]">
           ENVIRONMENT MANAGER
         </p>
         <h1 className="text-5xl font-extrabold leading-[0.94] tracking-[-0.022em]">

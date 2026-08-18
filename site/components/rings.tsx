@@ -10,17 +10,18 @@ const RINGS = [
   { r: 17.8, c: 'var(--ow-anil)' },
 ];
 
-export function Rings({ size = 290 }: { size?: number }) {
-  const strokeWidth = 180 / size;
+const SIZE = 290;
+const STROKE_WIDTH = 180 / SIZE;
 
+export function Rings() {
   return (
     <svg
-      width={size}
-      height={size}
+      width={SIZE}
+      height={SIZE}
       viewBox="0 0 32 32"
       fill="none"
       aria-hidden="true"
-      className="pointer-events-none absolute -right-16 -top-14"
+      className="pointer-events-none absolute -right-16 -top-14 h-20 w-20 sm:h-[290px] sm:w-[290px]"
     >
       {RINGS.map((ring) => (
         <circle
@@ -29,7 +30,7 @@ export function Rings({ size = 290 }: { size?: number }) {
           cy="16"
           r={ring.r}
           stroke={ring.c}
-          strokeWidth={strokeWidth}
+          strokeWidth={STROKE_WIDTH}
         />
       ))}
     </svg>

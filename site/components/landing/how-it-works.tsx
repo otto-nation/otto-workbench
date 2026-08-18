@@ -6,7 +6,7 @@ const TIERS = [
 export function HowItWorks() {
   return (
     <section className="px-6 pb-8">
-      <p className="mb-4 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.15em] text-[var(--ow-ink-faint)]">
+      <p className="mb-4 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.15em] text-[var(--ow-ink-muted)]">
         HOW IT WORKS
       </p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

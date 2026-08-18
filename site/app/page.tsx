@@ -8,14 +8,16 @@ import { Nav } from '@/components/landing/nav';
 
 export default function Home() {
   return (
-    <main className="flex-1">
+    <>
       <Nav />
-      <Hero />
-      <Install />
-      <GrecaDivider />
-      <Included />
-      <HowItWorks />
+      <main className="flex-1">
+        <Hero />
+        <Install />
+        <GrecaDivider />
+        <Included />
+        <HowItWorks />
+      </main>
       <Footer />
-    </main>
+    </>
   );
 }

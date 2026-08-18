@@ -12,12 +12,16 @@ const ITEMS = [
 export function Included() {
   return (
     <section className="px-6 py-7">
-      <p className="mb-5 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.15em] text-[var(--ow-ink-faint)]">
+      <p className="mb-5 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.15em] text-[var(--ow-ink-muted)]">
         WHAT&apos;S INCLUDED
       </p>
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {ITEMS.map((item) => (
-          <Link key={item.title} href={item.href} className="block">
+          <Link
+            key={item.title}
+            href={item.href}
+            className="-m-4 block rounded-lg border border-transparent p-4 transition-colors hover:border-[var(--ow-hairline)] focus-visible:border-[var(--ow-hairline)]"
+          >
             <h2 className="text-sm font-bold tracking-tight">{item.title}</h2>
             <p className="mt-1 text-xs leading-relaxed text-[var(--ow-ink-muted)]">{item.body}</p>
           </Link>

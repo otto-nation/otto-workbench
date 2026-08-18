@@ -13,3 +13,7 @@ CLAUDE.md
 # whichever command ran last leaves a dirty tree. tsconfig.json includes both
 # directories directly, so nothing depends on which form is on disk.
 next-env.d.ts
+
+# Incremental-build cache written by `tsc`. Machine-specific and ~270KB, so it
+# only ever lands in a diff as noise.
+tsconfig.tsbuildinfo

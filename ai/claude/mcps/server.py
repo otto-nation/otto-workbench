@@ -105,6 +105,9 @@ def _default_tool_dirs() -> list[str]:
 
 def _resolve_dirs(config: dict) -> list[Path]:
     dirs = []
+    # `get(key, default)` and not `get(key) or default`: an empty list is a
+    # deliberate "discover nothing", and the `or` form would read it as absent
+    # and scan the default instead.
     for d in config.get("tool_dirs", _default_tool_dirs()):
         p = Path(d).expanduser()
         if p.is_dir():

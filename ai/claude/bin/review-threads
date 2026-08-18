@@ -2407,7 +2407,7 @@ def _summary_still_owed(
     commit_status: str,
     has_unaccounted: bool,
 ) -> bool:
-    """Whether --resolve must re-render the fix summary later.
+    """Whether --finish must re-render the fix summary later.
 
     Discussion that is still open, or a commit that never reached the remote,
     both make the summary premature. So does a draft run: it printed the summary
@@ -3443,10 +3443,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fix", action="store_true",
                         help="Phase: triage threads and apply mechanical fixes via "
                              "Claude agent")
-    # --resolve is kept as an alias: resolution is not what this gates (--triage
-    # already resolves verified threads), but the flag shipped under that name.
-    parser.add_argument("--finish", "--resolve", "--resolve-verified",
-                        action="store_true", dest="finish",
+    parser.add_argument("--finish", action="store_true", dest="finish",
                         help="Phase: close out deferred work — replies, tracking "
                              "issue, summary. Drafts them unless --post is given")
     parser.add_argument("--track", action="append", default=[], metavar="THREAD_ID",

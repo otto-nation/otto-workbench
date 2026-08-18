@@ -63,11 +63,11 @@ def _extract_body_findings(body: str) -> list[dict]:
 @functools.lru_cache(maxsize=1)
 def _get_bot_login() -> str:
     """Return the authenticated GitHub user's login, or empty string on failure."""
-    code, user_out = review_github._gh_api("user")
-    if code != 0:
+    r = review_github._gh_api("user")
+    if not r.ok:
         return ""
     try:
-        return json.loads(user_out).get("login", "")
+        return json.loads(r.stdout).get("login", "")
     except (json.JSONDecodeError, TypeError):
         return ""
 
@@ -182,10 +182,10 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list
       }}
     }}
     """
-    rc, stdout = review_github._gh_graphql(
+    result = review_github._gh_graphql(
         query, {"owner": owner, "name": name, "pr": int(pr)},
     )
-    if rc != 0:
+    if not result.ok:
         all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
         return [
             {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
@@ -195,7 +195,7 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list
         ]
 
     try:
-        data = json.loads(stdout)
+        data = json.loads(result.stdout)
         nodes = data["data"]["repository"]["pullRequest"]["reviews"]["nodes"]
     except (json.JSONDecodeError, KeyError, TypeError):
         return []

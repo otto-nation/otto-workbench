@@ -16,15 +16,13 @@ from pathlib import Path
 
 import log
 import pr_target
+# Re-exported rather than called through the module: this file's own call sites
+# read as `failure_message(...)`, and proc.py is stdlib-only so the import costs
+# consumers nothing.
+from proc import failure_message  # noqa: F401
 
 _PR_URL_RE = re.compile(r"/pull/(\d+)")
 _PR_NUMBER_RE = re.compile(r"^\d+$")
-
-# gh reports a transport failure as "HTTP 503: ..." on stderr, whether it came
-# from REST or GraphQL, and git over https reports one as "HTTP 502" too.
-# Matching the status line is enough to tell a server outage from a local
-# misconfiguration.
-_SERVER_ERROR_RE = re.compile(r"\bHTTP 5\d\d\b")
 
 RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent / "bin" / "resolve-branch"
 
@@ -43,24 +41,6 @@ def classify_target(target: str) -> tuple[str | None, str | None]:
     if is_pr_ref(target):
         return target, None
     return None, target
-
-
-def failure_message(action: str, r: subprocess.CompletedProcess) -> str:
-    """Error text for a failed subprocess, quoting what the command said.
-
-    Asserting a cause the code has not established — "cannot determine the repo
-    from the git remote" — sends the operator to the wrong place whenever the
-    real fault is auth, the network, or a GitHub outage. So name the action that
-    failed and let the command's own stderr name the cause. A 5xx is called out
-    separately because it is the one case where the answer is to wait rather
-    than to change anything.
-    """
-    detail = " ".join((r.stderr or "").split())
-    if not detail:
-        return action
-    if _SERVER_ERROR_RE.search(detail):
-        return f"{action} — server error, retry later: {detail}"
-    return f"{action}: {detail}"
 
 
 @dataclass(frozen=True)

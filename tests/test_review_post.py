@@ -12,7 +12,23 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from pr_state import PostedAs, PostEvent, PostTracking
+from proc import CmdResult
 from serde import from_dict as serde_from_dict
+
+
+# A GitHub outage as gh reports it: nothing on stdout, the status line on
+# stderr. Shared so a failure-path test never has to restate the shape.
+_API_UNAVAILABLE = CmdResult(1, "", "gh: Service unavailable (HTTP 503)")
+
+
+def _completed(returncode, stdout, stderr=""):
+    """Stand in for what subprocess.run hands back.
+
+    All three streams every time — a MagicMock left without `stderr` yields a
+    mock where CmdResult expects a string, and the failure is a TypeError deep
+    inside the code under test rather than a readable assertion.
+    """
+    return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 def _make_sections(rp, **kwargs):
@@ -1058,16 +1074,16 @@ class TestIsRateLimited:
 
 class TestGhApi:
     def test_get_request(self, rp):
-        mock_result = MagicMock(returncode=0, stdout='{"ok": true}')
+        mock_result = _completed(0, '{"ok": true}')
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
-            rc, stdout = rp._gh_api("repos/org/repo/pulls/1")
+            r = rp._gh_api("repos/org/repo/pulls/1")
             mock_run.assert_called_once()
             cmd = mock_run.call_args[0][0]
             assert cmd == ["gh", "api", "repos/org/repo/pulls/1"]
-            assert rc == 0
+            assert r.ok
 
     def test_post_request(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="{}")
+        mock_result = _completed(0, "{}")
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             rp._gh_api("repos/org/repo/pulls/1/reviews", method="POST")
             cmd = mock_run.call_args[0][0]
@@ -1075,22 +1091,27 @@ class TestGhApi:
             assert "POST" in cmd
 
     def test_input_file(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="{}")
+        mock_result = _completed(0, "{}")
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             rp._gh_api("endpoint", method="POST", input_file="/tmp/payload.json")
             cmd = mock_run.call_args[0][0]
             assert "--input" in cmd
             assert "/tmp/payload.json" in cmd
 
-    def test_returns_tuple(self, rp):
-        mock_result = MagicMock(returncode=1, stdout="error msg")
+    def test_returns_both_streams(self, rp):
+        # The point of #740: the API error body lands on stdout while gh's own
+        # status line lands on stderr, and a caller needs to see both.
+        mock_result = _completed(
+            1, '{"message": "Bad gateway"}', "gh: Bad gateway (HTTP 502)")
         with patch.object(rp.subprocess, "run", return_value=mock_result):
-            rc, stdout = rp._gh_api("endpoint")
-            assert rc == 1
-            assert stdout == "error msg"
+            r = rp._gh_api("endpoint")
+            assert not r.ok
+            assert r.stdout == '{"message": "Bad gateway"}'
+            assert r.detail == "gh: Bad gateway (HTTP 502)"
+            assert r.server_error
 
     def test_headers(self, rp):
-        mock_result = MagicMock(returncode=0, stdout="diff text")
+        mock_result = _completed(0, "diff text")
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             rp._gh_api("endpoint", headers={"Accept": "application/vnd.github.v3.diff"})
             cmd = mock_run.call_args[0][0]
@@ -1101,16 +1122,17 @@ class TestGhApi:
 
 class TestHandleApiAttempt:
     def test_success_returns_parsed_json(self, rp):
-        result = rp._handle_api_attempt(0, 0, '{"id": 42}')
+        result = rp._handle_api_attempt(0, CmdResult(0, '{"id": 42}'))
         assert result == {"id": 42}
 
     def test_invalid_json_returns_none(self, rp):
-        result = rp._handle_api_attempt(0, 0, "not json")
+        result = rp._handle_api_attempt(0, CmdResult(0, "not json"))
         assert result is None
 
     def test_rate_limited_sleeps_and_returns_none(self, rp):
         with patch.object(rp.time, "sleep") as mock_sleep:
-            result = rp._handle_api_attempt(0, 1, '{"message": "secondary rate limit"}')
+            result = rp._handle_api_attempt(
+                0, CmdResult(1, '{"message": "secondary rate limit"}'))
             assert result is None
             mock_sleep.assert_called_once()
             wait = mock_sleep.call_args[0][0]
@@ -1118,32 +1140,52 @@ class TestHandleApiAttempt:
 
     def test_rate_limited_exponential_backoff(self, rp):
         with patch.object(rp.time, "sleep") as mock_sleep:
-            rp._handle_api_attempt(2, 1, '{"message": "secondary rate limit"}')
+            rp._handle_api_attempt(2, CmdResult(1, '{"message": "secondary rate limit"}'))
             wait = mock_sleep.call_args[0][0]
             expected = int(min(rp.RATE_LIMIT_WAIT * (rp.RATE_LIMIT_BACKOFF ** 2), rp.RATE_LIMIT_MAX_WAIT))
             assert wait == expected
 
+    def test_server_error_on_stderr_backs_off_and_names_the_cause(self, rp, capsys):
+        # #740: gh reports a 5xx on stderr and leaves stdout empty, so a
+        # stdout-only classifier saw an unknown error with nothing to print and
+        # took the flat non-rate delay instead of backing off.
+        r = _API_UNAVAILABLE
+        with patch.object(rp.time, "sleep") as mock_sleep:
+            assert rp._handle_api_attempt(0, r) is None
+            assert mock_sleep.call_args[0][0] == rp.RATE_LIMIT_WAIT
+        stderr = capsys.readouterr().err
+        assert "Server error" in stderr
+        assert "HTTP 503" in stderr
+
     def test_non_rate_error_sleeps_if_not_last(self, rp):
         with patch.object(rp.time, "sleep") as mock_sleep:
-            result = rp._handle_api_attempt(0, 1, '{"message": "Not Found"}')
+            result = rp._handle_api_attempt(0, CmdResult(1, '{"message": "Not Found"}'))
             assert result is None
             mock_sleep.assert_called_once_with(rp.NON_RATE_LIMIT_DELAY)
 
     def test_non_rate_error_no_sleep_on_last_attempt(self, rp):
         with patch.object(rp.time, "sleep") as mock_sleep:
-            result = rp._handle_api_attempt(rp.MAX_RETRIES - 1, 1, '{"message": "error"}')
+            result = rp._handle_api_attempt(
+                rp.MAX_RETRIES - 1, CmdResult(1, '{"message": "error"}'))
             assert result is None
             mock_sleep.assert_not_called()
 
+    def test_stderr_only_failure_is_still_reported(self, rp, capsys):
+        # A local misconfiguration says nothing on stdout either. Without the
+        # stderr slot this rendered as "GitHub API error" and no cause at all.
+        with patch.object(rp.time, "sleep"):
+            rp._handle_api_attempt(0, CmdResult(1, "", "gh: Not logged in to github.com"))
+        assert "Not logged in to github.com" in capsys.readouterr().err
+
     def test_line_resolution_error_takes_priority(self, rp):
-        stdout = '{"message": "Unprocessable Entity", "errors": ["Line could not be resolved"]}'
+        body = '{"message": "Unprocessable Entity", "errors": ["Line could not be resolved"]}'
         with pytest.raises(rp.LineResolutionError):
-            rp._handle_api_attempt(0, 1, stdout)
+            rp._handle_api_attempt(0, CmdResult(1, body))
 
     def test_errors_array_logged_for_non_line_errors(self, rp, capsys):
-        stdout = '{"message": "Unprocessable Entity", "errors": ["Something else"]}'
+        body = '{"message": "Unprocessable Entity", "errors": ["Something else"]}'
         with patch.object(rp.time, "sleep"):
-            rp._handle_api_attempt(0, 1, stdout)
+            rp._handle_api_attempt(0, CmdResult(1, body))
         captured = capsys.readouterr()
         assert "Something else" in captured.err
 
@@ -1151,33 +1193,41 @@ class TestHandleApiAttempt:
 class TestCheckExistingPending:
     def test_returns_review_id(self, rp):
         reviews = json.dumps([{"id": 12345, "state": "PENDING"}])
-        with patch("review_github._gh_api", return_value=(0, reviews)):
+        with patch("review_github._gh_api", return_value=CmdResult(0, reviews)):
             assert rp._check_existing_pending("org/repo", "1") == 12345
 
     def test_returns_none_when_no_pending(self, rp):
         reviews = json.dumps([{"id": 1, "state": "APPROVED"}])
-        with patch("review_github._gh_api", return_value=(0, reviews)):
+        with patch("review_github._gh_api", return_value=CmdResult(0, reviews)):
             assert rp._check_existing_pending("org/repo", "1") is None
 
     def test_returns_none_for_empty_list(self, rp):
-        with patch("review_github._gh_api", return_value=(0, "[]")):
+        with patch("review_github._gh_api", return_value=CmdResult(0, "[]")):
             assert rp._check_existing_pending("org/repo", "1") is None
 
     def test_returns_none_on_api_failure(self, rp):
-        with patch("review_github._gh_api", return_value=(1, "")):
+        with patch("review_github._gh_api", return_value=CmdResult(1)):
             assert rp._check_existing_pending("org/repo", "1") is None
+
+    def test_api_failure_warns_with_the_cause(self, rp, capsys):
+        # None also means "no pending review", and a caller that reads it that
+        # way opens a second one — so the failure has to be audible.
+        failure = _API_UNAVAILABLE
+        with patch("review_github._gh_api", return_value=failure):
+            assert rp._check_existing_pending("org/repo", "1") is None
+        assert "HTTP 503" in capsys.readouterr().err
 
 
 class TestPostWithRetries:
     def test_success_on_first_attempt(self, rp):
-        mock_result = MagicMock(returncode=0, stdout='{"id": 42}')
+        mock_result = _completed(0, '{"id": 42}')
         with patch.object(rp.subprocess, "run", return_value=mock_result):
             result = rp._post_with_retries("repos/org/repo/pulls/1/reviews", "/tmp/payload.json")
             assert result == {"id": 42}
 
     def test_success_after_retry(self, rp):
-        fail = MagicMock(returncode=1, stdout='{"message": "error"}')
-        success = MagicMock(returncode=0, stdout='{"id": 99}')
+        fail = _completed(1, '{"message": "error"}')
+        success = _completed(0, '{"id": 99}')
         with (
             patch.object(rp.subprocess, "run", side_effect=[fail, success]),
             patch.object(rp.time, "sleep"),
@@ -1186,7 +1236,7 @@ class TestPostWithRetries:
             assert result == {"id": 99}
 
     def test_all_attempts_fail_returns_none(self, rp):
-        fail = MagicMock(returncode=1, stdout='{"message": "error"}')
+        fail = _completed(1, '{"message": "error"}')
         with (
             patch.object(rp.subprocess, "run", return_value=fail),
             patch.object(rp.time, "sleep"),
@@ -1195,8 +1245,8 @@ class TestPostWithRetries:
             assert result is None
 
     def test_rate_limited_then_success(self, rp):
-        rate_limited = MagicMock(returncode=1, stdout='{"message": "secondary rate limit"}')
-        success = MagicMock(returncode=0, stdout='{"id": 1}')
+        rate_limited = _completed(1, '{"message": "secondary rate limit"}')
+        success = _completed(0, '{"id": 1}')
         with (
             patch.object(rp.subprocess, "run", side_effect=[rate_limited, success]),
             patch.object(rp.time, "sleep") as mock_sleep,
@@ -1212,7 +1262,7 @@ class TestPostReview:
     def test_no_existing_pending(self, rp):
         with (
             patch("review_github._check_existing_pending", return_value=None),
-            patch("review_github._gh_api", return_value=(0, '{"id": 42}')),
+            patch("review_github._gh_api", return_value=CmdResult(0, '{"id": 42}')),
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD)
             assert result == {"id": 42}
@@ -1220,7 +1270,7 @@ class TestPostReview:
     def test_deletes_existing_pending(self, rp):
         with (
             patch("review_github._check_existing_pending", return_value=999),
-            patch("review_github._gh_api", return_value=(0, '{"id": 42}')) as mock_api,
+            patch("review_github._gh_api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD)
             assert result == {"id": 42}
@@ -1238,7 +1288,7 @@ class TestPostReview:
 
         with (
             patch("review_github._check_existing_pending", return_value=None),
-            patch("review_github._gh_api", return_value=(0, '{"id": 42}')),
+            patch("review_github._gh_api", return_value=CmdResult(0, '{"id": 42}')),
             patch.object(rp.json, "dump", side_effect=capture_dump),
         ):
             result = rp.post_review("org/repo", "1", self.PAYLOAD, submit=True)
@@ -1248,14 +1298,14 @@ class TestPostReview:
 
 class TestSubmitReview:
     def test_success(self, rp):
-        mock_result = MagicMock(returncode=0, stdout='{"ok": true}')
+        mock_result = _completed(0, '{"ok": true}')
         with patch.object(rp.subprocess, "run", return_value=mock_result) as mock_run:
             assert rp._submit_review("org/repo", "1", 42) is True
             cmd = mock_run.call_args[0][0]
             assert "repos/org/repo/pulls/1/reviews/42/events" in " ".join(cmd)
 
     def test_failure_warns(self, rp, capsys):
-        fail = MagicMock(returncode=1, stdout='{"message": "bad request"}')
+        fail = _completed(1, '{"message": "bad request"}')
         with (
             patch.object(rp.subprocess, "run", return_value=fail),
             patch.object(rp.time, "sleep"),
@@ -1271,7 +1321,7 @@ class TestFetchPrMetadata:
             "head": {"sha": "abc123", "ref": "feat/branch"},
             "base": {"ref": "main"},
         })
-        with patch("review_github._gh_api", return_value=(0, pr_json)):
+        with patch("review_github._gh_api", return_value=CmdResult(0, pr_json)):
             meta = rp._fetch_pr_metadata("org/repo", "1")
             assert meta["head_sha"] == "abc123"
             assert meta["head_ref"] == "feat/branch"
@@ -1279,7 +1329,7 @@ class TestFetchPrMetadata:
 
     def test_failure_exits(self, rp):
         with (
-            patch("review_github._gh_api", return_value=(1, "")),
+            patch("review_github._gh_api", return_value=CmdResult(1)),
             pytest.raises(SystemExit),
         ):
             rp._fetch_pr_metadata("org/repo", "1")
@@ -1287,11 +1337,11 @@ class TestFetchPrMetadata:
 
 class TestGetDiff:
     def test_success(self, rp):
-        with patch("review_github._gh_api", return_value=(0, "diff --git a/f b/f\n")):
+        with patch("review_github._gh_api", return_value=CmdResult(0, "diff --git a/f b/f\n")):
             assert rp._get_diff("org/repo", "1") == "diff --git a/f b/f\n"
 
     def test_failure_returns_empty(self, rp):
-        with patch("review_github._gh_api", return_value=(1, "")):
+        with patch("review_github._gh_api", return_value=CmdResult(1)):
             assert rp._get_diff("org/repo", "1") == ""
 
 
@@ -2193,21 +2243,21 @@ class TestCountNewCommits:
             {"sha": "bbb222"},
             {"sha": "ccc333"},
         ]
-        with patch("review_github._gh_api", return_value=(0, json.dumps(commits))):
+        with patch("review_github._gh_api", return_value=CmdResult(0, json.dumps(commits))):
             assert rp._count_new_commits("org/repo", "1", "bbb222") == 1
 
     def test_no_match_returns_total(self, rp):
         commits = [{"sha": "aaa"}, {"sha": "bbb"}]
-        with patch("review_github._gh_api", return_value=(0, json.dumps(commits))):
+        with patch("review_github._gh_api", return_value=CmdResult(0, json.dumps(commits))):
             assert rp._count_new_commits("org/repo", "1", "zzz") == 2
 
     def test_api_failure_returns_zero(self, rp):
-        with patch("review_github._gh_api", return_value=(1, "")):
+        with patch("review_github._gh_api", return_value=CmdResult(1)):
             assert rp._count_new_commits("org/repo", "1", "aaa") == 0
 
     def test_prefix_match(self, rp):
         commits = [{"sha": "aabbccdd1234"}, {"sha": "eeff5678"}]
-        with patch("review_github._gh_api", return_value=(0, json.dumps(commits))):
+        with patch("review_github._gh_api", return_value=CmdResult(0, json.dumps(commits))):
             assert rp._count_new_commits("org/repo", "1", "aabbccdd") == 1
 
 
@@ -2252,7 +2302,7 @@ class TestCollectReviewFindings:
 class TestFetchBotComments:
     def test_combines_inline_and_review_findings(self, rp):
         with (
-            patch("review_github._gh_api", return_value=(0, '{"login": "bot"}')),
+            patch("review_github._gh_api", return_value=CmdResult(0, '{"login": "bot"}')),
             patch("review_github._fetch_json_list", side_effect=[
                 [{"path": "a.go", "body": "inline", "user": {"login": "bot"}}],
                 [{"body": "- **[M1]** **`b.go:1`** — review", "user": {"login": "bot"}}],
@@ -2262,11 +2312,11 @@ class TestFetchBotComments:
             assert len(result) == 2
 
     def test_api_failure_returns_empty(self, rp):
-        with patch("review_github._gh_api", return_value=(1, "")):
+        with patch("review_github._gh_api", return_value=CmdResult(1)):
             assert rp._fetch_bot_comments("org/repo", "1") == []
 
     def test_empty_login_returns_empty(self, rp):
-        with patch("review_github._gh_api", return_value=(0, '{"login": ""}')):
+        with patch("review_github._gh_api", return_value=CmdResult(0, '{"login": ""}')):
             assert rp._fetch_bot_comments("org/repo", "1") == []
 
 
@@ -2498,7 +2548,7 @@ class TestCheckReviewAlreadyPosted:
 
 class TestFetchBotReviews:
     def test_returns_bot_reviews(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: CmdResult(0, '{"login":"bot"}'))
         monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
             {"id": 1, "user": {"login": "bot"}, "state": "COMMENTED", "body": "review text"},
             {"id": 2, "user": {"login": "human"}, "state": "COMMENTED", "body": "human review"},
@@ -2509,28 +2559,28 @@ class TestFetchBotReviews:
         assert result[0]["id"] == 1
 
     def test_ignores_pending(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: CmdResult(0, '{"login":"bot"}'))
         monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
             {"id": 42, "body": "some body text here", "state": "PENDING", "user": {"login": "bot"}},
         ])
         assert rp.fetch_bot_reviews("org/repo", "1") == []
 
     def test_ignores_dismissed(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: CmdResult(0, '{"login":"bot"}'))
         monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
             {"id": 42, "body": "some body text here", "state": "DISMISSED", "user": {"login": "bot"}},
         ])
         assert rp.fetch_bot_reviews("org/repo", "1") == []
 
     def test_ignores_other_users(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (0, '{"login":"bot"}'))
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: CmdResult(0, '{"login":"bot"}'))
         monkeypatch.setattr(rp.review_github, "_fetch_json_list", lambda *a: [
             {"id": 42, "body": "some body text here", "state": "COMMENTED", "user": {"login": "alice"}},
         ])
         assert rp.fetch_bot_reviews("org/repo", "1") == []
 
     def test_api_failure_returns_empty(self, rp, monkeypatch):
-        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: (1, ""))
+        monkeypatch.setattr(rp.review_github, "_gh_api", lambda *a, **k: CmdResult(1))
         assert rp.fetch_bot_reviews("org/repo", "1") == []
 
 

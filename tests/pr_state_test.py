@@ -1367,6 +1367,30 @@ def test_apply_fix_replaces_deferred_issue_when_supplied():
     assert state.fix.deferred_issue_url == "u2"
 
 
+def test_apply_fix_preserves_summary_url_across_quiet_rounds():
+    """A round that posts nothing must not erase the summary already on the PR."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, FixSummary(
+        threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
+        commit_sha="abc", commit_status="pushed",
+        summary_url="https://github.com/r/p/pull/1#issuecomment-1",
+        updated_at="t1",
+    ))
+    apply(state, FixSummary(
+        threads=[], commit_status="no_changes", updated_at="t2",
+    ))
+    assert state.fix.summary_url == "https://github.com/r/p/pull/1#issuecomment-1"
+    assert state.fix.summary_deferred is False
+    assert [t.id for t in state.fix.threads] == ["t1"]
+
+
+def test_apply_fix_replaces_summary_url_when_supplied():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, FixSummary(summary_url="u1"))
+    apply(state, FixSummary(summary_url="u2"))
+    assert state.fix.summary_url == "u2"
+
+
 # ── ReviewVerdict ───────────────────────────────────────────────────────────
 
 

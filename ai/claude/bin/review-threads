@@ -2149,15 +2149,65 @@ def _carried_over_rows(published: str, fresh: str) -> list[str]:
     ]
 
 
+def _newest_reviewer_activity(report: PRReport) -> str:
+    """The newest review or review comment on the PR that is not ours.
+
+    Our own is excluded because the fix pass replies to threads before it
+    publishes, and a run that counted its own replies would find the summary
+    answered every single round.  An unknown login counts as somebody else's,
+    the same way `ReportThread.my_login` reads "cannot tell" as not ours.
+
+    Issue-level comments are not read here. `find_marker_comment` already lists
+    them to locate the summary, so `MarkerComment.newest_other_at` covers them
+    off that listing — and covers the bot comments the report filters out,
+    which bury a summary as surely as a human's do.
+    """
+    mine = report.my_login.lower()
+    stamps = [
+        v.get("submitted_at", "") for v in report.verdicts
+        if not mine or (v.get("user") or "").lower() != mine
+    ]
+    stamps += [
+        c.get("createdAt", "")
+        for thread in report.threads for c in thread.comments
+        if not mine or ((c.get("author") or {}).get("login") or "").lower() != mine
+    ]
+    return max((s for s in stamps if s), default="")
+
+
+def _summary_answered_since(existing: pc.MarkerComment, activity_at: str) -> bool:
+    """Whether anything was said on the PR below the published summary.
+
+    Editing is invisible: GitHub leaves the comment where it was posted and
+    notifies nobody.  So an edit is only honest while the summary is still the
+    last word — once a reviewer has answered below it, the round's outcome
+    would land in a comment the reader has already scrolled past, and the round
+    posts a fresh summary instead.
+
+    A target with no timestamp keeps the in-place edit rather than guessing.
+    The lookup could not read when the comment was posted, and guessing "buried"
+    there would append a duplicate summary on every round for the life of the PR.
+    """
+    if not existing.comment_id or not existing.created_at:
+        return False
+    return max(existing.newest_other_at, activity_at) > existing.created_at
+
+
 def _publish_summary(
     repo: str, pr_number: int, build_body: Callable[..., str],
+    activity_at: str = "",
 ) -> str | None:
-    """Upsert the summary comment without ever shrinking what it already says.
+    """Publish the summary without ever shrinking what it already says.
 
     `build_body(carried_over=...)` renders from local state. It is called a
     second time when the published comment holds rows that render did not
     cover, because the carried rows have to reach the reader through the same
     body — the counts line and the table are one artifact, not two.
+
+    The comment is edited in place while nothing has been said below it, and
+    posted fresh once something has — see `_summary_answered_since`. Either way
+    the body carries the marker and every row the published comment held, so
+    the newest summary is always the complete one and the next round finds it.
 
     A lookup that fails outright carries nothing: `MarkerComment.body` is empty,
     so this cannot tell a comment it could not read from one that says nothing.
@@ -2174,6 +2224,12 @@ def _publish_summary(
             "for — carrying them forward rather than dropping them"
         )
         body = build_body(carried_over=carried)
+    if _summary_answered_since(existing, activity_at):
+        log.info(
+            "The published summary has been answered since it was posted — "
+            "posting a fresh one rather than editing a comment nobody will re-read"
+        )
+        return pc.post_issue_comment(repo, pr_number, body)
     return pc.post_issue_comment(
         repo, pr_number, body, marker=_SUMMARY_MARKER, existing=existing,
     )
@@ -2193,6 +2249,7 @@ def _post_fix_summary(
     review_body_comments: list[dict] | None = None,
     has_comment_items: bool = False,
     head_sha: str = "",
+    activity_at: str = "",
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     dismissed = dismissed or []
@@ -2215,7 +2272,7 @@ def _post_fix_summary(
         review_body_comments=review_body_comments,
         has_comment_items=has_comment_items,
         head_sha=head_sha,
-    ))
+    ), activity_at=activity_at)
     if url:
         log.info(f"Posted fix summary: {url}")
     elif publishing.enabled():
@@ -2389,7 +2446,7 @@ def _render_deferred_summary(
         deferred_issue_url=fix.deferred_issue_url,
         has_comment_items=fix.has_comment_items,
         head_sha=cp.sha or state.identity.head_sha,
-    ))
+    ), activity_at=_newest_reviewer_activity(report))
     if url:
         log.info(f"Posted deferred fix summary: {url}")
         fix.summary_url = url
@@ -2433,6 +2490,7 @@ def _post_or_defer_summary(
     review_body_comments: list[dict] | None = None,
     has_comment_items: bool = False,
     head_sha: str = "",
+    activity_at: str = "",
 ) -> str | None:
     """Post summary immediately or defer to state when discussion is pending.
 
@@ -2453,6 +2511,7 @@ def _post_or_defer_summary(
             review_body_comments=review_body_comments,
             has_comment_items=has_comment_items,
             head_sha=head_sha,
+            activity_at=activity_at,
         )
 
     log.info("Deferred fix summary — will render from state on --finish")
@@ -2869,6 +2928,7 @@ def _run_comment_fix(
                 review_body_comments=report.review_body_comments,
                 has_comment_items=has_items,
                 head_sha=ctx.head_sha,
+                activity_at=_newest_reviewer_activity(report),
             )
         else:
             summary_url = None
@@ -2975,6 +3035,7 @@ def _run_comment_fix(
         review_body_comments=report.review_body_comments,
         has_comment_items=has_items,
         head_sha=cp.sha or ctx.head_sha,
+        activity_at=_newest_reviewer_activity(report),
     )
 
     _persist_fix_state(pr_state.FixSummary(

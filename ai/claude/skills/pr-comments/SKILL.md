@@ -117,7 +117,7 @@ The `fix_pass` object contains:
 | `commit_sha` | Short SHA of the fix commit, or null |
 | `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, or `push_held` |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
-| `summary_url` | URL of the summary issue comment, or null |
+| `summary_url` | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |
 | `summary_deferred` | `true` when summary was deferred because `needs_human` threads exist |
 | `comment_items` | Breakdown of comment item outcomes: `{fixed, needs_human, dismissed, deferred}` |
 

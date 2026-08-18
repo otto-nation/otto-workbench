@@ -541,6 +541,30 @@ def test_find_marker_comment_spans_pages():
     assert found == _found(10, f"{MARKER}\nround one")
 
 
+def test_find_marker_comment_carries_the_timeline():
+    """The upsert has to know whether anyone spoke below the summary."""
+    listing = _pages([
+        {"id": 10, "body": f"{MARKER}\nround one", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 11, "body": "not so fast", "created_at": "2026-01-02T00:00:00Z"},
+    ])
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+    assert found.created_at == "2026-01-01T00:00:00Z"
+    assert found.newest_other_at == "2026-01-02T00:00:00Z"
+
+
+def test_find_marker_comment_does_not_read_an_older_summary_as_an_answer():
+    """A superseded summary is ours; reading it as a reply reposts forever."""
+    listing = _pages([
+        {"id": 10, "body": f"{MARKER}\nround one", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 11, "body": f"{MARKER}\nround two", "created_at": "2026-01-03T00:00:00Z"},
+    ])
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+    assert found.comment_id == 11
+    assert found.newest_other_at == ""
+
+
 def test_find_marker_comment_accepts_flat_listing():
     """A single unslurped page must still be readable."""
     listing = json.dumps([{"id": 12, "body": f"{MARKER}\nonly"}])

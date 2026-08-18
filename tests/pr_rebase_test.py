@@ -29,7 +29,7 @@ _spec.loader.exec_module(pr_rebase_cli)
 import pr_context  # noqa: E402
 import pr_state  # noqa: E402
 
-from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
+from conftest import assert_no_worktree_exit, init_worktree, make_ctx  # noqa: E402
 
 
 # ── _detect_rebase_in_progress ──────────────────────────────────────────────
@@ -2040,6 +2040,22 @@ def test_fresh_skips_checkout_when_on_correct_branch():
     assert len(checkout_calls) == 0
 
 
+def _fake_run_without_local_branch(checkout_calls):
+    """A git stub for a worktree that does not have ctx.branch locally yet.
+
+    `rev-parse --verify` is the question _checkout_target_branch asks first, and
+    a blanket success would answer "the branch is already here" — which is a
+    different path with a different checkout.
+    """
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "checkout"]:
+            checkout_calls.append(cmd)
+        if cmd[:3] == ["git", "rev-parse", "--verify"]:
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+    return fake_run
+
+
 def test_fresh_checks_out_branch_on_detached_head():
     """Detached HEAD (current_branch=None) triggers checkout -B."""
     ctx = mock.MagicMock()
@@ -2047,12 +2063,7 @@ def test_fresh_checks_out_branch_on_detached_head():
     ctx.current_branch = None
     checkout_calls = []
 
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "checkout"]:
-            checkout_calls.append(cmd)
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_fake_run_without_local_branch(checkout_calls)), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
         result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
@@ -2069,12 +2080,7 @@ def test_fresh_checks_out_branch_on_wrong_branch():
     ctx.current_branch = "other-branch"
     checkout_calls = []
 
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "checkout"]:
-            checkout_calls.append(cmd)
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_fake_run_without_local_branch(checkout_calls)), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
         result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
@@ -2140,6 +2146,123 @@ def test_fresh_checkout_failure_returns_error():
         result = pr_rebase_cli._fresh("/fake", ctx, pr_rebase_cli.RunMode.PUSH)
 
     assert result == 1
+
+
+# ── _checkout_target_branch ─────────────────────────────────────────────────
+#
+# Against a real repo rather than a subprocess stub: the bug these cover (#744)
+# was `checkout -B` resetting the branch ref, and only git itself decides where
+# a ref lands. A stub asserting on the argv would have passed throughout.
+
+_CHECKOUT_BRANCH = "feat/checkout"
+
+
+def _git(repo, *args):
+    """Run git in *repo*, failing the test on a non-zero exit."""
+    return subprocess.run(
+        ["git", *args], cwd=str(repo), capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _commit(repo, name, message):
+    """Add a one-file commit and return its sha."""
+    (Path(repo) / name).write_text(f"{name}\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _repo_on_main(tmp_path):
+    """A repo with one commit on main, checked out there."""
+    repo = init_worktree(tmp_path / "repo")
+    _git(repo, "config", "user.email", "rebase-test@example.com")
+    _git(repo, "config", "user.name", "Rebase Test")
+    _commit(repo, "base.txt", "base")
+    return repo
+
+
+def _checkout_ctx():
+    ctx = mock.MagicMock()
+    ctx.branch = _CHECKOUT_BRANCH
+    return ctx
+
+
+def test_checkout_target_branch_keeps_unpushed_commits(tmp_path):
+    """Regression (#744): a commit that was never pushed survives the checkout."""
+    repo = _repo_on_main(tmp_path)
+    _git(repo, "checkout", "-q", "-b", _CHECKOUT_BRANCH)
+    pushed = _commit(repo, "pushed.txt", "pushed work")
+    _git(repo, "update-ref", f"refs/remotes/origin/{_CHECKOUT_BRANCH}", pushed)
+    unpushed = _commit(repo, "unpushed.txt", "unpushed work")
+    _git(repo, "checkout", "-q", "main")
+
+    rc = pr_rebase_cli._checkout_target_branch(str(repo), _checkout_ctx())
+
+    assert rc == 0
+    assert _git(repo, "rev-parse", "HEAD") == unpushed
+    assert _git(repo, "rev-parse", _CHECKOUT_BRANCH) == unpushed
+    assert "unpushed work" in _git(repo, "log", "--oneline")
+
+
+def test_checkout_target_branch_fast_forwards_when_behind(tmp_path):
+    """A local ref with nothing of its own still takes the remote's newer tip."""
+    repo = _repo_on_main(tmp_path)
+    _git(repo, "checkout", "-q", "-b", _CHECKOUT_BRANCH)
+    local = _commit(repo, "one.txt", "one")
+    remote = _commit(repo, "two.txt", "two")
+    _git(repo, "update-ref", f"refs/remotes/origin/{_CHECKOUT_BRANCH}", remote)
+    _git(repo, "reset", "-q", "--hard", local)
+    _git(repo, "checkout", "-q", "main")
+
+    rc = pr_rebase_cli._checkout_target_branch(str(repo), _checkout_ctx())
+
+    assert rc == 0
+    assert _git(repo, "rev-parse", "HEAD") == remote
+
+
+def test_checkout_target_branch_refuses_when_diverged(tmp_path):
+    """Neither side can be dropped, so the run stops instead of picking one."""
+    repo = _repo_on_main(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", _CHECKOUT_BRANCH)
+    local = _commit(repo, "local.txt", "local only")
+    _git(repo, "checkout", "-q", "-b", "remote-side", base)
+    remote = _commit(repo, "remote.txt", "remote only")
+    _git(repo, "update-ref", f"refs/remotes/origin/{_CHECKOUT_BRANCH}", remote)
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "branch", "-qD", "remote-side")
+
+    rc = pr_rebase_cli._checkout_target_branch(str(repo), _checkout_ctx())
+
+    assert rc == 1
+    assert _git(repo, "rev-parse", _CHECKOUT_BRANCH) == local
+    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+
+
+def test_checkout_target_branch_creates_from_origin_when_absent(tmp_path):
+    """No local ref means nothing to preserve — -B is how the branch arrives."""
+    repo = _repo_on_main(tmp_path)
+    remote = _commit(repo, "remote.txt", "remote work")
+    _git(repo, "update-ref", f"refs/remotes/origin/{_CHECKOUT_BRANCH}", remote)
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")
+
+    rc = pr_rebase_cli._checkout_target_branch(str(repo), _checkout_ctx())
+
+    assert rc == 0
+    assert _git(repo, "rev-parse", "HEAD") == remote
+
+
+def test_checkout_target_branch_uses_local_when_remote_ref_is_gone(tmp_path):
+    """--prune drops origin/<branch>; every commit on it is then unpushed."""
+    repo = _repo_on_main(tmp_path)
+    _git(repo, "checkout", "-q", "-b", _CHECKOUT_BRANCH)
+    tip = _commit(repo, "only.txt", "only local")
+    _git(repo, "checkout", "-q", "main")
+
+    rc = pr_rebase_cli._checkout_target_branch(str(repo), _checkout_ctx())
+
+    assert rc == 0
+    assert _git(repo, "rev-parse", "HEAD") == tip
 
 
 # ── already-landed preflight ────────────────────────────────────────────────

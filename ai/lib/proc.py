@@ -34,7 +34,7 @@ _SERVER_ERROR_RE = re.compile(r"\bHTTP 5\d\d\b")
 # How much of a stream to quote when it is the only account of a failure there
 # is. stdout is a payload rather than a sentence, so it needs a bound; stderr is
 # quoted whole because a command that writes an essay there is the exception.
-_DETAIL_LIMIT = 200
+DETAIL_LIMIT = 200
 
 
 @dataclass(frozen=True)
@@ -104,7 +104,7 @@ def failure_message(action: str, r: CmdResult | subprocess.CompletedProcess) -> 
         # that arrived on stdout with nothing on stderr — the shape of #740
         # itself. Quote stdout in that case rather than annotate a retry and
         # then say nothing about it.
-        detail = r.detail or " ".join(r.stdout.split())[:_DETAIL_LIMIT]
+        detail = r.detail or " ".join(r.stdout.split())[:DETAIL_LIMIT]
         return f"{action} — server error, retry later: {detail}"
     if not r.detail:
         return action

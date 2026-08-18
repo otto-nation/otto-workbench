@@ -211,7 +211,7 @@ def _api_error_message(r: CmdResult) -> str:
     except (json.JSONDecodeError, AttributeError):
         message, errors = "", []
     if not message:
-        return (r.detail or r.combined_output.strip())[:200]
+        return (r.detail or r.combined_output.strip())[:proc.DETAIL_LIMIT]
     if errors:
         message += " — " + "; ".join(str(e) for e in errors)
     return message
@@ -228,7 +228,7 @@ def _handle_api_attempt(attempt: int, r: CmdResult) -> dict | None:
 
     said = r.combined_output
     if _is_line_resolution_error(said):
-        raise LineResolutionError(said[:200])
+        raise LineResolutionError(said[:proc.DETAIL_LIMIT])
 
     # A 5xx is the far end's, and waiting is the whole remedy — the same
     # treatment a secondary rate limit gets, and the case that used to fall

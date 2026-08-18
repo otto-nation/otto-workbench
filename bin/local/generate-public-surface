@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# Generate the public surface snapshot for each released package.
+#
+# The snapshot is the machine-readable form of the semver contract: removing an
+# entry from it is a breaking change unless the commit says otherwise. See
+# docs/superpowers/specs/2026-08-18-breaking-change-declaration-design.md.
+#
+# Writes:
+#   public-surface.json               — otto-workbench (root package)
+#   ai/claude/public-surface.json     — otto-ai-tools
+#
+# Placement is load-bearing: the root release-please config sets
+# exclude-paths: ["ai/claude"], so each snapshot's diff is attributed to the
+# package that owns it with no routing logic here.
+#
+# Usage: bin/local/generate-public-surface [--check] [--quiet] [--out-dir DIR]
+# Exit code: 0 on success; 1 if --check finds a committed snapshot out of date.
+
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+REPO_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+# shellcheck source=../../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--check] [--quiet] [--out-dir DIR]
+
+Generate public-surface.json for each released package.
+
+Options:
+  --check        Do not write; exit 1 if a committed snapshot is stale
+  --quiet        Suppress output on success
+  --out-dir DIR  Write beneath DIR instead of the repo root (used by tests)
+  -h, --help     Show this help
+EOF
+}
+
+CHECK=false
+QUIET=false
+OUT_DIR="$REPO_ROOT"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --check) CHECK=true; shift ;;
+    --quiet) QUIET=true; shift ;;
+    --out-dir) OUT_DIR="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) err "Unknown argument: $1"; usage; exit 1 ;;
+  esac
+done
+
+# _registries_for PACKAGE — prints registry paths whose tools install to
+# ~/.local/bin for the given package. validation:bindir marks registries whose
+# tools are scripts this repo ships; validation:none marks third-party tools
+# (brew, mise, rtk), which are a dependency concern, not our contract.
+# meta.scope:workbench marks repo-internal scripts that are never installed.
+_registries_for() {
+  local package="$1" f rel validation scope owner
+  for f in "$REPO_ROOT"/*/registry.yml "$REPO_ROOT"/*/*/registry.yml; do
+    [[ -f "$f" ]] || continue
+    rel="${f#"$REPO_ROOT"/}"
+    validation=$(yq '.meta.validation // ""' "$f")
+    scope=$(yq '.meta.scope // ""' "$f")
+    [[ "$validation" == "bindir" ]] || continue
+    [[ "$scope" != "workbench" ]] || continue
+    owner="otto-workbench"
+    [[ "$rel" == ai/claude/* ]] && owner="otto-ai-tools"
+    [[ "$owner" == "$package" ]] || continue
+    echo "$f"
+  done
+}
+
+# _commands PACKAGE — prints "command:<name>" for each tool in that package.
+_commands() {
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    yq -r '.tools[]?.name' "$f" | sed 's/^/command:/'
+  done < <(_registries_for "$1")
+}
+
+# _config_entries — prints "config:<dotted.key>" and "config:<key>=<enum>".
+# Reads the generated schema rather than re-deriving from WorkbenchConfig:
+# config.schema.json already owns that derivation.
+_config_entries() {
+  jq -r '
+    def props($prefix):
+      ((.properties // {}) | to_entries[] |
+         ($prefix + .key) as $p |
+         $p, (.value | props($p + "."))),
+      (((.oneOf // []) + (.anyOf // []))[] | props($prefix));
+    props("")
+  ' "$REPO_ROOT/config.schema.json" | sed 's/^/config:/'
+
+  jq -r '
+    def enums($prefix):
+      ((.properties // {}) | to_entries[] |
+         ($prefix + .key) as $p |
+         (.value | enums($p + "."))),
+      (((.oneOf // []) + (.anyOf // []))[] | enums($prefix)),
+      ((.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)");
+    enums("")
+  ' "$REPO_ROOT/config.schema.json" | grep -v '^=' | sed 's/^/config:/'
+}
+
+# _component_entries — prints "component:<name>" from install.components.
+_component_entries() {
+  grep -vE '^\s*(#|$)' "$REPO_ROOT/install.components" | tr -d ' ' | sed 's/^/component:/'
+}
+
+# _claude_artifacts — prints agent, skill, and settings entries for otto-ai-tools.
+_claude_artifacts() {
+  local f d
+  for f in "$REPO_ROOT"/ai/claude/agents/*.md; do
+    [[ -f "$f" ]] || continue
+    printf 'agent:%s\n' "$(basename "$f" .md)"
+  done
+  for d in "$REPO_ROOT"/ai/claude/skills/*/; do
+    [[ -d "$d" ]] || continue
+    printf 'skill:%s\n' "$(basename "$d")"
+  done
+  jq -r 'keys[]' "$REPO_ROOT/ai/claude/settings.json" | sed 's/^/setting:/'
+}
+
+# _write_snapshot PACKAGE RELATIVE_PATH ENTRIES...
+_write_snapshot() {
+  local package="$1" relpath="$2"
+  shift 2
+  local target="$OUT_DIR/$relpath"
+  local rendered
+  rendered=$(printf '%s\n' "$@" | sort -u | jq -R . | jq -s \
+    --arg pkg "$package" '{package: $pkg, entries: .}')
+
+  if $CHECK; then
+    if [[ ! -f "$target" ]] || ! diff -q <(echo "$rendered") "$target" >/dev/null; then
+      err "$relpath is out of date — run bin/local/generate-public-surface"
+      return 1
+    fi
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$target")"
+  echo "$rendered" > "$target"
+}
+
+_wb_entries=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && _wb_entries+=("$line")
+done < <(_commands "otto-workbench"; _config_entries; _component_entries)
+
+_ai_entries=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && _ai_entries+=("$line")
+done < <(_commands "otto-ai-tools"; _claude_artifacts)
+
+_failed=false
+_write_snapshot "otto-workbench" "public-surface.json" "${_wb_entries[@]}" || _failed=true
+_write_snapshot "otto-ai-tools" "ai/claude/public-surface.json" "${_ai_entries[@]}" || _failed=true
+
+if $_failed; then
+  exit 1
+fi
+
+$QUIET || success "Generated 2 public surface snapshots"

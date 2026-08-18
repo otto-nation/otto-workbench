@@ -83,3 +83,13 @@ tools:
     permission: false
     visibility: brief
     description: "Generates config.schema.json and the docs key reference from WorkbenchConfig"
+
+  - name: generate-public-surface
+    permission: false
+    visibility: brief
+    description: "Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts"
+
+  - name: validate-public-surface
+    permission: false
+    visibility: brief
+    description: "Validates that the committed public surface snapshots match their source registries"

@@ -95,11 +95,14 @@ _run_step "Validating conventions"     "$REPO_ROOT/bin/local/validate-all" --qui
 _step "Regenerating tool context"
 "$REPO_ROOT/bin/local/generate-tool-context" --quiet
 "$REPO_ROOT/git/bin/local/generate-git-rules" --quiet
+"$REPO_ROOT/bin/local/generate-public-surface" --quiet
 _tool_gen_files=(
   docs/tools.md
   docs/ai-automation.md
   docs/components.md
   README.md
+  public-surface.json
+  ai/claude/public-surface.json
 )
 _stale_files=()
 for _f in "${_tool_gen_files[@]}"; do

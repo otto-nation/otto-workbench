@@ -67,6 +67,8 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
+| `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
+| `validate-public-surface` | Validates that the committed public surface snapshots match their source registries |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |
 | `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |

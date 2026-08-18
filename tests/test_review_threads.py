@@ -4542,7 +4542,7 @@ class TestHumanReason:
         ]
 
     def test_triage_stamps_the_token_not_the_prose(self, rt):
-        """`reason` stays machine-readable — --track and the JSON report read it."""
+        """`reason` stays machine-readable — the state file and JSON report carry it."""
         entries = [
             CommentItem(id="t1", state=ThreadState.CONTESTED),
             CommentItem(id="t2", classification="conflicting"),
@@ -4556,3 +4556,19 @@ class TestHumanReason:
         assert [e.reason for e in result.needs_human] == [
             "contested", "conflicting", "question", "complex", "needs_discussion",
         ]
+
+    def test_a_token_read_back_from_state_renders_as_prose(self, rt):
+        """The round trip the token stability exists for: state file → Action cell.
+
+        `--finish` rebuilds the needs-human bucket out of persisted
+        `ThreadOutcome`s rather than the triage entries, so the prose mapping has
+        to hold for that shape too.
+        """
+        cp = rt.CommitPushResult(None, "no_changes", "")
+        outcome = ThreadOutcome(
+            id="t1", summary="premise disputed", file="a.py", line=1,
+            action=ThreadAction.NEEDS_HUMAN, reason=rt.HumanReason.CONTESTED.value,
+        )
+        body = rt._build_summary_body([], [outcome], [], cp, "owner/repo", 1, {})
+        rows = rt._summary_table_rows(body)
+        assert rt._row_cells(rows[0])[-1] == rt.HumanReason.CONTESTED.prose

@@ -1941,12 +1941,20 @@ _SUMMARY_TABLE_DIVIDER = "|" + "|".join("-" * 8 for _ in _SUMMARY_TABLE_COLUMNS)
 class HumanReason(Enum):
     """Why a thread was routed to a human, in both spellings it is written in.
 
-    `value` is the machine-readable token stamped on the entry's `reason`: it
-    is persisted in the state file, and read back by `--track`, the deferral
-    replies and the JSON report, so the values must stay stable. `prose` is
-    what the summary table's Action cell shows, alongside "Already addressed"
-    and "Dismissed (invalid)". One member owns both, so a token cannot reach
-    the published comment the way `needs_discussion` once did.
+    `value` is the machine-readable token stamped on the entry's `reason`.
+    `to_outcome` persists it as `ThreadOutcome.reason`, and a later `--finish`
+    reads it back out of the state file to render the Action cell through
+    `prose_for` — that round trip is why the values must stay stable. They also
+    leave the process verbatim, in the stdout JSON report and the
+    `publishing_hold` trail entry, but neither of those interprets them.
+
+    `--track` and the deferral replies read neither: both work the deferred
+    bucket, whose `reason` is free text ("agent could not auto-fix") and never
+    a member of this enum.
+
+    `prose` is what the summary table's Action cell shows, alongside "Already
+    addressed" and "Dismissed (invalid)". One member owns both, so a token
+    cannot reach the published comment the way `needs_discussion` once did.
     """
 
     CONTESTED = ("contested", "Contested — needs discussion")

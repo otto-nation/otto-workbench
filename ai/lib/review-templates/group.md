@@ -26,6 +26,8 @@ Use finding IDs starting at [M1], [S1], [N1], [I1] — they will be renumbered d
 Finding format: `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap the file path in backticks inside the bold markers.
 Must-fix and should-fix findings must include an evidence block — a blockquoted, fenced code snippet from the referenced file proving the claim. Nit and idiom findings do not need evidence.
 Skip or downgrade to Nit any findings in generated files (e.g. `*_pb2.py`, `*.pb.go`, `*.pb.gw.go`, `*_pb2_grpc.py`). Generated code is not author-controlled — only flag it if a proto source change is needed.
+A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.
+A finding already annotated `*(declined — reason)*` was adjudicated — carry it forward with the annotation intact rather than re-raising it as open.
 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write your findings file FIRST based on the diff and file contents — do not investigate before writing. Use any remaining turns to verify specific concerns and update the file.

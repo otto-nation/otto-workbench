@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import log
@@ -203,6 +203,9 @@ class FixPassResult:
     fixed: list[Finding]
     skipped: list[Finding]
     unchanged: list[Finding]
+    # Kept apart from `skipped`: a skip is work the pass could not do and the
+    # next run should retry, a decline is work nobody is going to do.
+    declined: list[Finding] = field(default_factory=list)
 
     @property
     def fixed_count(self) -> int:
@@ -230,7 +233,9 @@ def _reconcile_checkboxes(review_file: str, changed: set[str]) -> None:
     findings = parse_findings(text)
     updated = False
     for f in findings:
-        if f.checked or not f.path:
+        # A declined finding is never checked off: nobody claimed to fix it,
+        # and an incidental edit to the same file is not a fix for it.
+        if f.checked or f.declined or not f.path:
             continue
         old = f"- [ ] **[{f.id}]**"
         new = f"- [x] **[{f.id}]**"
@@ -250,20 +255,25 @@ def _diff_findings(before: list[Finding], after: list[Finding]) -> FixPassResult
     fixed: list[Finding] = []
     skipped: list[Finding] = []
     unchanged: list[Finding] = []
+    declined: list[Finding] = []
 
     for fid, bf in before_by_id.items():
         af = after_by_id.get(fid)
         if af is None:
             unchanged.append(bf)
             continue
-        if not bf.checked and af.checked:
+        if af.declined:
+            declined.append(af)
+        elif not bf.checked and af.checked:
             fixed.append(af)
         elif not bf.checked and not af.checked:
             skipped.append(af)
         else:
             unchanged.append(af)
 
-    return FixPassResult(fixed=fixed, skipped=skipped, unchanged=unchanged)
+    return FixPassResult(
+        fixed=fixed, skipped=skipped, unchanged=unchanged, declined=declined,
+    )
 
 
 def _format_fix_summary(result: FixPassResult) -> str:
@@ -278,6 +288,11 @@ def _format_fix_summary(result: FixPassResult) -> str:
         lines.append("Skipped:")
         for f in result.skipped:
             reason = f.skip_reason if f.skip_reason else "no auto-fix"
+            lines.append(f"  - [{f.id}] {reason}")
+    if result.declined:
+        lines.append("Declined:")
+        for f in result.declined:
+            reason = f.decline_reason if f.decline_reason else "adjudicated, not a defect"
             lines.append(f"  - [{f.id}] {reason}")
     return "\n".join(lines)
 
@@ -303,10 +318,14 @@ def run_fix_pass(job: ReviewJob):
 
     before_text = Path(job.review_file).read_text()
     before_findings = parse_findings(before_text)
-    before_unchecked = sum(1 for f in before_findings if not f.checked)
+    # A declined finding is not work: it was considered and rejected, so it is
+    # out of the work set and out of the turn budget it would otherwise buy.
+    before_unchecked = sum(
+        1 for f in before_findings if not f.checked and not f.declined
+    )
 
     if before_unchecked == 0:
-        log.info("All findings already checked — skipping fix pass")
+        log.info("No findings left to fix — skipping fix pass")
         return
 
     max_turns = _fix_turn_budget(before_unchecked)

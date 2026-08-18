@@ -220,15 +220,66 @@ class TestExtractSkipReasons:
         assert findings[0].skip_reason == ""
 
 
+class TestParseDeclinedFindings:
+    """`*(declined — reason)*` is where an adjudicated verdict survives.
+
+    The `## Prior findings` ledger is stripped before the review file is
+    finished, so a decline recorded only there would reach the next fix pass
+    looking like an ordinary open finding.
+    """
+
+    def test_reads_the_reason_off_the_line(self):
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `a.go:1` — *(declined — documented `ceiling:` tradeoff)* "
+            "— Global lock serialises writes\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is True
+        assert findings[0].decline_reason == "documented `ceiling:` tradeoff"
+
+    def test_a_decline_without_a_reason_still_registers(self):
+        text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(declined)* — Body\n"
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is True
+        assert findings[0].decline_reason == ""
+
+    def test_a_skip_is_not_a_decline(self):
+        """A skip is work deferred; a decline is work rejected."""
+        text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(skipped — needs design)* — Body\n"
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is False
+
+    def test_a_file_without_declines_parses_unchanged(self):
+        """Review files predating `Declined` must keep parsing."""
+        text = (
+            "## Must fix\n"
+            "- [x] **[M1]** `a.go:1` — Fixed\n"
+            "- [ ] **[M2]** `b.go:2` — Still open\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert [f.declined for f in findings] == [False, False]
+        assert [f.decline_reason for f in findings] == ["", ""]
+
+
 class TestDiffFindings:
-    def _finding(self, fid, checked=False, skip_reason=""):
+    def _finding(self, fid, checked=False, skip_reason="", declined=False):
         sev = fid[0]
         seq = int(fid[1:])
         return Finding(
             id=fid, severity=sev, seq=seq, path="file.go",
             line=1, end_line=None, body="body",
-            checked=checked, skip_reason=skip_reason,
+            checked=checked, skip_reason=skip_reason, declined=declined,
         )
+
+    def test_declined_is_bucketed_apart_from_skipped(self):
+        """A skip gets retried next pass; a decline must not be."""
+        before = [self._finding("M1", checked=False)]
+        after = [self._finding("M1", checked=False, declined=True)]
+        result = review_fix._diff_findings(before, after)
+        assert [f.id for f in result.declined] == ["M1"]
+        assert result.skipped == []
+        assert result.fixed_count == 0
 
     def test_finding_fixed(self):
         before = [self._finding("M1", checked=False)]
@@ -313,6 +364,26 @@ class TestFormatFixSummary:
         )
         summary = review_fix._format_fix_summary(result)
         assert "no auto-fix" in summary
+
+    def test_declined_renders_under_its_own_heading(self):
+        declined = self._finding("M2", body="body")
+        declined.declined = True
+        declined.decline_reason = "documented `ceiling:` tradeoff"
+        result = review_fix.FixPassResult(
+            fixed=[], skipped=[], unchanged=[], declined=[declined],
+        )
+        summary = review_fix._format_fix_summary(result)
+        assert "Declined:" in summary
+        assert "[M2] documented `ceiling:` tradeoff" in summary
+        assert "Skipped:" not in summary
+
+    def test_declined_without_a_reason_uses_default(self):
+        declined = self._finding("N1", body="body")
+        declined.declined = True
+        result = review_fix.FixPassResult(
+            fixed=[], skipped=[], unchanged=[], declined=[declined],
+        )
+        assert "adjudicated, not a defect" in review_fix._format_fix_summary(result)
 
 
 class TestCommitFixesWithSummary:
@@ -556,6 +627,16 @@ class TestReconcileCheckboxes:
         review.write_text(original)
         review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
         assert review.read_text() == original
+
+    def test_a_declined_finding_is_never_checked_off(self, tmp_path):
+        """An incidental edit to the same file is not a fix for a decline."""
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** `src/auth.go:10` — *(declined — documented tradeoff)* — Lock\n"
+        )
+        review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
+        assert "- [ ] **[M1]**" in review.read_text()
 
     def test_checks_findings_on_extensionless_scripts(self, tmp_path):
         """A finding on a bin script must reconcile, or it reports as skipped."""
@@ -852,3 +933,55 @@ class TestRunFixPassOnADirtyWorktree:
         assert "- [ ] **[M1]**" in review
         assert "- [x] **[M2]**" in review
         mock_push.assert_called_once()
+
+
+class TestRunFixPassLeavesDeclinedFindingsAlone:
+    """`--fix` must not act on a finding a review already adjudicated — #782."""
+
+    def _make_job(self, git_wt, tmp_path, review_content):
+        review_file = tmp_path / "review.md"
+        review_file.write_text(review_content)
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(git_wt)
+        job.model = None
+        job.effort = Effort.MEDIUM
+        return job
+
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_review_of_only_declines_never_runs_the_agent(
+        self, mock_prompt, mock_invoke, git_wt, tmp_path,
+    ):
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Must fix\n"
+            "- [ ] **[M1]** `src.py:1` — *(declined — documented tradeoff)* — Lock\n",
+        )
+        review_fix.run_fix_pass(job)
+        mock_invoke.assert_not_called()
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_decline_survives_a_pass_that_touches_its_file(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Must fix\n"
+            "- [ ] **[M1]** `src.py:1` — *(declined — documented tradeoff)* — Lock\n"
+            "- [ ] **[M2]** `helper.py:1` — Missing helper\n",
+        )
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "src.py").write_text("agent touched this for M2's sake\n")
+            (git_wt / "helper.py").write_text("def helper(): pass\n")
+
+        mock_invoke.side_effect = agent_run
+        review_fix.run_fix_pass(job)
+
+        review = Path(job.review_file).read_text()
+        assert "- [ ] **[M1]**" in review
+        assert "*(declined — documented tradeoff)*" in review
+        assert "- [x] **[M2]**" in review

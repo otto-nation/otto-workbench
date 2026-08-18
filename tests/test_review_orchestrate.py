@@ -515,6 +515,25 @@ class TestPriorDisposition:
         assert ro.PriorDisposition.parse("Fixed, but only on the happy path") is None
         assert ro.PriorDisposition.parse("Fixed in a follow-up branch") is None
 
+    def test_parses_a_declined_verdict(self, ro):
+        assert ro.PriorDisposition.parse("Declined") is ro.PriorDisposition.DECLINED
+        assert (
+            ro.PriorDisposition.parse("Declined — documented `ceiling:` tradeoff")
+            is ro.PriorDisposition.DECLINED
+        )
+
+    def test_the_older_two_verdicts_keep_their_spelling(self, ro):
+        """A review file written before Declined existed still has to parse."""
+        assert ro.PriorDisposition.FIXED.value == "Fixed"
+        assert ro.PriorDisposition.STILL_OPEN.value == "Still open"
+
+    def test_declined_outranks_the_verdicts_it_must_survive(self, ro):
+        assert (
+            ro.PriorDisposition.DECLINED.precedence
+            > ro.PriorDisposition.STILL_OPEN.precedence
+            > ro.PriorDisposition.FIXED.precedence
+        )
+
 
 class TestUnaccountedPriorFindings:
     def test_empty_prior(self, ro):
@@ -994,6 +1013,31 @@ class TestMergeReviews:
         result = ro.merge_reviews([str(g1), str(g2)])
         assert "**[M3]** `a.go` — Still open" in result
         assert "Fixed" not in result
+
+    def _ledger_pair(self, ro, tmp_path, first: str, second: str) -> str:
+        """Two groups dispositioning the same prior finding, merged."""
+        paths = []
+        for name, verdict in (("g1", first), ("g2", second)):
+            path = tmp_path / f"{name}.md"
+            path.write_text(
+                "## File Triage\n- `a.go` — reviewed\n"
+                f"## {ro.SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — {verdict}\n"
+            )
+            paths.append(str(path))
+        return ro.merge_reviews(paths)
+
+    def test_merge_does_not_reopen_a_declined_finding(self, ro, tmp_path):
+        """Still-open used to overwrite whatever was kept, declined included."""
+        result = self._ledger_pair(ro, tmp_path, "Declined", "Still open")
+        assert "**[M3]** `a.go` — Declined" in result
+        assert "Still open" not in result
+
+    def test_merge_lets_a_decline_settle_a_finding_another_group_still_sees(
+        self, ro, tmp_path,
+    ):
+        result = self._ledger_pair(ro, tmp_path, "Still open", "Declined")
+        assert "**[M3]** `a.go` — Declined" in result
+        assert "Still open" not in result
 
     def test_merge_omits_ledger_when_no_group_has_one(self, ro, tmp_path):
         g1 = tmp_path / "g1.md"

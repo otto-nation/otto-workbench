@@ -27,7 +27,8 @@ _spec = importlib.util.spec_from_loader(
 otto_log = importlib.util.module_from_spec(_spec)
 # Registered before execution: @dataclass resolves a string annotation through
 # sys.modules[cls.__module__], which is how `from __future__ import annotations`
-# leaves them, and an unregistered module makes that lookup return None.
+# leaves them. Without this line that lookup misses and the class body raises
+# AttributeError inside dataclasses._is_type, so the whole module fails to load.
 sys.modules["otto_log"] = otto_log
 _spec.loader.exec_module(otto_log)
 

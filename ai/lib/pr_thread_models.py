@@ -44,6 +44,11 @@ class CommentItem:
     # reviewer has to point at code, so triage cites the location it read.
     evidence_file: str = ""
     evidence_line: int = 0
+    # The commit that fixed this entry, when it is known to be an older one than
+    # the pass now running. Set when an entry is rebuilt from a ThreadOutcome to
+    # drain a deferred reply queue; empty for an entry the current pass fixed,
+    # which the pass's own SHA covers.
+    commit_sha: str = ""
 
     def __post_init__(self) -> None:
         self.line = int(self.line or 0)
@@ -65,6 +70,7 @@ class CommentItem:
             summary=self.summary,
             action=action,
             reason=reason or self.reason or self.reasoning,
+            commit_sha=self.commit_sha,
         )
 
 

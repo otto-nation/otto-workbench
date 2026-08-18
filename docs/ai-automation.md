@@ -741,6 +741,28 @@ missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both.
 
+### The history preflight
+
+The same hold can be triggered without any reviewer saying anything, by three
+cheap checks the fix pass runs before it fixes:
+
+| Signal | What it reads | Holds? |
+|---|---|---|
+| `rebase_skew` | author vs committer date on the branch's first commit, ≥ 7 days apart | no |
+| `readds_removed_symbol` | a definition in `git diff origin/<default>...HEAD` that the default branch no longer contains but once did | yes |
+| `superseding_pr` | a merged PR mentioning that symbol, via `gh api search/issues` | yes |
+
+Each finding is printed with its kind, so the output says which check fired.
+Only the last two hold: a branch replayed onto a base that has moved is what
+makes supersession visible, but on its own it describes every long-lived branch,
+and holding on it would withhold every push routinely. A holding signal places
+the same hold a contested thread does, and reaches the same acts — the push, the
+replies, the resolutions, and the summary, but not the local commit.
+
+It is a preflight, not an investigation — the symbol scan stops at the first ten
+definitions and only the first two flagged symbols are searched for on GitHub, so
+a clean branch costs two local git commands and no network call at all.
+
 ### The summary comment is the record, not the state file
 
 The `Review Comments Addressed` comment is what a reviewer reads to confirm

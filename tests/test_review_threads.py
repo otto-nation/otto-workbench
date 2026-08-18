@@ -16,7 +16,9 @@ if str(LIB_DIR) not in sys.path:
 from conftest import assert_no_worktree_exit, make_ctx, write_thrash_log
 import pr_state
 from pr_comments import ThreadState
-from pr_state import FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome
+from pr_state import (
+    CommitStatus, FixSummary, PRIdentity, PRState, ThreadAction, ThreadOutcome,
+)
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
     TriageStats, triage_result_from_dict,
@@ -109,6 +111,14 @@ class TestExtractJson:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+# Stand-in SHAs for the attribution tests. Per-round attribution is only
+# testable when each round has a distinguishable one, and an assertion reads as
+# a claim about the round rather than about seven digits.
+_ROUND_1_SHA = "1111111"
+_ROUND_2_SHA = "2222222"
+_PASS_SHA = "9999999"
+
 
 def _make_comments(*entries):
     """Create comment list from (login, body) tuples."""
@@ -739,10 +749,29 @@ class TestRecoverAgentCommit:
     """Three distinct branches: no change, already pushed, push attempt."""
 
     def test_no_change_when_sha_unchanged(self, rt):
-        """head_after == head_before → no_changes, no push attempted."""
-        with patch.object(rt, "_get_head_sha", return_value="abc1234"):
+        """head_after == head_before, clean tree → no_changes, no push."""
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
+             patch.object(rt.review_common, "has_uncommitted_changes",
+                          return_value=False):
             result = rt._recover_agent_commit(Path("/fake"), "abc1234")
         assert result.status == "no_changes"
+        assert result.sha is None
+
+    def test_a_known_failure_is_never_downgraded(self, rt):
+        """#734: recovery adds information, it does not overwrite it."""
+        prior = rt.CommitPushResult(None, "commit_failed", "hook rejected")
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234", prior=prior)
+        assert result.status == "commit_failed"
+        assert result.error == "hook rejected"
+
+    def test_a_dirty_tree_is_a_refused_commit_not_an_empty_one(self, rt):
+        """Nothing committed with changes still there means something said no."""
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
+             patch.object(rt.review_common, "has_uncommitted_changes",
+                          return_value=True):
+            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
+        assert result.status == "commit_failed"
         assert result.sha is None
 
     def test_already_pushed_skips_push(self, rt):
@@ -798,16 +827,27 @@ class TestFixedStatusText:
         assert "abc1234" in text
         assert "push failed" not in text
 
-    def test_push_failed_falls_through_to_pending(self, rt):
+    def test_push_failed_says_the_commit_exists(self, rt):
+        """"Fix pending" would deny a commit that is sitting in the worktree."""
         cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
         text = rt._fixed_status_text(cp, "owner/repo")
-        assert text == "Fix pending"
-        assert "push failed" not in text
+        assert "committed locally" in text
+        assert "push failed" in text
+        assert "abc1234" not in text
 
-    def test_no_changes(self, rt):
+    def test_push_held_says_why_it_is_waiting(self, rt):
+        cp = rt.CommitPushResult("abc1234", "push_held", "")
+        text = rt._fixed_status_text(cp, "owner/repo")
+        assert "committed locally" in text
+        assert "push held" in text
+        assert "abc1234" not in text
+
+    def test_no_changes_claims_nothing_about_why(self, rt):
+        """"Fixed" and "nothing committed" cannot both be true — #734."""
         cp = rt.CommitPushResult(None, "no_changes", "")
         text = rt._fixed_status_text(cp, "owner/repo")
-        assert "no commit needed" in text
+        assert text == rt._UNATTRIBUTED_STATUS_TEXT
+        assert "no commit needed" not in text
 
     def test_commit_failed(self, rt):
         cp = rt.CommitPushResult(None, "commit_failed", "hook error")
@@ -835,12 +875,13 @@ class TestBuildSummaryBody:
         assert "abc1234" in body
         assert "push failed" not in body
 
-    def test_no_changes_shows_no_commit_needed(self, rt):
+    def test_no_changes_shows_an_unattributed_fix(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
         body = rt._build_summary_body(
             [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
-        assert "no commit needed" in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert "no commit needed" not in body
 
     def test_commit_failed_shows_precommit_hint(self, rt):
         cp = rt.CommitPushResult(None, "commit_failed", "hook error")
@@ -849,13 +890,18 @@ class TestBuildSummaryBody:
         )
         assert "commit failed" in body
 
-    def test_push_failed_shows_pending(self, rt):
+    def test_push_failed_names_the_local_commit(self, rt):
+        """The row says the work is committed but unpublished, and links nothing.
+
+        A SHA the remote does not have would 404 for whoever clicks it, so the
+        cell states the situation rather than citing it.
+        """
         cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
         body = rt._build_summary_body(
             [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
         )
-        assert "Fix pending" in body
-        assert "push failed" not in body
+        assert "committed locally (push failed)" in body
+        assert "/commit/abc1234" not in body
 
     def test_needs_human_rows(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
@@ -1311,12 +1357,12 @@ class TestSummaryUsesPerThreadCommit:
         assert "deadbee" in body
         assert "no commit needed" not in body
 
-    def test_row_without_a_sha_still_says_no_commit_needed(self, rt):
+    def test_row_without_a_sha_claims_no_commit(self, rt):
         body = self._post(rt, ThreadOutcome(
             id="t1", summary="fix regex", file="p.py", line=10,
             action=ThreadAction.FIXED,
         ))
-        assert "no commit needed" in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT in body
 
     def test_each_round_keeps_its_own_attribution(self, rt):
         """The #2670 failure: one pass's envelope SHA relabelled every round."""
@@ -1354,6 +1400,144 @@ class TestSummaryUsesPerThreadCommit:
             commit_sha="def5678", commit_status="pushed",
         )
         assert "def5678" in body
+
+
+class TestFailedCommitIsNotReportedAsNoCommit:
+    """#734: a hook-rejected commit published as "no commit needed".
+
+    Two independent defects, one visible claim: recovery overwrote the known
+    failure on its way out of the fix pass, and the renderer then read the
+    status cell straight off a snapshot it never checked against the worktree.
+    """
+
+    @staticmethod
+    def _item(tid, verification="valid"):
+        return CommentItem(
+            id=tid, file="f.go", line=10, reviewer="kgn", summary=f"{tid} summary",
+            classification="actionable_suggestion", verification=verification,
+            complexity="low", state=ThreadState.NEW,
+        )
+
+    def _fix_pass(self, rt, tmp_path):
+        """Drive a fix pass whose commit is rejected and whose HEAD never moves."""
+        threads = [self._item("t1"), self._item("t2")]
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[
+                ReportThread(id=t.id, file=t.file, line=t.line,
+                             comments=[{"databaseId": 100 + n}])
+                for n, t in enumerate(threads)
+            ],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+
+        pushes = []
+        commits = []
+
+        def mock_run(cmd, **kwargs):
+            if "push" in cmd:
+                pushes.append(cmd)
+            if "commit" in cmd:
+                commits.append(cmd)
+                return _make_completed(1, stderr="pre-commit hook failed\n")
+            return _make_completed(0, stdout="aaa1111\n")
+
+        batch = rt.FixBatchResult(
+            tracking=TrackingResult(fixed=threads),
+            unproductive=False, max_turns=10, max_budget=1.0,
+        )
+        with patch.object(rt, "_run_fix_batch", return_value=batch), \
+             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt, "_persist_fix_state") as persist, \
+             patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
+             patch.object(rt.subprocess, "run", side_effect=mock_run), \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.post_issue_comment", return_value="u"), \
+             patch("pr_comments.resolve_thread", return_value=True):
+            result = rt._run_comment_fix(
+                TriageResult(threads=threads), report, tmp_path, ctx,
+            )
+        return SimpleNamespace(
+            result=result, persisted=persist.call_args[0][0],
+            pushes=pushes, commits=commits,
+        )
+
+    def test_the_failure_survives_recovery(self, rt, tmp_path, publishing_on):
+        """The persisted status is what --finish reads on the next run."""
+        run = self._fix_pass(rt, tmp_path)
+        assert run.result.commit_status == "commit_failed"
+        assert run.persisted.commit_status == "commit_failed"
+        assert run.persisted.commit_sha == ""
+
+    def test_a_rejected_commit_pushes_nothing(self, rt, tmp_path, publishing_on):
+        """There is no commit to publish, so no push may be attempted.
+
+        The status cell is only half the claim: pushing a branch whose commit
+        the hook rejected would put the *previous* head in front of a reviewer
+        as though it carried this round's fixes.
+        """
+        run = self._fix_pass(rt, tmp_path)
+        assert run.commits
+        assert run.pushes == []
+
+    def test_a_hand_commit_gets_the_credit(self, rt):
+        """HEAD moved past the snapshot: attribute the fixes to what landed."""
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="t1 summary", file="f.go",
+                                   line=10, action=ThreadAction.FIXED)],
+            commit_status="commit_failed", head_sha="aaa1111",
+            summary_deferred=True,
+        )
+        with patch.object(rt, "_get_head_sha", return_value="bbb2222"), \
+             patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert "bbb2222" in body
+        assert "no commit needed" not in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT not in body
+
+    def test_an_unpushed_hand_commit_claims_nothing(self, rt):
+        """A SHA a reviewer cannot open is not worth naming."""
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="t1 summary", file="f.go",
+                                   line=10, action=ThreadAction.FIXED)],
+            commit_status="commit_failed", head_sha="aaa1111",
+            summary_deferred=True,
+        )
+        with patch.object(rt, "_get_head_sha", return_value="bbb2222"), \
+             patch.object(rt, "_is_pushed", return_value=False), \
+             patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert rt._RECONCILED_STATUS_TEXT in body
+        assert "bbb2222" not in body
+
+    def test_a_still_unmoved_head_keeps_the_failure(self, rt):
+        """Nothing was committed by anyone — the cell must not invent a commit."""
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="t1 summary", file="f.go",
+                                   line=10, action=ThreadAction.FIXED)],
+            commit_status="commit_failed", head_sha="aaa1111",
+            summary_deferred=True,
+        )
+        with patch.object(rt, "_get_head_sha", return_value="aaa1111"), \
+             patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert "commit failed" in body
+
+    def test_the_contradiction_is_reported(self, rt, capsys):
+        """N fixes and no commit is caught, not rendered quietly."""
+        cp = rt.CommitPushResult(None, "commit_failed", "hook")
+        rt._warn_unattributed_fixes(
+            [CommentItem(id="t1", summary="fix it", file="a.py", line=1)], cp,
+        )
+        assert "no commit to attribute" in capsys.readouterr().err
 
 
 class TestSummaryStillOwed:
@@ -1586,6 +1770,192 @@ class TestPendingFixReplies:
         with patch("pr_comments.post_thread_reply") as mock_reply:
             rt._post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
+
+
+class TestReplyAttributionAcrossRounds:
+    """#735: the reply cited the running pass's commit, whatever fixed the thread.
+
+    A single-round fixture cannot tell per-entry attribution from pass-level —
+    they agree — which is exactly why this went unnoticed. So every test here
+    drains a queue whose entries were fixed by different commits than the pass
+    that is now sending their replies.
+    """
+
+    def _drain(self, rt, *outcomes, pass_sha=_PASS_SHA):
+        """Send the deferred replies for `outcomes`; return body by thread id."""
+        fix = FixSummary(
+            threads=list(outcomes), commit_sha=pass_sha,
+            commit_status="pushed", replies_pending=True,
+        )
+        threads_by_id = {
+            o.id: ReportThread(id=o.id, is_resolved=False,
+                               comments=[{"databaseId": 100 + n}])
+            for n, o in enumerate(outcomes)
+        }
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True) as reply, \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(_make_state(fix), "owner/repo", 1, threads_by_id)
+        bodies = [call[0][3] for call in reply.call_args_list]
+        return dict(zip([o.id for o in outcomes], bodies))
+
+    @staticmethod
+    def _fixed(tid, sha, path):
+        return ThreadOutcome(id=tid, summary=f"{tid} summary", file=path, line=1,
+                             action=ThreadAction.FIXED, commit_sha=sha)
+
+    def test_each_reply_cites_the_commit_that_fixed_it(self, rt, publishing_on):
+        bodies = self._drain(
+            rt,
+            self._fixed("t1", _ROUND_1_SHA, "a.py"),
+            self._fixed("t2", _ROUND_2_SHA, "b.py"),
+        )
+        assert _ROUND_1_SHA in bodies["t1"]
+        assert _ROUND_2_SHA not in bodies["t1"]
+        assert _ROUND_2_SHA in bodies["t2"]
+        assert _PASS_SHA not in bodies["t1"] + bodies["t2"]
+
+    def test_each_permalink_is_pinned_to_that_commit(self, rt, publishing_on):
+        """The blob link is evidence — pinned to the wrong SHA it shows the wrong code."""
+        bodies = self._drain(
+            rt,
+            self._fixed("t1", _ROUND_1_SHA, "a.py"),
+            self._fixed("t2", _ROUND_2_SHA, "b.py"),
+        )
+        assert f"/blob/{_ROUND_1_SHA}/a.py" in bodies["t1"]
+        assert f"/blob/{_ROUND_2_SHA}/b.py" in bodies["t2"]
+
+    def test_an_entry_with_no_commit_of_its_own_uses_the_pass(self, rt, publishing_on):
+        outcome = ThreadOutcome(id="t1", summary="t1 summary", file="a.py", line=1,
+                                action=ThreadAction.FIXED)
+        bodies = self._drain(rt, outcome)
+        assert _PASS_SHA in bodies["t1"]
+
+    def test_the_summary_row_and_the_reply_agree(self, rt, publishing_on):
+        """One precedence rule, two renderers — they disagreed before #735."""
+        outcome = self._fixed("t1", _ROUND_1_SHA, "a.py")
+        bodies = self._drain(rt, outcome)
+        cell = rt._fixed_status_for(outcome, rt.CommitPushResult(_PASS_SHA, "pushed", ""),
+                                    "owner/repo")
+        assert _ROUND_1_SHA in cell
+        assert _ROUND_1_SHA in bodies["t1"]
+
+
+class TestHandWrittenRepliesSurvive:
+    """#735: re-draining the queue overwrote replies a human had rewritten."""
+
+    def _reply(self, rt, body):
+        """Run the fix-reply upsert against a thread whose standing reply is `body`."""
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1)
+        threads_by_id = {"t1": _standing_reply_thread(body=body)}
+        with patch("pr_comments.patch_thread_reply", return_value=True) as edit, \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            count = rt._post_fix_replies(
+                [entry], threads_by_id, "owner/repo", 42, "abc1234",
+            )
+        return count, edit, post
+
+    def test_a_rewritten_reply_is_left_alone(self, rt):
+        count, edit, post = self._reply(rt, (
+            "Applied: fix it\n\n"
+            "On reflection we are not doing this — the reviewer's premise "
+            "assumes a code path that was removed in #700."
+        ))
+        assert count == 0
+        edit.assert_not_called()
+        post.assert_not_called()
+
+    def test_a_reply_that_is_still_the_template_is_refreshed(self, rt):
+        """Pairs with the case above — proves that assertion is not vacuous."""
+        count, edit, _ = self._reply(rt, (
+            "Applied: fix it\n\n"
+            "Fixed in [`0000000`](https://github.com/owner/repo/commit/0000000)."
+        ))
+        assert count == 1
+        edit.assert_called_once()
+        assert "abc1234" in edit.call_args[0][2]
+
+    def test_a_reviewers_own_words_are_never_taken_for_ours(self, rt):
+        count, _, _ = self._reply(rt, "Thanks, that works for me.")
+        assert count == 0
+
+    @pytest.mark.parametrize("body", [
+        "Applied: fix it",
+        "Applied: fix it\n\nResult is in [`a.py`](https://github.com/o/r/blob/s/a.py).",
+        "Already addressed: fix it\n\nCurrent behaviour is at https://x/#L1.",
+        "Already addressed in the current implementation: fix it",
+        "Suggestion reviewed and determined to be inapplicable: nope",
+        "Suggestion reviewed and determined to be inapplicable.\n\nSee https://x/#L1.",
+        "Deferred: fix it\n\nTracked in [ENG-1](https://linear.app/i/ENG-1).",
+        "Deferred: fix it\n\nTracked in ENG-1.\n\nUnchanged at https://x/#L1.",
+    ])
+    def test_every_generated_shape_is_recognised(self, rt, body):
+        """A shape this misses is a reply the pass refuses to ever update again."""
+        assert rt._is_generated_reply(body) is True
+
+    @pytest.mark.parametrize("body", [
+        "",
+        "Sounds good to me.",
+        "Applied: fix it\n\nBut see the caveat below.",
+        "Deferred: fix it\n\nI disagree that this is deferrable.",
+    ])
+    def test_anything_else_is_treated_as_a_human_reply(self, rt, body):
+        assert rt._is_generated_reply(body) is False
+
+    def test_a_body_that_only_reads_like_ours_is_still_theirs(self, rt):
+        """The near-miss is the dangerous one: it opens with our prefix and ends
+        in a sentence, and only the followup opening tells it from the template."""
+        body = (
+            "Applied: fix it\n\n"
+            "Landed in the follow-up branch rather than here."
+        )
+        assert rt._is_generated_reply(body) is False
+        assert self._reply(rt, body)[0] == 0
+
+    def test_a_hand_sentence_reusing_a_followup_opening_is_missed(self, rt):
+        """Documents the ceiling on `_is_generated_reply`, not an endorsement.
+
+        The followup pattern matches any sentence under a known opening, so a
+        human who happens to start theirs with one is overwritten. Tightening it
+        to demand a link would orphan the linkless generated shapes, which is
+        the worse failure — a reply the pass can never update again.
+        """
+        body = "Applied: fix it\n\nFixed in the follow-up branch rather than here."
+        assert rt._is_generated_reply(body) is True
+
+    def test_the_addressed_fallback_body_is_recognised(self, rt, tmp_path):
+        """The single-paragraph shapes are built by a different branch of the
+        body builders, so assert on what they emit rather than on a transcribed
+        copy — a wording change there must not silently orphan the reply."""
+        entry = CommentItem(id="t1", summary="use helper", file="src/app.py")
+        with patch("pr_comments.post_thread_reply", return_value=True) as post, \
+             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch.object(rt, "_code_link", return_value=""):
+            rt._post_already_addressed_replies(
+                [entry], {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])},
+                "owner/repo", 42, tmp_path,
+            )
+        assert rt._is_generated_reply(post.call_args[0][3]) is True
+
+    def test_the_dismissal_body_with_no_evidence_is_recognised(self, rt, tmp_path):
+        entry = CommentItem(id="t1", summary="not applicable", reasoning="premise fails")
+        with patch("pr_comments.post_thread_reply", return_value=True) as post, \
+             patch.object(rt, "_evidence_link", return_value=""):
+            rt._post_dismissed_replies(
+                [entry], {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])},
+                "owner/repo", 42, tmp_path,
+            )
+        assert rt._is_generated_reply(post.call_args[0][3]) is True
+
+    def test_the_dismissal_body_with_no_reasoning_is_recognised(self, rt, tmp_path):
+        entry = CommentItem(id="t1", summary="not applicable")
+        with patch("pr_comments.post_thread_reply", return_value=True) as post, \
+             patch.object(rt, "_evidence_link", return_value=""):
+            rt._post_dismissed_replies(
+                [entry], {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])},
+                "owner/repo", 42, tmp_path,
+            )
+        assert rt._is_generated_reply(post.call_args[0][3]) is True
 
 
 # ── _summarize_comment_body ─────────────────────────────────────────────────
@@ -2942,6 +3312,157 @@ class TestClassifyAlreadyAddressed:
         assert outcomes[0].commit_sha == ""
 
 
+_CLEAN_LOG = "1700000000 1700000000\n"
+_SKEWED_LOG = "1700000000 1700864000\n"
+_READDS_DIFF = "+++ b/ai/lib/foo.py\n+def dropped_helper(x):\n     pass\n"
+
+
+class TestHistoryPreflight:
+    """#703's other half: the branch was fixing code `main` had already deleted.
+
+    Each signal is driven on its own, because the value of the preflight is
+    that any one of them can fire — a branch can be superseded without having
+    been rebased, and a rebase is not on its own a reason to withhold anything.
+    """
+
+    @staticmethod
+    def _signals(rt, *, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
+                 gh_out="", gh_rc=0, calls=None):
+        def mock_run(cmd, **kwargs):
+            if calls is not None:
+                calls.append(cmd)
+            if cmd[0] == "gh":
+                return _make_completed(gh_rc, stdout=gh_out)
+            if "--reverse" in cmd:
+                return _make_completed(0, stdout=log_out)
+            if cmd[3] == "diff":
+                return _make_completed(0, stdout=diff)
+            if cmd[3] == "grep":
+                return _make_completed(grep_rc)
+            return _make_completed(0, stdout=pickaxe)
+
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt.subprocess, "run", side_effect=mock_run):
+            return rt._history_preflight(Path("/fake"), "owner/repo")
+
+    def test_a_healthy_branch_raises_nothing(self, rt):
+        assert self._signals(rt) == []
+
+    def test_rebase_skew_is_reported(self, rt):
+        signals = self._signals(rt, log_out=_SKEWED_LOG)
+        assert [s.kind for s in signals] == ["rebase_skew"]
+        assert "10 day(s)" in signals[0].detail
+
+    def test_rebase_skew_alone_does_not_hold(self, rt):
+        """Every long-lived branch has one. Holding on it would fire on health."""
+        assert self._signals(rt, log_out=_SKEWED_LOG)[0].holds is False
+
+    def test_a_same_week_rebase_is_not_skew(self, rt):
+        assert self._signals(rt, log_out="1700000000 1700100000\n") == []
+
+    def test_unreadable_dates_are_not_a_finding(self, rt):
+        """A hint that cannot be computed is not evidence of anything."""
+        assert self._signals(rt, log_out="not a timestamp\n") == []
+
+    def test_a_readded_symbol_is_reported(self, rt):
+        signals = self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n")
+        assert [s.kind for s in signals] == ["readds_removed_symbol"]
+        assert "dropped_helper" in signals[0].detail
+        assert "abc1234" in signals[0].detail
+
+    def test_a_readded_symbol_holds(self, rt):
+        signals = self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n")
+        assert signals[0].holds is True
+
+    def test_a_symbol_the_base_still_has_is_not_readded(self, rt):
+        assert self._signals(rt, diff=_READDS_DIFF, grep_rc=0) == []
+
+    def test_a_symbol_the_base_never_had_is_just_new(self, rt):
+        """Absent from the base with no history of it is what new code looks like."""
+        assert self._signals(rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="") == []
+
+    def test_the_superseding_pr_is_surfaced(self, rt):
+        signals = self._signals(
+            rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n",
+            gh_out="#42 refactor: drop dropped_helper\n",
+        )
+        assert [s.kind for s in signals] == ["readds_removed_symbol", "superseding_pr"]
+        assert "#42 refactor: drop dropped_helper" in signals[1].detail
+
+    def test_a_failed_search_still_leaves_the_local_signal(self, rt):
+        """No network is a reason to say less, not a reason to say nothing."""
+        signals = self._signals(
+            rt, diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n", gh_rc=1,
+        )
+        assert [s.kind for s in signals] == ["readds_removed_symbol"]
+
+    def test_nothing_is_searched_for_when_nothing_was_readded(self, rt):
+        """This is a preflight — the network call is earned, not routine."""
+        calls = []
+        self._signals(rt, diff=_READDS_DIFF, grep_rc=0, calls=calls)
+        assert [c for c in calls if c[0] == "gh"] == []
+
+    def test_the_symbol_scan_is_capped(self, rt):
+        diff = "+++ b/ai/lib/foo.py\n" + "".join(
+            f"+def helper_{n}(x):\n" for n in range(25)
+        )
+        signals = self._signals(rt, diff=diff, grep_rc=1, pickaxe="abc1234\n")
+        readded = [s for s in signals if s.kind == "readds_removed_symbol"]
+        assert len(readded) == rt._PREFLIGHT_SYMBOL_LIMIT
+
+    def test_the_search_is_capped_harder(self, rt):
+        diff = "+++ b/ai/lib/foo.py\n" + "".join(
+            f"+def helper_{n}(x):\n" for n in range(25)
+        )
+        calls = []
+        self._signals(rt, diff=diff, grep_rc=1, pickaxe="abc1234\n",
+                      gh_out="#42 t\n", calls=calls)
+        assert len([c for c in calls if c[0] == "gh"]) == rt._PREFLIGHT_SEARCH_LIMIT
+
+    def test_the_findings_reach_the_trail(self, rt):
+        trail = MagicMock()
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt.subprocess, "run",
+                          return_value=_make_completed(0, stdout=_SKEWED_LOG)):
+            rt._history_preflight(Path("/fake"), "owner/repo", trail)
+        assert trail.info.call_args.kwargs["data"]["signals"] == ["rebase_skew"]
+
+
+class TestHoldIfSuperseded:
+    """What the preflight's findings are allowed to do to the run."""
+
+    def test_evidence_shuts_the_gate(self, rt, publishing_on):
+        import publishing
+        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "d")])
+        assert publishing.enabled() is False
+        assert "history signal" in publishing.held()
+
+    def test_context_alone_leaves_it_open(self, rt, publishing_on):
+        """A rebase is how the problem becomes visible, not the problem."""
+        import publishing
+        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.REBASE_SKEW, "d", holds=False)])
+        assert publishing.enabled() is True
+
+    def test_nothing_found_says_nothing(self, rt, publishing_on, capsys):
+        rt._hold_if_superseded([])
+        assert capsys.readouterr().err == ""
+
+    def test_the_output_names_the_signal_that_fired(self, rt, publishing_on, capsys):
+        rt._hold_if_superseded([
+            rt.HistorySignal(rt.HistoryKind.REBASE_SKEW, "replayed onto a moved base", holds=False),
+            rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "`foo` is gone from origin/main"),
+        ])
+        err = capsys.readouterr().err
+        assert "[rebase_skew] replayed onto a moved base" in err
+        assert "[readds_removed_symbol] `foo` is gone from origin/main" in err
+
+    def test_the_hold_is_recorded_on_the_trail(self, rt, publishing_on):
+        trail = MagicMock()
+        rt._hold_if_superseded([rt.HistorySignal(rt.HistoryKind.READDS_REMOVED_SYMBOL, "d")], trail)
+        data = trail.decision.call_args.kwargs["data"]
+        assert data["signals"] == ["readds_removed_symbol"]
+
+
 class TestHoldWhileContested:
     """#703: 8 real fixes pushed to a branch a reviewer had said should not land."""
 
@@ -3022,10 +3543,13 @@ class TestFixPassHoldsWhenContested:
             target_dir=tmp_path,
         )
         pushes = []
+        commits = []
 
         def mock_run(cmd, **kwargs):
             if "push" in cmd:
                 pushes.append(cmd)
+            if "commit" in cmd:
+                commits.append(cmd)
             return _make_completed(0, stdout="abc1234\n")
 
         batch = rt.FixBatchResult(
@@ -3044,34 +3568,45 @@ class TestFixPassHoldsWhenContested:
             result = rt._run_comment_fix(
                 TriageResult(threads=threads), report, tmp_path, ctx,
             )
-        return result, pushes
+        return SimpleNamespace(result=result, pushes=pushes, commits=commits)
 
     def test_a_contested_thread_stops_the_push(self, rt, tmp_path, publishing_on):
-        result, pushes = self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        assert result.commit_status == "push_held"
-        assert pushes == []
+        run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert run.result.commit_status == CommitStatus.PUSH_HELD
+        assert run.pushes == []
 
     def test_the_commit_is_still_made(self, rt, tmp_path, publishing_on):
-        """Holding must not cost the work — only its publication."""
-        result, _ = self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        assert result.commit_sha == "abc1234"
+        """Holding must not cost the work — only its publication.
+
+        #718 settled this: a local commit asserts nothing to a reviewer, since
+        only the push makes it visible, and the push is what the hold stops.
+        """
+        run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert run.result.commit_sha == "abc1234"
+        assert run.commits
+
+    def test_the_fixes_are_still_applied(self, rt, tmp_path, publishing_on):
+        """Holding must not cost the work — only the acts that assert it."""
+        run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert [t.id for t in run.result.fixed] == ["t1"]
 
     def test_no_fixed_replies_go_out_while_held(self, rt, tmp_path, publishing_on):
-        result, _ = self._run(rt, tmp_path, contested=True, publishing_on_=True)
-        assert result.replies_posted == 0
-        assert result.summary_url is None
-        assert result.summary_deferred is True
+        run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
+        assert run.result.replies_posted == 0
+        assert run.result.summary_url is None
+        assert run.result.summary_deferred is True
 
     def test_an_uncontested_pass_still_pushes(self, rt, tmp_path, publishing_on):
         """The gate must not have closed on the common case."""
-        result, pushes = self._run(rt, tmp_path, contested=False, publishing_on_=True)
-        assert result.commit_status == "pushed"
-        assert pushes
+        run = self._run(rt, tmp_path, contested=False, publishing_on_=True)
+        assert run.result.commit_status == CommitStatus.PUSHED
+        assert run.pushes
+        assert run.commits
 
     def test_an_uncontested_pass_still_replies(self, rt, tmp_path, publishing_on):
         """Pairs with the held case: proves that assertion is not vacuous."""
-        result, _ = self._run(rt, tmp_path, contested=False, publishing_on_=True)
-        assert result.replies_posted == 1
+        run = self._run(rt, tmp_path, contested=False, publishing_on_=True)
+        assert run.result.replies_posted == 1
 
 
 class TestTriagePromptVerificationValues:

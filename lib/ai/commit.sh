@@ -55,7 +55,11 @@ build_commit_rules() {
 - No period at end of subject
 - Use semicolon (;) to separate multiple changes in header
 - Separate header and body with blank line
-- Use bullet points for multiple changes in body"
+- Use bullet points for multiple changes in body
+- If the change removes or renames anything on the public surface, add a
+  '$BREAKING_CHANGE_FOOTER: <what broke>' footer as the last paragraph of the body
+- The '!' marker (e.g. feat!:) may be used in the header but never replaces the
+  footer — squash merges can discard the subject, the body always survives"
   fi
 }
 
@@ -153,7 +157,7 @@ validate_commit_msg() {
     # Build regex from COMMIT_TYPES so it stays in sync with build_commit_rules
     local types_regex
     types_regex=$(echo "$COMMIT_TYPES" | tr ' ' '|')
-    local commit_pattern="^(${types_regex})(\(.+\))?: .+"
+    local commit_pattern="^(${types_regex})(\(.+\))?!?: .+"
     if ! echo "$header" | grep -qE "$commit_pattern"; then
       echo "✗ Header does not follow conventional commit format: $header"
       echo "  Expected: type(scope): description"

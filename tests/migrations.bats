@@ -349,6 +349,117 @@ EOF
   grep -qxF "mycomp/20250101-test.sh" "$FAKE_STATE/migrations.applied"
 }
 
+# ─── Adoption-sensitive migrations (#741) ────────────────────────────────────
+#
+# A migration that drains a path adoption writes into is undone by an adoption
+# that runs after it is recorded as applied. The marker in the migration's own
+# header is what buys it another pass.
+
+# Helper: create a migration that declares itself adoption-sensitive and
+# appends its own name to $TMPDIR/exec.log when it runs.
+create_sensitive_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+# adoption-sensitive: drains a path adoption writes into.
+${fn_name}() {
+  echo "$filename" >> "$TMPDIR/exec.log"
+}
+EOF
+}
+
+@test "adoption that moves nothing leaves the migration state alone" {
+  # The reset is a cost — every marked migration runs again — so it may not fire
+  # on the ordinary sync, which is every sync after the first.
+  create_sensitive_migration mycomp 20250101-sensitive.sh migration_20250101_sensitive
+  echo "mycomp/20250101-sensitive.sh" > "$FAKE_STATE/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "$FAKE_STATE/migrations.applied")" = "mycomp/20250101-sensitive.sh" ]
+}
+
+@test "a real adoption forgets the marked migrations and only those" {
+  create_sensitive_migration mycomp 20250101-sensitive.sh migration_20250101_sensitive
+  create_migration mycomp 20250102-plain.sh migration_20250102_plain
+  mkdir -p "$FAKE_LEGACY"
+  printf 'mycomp/20250101-sensitive.sh\nmycomp/20250102-plain.sh\n' \
+    > "$FAKE_LEGACY/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"running them again"* ]]
+
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250102-plain.sh" ]
+}
+
+@test "a migration with no marker keeps its state through an adoption" {
+  # The counterpart to the test above, stated on its own: a blanket reset would
+  # re-run a migration that removed something on purpose and put the removal
+  # back, undoing an operator who deliberately restored it.
+  create_migration mycomp 20250102-plain.sh migration_20250102_plain
+  mkdir -p "$FAKE_LEGACY/reviews"
+  echo "mycomp/20250102-plain.sh" > "$FAKE_LEGACY/migrations.applied"
+  echo "data" > "$FAKE_LEGACY/reviews/x"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"running them again"* ]]
+
+  [ "$(cat "$FAKE_STATE/migrations.applied")" = "mycomp/20250102-plain.sh" ]
+}
+
+@test "a marked migration runs again over the data adoption just moved" {
+  # The end-to-end shape of #741: the legacy root carries both the data and the
+  # state file that says the migration which drains it is already done.
+  create_sensitive_migration mycomp 20250101-sensitive.sh migration_20250101_sensitive
+  create_migration mycomp 20250102-plain.sh migration_20250102_plain
+  mkdir -p "$FAKE_LEGACY/reviews/repo-42"
+  printf 'mycomp/20250101-sensitive.sh\nmycomp/20250102-plain.sh\n' \
+    > "$FAKE_LEGACY/migrations.applied"
+  echo "trail" > "$FAKE_LEGACY/reviews/repo-42/trail.jsonl"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+
+  [ "$(cat "$TMPDIR/exec.log")" = "20250101-sensitive.sh" ]
+  # Recorded again, so the sync after this one is back to skipping it.
+  grep -qxF "mycomp/20250101-sensitive.sh" "$FAKE_STATE/migrations.applied"
+  grep -qxF "mycomp/20250102-plain.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "forgetting the marked migrations empties a state file that holds only them" {
+  # printf over an empty array writes a blank line, which _prune_stale_migration_state
+  # would then warn about as an unrecognised entry.
+  create_sensitive_migration mycomp 20250101-sensitive.sh migration_20250101_sensitive
+  mkdir -p "$FAKE_LEGACY"
+  echo "mycomp/20250101-sensitive.sh" > "$FAKE_LEGACY/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [ ! -s "$FAKE_STATE/migrations.applied" ]
+}
+
+@test "the trail-root migration in this repo is marked and its key is derived correctly" {
+  # Against the real tree, not the fake one: the marker has to be spelled the
+  # way lib/migrations.sh greps for it, and the state key has to match what
+  # run_component_migrations records — a rename of the file breaks the second
+  # even when the first still holds.
+  run bash -c "
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/migrations.sh'
+    keys=()
+    _discover_migration_keys keys \"\$_ADOPTION_SENSITIVE_MARKER\"
+    printf '%s\n' \"\${keys[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ai/claude/20260814-unify-trail-root.sh"* ]]
+}
+
 # ─── Component discovery under set -e ────────────────────────────────────────
 
 @test "discover_migration_dirs returns 0 under set -e with no migrations" {

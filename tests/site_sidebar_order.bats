@@ -13,13 +13,22 @@ teardown() {
 }
 
 _ordered_slugs() {
-  sed -n "/SIDEBAR_ORDER = \[/,/\]/p" "$ORDER_FILE" | grep -oE "'[a-z0-9-]+'" | tr -d "'"
+  sed -n "/SIDEBAR_ORDER = \[/,/\]/p" "$ORDER_FILE" | grep -oE "['\"][a-z0-9-]+['\"]" | tr -d "'\""
 }
 
 _doc_slugs() {
   for f in "$REPO_ROOT"/docs/*.md; do
     basename "$f" .md
   done
+}
+
+@test "SIDEBAR_ORDER parses to a non-empty slug list" {
+  local count
+  count="$(_ordered_slugs | grep -c . || true)"
+  [ "$count" -gt 0 ] || {
+    echo "no slugs parsed from SIDEBAR_ORDER in $ORDER_FILE — check its quoting"
+    return 1
+  }
 }
 
 @test "every ordered slug has a doc file" {

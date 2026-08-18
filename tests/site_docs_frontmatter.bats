@@ -11,10 +11,27 @@ teardown() {
   common_teardown
 }
 
+# _frontmatter_block FILE — prints the lines between the opening `---` and the
+# next `---`, so a `title:`-prefixed line in the body (a code sample, prose)
+# can't stand in for the real frontmatter field.
+_frontmatter_block() {
+  sed -n '2,/^---$/p' "$1" | sed '$d'
+}
+
+# _frontmatter_field FILE KEY — prints KEY's frontmatter value with any
+# wrapping quotes stripped, so a quoted-empty value (`title: ""`) reads empty.
+_frontmatter_field() {
+  local value
+  value="$(_frontmatter_block "$1" | grep -E "^$2: " | head -n1 | sed -E "s/^$2: *//")"
+  value="${value%\"}"
+  value="${value#\"}"
+  printf '%s' "$value"
+}
+
 @test "every docs/*.md has a non-empty title" {
   local missing=()
   for f in "$REPO_ROOT"/docs/*.md; do
-    grep -qE '^title: +\S' "$f" || missing+=("$(basename "$f")")
+    [ -n "$(_frontmatter_field "$f" title)" ] || missing+=("$(basename "$f")")
   done
   [ "${#missing[@]}" -eq 0 ] || {
     echo "missing title: ${missing[*]}"
@@ -25,7 +42,7 @@ teardown() {
 @test "every docs/*.md has a non-empty description" {
   local missing=()
   for f in "$REPO_ROOT"/docs/*.md; do
-    grep -qE '^description: +\S' "$f" || missing+=("$(basename "$f")")
+    [ -n "$(_frontmatter_field "$f" description)" ] || missing+=("$(basename "$f")")
   done
   [ "${#missing[@]}" -eq 0 ] || {
     echo "missing description: ${missing[*]}"

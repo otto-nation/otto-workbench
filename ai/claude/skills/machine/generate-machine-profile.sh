@@ -225,8 +225,9 @@ today=$(date +%Y-%m-%d)
       printf '%s\n' "$row"
     done
   else
-    printf '%s\n' "_No repos registered yet. A repo joins the registry the first" \
-      "time a workbench command runs in it — see \`otto-workbench projects\`._"
+    empty_registry_msg="_No repos registered yet. A repo joins the registry the first"
+    empty_registry_msg+=" time a workbench command runs in it — see \`otto-workbench projects\`._"
+    printf '%s\n' "$empty_registry_msg"
   fi
   printf '\n'
 } > "$tmp_file"

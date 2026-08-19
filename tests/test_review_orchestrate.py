@@ -3288,6 +3288,30 @@ class TestWriteReviewSidecar:
         meta = json.loads((tmp_path / "meta.json").read_text())
         assert "generator_version" not in meta
 
+    def test_meta_records_the_runs_start(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        job.started_at = "2026-08-18T13:47:03+00:00"
+        ro._write_review_sidecar(job)
+        meta = json.loads((tmp_path / "meta.json").read_text())
+        assert meta["started_at"] == "2026-08-18T13:47:03+00:00"
+
+    def test_meta_claims_nothing_about_being_reviewed(self, ro, tmp_path):
+        """The sidecar is written from every branch that reaches a review file,
+        so it cannot be the thing that says a review was produced."""
+        job = self._make_job(ro, tmp_path)
+        ro._write_review_sidecar(job)
+        meta = json.loads((tmp_path / "meta.json").read_text())
+        assert "reviewed_at" not in meta
+
+    def test_a_second_write_keeps_the_same_start(self, ro, tmp_path):
+        """One run, one start — the sidecar carries the job's stamp, not the
+        clock at each of the branches that write it."""
+        job = self._make_job(ro, tmp_path)
+        ro._write_review_sidecar(job)
+        first = json.loads((tmp_path / "meta.json").read_text())["started_at"]
+        ro._write_review_sidecar(job)
+        assert json.loads((tmp_path / "meta.json").read_text())["started_at"] == first
+
 
 # ── _is_quota_error ───────────────────────────────────────────────────
 

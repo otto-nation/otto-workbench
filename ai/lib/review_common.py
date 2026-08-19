@@ -10,17 +10,19 @@ import argparse
 import json
 import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 from typing import TypeVar
 
 import ai_usage
+import log
 import serde
 import workbench_paths
 from ai_usage import SessionUsage, parse_session_log
-from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict
+from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict, now_iso
 
 
 # ── Severity ─────────────────────────────────────────────────────────────────
@@ -686,6 +688,13 @@ class ReviewMeta:
     # the repo; `mode` defaulting to PR would claim a fact the file never stated.
     review_type: ReviewType | None = None
     mode: Mode | None = None
+    # Two timestamps because a review run has two moments worth recording and
+    # they are not the same one. `started_at` is taken when the run begins;
+    # `reviewed_at` is stamped only where a run reached its end with a review in
+    # hand. Both are empty for a meta.json written before they existed — see
+    # `ReviewEntry.reviewed_at` for what answers "when" in that case.
+    started_at: str = ""
+    reviewed_at: str = ""
 
 
 def _meta_enum(enum_cls, value):
@@ -712,6 +721,8 @@ def review_meta_from_dict(d: dict) -> ReviewMeta:
         base_ref=d.get("base_ref", ""),
         review_type=_meta_enum(ReviewType, d.get("review_type")),
         mode=_meta_enum(Mode, d.get("mode")),
+        started_at=d.get("started_at") or "",
+        reviewed_at=d.get("reviewed_at") or "",
     )
 
 
@@ -769,27 +780,6 @@ def review_file_path(repo: str, pr_number: str) -> Path:
     return workbench_paths.reviews_dir() / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
 
 
-def find_review_file(repo: str, pr_number: str) -> Path | None:
-    """Find a review file by repo and PR, checking canonical path then scanning meta."""
-    canonical = review_file_path(repo, pr_number)
-    if canonical.is_file():
-        return canonical
-    reviews = workbench_paths.reviews_dir()
-    if not reviews.is_dir():
-        return None
-    repo_name = repo.split("/")[-1]
-    for entry in reviews.iterdir():
-        if not entry.is_dir() or not entry.name.startswith(repo_name):
-            continue
-        review = entry / f"review{REVIEW_EXT}"
-        if not review.is_file():
-            continue
-        meta = read_review_meta(entry)
-        if meta.repo == repo and str(meta.pr_number) == str(pr_number):
-            return review
-    return None
-
-
 def read_review_meta(review_dir: Path) -> ReviewMeta:
     """Read meta.json from a review directory."""
     meta_file = review_dir / FILENAME_META
@@ -799,6 +789,155 @@ def read_review_meta(review_dir: Path) -> ReviewMeta:
         return review_meta_from_dict(json.loads(meta_file.read_text()))
     except (json.JSONDecodeError, OSError):
         return ReviewMeta()
+
+
+def stamp_reviewed(review_dir: Path) -> None:
+    """Record in the sidecar that this review's run reached its end.
+
+    Kept apart from the sidecar write itself because the two answer different
+    questions: the sidecar is written wherever a run learns what it is
+    reviewing, so anything stamped there means "started". This is the only
+    place that means "reviewed", so there is one answer to when a review was
+    produced rather than one per pipeline branch.
+
+    Nothing is created here. A run that never wrote a sidecar produced no
+    review to date, and a meta.json we cannot read is not one to overwrite —
+    the fields already in it are worth more than this timestamp.
+    """
+    meta_file = review_dir / FILENAME_META
+    try:
+        meta = json.loads(meta_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(meta, dict):
+        return
+    meta["reviewed_at"] = now_iso()
+    try:
+        meta_file.write_text(json.dumps(meta))
+    except OSError as exc:
+        # Warned rather than raised: the review is already written and this
+        # runs at the very end of a run that worked. Losing the stamp costs a
+        # reader the mtime fallback; failing here would cost the whole review.
+        log.warn(f"could not stamp {meta_file} ({exc}) — its age will read from the file's mtime")
+
+
+# ── Walking the reviews tree ─────────────────────────────────────────────────
+
+
+class ReviewEntryKind(StrEnum):
+    """What one entry at the reviews root turned out to be.
+
+    The three kinds are what the callers of the walk already distinguish: gc
+    collects strays and orphans on different rules, and everything that looks
+    up a review wants the entries that actually hold one.
+    """
+
+    # A directory holding a review.md — a review someone can read.
+    REVIEW = "review"
+    # A directory with no review.md: a run in flight, or one that never
+    # produced its deliverable.
+    ORPHAN = "orphan"
+    # A loose file at the reviews root. Reviews live in directories, so this is
+    # either an agent's scratch file or a leftover of the flat layout.
+    STRAY = "stray"
+
+
+@dataclass(frozen=True)
+class ReviewEntry:
+    """One entry at the reviews root, classified and attributed.
+
+    Attribution is `meta.json`'s, never the directory name's. The name is a
+    convenience for a human reading `ls`, and it is chosen from the repo's short
+    name, so two repos sharing one — `acme/widget` and `other/widget` — are
+    indistinguishable by name. Only the sidecar says what a review is for.
+    """
+
+    path: Path
+    kind: ReviewEntryKind
+    meta: ReviewMeta = ReviewMeta()
+
+    @property
+    def review_file(self) -> Path:
+        """Where this entry's deliverable is, whether or not it was written."""
+        return self.path / f"review{REVIEW_EXT}"
+
+    def is_for(self, repo: str, pr_number: str | int) -> bool:
+        """Whether meta.json attributes this entry to *repo*'s PR *pr_number*."""
+        if not self.meta.repo or self.meta.pr_number is None:
+            return False
+        return self.meta.repo == repo and str(self.meta.pr_number) == str(pr_number)
+
+    @property
+    def reviewed_at(self) -> str:
+        """When this review was produced, as an ISO timestamp, or "" if unknowable.
+
+        meta.json is authoritative because it survives a copy, an rsync, and a
+        backup restore. A review written before the field existed has only its
+        deliverable's mtime left to date it — filesystem state, which every one
+        of those rewrites, but the only record there is.
+        """
+        if self.meta.reviewed_at:
+            return self.meta.reviewed_at
+        try:
+            mtime = self.review_file.stat().st_mtime
+        except OSError:
+            return ""
+        return datetime.fromtimestamp(mtime, timezone.utc).isoformat()
+
+
+def iter_review_entries(reviews_dir: Path | None = None) -> Iterator[ReviewEntry]:
+    """Every entry at the reviews root, walked once and classified once.
+
+    The one walk of the tree: gc, the prune, and every review lookup read it,
+    so what counts as a review and what a review is for are decided here rather
+    than re-derived per call site with rules that drift apart.
+
+    The listing is taken eagerly, so a caller may delete what it is handed
+    without disturbing the iteration. A root that does not exist yields
+    nothing — a machine that has never run a review is not an error.
+    """
+    root = workbench_paths.reviews_dir() if reviews_dir is None else reviews_dir
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if entry.is_dir():
+            kind = (
+                ReviewEntryKind.REVIEW
+                if (entry / f"review{REVIEW_EXT}").is_file()
+                else ReviewEntryKind.ORPHAN
+            )
+            # ceiling: meta.json is read for every directory, including by a
+            # caller that only wants strays. A reviews root holds tens of
+            # directories and each read is a few hundred bytes, which is
+            # cheaper than the machinery to defer it. Upgrade trigger: if a
+            # sweep over this root ever shows up in a profile, make `meta` a
+            # lazily-read cached property.
+            yield ReviewEntry(entry, kind, read_review_meta(entry))
+        elif entry.is_file():
+            yield ReviewEntry(entry, ReviewEntryKind.STRAY)
+
+
+def find_review_file(repo: str, pr_number: str) -> Path | None:
+    """Find a review file by repo and PR, checking canonical path then scanning meta.
+
+    Both steps answer with meta.json. The scan used to pre-filter directories on
+    `name.startswith(repo_name)`, which made the name part of the matching rule:
+    a review correctly attributed to this repo went unfound because its
+    directory was named for something else.
+    """
+    canonical = review_file_path(repo, pr_number)
+    # The canonical name is derived from the repo's short name, so `acme/widget`
+    # and `other/widget` derive the same one. Take it unless the sidecar
+    # positively attributes it elsewhere — a review carrying no attribution at
+    # all predates the field and still resolves the way it always did.
+    if canonical.is_file() and read_review_meta(canonical.parent).repo in ("", repo):
+        return canonical
+    for entry in iter_review_entries():
+        if entry.kind is ReviewEntryKind.REVIEW and entry.is_for(repo, pr_number):
+            return entry.review_file
+    return None
 
 
 def count_severities(file: Path | None) -> dict[str, int]:

@@ -128,11 +128,15 @@
               "fix"
             ]
           }
-        },
-        "issue_tracker": {
-          "type": "object",
-          "properties": {
-            "provider": {
+        }
+      }
+    },
+    "issue_tracker": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "oneOf": [
+            {
               "type": "string",
               "enum": [
                 "linear",
@@ -140,13 +144,16 @@
                 "jira"
               ]
             },
-            "team": {
-              "type": "string"
-            },
-            "jira_url": {
-              "type": "string"
+            {
+              "type": "null"
             }
-          }
+          ]
+        },
+        "team": {
+          "type": "string"
+        },
+        "jira_url": {
+          "type": "string"
         }
       }
     }

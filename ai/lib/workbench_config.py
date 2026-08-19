@@ -75,6 +75,7 @@ GENERATOR_PATH = "bin/local/generate-config-schema"
 # WorkbenchConfig and fails on a key no field answers to.
 REUSE_LEVEL_KEY = "reuse.level"
 REUSE_DEFAULT_KEY = "reuse.default"
+ISSUE_PROVIDER_KEY = "issue_tracker.provider"
 
 _YQ_TIMEOUT = 10
 
@@ -114,7 +115,19 @@ class PhaseOverride:
 
 @dataclass(frozen=True)
 class IssueTrackerConfig:
-    provider: IssueProvider = IssueProvider.LINEAR
+    """Where a repo files its issues.
+
+    Top-level rather than under ``review``: where a repo files issues is a
+    fact about the repo, read by the SessionStart context line and by every
+    rule in ``issue-tracker.md``, of which only two callers are reviews.
+
+    ``provider`` has no default on purpose. A repo that has never said
+    anything about its tracker is unknown, not Linear — the callers that
+    need one ask rather than guess, and the one that only enriches a
+    review does without.
+    """
+
+    provider: IssueProvider | None = None
     team: str = ""
     jira_url: str = ""
 
@@ -134,7 +147,6 @@ class ReviewConfig:
     provider: str | None = None
     effort: Effort | None = None
     phases: dict[Phase, PhaseOverride] = field(default_factory=dict)
-    issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
 
 
 @dataclass(frozen=True)
@@ -149,6 +161,7 @@ class ReuseConfig:
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
 
 
 def schema_json() -> str:
@@ -407,8 +420,8 @@ def load_config_or_default(
         return WorkbenchConfig()
 
 
-def set_value(key: str, value: str) -> None:
-    """Write one dotted key into the global config, creating it if needed.
+def set_value(key: str, value: str, path: Path | None = None) -> None:
+    """Write one dotted key into a config file, creating it if needed.
 
     Through ``yq -i`` so the write preserves the comments and ordering of a
     file the user hand-authored. PyYAML is the fallback and does not preserve
@@ -421,7 +434,8 @@ def set_value(key: str, value: str) -> None:
     that ``serde`` then ignores on the way back in. Every call site today passes
     a literal; a call site that builds a key wants a check here first.
     """
-    path = global_config_path()
+    if path is None:
+        path = global_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(CONFIG_HEADER + "\n")
@@ -436,6 +450,21 @@ def set_value(key: str, value: str) -> None:
             raise ConfigError(f"could not write {key} to {path}: {exc}") from exc
         return
     _set_value_with_pyyaml(path, key, value)
+
+
+def set_project_value(key: str, value: str, project_root: Path | str) -> None:
+    """Write one dotted key into a repo's ``.workbench.yml``.
+
+    Shares ``set_value`` rather than reimplementing the write: the yq-first
+    ordering exists so a hand-authored file keeps its comments, and a second
+    writer would have to reproduce that ordering and would drift from it.
+
+    The file is committed in the consumer repo, so this dirties a working tree
+    the user may not have meant to modify. That is the same trade
+    ``adopt_project_review_yml`` already makes, and the caller treats a failed
+    write as a non-event.
+    """
+    set_value(key, value, project_config_path(project_root))
 
 
 def _set_value_with_pyyaml(path: Path, key: str, value: str) -> None:

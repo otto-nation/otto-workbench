@@ -1610,35 +1610,6 @@ def test_stamp_reviewed_leaves_an_unreadable_sidecar_as_it_found_it(cr, reviews_
     assert (d / "meta.json").read_text() == "{ truncated"
 
 
-# ── _confirm ──────────────────────────────────────────────────────────────────
-
-
-def _patch_confirm_input(monkeypatch, answer):
-    monkeypatch.setattr("builtins.input", lambda _: answer)
-    monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-
-
-def test_confirm_yes(cr, monkeypatch):
-    _patch_confirm_input(monkeypatch, "y")
-    assert cr._confirm("Continue?") is True
-
-
-def test_confirm_empty_defaults_yes(cr, monkeypatch):
-    _patch_confirm_input(monkeypatch, "")
-    assert cr._confirm("Continue?") is True
-
-
-def test_confirm_no(cr, monkeypatch):
-    _patch_confirm_input(monkeypatch, "n")
-    assert cr._confirm("Continue?") is False
-
-
-def test_confirm_eof_defaults_no(cr, monkeypatch):
-    monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-    monkeypatch.setattr("builtins.input", MagicMock(side_effect=EOFError))
-    assert cr._confirm("Continue?") is False
-
-
 # ── CLI argument parsing ──────────────────────────────────────────────────────
 
 
@@ -2040,6 +2011,45 @@ def test_self_review_recover_reads_head_after_worktree_switch(
     assert body.call_args.kwargs["head_sha"] == "fresh11"
 
 
+def test_pr_review_reads_the_tracker_from_the_repo_config(cr, tmp_path, monkeypatch):
+    """The PR path resolves the provider against the clone, like --self does.
+
+    Called with no path it reads the machine config only, so a repo that
+    declares its tracker in .workbench.yml would review as if none were set.
+    """
+    (tmp_path / ".workbench.yml").write_text(
+        "issue_tracker:\n  provider: github\n",
+    )
+    monkeypatch.setattr(cr, "_find_repo_root", lambda repo, repo_dir="": str(tmp_path))
+    real_run = cr.subprocess.run
+
+    def _fake_run(cmd, *args, **kwargs):
+        # Only the PR lookup is stubbed: cr.subprocess is the module every
+        # other caller shares, and the config reader shells out to yq.
+        if cmd[:2] == ["gh", "pr"]:
+            return SimpleNamespace(returncode=1, stdout="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(cr.subprocess, "run", _fake_run)
+    seen = []
+
+    def _record(provider, *args):
+        seen.append(provider)
+        raise SystemExit(7)
+
+    monkeypatch.setattr(cr.review_issue, "extract_issue_id", _record)
+
+    with pytest.raises(SystemExit) as exc:
+        cr._run_review_pr(
+            MagicMock(), make_ctx(), 42, "owner/repo", tmp_path,
+            tmp_path / "review.md", "", True, False, False,
+            False, str(tmp_path), 1, False, None, None,
+        )
+
+    assert exc.value.code == 7
+    assert seen == ["github"]
+
+
 def _self_ctx(tmp_path, branch="feat/x"):
     """The identity a --self run resolves once and threads down."""
     return SimpleNamespace(
@@ -2162,8 +2172,8 @@ def test_check_stale_review_auto_recovers_on_failures(cr, tmp_path, monkeypatch)
 
     # Mock gh to return matching HEAD
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
-    # Verify _confirm is never called — auto-recovery must skip the prompt
-    monkeypatch.setattr(cr, "_confirm", MagicMock(side_effect=AssertionError("_confirm called unexpectedly")))
+    # Verify prompt.confirm is never called — auto-recovery must skip the prompt
+    monkeypatch.setattr(cr.prompt, "confirm", MagicMock(side_effect=AssertionError("confirm called unexpectedly")))
 
     cr._check_stale_review("owner/repo", "1", review_file, force=False)
 
@@ -2180,7 +2190,7 @@ def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch
     }))
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
-    monkeypatch.setattr(cr, "_confirm", lambda msg: False)
+    monkeypatch.setattr(cr.prompt, "confirm", lambda msg: False)
 
     with pytest.raises(SystemExit):
         cr._check_stale_review("owner/repo", "1", review_file, force=False)

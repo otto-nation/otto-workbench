@@ -232,14 +232,14 @@ Every key both files accept:
 | `review.effort` | `low`, `medium`, `high` | — |
 | `review.phases.<phase>.model` | string | — |
 | `review.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
-| `review.issue_tracker.provider` | `linear`, `github`, `jira` | `linear` |
-| `review.issue_tracker.team` | string | — |
-| `review.issue_tracker.jira_url` | string | — |
+| `issue_tracker.provider` | `linear`, `github`, `jira` | — |
+| `issue_tracker.team` | string | — |
+| `issue_tracker.jira_url` | string | — |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`
 <!-- CONFIG-REFERENCE-END -->
 
-Both writers seed the modeline — `wb_config_ensure_file` in bash, `set_value` in Python — and `yq -i` carries it through every later write, so completion and enum validation work while the file is hand-edited. Paste it at the top of a `.workbench.yml` to get the same in a project. A file that already exists is never seeded: the modeline is a courtesy on creation, not something sync re-imposes.
+Both writers seed the modeline — `wb_config_ensure_file` in bash, `set_value` in Python — and `yq -i` carries it through every later write, so completion and enum validation work while the file is hand-edited. A `.workbench.yml` that the workbench creates for you — recording an answer such as `issue_tracker.provider` — is seeded the same way; paste it in yourself at the top of one you hand-author. A file that already exists is never seeded: the modeline is a courtesy on creation, not something sync re-imposes.
 
 Five layers decide a review value, highest first:
 

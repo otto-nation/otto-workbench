@@ -769,6 +769,22 @@ pr comments --finish --post    # publish once the drafts read correctly
 A draft run leaves state untouched, so nothing is recorded as posted and a later
 `--post` run picks up the same queue.
 
+Filing the deferral tracking issue is the one thing `--post` may stop to ask
+about. Nothing assumes a tracker: if `issue_tracker.provider` is unset for
+the repo, a `--post` run asks where the repo files issues, then whether to record
+the answer for this repo or for all of them. A repo-scoped answer is written to
+`.workbench.yml` at the repo root — commit it and nobody is asked again. A
+machine-wide answer goes to `config.yml` under the config root.
+
+The question is only ever asked when it can be answered and the answer would
+matter. A draft run does not ask, because it files nothing either way. A run with
+no terminal at all — CI, or anything else detached from one — reports the key to
+set instead of asking. A piped stdin is not that: the question goes to the
+terminal the command was started from, so a `--post` run piped into `tee` still
+asks. Either way an unanswered question files nothing: no tracking issue is
+created and the deferral replies that would link to it are not sent, rather than
+an issue being filed to a tracker nobody named.
+
 ### When a contested thread holds the gate shut
 
 `--post` is a request, not a guarantee. If triage routes any thread to

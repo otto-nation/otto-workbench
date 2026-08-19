@@ -878,8 +878,8 @@ unify_in_fake() {
 
   [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
   [ "$(yq -r '.reuse.default' "$FAKE_CONFIG/config.yml")" = "lite" ]
-  [ "$(yq -r '.review.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
-  [ "$(yq -r '.review.issue_tracker.team' "$FAKE_CONFIG/config.yml")" = "ENG" ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+  [ "$(yq -r '.issue_tracker.team' "$FAKE_CONFIG/config.yml")" = "ENG" ]
 
   [ ! -f "$FAKE_CONFIG/reuse-level" ]
   [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
@@ -918,7 +918,7 @@ unify_in_fake() {
   [ "$status" -eq 0 ]
   [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "lite" ]
   [ "$(yq -r '.reuse.default' "$FAKE_CONFIG/config.yml")" = "full" ]
-  [ "$(yq -r '.review.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "jira" ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "jira" ]
 }
 
 @test "unification renames a review.yml with nothing to carry" {
@@ -928,7 +928,7 @@ unify_in_fake() {
   run unify_in_fake
   [ "$status" -eq 0 ]
   [ -f "$FAKE_CONFIG/review.yml.migrated" ]
-  [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+  [ "$(yq -r '.issue_tracker // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
 }
 
 @test "unification seeds a new config.yml with the schema modeline" {
@@ -981,4 +981,97 @@ unify_in_fake() {
   # A fold that succeeded before the failure still carried its value over.
   [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
   [ -f "$FAKE_CONFIG/reuse-level.migrated" ]
+}
+
+# ─── Issue tracker key lift ──────────────────────────────────────────────────
+
+lift_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$REPO_ROOT/lib/constants.sh"
+    . "$REPO_ROOT/bin/migrations/20260819-lift-issue-tracker-key.sh"
+    migration_20260819_lift_issue_tracker_key
+  )
+}
+
+@test "lift is a no-op when there is no config.yml" {
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  [ ! -f "$FAKE_CONFIG/config.yml" ]
+}
+
+@test "lift is a no-op when the key is already top-level" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'issue_tracker:\n  provider: github\n' > "$FAKE_CONFIG/config.yml"
+
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+}
+
+@test "lift moves the whole legacy mapping to the top level" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  issue_tracker:\n    provider: github\n    team: ENG\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+  [ "$(yq -r '.issue_tracker.team' "$FAKE_CONFIG/config.yml")" = "ENG" ]
+  [ "$(yq -r '.review.issue_tracker // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "lift drops a review section it emptied" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  issue_tracker:\n    provider: jira\n' > "$FAKE_CONFIG/config.yml"
+
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "lift keeps a review section holding other settings" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  model: opus\n  issue_tracker:\n    provider: jira\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.review.model' "$FAKE_CONFIG/config.yml")" = "opus" ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "jira" ]
+}
+
+@test "lift keeps a top-level value already written against the new schema" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  issue_tracker:\n    provider: jira\nissue_tracker:\n  provider: github\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+  [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "lift preserves the schema modeline and hand-written comments" {
+  mkdir -p "$FAKE_CONFIG"
+  printf '# yaml-language-server: $schema=https://example/config.schema.json\n# we file on GitHub\nreview:\n  issue_tracker:\n    provider: github\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  run head -1 "$FAKE_CONFIG/config.yml"
+  [[ "$output" == "# yaml-language-server: \$schema="* ]]
+  grep -q "# we file on GitHub" "$FAKE_CONFIG/config.yml"
+}
+
+@test "lift re-run after a move is a no-op" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  issue_tracker:\n    provider: github\n' > "$FAKE_CONFIG/config.yml"
+
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  run lift_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
 }

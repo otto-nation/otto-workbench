@@ -11,9 +11,11 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import log
+import prompt
 import publishing
 import workbench_config
 from workbench_config import yaml_dump
@@ -32,10 +34,18 @@ class IssueProviderInfo:
 
     Named apart from ``workbench_config.IssueProvider``, the enum of provider
     names this carries in ``name`` — the two are in scope together here.
+
+    An empty ``name`` means no repo and no machine has said where issues go.
+    Read ``resolved`` rather than testing the string, so a call site states
+    what it is asking.
     """
 
-    name: str = str(workbench_config.IssueProvider.LINEAR)
+    name: str = ""
     options: dict = field(default_factory=dict)
+
+    @property
+    def resolved(self) -> bool:
+        return bool(self.name)
 
 
 @dataclass(frozen=True)
@@ -77,8 +87,11 @@ def adopt_project_review_yml(wt_path: str) -> bool:
     if not isinstance(tracker, dict):
         return False
 
+    body = yaml_dump({"issue_tracker": tracker})
     try:
-        target.write_text(yaml_dump({"review": {"issue_tracker": tracker}}))
+        # The modeline every other creator seeds, so a converted file gets the
+        # same schema completion a file `set_value` created would.
+        target.write_text(f"{workbench_config.CONFIG_HEADER}\n{body}")
     except OSError as exc:
         # A read-only checkout still has the legacy file to fall back on, so a
         # failed conversion costs nothing but the conversion.
@@ -98,11 +111,141 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     if wt_path:
         adopt_project_review_yml(wt_path)
     config = workbench_config.load_config_or_default(wt_path)
-    tracker = config.review.issue_tracker
+    tracker = config.issue_tracker
     # str() per value: asdict leaves an enum member as the member, and every
-    # consumer of options reads it as a string.
+    # consumer of options reads it as a string. A None provider is dropped by
+    # the same truthiness filter, so options never carries a "None" string.
     options = {k: str(v) for k, v in dataclasses.asdict(tracker).items() if v}
-    return IssueProviderInfo(name=str(tracker.provider), options=options)
+    name = str(tracker.provider) if tracker.provider is not None else ""
+    return IssueProviderInfo(name=name, options=options)
+
+
+# Providers whose issue creation needs a team or project key. GitHub is
+# addressed by repo, so requiring one there rejects a creation that would
+# have worked. Jira is absent for the opposite reason: create_issue has no
+# Jira branch, so gating it on a team key blames a missing key for a
+# creation that a key would not have enabled.
+_TEAM_KEY_PROVIDERS = frozenset({
+    str(workbench_config.IssueProvider.LINEAR),
+})
+
+
+class _Scope(StrEnum):
+    """How widely a recorded answer applies."""
+
+    REPO = "repo"
+    ALL = "all"
+
+
+def needs_team_key(provider: str) -> bool:
+    """Whether creating an issue with this provider requires a team key."""
+    return provider in _TEAM_KEY_PROVIDERS
+
+
+def _config_problem(wt_path: str | None) -> str:
+    """Why this scope's config cannot be read, or ``""`` when it reads.
+
+    ``load_issue_provider`` goes through ``load_config_or_default``, which
+    reports a file it cannot parse as an unset provider. That is right for a
+    hook and wrong for a caller about to offer to record the very key the
+    broken file may already hold.
+    """
+    try:
+        workbench_config.load_config(wt_path)
+    except workbench_config.ConfigError as exc:
+        return str(exc)
+    return ""
+
+
+def ensure_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
+    """The issue tracker for this scope, asking for it when nothing has said.
+
+    For callers that are about to file. ``load_issue_provider`` is the one to
+    use when a missing tracker is survivable — enriching a review with issue
+    context needs no tracker and must not stop to ask for one.
+
+    An unanswered, declined, or unrecognised question leaves the provider
+    unresolved. Nothing is written in those cases: a prompt that records
+    something on a non-answer is another way to arrive at a guess, which is
+    what this function exists to remove.
+    """
+    info = load_issue_provider(wt_path)
+    if info.resolved:
+        return info
+
+    where = wt_path or "this repo"
+    problem = _config_problem(wt_path)
+    if problem:
+        log.error(
+            f"Cannot read the issue tracker for {where}: {problem} — fix the "
+            f"file; an answer given now would be shadowed by it",
+        )
+        return info
+
+    accepted = [str(p) for p in workbench_config.IssueProvider]
+    if not prompt.interactive():
+        log.warn(
+            f"No issue tracker configured for {where} — set "
+            f"{workbench_config.ISSUE_PROVIDER_KEY} to one of "
+            f"{', '.join(accepted)} in {workbench_config.PROJECT_CONFIG_NAME} "
+            f"or {workbench_config.global_config_path()}",
+        )
+        return info
+
+    answer = prompt.ask(
+        f"Where does {where} file issues? ({'/'.join(accepted)}, Enter to skip): ",
+    ).lower()
+    if not answer:
+        log.warn(
+            f"No issue tracker recorded for {where} — nothing was filed",
+        )
+        return info
+    if answer not in accepted:
+        log.warn(f"'{answer}' is not one of {', '.join(accepted)} — nothing was recorded")
+        return info
+
+    _record_issue_provider(answer, wt_path)
+    return IssueProviderInfo(name=answer, options={**info.options, "provider": answer})
+
+
+def _record_issue_provider(provider: str, wt_path: str | None) -> None:
+    """Persist the answer at the scope the user picks.
+
+    A failed write, or an unrecognised scope answer, is reported and
+    swallowed: the caller has an answer for this run either way, and a
+    read-only checkout — or a garbled scope — should cost the recording
+    rather than the filing. ``adopt_project_review_yml`` makes the same
+    trade on a failed write.
+    """
+    if wt_path is None:
+        scope = str(_Scope.ALL)
+    else:
+        scope = prompt.ask(
+            f"Record for this repo or all repos? "
+            f"({_Scope.REPO}/{_Scope.ALL}, Enter for {_Scope.REPO}): ",
+        ).lower()
+
+    try:
+        chosen = _Scope(scope or _Scope.REPO)
+    except ValueError:
+        log.warn(f"'{scope}' is not {_Scope.REPO} or {_Scope.ALL} — nothing was recorded")
+        return
+    scope_all = chosen is _Scope.ALL
+
+    try:
+        if scope_all:
+            workbench_config.set_value(workbench_config.ISSUE_PROVIDER_KEY, provider)
+            log.ok(f"Recorded {provider} as the tracker for all repos")
+            return
+        workbench_config.set_project_value(
+            workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
+        )
+        log.ok(
+            f"Recorded {provider} in {workbench_config.PROJECT_CONFIG_NAME} "
+            f"— commit it so the repo keeps the answer",
+        )
+    except workbench_config.ConfigError as exc:
+        log.dim(f"could not record the tracker ({exc}) — using {provider} for this run")
 
 
 def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:

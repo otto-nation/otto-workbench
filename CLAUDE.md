@@ -28,6 +28,12 @@ npm --prefix site run build    # static-export the site to site/out (what CI's S
 Pre-push and CI run three gates independently — `bin/local/validate-all`, `bats tests/`,
 and `pytest tests/`. Passing one is not passing the gate.
 
+There is no virtualenv and no Python dependency manager here — `pyproject.toml` only sets
+pytest's `testpaths`, and nothing is installed from it. Run `pytest` and `bats` as bare
+commands off `PATH`, the way the Taskfile, CI, and the pre-push hook do. `uv run pytest`
+and `.venv/bin/python -m pytest` reach nothing the bare command does not, and neither is
+allow-listed, so they only add a permission prompt.
+
 ## Conventions
 
 - **Single source of truth** — every piece of data or config has exactly one authoritative owner. Display logic reads from the owner; it does not duplicate or re-derive the data. Runtime choices (e.g. Docker runtime) are recorded in state files (`~/.local/state/workbench/`); checks should read state, not infer from binary presence. When defaults must appear in multiple formats (YAML + shell), add a cross-validation test. Registry `*.registry.yml` files own tool documentation (`tools[]`). Registry `*.env.yml` files own env var declarations (`env[]`, `auth`), colocated with the consumer code that reads them. Env vars set programmatically at runtime (e.g. DOCKER_HOST) are NOT declared in registries.

@@ -134,6 +134,23 @@ def _write_tool_script(path: Path, name: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def _side_effect_of(script: Path) -> Path:
+    """The file _write_destructive_script's subject touches when it runs."""
+    return script.parent / "side-effect"
+
+
+def _write_destructive_script(directory: Path) -> Path:
+    """Write an unmarked executable whose only act is a visible side effect.
+
+    Nothing here answers the protocol, so anything that runs it has skipped the
+    marker check — which is the whole assertion.
+    """
+    script = directory / "destructive-script"
+    script.write_text(f"#!/bin/bash\ntouch '{_side_effect_of(script)}'\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return script
+
+
 def _write_counting_tool(directory: Path) -> Path:
     """Write a tool into *directory* that records each probe; return the log.
 
@@ -199,16 +216,13 @@ class TestDiscovery:
 
     def test_script_without_the_flag_is_never_executed(self, tmp_path):
         """A script that ignores unknown flags must not run during discovery."""
-        marker = tmp_path / "side-effect"
-        script = tmp_path / "destructive-script"
-        script.write_text(f"#!/bin/bash\ntouch '{marker}'\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        script = _write_destructive_script(tmp_path)
 
         config = {"tool_dirs": [str(tmp_path)], "plugin_dirs": []}
         tools = discover_tools(config)
 
         assert tools == {}
-        assert not marker.exists()
+        assert not _side_effect_of(script).exists()
 
     def test_probing_an_unmarked_script_refuses_to_run_it(self, tmp_path):
         """The guard travels with probe_tool, not with the caller that filters.
@@ -217,16 +231,13 @@ class TestDiscovery:
         on its own and running an unmarked script is what wrote a release
         archive into the CWD.
         """
-        marker = tmp_path / "side-effect"
-        script = tmp_path / "destructive-script"
-        script.write_text(f"#!/bin/bash\ntouch '{marker}'\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        script = _write_destructive_script(tmp_path)
 
         result = server.probe_tool(script)
 
         assert result.ok is False
         assert "no protocol marker" in result.reason
-        assert not marker.exists()
+        assert not _side_effect_of(script).exists()
 
     def test_tool_parser_import_counts_as_a_declaration(self, tmp_path):
         """ToolParser-based scripts inherit the flag without naming it."""

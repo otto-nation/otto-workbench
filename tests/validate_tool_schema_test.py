@@ -1,5 +1,7 @@
 """Tests for bin/local/validate-tool-schema."""
 
+from __future__ import annotations
+
 import importlib.machinery
 import importlib.util
 import stat

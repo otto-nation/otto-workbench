@@ -248,6 +248,21 @@ BREAKING CHANGE: beta replaces the old entrypoint"
   [[ "$output" != *"skipping surface comparison"* ]]
 }
 
+# git writes advisories to stderr on commands that succeed. A tag and a branch
+# sharing a name draws "warning: refname 'dup' is ambiguous" from a merge-base
+# that exits 0, so capturing stderr into the same variable as the SHA would
+# make the resolved base "warning: …\n<sha>" and kill the next git call.
+@test "an ambiguous base ref does not corrupt the resolved merge base" {
+  _seed_base '["command:alpha"]'
+  git -C "$LOCAL" branch dup main
+  git -C "$LOCAL" tag dup main
+
+  run "$GATE" --repo-dir "$LOCAL" --base dup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"public surface compatible with dup"* ]]
+  [[ "$output" != *"invalid object name"* ]]
+}
+
 @test "fails when the repo dir is not a git repository" {
   mkdir -p "$TMPDIR/notarepo"
   run "$GATE" --repo-dir "$TMPDIR/notarepo"

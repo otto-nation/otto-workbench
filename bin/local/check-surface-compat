@@ -19,11 +19,17 @@
 #
 # Usage: bin/local/check-surface-compat [--base REF] [--repo-dir DIR] [--quiet]
 # Exit codes:
-#   0   every removal is declared
-#   1   at least one removal is undeclared, or a `!` header carries no footer
-#   >1  the gate could not run (bad ref, unreadable snapshot, malformed JSON)
-# The three ranges are kept distinct so a caller can tell "the surface is
-# incompatible" from "the check never happened".
+#   0    every removal is declared, or there was nothing to compare
+#   1    a removal is undeclared, or a `!` header carries no footer
+#   2    a usage error, or a snapshot path at the base is not a file
+#   5    jq aborted on a malformed snapshot (.entries not an array, or
+#        .package missing or not a string) — jq's own status, passed through
+#   128  git's status from an unresolvable merge base (bad ref, not a repo)
+# 0 and 1 are the gate's verdict; everything above is "the check never
+# happened", and callers must not read those as a pass. Both current callers
+# (git/hooks/pre-push-workbench and the surface-compat CI job) treat any
+# non-zero status as a hard fail, so the distinction is for a reader and for
+# task automation reading the REMOVED lines, not for the gating itself.
 
 set -euo pipefail
 # Bash does not apply errexit inside `$(...)` unless inherit_errexit is on, so
@@ -149,10 +155,19 @@ _removed_entries() {
 # history — and the gate has no opinion there. Anything else (128 for a bad
 # ref, a missing remote-tracking branch, or a directory that is not a repo) is
 # a failure to run the check at all, and reporting that as a clean pass is how
-# a green tick comes to mean nothing. stderr is captured rather than discarded
-# so the git error reaches the operator.
+# a green tick comes to mean nothing.
+#
+# stderr goes to a file rather than into the capture. git writes advisories to
+# stderr while still exiting 0 — an ambiguous ref (a tag and a branch sharing a
+# name, or a tag literally called origin/main) draws a "warning: refname is
+# ambiguous" on a merge-base that succeeds — so folding 2>&1 into the value
+# would prepend the warning to the SHA and blow up the next `git log` on a
+# comparison that should have run clean.
+MERGE_BASE_ERR="$(mktemp "${TMPDIR:-/tmp}/surface-compat.XXXXXX")"
+trap 'rm -f "$MERGE_BASE_ERR"' EXIT
+
 MERGE_BASE_STATUS=0
-MERGE_BASE_OUT=$(git -C "$REPO_DIR" merge-base HEAD "$BASE" 2>&1) || MERGE_BASE_STATUS=$?
+MERGE_BASE=$(git -C "$REPO_DIR" merge-base HEAD "$BASE" 2>"$MERGE_BASE_ERR") || MERGE_BASE_STATUS=$?
 
 if [[ "$MERGE_BASE_STATUS" -eq 1 ]]; then
   $QUIET || info "No merge base with $BASE — skipping surface comparison"
@@ -161,14 +176,12 @@ fi
 
 if [[ "$MERGE_BASE_STATUS" -ne 0 ]]; then
   err "Could not resolve a merge base between HEAD and $BASE (git exit $MERGE_BASE_STATUS):"
-  sed 's/^/    /' <<<"$MERGE_BASE_OUT" >&2
+  sed 's/^/    /' "$MERGE_BASE_ERR" >&2
   echo "" >&2
   echo "  The surface was NOT checked. Fetch the base ref (git fetch origin)" >&2
   echo "  or pass an existing one with --base REF." >&2
   exit "$MERGE_BASE_STATUS"
 fi
-
-MERGE_BASE="$MERGE_BASE_OUT"
 
 COMMIT_BODIES=$(git -C "$REPO_DIR" log --format='%B' "$MERGE_BASE..HEAD")
 
@@ -229,7 +242,7 @@ for snapshot in "${PUBLIC_SURFACE_RELPATHS[@]}"; do
   fi
   base_type=$(git -C "$REPO_DIR" cat-file -t "$MERGE_BASE:$snapshot")
   if [[ "$base_type" != "blob" ]]; then
-    err "$snapshot is a $base_type at $BASE, not a file — cannot compare surfaces"
+    err "$snapshot is a $base_type at merge base $MERGE_BASE, not a file — cannot compare surfaces"
     exit 2
   fi
   base_json=$(git -C "$REPO_DIR" show "$MERGE_BASE:$snapshot")

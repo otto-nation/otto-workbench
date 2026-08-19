@@ -782,8 +782,10 @@ def test_resolve_local_does_not_create_a_worktree_in_a_bare_repo(monkeypatch):
     monkeypatch.setattr(pr_context, "find_bare_repo_worktree",
                         lambda cwd, branch: None)
     monkeypatch.setattr(pr_context, "_resolve_branch", lambda hint, cwd=None: hint)
-    monkeypatch.setattr(pr_context, "_target_repo_label", lambda cwd: "acme/widget")
-    monkeypatch.setattr(pr_target, "repo_key_from_origin", lambda cwd=None: "widget")
+    monkeypatch.setattr(
+        pr_target, "repo_identity_from_origin",
+        lambda cwd=None: pr_target.RepoIdentity(label="acme/widget", key="widget"),
+    )
     monkeypatch.setattr(
         pr_context, "create_worktree_for_branch",
         lambda *a, **kw: pytest.fail("resolve_local must not create a worktree"),

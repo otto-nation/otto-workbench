@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import Enum
 from pathlib import Path
+from typing import NoReturn
 
 import log
 import pr_target
@@ -209,7 +210,7 @@ def resolve_local(
 
     * ``pr_number`` is always None and ``repo`` is the canonical form behind the
       repo key (``acme/widget``), not ``gh``'s ``owner/repo`` — see
-      ``pr_target.repo_label_from_origin``.
+      ``pr_target.RepoIdentity``.
     * A bare repo hands back an existing worktree but never creates one, so
       ``worktree_root`` can be None where ``resolve`` would have made a
       checkout. Commands needing one call ``require_worktree``.
@@ -225,27 +226,30 @@ def resolve_local(
 
     branch_name = _resolve_branch(branch, cwd) if branch else _current_branch(cwd)
 
+    identity = _target_identity(cwd)
+
     return ResolvedContext(
-        repo=_target_repo_label(cwd),
+        repo=identity.label,
         pr_number=None,
         branch=branch_name,
         worktree_root=worktree_root,
         head_sha=_head_sha(cwd) if worktree_root else "",
         current_branch=_current_branch_quiet(cwd) if worktree_root else None,
-        target_dir=pr_target.target_dir(_target_repo_key(cwd), branch_name),
+        target_dir=pr_target.target_dir(identity.key, branch_name),
     )
 
 
-def _target_repo_label(cwd: str | None) -> str:
-    """The repo named readably, or exit 1 for the same reason the key would.
+def _target_identity(cwd: str | None) -> pr_target.RepoIdentity:
+    """Both names for the target repo from one read of ``origin``, or exit 1.
 
-    Both come from ``origin``, so a checkout that cannot name one cannot name
-    the other — failing here keeps the message identical either way.
+    For ``resolve_local``, which shows the repo *and* keys the target on it: one
+    read is what makes the two names provably the same repo, and it is also the
+    only subprocess the shallow rung spends on naming.
     """
-    label = pr_target.repo_label_from_origin(cwd)
-    if label:
-        return label
-    return _target_repo_key(cwd)
+    identity = pr_target.repo_identity_from_origin(cwd)
+    if identity:
+        return identity
+    _exit_without_an_origin()
 
 
 def _target_repo_key(cwd: str | None) -> str:
@@ -257,6 +261,11 @@ def _target_repo_key(cwd: str | None) -> str:
     key = pr_target.repo_key_from_origin(cwd)
     if key:
         return key
+    _exit_without_an_origin()
+
+
+def _exit_without_an_origin() -> NoReturn:
+    """Fail the run the same way whichever name the caller was asking for."""
     log.error(
         "Cannot read the origin remote — pr keys a run's state and lock on "
         "(origin repo, branch)"

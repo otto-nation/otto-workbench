@@ -778,8 +778,10 @@ machine-wide answer goes to `config.yml` under the config root.
 
 The question is only ever asked when it can be answered and the answer would
 matter. A draft run does not ask, because it files nothing either way. A run with
-no terminal — CI, a hook, a piped subprocess — reports the key to set instead of
-asking. Either way an unanswered question files nothing: no tracking issue is
+no terminal at all — CI, or anything else detached from one — reports the key to
+set instead of asking. A piped stdin is not that: the question goes to the
+terminal the command was started from, so a `--post` run piped into `tee` still
+asks. Either way an unanswered question files nothing: no tracking issue is
 created and the deferral replies that would link to it are not sent, rather than
 an issue being filed to a tracker nobody named.
 

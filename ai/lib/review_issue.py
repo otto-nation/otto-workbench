@@ -128,6 +128,7 @@ _TEAM_KEY_PROVIDERS = frozenset({
     str(workbench_config.IssueProvider.JIRA),
 })
 
+
 class _Scope(StrEnum):
     """How widely a recorded answer applies."""
 

@@ -370,6 +370,26 @@ make_bare_worktree_layout() {
   [ "$output" = "$TMPDIR/alpha" ]
 }
 
+@test "the backfill does not retire itself when ~/.claude.json fails to parse" {
+  # A file that exists but fails to parse (mid-write, hand-edited syntax
+  # error) must not read like "no candidates" — that would record the marker
+  # and retire the backfill on a machine that never had a successful read.
+  make_repo "$TMPDIR/alpha"
+  CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"
+  printf '{"projects":' > "$CLAUDE_CONFIG_FILE"
+
+  run seed_project_registry
+  [ "$status" -eq 0 ]
+  run grep -c 'backfilled from' "$PROJECTS_REGISTRY_FILE"
+  [ "$status" -ne 0 ]
+
+  # Once the file is fixed, the backfill still runs.
+  printf '{"projects":{"%s":{}}}\n' "$TMPDIR/alpha" > "$CLAUDE_CONFIG_FILE"
+  seed_project_registry
+  run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
 @test "a session cwd that is no longer a repo is skipped, not fatal" {
   make_repo "$TMPDIR/alpha"
   CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"

@@ -320,7 +320,7 @@ _project_seed_candidates() {
   if [[ ! -f "$CLAUDE_CONFIG_FILE" ]]; then
     return 0
   fi
-  jq -r '(.projects // {}) | keys[]' "$CLAUDE_CONFIG_FILE" 2>/dev/null || true
+  jq -r '(.projects // {}) | keys[]' "$CLAUDE_CONFIG_FILE" 2>/dev/null
 }
 
 # _project_seed_roots CANDIDATE — the work-tree root a recorded cwd stands for.
@@ -380,12 +380,23 @@ seed_project_registry() {
   fi
 
   local candidate root seeded=0
-  local -a roots=()
-  while IFS= read -r candidate; do
+  local -a roots=() candidates=()
+  local seed_output
+  if ! seed_output="$(_project_seed_candidates)"; then
+    # A present-but-unparseable ~/.claude.json (mid-write, hand-edited syntax
+    # error) is not "no candidates" — treat it like the missing-jq case above
+    # and skip without recording the marker so the backfill retries later.
+    return 0
+  fi
+  if [[ -n "$seed_output" ]]; then
+    mapfile -t candidates <<< "$seed_output"
+  fi
+  for candidate in "${candidates[@]:-}"; do
+    [[ -z "$candidate" ]] && continue
     while IFS= read -r root; do
       roots+=("$root")
     done < <(_project_seed_roots "$candidate")
-  done < <(_project_seed_candidates)
+  done
 
   for root in "${roots[@]:-}"; do
     if [[ -z "$root" ]] || _project_contains "$root"; then

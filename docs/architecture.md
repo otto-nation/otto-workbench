@@ -69,7 +69,7 @@ Secrets are split between two files — use the right one:
 | `~/.env.local` | Interactive shell secrets (API keys, cloud credentials) | Shell on every session start |
 | `~/.config/task/taskfile.env` | AI automation tokens (`GH_TOKEN`, `AI_COMMAND`) | Task runner scripts only |
 
-`~/.env.local` is created from [`zsh/.env.local.template`](../zsh/.env.local.template) on first install. Its auto-generated ENV section is updated on every sync (new vars only, never overwrites your values).
+`~/.env.local` is created from [`zsh/.env.local.template`](../zsh/.env.local.template) on first install. The ENV marker section is auto-generated: every sync rewrites it wholesale from the registries. Your own values, which live below `ENV-END`, are never overwritten. If you set a value *inside* the markers — by uncommenting a catalogue line in place — sync rescues it before the rewrite, appends it to the end of the file, and prints a warning naming each variable it moved.
 
 ### AI Overrides
 

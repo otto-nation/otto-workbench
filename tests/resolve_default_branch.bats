@@ -23,24 +23,6 @@ teardown() {
   common_teardown
 }
 
-# _make_repo_no_default_branch DIR BRANCH — bare remote + clone with one commit,
-# the way an unfetched clone or a `wt-init`-converted repo ends up: no
-# refs/remotes/origin/HEAD symref, because the clone happened before the
-# remote had any commit for HEAD to point at.
-_make_repo_no_default_branch() {
-  local dir="$1"
-  local initial_branch="${2:-main}"
-  git init --bare "$dir/remote.git" --quiet --initial-branch="$initial_branch"
-  git clone "$dir/remote.git" "$dir/repo" --quiet 2>/dev/null
-  git -C "$dir/repo" config core.hooksPath /dev/null
-  git -C "$dir/repo" config user.email "test@example.com"
-  git -C "$dir/repo" config user.name "Test"
-  echo "init" > "$dir/repo/README.md"
-  git -C "$dir/repo" add .
-  git -C "$dir/repo" commit -m "initial" --quiet
-  git -C "$dir/repo" push --quiet
-}
-
 @test "falls back to main when origin/HEAD is missing" {
   _make_repo_no_default_branch "$TMPDIR" "main"
 
@@ -64,4 +46,48 @@ _make_repo_no_default_branch() {
   run resolve_default_branch
   [ "$status" -eq 0 ]
   [ "$output" = "trunk" ]
+}
+
+@test "falls back to master when origin/HEAD is missing and only master exists" {
+  _make_repo_no_default_branch "$TMPDIR" "master"
+
+  # Confirm the precondition: no symref, and no origin/main to fall back to —
+  # only the "prefer an existing ref" branch of the fallback can produce "master".
+  ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
+  ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/main
+
+  cd "$TMPDIR/repo"
+  run resolve_default_branch
+  [ "$status" -eq 0 ]
+  [ "$output" = "master" ]
+}
+
+@test "prefers the symref over existing main/master candidates" {
+  _make_repo_no_default_branch "$TMPDIR" "trunk"
+  # Give the remote a "main" branch too, so the fallback candidate list has
+  # something to (wrongly) prefer if the symref were not checked first.
+  git -C "$TMPDIR/repo" checkout -b main --quiet
+  git -C "$TMPDIR/repo" push origin main --quiet
+  git -C "$TMPDIR/repo" checkout trunk --quiet
+  git -C "$TMPDIR/repo" fetch origin --quiet
+  # Point origin/HEAD explicitly, the way `git remote set-head origin -a` would
+  git -C "$TMPDIR/repo" remote set-head origin trunk
+
+  cd "$TMPDIR/repo"
+  run resolve_default_branch
+  [ "$status" -eq 0 ]
+  [ "$output" = "trunk" ]
+}
+
+@test "falls back to the literal main when neither main nor master exist" {
+  _make_repo_no_default_branch "$TMPDIR" "develop"
+
+  ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
+  ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/main
+  ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/master
+
+  cd "$TMPDIR/repo"
+  run resolve_default_branch
+  [ "$status" -eq 0 ]
+  [ "$output" = "main" ]
 }

@@ -370,7 +370,7 @@ Foundation module: AI command loading, GitHub token resolution with per-org rout
 <!-- LIB-FUNCTIONS:ai/core.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `resolve_default_branch` | Resolves the remote's default branch, falling back to "main" when it can't be determined (unfetched clone, a `wt-init`-converted repo, or any remote whose HEAD was never pointed with `git remote set-head origin -a`). |
+| `resolve_default_branch` | Resolves the remote's default branch (unfetched clone, a `wt-init`-converted repo, or any remote whose HEAD was never pointed with `git remote set-head origin -a` all lack the symref this depends on). |
 | `load_ai_command` | Finds the AI config and validates the binary exists. |
 | `load_gh_token` | Resolves GH_TOKEN with per-org routing support. |
 | `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. |

@@ -445,6 +445,23 @@ SCRIPT
   [[ "$output" == *"origin/HEAD"* ]]
 }
 
+@test "validate-nesting --diff: unresolvable non-origin ref omits remote-set-head hint" {
+  _init_diff_repo "$TMPDIR"
+
+  cat > "$TMPDIR/script.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+func() { echo "ok"; }
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "init" --quiet
+
+  cd "$TMPDIR"
+  run "$VALIDATE_NESTING" --diff not-a-real-branch
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"did not resolve"* ]]
+  [[ "$output" != *"remote set-head"* ]]
+}
+
 @test "validate-nesting --diff: skips non-script files" {
   _init_diff_repo "$TMPDIR"
 

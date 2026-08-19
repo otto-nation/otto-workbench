@@ -157,8 +157,11 @@ def _resolve_diff_files(base_ref: str, repo_root: str):
     except subprocess.CalledProcessError:
         print(f"error: --diff base ref '{base_ref}' did not resolve — "
               'is it missing or unfetched?', file=sys.stderr)
-        print("  if this is meant to be the default branch, run: "
-              'git remote set-head origin -a', file=sys.stderr)
+        # Only relevant when the ref names a remote-tracking branch — base_ref
+        # can also be a local branch, a different remote, or a raw SHA.
+        if base_ref.startswith('origin/'):
+            print("  if this is meant to be the default branch, run: "
+                  'git remote set-head origin -a', file=sys.stderr)
         sys.exit(2)
 
     added_lines = _parse_diff(diff_output)

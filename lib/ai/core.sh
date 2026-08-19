@@ -48,18 +48,32 @@ PR_DESCRIPTION_MARKER="DESCRIPTION:"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # resolve_default_branch
-# Resolves the remote's default branch, falling back to "main" when it can't be
-# determined (unfetched clone, a `wt-init`-converted repo, or any remote whose
-# HEAD was never pointed with `git remote set-head origin -a`).
+# Resolves the remote's default branch (unfetched clone, a `wt-init`-converted
+# repo, or any remote whose HEAD was never pointed with
+# `git remote set-head origin -a` all lack the symref this depends on).
 # symbolic-ref, not rev-parse --abbrev-ref: when refs/remotes/$GIT_REMOTE/HEAD is
 # missing, rev-parse still echoes "$GIT_REMOTE/HEAD" to stdout (then exits 128), so
 # the string survives a sed strip as a non-empty "HEAD" and defeats a "${VAR:-main}"
 # fallback. symbolic-ref prints nothing on failure, so the fallback here actually fires.
+# When the symref is missing, prefers a remote-tracking ref that actually exists
+# over a literal guess: tries "main" then "master" via a local `show-ref` (no
+# network call), and only returns the literal "main" when neither is present.
 # Prints the resolved branch name to stdout.
 resolve_default_branch() {
   local branch
   branch=$(git symbolic-ref "refs/remotes/$GIT_REMOTE/HEAD" 2>/dev/null | sed "s@^refs/remotes/$GIT_REMOTE/@@")
-  printf '%s\n' "${branch:-main}"
+  if [[ -n "$branch" ]]; then
+    printf '%s\n' "$branch"
+    return
+  fi
+
+  local candidate
+  for candidate in main master; do
+    git show-ref --verify --quiet "refs/remotes/$GIT_REMOTE/$candidate" || continue
+    printf '%s\n' "$candidate"
+    return
+  done
+  printf 'main\n'
 }
 
 # _resolve_env_file — finds the active env file (local override or global).

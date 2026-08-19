@@ -16,25 +16,6 @@ teardown() {
   common_teardown
 }
 
-# make_fake_gh EXIT_CODE OUTPUT — stub gh that records its arguments and prints
-# OUTPUT. Failures print on stderr, matching how gh reports errors.
-make_fake_gh() {
-  local exit_code="$1"
-  local output="$2"
-  local stream=1
-  [[ "$exit_code" -eq 0 ]] || stream=2
-  mkdir -p "$TMPDIR/bin"
-  GH_ARGS_FILE="$TMPDIR/gh-args.txt"
-  cat > "$TMPDIR/bin/gh" << SCRIPT
-#!/bin/bash
-printf '%s\n' "\$@" > "$GH_ARGS_FILE"
-printf '%s\n' "$output" >&$stream
-exit $exit_code
-SCRIPT
-  chmod +x "$TMPDIR/bin/gh"
-  PATH="$TMPDIR/bin:$PATH"
-}
-
 @test "reports the PR URL when gh succeeds" {
   make_fake_gh 0 "https://github.com/otto-nation/otto-workbench/pull/644"
 

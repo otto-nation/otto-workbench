@@ -82,6 +82,54 @@ make_fake_binary() {
   chmod +x "$dir/$name"
 }
 
+# make_fake_gh EXIT_CODE OUTPUT — stub gh that records its arguments in
+# $TMPDIR/gh-args.txt (path exposed via GH_ARGS_FILE) and prints OUTPUT.
+# Failures print on stderr, matching how gh reports errors. Callers that only
+# need gh to succeed quietly (e.g. as an entry-gate check) can pass `0 ""`.
+make_fake_gh() {
+  local exit_code="$1"
+  local output="$2"
+  local stream=1
+  [[ "$exit_code" -eq 0 ]] || stream=2
+  mkdir -p "$TMPDIR/bin"
+  GH_ARGS_FILE="$TMPDIR/gh-args.txt"
+  cat > "$TMPDIR/bin/gh" << SCRIPT
+#!/bin/bash
+printf '%s\n' "\$@" > "$GH_ARGS_FILE"
+printf '%s\n' "$output" >&$stream
+exit $exit_code
+SCRIPT
+  chmod +x "$TMPDIR/bin/gh"
+  PATH="$TMPDIR/bin:$PATH"
+}
+
+# _make_repo_no_default_branch DIR [INITIAL_BRANCH] [EXTRA_BRANCH] — bare remote +
+# clone with one commit, the way an unfetched clone or a `wt-init`-converted
+# repo ends up: no refs/remotes/origin/HEAD symref, because the clone happened
+# before the remote had any commit for HEAD to point at. When EXTRA_BRANCH is
+# given, checks it out with one more commit on top — for callers that also
+# need to be off the default branch (e.g. load_pr_context's protected-branch guard).
+_make_repo_no_default_branch() {
+  local dir="$1"
+  local initial_branch="${2:-main}"
+  local extra_branch="${3:-}"
+  git init --bare "$dir/remote.git" --quiet --initial-branch="$initial_branch"
+  git clone "$dir/remote.git" "$dir/repo" --quiet 2>/dev/null
+  git -C "$dir/repo" config core.hooksPath /dev/null
+  git -C "$dir/repo" config user.email "test@example.com"
+  git -C "$dir/repo" config user.name "Test"
+  echo "init" > "$dir/repo/README.md"
+  git -C "$dir/repo" add .
+  git -C "$dir/repo" commit -m "initial" --quiet
+  git -C "$dir/repo" push --quiet
+
+  [[ -z "$extra_branch" ]] && return 0
+  git -C "$dir/repo" checkout -b "$extra_branch" --quiet
+  echo "feature" > "$dir/repo/feature.txt"
+  git -C "$dir/repo" add .
+  git -C "$dir/repo" commit -m "feat: add feature" --quiet
+}
+
 # make_git_remote REMOTE_DIR LOCAL_DIR BRANCH — sets up a bare remote, clones it,
 # makes an initial commit on main, then creates BRANCH with one commit.
 make_git_remote() {

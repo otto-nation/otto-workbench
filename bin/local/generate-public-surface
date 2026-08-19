@@ -241,7 +241,7 @@ _ai_entries="$_ai_entries"$'\n'"$(_collect "claude artifacts" _claude_artifacts)
 # empty snapshot. A bare call lets a real failure abort the script
 # immediately, at the cost of only ever reporting the first package that
 # fails --check in a given run rather than checking both before exiting.
-_write_snapshot "otto-workbench" "public-surface.json" "$_wb_entries"
-_write_snapshot "otto-ai-tools" "ai/claude/public-surface.json" "$_ai_entries"
+_write_snapshot "otto-workbench" "$WORKBENCH_SURFACE_RELPATH" "$_wb_entries"
+_write_snapshot "otto-ai-tools" "$AI_TOOLS_SURFACE_RELPATH" "$_ai_entries"
 
 $QUIET || success "Generated 2 public surface snapshots"

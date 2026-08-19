@@ -12,6 +12,7 @@ import json
 import signal
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
@@ -55,17 +56,75 @@ VALUE_FLAGS_TIMEOUT = 5.0
 # written to a worktree any more. It exists only as something to sweep.
 _LEGACY_TRAIL_FILENAME = "trail.jsonl"
 
+
+@dataclass(frozen=True)
+class Need:
+    """What one command needs of dispatch before its handler runs.
+
+    Three independent axes, declared rather than opted out of. Independent
+    because they routinely disagree: `rebase` needs `gh` to name its PR but
+    must not fetch (it does its own), and `gc` writes nothing to the remote yet
+    still locks, because it deletes the directory other runs key on.
+
+    * ``depth`` — how far ``pr_context`` resolves. LOCAL is git alone; REMOTE
+      adds the ``gh`` calls that name the repo and the PR.
+    * ``update`` — whether to fetch and fast-forward the worktree
+      (``update_to_remote``) before the handler runs.
+    * ``lock`` — whether to hold the target's run lock for the whole dispatch.
+      False only for a command that neither writes ``state.json`` nor touches
+      the worktree, so it is safe alongside another run.
+    """
+
+    depth: pr_context.ContextDepth
+    update: bool
+    lock: bool
+
+
+_LOCAL = pr_context.ContextDepth.LOCAL
+_REMOTE = pr_context.ContextDepth.REMOTE
+
 _COMMANDS = {
-    "create":   {"help": "Create a PR (wraps task pr:create)"},
-    "status":   {"help": "Show CI, review, and comment status dashboard"},
-    "ci":       {"help": "Check CI failures",                     "script": "ci-check"},
-    "review":   {"help": "Run code review",                       "script": "claude-review"},
-    "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads"},
-    "fix":      {"help": "Fix CI + review + comments"},
-    "rebase":   {"help": "Rebase onto origin/main",               "script": "pr-rebase"},
-    "describe": {"help": "Revise the PR description",             "script": "pr-describe"},
-    "gc":       {"help": "Clean up stale PR artifacts"},
+    "create":   {"help": "Create a PR (wraps task pr:create)",
+                 "need": Need(_REMOTE, update=False, lock=True)},
+    "status":   {"help": "Show CI, review, and comment status dashboard",
+                 "need": Need(_LOCAL,  update=False, lock=False)},
+    "ci":       {"help": "Check CI failures",                     "script": "ci-check",
+                 "need": Need(_REMOTE, update=True,  lock=True)},
+    "review":   {"help": "Run code review",                       "script": "claude-review",
+                 "need": Need(_REMOTE, update=True,  lock=True)},
+    "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads",
+                 "need": Need(_REMOTE, update=True,  lock=True)},
+    "fix":      {"help": "Fix CI + review + comments",
+                 "need": Need(_REMOTE, update=True,  lock=True)},
+    "rebase":   {"help": "Rebase onto origin/main",               "script": "pr-rebase",
+                 "need": Need(_REMOTE, update=False, lock=True)},
+    "describe": {"help": "Revise the PR description",             "script": "pr-describe",
+                 "need": Need(_REMOTE, update=True,  lock=True)},
+    "gc":       {"help": "Clean up stale PR artifacts",
+                 "need": Need(_REMOTE, update=False, lock=True)},
 }
+
+
+def _validate_needs(commands: dict) -> None:
+    """Raise unless every command declares a Need.
+
+    The check that replaces "remember to edit two opt-out sets": a command that
+    declares nothing fails at import, where the old sets silently handed it
+    whatever not being listed happened to mean. A raise rather than an assert,
+    so the invariant survives -O.
+    """
+    undeclared = sorted(
+        name for name, entry in commands.items()
+        if not isinstance(entry.get("need"), Need)
+    )
+    if undeclared:
+        raise RuntimeError(
+            "pr: commands declare no dispatch need: " + ", ".join(undeclared)
+            + " — add a Need(depth, update=…, lock=…) to each _COMMANDS entry"
+        )
+
+
+_validate_needs(_COMMANDS)
 
 
 def _run_delegate(entry: dict, argv: list[str],
@@ -585,9 +644,6 @@ _CUSTOM = {
     "gc":       cmd_gc,
 }
 
-# Commands that do not need a remote fetch before dispatch.
-_NO_UPDATE_COMMANDS = {"status", "gc", "rebase", "create"}
-
 # Commands that accept no positional target, so every bare token in their argv
 # belongs to the flag before it. 'create' always operates on the current branch
 # and `task pr:create` has no way to accept a target, so the positional scan has
@@ -596,12 +652,6 @@ _NO_UPDATE_COMMANDS = {"status", "gc", "rebase", "create"}
 # no arity list of its own: the flags are parsed by parse_pr_flags in
 # lib/ai/pr.sh, which stays their single source of truth.
 _NO_TARGET_COMMANDS = {"create"}
-
-# Read-only commands, safe to run alongside another pr run. Everything
-# else writes state.json and may edit/commit the worktree, so it takes
-# the run lock — see run_lock.py. 'gc' is absent deliberately:
-# it deletes the state directory, which is the opposite of read-only.
-_NO_LOCK_COMMANDS = {"status"}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -762,26 +812,31 @@ def main():
             original_pr, original_branch = pr_context.classify_target(extra[idx])
             extra.pop(idx)
 
-    ctx = pr_context.resolve(
+    # The command's declaration drives all three axes from here. Read after the
+    # positional scan above, because that scan is what turns a bare token into
+    # the --pr that can escalate the declared depth.
+    need = entry["need"]
+
+    ctx = pr_context.resolve_at(
+        need.depth,
         pr=original_pr,
         branch=original_branch,
         repo_dir=getattr(args, "repo_dir", None),
     )
 
-    if args.command not in _NO_UPDATE_COMMANDS:
+    if need.update:
         ctx = pr_context.update_to_remote(ctx)
 
-    # Read-only commands take no lock at all. Acquired before _dispatch so
-    # contention costs no trail artifacts.
-
+    # The lock is acquired before _dispatch so contention costs no trail
+    # artifacts.
     try:
         lock = (
-            contextlib.nullcontext() if args.command in _NO_LOCK_COMMANDS
-            else run_lock.acquire(
+            run_lock.acquire(
                 ctx.target_dir,
                 command=" ".join(["pr"] + sys.argv[1:]),
                 started=pr_state.now_iso(),
             )
+            if need.lock else contextlib.nullcontext()
         )
         with lock:
             sys.exit(_dispatch(args, ctx, extra, global_args,

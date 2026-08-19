@@ -1,5 +1,6 @@
 """Tests for pr_context library."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -494,6 +495,27 @@ def test_resolve_bare_repo_worktree_fuzzy_resolves_branch(mock_resolve, mock_fin
     mock_find.assert_any_call("isaac/improve-ci-failures-skill", None)
 
 
+@patch("pr_context.create_worktree_for_branch")
+@patch("pr_context._resolve_branch", side_effect=lambda hint, cwd=None: hint)
+@patch("pr_context.find_worktree_for_branch", return_value=None)
+def test_find_bare_repo_worktree_creates_nothing(_mock_find, _mock_resolve, mock_create):
+    """The non-creating half of the pair: a command that only reads state must
+    not leave a checkout behind as the price of finding its target."""
+    assert pr_context.find_bare_repo_worktree(None, "nonexistent") is None
+    mock_create.assert_not_called()
+
+
+@patch("pr_context.create_worktree_for_branch")
+@patch("pr_context.find_worktree_dir_named", return_value=None)
+@patch("pr_context.find_worktree_for_branch", return_value=None)
+@patch("pr_context.subprocess.run")
+def test_find_bare_repo_worktree_creates_nothing_without_a_branch(
+        mock_run, _mock_find, _mock_named, mock_create):
+    mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
+    assert pr_context.find_bare_repo_worktree(None, None) is None
+    mock_create.assert_not_called()
+
+
 # ── create_worktree_for_branch ─────────────────────────────────────────────
 
 
@@ -675,6 +697,135 @@ def test_update_to_remote_preserves_the_target_dir(monkeypatch, tmp_path):
 
     assert updated.head_sha == "new-sha"
     assert updated.target_dir == ctx.target_dir
+
+
+# ── resolve_local / resolve_at ─────────────────────────────────────────────
+
+
+def _git_repo(path: Path, origin="git@github.com:acme/widget.git",
+              branch="main") -> Path:
+    """A checkout with one commit, so HEAD names a branch. origin=None omits it."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    if origin:
+        subprocess.run(["git", "-C", str(path), "remote", "add", "origin", origin],
+                       check=True)
+    # Identity through the environment, never `git config`: the autouse guard in
+    # conftest fails any test that writes config into the repo under test.
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+        env={**os.environ,
+             "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"},
+    )
+    return path
+
+
+def _recorded_runs(monkeypatch) -> list[list[str]]:
+    """Every command the code under test shells out to, in order."""
+    real = subprocess.run
+    calls: list[list[str]] = []
+
+    def spy(cmd, *args, **kwargs):
+        calls.append(list(cmd))
+        return real(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(pr_context.subprocess, "run", spy)
+    return calls
+
+
+def test_resolve_local_reads_the_whole_target_from_git(monkeypatch, tmp_path):
+    """The headline of #770: no `gh`, so no network and no auth, and the target
+    directory is still the one `resolve` would have computed."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    wt = _git_repo(tmp_path / "wt")
+    calls = _recorded_runs(monkeypatch)
+
+    ctx = pr_context.resolve_local(repo_dir=str(wt))
+
+    assert ctx.branch == "main"
+    assert ctx.pr_number is None
+    assert ctx.repo == "acme/widget"
+    assert ctx.target_dir == pr_target.target_dir("acme-widget-b9d71e86", "main")
+    assert Path(ctx.worktree_root).resolve() == wt.resolve()
+    assert ctx.head_sha
+    assert [c for c in calls if c[0] == "gh"] == []
+
+
+def test_resolve_local_names_the_repo_without_gh(monkeypatch, tmp_path):
+    """The one user-visible consequence, pinned: the label comes from `origin`,
+    so it is the canonical form (host dropped, A-Z folded), not gh's spelling."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    wt = _git_repo(tmp_path / "wt", origin="https://github.com/Acme/Widget.git")
+
+    assert pr_context.resolve_local(repo_dir=str(wt)).repo == "acme/widget"
+
+
+def test_resolve_local_exits_without_an_origin_remote(monkeypatch, tmp_path, capsys):
+    """No origin is no target key, and a run with no target has nowhere to look
+    — the same fatal `resolve` reaches by another route."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    wt = _git_repo(tmp_path / "wt", origin=None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        pr_context.resolve_local(repo_dir=str(wt))
+
+    assert excinfo.value.code == 1
+    assert "origin" in capsys.readouterr().err
+
+
+def test_resolve_local_does_not_create_a_worktree_in_a_bare_repo(monkeypatch):
+    """`pr status` used to make a checkout as a side effect of being run."""
+    monkeypatch.setattr(pr_context, "_git_toplevel", lambda cwd=None: None)
+    monkeypatch.setattr(pr_context, "is_bare_repo", lambda cwd=None: True)
+    monkeypatch.setattr(pr_context, "find_bare_repo_worktree",
+                        lambda cwd, branch: None)
+    monkeypatch.setattr(pr_context, "_resolve_branch", lambda hint, cwd=None: hint)
+    monkeypatch.setattr(
+        pr_target, "repo_identity_from_origin",
+        lambda cwd=None: pr_target.RepoIdentity(label="acme/widget", key="widget"),
+    )
+    monkeypatch.setattr(
+        pr_context, "create_worktree_for_branch",
+        lambda *a, **kw: pytest.fail("resolve_local must not create a worktree"),
+    )
+
+    ctx = pr_context.resolve_local(branch="feat/login", repo_dir="/bare")
+
+    assert ctx.worktree_root is None
+    assert ctx.branch == "feat/login"
+
+
+def test_resolve_at_local_takes_the_local_rung(monkeypatch):
+    monkeypatch.setattr(pr_context, "resolve",
+                        lambda **kw: pytest.fail("must not reach gh"))
+    monkeypatch.setattr(pr_context, "resolve_local",
+                        lambda **kw: make_ctx(pr_number=None))
+
+    ctx = pr_context.resolve_at(pr_context.ContextDepth.LOCAL, branch="feat/x")
+
+    assert ctx.pr_number is None
+
+
+def test_resolve_at_local_escalates_for_an_explicit_pr(monkeypatch):
+    """A PR number names a branch only gh can report, and the branch is half the
+    target key — honouring LOCAL here would key the run on the wrong branch."""
+    monkeypatch.setattr(pr_context, "resolve_local",
+                        lambda **kw: pytest.fail("a PR cannot be resolved locally"))
+    monkeypatch.setattr(pr_context, "resolve", lambda **kw: make_ctx(pr_number=42))
+
+    ctx = pr_context.resolve_at(pr_context.ContextDepth.LOCAL, pr="42")
+
+    assert ctx.pr_number == 42
+
+
+def test_resolve_at_remote_always_takes_the_deep_rung(monkeypatch):
+    monkeypatch.setattr(pr_context, "resolve_local",
+                        lambda **kw: pytest.fail("REMOTE must not resolve locally"))
+    monkeypatch.setattr(pr_context, "resolve", lambda **kw: make_ctx())
+
+    assert pr_context.resolve_at(pr_context.ContextDepth.REMOTE).pr_number == 42
 
 
 # ── Repo detection ─────────────────────────────────────────────────────────

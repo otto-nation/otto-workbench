@@ -100,6 +100,7 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import workbench_paths
@@ -217,8 +218,8 @@ def _canonical(url: str) -> str:
     return _fold_case(path)
 
 
-def _repo_key(url: str) -> str | None:
-    """An origin URL as one path component naming the repo, or None.
+def _key_for(canonical: str) -> str:
+    """A canonical form as one path component naming the repo.
 
     A readable prefix and a digest of the canonical form. The digest is what
     makes the key injective — two repos cannot collide however the flattening
@@ -230,16 +231,16 @@ def _repo_key(url: str) -> str | None:
         https://github.com/acme/文档.git         -> acme/文档      -> acme-<d>
         /srv/git/widget.git                     -> widget        -> widget-<d>
         file://localhost/srv/git/widget.git     -> widget        -> widget-<d>        (same key)
-        ssh://git@github.com/                   -> ""            -> None
+        ssh://git@github.com/                   -> ""            -> no key
 
     Because the prefix carries no distinctness, it is free to be lossy: a
     segment that slugs away contributes nothing, and two paths that flatten
     alike (``acme/wid/get`` and ``acme/wid-get``) share a prefix and differ in
     the digest. That is the design, not a defect in it.
+
+    Takes the canonical form rather than the URL so that a caller wanting both
+    names pays for one ``_canonical`` — see ``repo_identity_from_origin``.
     """
-    canonical = _canonical(url)
-    if not canonical:
-        return None
     # 8 hex characters is 32 bits of the canonical form's SHA-256: at the scale
     # one machine keys repos, a collision needs no more, and the readable part
     # still leads the directory name.
@@ -256,19 +257,62 @@ def _repo_key(url: str) -> str | None:
     return f"{readable}-{digest}" if readable else digest
 
 
-def repo_key_from_origin(cwd: str | None = None) -> str | None:
-    """The repo's key per its ``origin`` remote, or None if it has none.
+def _repo_key(url: str) -> str | None:
+    """An origin URL as one path component naming the repo, or None."""
+    canonical = _canonical(url)
+    return _key_for(canonical) if canonical else None
 
-    Not ``gh repo view``: the key must be derivable without the network, and two
-    sources for one component is how the two derivations below drift apart.
-    """
+
+def _origin_url(cwd: str | None) -> str | None:
+    """The ``origin`` remote's URL as git records it, or None if it has none."""
     r = subprocess.run(
         ["git", "remote", "get-url", "origin"],
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0 or not r.stdout.strip():
         return None
-    return _repo_key(r.stdout.strip())
+    return r.stdout.strip()
+
+
+@dataclass(frozen=True)
+class RepoIdentity:
+    """What one ``origin`` says about a repo: how to name it, how to key it.
+
+    ``label`` is the canonical form (``acme/widget``) — for callers that want to
+    *show* the repo without paying for ``gh repo view``. Not interchangeable
+    with ``gh``'s ``owner/repo``: the host is dropped and ``A``-``Z`` folded
+    (see ``_canonical``), and a local remote reduces to its trailing segment.
+    Fine for a header, wrong for an API call.
+
+    ``key`` is the target key the layout is built from — opaque, per the module
+    docstring.
+
+    One type rather than two lookups because both come from one canonical form:
+    a label and a key that reach a caller together cannot name different repos,
+    and reading the remote once is what makes that true rather than likely.
+    """
+
+    label: str
+    key: str
+
+
+def repo_identity_from_origin(cwd: str | None = None) -> RepoIdentity | None:
+    """Both names from one read of ``origin``, or None if it names no repo.
+
+    Not ``gh repo view``: the key must be derivable without the network, and two
+    sources for one component is how the two derivations drift apart.
+    """
+    url = _origin_url(cwd)
+    canonical = _canonical(url) if url else ""
+    if not canonical:
+        return None
+    return RepoIdentity(label=canonical, key=_key_for(canonical))
+
+
+def repo_key_from_origin(cwd: str | None = None) -> str | None:
+    """The repo's key per its ``origin`` remote, or None if it has none."""
+    identity = repo_identity_from_origin(cwd)
+    return identity.key if identity else None
 
 
 def targets_root() -> Path:

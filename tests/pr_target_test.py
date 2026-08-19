@@ -346,6 +346,56 @@ def test_repo_key_from_origin_is_none_without_an_origin(tmp_path):
     assert pr_target.repo_key_from_origin(str(path)) is None
 
 
+@pytest.mark.parametrize("origin,expected", [
+    ("git@github.com:acme/widget.git", "acme/widget"),
+    ("https://github.com/Acme/Widget.GIT", "acme/widget"),
+    ("https://gitlab.com/group/subgroup/widget.git", "group/subgroup/widget"),
+    ("/srv/git/widget.git", "widget"),
+])
+def test_repo_identity_labels_the_remote_readably(tmp_path, origin, expected):
+    """The readable name, for callers that must not pay for `gh repo view`."""
+    identity = pr_target.repo_identity_from_origin(str(_git_repo(tmp_path / "wt", origin)))
+    assert identity.label == expected
+
+
+def test_repo_identity_is_none_without_an_origin(tmp_path):
+    path = tmp_path / "wt"
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    assert pr_target.repo_identity_from_origin(str(path)) is None
+
+
+def test_repo_identity_is_none_when_the_remote_names_no_repo(tmp_path):
+    """An origin with no path has no canonical form, so it names no repo — the
+    same condition under which it has no key."""
+    wt = _git_repo(tmp_path / "wt", "ssh://git@github.com/")
+    assert pr_target.repo_identity_from_origin(str(wt)) is None
+    assert pr_target.repo_key_from_origin(str(wt)) is None
+
+
+def test_repo_identity_label_and_key_name_one_repo(tmp_path):
+    """Both derive from one canonical form, so a checkout cannot report a label
+    and a key that disagree about which repo it is."""
+    wt = _git_repo(tmp_path / "wt", "https://github.com/Acme/Widget.git")
+    identity = pr_target.repo_identity_from_origin(str(wt))
+    assert identity.key.startswith(pr_target.slug(identity.label))
+    assert identity.key == pr_target.repo_key_from_origin(str(wt))
+
+
+def test_repo_identity_reads_the_origin_once(tmp_path, monkeypatch):
+    """One `git remote get-url`, not one per name — the reason the two names
+    cannot disagree is that there is only one read behind them."""
+    wt = _git_repo(tmp_path / "wt", "git@github.com:acme/widget.git")
+    reads = []
+    real = pr_target._origin_url
+    monkeypatch.setattr(pr_target, "_origin_url",
+                        lambda cwd: reads.append(cwd) or real(cwd))
+
+    pr_target.repo_identity_from_origin(str(wt))
+
+    assert len(reads) == 1
+
+
 def test_target_dir_for_checkout_matches_target_dir(tmp_path, monkeypatch):
     """The two derivations of one identity, asserted equal rather than assumed."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))

@@ -467,7 +467,7 @@ print(*workbench_projects.registered())
 
   run python3 -c "
 import sys
-sys.path.insert(0, '$REPO_ROOT/ai/lib')
+sys.path.insert(0, '$REPO_ROO/ai/lib')
 import workbench_projects
 print('\n'.join(sorted(workbench_projects.TEMP_ROOTS)))
 "
@@ -648,4 +648,3 @@ print(workbench_projects.register('$TMPDIR/container'))
   [ "$status" -eq 0 ]
   [ "$(cat "$TMPDIR/alpha/.claude/architecture.md")" = "current" ]
 }
-

@@ -108,6 +108,7 @@ def reviews_dir() -> Path:
     return state_dir() / REVIEWS_DIRNAME
 
 
-# Where per-worktree state lived before #624. Nothing writes it any more;
-# `pr._sweep_legacy_state` still reclaims what earlier versions left behind.
+# Where per-worktree state lived before the roots were split. Nothing writes
+# it any more; `pr._sweep_legacy_state` still reclaims what earlier versions
+# left behind.
 LEGACY_WORKTREE_STATE_DIRNAME = ".workbench"

@@ -92,7 +92,7 @@ def adopt_project_review_yml(wt_path: str) -> bool:
 def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     """The issue tracker for this scope, project config first.
 
-    A repo still holding the pre-#626 ``.claude/review.yml`` is converted on
+    A repo still holding the legacy ``.claude/review.yml`` is converted on
     the way through, so the answer comes from one place afterwards.
     """
     if wt_path:

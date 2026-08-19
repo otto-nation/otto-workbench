@@ -763,7 +763,7 @@ class TestRecoverAgentCommit:
         assert result.sha is None
 
     def test_a_known_failure_is_never_downgraded(self, rt):
-        """#734: recovery adds information, it does not overwrite it."""
+        """Recovery adds information, it does not overwrite it."""
         prior = rt.CommitPushResult(None, "commit_failed", "hook rejected")
         with patch.object(rt, "_get_head_sha", return_value="abc1234"):
             result = rt._recover_agent_commit(Path("/fake"), "abc1234", prior=prior)
@@ -848,7 +848,7 @@ class TestFixedStatusText:
         assert "abc1234" not in text
 
     def test_no_changes_claims_nothing_about_why(self, rt):
-        """"Fixed" and "nothing committed" cannot both be true — #734."""
+        """"Fixed" and "nothing committed" cannot both be true."""
         cp = rt.CommitPushResult(None, "no_changes", "")
         text = rt._fixed_status_text(cp, "owner/repo")
         assert text == rt._UNATTRIBUTED_STATUS_TEXT
@@ -1203,7 +1203,7 @@ class TestRenderDeferredSummary:
         assert "→" not in body
 
     def test_reports_needs_human_as_open(self, rt):
-        """The one condition that routes here is a needs_human thread — #714."""
+        """The one condition that routes here is a needs_human thread."""
         fix = FixSummary(
             threads=[
                 ThreadOutcome(id="t1", summary="auto fix", file="a.py", line=1, action=ThreadAction.FIXED),
@@ -1228,7 +1228,7 @@ class TestRenderDeferredSummary:
         assert "1 need discussion" in body
 
     def test_needs_human_settled_by_hand_renders_as_fixed(self, rt, worktree):
-        """--finish reconciles first, so the row credits the hand fix — #714."""
+        """--finish reconciles first, so the row credits the hand fix."""
         pr_state.save_state(worktree / "target", PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
                                 head_sha="aaaaaaa", worktree_root=str(worktree)),
@@ -1370,7 +1370,7 @@ class TestSummaryUsesPerThreadCommit:
         assert rt._UNATTRIBUTED_STATUS_TEXT in body
 
     def test_each_round_keeps_its_own_attribution(self, rt):
-        """The #2670 failure: one pass's envelope SHA relabelled every round."""
+        """The failure: one pass's envelope SHA relabelled every round."""
         body = self._post(
             rt,
             ThreadOutcome(id="t1", summary="round one", file="a.py", line=1,
@@ -1408,7 +1408,7 @@ class TestSummaryUsesPerThreadCommit:
 
 
 class TestFailedCommitIsNotReportedAsNoCommit:
-    """#734: a hook-rejected commit published as "no commit needed".
+    """A hook-rejected commit published as "no commit needed".
 
     Two independent defects, one visible claim: recovery overwrote the known
     failure on its way out of the fix pass, and the renderer then read the
@@ -1778,7 +1778,7 @@ class TestPendingFixReplies:
 
 
 class TestTriageOnlyPassQueue:
-    """#3055: a pass with nothing to fix dropped every reply it drafted.
+    """A pass with nothing to fix dropped every reply it drafted.
 
     The already-addressed and dismissed replies are sent during triage, before
     the pass knows whether anything is fixable, so a drafted run rendered them
@@ -1916,7 +1916,7 @@ class TestTriageQueueIsRecorded:
 
 
 class TestReplyAttributionAcrossRounds:
-    """#735: the reply cited the running pass's commit, whatever fixed the thread.
+    """The reply cited the running pass's commit, whatever fixed the thread.
 
     A single-round fixture cannot tell per-entry attribution from pass-level —
     they agree — which is exactly why this went unnoticed. So every test here
@@ -1975,7 +1975,7 @@ class TestReplyAttributionAcrossRounds:
         assert _PASS_SHA in bodies["t1"]
 
     def test_the_summary_row_and_the_reply_agree(self, rt, publishing_on):
-        """One precedence rule, two renderers — they disagreed before #735."""
+        """One precedence rule, two renderers — they must not disagree."""
         outcome = self._fixed("t1", _ROUND_1_SHA, "a.py")
         bodies = self._drain(rt, outcome)
         cell = rt._fixed_status_for(outcome, rt.CommitPushResult(_PASS_SHA, "pushed", ""),
@@ -1985,7 +1985,7 @@ class TestReplyAttributionAcrossRounds:
 
 
 class TestHandWrittenRepliesSurvive:
-    """#735: re-draining the queue overwrote replies a human had rewritten."""
+    """Re-draining the queue must not overwrite replies a human rewrote."""
 
     def _reply(self, rt, body):
         """Run the fix-reply upsert against a thread whose standing reply is `body`."""
@@ -2784,7 +2784,7 @@ class TestRunReply:
         err.assert_not_called()
 
     def test_a_drafted_reply_says_draft_and_sends_nothing(self, rt, tmp_path):
-        """#686: the closing line claimed a post no draft run ever made."""
+        """The closing line must not claim a post no draft run ever made."""
         body = tmp_path / "reply.md"
         body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
@@ -2816,7 +2816,7 @@ class TestRunReply:
     def test_edits_the_standing_reply_on_a_resolved_thread(
         self, rt, tmp_path, publishing_on,
     ):
-        """#676 end to end: --finish --post resolves the threads it answers."""
+        """End to end: --finish --post resolves the threads it answers."""
         body = tmp_path / "reply.md"
         body.write_text("Revised. https://github.com/owner/repo/blob/abc/src/app.py#L4")
         fetch_pr, fetch_threads = self._patches(
@@ -2950,8 +2950,8 @@ class TestOurLastReplyId:
         assert rt._our_last_reply_id(_standing_reply_thread()) == 222
 
     def test_resolution_does_not_retire_our_standing_reply(self, rt):
-        """#676: --finish --post resolves what it replies to, and RESOLVED
-        outranks ADDRESSED — reading the state stacked a second comment."""
+        """--finish --post resolves what it replies to, and RESOLVED outranks
+        ADDRESSED — reading the state the other way stacks a second comment."""
         thread = _standing_reply_thread(state=ThreadState.RESOLVED, is_resolved=True)
         assert rt._our_last_reply_id(thread) == 222
 
@@ -3068,7 +3068,7 @@ class TestReplyUpsert:
         assert count == 0
 
     def test_a_fix_replaces_an_earlier_dismissal(self, rt):
-        """The #2633 regression: round one dismissed the thread, round two fixed it.
+        """Round one dismissed the thread, round two fixed it.
 
         Guarding per verdict left both replies standing, telling the reviewer
         their point did not apply and that we had acted on it.
@@ -3505,7 +3505,7 @@ class TestHoldIfSuperseded:
 
 
 class TestHoldWhileContested:
-    """#703: 8 real fixes pushed to a branch a reviewer had said should not land."""
+    """Real fixes must not reach a branch a reviewer said should not land."""
 
     @staticmethod
     def _entry(reason, id="t1"):
@@ -3547,11 +3547,11 @@ class TestHoldWhileContested:
 
 
 class TestFixPassHoldsWhenContested:
-    """The whole point of #703, asserted through `_run_comment_fix` itself.
+    """The whole point of the hold, asserted through `_run_comment_fix` itself.
 
     `TestHoldWhileContested` and `TestCommitAndPush` each cover one half. Neither
     catches a reorder that puts the commit before the hold, which is precisely
-    how the bug worked — so this drives the real entry point with one contested
+    how the bug works — so this drives the real entry point with one contested
     thread and one fixable one, and asserts nothing was pushed.
     """
 
@@ -3619,7 +3619,7 @@ class TestFixPassHoldsWhenContested:
     def test_the_commit_is_still_made(self, rt, tmp_path, publishing_on):
         """Holding must not cost the work — only its publication.
 
-        #718 settled this: a local commit asserts nothing to a reviewer, since
+        A local commit asserts nothing to a reviewer, since
         only the push makes it visible, and the push is what the hold stops.
         """
         run = self._run(rt, tmp_path, contested=True, publishing_on_=True)
@@ -3762,7 +3762,7 @@ def _published_summary(rt, *rows: str) -> str:
 
 
 class TestSummaryRowKey:
-    """Two renders of one thread must key the same, across rounds — #712."""
+    """Two renders of one thread must key the same, across rounds."""
 
     def test_anchor_identifies_the_row(self, rt):
         assert rt._summary_row_key(ROUND_ONE_ROW) == "#discussion_r111"
@@ -3834,7 +3834,7 @@ class TestCarriedOverRows:
 
 
 class TestPublishedRowsSurviveTheEdit:
-    """State is per-worktree; the comment is the record of rounds it never saw — #712."""
+    """State is per-worktree; the comment is the record of rounds it never saw."""
 
     def _fix(self, **overrides):
         defaults = dict(

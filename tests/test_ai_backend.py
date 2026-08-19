@@ -271,7 +271,7 @@ class TestScriptName:
 
 
 class TestCwdIsRequired:
-    """#613: an AI call with no cwd runs in whichever worktree launched the process.
+    """An AI call with no cwd runs in whichever worktree launched the process.
 
     On a bare repo with sibling worktrees that is another live branch. A
     `pr rebase --fix` targeting one worktree ran bats in another and truncated

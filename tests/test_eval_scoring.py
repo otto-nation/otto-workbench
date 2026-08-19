@@ -355,7 +355,7 @@ class TestTokenRatchet:
         assert result["regressions"] == []
 
     def test_cache_read_ratio_below_the_floor_regresses(self):
-        """The #584 failure mode: caching silently stops and the bill triples."""
+        """The failure mode: caching silently stops and the bill triples."""
         result = compare_baselines(
             {"sonnet": _token_baseline()}, _token_current(cache_read_ratio_mean=0.59))
         assert "cache_read_ratio_mean" in _regressed(result)

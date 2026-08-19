@@ -48,8 +48,8 @@ class PRHead:
     """A PR's head branch and SHA, or the reason ``gh`` could not report them.
 
     Both halves come from one API call because the SHA is what a PR target's
-    state must be stamped with — reading it from the caller's HEAD is how
-    #2973's state ended up carrying the repo root's SHA.
+    state must be stamped with — reading it from the caller's HEAD stamps the
+    state with the repo root's SHA instead.
     """
     branch: str = ""
     sha: str = ""

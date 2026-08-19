@@ -6,14 +6,14 @@
 # types and config.schema.json describes, then renames the originals so a
 # re-run has nothing left to read.
 #
-# Runs after adopt_legacy_workbench_root, so a pre-#624 machine's files are
+# Runs after adopt_legacy_workbench_root, so a pre-split machine's files are
 # already under the config root by the time this reads them.
 #
 # adoption-sensitive: those three names are _LEGACY_CONFIG_ENTRIES, so adoption
 # writes them straight back into the config root this drains. It only bites on a
 # machine that overrides XDG_CONFIG_HOME — elsewhere the config root and the
 # legacy root are the same path and adoption skips them — but the resolution is
-# the same either way: another pass folds them in (#741).
+# the same either way: another pass folds them in.
 
 # Carry one single-line file into a config.yml key.
 #

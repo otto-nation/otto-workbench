@@ -24,7 +24,7 @@ teardown() {
 # does (lib/migrations.sh — _source_migration, then "$fn_name"). The file used
 # to invoke itself and this harness leaned on that; the call ran on the
 # sourcing pass, outside the `if` that turns a failure into warn-and-retry, so
-# a non-zero return there took the whole sync down (#731). Exit status is the
+# a non-zero return there took the whole sync down. Exit status is the
 # function's own, which is what the framework reads to decide whether to
 # record the migration as applied.
 _run_migration() {

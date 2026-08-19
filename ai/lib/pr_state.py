@@ -446,8 +446,8 @@ class CommitStatus(StrEnum):
     A `StrEnum`, so the persisted values and the JSON payload are the same
     strings they have always been: a state file written before this existed
     still loads, and its plain strings still compare equal to these members.
-    The enum is for the code. #734 was two of these values being confused for
-    one another, which is the argument for naming them in one place.
+    The enum is for the code: two of these values are easily confused for one
+    another, which is the argument for naming them in one place.
     """
 
     # Committed and on the remote.

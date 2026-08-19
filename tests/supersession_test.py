@@ -1,6 +1,6 @@
 """Tests for supersession: is this branch's reason to exist already gone?
 
-#703's other half: the branch was fixing code `main` had already deleted. Each
+The branch is fixing code `main` has already deleted. Each
 signal is driven on its own, because the value of the preflight is that any one
 of them can fire — a branch can be superseded without having been rebased, and
 a rebase is not on its own a reason to withhold anything.

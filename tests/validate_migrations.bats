@@ -137,7 +137,7 @@ EOF
   [[ "$output" == *"expected function"* ]]
 }
 
-# ── File scope (#731) ───────────────────────────────────────────────────────
+# ── File scope ──────────────────────────────────────────────────────────────
 
 @test "self-invocation at file scope fails" {
   local dir="$FAKE_WORKBENCH/comp/migrations"

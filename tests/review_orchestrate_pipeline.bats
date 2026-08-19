@@ -582,7 +582,7 @@ print(f'session={session_exists},holistic={holistic_exists},group={group_exists}
 }
 
 @test "cleanup_intermediates: removes every phase artifact and pipeline state" {
-  # Regression for #675: disprove.md and disprove.jsonl outlived the pass
+  # Regression: disprove.md and disprove.jsonl outlived the pass
   # because the call site enumerated what to remove and never named them.
   echo "scout" > "$TMPDIR/scout.md"
   echo "slog" > "$TMPDIR/scout.jsonl"

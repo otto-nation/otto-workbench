@@ -1509,8 +1509,8 @@ def test_gc_clean_stale_intermediates_removes_stale(cr, tmp_path):
 
 
 def test_gc_clean_stale_intermediates_collects_every_phase_artifact(cr, tmp_path):
-    # Regression for #661: the pattern list was hand-copied and never grew
-    # scout.md or disprove.md. Derived from Phase, a new phase's artifact is
+    # The pattern list used to be hand-copied and never grew scout.md or
+    # disprove.md. Derived from Phase, a new phase's artifact is
     # collected without editing review_gc.
     d = tmp_path / "review-dir"
     d.mkdir()
@@ -2036,7 +2036,7 @@ def _caller_checkout(path: Path, branch: str = "main") -> Path:
 def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     cr, tmp_path, monkeypatch,
 ):
-    """#680(c): the summary belongs to the PR reviewed, not to where we stood.
+    """The summary belongs to the PR reviewed, not to where we stood.
 
     `pr review <N>` is routinely run from a checkout sitting on some other
     branch. The run's identity is resolved once at entry and threaded down; a

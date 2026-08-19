@@ -743,8 +743,8 @@ def _refuse_if_superseded(
     is deliberate.
 
     Findings about code the default branch has already deleted are worse than
-    no findings: they read as ordinary review comments, and #703 is what
-    happens when someone acts on them.
+    no findings: they read as ordinary review comments, so acting on them
+    means fixing code that no longer exists.
     """
     if override:
         return

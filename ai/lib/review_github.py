@@ -58,8 +58,8 @@ def _gh_api(
 
     Both streams, not just stdout: gh writes an API error body to stdout but
     reports a transport failure — the 5xx that is worth retrying — only on
-    stderr, and a wrapper returning `(returncode, stdout)` had nowhere to put
-    it (#740).
+    stderr, and a wrapper returning `(returncode, stdout)` has nowhere to put
+    it.
     """
     cmd = ["gh", "api", endpoint]
     if method != "GET":
@@ -178,7 +178,7 @@ def _count_new_commits(repo: str, pr: str, review_sha: str, pr_data: PRData | No
 # Classification reads both streams. gh puts an API error body on stdout and
 # its own status line on stderr, so which one carries the evidence depends on
 # how the call failed — a 403 explains itself in the body, a 503 or a dropped
-# connection leaves the body empty (#740).
+# connection leaves the body empty.
 
 def _is_rate_limited(output: str) -> bool:
     """Check if the API response indicates rate limiting."""

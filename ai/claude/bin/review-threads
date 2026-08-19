@@ -1020,8 +1020,8 @@ def _commit_fixes(
 ) -> CommitPushResult:
     """Commit the pass's work, and recover a commit the agent made itself.
 
-    A hold does not reach this far, and #718 settled that deliberately: a local
-    commit asserts nothing to a reviewer, because it only becomes visible on
+    A hold does not reach this far, and that is deliberate: a local commit
+    asserts nothing to a reviewer, because it only becomes visible on
     push and the push is what the hold stops. Leaving the fixes uncommitted
     instead would make them fragile, and would leave the next `--fix` round
     reading its own dirty tree as a refused commit.
@@ -1076,8 +1076,8 @@ def _is_generated_reply(body: str) -> bool:
     The upsert replaces our standing reply wholesale, and the fix queue
     re-drains every fixed thread on later rounds — so a reply someone rewrote
     by hand, with reasoning or an explicit decision not to do what the reviewer
-    asked, was overwritten by the three-line template with no undo but the edit
-    history (#735).
+    asked, would otherwise be overwritten by the three-line template with no
+    undo but the edit history.
 
     Divergence is measured against the template rather than tracked by round
     number: the round a reply was written in says nothing about whether it is
@@ -1186,7 +1186,7 @@ def _entry_commit_sha(
     Shared by the summary row and the thread reply on purpose: they were two
     implementations of the same attribution, and only the summary's was right —
     the reply pinned every round's `Fixed in` line, and every blob permalink
-    beneath it, to whatever the latest pass had committed (#735).
+    beneath it, to whatever the latest pass had committed.
     """
     return getattr(entry, "commit_sha", "") or pass_sha
 
@@ -1783,9 +1783,9 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     if cp.status == CommitStatus.NO_CHANGES:
         # "A fix was applied" and "nothing was committed" contradict each other,
         # and which half is wrong is not knowable from here — a hook may have
-        # rejected the commit, or the edit may have been a no-op. #734 published
-        # the confident reading of that ("no commit needed") over a rejected
-        # commit, so the cell now states only what is certain.
+        # rejected the commit, or the edit may have been a no-op. Publishing the
+        # confident reading ("no commit needed") over a rejected commit asserts
+        # more than is known, so the cell states only what is certain.
         return _UNATTRIBUTED_STATUS_TEXT
     if cp.status == CommitStatus.COMMIT_FAILED:
         return "Fix applied (commit failed — pre-commit hook?)"
@@ -2342,7 +2342,7 @@ def _post_pending_fix_replies(
     already-addressed and dismissed replies are sent eagerly during triage,
     before any fix work runs, so a drafted pass renders them and then drops
     them — and the triage-only pass, where nothing was fixable, is exactly the
-    shape that leaves no fixed entry to carry them back (#3055).
+    shape that leaves no fixed entry to carry them back.
     """
     fix = state.fix
     if not _commit_unpushed(fix.commit_status) and not fix.replies_pending:
@@ -2417,7 +2417,7 @@ def _reconciled_commit(
     the pass recorded no commit of its own; the status cell did not, so a
     hook-rejected commit the operator then made by hand rendered as a flat
     "no commit needed" beside a file link pointing at the very change it
-    denied (#734).
+    denied.
 
     A moved HEAD with nothing recorded means someone committed outside the
     pass. That commit is only worth naming if a reviewer can open it, so an
@@ -2586,8 +2586,8 @@ def _unrecovered_commit(
 
     Recovery exists to *add* information. When it finds none, whatever the
     caller already established stands: overwriting a `commit_failed` with
-    `no_changes` here is how #734 published "Fix applied (no commit needed)"
-    over a commit a pre-commit hook had rejected.
+    `no_changes` here publishes "Fix applied (no commit needed)" over a commit
+    a pre-commit hook rejected.
 
     With nothing prior to preserve, the tree itself distinguishes the two
     remaining readings. Changes still sitting there after a commit was
@@ -2859,7 +2859,7 @@ def _hold_while_contested(
     does not exist" only removes itself from `fixable` — the pass goes on to fix
     everything else, commit it, push it, and reply that it is done. Every one of
     those findings can be individually real and the branch still not worth
-    landing, which is how #703 ended up with 8 pushed fixes to superseded code.
+    landing — that is how a pass pushes a run of fixes to superseded code.
 
     Telling a premise-invalidating question from a bikeshed is the hard problem,
     and getting it wrong in the permissive direction is what this exists to
@@ -2888,8 +2888,8 @@ def _triage_replies_drafted(
     The already-addressed and dismissed replies go out during triage, before
     the pass knows whether anything is fixable. A draft renders them to stderr
     and sends nothing, so the queue has to say they are still owed — otherwise
-    `--finish --post` finds a drained queue and publishes nothing, which is how
-    a whole approved round went missing (#3055).
+    `--finish --post` finds a drained queue and publishes nothing, and a whole
+    approved round goes missing.
     """
     return bool(already_addressed or dismissed) and not publishing.enabled()
 

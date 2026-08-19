@@ -2219,6 +2219,57 @@ class HumanReason(Enum):
             return cls.NEEDS_DISCUSSION.prose
 
 
+# Every opening an Action cell this renderer wrote can have. The reply-side
+# counterpart of `_GENERATED_REPLY_PREFIXES`, and used the same way: to tell a
+# cell we produced apart from one somebody rewrote by hand.
+#
+# Kept in step with the four places a status cell is built — `_fixed_status_for`
+# and `_fixed_status_text` (every "Fix…" opening), the literal cells in
+# `_build_summary_body`, and `HumanReason.prose`. A new wording that is not
+# covered here reads as hand-written, and its row is then frozen at whatever the
+# published comment already said.
+_GENERATED_ACTION_PREFIXES = (
+    "Fixed in ",
+    "Fix applied",
+    "Fix committed locally",
+    "Fix pending",
+    "Deferred",
+    "Already addressed",
+    "Dismissed (invalid)",
+    _RECONCILED_STATUS_TEXT,
+    *(reason.prose for reason in HumanReason),
+)
+
+
+def _is_generated_action(cell: str) -> bool:
+    """Whether an Action cell is still one of ours, in template shape.
+
+    ceiling: an opening is the whole test, so a hand edit that appends to a
+    generated cell ("Fixed in `abc` — but see below") still reads as generated
+    and is overwritten on the next round. Matching the whole cell instead is not
+    the fix: the commit SHA and the deferral issue link vary per round, so an
+    exact set cannot be written down. Upgrade trigger: if an appended note is
+    ever lost this way, mark generated cells with an HTML comment and key off
+    that instead of the opening.
+    """
+    return cell.startswith(_GENERATED_ACTION_PREFIXES)
+
+
+@dataclass(frozen=True)
+class HeldRow:
+    """A published summary row whose Action cell a human wrote.
+
+    `published` is re-emitted in place of `replaced_by`, which is what this
+    render would otherwise have said. Both halves are carried so the run can
+    report the swap in full: a hand edit is only defensible as a hand edit if
+    the reader can see what the generated cell would have claimed instead.
+    """
+
+    key: str
+    published: str
+    replaced_by: str
+
+
 def _build_summary_body(
     fixed: list[_SummaryEntry],
     needs_human: list[_SummaryEntry],
@@ -2236,6 +2287,7 @@ def _build_summary_body(
     has_comment_items: bool = False,
     head_sha: str = "",
     carried_over: list[str] | None = None,
+    hand_held: list[HeldRow] | None = None,
 ) -> str:
     """Build the markdown body for the fix summary comment.
 
@@ -2243,12 +2295,20 @@ def _build_summary_body(
     this render cannot account for — see `_carried_over_rows`. They are already
     rendered, so they are re-emitted as-is rather than round-tripped through an
     entry the state file does not have.
+
+    ``hand_held`` holds rows this render *can* account for and still must not
+    write: the Action cell was rewritten by hand — see `_hand_written_rows`.
+    Each one is re-emitted in the position its entry would have taken, and the
+    entry behind it is dropped from the header counts, because a row reading
+    ``Superseded`` under a header reading ``1 need discussion`` reopens the
+    question the hand edit closed.
     """
     dismissed = dismissed or []
     already_addressed = already_addressed or []
     issue_comments = issue_comments or []
     review_body_comments = review_body_comments or []
     carried_over = carried_over or []
+    held_by_key = {row.key: row.published for row in hand_held or []}
     # Ahead of the counts, not just the rows: a count with no row under it is a
     # claim the table cannot show the reader.
     folded = _duplicate_item_ids(
@@ -2260,11 +2320,49 @@ def _build_summary_body(
     dismissed = [e for e in dismissed if e.id not in folded]
     needs_human = [e for e in needs_human if e.id not in folded]
     deferred = [e for e in deferred if e.id not in folded]
-    fixed_count = len(fixed)
-    deferred_count = len(deferred)
-    human_count = len(needs_human)
-    dismissed_count = len(dismissed)
-    addressed_count = len(already_addressed)
+
+    rows: list[str] = []
+    held: list[str] = []
+    # The fix commit is the tree the table describes; fall back to the reviewed
+    # head when nothing was committed.
+    link_sha = cp.sha or head_sha
+    if deferred_issue_id and deferred_issue_url:
+        deferred_status = f"Deferred → [{deferred_issue_id}]({deferred_issue_url})"
+    elif deferred_issue_id:
+        deferred_status = f"Deferred → {deferred_issue_id}"
+    else:
+        deferred_status = "Deferred"
+
+    def emit(entry: _SummaryEntry, status: str, sha: str) -> bool:
+        """Append this entry's row, or the published one a human rewrote.
+
+        Returns whether the entry's own classification reached the table, which
+        is what the header counts count — the counts are derived from the rows
+        rather than from the buckets so the two cannot disagree.
+        """
+        row = _build_row(entry, status, threads_by_id, repo, pr_number, sha)
+        published = held_by_key.get(_summary_row_key(row))
+        if published is None:
+            rows.append(row)
+            return True
+        rows.append(published)
+        held.append(published)
+        return False
+
+    fixed_count = sum(
+        emit(e, _fixed_status_for(e, cp, repo), getattr(e, "commit_sha", "") or link_sha)
+        for e in fixed
+    )
+    addressed_count = sum(
+        emit(e, "Already addressed", link_sha) for e in already_addressed
+    )
+    dismissed_count = sum(emit(e, "Dismissed (invalid)", link_sha) for e in dismissed)
+    human_count = sum(
+        emit(e, HumanReason.prose_for(e.reason), link_sha) for e in needs_human
+    )
+    deferred_count = sum(emit(e, deferred_status, link_sha) for e in deferred)
+    rows.extend(carried_over)
+    held_count = len(held)
     carried_count = len(carried_over)
 
     parts = [_SUMMARY_MARKER, "## Review Comments Addressed", ""]
@@ -2279,41 +2377,24 @@ def _build_summary_body(
         counts.append(f"{deferred_count} deferred")
     if human_count:
         counts.append(f"{human_count} need discussion")
+    if held_count:
+        counts.append(f"{held_count} hand-written")
     if carried_count:
         counts.append(f"{carried_count} carried over")
     parts.append(" · ".join(counts))
     parts.append("")
 
-    rows = []
-    # The fix commit is the tree the table describes; fall back to the reviewed
-    # head when nothing was committed.
-    link_sha = cp.sha or head_sha
-    for entry in fixed:
-        rows.append(_build_row(
-            entry, _fixed_status_for(entry, cp, repo), threads_by_id, repo,
-            pr_number, getattr(entry, "commit_sha", "") or link_sha,
-        ))
-    for entry in already_addressed:
-        rows.append(_build_row(entry, "Already addressed", threads_by_id, repo, pr_number, link_sha))
-    for entry in dismissed:
-        rows.append(_build_row(entry, "Dismissed (invalid)", threads_by_id, repo, pr_number, link_sha))
-    for entry in needs_human:
-        reason = HumanReason.prose_for(entry.reason)
-        rows.append(_build_row(entry, reason, threads_by_id, repo, pr_number, link_sha))
-    if deferred_issue_id and deferred_issue_url:
-        deferred_status = f"Deferred → [{deferred_issue_id}]({deferred_issue_url})"
-    elif deferred_issue_id:
-        deferred_status = f"Deferred → {deferred_issue_id}"
-    else:
-        deferred_status = "Deferred"
-    for entry in deferred:
-        rows.append(_build_row(entry, deferred_status, threads_by_id, repo, pr_number, link_sha))
-    rows.extend(carried_over)
-
     if rows:
         parts.append(_SUMMARY_TABLE_HEADER)
         parts.append(_SUMMARY_TABLE_DIVIDER)
         parts.extend(rows)
+        parts.append("")
+
+    if held_count:
+        parts.append(
+            f"> {held_count} row{review_common.plural(held_count)} kept as published "
+            "— the Action cell was written by hand, so this round did not re-render it."
+        )
         parts.append("")
 
     if carried_count:
@@ -2482,6 +2563,50 @@ def _carried_over_rows(published: str, fresh: str) -> list[str]:
     ]
 
 
+def _row_action_cell(row: str) -> str:
+    """The Action cell of a rendered row, or "" for a row that has no such cell."""
+    cells = _row_cells(row)
+    if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
+        return ""
+    return cells[len(_SUMMARY_TABLE_COLUMNS) - 1]
+
+
+def _hand_written_rows(published: str, fresh: str) -> list[HeldRow]:
+    """Published rows this render would overwrite a human's Action cell on.
+
+    `_carried_over_rows` is the sibling case and covers the opposite one: a
+    published row this render cannot account for. Between them they compose into
+    the protection a hand-written thread reply already has — except that the
+    carry-forward path alone gave the inverse of it, because `_summary_row_key`
+    deliberately excludes the Action cell so that a round changing it (deferred
+    to fixed) still counts as the same row. That exclusion is right, and it also
+    means the Action cell — the only cell a human ever edits — is the one the
+    key cannot defend. A hand edit therefore survived exactly as long as local
+    state could not account for its thread, and was overwritten the round state
+    regained coverage.
+
+    So the two questions are asked separately: carry-forward asks whether the
+    render covers the row at all, and this asks whether the render may write the
+    row it covers. A cell no generated opening claims was written by a person,
+    and stays for the life of the PR — `gh api -X PATCH` on the summary comment
+    is the way to hand a row back to the renderer.
+
+    A row with no Action cell to read is not a hand edit but a row whose shape
+    this renderer no longer produces, and re-rendering it is the repair.
+    """
+    if not published:
+        return []
+    fresh_by_key = {_summary_row_key(row): row for row in _summary_table_rows(fresh)}
+    held = []
+    for row in _summary_table_rows(published):
+        cell = _row_action_cell(row)
+        key = _summary_row_key(row)
+        if not cell or key not in fresh_by_key or _is_generated_action(cell):
+            continue
+        held.append(HeldRow(key, row, fresh_by_key[key]))
+    return held
+
+
 def _newest_reviewer_activity(report: PRReport) -> str:
     """The newest review or review comment on the PR that is not ours.
 
@@ -2532,10 +2657,15 @@ def _publish_summary(
 ) -> str | None:
     """Publish the summary without ever shrinking what it already says.
 
-    `build_body(carried_over=...)` renders from local state. It is called a
-    second time when the published comment holds rows that render did not
-    cover, because the carried rows have to reach the reader through the same
-    body — the counts line and the table are one artifact, not two.
+    `build_body(carried_over=...)` renders from local state. It is called
+    again when the published comment holds rows this render must not write —
+    rows it did not cover at all, and rows whose Action cell a human rewrote —
+    because those rows have to reach the reader through the same body: the
+    counts line and the table are one artifact, not two.
+
+    Held rows are resolved before carried ones, and the carry-forward set is
+    then computed against the body that already holds them, so a hand-written
+    row is kept once rather than emitted twice.
 
     The comment is edited in place while nothing has been said below it, and
     posted fresh once something has — see `_summary_answered_since`. Either way
@@ -2550,13 +2680,22 @@ def _publish_summary(
     """
     existing = pc.find_marker_comment(repo, pr_number, _SUMMARY_MARKER)
     body = build_body(carried_over=[])
+    hand_held = _hand_written_rows(existing.body, body)
+    for row in hand_held:
+        log.warn(
+            f"Keeping the hand-written Action cell on {row.key}: "
+            f"{_row_action_cell(row.published)!r} — this round would have "
+            f"rendered {_row_action_cell(row.replaced_by)!r}"
+        )
+    if hand_held:
+        body = build_body(carried_over=[], hand_held=hand_held)
     carried = _carried_over_rows(existing.body, body)
     if carried:
         log.warn(
             f"Published summary has {len(carried)} row(s) this run cannot account "
             "for — carrying them forward rather than dropping them"
         )
-        body = build_body(carried_over=carried)
+        body = build_body(carried_over=carried, hand_held=hand_held)
     if _summary_answered_since(existing, activity_at):
         log.info(
             "The published summary has been answered since it was posted — "
@@ -2815,6 +2954,13 @@ def _summary_still_owed(
     Discussion that is still open, or a commit that never reached the remote,
     both make the summary premature. So does a draft run: it printed the summary
     instead of posting it, so everything it had to say is still owed.
+
+    A hand-written Action cell does not retire the render this owes, and is not
+    read here. The question is whether local state still has something to say,
+    and it does: the thread is recorded as `needs_human` either way, and the
+    render that answers this is now the one that preserves the cell. Reading the
+    published comment from here would cost a second listing per run to change
+    nothing but which of two harmless renders happens.
     """
     if deferred or needs_human or has_unaccounted:
         return True

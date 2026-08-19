@@ -4029,6 +4029,158 @@ class TestPublishedRowsSurviveTheEdit:
             True, 11, _published_summary(rt, ROUND_ONE_ROW))
 
 
+# ── rows a human rewrote, that local state can account for ─────────────────
+
+
+_GENERATED_ACTION_CELL = "Fixed in [`9f2e1a0`](https://github.com/owner/repo/commit/9f2e1a0)"
+_HAND_WRITTEN_ACTION_CELL = (
+    "Superseded — @kgn reproduced it independently and the next review round "
+    "accepted the root cause"
+)
+HAND_EDITED_ROW = ROUND_ONE_ROW.replace(
+    _GENERATED_ACTION_CELL, _HAND_WRITTEN_ACTION_CELL)
+
+
+class TestGeneratedActionCell:
+    """A cell no generated opening claims was written by a person."""
+
+    def test_every_fix_status_the_renderer_writes_is_recognised(self, rt):
+        """Assert on what the builders emit, not on a transcribed copy — a
+        wording change there must not silently freeze the rows it renders."""
+        for status in CommitStatus:
+            cp = rt.CommitPushResult("9f2e1a0", status, "")
+            assert rt._is_generated_action(rt._fixed_status_text(cp, "owner/repo")) is True
+            bare = rt.CommitPushResult(None, status, "")
+            assert rt._is_generated_action(rt._fixed_status_text(bare, "owner/repo")) is True
+
+    def test_every_human_reason_prose_is_recognised(self, rt):
+        for reason in rt.HumanReason:
+            assert rt._is_generated_action(reason.prose) is True
+
+    @pytest.mark.parametrize("cell", [
+        "Already addressed",
+        "Dismissed (invalid)",
+        "Deferred",
+        "Deferred → ENG-1",
+        "Deferred → [ENG-1](https://linear.app/i/ENG-1)",
+        "Addressed outside the fix pass",
+    ])
+    def test_the_literal_cells_are_recognised(self, rt, cell):
+        assert rt._is_generated_action(cell) is True
+
+    @pytest.mark.parametrize("cell", [
+        "",
+        _HAND_WRITTEN_ACTION_CELL,
+        "Withdrawn by the reviewer",
+    ])
+    def test_anything_else_reads_as_hand_written(self, rt, cell):
+        assert rt._is_generated_action(cell) is False
+
+    def test_only_a_row_the_render_covers_is_held(self, rt):
+        """A hand-written row the render does not cover is the carry-forward
+        case, and must not be reported twice."""
+        published = _published_summary(rt, HAND_EDITED_ROW)
+        fresh = _published_summary(
+            rt,
+            "| [new work](https://github.com/owner/repo/pull/1#discussion_r222) "
+            "| @kgn | `new.go:1` | Fixed in `bbbbbbb` |")
+        assert rt._hand_written_rows(published, fresh) == []
+        assert rt._carried_over_rows(published, fresh) == [HAND_EDITED_ROW]
+
+    def test_a_row_with_no_action_cell_is_re_rendered(self, rt):
+        """A shape this renderer no longer produces is repaired, not frozen."""
+        stub = "| [drop the guard](https://github.com/owner/repo/pull/1#discussion_r111) |"
+        fresh = _published_summary(rt, ROUND_ONE_ROW)
+        assert rt._hand_written_rows(_published_summary(rt, stub), fresh) == []
+
+    def test_the_held_row_names_both_halves(self, rt):
+        fresh = _published_summary(
+            rt, ROUND_ONE_ROW.replace(_GENERATED_ACTION_CELL, "Conflicting reviewer feedback"))
+        held = rt._hand_written_rows(_published_summary(rt, HAND_EDITED_ROW), fresh)
+        assert [h.key for h in held] == ["#discussion_r111"]
+        assert rt._row_action_cell(held[0].published) == _HAND_WRITTEN_ACTION_CELL
+        assert rt._row_action_cell(held[0].replaced_by) == "Conflicting reviewer feedback"
+
+
+class TestHandEditedCellsSurviveTheRender:
+    """State regaining coverage of a thread used to be what destroyed the edit."""
+
+    def _threads(self):
+        return {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
+
+    def _fix(self, **overrides):
+        defaults = dict(
+            threads=[ThreadOutcome(
+                id="t1", summary="drop the guard", file="old.go", line=4,
+                action=ThreadAction.NEEDS_HUMAN, reason="conflicting")],
+            commit_status="no_changes", summary_deferred=True,
+        )
+        defaults.update(overrides)
+        return FixSummary(**defaults)
+
+    def _render(self, rt, published):
+        state = _make_state(self._fix())
+        with _published(published), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, self._threads())
+        return post.call_args[0][2]
+
+    def test_the_hand_written_cell_is_republished(self, rt):
+        body = self._render(rt, _published_summary(rt, HAND_EDITED_ROW))
+        assert _HAND_WRITTEN_ACTION_CELL in body
+        assert "Conflicting reviewer feedback" not in body
+
+    def test_the_row_is_not_duplicated(self, rt):
+        body = self._render(rt, _published_summary(rt, HAND_EDITED_ROW))
+        assert body.count("drop the guard") == 1
+
+    def test_the_header_count_follows_the_cell(self, rt):
+        """A row reading `Superseded` under a header reading `1 need discussion`
+        reopens the question the hand edit closed."""
+        body = self._render(rt, _published_summary(rt, HAND_EDITED_ROW))
+        assert "need discussion" not in body
+        assert "1 hand-written" in body
+
+    def test_the_reader_is_told_why_the_row_was_not_re_rendered(self, rt):
+        body = self._render(rt, _published_summary(rt, HAND_EDITED_ROW))
+        assert "written by hand" in body
+
+    def test_holding_a_row_is_idempotent(self, rt):
+        once = self._render(rt, _published_summary(rt, HAND_EDITED_ROW))
+        assert self._render(rt, once) == once
+
+    def test_the_run_names_the_row_and_what_it_would_have_said(self, rt):
+        """An overwritten hand edit was silent — the warning listed only the
+        rows the run kept, never the one it replaced."""
+        with patch.object(rt.log, "warn") as warn:
+            self._render(rt, _published_summary(rt, HAND_EDITED_ROW))
+        held = next(c[0][0] for c in warn.call_args_list if "hand-written" in c[0][0])
+        assert "#discussion_r111" in held
+        assert _HAND_WRITTEN_ACTION_CELL in held
+        assert "Conflicting reviewer feedback" in held
+
+    def test_a_generated_cell_is_still_re_rendered(self, rt):
+        """Pairs with the cases above — proves those assertions are not vacuous."""
+        body = self._render(rt, _published_summary(rt, ROUND_ONE_ROW))
+        assert "Conflicting reviewer feedback" in body
+        assert "1 need discussion" in body
+        assert "hand-written" not in body
+
+    def test_the_fix_pass_upsert_holds_the_cell_too(self, rt):
+        """--fix edits the same comment, so it can destroy the edit the same way."""
+        cp = rt.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
+        with _published(_published_summary(rt, HAND_EDITED_ROW)), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._post_fix_summary(
+                [CommentItem(id="t1", summary="drop the guard", file="old.go", line=4)],
+                [], [], cp, "owner/repo", 1, self._threads(),
+            )
+        body = post.call_args[0][2]
+        assert _HAND_WRITTEN_ACTION_CELL in body
+        assert "1 hand-written" in body
+        assert "1 fixed" not in body
+
+
 # ── reposting a summary the PR has moved past ──────────────────────────────
 
 

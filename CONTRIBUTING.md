@@ -98,6 +98,9 @@ Put the footer in the **commit body**:
 
     BREAKING CHANGE: `pr review --post` renamed to `--publish`
 
+`BREAKING-CHANGE:` (hyphenated) means exactly the same thing — Conventional Commits
+v1.0.0 lists it as a synonym, release-please honours it, and so does the gate.
+
 A `!` in the header (`feat!: …`) is encouraged for readability but never enough on
 its own. This repo squash-merges with `COMMIT_OR_PR_TITLE`, so on a multi-commit PR
 the PR title replaces your subject and a header-only marker is silently lost.

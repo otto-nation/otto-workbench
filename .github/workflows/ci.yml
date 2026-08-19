@@ -140,6 +140,10 @@ jobs:
   surface-compat:
     name: Surface Compatibility
     runs-on: ubuntu-24.04
+    # Does real work on pull_request only. On push to main the merge base with
+    # origin/main is HEAD itself, so the commit range is empty and the job is a
+    # no-op pass. It stays on both triggers so the check keeps reporting and any
+    # required-check configuration keeps resolving after a merge.
     steps:
       # fetch-depth: 0 is required — the gate resolves a merge base against the
       # target branch, which a shallow clone cannot do.

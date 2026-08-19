@@ -486,6 +486,12 @@ class FixSummary(Domain):
     # those are sent during triage, so a pass with nothing fixable still owes
     # them and has no fixed entry to carry them back.
     replies_pending: bool = False
+    # The fix pass drafted a new PR description but the gate was shut, so the
+    # draft is sitting in the worktree waiting for --finish --post. Cycle-scoped
+    # in merge_into for the same reason the summary is: a later round that did
+    # not touch the description says nothing about it rather than clearing it,
+    # and clearing it would strand the draft with nothing left to deliver it.
+    pr_body_pending: bool = False
     summary_url: str = ""
     summary_deferred: bool = False
     deferred_issue_id: str = ""
@@ -501,7 +507,7 @@ class FixSummary(Domain):
     def merge_into(self, prior: "FixSummary") -> "FixSummary":
         """Merge this fix pass into the accumulated summary.
 
-        Three things are cycle-scoped rather than per-round, for the same reason:
+        Four things are cycle-scoped rather than per-round, for the same reason:
         a review cycle spans several rounds, and a round that did not touch one
         of them says nothing about it rather than clearing it.
 
@@ -529,6 +535,12 @@ class FixSummary(Domain):
         reposted rather than edited, so the url names the live summary rather
         than the first one the cycle wrote.
 
+        An undelivered PR description is cycle-scoped too.  The draft lives in
+        the worktree across rounds, so a later round that rewrote nothing
+        carries pr_body_pending false meaning "not drafted this round" — letting
+        that overwrite a true would leave a draft on disk that --finish no
+        longer knows to send.  --finish clears the flag once the write lands.
+
         Every other field is per-round and comes from this pass.
         """
         merged = {t.id: t for t in prior.threads if t.id}
@@ -553,6 +565,7 @@ class FixSummary(Domain):
                 self.deferred_issue_pending or prior.deferred_issue_pending
             ),
             summary_url=self.summary_url or prior.summary_url,
+            pr_body_pending=self.pr_body_pending or prior.pr_body_pending,
         )
 
 

@@ -586,6 +586,18 @@ def _build_tracking_file(
     tracking_path.write_text(content)
 
 
+def _pr_body_draft(wt_path: Path) -> Path:
+    """Where the fix agent leaves a PR description it was asked to rewrite.
+
+    A reviewer comment is sometimes answered by editing the PR description
+    rather than the code. That is a GitHub write, and every GitHub write in
+    this tool waits for `--post`, so the agent writes the new description to a
+    file and `_deliver_pr_body` sends it through the gated client. Alongside
+    the tracking file, so one directory holds everything a fix pass produced.
+    """
+    return wt_path / "ignore" / "pr-comments" / "pr-description.md"
+
+
 def _render_fix_template(
     branch: str, repo: str, threads_content: str,
     tracking_file: str, wt_path: str, max_turns: int,
@@ -598,6 +610,7 @@ def _render_fix_template(
         repo=repo,
         threads_content=threads_content,
         tracking_file=tracking_file,
+        pr_body_file=str(_pr_body_draft(Path(wt_path))),
         worktree_block=review_common.build_worktree_block(wt_path),
         max_turns=str(max_turns),
     )
@@ -1740,6 +1753,10 @@ def _finish_deferred_work(
         return
     threads_by_id = {t.id: t for t in report.threads}
     _push_held_commit(state, wt_path, trail)
+    if state.fix.pr_body_pending:
+        state.fix.pr_body_pending = _deliver_pr_body(
+            wt_path, ctx.repo, ctx.pr_number,
+        )
     _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
     _warn_if_snapshot_stale(state, wt_path)
     _reconcile_fix_snapshot(state, threads_by_id, _answered_comment_sources(
@@ -1788,6 +1805,29 @@ def _push_held_commit(
 
     log.info(f"Pushed held fixes ({fix.commit_sha})")
     fix.commit_status = CommitStatus.PUSHED
+
+
+def _deliver_pr_body(wt_path: Path, repo: str, pr_number: int) -> bool:
+    """Send the PR description the fix agent drafted. True when still owed.
+
+    The gate is not consulted here: `pc.update_pr_body` asks `publishing` at the
+    write, and reports the draft as a failure to deliver, so a run without
+    `--post` leaves the file on disk for `--finish --post` to pick up. A caller
+    that forgot to check would therefore still publish nothing.
+    """
+    draft_file = _pr_body_draft(wt_path)
+    if not draft_file.exists():
+        return False
+    body = draft_file.read_text().strip()
+    if not body:
+        # An empty draft would blank the description; discard it instead.
+        draft_file.unlink()
+        return False
+    if not pc.update_pr_body(repo, pr_number, body):
+        return True
+    log.info("Updated the PR description")
+    draft_file.unlink()
+    return False
 
 
 def _resolve_fixed_threads(
@@ -3579,6 +3619,8 @@ def _run_comment_fix(
     all_fixed = tracking.fixed + tracking.fixed_items
     all_deferred = tracking.deferred + tracking.deferred_items
 
+    pr_body_pending = _deliver_pr_body(wt_path, ctx.repo, report.pr_number)
+
     pending_deferred = _summary_still_owed(
         all_fixed, all_needs_human, all_deferred, all_dismissed,
         cp.status, has_unaccounted,
@@ -3611,6 +3653,7 @@ def _run_comment_fix(
             bool(tracking.fixed) and not publishing.enabled()
             or _triage_replies_drafted(all_addressed, all_dismissed)
         ),
+        pr_body_pending=pr_body_pending,
         summary_url=summary_url or "",
         summary_deferred=summary_url is None and pending_deferred,
         has_comment_items=has_items,

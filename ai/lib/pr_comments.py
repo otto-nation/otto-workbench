@@ -241,6 +241,19 @@ def patch_thread_reply(repo: str, comment_database_id: int, body: str) -> bool:
     return code == 0
 
 
+def update_pr_body(repo: str, pr_number: int, body: str) -> bool:
+    """Replace a PR's description. Returns True when it reached GitHub.
+
+    Routed through `_gh_post` rather than `gh pr edit` so the description is
+    gated exactly like a reply: `_gh_post` asks `publishing` at the write, so
+    there is no version of this call that publishes without `--post`. The
+    endpoint's `body` field *is* the description, which is why the shared
+    `{"body": …}` payload fits it unchanged.
+    """
+    code, _ = _gh_post(f"repos/{repo}/pulls/{pr_number}", body, method="PATCH")
+    return code == 0
+
+
 @dataclass(frozen=True)
 class MarkerComment:
     """The upsert target for a marked comment, as the lookup found it.
@@ -664,13 +677,17 @@ class CloseoutDebt:
     # replies via `replies` while this reads 0. `replies` alone decides whether
     # anything is owed; the count only sharpens the wording.
     reply_count: int = 0
+    # A PR description the fix pass rewrote but could not send. It is a GitHub
+    # write like any other, so it is owed here rather than quietly sitting in
+    # the worktree until someone notices the description never changed.
+    description: bool = False
 
     @property
     def owed(self) -> bool:
-        return self.summary or self.replies or self.deferred_issue
+        return self.summary or self.replies or self.deferred_issue or self.description
 
     def describe(self) -> str:
-        """Name what is owed — 'summary', '15 replies', 'deferred tracking issue', or a mix."""
+        """Name what is owed — 'summary', '15 replies', 'deferred tracking issue', 'PR description', or a mix."""
         parts = []
         if self.summary:
             parts.append("summary")
@@ -680,6 +697,8 @@ class CloseoutDebt:
             parts.append(f"{self.reply_count} {noun}" if self.reply_count else "replies")
         if self.deferred_issue:
             parts.append("deferred tracking issue")
+        if self.description:
+            parts.append("PR description")
         return " + ".join(parts)
 
 
@@ -707,6 +726,7 @@ def closeout_debt(f: FixSummary) -> CloseoutDebt:
         replies=f.replies_pending,
         deferred_issue=f.deferred_issue_pending,
         reply_count=sum(1 for t in f.threads if t.action in _REPLY_ACTIONS),
+        description=f.pr_body_pending,
     )
 
 

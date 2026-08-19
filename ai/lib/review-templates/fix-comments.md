@@ -31,6 +31,19 @@ Process threads in this order to maximize fixes within the turn budget:
 - If a suggestion is ambiguous or requires a design choice, skip it (leave unchecked)
 - Do not add comments explaining the change — the reviewer already knows what they asked for
 - When a "PR diff for this file" section is included, use it to understand what the PR changed before applying the fix
+- Never run `gh` or any other command that writes to GitHub — posting is not your job and the tool will refuse the call. Everything you produce is delivered later, once the operator publishes
+
+## PR description
+
+A comment is sometimes answered by rewriting the PR description rather than the
+code — a missing rationale, a wrong section, a claim the diff no longer supports.
+To answer one that way:
+
+1. Write the **complete** new description to `${pr_body_file}` — it replaces the
+   existing one wholesale, so include every section you want to keep
+2. Check the thread's box like any other fix
+
+Leave the file absent when no comment calls for a description change.
 
 ## Tracking file location
 ${tracking_file}

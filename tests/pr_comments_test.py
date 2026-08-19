@@ -624,6 +624,29 @@ def test_render_fix_status_silent_when_nothing_is_owed():
     assert _closeout_line(lines) is None
 
 
+def test_closeout_debt_reads_an_undelivered_pr_description():
+    debt = pr_comments.closeout_debt(_fix_with_closeout(pr_body_pending=True))
+    assert debt.owed is True
+    assert debt.description is True
+
+
+def test_render_fix_status_warns_for_a_pending_pr_description_alone():
+    lines = render_fix_status(_fix_with_closeout(pr_body_pending=True))
+    assert _closeout_line(lines) == (
+        f"  ⚠ closeout owed: PR description — run: {CLOSEOUT_COMMAND}"
+    )
+
+
+def test_render_fix_status_names_the_description_alongside_the_rest():
+    lines = render_fix_status(_fix_with_closeout(
+        summary_deferred=True, replies_pending=True, pr_body_pending=True,
+    ))
+    assert _closeout_line(lines) == (
+        "  ⚠ closeout owed: summary + 3 replies + PR description"
+        f" — run: {CLOSEOUT_COMMAND}"
+    )
+
+
 # ── post_issue_comment upsert ──────────────────────────────────────────────
 
 
@@ -790,6 +813,19 @@ def test_patch_thread_reply_reports_failure():
         assert pr_comments.patch_thread_reply("owner/repo", 99, "body") is False
 
 
+def test_update_pr_body_patches_the_pull_endpoint():
+    with patch.object(pr_comments, "_gh_post", return_value=(0, "")) as post:
+        assert pr_comments.update_pr_body("owner/repo", 7, "new body") is True
+    assert post.call_args.kwargs["method"] == "PATCH"
+    assert post.call_args[0][0] == "repos/owner/repo/pulls/7"
+    assert post.call_args[0][1] == "new body"
+
+
+def test_update_pr_body_reports_failure():
+    with patch.object(pr_comments, "_gh_post", return_value=(1, "")):
+        assert pr_comments.update_pr_body("owner/repo", 7, "new body") is False
+
+
 # ── Publishing gate ──────────────────────────────────────────────────────────
 
 
@@ -816,6 +852,13 @@ class TestPublishingGate:
 
     def test_thread_is_not_resolved(self, no_subprocess):
         assert pr_comments.resolve_thread("PRRT_1") is False
+
+    def test_pr_description_is_not_edited(self, no_subprocess):
+        assert pr_comments.update_pr_body("o/r", 1, "new body") is False
+
+    def test_pr_description_draft_goes_to_stderr(self, no_subprocess, capsys):
+        pr_comments.update_pr_body("o/r", 1, "the rewritten description")
+        assert "the rewritten description" in capsys.readouterr().err
 
     def test_draft_body_goes_to_stderr(self, no_subprocess, capsys):
         pr_comments.post_thread_reply("o/r", 1, 99, "the reply text")

@@ -60,6 +60,17 @@ class TestBuildFixCmd:
         assert "--output-format" in cmd
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
 
+    def test_denies_gh_so_the_agent_cannot_write_to_github(self):
+        """Every outward write waits for --post; `gh` would route around it."""
+        cmd = ai_backend_claude._build_fix_cmd(ai_backend.AgentInvocation(prompt="p"))
+        assert "--disallowedTools" in cmd
+        assert cmd[cmd.index("--disallowedTools") + 1] == "Bash(gh:*)"
+
+    def test_the_review_agent_keeps_gh(self):
+        """Only the fix pass is barred — a review agent reads the PR with it."""
+        cmd = ai_backend_claude._build_agent_cmd(ai_backend.AgentInvocation(prompt="p"))
+        assert "--disallowedTools" not in cmd
+
 
 class TestPromptParsesEnvelope:
     def _run(self, monkeypatch, tmp_path, stdout, returncode=0):

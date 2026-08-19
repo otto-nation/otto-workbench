@@ -106,11 +106,25 @@ def _build_agent_cmd(inv: AgentInvocation) -> list[str]:
     return cmd
 
 
+# A fix agent edits the worktree; it has no GitHub business. Every outward write
+# in this tool waits for `--post` (see `publishing`), and an agent shelling out to
+# `gh` is a way around that gate rather than a use of it — a `--fix` run without
+# `--post` that edits the PR has published something nobody approved, and left no
+# draft record of it either. Denied at the tool call so the fix templates' rule is
+# enforced rather than trusted. A comment answered by rewriting the PR description
+# is drafted to a file instead; `_deliver_pr_body` in review-threads sends it
+# through the gated client.
+FIX_DENIED_TOOLS = "Bash(gh:*)"
+
+
 def _build_fix_cmd(inv: AgentInvocation) -> list[str]:
     add_dir_args = []
     for d in inv.add_dirs:
         add_dir_args += ["--add-dir", d]
-    cmd = [*_base_cmd(), "--output-format", "stream-json", *add_dir_args]
+    cmd = [
+        *_base_cmd(), "--disallowedTools", FIX_DENIED_TOOLS,
+        "--output-format", "stream-json", *add_dir_args,
+    ]
     if inv.max_turns is not None:
         cmd += ["--max-turns", str(inv.max_turns)]
     if inv.max_budget is not None:

@@ -749,13 +749,23 @@ one file per month. `otto-log recent --repo <org/repo>` narrows it to one repo;
 ### Drafts, and what it takes to publish
 
 `pr comments` writes nothing outward unless you pass `--post`. Replies, the fix
-summary, thread resolutions, deferral tracking issues, and the push are all
-printed to stderr as drafts instead, prefixed `DRAFT (not published)`. Code fixes
-and the commit are unaffected: they are local and undoable, and they are what
-makes the work reviewable at all. The gate covers what leaves the machine.
+summary, thread resolutions, deferral tracking issues, the PR description, and
+the push are all printed to stderr as drafts instead, prefixed
+`DRAFT (not published)`. Code fixes and the commit are unaffected: they are local
+and undoable, and they are what makes the work reviewable at all. The gate covers
+what leaves the machine.
 
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.
+
+Some comments are answered by rewriting the PR description rather than the code.
+That is a GitHub write like any other, so the fix agent does not make it: it is
+barred from running `gh` at all, and instead writes the replacement description
+to `ignore/pr-comments/pr-description.md` in the worktree. The fix pass sends it
+through the same gated client the replies use, which means a run without `--post`
+records the intended edit and performs none. The undelivered description is owed
+in `pr status` alongside the replies (`⚠ closeout owed: PR description`) and
+`--finish --post` delivers it.
 
 The default is draft because a review reply is public the moment it lands: an
 incorrect claim has to be retracted in front of the reviewer, and a wrong

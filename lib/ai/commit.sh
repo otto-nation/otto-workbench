@@ -65,22 +65,28 @@ build_commit_rules() {
 
 # _surface_removals REPO_DIR
 # Prints one removed public-surface entry per line, empty when the surface is
-# intact. Silent whenever the gate did not deliver a real verdict — missing,
-# non-executable, or exiting with anything other than 0 (compatible) or 1
-# (undeclared removals): a jq/data error (5), a bad snapshot blob (2), or an
-# unresolvable merge base (128) all mean the check never ran to completion, and
-# a partial REMOVED list from before the abort is worse than none. An
-# unavailable gate must not block message generation, it only forfeits the
-# extra prompt context.
+# intact. Silent when the gate is missing or non-executable — an unavailable
+# gate must not block message generation, it only forfeits the extra prompt
+# context. When the gate runs but exits with anything other than 0 (compatible)
+# or 1 (undeclared removals) — a jq/data error (5), a bad snapshot blob (2), or
+# an unresolvable merge base (128) — the check never ran to completion, so any
+# REMOVED lines printed before the abort are a partial result and are
+# discarded; that failure is still reported to stderr, since "never swallow
+# errors silently" applies here too, even though it does not block the commit.
+# WORKBENCH_SURFACE_GATE overrides the gate path — a test-only seam, not a
+# taskfile.env setting a contributor is expected to set.
 _surface_removals() {
   local repo_dir="$1"
-  local gate="${SURFACE_GATE:-$repo_dir/bin/local/check-surface-compat}"
+  local gate="${WORKBENCH_SURFACE_GATE:-$repo_dir/bin/local/check-surface-compat}"
   [[ -x "$gate" ]] || return 0
 
   local gate_output gate_status=0
-  gate_output=$("$gate" --repo-dir "$repo_dir" 2>/dev/null) || gate_status=$?
+  gate_output=$("$gate" --repo-dir "$repo_dir" --quiet 2>/dev/null) || gate_status=$?
 
-  [[ "$gate_status" -eq 0 || "$gate_status" -eq 1 ]] || return 0
+  if [[ "$gate_status" -ne 0 && "$gate_status" -ne 1 ]]; then
+    echo "→ Surface gate exited $gate_status — skipping the removed-surface prompt hint" >&2
+    return 0
+  fi
   sed -n 's/^REMOVED //p' <<<"$gate_output"
 }
 
@@ -105,8 +111,11 @@ _build_commit_prompt() {
 This change removes the following entries from the package's public surface:
 $(sed 's/^/  - /' <<<"$removals")
 
-Unless these removals are backwards compatible, the body MUST end with a
-'$BREAKING_CHANGE_FOOTER: <what broke>' footer naming what a user has to change."
+If this is a breaking change, the body MUST end with a
+'$BREAKING_CHANGE_FOOTER: <what broke>' footer naming what a user has to change.
+If it genuinely is not breaking (e.g. a rename that ships a back-compat alias),
+add one '$NOT_BREAKING_FOOTER: <entry> — <reason>' footer per removed entry
+instead, naming the entry exactly as listed above."
   fi
 
   run_ai "$(prompt_commit "$diff_content" "$files_section" "$retry_preamble" "$surface_note")" "" "commit-message"

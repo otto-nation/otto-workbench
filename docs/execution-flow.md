@@ -143,4 +143,6 @@ These files are derived from source data and must never be edited directly. Edit
 
 ## Environment Variable Generation
 
-`~/.env.local` is created from [`zsh/.env.local.template`](../zsh/.env.local.template) on first install. On every sync, the generator scans all `*.env.yml` files and updates the auto-generated ENV section in the template. Existing user values are never overwritten — only new variables are appended.
+`~/.env.local` is created from [`zsh/.env.local.template`](../zsh/.env.local.template) on first install. On every sync, the generator scans all `*.env.yml` files and rewrites the ENV marker section from scratch. Everything below `ENV-END` is yours and is never overwritten.
+
+Because the marker section is regenerated wholesale, a value set *inside* it would be lost. `step_env_local` prevents that: before the rewrite it collects every line between the markers that the generator did not just produce, appends those lines to the end of the file under a `# Moved here by otto-workbench sync` comment, and warns with the name of each variable it relocated. The relocated copy lands after all pre-existing content, so it is the assignment the shell ends up with. Re-running sync finds nothing left to hoist and leaves the file byte-identical.

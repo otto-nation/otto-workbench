@@ -1467,6 +1467,16 @@ def test_walk_attributes_nothing_to_a_directory_with_no_meta(cr, reviews_dir):
     assert not next(iter_review_entries(reviews_dir)).is_for("acme/widget", "42")
 
 
+def test_a_stray_file_is_not_asked_for_a_deliverable(cr, reviews_dir):
+    """`check_hunks.py/review.md` is a worse answer than a raise."""
+    (reviews_dir / "check_hunks.py").write_text("scratch")
+
+    entry = next(iter_review_entries(reviews_dir))
+
+    with pytest.raises(ValueError):
+        _ = entry.review_file
+
+
 def test_walk_yields_nothing_for_a_root_that_does_not_exist(cr, tmp_path):
     """A machine that has never run a review is not an error."""
     assert list(iter_review_entries(tmp_path / "never-reviewed")) == []

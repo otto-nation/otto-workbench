@@ -858,7 +858,15 @@ class ReviewEntry:
 
     @property
     def review_file(self) -> Path:
-        """Where this entry's deliverable is, whether or not it was written."""
+        """Where this entry's deliverable is, whether or not it was written.
+
+        A stray is a loose file rather than a directory, so it has nowhere to
+        hold a deliverable. Asking is a caller that mixed the kinds up, and
+        `check_hunks.py/review.md` is a worse answer than a raise — it is a path
+        that never exists, which reads downstream as a review not yet written.
+        """
+        if self.kind is ReviewEntryKind.STRAY:
+            raise ValueError(f"a stray file holds no review: {self.path}")
         return self.path / f"review{REVIEW_EXT}"
 
     def is_for(self, repo: str, pr_number: str | int) -> bool:
@@ -875,6 +883,8 @@ class ReviewEntry:
         backup restore. A review written before the field existed has only its
         deliverable's mtime left to date it — filesystem state, which every one
         of those rewrites, but the only record there is.
+
+        Raises for a stray, for the reason `review_file` does.
         """
         if self.meta.reviewed_at:
             return self.meta.reviewed_at

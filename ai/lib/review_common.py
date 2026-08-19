@@ -70,11 +70,21 @@ class PriorDisposition(StrEnum):
     """What a re-review says became of a prior finding.
 
     The values are the words the prompt asks for and the words the ledger is
-    parsed for, so the two cannot drift apart.
+    parsed for, so the two cannot drift apart. `FIXED` and `STILL_OPEN` keep
+    their original spellings: a review file written before `DECLINED` existed
+    still parses.
+
+    Declaration order is load-bearing: `precedence` reads it, so a member
+    declared later outranks every member above it.
     """
 
     FIXED = "Fixed"
     STILL_OPEN = "Still open"
+    # Raised, considered, and rejected on the merits — a documented tradeoff or
+    # a decision already made. Distinct from STILL_OPEN, which is outstanding
+    # work: carrying an adjudicated finding as open re-presents it every review
+    # and feeds it back into the next fix pass.
+    DECLINED = "Declined"
 
     @classmethod
     def parse(cls, text: str) -> "PriorDisposition | None":
@@ -90,6 +100,34 @@ class PriorDisposition(StrEnum):
             if rest != lowered and _DISPOSITION_TAIL_RE.match(rest):
                 return member
         return None
+
+    @property
+    def precedence(self) -> int:
+        """Which verdict survives when two groups disposition one finding.
+
+        A group that still sees a finding beats one that says it went, so
+        `STILL_OPEN` outranks `FIXED`. `DECLINED` outranks both: it is a
+        judgement about the finding rather than a report on the code, and no
+        amount of the code still looking that way overturns it.
+        """
+        return _DISPOSITION_PRECEDENCE[self]
+
+
+# Derived from the enum's declaration order rather than restated, so a member
+# added to `PriorDisposition` is ranked by where it is declared instead of
+# raising a `KeyError` from `precedence` the first time two groups disagree.
+_DISPOSITION_PRECEDENCE = {
+    member: rank for rank, member in enumerate(PriorDisposition, 1)
+}
+
+# An entry whose wording the parser could not read a verdict from. It loses to
+# any verdict it can read, and holds its slot against another unreadable one.
+NO_DISPOSITION_PRECEDENCE = 0
+
+
+def disposition_precedence(disposition: "PriorDisposition | None") -> int:
+    """`precedence`, tolerating the unparsed entry a ledger may also carry."""
+    return NO_DISPOSITION_PRECEDENCE if disposition is None else disposition.precedence
 
 
 # What may follow a disposition without qualifying it: nothing, or a break that

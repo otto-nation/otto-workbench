@@ -51,6 +51,8 @@ Rules:
 - Do NOT include a File Triage section
 - Do NOT include a Verdict section
 - Omit empty severity sections entirely (no "None" or "N/A")
+- A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it
+- A finding already annotated `*(declined — reason)*` was adjudicated — carry it forward with the annotation intact rather than re-raising it as open
 - On a re-review — a `## Prior review` section is present below — add the `## Prior findings` ledger it asks for after the severity sections
 
 ## Output

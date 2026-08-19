@@ -64,6 +64,11 @@ tools:
     visibility: brief
     description: "Validates that every ceiling marker names an upgrade trigger or is marked permanent"
 
+  - name: validate-tool-schema
+    permission: false
+    visibility: brief
+    description: "Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe"
+
   - name: validate-eval-baselines
     permission: false
     visibility: brief

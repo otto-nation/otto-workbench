@@ -923,6 +923,12 @@ server discovers tools — it probes every executable in the workbench's compone
 directories, plus any `tool_dirs` adds (see [`tools.md`](tools.md#otto-mcp-server)) — and
 it is what the skill reference above cites for `ci-check` and `pr-rebase`.
 
+Naming the flag in a script under one of those directories is therefore a claim, and
+`bin/local/validate-tool-schema` holds the build to it: it probes every candidate
+discovery would and fails when one cannot answer. `bin/local/validate-skills` asserts the
+converse for the tool a skill's `output_schema` names — that one must implement the
+protocol, marker or not, or the skill cites a contract nothing publishes.
+
 The output schema is generated from the tool's dataclass by
 [`ai/lib/schema_gen.py`](../ai/lib/schema_gen.py), which describes what
 [`serde`](../ai/lib/serde.py) will accept for each field rather than deciding that

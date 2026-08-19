@@ -20,8 +20,8 @@ import server
 from server import (
     WORKBENCH_DIR,
     _args_to_cli,
-    _declares_tool_schema,
     _extract_json,
+    declares_tool_schema,
     discover_tool_dirs,
     discover_tools,
 )
@@ -215,7 +215,7 @@ class TestDiscovery:
         script = tmp_path / "framework-tool"
         script.write_text("#!/usr/bin/env python3\nfrom tool_parser import ToolParser\n")
 
-        assert _declares_tool_schema(script) is True
+        assert declares_tool_schema(script) is True
 
     def test_tarball_builder_is_not_a_probe_candidate(self):
         """The script that motivated the guard must stay out of the probe path.
@@ -230,7 +230,7 @@ class TestDiscovery:
         if not builder.exists():
             pytest.skip("builder not found")
 
-        assert _declares_tool_schema(builder) is False
+        assert declares_tool_schema(builder) is False
 
     def test_launcher_is_not_a_probe_candidate(self):
         """Probing the launcher would exec the server and hang until the timeout.
@@ -246,14 +246,14 @@ class TestDiscovery:
         if not launcher.exists():
             pytest.skip("launcher not found")
 
-        assert _declares_tool_schema(launcher) is False
+        assert declares_tool_schema(launcher) is False
 
     def test_skips_unreadable_script(self, tmp_path):
         script = tmp_path / "unreadable"
         script.write_text("#!/bin/bash\necho --tool-schema\n")
         script.chmod(stat.S_IXUSR)
 
-        assert _declares_tool_schema(script) is False
+        assert declares_tool_schema(script) is False
 
     def test_skips_hidden_files(self, tmp_path):
         script = tmp_path / ".hidden-tool"
@@ -417,6 +417,17 @@ class TestWorkbenchToolDirs:
         }
 
         assert tracked <= set(discover_tool_dirs())
+
+    def test_another_root_can_be_named(self, tmp_path):
+        """bin/local/validate-tool-schema points this at a fixture tree.
+
+        Re-deriving the layout there would be a second copy of the rule the
+        server owns, which is the drift this parameter exists to prevent.
+        """
+        (tmp_path / "git" / "bin").mkdir(parents=True)
+        (tmp_path / "bin").mkdir()
+
+        assert discover_tool_dirs(tmp_path) == [tmp_path / "bin", tmp_path / "git" / "bin"]
 
     def test_absent_tool_dirs_still_discovers_tools(self):
         """The regression guard: an empty config used to yield no tools at all."""

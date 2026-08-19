@@ -7,6 +7,7 @@
 #   prompts.sh — confirm, confirm_n, confirm_step, prompt_overwrite, select_menu, select_subdirs, conf_get
 #   files.sh   — install_symlink, install_file, copy_dir, symlink_dir, apply_config_patch
 #   setup.sh   — require_command, install_cask, register_step, run_steps, run_migrations
+#   projects.sh — project_register, project_registered, project_forget, project_prune
 #   portable.sh — file_mtime, file_birth, file_mode
 #   config.sh  — wb_config_get
 #
@@ -41,6 +42,8 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   . "$_ui_lib_dir/setup.sh"
   # shellcheck source=state.sh
   . "$_ui_lib_dir/state.sh"
+  # shellcheck source=projects.sh
+  . "$_ui_lib_dir/projects.sh"
   # shellcheck source=config.sh
   . "$_ui_lib_dir/config.sh"
   # shellcheck source=commands.sh

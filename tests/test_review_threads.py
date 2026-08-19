@@ -1797,6 +1797,7 @@ class TestPendingFixReplies:
         body = mock_reply.call_args[0][3]
         assert "Fixed in [`def5678`](https://github.com/owner/repo/commit/def5678)" in body
         assert "owner/repo/blob/def5678/x.py" in body
+        assert fix.replies_pending is False
 
     def test_falls_back_to_the_linkless_shape_when_no_commit_can_be_named(
         self, rt, publishing_on,
@@ -1817,6 +1818,7 @@ class TestPendingFixReplies:
         assert "Fixed in" not in body
         assert "/commit/)" not in body
         assert "/blob//" not in body
+        assert fix.replies_pending is False
 
 
 class TestTriageOnlyPassQueue:

@@ -142,6 +142,8 @@ step_claude_rules() {
 # step_claude_settings — merges workbench settings.json template into the live
 # settings file, preserving any existing user customisations.
 # Supports user overrides: user/ai/claude/settings.json is deep-merged on top.
+# The committed template carries handwritten permissions only; registry-derived
+# ones are collected here, so the live file is where the two halves meet.
 step_claude_settings() {
   mkdir -p "$CLAUDE_DIR"
 
@@ -153,9 +155,6 @@ step_claude_settings() {
 
   local template
   template=$(cat "$CLAUDE_SETTINGS_SRC")
-
-  # Strip repo bookkeeping key before injecting into user settings
-  template=$(jq 'del(._generated_permissions)' <<< "$template")
 
   # Merge user override settings into the template before applying
   if [[ -f "$USER_SETTINGS_SRC" ]]; then

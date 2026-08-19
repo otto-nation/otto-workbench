@@ -18,6 +18,12 @@ setup_file() {
   source "$REPO_ROOT/lib/ui.sh"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/ai/claude/steps.sh"
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/lib/registries.sh"
+
+  local -a perms=()
+  collect_registry_permissions perms "$REPO_ROOT"
+  printf '%s\n' "${perms[@]}" > "$SHARED_TMPDIR/registry_perms.list"
 
   EXPORT_DIR="$SHARED_TMPDIR/export"
   _export_claude_config "$EXPORT_DIR" "server"
@@ -97,6 +103,21 @@ _build_tarball() {
   [ -f "$EXPORT_DIR/settings.json" ]
   run jq empty "$EXPORT_DIR/settings.json"
   [ "$status" -eq 0 ]
+}
+
+# The export is a plain copy of the committed template, which is the whole
+# claim of its comment: no user overrides and no registry permissions. Registry
+# permissions are a sync-time injection, so a copy that carried them would mean
+# the generator had written into the template again.
+@test "_export_claude_config: settings.json carries no registry permission" {
+  local -a registry_perms=()
+  mapfile -t registry_perms < "$SHARED_TMPDIR/registry_perms.list"
+  [ "${#registry_perms[@]}" -gt 0 ]
+  local perm
+  for perm in "${registry_perms[@]}"; do
+    run jq -e --arg p "$perm" '.permissions.allow | index($p) != null' "$EXPORT_DIR/settings.json"
+    [ "$status" -ne 0 ] || { echo "exported settings carries registry permission: $perm"; return 1; }
+  done
 }
 
 @test "_export_claude_config: copies CLAUDE.md" {

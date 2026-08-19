@@ -1,7 +1,26 @@
 #!/usr/bin/env bats
 # Validates Claude Code settings.json template and registry-derived permissions.
-# The template contains static permissions (shell builtins, filesystem ops).
-# Tool permissions (gh, go, etc.) are derived from registry permission fields.
+# The template contains handwritten permissions only (shell builtins, filesystem
+# ops). Tool permissions (gh, go, etc.) are derived from registry permission
+# fields by step_claude_settings and only ever land in ~/.claude/settings.json,
+# so the synced sandbox below — not the template — is where they are asserted.
+
+# _sync_settings_into FAKE_HOME REPO_ROOT — runs step_claude_settings against a
+# sandbox HOME. constants.sh derives every path from HOME at source time, so
+# presetting it keeps the real ~/.claude untouched.
+_sync_settings_into() {
+  local fake_home="$1" repo_root="$2"
+  mkdir -p "$fake_home"
+  HOME="$fake_home"
+  export WORKBENCH_DIR="$repo_root"
+  export WORKBENCH_STABLE_DIR="$repo_root"
+  export NO_COLOR=1
+  # shellcheck source=/dev/null
+  source "$repo_root/lib/ui.sh"
+  # shellcheck source=/dev/null
+  source "$repo_root/ai/claude/steps.sh"
+  step_claude_settings >/dev/null
+}
 
 setup_file() {
   load 'test_helper'
@@ -15,12 +34,15 @@ setup_file() {
   local -a perms=()
   collect_registry_permissions perms "$repo_root"
   printf '%s\n' "${perms[@]}" > "$BATS_FILE_TMPDIR/registry_perms.list"
+
+  _sync_settings_into "$BATS_FILE_TMPDIR/home" "$repo_root"
 }
 
 setup() {
   load 'test_helper'
   common_setup
   SETTINGS="$REPO_ROOT/ai/claude/settings.json"
+  SYNCED="$BATS_FILE_TMPDIR/home/.claude/settings.json"
   BREW_REGISTRY="$REPO_ROOT/brew/registry.yml"
 }
 
@@ -45,23 +67,39 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-# ── Registry permissions are auto-managed ────────────────────────────────────
+# ── Registry permissions are injected at sync ────────────────────────────────
+# Sync is the only path that derives them, so it is the only place coverage can
+# be asserted — the committed template must stay free of them, or the two halves
+# drift apart again.
 
-@test "registry-derived permissions are tracked in _generated_permissions" {
+@test "registry-derived permissions reach the synced settings file" {
+  [ -f "$SYNCED" ] || { echo "sync produced no $SYNCED"; return 1; }
   local -a registry_perms=()
   mapfile -t registry_perms < "$BATS_FILE_TMPDIR/registry_perms.list"
   [ "${#registry_perms[@]}" -gt 0 ]
+  local perm
   for perm in "${registry_perms[@]}"; do
-    run jq -e --arg p "$perm" '._generated_permissions | index($p) != null' "$SETTINGS"
-    [ "$status" -eq 0 ] || { echo "missing from _generated_permissions: $perm"; return 1; }
+    run jq -e --arg p "$perm" '.permissions.allow | index($p) != null' "$SYNCED"
+    [ "$status" -eq 0 ] || { echo "missing from synced permissions.allow: $perm"; return 1; }
   done
 }
 
-@test "_generated_permissions entries are all in permissions.allow" {
-  local count
-  count=$(jq '.permissions.allow as $allow |
-    [._generated_permissions[] | select(. as $p | $allow | index($p) == null)] | length' "$SETTINGS")
-  [ "$count" -eq 0 ]
+@test "the committed template carries no registry-derived permission" {
+  local -a registry_perms=()
+  mapfile -t registry_perms < "$BATS_FILE_TMPDIR/registry_perms.list"
+  [ "${#registry_perms[@]}" -gt 0 ]
+  local perm
+  for perm in "${registry_perms[@]}"; do
+    run jq -e --arg p "$perm" '.permissions.allow | index($p) != null' "$SETTINGS"
+    [ "$status" -ne 0 ] || { echo "registry permission committed to the template: $perm"; return 1; }
+  done
+}
+
+# validate-permissions discovers only committed settings files, so the
+# registry-derived half is checked here against the file they actually land in.
+@test "every rule in the synced settings file can match a command" {
+  run "$REPO_ROOT/bin/local/validate-permissions" --quiet "$SYNCED"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
 # ── npm outward-facing subcommands ────────────────────────────────────────────

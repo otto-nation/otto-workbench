@@ -25,9 +25,10 @@ than documentation: the rule classifier tests `/^(.+):\\*$/` before it looks for
 an unescaped `*`, and the wildcard branch compiles the pattern to a `^…$`
 regex.  Re-derive them the same way if a release ever changes the behaviour.
 
-Registry `permission:` entries reach the template through
-_generated_permissions (tests/claude_settings.bats enforces that they all
-appear there), so scanning the settings files covers the registries too.
+Registry `permission:` entries never reach a committed settings file — they are
+collected at sync time and injected into ~/.claude/settings.json.  Pass that
+file (or any other) as an argument to check them; tests/claude_settings.bats
+does exactly that against a synced sandbox.
 
 When no files are given, discovers every settings JSON in the repo that
 declares Bash rules.
@@ -48,8 +49,7 @@ from ansi import RED, GREEN, DIM, NC  # noqa: E402
 
 BASH_RULE = re.compile(r'^Bash\((.*)\)$', re.DOTALL)
 
-# Buckets holding rule strings. _generated_permissions is the workbench's own
-# record of the registry-derived entries — a dead rule is just as dead there.
+# Buckets under `permissions` holding rule strings.
 RULE_BUCKETS = ('allow', 'deny', 'ask')
 
 TILDE = 'the Bash matcher never expands ~, so only a literally tilde-spelled command matches'
@@ -114,7 +114,6 @@ def rules_in(settings: dict) -> list[str]:
     """Collect every permission rule string declared by a settings object."""
     permissions = settings.get('permissions') or {}
     rules = [r for bucket in RULE_BUCKETS for r in permissions.get(bucket) or []]
-    rules += settings.get('_generated_permissions') or []
     # A rule repeated across buckets is one mistake, reported once.
     return list(dict.fromkeys(rules))
 

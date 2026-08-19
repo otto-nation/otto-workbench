@@ -15,6 +15,7 @@ setup() {
 
   # A test's repos are all temporary, which is what the default exclusion list
   # refuses; the sandboxed state root keeps the writes out of the real registry.
+  # shellcheck disable=SC2034  # read by lib/projects.sh, sourced through ui.sh
   PROJECTS_EXCLUDED_PREFIXES=("$WORKBENCH_STATE_DIR" "$WORKBENCH_CACHE_DIR")
 
   # shellcheck source=../lib/ui.sh

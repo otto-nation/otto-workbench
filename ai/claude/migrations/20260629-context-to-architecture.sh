@@ -4,24 +4,25 @@ set -e
 # projects. Idempotent — skips repos already renamed or without the file.
 
 migration_20260629_context_to_architecture() {
-  local git_roots=("$HOME/git" "$HOME/src" "$HOME/projects" "$HOME/code")
   local migrated=0
-  local root project_dir old new
+  local project_dir old new
 
-  for root in "${git_roots[@]}"; do
-    [[ -d "$root" ]] || continue
-    while IFS= read -r claude_dir; do
-      project_dir="$(dirname "$claude_dir")"
-      old="$project_dir/.claude/context.md"
-      new="$project_dir/.claude/architecture.md"
+  # The repos to visit come from the project registry (lib/projects.sh), which
+  # run_all_migrations seeds before the framework starts. What this replaced was
+  # a `find -maxdepth 5` over four guessed-at git roots: a repo cloned anywhere
+  # else was never seen, and a bare-repo layout sits exactly at that depth
+  # limit, so one directory deeper and the migration reported "nothing to
+  # migrate" and recorded itself as applied (#780).
+  while IFS= read -r project_dir; do
+    old="$project_dir/.claude/context.md"
+    new="$project_dir/.claude/architecture.md"
 
-      [[ -f "$old" ]] || continue
-      [[ -f "$new" ]] && continue
+    [[ -f "$old" ]] || continue
+    [[ -f "$new" ]] && continue
 
-      mv "$old" "$new"
-      migrated=$((migrated + 1))
-    done < <(find "$root" -maxdepth 5 -type d -name ".claude" 2>/dev/null)
-  done
+    mv "$old" "$new"
+    migrated=$((migrated + 1))
+  done < <(project_registered)
 
   if [[ $migrated -gt 0 ]]; then
     success "Renamed .claude/context.md → architecture.md in $migrated project(s)"

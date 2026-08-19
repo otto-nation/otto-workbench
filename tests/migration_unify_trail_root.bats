@@ -62,12 +62,14 @@ _build_fake_workbench() {
   cp "$REPO_ROOT/lib/components.sh" "$FAKE_ROOT/lib/components.sh"
   cp "$REPO_ROOT/lib/migrations.sh" "$FAKE_ROOT/lib/migrations.sh"
   cp "$REPO_ROOT/lib/portable.sh" "$FAKE_ROOT/lib/portable.sh"
+  cp "$REPO_ROOT/lib/projects.sh" "$FAKE_ROOT/lib/projects.sh"
   cp "$MIGRATION" "$FAKE_ROOT/ai/claude/migrations/20260814-unify-trail-root.sh"
 
   # The stub carries portable.sh because the real ui.sh does, and _append_ledger
   # calls file_mode from it.
   cat > "$FAKE_ROOT/lib/ui.sh" <<'STUB'
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/portable.sh"
+info()    { echo "INFO $*"; }
 success() { echo "OK $*"; }
 warn()    { echo "WARN $*"; }
 STUB
@@ -79,6 +81,12 @@ WORKBENCH_STATE_DIR="$FAKE_STATE"
 WORKBENCH_CONFIG_DIR="$STATE/fake-$name-config"
 LEGACY_WORKBENCH_ROOT="$STATE/fake-$name-legacy"
 MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
+PROJECTS_REGISTRY_FILE="$FAKE_STATE/projects.registry"
+# No such file, so run_all_migrations' backfill finds no candidates.
+CLAUDE_CONFIG_FILE="$STATE/fake-$name-absent-claude.json"
+# The real projects.sh, which run_all_migrations calls into. Loaded here rather
+# than from the ui.sh stub because it needs the constants above.
+. "$FAKE_ROOT/lib/projects.sh"
 CONST
 }
 

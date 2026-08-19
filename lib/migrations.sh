@@ -507,11 +507,18 @@ adopt_legacy_workbench_root() {
 }
 
 # run_all_migrations
-# Discovers and runs migrations across all components, then prunes stale state.
+# Adopts the legacy root, backfills the project registry, prunes stale state, then runs every component's migrations.
 run_all_migrations() {
   # Before anything reads the state root: carry a pre-split ~/.config/workbench
   # into the roots that own it now, migrations.applied included.
   adopt_legacy_workbench_root
+
+  # Before any project-scoped migration reads it: backfill the registry of repos
+  # that use the workbench. Here rather than as a migration of its own because
+  # migrations run in filename order — one that sorted ahead of the backfill
+  # would read an empty registry, find nothing, and record itself as applied.
+  # No-op after the first run on a machine.
+  seed_project_registry
 
   # Prune stale state entries before running (handles removed/renamed migrations)
   _prune_stale_migration_state

@@ -16,13 +16,14 @@
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+# ui.sh rather than constants.sh alone: the project registry this reads is
+# lib/projects.sh, and the facade is what puts it in scope.
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 
 MACHINE_DIR="$CLAUDE_DIR/machine"
 PROFILE_FILE="$MACHINE_DIR/machine.md"
 STAMP_FILE="$MACHINE_DIR/.last-updated"
 STALE_HOURS=24
-GIT_ROOTS=("$HOME/git" "$HOME/src" "$HOME/projects" "$HOME/code")
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 
@@ -121,17 +122,28 @@ has_mise=$(command -v mise >/dev/null 2>&1 && echo "yes" || echo "no")
 has_uv=$(command -v uv >/dev/null 2>&1 && echo "yes" || echo "no")
 has_task=$(command -v task >/dev/null 2>&1 && echo "yes" || echo "no")
 
-# Workbench location
-workbench_dir=""
-for candidate in \
-    "$HOME/git/otto-nation/otto-workbench" \
-    "$HOME/src/otto-nation/otto-workbench" \
-    "$HOME/otto-workbench"; do
-  if [[ -d "$candidate" ]]; then workbench_dir="$candidate"; break; fi
-done
+# Workbench location — this script's own repo, not a guess at where it might be.
+#
+# constants.sh derives WORKBENCH_DIR from its own file location and resolves the
+# main worktree for a bare-repo layout, so WORKBENCH_STABLE_DIR is the path that
+# stays put across worktree switches. What this replaces was a list of three
+# hardcoded candidate paths that matched nothing on a bare-repo machine, leaving
+# the location silently absent from the profile (#780) — so a miss is now
+# reported in the profile and on stderr rather than dropped.
+workbench_dir="$WORKBENCH_STABLE_DIR"
+if [[ ! -d "$workbench_dir" ]]; then
+  warn "otto-workbench location did not resolve: $workbench_dir is not a directory"
+  workbench_dir=""
+fi
 
 # ── Project registry ──────────────────────────────────────────────────────────
-# Discover git repos and cross-reference with ~/.claude/projects/ for memory status.
+# The repos that use the workbench, from lib/projects.sh, cross-referenced with
+# ~/.claude/projects/ for memory status.
+#
+# The list used to be a `find` over four guessed-at git roots, which missed any
+# repo cloned elsewhere and any repo nested past its depth limit. Membership is
+# now recorded when a workbench command runs in a repo, so this reads one list
+# instead of re-deriving its own.
 
 declare -A memory_status=()
 for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
@@ -144,30 +156,25 @@ for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
 done
 
 declare -a project_rows=()
-for git_root in "${GIT_ROOTS[@]}"; do
-  [[ -d "$git_root" ]] || continue
-  while IFS= read -r -d '' repo_dir; do
-    [[ -d "$repo_dir/.git" ]] || continue
-    local_path="${repo_dir/#$HOME/~}"
-    name=$(basename "$repo_dir")
-    slug="${repo_dir//\//-}"
-    mem="${memory_status[$slug]:-no}"
-    # Detect primary stack from presence of key files
-    stack=""
-    [[ -d "$repo_dir/ansible" ]] && stack="ansible"
-    [[ -f "$repo_dir/go.mod" ]] && stack="${stack:+$stack,}go"
-    [[ -f "$repo_dir/package.json" ]] && stack="${stack:+$stack,}node"
-    [[ -f "$repo_dir/pyproject.toml" || -f "$repo_dir/requirements.txt" ]] && \
-      stack="${stack:+$stack,}python"
-    [[ -f "$repo_dir/build.gradle.kts" || -f "$repo_dir/pom.xml" ]] && \
-      stack="${stack:+$stack,}java"
-    [[ $(find "$repo_dir" -maxdepth 2 -name '*.sh' 2>/dev/null | wc -l) -gt 3 ]] && \
-      [[ -z "$stack" ]] && stack="bash"
-    [[ -z "$stack" ]] && stack="—"
-    project_rows+=("| $name | $local_path | $stack | $mem |")
-  done < <(find "$git_root" -maxdepth 3 -name ".git" -type d -print0 2>/dev/null \
-    | sed 's|/.git||g' | tr '\n' '\0' | sort -z)
-done
+while IFS= read -r repo_dir; do
+  local_path="${repo_dir/#$HOME/~}"
+  name=$(basename "$repo_dir")
+  slug="${repo_dir//\//-}"
+  mem="${memory_status[$slug]:-no}"
+  # Detect primary stack from presence of key files
+  stack=""
+  [[ -d "$repo_dir/ansible" ]] && stack="ansible"
+  [[ -f "$repo_dir/go.mod" ]] && stack="${stack:+$stack,}go"
+  [[ -f "$repo_dir/package.json" ]] && stack="${stack:+$stack,}node"
+  [[ -f "$repo_dir/pyproject.toml" || -f "$repo_dir/requirements.txt" ]] && \
+    stack="${stack:+$stack,}python"
+  [[ -f "$repo_dir/build.gradle.kts" || -f "$repo_dir/pom.xml" ]] && \
+    stack="${stack:+$stack,}java"
+  [[ $(find "$repo_dir" -maxdepth 2 -name '*.sh' 2>/dev/null | wc -l) -gt 3 ]] && \
+    [[ -z "$stack" ]] && stack="bash"
+  [[ -z "$stack" ]] && stack="—"
+  project_rows+=("| $name | $local_path | $stack | $mem |")
+done < <(project_registered | sort)
 
 # ── Write profile ─────────────────────────────────────────────────────────────
 
@@ -202,18 +209,26 @@ today=$(date +%Y-%m-%d)
   printf '%s\n' "## Key Tools"
   printf '%s\n' "- Homebrew (${brew_count} packages)"
   [[ "$has_task" == "yes" ]] && printf '%s\n' "- task (task runner)"
-  [[ -n "$workbench_dir" ]] && printf '%s\n' "- otto-workbench: ${workbench_dir/#$HOME/~}"
+  if [[ -n "$workbench_dir" ]]; then
+    printf '%s\n' "- otto-workbench: ${workbench_dir/#$HOME/~}"
+  else
+    printf '%s\n' "- otto-workbench: location unresolved" \
+      "  (expected ${WORKBENCH_STABLE_DIR/#$HOME/~} — re-run \`otto-workbench sync\`)"
+  fi
   printf '\n'
 
+  printf '## Project Registry\n\n'
   if [[ ${#project_rows[@]} -gt 0 ]]; then
-    printf '## Project Registry\n\n'
     printf '| Project | Path | Stack | Memory |\n'
     printf '|---------|------|-------|--------|\n'
     for row in "${project_rows[@]}"; do
       printf '%s\n' "$row"
     done
-    printf '\n'
+  else
+    printf '%s\n' "_No repos registered yet. A repo joins the registry the first" \
+      "time a workbench command runs in it — see \`otto-workbench projects\`._"
   fi
+  printf '\n'
 } > "$tmp_file"
 
 mv "$tmp_file" "$PROFILE_FILE"

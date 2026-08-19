@@ -83,6 +83,16 @@ INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 # into. The hand-authored settings are overrides/ under the config root.
 INSTALL_YML_FILE="$WORKBENCH_STATE_DIR/install.yml"
 
+# ─── Project registry ─────────────────────────────────────────────────────────
+# The repos on this machine that use otto-workbench, one absolute path per line.
+# lib/projects.sh owns every read and write; ai/lib/workbench_paths.py spells the
+# same filename for Python, and tests/workbench_roots.bats fails when the two
+# drift. Newline-delimited text rather than YAML for the same reason
+# migrations.applied is: every write is an append and every read is a scan, and
+# a YAML file would pay a `yq` fork on each of them.
+PROJECTS_REGISTRY_NAME="projects.registry"
+PROJECTS_REGISTRY_FILE="$WORKBENCH_STATE_DIR/$PROJECTS_REGISTRY_NAME"
+
 # ─── Workbench config ─────────────────────────────────────────────────────────
 # Hand-authored settings, one file per scope: the global file under the config
 # root and one per repo at its toplevel. lib/config.sh reads them;

@@ -16,7 +16,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 ```
 
-`ui.sh` is a facade — it sources `output.sh`, `prompts.sh`, `files.sh`, `constants.sh`, `setup.sh`, `state.sh`, and `migrations.sh`. Modules not in the facade (`registries.sh`, `summary.sh`, `conventions.sh`, `lib/ai/*`) are sourced directly by their consumers. `roots.sh` reaches the facade through `constants.sh`, and is also sourced on its own by consumers that need the roots without the rest of the framework.
+`ui.sh` is a facade — it sources `output.sh`, `prompts.sh`, `files.sh`, `constants.sh`, `setup.sh`, `state.sh`, `projects.sh`, and `migrations.sh`. Modules not in the facade (`registries.sh`, `summary.sh`, `conventions.sh`, `lib/ai/*`) are sourced directly by their consumers. `roots.sh` reaches the facade through `constants.sh`, and is also sourced on its own by consumers that need the roots without the rest of the framework.
 
 ## Core Modules
 
@@ -190,6 +190,39 @@ Component installation state tracking.
 
 State file: `$INSTALL_YML_FILE` — `install.yml` under the [state root](#rootssh). The flat `installed.components` it replaced survives only as the second half of `state_file_exists`. Loaded via `ui.sh`.
 
+### projects.sh
+
+The repos on this machine that use otto-workbench.
+
+<!-- LIB-FUNCTIONS:projects.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `project_register DIR` | record DIR as a repo that uses the workbench. |
+| `project_registered` | print every registered repo that still exists, one per line. |
+| `project_forget DIR` | drop DIR's entry. Returns 1 when it had none. |
+| `project_prune` | drop entries whose directory is gone. Prints how many went. |
+| `seed_project_registry` | backfill the repos that predate the registry, once. |
+<!-- LIB-FUNCTIONS:projects.sh-END -->
+
+State file: `$PROJECTS_REGISTRY_FILE` — `projects.registry` under the [state root](#rootssh), one absolute path per line with `#` comment lines. Text rather than YAML for the reason `migrations.applied` is: every write is an append and every read is a scan, and YAML would pay a `yq` fork on each of them. Loaded via `ui.sh`.
+
+Membership means a workbench command actually ran in a repo. Nothing scans for candidates — the two consumers that used to, the machine profile generator and the project-scoped migrations, each carried their own guessed-at list of git roots and a depth limit, so a repo cloned anywhere else was invisible and the migration recorded itself applied all the same (#780). The registrations are:
+
+| Caller | Where the root comes from |
+|--------|---------------------------|
+| Claude's SessionStart hook (`reuse-session-start`) | already resolved for the ceiling scan |
+| `pr` | `ctx.worktree_root` |
+| `otto-workbench ai init` | the repo being scaffolded |
+| `otto-workbench projects add [DIR]` | by hand, for a repo that uses neither |
+
+`project_register` does no discovery of its own and forks nothing: every caller has a resolved work-tree root in hand. A path under `$TMPDIR`, `/tmp`, `/var/folders`, or the workbench's own state or cache root is refused — `bats` builds throwaway repos there and runs validators and pre-commit hooks inside them. So is a bare repo's container, which holds worktrees rather than being one. `PROJECTS_EXCLUDED_PREFIXES` is assignable so a test can register the repos it builds, which are all temporary.
+
+Reads drop entries whose directory is gone, which is what saves the registry from needing a pruning job; `otto-workbench projects prune` makes the drop permanent.
+
+[`ai/lib/workbench_projects.py`](../ai/lib/workbench_projects.py) is the Python half — the SessionStart hook and `pr` register through it, against the same file in the same shape. It raises nothing: registration is a side effect of a command run for some other reason, and a hook that died on an unwritable state file would cost a session for a bookkeeping entry. The filename is declared once in [`constants.sh`](#constantssh) as `PROJECTS_REGISTRY_NAME` and once in `workbench_paths.py`; `tests/workbench_roots.bats` fails when the two drift, and `tests/projects.bats` cross-validates the halves against one file.
+
+`seed_project_registry` backfills the repos that predate the registry, once per machine, from the `.projects` map in `~/.claude.json` — an observation Claude Code wrote, not another guess at where repos live. Each key is a session cwd, routinely a bare repo's container, so every one is resolved through `git rev-parse --show-toplevel` first. A `# backfilled from <path>` line inside the file records that it ran: the Python half creates the file the first time `pr` registers anything, so a backfill keyed on the file's existence would be skipped forever on a machine that used a tool before it next synced. It is called from `run_all_migrations` ahead of the framework rather than written as a migration, for the reason adoption is — see [Execution Flow — Migrations](execution-flow.md#migrations).
+
 ### config.sh
 
 Hand-authored settings, read from YAML — one file per scope, project first.
@@ -264,7 +297,7 @@ Migration framework with state tracking.
 |----------|---------|
 | `run_component_migrations DIR` | Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs each function, and records success. |
 | `adopt_legacy_workbench_root` | Move a pre-#624 ~/.config/workbench to whichever roots now own its contents. |
-| `run_all_migrations` | Discovers and runs migrations across all components, then prunes stale state. |
+| `run_all_migrations` | Adopts the legacy root, backfills the project registry, prunes stale state, then runs every component's migrations. |
 <!-- LIB-FUNCTIONS:migrations.sh-END -->
 
 State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state root](#rootssh). Loaded via `ui.sh`. See [Execution Flow — Migrations](execution-flow.md#migrations).

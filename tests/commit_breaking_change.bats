@@ -51,6 +51,10 @@ setup() {
   run --separate-stderr _surface_removals "$REPO_ROOT"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+  # A genuinely clean gate produces no stderr either — unlike the "aborted
+  # mid-run" case below, which looks identical on stdout alone (status 0,
+  # empty output) but always leaves a stderr trace.
+  [ -z "$stderr" ]
 }
 
 @test "_surface_removals parses REMOVED lines from the gate" {
@@ -114,6 +118,29 @@ setup() {
   # it, which is the placement the brief specifically warned against.
   local before_diff="${AI_MSG%%Diff:*}"
   [[ "$before_diff" == *"command:beta"* ]]
+}
+
+@test "_build_commit_prompt lists removed entries without a bullet the model could copy into the footer" {
+  local fake_gate="$BATS_TEST_TMPDIR/check-surface-compat"
+  printf '#!/bin/bash\necho "REMOVED command:beta"\nexit 1\n' > "$fake_gate"
+  chmod +x "$fake_gate"
+  WORKBENCH_SURFACE_GATE="$fake_gate"
+
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/bash\ncat\n' > "$BATS_TEST_TMPDIR/bin/fake-ai"
+  chmod +x "$BATS_TEST_TMPDIR/bin/fake-ai"
+  AI_COMMAND="fake-ai"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+
+  _build_commit_prompt "some diff" ""
+
+  # A "- command:beta" bullet in the note risks the model literally copying
+  # the dash into 'Not-Breaking: - command:beta — reason', which the gate's
+  # _declared_keys (awk '{print $2}') reads as the entry "-", leaving
+  # command:beta undeclared — the exact pre-push rejection this task exists
+  # to remove. The entry must appear with no leading dash anywhere it's listed.
+  [[ "$AI_MSG" == *"command:beta"* ]]
+  [[ "$AI_MSG" != *"- command:beta"* ]]
 }
 
 @test "_build_commit_prompt sends no surface note when the gate is clean" {

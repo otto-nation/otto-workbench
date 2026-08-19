@@ -109,13 +109,14 @@ _build_commit_prompt() {
     surface_note="
 
 This change removes the following entries from the package's public surface:
-$(sed 's/^/  - /' <<<"$removals")
+$(sed 's/^/  /' <<<"$removals")
 
 If this is a breaking change, the body MUST end with a
 '$BREAKING_CHANGE_FOOTER: <what broke>' footer naming what a user has to change.
 If it genuinely is not breaking (e.g. a rename that ships a back-compat alias),
 add one '$NOT_BREAKING_FOOTER: <entry> — <reason>' footer per removed entry
-instead, naming the entry exactly as listed above."
+instead — use the entry name exactly as it appears above, with no leading dash
+or bullet marker."
   fi
 
   run_ai "$(prompt_commit "$diff_content" "$files_section" "$retry_preamble" "$surface_note")" "" "commit-message"

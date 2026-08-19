@@ -124,15 +124,18 @@ the AI to write the message. If it finds an undeclared removal, the AI is told
 which entries disappeared and is instructed to add either a `BREAKING CHANGE:`
 footer or a `Not-Breaking:` footer per entry, depending on whether the removal is
 actually breaking — so you see the correction while writing the commit, not as a
-pre-push rejection afterward. The gate is advisory here: if it can't run (no
-`origin/main`, not a repo, a malformed snapshot), `task commit` degrades to its
-old behavior silently rather than blocking the commit. The hard check still
-happens at push time.
+pre-push rejection afterward. The gate is advisory here: it never blocks the
+commit. A missing or non-executable gate binary stays silent; if the gate runs
+but can't complete (no `origin/main`, not a repo, a malformed snapshot), `task
+commit` prints a one-line note to stderr and still proceeds without the hint.
+The hard check still happens at push time.
 
 Run `bin/local/generate-public-surface` before `task commit` if you just removed
-something: the snapshot is only regenerated at pre-push, so on the *first* commit
-after a removal the working-tree snapshot still lists the old entry and the gate
-has nothing to report — the hint only appears once the snapshot is caught up.
+something: nothing regenerates the snapshot for you automatically —
+`validate-public-surface` (part of pre-push) only checks that it isn't stale and
+fails, telling you to run the generator by hand. So on the *first* commit after
+a removal, the working-tree snapshot still lists the old entry and the gate has
+nothing to report; the hint only appears once the snapshot is caught up.
 
 ### One caveat
 

@@ -19,6 +19,8 @@ Before code changes, walk this ladder — stop at the first unmet gate:
 Plans describe *what* and *why* — not implementation details.
 Save plans to `ignore/plans/`, specs to `ignore/specs/`.
 
+- A plan's out-of-scope section names the issue tracking each entry. Filing deferred work is required by `issue-tracker.md` § Writing an issue (any tracker); the plan is where that gets skipped, because listing something under "out of scope" already feels like disposing of it. An entry with no issue behind it is not deferred, it is dropped
+
 ## Code Quality
 
 Reuse ladder — stop at the first rung that solves the problem:

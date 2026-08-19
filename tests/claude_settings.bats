@@ -582,6 +582,62 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+# ── backgrounding ───────────────────────────────────────────────────────────
+# A `&` that stands alone backgrounds a shell the tool cannot reach, so the
+# cleanup is a pkill. The neighbours matter: `&&`, `2>&1`, `&>` and `|&` all
+# contain an ampersand and none of them background anything.
+
+@test "background hook: blocks a trailing &" {
+  run _run_guard '{"tool_input":{"command":"npm --prefix site run dev &"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"run_in_background"* ]]
+}
+
+@test "background hook: blocks a background start followed by a probe" {
+  run _run_guard '{"tool_input":{"command":"python3 -m http.server 8931 & sleep 2; curl -sI localhost:8931"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "background hook: blocks a background start on its own line" {
+  run _run_guard '{"tool_input":{"command":"ignore/serve.py &\ncurl -sI localhost:8000"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "background hook: blocks nohup" {
+  run _run_guard '{"tool_input":{"command":"nohup node serve-out.mjs"}}'
+  [ "$status" -eq 2 ]
+}
+
+@test "background hook: allows a && conjunction" {
+  run _run_guard '{"tool_input":{"command":"git fetch origin main && git status"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "background hook: allows a 2>&1 redirect" {
+  run _run_guard '{"tool_input":{"command":"bats tests/claude_settings.bats 2>&1 | tail -5"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "background hook: allows a &> redirect" {
+  run _run_guard '{"tool_input":{"command":"pytest tests/ &> /tmp/out.log"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "background hook: allows a |& pipe" {
+  run _run_guard '{"tool_input":{"command":"shellcheck bin/local/validate-all |& head -20"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "background hook: allows a case statement fallthrough" {
+  run _run_guard '{"tool_input":{"command":"case release in r*) echo tag ;& *) echo done ;; esac"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "background hook: allows an ampersand inside a quoted argument" {
+  run _run_guard "{\"tool_input\":{\"command\":\"grep -n 'a & b' /tmp/probe.txt\"}}"
+  [ "$status" -eq 0 ]
+}
+
 # ── shell variable expansion ────────────────────────────────────────────────
 # A `$VAR` reference is flagged as "simple_expansion" and prompts every time.
 # This rule reads text stripped of single-quoted spans only: `'$HOME'` is a

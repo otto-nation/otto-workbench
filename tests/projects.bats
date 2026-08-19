@@ -55,7 +55,8 @@ make_bare_container() {
 @test "registering twice leaves one line" {
   make_repo "$TMPDIR/alpha"
   project_register "$TMPDIR/alpha"
-  project_register "$TMPDIR/alpha"
+  run project_register "$TMPDIR/alpha"
+  [ "$status" -eq 3 ]
 
   run project_registered
   [ "${#lines[@]}" -eq 1 ]
@@ -64,7 +65,8 @@ make_bare_container() {
 @test "a trailing slash is the same repo" {
   make_repo "$TMPDIR/alpha"
   project_register "$TMPDIR/alpha/"
-  project_register "$TMPDIR/alpha"
+  run project_register "$TMPDIR/alpha"
+  [ "$status" -eq 3 ]
 
   run project_registered
   [ "${#lines[@]}" -eq 1 ]

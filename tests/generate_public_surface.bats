@@ -147,3 +147,63 @@ EOF
   [ "$status" -ne 0 ]
   [ ! -e "$TMPDIR/out" ]
 }
+
+@test "a broken yq call inside _registries_for aborts instead of truncating" {
+  # GENERATOR_UNDER_TEST — see the note on the jq fault-injection test above.
+  local gen="${GENERATOR_UNDER_TEST:-$REPO_ROOT/bin/local/generate-public-surface}"
+  local fakebin="$TMPDIR/fakebin" real_yq
+  mkdir -p "$fakebin"
+  real_yq="$(command -v yq)"
+  # _registries_for's own yq calls are reached through a process substitution
+  # (`done < <(_registries_for ...)` in _commands), which has no exit-status
+  # channel back to the reader at all — pipefail and inherit_errexit both
+  # only reach pipes and command substitutions, neither of which this is.
+  # Failing yq only for one specific registry (not every call) reproduces a
+  # single bad file, not a total tool outage, since a total outage would
+  # make _registries_for itself fail every iteration in a way _collect's
+  # empty-category check already catches.
+  cat > "$fakebin/yq" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == *"git/bin/registry.yml"* ]]; then
+    echo "yq: fake failure on git/bin/registry.yml" >&2
+    exit 1
+  fi
+done
+exec "$real_yq" "\$@"
+EOF
+  chmod +x "$fakebin/yq"
+
+  run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
+  [ "$status" -ne 0 ]
+  [ ! -e "$TMPDIR/out" ]
+}
+
+@test "a broken jq call inside _write_snapshot's render pipeline aborts instead of writing an empty snapshot" {
+  # GENERATOR_UNDER_TEST — see the note on the jq fault-injection test above.
+  local gen="${GENERATOR_UNDER_TEST:-$REPO_ROOT/bin/local/generate-public-surface}"
+  local fakebin="$TMPDIR/fakebin" real_jq
+  mkdir -p "$fakebin"
+  real_jq="$(command -v jq)"
+  # _write_snapshot's own render pipeline (printf | sort | jq -R | jq -s) is
+  # only reachable if _write_snapshot itself runs under errexit, which
+  # requires it not be called on the left of || at its call sites. Failing
+  # only the `select(length > 0)` stage (unique to _write_snapshot, not used
+  # by any category function) isolates this specific pipeline.
+  cat > "$fakebin/jq" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == *"select(length > 0)"* ]]; then
+    echo "jq: fake failure on select(length > 0)" >&2
+    exit 1
+  fi
+done
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$fakebin/jq"
+
+  run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
+  [ "$status" -ne 0 ]
+  [ ! -e "$TMPDIR/out/public-surface.json" ]
+  [ ! -e "$TMPDIR/out/ai/claude/public-surface.json" ]
+}

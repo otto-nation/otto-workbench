@@ -95,12 +95,25 @@ _registries_for() {
 }
 
 # _commands PACKAGE — prints "command:<name>" for each tool in that package.
+# _registries_for's own yq calls run inside a for loop, not a pipe, so
+# neither pipefail nor inherit_errexit can surface a failure there through a
+# process substitution: `done < <(_registries_for ...)` lets errexit abort
+# the substitution's own subshell, but the parent read loop never inspects a
+# process substitution's exit status — it just sees a short stream and
+# returns 0. Capturing into a variable first, with an explicit status check,
+# closes that gap the same way _collect does for the category functions.
 _commands() {
-  local f
+  local package="$1" registries rc f
+  registries="$(_registries_for "$package")"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    err "_registries_for failed for $package"
+    exit 1
+  fi
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     yq -r '.tools[]?.name' "$f" | sed 's/^/command:/'
-  done < <(_registries_for "$1")
+  done <<< "$registries"
 }
 
 # _config_entries — prints "config:<dotted.key>" and "config:<key>=<enum>".
@@ -219,12 +232,16 @@ _wb_entries="$_wb_entries"$'\n'"$(_collect "component entries" _component_entrie
 _ai_entries="$(_collect "otto-ai-tools commands" _commands "otto-ai-tools")"
 _ai_entries="$_ai_entries"$'\n'"$(_collect "claude artifacts" _claude_artifacts)"
 
-_failed=false
-_write_snapshot "otto-workbench" "public-surface.json" "$_wb_entries" || _failed=true
-_write_snapshot "otto-ai-tools" "ai/claude/public-surface.json" "$_ai_entries" || _failed=true
-
-if $_failed; then
-  exit 1
-fi
+# Both calls are bare — not `_write_snapshot ... || _failed=true` — for the
+# same reason _collect's category calls are bare: testing a function's exit
+# status with || suspends errexit for that function's entire execution,
+# including everything it calls. _write_snapshot's own render pipeline
+# (printf | sort | jq -R | jq -s) would then be free to fail mid-pipe and
+# still let the function finish and write a validly-formed but wrongly
+# empty snapshot. A bare call lets a real failure abort the script
+# immediately, at the cost of only ever reporting the first package that
+# fails --check in a given run rather than checking both before exiting.
+_write_snapshot "otto-workbench" "public-surface.json" "$_wb_entries"
+_write_snapshot "otto-ai-tools" "ai/claude/public-surface.json" "$_ai_entries"
 
 $QUIET || success "Generated 2 public surface snapshots"

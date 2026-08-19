@@ -879,6 +879,35 @@ def _parse_tracking_results(
     return result
 
 
+class CommitClaim(StrEnum):
+    """How firmly one thread's change can be pinned to a commit.
+
+    Render-time only, never persisted: this is what a run may *say* about a
+    row, not a fact recorded about the branch.
+
+    The three that carry no SHA are the point of the type. "This entry has no
+    commit" used to be one case, and two reviewer-facing surfaces wanted
+    opposite renderings of it, so whichever was patched last inverted the
+    other. They are separate answers now.
+    """
+
+    # The entry names the commit that carried it, recorded when the fix pass
+    # that landed it committed. Wins over anything the running pass could say.
+    RECORDED = "recorded"
+    # The row rode the running pass's own commit. Whether that commit may be
+    # named is the pass's question, not the row's — an unpushed one would 404.
+    PASS = "pass"
+    # The pass recorded no commit and exactly one published commit landed
+    # outside it: the operator landed the pass's work by hand.
+    RECONCILED = "reconciled"
+    # Work landed outside the pass across more than one commit. Something
+    # carries this row and the run cannot say which.
+    UNDETERMINED = "undetermined"
+    # No commit carries this row: it was satisfied without one, or it was
+    # replayed from a round that recorded none.
+    UNRECORDED = "unrecorded"
+
+
 @dataclass
 class CommitPushResult:
     sha: str | None
@@ -887,6 +916,11 @@ class CommitPushResult:
     # precisely so the two compare equal.
     status: str
     error: str
+    # Where `sha` came from, which decides what an entry with no commit of its
+    # own inherits from it. The default is the only honest answer for a pass
+    # that committed its own work; `_reconciled_commit` is the one place that
+    # recovers a SHA from somewhere else and says so.
+    claim: CommitClaim = CommitClaim.PASS
 
 
 # A real commit the remote does not have. `push_failed` is git refusing;
@@ -1196,16 +1230,16 @@ def _post_fix_replies(
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
-    commit_sha: str,
+    cp: CommitPushResult,
 ) -> int:
     """Post replies to each fixed thread. Returns count of replies posted.
 
-    `commit_sha` covers the entries this pass just fixed. An entry replayed from
-    state carries the commit that actually fixed it, which may be several rounds
-    old — see `_entry_commit_sha`.
+    Every entry here must be one `_attribute_commit` can cite, which is what
+    `_reply_to_fixed` partitions for — this body asserts a commit link and a
+    blob permalink under it, and neither has a shape that degrades gracefully.
     """
     def body_fn(entry: CommentItem) -> str:
-        sha = _entry_commit_sha(entry, commit_sha)
+        sha = _attribute_commit(entry, cp).sha
         parts = [
             f"{_APPLIED_REPLY_PREFIX} {entry.summary}",
             f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha}).",
@@ -1224,21 +1258,92 @@ def _post_fix_replies(
     return posted
 
 
-def _entry_commit_sha(
-    entry: CommentItem | pr_state.ThreadOutcome, pass_sha: str = "",
-) -> str:
-    """The commit that fixed this entry, preferring the entry's own record.
+@dataclass(frozen=True)
+class CommitAttribution:
+    """Which commit carries one thread's change, and how well that is known.
 
-    `pass_sha` describes the pass running now. An entry replayed from state may
-    have been fixed rounds ago by a different commit, so its own SHA wins and
-    the pass-level one is only a fallback for an entry that has none.
-
-    Shared by the summary row and the thread reply on purpose: they were two
-    implementations of the same attribution, and only the summary's was right —
-    the reply pinned every round's `Fixed in` line, and every blob permalink
-    beneath it, to whatever the latest pass had committed.
+    `sha` is filled only when a reviewer could open that commit and find the
+    change in it, so `cited` is the whole question a renderer has to ask before
+    writing a link. `claim` says why, which is what lets callers render the
+    uncitable cases differently without re-deriving a SHA of their own.
     """
-    return getattr(entry, "commit_sha", "") or pass_sha
+
+    claim: CommitClaim
+    sha: str = ""
+
+    @property
+    def cited(self) -> bool:
+        """Whether a commit may be named for this entry."""
+        return bool(self.sha)
+
+
+def _attribute_commit(
+    entry: CommentItem | pr_state.ThreadOutcome, cp: CommitPushResult,
+) -> CommitAttribution:
+    """Which commit carries this entry's change — the one answer to that question.
+
+    Every reviewer-facing surface reads this: the summary row, the thread
+    reply, and the blob permalink under it. Four mechanisms used to answer it
+    independently and three of them were wrong for some caller, because each
+    was written for the caller that noticed first.
+
+    An empty `entry.commit_sha` is not one case, it is three, and the whole
+    reason this function exists is that its callers wanted contradictory
+    things from it:
+
+    - UNRECORDED — the pass recorded a commit and this entry is not stamped
+      with it, so the entry was fixed in an earlier round or satisfied with no
+      commit at all. Crediting the pass would name a commit that does not
+      carry the change.
+    - RECONCILED — the pass recorded nothing and exactly one published commit
+      landed outside it. The operator landed the pass's work by hand and that
+      commit is the honest citation.
+    - UNDETERMINED — the same, but the work landed across several commits.
+      Reconciliation is a yes/no about the branch with no per-row evidence, so
+      it must not answer for n distinct changes with one SHA.
+
+    Callers decide how to render an entry with no citation. They do not get to
+    invent one.
+    """
+    sha = getattr(entry, "commit_sha", "")
+    pass_sha = cp.sha or ""
+    published = cp.status == CommitStatus.PUSHED
+    if sha and sha != pass_sha:
+        # An earlier round's commit, and one the remote already has: this round
+        # could only have read it back out of a state file the last one pushed.
+        return CommitAttribution(CommitClaim.RECORDED, sha)
+    if sha:
+        # Stamped with the pass's own commit, so only the pass knows whether it
+        # is safe to name yet.
+        return CommitAttribution(CommitClaim.PASS, pass_sha if published else "")
+    if cp.claim is CommitClaim.UNDETERMINED:
+        return CommitAttribution(CommitClaim.UNDETERMINED)
+    if cp.claim is CommitClaim.RECONCILED:
+        return CommitAttribution(CommitClaim.RECONCILED, pass_sha)
+    if pass_sha:
+        return CommitAttribution(CommitClaim.UNRECORDED)
+    # The pass has no commit of its own and none landed outside it, so there is
+    # nothing entry-specific to say and the pass-level status is the whole
+    # story for this row.
+    return CommitAttribution(CommitClaim.PASS)
+
+
+def _stamp_pass_commit(fixed: list, sha: str) -> None:
+    """Record the pass's commit on the entries it just landed.
+
+    The single write of thread → commit attribution. Everything downstream
+    reads `entry.commit_sha` back through `_attribute_commit` instead of
+    re-deriving a SHA from whichever pass happens to be running, which is how
+    a row fixed three rounds ago came to be credited to today's commit.
+
+    An entry that already names a commit keeps it: the reply queue spans
+    rounds, so a drained entry carries the commit that actually fixed it.
+    """
+    if not sha:
+        return
+    for entry in fixed:
+        if not getattr(entry, "commit_sha", ""):
+            entry.commit_sha = sha
 
 
 def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
@@ -1330,6 +1435,37 @@ def _post_already_addressed_replies(
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
         log.info(f"Replied on {posted} already-addressed thread(s)")
+    return posted
+
+
+def _reply_to_fixed(
+    fixed: list[CommentItem],
+    threads_by_id: dict[str, ReportThread],
+    repo: str,
+    pr_number: int,
+    cp: CommitPushResult,
+    wt_path: Path,
+) -> int:
+    """Reply on every fixed thread, each citing the commit attributed to it.
+
+    The split is the resolver's, not the caller's. Both the fix pass and the
+    `--finish` drain reply to fixed threads, and each used to decide for itself
+    which SHA a reply could name — the two disagreed, and the reply path was
+    the one that got it wrong. An entry the resolver cannot attribute gets the
+    linkless already-addressed shape rather than a reply whose commit link and
+    blob permalink both 404.
+    """
+    attributed, unattributed = [], []
+    for entry in fixed:
+        bucket = attributed if _attribute_commit(entry, cp).cited else unattributed
+        bucket.append(entry)
+    posted = 0
+    if attributed:
+        posted += _post_fix_replies(attributed, threads_by_id, repo, pr_number, cp)
+    if unattributed:
+        posted += _post_already_addressed_replies(
+            unattributed, threads_by_id, repo, pr_number, wt_path,
+        )
     return posted
 
 
@@ -2030,25 +2166,28 @@ def _create_or_update_deferred_issue(
 def _fixed_status_for(
     entry: CommentItem | pr_state.ThreadOutcome, cp: CommitPushResult, repo: str,
 ) -> str:
-    """Status cell for one fixed row, preferring the thread's own commit.
+    """Status cell for one fixed row, rendering what `_attribute_commit` allows.
 
-    `cp` describes the pass that is running now; a ThreadOutcome replayed from
-    state may have been fixed several rounds ago by a different commit. Its own
-    SHA is the accurate attribution, and the pass-level text — including
-    "no commit needed" — is only right for a row that has none.
-
-    Reachable only from `_render_deferred_summary`, which refuses to post while
-    a recorded commit is still unpushed, so the commit link cannot 404.
+    The row asks the resolver which commit carries it and renders that answer;
+    it does not reach past the resolver for a SHA. Falling through to the
+    pass-level text is only correct when the resolver says the pass's own
+    commit is the whole story for this row — otherwise that text credits the
+    running pass for work landed in an earlier round, or by an operator across
+    several commits it cannot tell apart.
     """
-    sha = _entry_commit_sha(entry)
-    if sha:
+    attribution = _attribute_commit(entry, cp)
+    if attribution.cited:
+        sha = attribution.sha
         return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
-    # Reconciled outcomes were handled by hand or by the reviewer, and the
-    # commit that did it is not recorded anywhere. Falling through would credit
-    # the pass's commit for work it never did.
+    # A row reconciled at drain time was settled by hand or by the reviewer, and
+    # the commit that did it is not recorded anywhere. That is true of the row
+    # whatever the running pass did, so it is answered before the pass-level
+    # text gets a say.
     if getattr(entry, "reason", "") == _RECONCILED_REASON:
         return _RECONCILED_STATUS_TEXT
-    return _fixed_status_text(cp, repo)
+    if attribution.claim is CommitClaim.PASS:
+        return _fixed_status_text(cp, repo)
+    return _UNATTRIBUTED_STATUS_TEXT
 
 
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
@@ -2084,12 +2223,15 @@ def _warn_unattributed_fixes(fixed: list, cp: CommitPushResult) -> None:
     The contradiction is caught rather than rendered silently: the summary goes
     out under the operator's name, and a row that asserts both halves is a claim
     about their branch that nothing in the run supports.
+
+    An unpushed commit is not this: the work is committed and the row says so,
+    it is only the link that has to wait. Everything else the resolver declines
+    to cite counts, including rows whose fix landed in a round this state file
+    no longer describes.
     """
-    if cp.sha or not fixed:
+    if _commit_unpushed(cp.status):
         return
-    if cp.status not in (CommitStatus.NO_CHANGES, CommitStatus.COMMIT_FAILED):
-        return
-    orphans = [e for e in fixed if not getattr(e, "commit_sha", "")]
+    orphans = [e for e in fixed if not _attribute_commit(e, cp).cited]
     if not orphans:
         return
     log.warn(
@@ -2907,23 +3049,14 @@ def _post_pending_fix_replies(
     # itself. A draft returns 0 here, so a drafted drain adds nothing.
     fixed = bucket(FA.FIXED)
     if fixed:
-        # The same reconciliation the summary rows get. A pass whose commit a
-        # hook rejected records no SHA of its own, so an operator who then lands
-        # those fixes by hand would otherwise be replying "Fixed in ``" with an
-        # empty commit link and an empty blob permalink under it.
-        pass_sha = _reconciled_commit(fix, fix.commit_status, wt_path).sha or ""
-        attributed = [e for e in fixed if _entry_commit_sha(e, pass_sha)]
-        # Nothing a reviewer can open, so the linkless shape rather than a reply
-        # whose every link 404s. Mirrors the fix pass's own fallback.
-        unattributed = [e for e in fixed if not _entry_commit_sha(e, pass_sha)]
-        if attributed:
-            fix.replies_posted += _post_fix_replies(
-                attributed, threads_by_id, repo, pr_number, pass_sha,
-            )
-        if unattributed:
-            fix.replies_posted += _post_already_addressed_replies(
-                unattributed, threads_by_id, repo, pr_number, wt_path,
-            )
+        # The same reconciliation the summary rows get, read through the same
+        # resolver. A pass whose commit a hook rejected records no SHA of its
+        # own, so an operator who then lands those fixes by hand would
+        # otherwise be replied to with "Fixed in ``" over an empty link.
+        fix.replies_posted += _reply_to_fixed(
+            fixed, threads_by_id, repo, pr_number,
+            _reconciled_commit(fix, fix.commit_status, wt_path), wt_path,
+        )
         _resolve_fixed_threads(fixed, threads_by_id)
 
     addressed = bucket(FA.ALREADY_ADDRESSED)
@@ -2972,7 +3105,9 @@ def _reconciled_commit(
         return CommitPushResult(None, status, "")
     if _is_pushed(wt_path, current):
         log.info(f"Attributing fixes to {current} — HEAD moved past the fix snapshot")
-        return CommitPushResult(current, CommitStatus.PUSHED, "")
+        return CommitPushResult(
+            current, CommitStatus.PUSHED, "", claim=CommitClaim.RECONCILED,
+        )
     return CommitPushResult(None, CommitStatus.RECONCILED, "")
 
 
@@ -3195,15 +3330,15 @@ def _build_thread_outcomes(
 ) -> list[pr_state.ThreadOutcome]:
     """Build ThreadOutcome list from categorized entries.
 
-    `commit_sha` is stamped on the fixed outcomes only. The others were not
-    landed by this commit, and a SHA on them would read as if they had been.
+    `commit_sha` is stamped on the fixed entries only, through the one writer
+    of that field. The others were not landed by this commit, and a SHA on them
+    would read as if they had been.
     """
     FA = pr_state.ThreadAction
+    _stamp_pass_commit(fixed, commit_sha)
     outcomes: list[pr_state.ThreadOutcome] = []
     for entry in fixed:
-        outcome = entry.to_outcome(FA.FIXED)
-        outcome.commit_sha = _entry_commit_sha(entry, commit_sha)
-        outcomes.append(outcome)
+        outcomes.append(entry.to_outcome(FA.FIXED))
     for entry in deferred:
         outcomes.append(entry.to_outcome(FA.DEFERRED))
     for entry in needs_human:
@@ -3602,18 +3737,18 @@ def _run_comment_fix(
 
     cp = _commit_fixes(wt_path, fixed_count, deferred_count, head_before, trail)
 
+    # Recorded here rather than left for the pass envelope to imply: from this
+    # point on, "no SHA on the entry" means the entry did not land in this
+    # commit, which is what lets a later round tell its own rows from an
+    # earlier round's.
+    _stamp_pass_commit(tracking.fixed, cp.sha or "")
+    _stamp_pass_commit(tracking.fixed_items, cp.sha or "")
+
     replies_posted = triage_replies
     if tracking.fixed and cp.status == CommitStatus.PUSHED:
-        if cp.sha:
-            replies_posted += _post_fix_replies(
-                tracking.fixed, threads_by_id, ctx.repo, report.pr_number,
-                cp.sha,
-            )
-        else:
-            replies_posted += _post_already_addressed_replies(
-                tracking.fixed, threads_by_id, ctx.repo, report.pr_number,
-                wt_path,
-            )
+        replies_posted += _reply_to_fixed(
+            tracking.fixed, threads_by_id, ctx.repo, report.pr_number, cp, wt_path,
+        )
         _resolve_fixed_threads(tracking.fixed, threads_by_id)
 
     all_fixed = tracking.fixed + tracking.fixed_items

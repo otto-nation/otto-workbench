@@ -863,6 +863,92 @@ class TestFixedStatusText:
         assert "pre-commit" in text
 
 
+# ── _attribute_commit ───────────────────────────────────────────────────────
+
+
+class TestAttributeCommit:
+    """One resolver answers "which commit carries this thread?" for every surface.
+
+    Each renderer used to derive that itself, and an empty `commit_sha` meant
+    something different to each of them — so a fix that made one honest
+    inverted another. The claim is the discriminator that lets them disagree
+    about *rendering* without disagreeing about the facts.
+    """
+
+    @staticmethod
+    def _entry(**kw):
+        return CommentItem(id="t1", summary="fix it", file="a.py", line=1, **kw)
+
+    def test_a_recorded_commit_outranks_the_running_pass(self, rt):
+        """An earlier round's commit is the one that carries the change."""
+        got = rt._attribute_commit(
+            self._entry(commit_sha=_ROUND_1_SHA),
+            rt.CommitPushResult(_PASS_SHA, "pushed", ""),
+        )
+        assert got.claim is rt.CommitClaim.RECORDED
+        assert got.sha == _ROUND_1_SHA
+
+    def test_an_entry_the_pass_landed_rides_the_pass_commit(self, rt):
+        got = rt._attribute_commit(
+            self._entry(commit_sha=_PASS_SHA),
+            rt.CommitPushResult(_PASS_SHA, "pushed", ""),
+        )
+        assert got.claim is rt.CommitClaim.PASS
+        assert got.sha == _PASS_SHA
+
+    def test_an_unpublished_pass_commit_is_not_citable(self, rt):
+        """A SHA the remote does not have would 404 for whoever clicks it."""
+        got = rt._attribute_commit(
+            self._entry(commit_sha=_PASS_SHA),
+            rt.CommitPushResult(_PASS_SHA, "push_failed", "rejected"),
+        )
+        assert got.claim is rt.CommitClaim.PASS
+        assert got.cited is False
+
+    def test_an_entry_the_pass_never_recorded_claims_nothing(self, rt):
+        """The pass committed and this entry is not in that commit."""
+        got = rt._attribute_commit(
+            self._entry(), rt.CommitPushResult(_PASS_SHA, "pushed", ""),
+        )
+        assert got.claim is rt.CommitClaim.UNRECORDED
+        assert got.cited is False
+
+    def test_a_reconciled_pass_lends_the_commit_it_recovered(self, rt):
+        """One published commit landed outside the pass — the operator's."""
+        got = rt._attribute_commit(
+            self._entry(),
+            rt.CommitPushResult(_PASS_SHA, "pushed", "",
+                                claim=rt.CommitClaim.RECONCILED),
+        )
+        assert got.claim is rt.CommitClaim.RECONCILED
+        assert got.sha == _PASS_SHA
+
+    def test_an_undetermined_pass_lends_nothing(self, rt):
+        """Several commits landed outside the pass; none of them answers for a row."""
+        got = rt._attribute_commit(
+            self._entry(),
+            rt.CommitPushResult(_PASS_SHA, "pushed", "",
+                                claim=rt.CommitClaim.UNDETERMINED),
+        )
+        assert got.claim is rt.CommitClaim.UNDETERMINED
+        assert got.cited is False
+
+    def test_a_pass_with_no_commit_leaves_the_row_to_the_pass(self, rt):
+        """Nothing was committed by anyone, so there is nothing row-specific to say."""
+        got = rt._attribute_commit(
+            self._entry(), rt.CommitPushResult(None, "no_changes", ""),
+        )
+        assert got.claim is rt.CommitClaim.PASS
+        assert got.cited is False
+
+    def test_the_pass_stamps_the_entries_it_landed(self, rt):
+        """The one write of thread → commit; every reader goes through the resolver."""
+        fresh, earlier = self._entry(), self._entry(commit_sha=_ROUND_1_SHA)
+        rt._stamp_pass_commit([fresh, earlier], _PASS_SHA)
+        assert fresh.commit_sha == _PASS_SHA
+        assert earlier.commit_sha == _ROUND_1_SHA
+
+
 # ── _build_summary_body ─────────────────────────────────────────────────────
 
 
@@ -877,9 +963,9 @@ class TestBuildSummaryBody:
     def test_pushed_shows_commit_link(self, rt):
         cp = rt.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
-            [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
+            [self._fixed_entry(commit_sha="abc1234")], [], [], cp, "owner/repo", 1, {},
         )
-        assert "abc1234" in body
+        assert "/commit/abc1234" in body
         assert "push failed" not in body
 
     def test_no_changes_shows_an_unattributed_fix(self, rt):
@@ -905,7 +991,7 @@ class TestBuildSummaryBody:
         """
         cp = rt.CommitPushResult("abc1234", "push_failed", "rejected")
         body = rt._build_summary_body(
-            [self._fixed_entry()], [], [], cp, "owner/repo", 1, {},
+            [self._fixed_entry(commit_sha="abc1234")], [], [], cp, "owner/repo", 1, {},
         )
         assert "committed locally (push failed)" in body
         assert "/commit/abc1234" not in body
@@ -1399,14 +1485,23 @@ class TestSummaryUsesPerThreadCommit:
         assert "Fixed in" not in body
         assert "Addressed outside the fix pass" in body
 
-    def test_pass_sha_still_covers_a_thread_with_none(self, rt):
+    def test_a_thread_with_no_sha_does_not_borrow_the_pass(self, rt):
+        """The pass committed; this row is not in that commit, so it says so.
+
+        The row's file cell still permalinks at the pass's SHA — a location
+        anchor pins the tree the reviewer should read, which is a different
+        claim from "this commit fixed your thread". Only the status cell makes
+        that claim, and it has nothing to make it with.
+        """
         body = self._post(
             rt,
             ThreadOutcome(id="t1", summary="fix it", file="a.py", line=1,
                           action=ThreadAction.FIXED),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert "def5678" in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert "Fixed in" not in body
+        assert "/blob/def5678/a.py" in body
 
 
 class TestFailedCommitIsNotReportedAsNoCommit:
@@ -2095,11 +2190,18 @@ class TestReplyAttributionAcrossRounds:
         assert f"/blob/{_ROUND_1_SHA}/a.py" in bodies["t1"]
         assert f"/blob/{_ROUND_2_SHA}/b.py" in bodies["t2"]
 
-    def test_an_entry_with_no_commit_of_its_own_uses_the_pass(self, rt, publishing_on):
+    def test_an_entry_with_no_commit_of_its_own_borrows_none(self, rt, publishing_on):
+        """An entry the pass never recorded must not be credited to the pass.
+
+        The pass committed, and this entry is not in that commit — it was
+        replayed from a round that recorded nothing. Citing the pass's SHA
+        sends the reviewer to a commit their thread is not in.
+        """
         outcome = ThreadOutcome(id="t1", summary="t1 summary", file="a.py", line=1,
                                 action=ThreadAction.FIXED)
         bodies = self._drain(rt, outcome)
-        assert _PASS_SHA in bodies["t1"]
+        assert _PASS_SHA not in bodies["t1"]
+        assert "t1 summary" in bodies["t1"]
 
     def test_the_summary_row_and_the_reply_agree(self, rt, publishing_on):
         """One precedence rule, two renderers — they must not disagree."""
@@ -2116,12 +2218,14 @@ class TestHandWrittenRepliesSurvive:
 
     def _reply(self, rt, body):
         """Run the fix-reply upsert against a thread whose standing reply is `body`."""
-        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1)
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
+                            commit_sha="abc1234")
         threads_by_id = {"t1": _standing_reply_thread(body=body)}
         with patch("pr_comments.patch_thread_reply", return_value=True) as edit, \
              patch("pr_comments.post_thread_reply", return_value=True) as post:
             count = rt._post_fix_replies(
-                [entry], threads_by_id, "owner/repo", 42, "abc1234",
+                [entry], threads_by_id, "owner/repo", 42,
+                rt.CommitPushResult("abc1234", "pushed", ""),
             )
         return count, edit, post
 
@@ -3315,14 +3419,16 @@ class TestReplyUpsert:
         Guarding per verdict left both replies standing, telling the reviewer
         their point did not apply and that we had acted on it.
         """
-        fixed = [CommentItem(id="t1", summary="fix it", file="src/app.py")]
+        fixed = [CommentItem(id="t1", summary="fix it", file="src/app.py",
+                             commit_sha="def5678")]
         threads_by_id = {"t1": _standing_reply_thread(
             body="Suggestion reviewed and determined to be inapplicable: old reason",
         )}
         with patch("pr_comments.post_thread_reply") as post, \
              patch("pr_comments.patch_thread_reply", return_value=True) as edit:
             count = rt._post_fix_replies(
-                fixed, threads_by_id, "owner/repo", 42, "def5678",
+                fixed, threads_by_id, "owner/repo", 42,
+                rt.CommitPushResult("def5678", "pushed", ""),
             )
         assert count == 1
         post.assert_not_called()
@@ -3355,10 +3461,12 @@ class TestReplyUpsert:
 class TestReplyEvidence:
 
     def test_fix_reply_links_the_file_at_the_fix_commit(self, rt):
-        fixed = [CommentItem(id="t1", summary="fix it", file="src/app.py")]
+        fixed = [CommentItem(id="t1", summary="fix it", file="src/app.py",
+                             commit_sha="def5678")]
         threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with patch("pr_comments.post_thread_reply", return_value=True) as post:
-            rt._post_fix_replies(fixed, threads_by_id, "owner/repo", 42, "def5678")
+            rt._post_fix_replies(fixed, threads_by_id, "owner/repo", 42,
+                                 rt.CommitPushResult("def5678", "pushed", ""))
         body = post.call_args[0][3]
         assert "owner/repo/blob/def5678/src/app.py" in body
         # No line anchor: the fix just moved the lines around it.

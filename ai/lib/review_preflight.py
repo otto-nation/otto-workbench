@@ -21,7 +21,7 @@ import log
 import serde
 import workbench_config
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
-from pr_state import ReviewStatus
+from pr_state import ReviewStatus, now_iso
 from review_common import (
     FILE_STAT_FMT, FILENAME_PIPELINE_STATE, Diagnosis, DiagnosisKind, Effort, Mode,
     PRIOR_SHA_RE, ReviewType, _run, plural,
@@ -122,6 +122,11 @@ class ReviewJob:
     pr_state_data: "PRState | None" = None
     viewer_role: str = ""
     throttle: "QuotaThrottle | None" = None
+    # Taken when the job is built, not when the sidecar is written: every
+    # branch that reaches a review file writes a sidecar, so a timestamp taken
+    # there dates the deliverable rather than the run that produced it. This is
+    # what `started_at` in meta.json carries.
+    started_at: str = field(default_factory=now_iso)
 
     @functools.cached_property
     def config(self) -> workbench_config.WorkbenchConfig:

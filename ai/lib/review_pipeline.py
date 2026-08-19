@@ -84,6 +84,13 @@ DISPROVE_MIN_FINDINGS = 3
 # ── Review pipelines ──────────────────────────────────────────────────────────
 
 def _write_review_sidecar(job: ReviewJob):
+    """Write the sidecar recording what this run is reviewing.
+
+    Called from every branch that reaches a review file, so the only timestamp
+    it can honestly stamp is the run's own start, which it carries rather than
+    takes. That a review came of the run is a separate claim, made once at the
+    end by `review_common.stamp_reviewed` and only when the run got there.
+    """
     sidecar_path = _derive_path(job.review_file, FILENAME_META)
     meta: dict = {
         "repo": job.repo,
@@ -94,6 +101,7 @@ def _write_review_sidecar(job: ReviewJob):
         "title": job.pr.title,
         "changed_files": job.pr.changed_files,
         "mode": job.mode,
+        "started_at": job.started_at,
     }
     if job.generator_version:
         meta["generator_version"] = job.generator_version

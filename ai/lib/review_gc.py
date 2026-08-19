@@ -26,13 +26,14 @@ import run_lock
 import workbench_paths
 from pr_state import PRClosure, PRCloseState, ReviewStatus
 from review_common import (
-    FILENAME_META,
     FILENAME_PIPELINE_STATE,
     FILENAME_PROMPT_STATS,
     REVIEW_EXT,
+    ReviewEntry,
+    ReviewEntryKind,
+    iter_review_entries,
     phase_artifacts,
     read_pipeline_status,
-    read_review_meta,
 )
 from trail import Trail
 
@@ -148,48 +149,59 @@ def _is_migration_input(f: Path, reviews_dir: Path) -> bool:
     return (reviews_dir / f"{stem}{REVIEW_EXT}").is_file()
 
 
-def _collect_strays(reviews_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
-    """Remove stale loose files at the reviews root. Returns the count removed.
+def _collect_stray(f: Path, stale_days: int = GC_STALE_DAYS) -> int:
+    """Remove one stale loose file at the reviews root. Returns 1 if it went.
 
     Reviews live in per-review directories, so a loose file is either an unclaimable
     leftover of the flat layout or an agent's scratch file. Staleness is the guard:
     a run still in flight must not have its working files pulled out from under it.
     """
-    now = datetime.now().timestamp()
-    cleaned = 0
-    for f in reviews_dir.iterdir():
-        if not f.is_file() or _is_migration_input(f, reviews_dir):
-            continue
-        if (now - f.stat().st_mtime) / SECONDS_PER_DAY <= stale_days:
-            continue
-        f.unlink(missing_ok=True)
-        log.info(f"GC: removed stray {f.name}")
-        cleaned += 1
-    return cleaned
+    if _is_migration_input(f, f.parent):
+        return 0
+    age_days = (datetime.now().timestamp() - f.stat().st_mtime) / SECONDS_PER_DAY
+    if age_days <= stale_days:
+        return 0
+    f.unlink(missing_ok=True)
+    log.info(f"GC: removed stray {f.name}")
+    return 1
+
+
+def _gc_one_review_dir(entry: ReviewEntry, stale_days: int = GC_STALE_DAYS) -> int:
+    """Collect what one review directory has to spare. Returns items cleaned.
+
+    A directory with no deliverable is only worth its artifacts, so it goes
+    whole once every one of them is stale. One that has a deliverable keeps it
+    and loses its intermediates, but only once no pipeline state says a run
+    might still resume from them.
+    """
+    if entry.kind is ReviewEntryKind.ORPHAN:
+        if not _dir_is_all_stale(entry.path, stale_days):
+            return 0
+        shutil.rmtree(entry.path, ignore_errors=True)
+        log.info(f"GC: removed orphaned {entry.path.name}")
+        return 1
+    if (entry.path / FILENAME_PIPELINE_STATE).is_file():
+        return 0
+    return _clean_stale_intermediates(entry.path, stale_days)
 
 
 def gc_reviews(reviews_dir: Path | None = None) -> int:
-    """Remove orphaned review dirs and stale intermediates. Returns items cleaned."""
+    """Remove orphaned review dirs and stale intermediates. Returns items cleaned.
+
+    Strays and directories are collected in the same pass over the shared walk:
+    they were two walks with two notions of what an entry at the root is, and
+    the classification now belongs to the walk rather than to either sweep.
+    """
     reviews_dir = reviews_dir or workbench_paths.reviews_dir()
     if not reviews_dir.is_dir():
         return 0
 
-    cleaned = _collect_strays(reviews_dir)
-    for review_dir in reviews_dir.iterdir():
-        if not review_dir.is_dir():
+    cleaned = 0
+    for entry in iter_review_entries(reviews_dir):
+        if entry.kind is ReviewEntryKind.STRAY:
+            cleaned += _collect_stray(entry.path)
             continue
-
-        has_review = (review_dir / f"review{REVIEW_EXT}").is_file()
-
-        if not has_review and _dir_is_all_stale(review_dir):
-            shutil.rmtree(review_dir, ignore_errors=True)
-            log.info(f"GC: removed orphaned {review_dir.name}")
-            cleaned += 1
-            continue
-
-        has_pipeline = (review_dir / FILENAME_PIPELINE_STATE).is_file()
-        if has_review and not has_pipeline:
-            cleaned += _clean_stale_intermediates(review_dir)
+        cleaned += _gc_one_review_dir(entry)
 
     return cleaned
 
@@ -207,17 +219,19 @@ def prune_merged_reviews(reviews_dir: Path | None = None, max_files: int = PRUNE
     pruned = 0
     checked = 0
 
-    for meta_file in reviews_dir.glob(f"*/{FILENAME_META}"):
+    for entry in iter_review_entries(reviews_dir):
         if checked >= max_files:
             break
 
-        meta = read_review_meta(meta_file.parent)
+        # A stray file carries no meta, so this is also what keeps the loose
+        # files at the root out of a sweep that only prunes whole directories.
+        meta = entry.meta
         if not meta.repo or not meta.pr_number:
             continue
 
         checked += 1
 
-        review_dir = meta_file.parent
+        review_dir = entry.path
         stale_days = GC_FAILED_STALE_DAYS if _has_pipeline_failure(review_dir) else GC_STALE_DAYS
         if not _dir_is_all_stale(review_dir, stale_days):
             continue

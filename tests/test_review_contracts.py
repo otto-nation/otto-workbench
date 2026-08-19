@@ -149,6 +149,20 @@ class TestReviewMeta:
         meta = review_common.review_meta_from_dict({"pr_number": None})
         assert meta.pr_number is None
 
+    def test_timestamps_are_absent_when_the_file_predates_them(self):
+        """No backfill: a meta.json without them reports them as absent."""
+        meta = review_common.review_meta_from_dict({})
+        assert meta.started_at == ""
+        assert meta.reviewed_at == ""
+
+    def test_timestamps_are_read_from_the_file(self):
+        meta = review_common.review_meta_from_dict({
+            "started_at": "2026-08-18T13:47:03+00:00",
+            "reviewed_at": "2026-08-18T14:02:11+00:00",
+        })
+        assert meta.started_at == "2026-08-18T13:47:03+00:00"
+        assert meta.reviewed_at == "2026-08-18T14:02:11+00:00"
+
 
 # ── 2. TestSeverityConsistency ───────────────────────────────────────────────
 

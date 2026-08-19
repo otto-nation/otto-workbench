@@ -1050,6 +1050,10 @@ def _our_last_reply_id(thread: ReportThread | None) -> int | None:
     The length guard covers self-review, where the thread root is our own
     comment — editing that would rewrite the review point instead of our
     answer to it.
+
+    Nothing but the edit-or-post choice may read this. Whether a human wrote
+    our standing reply is `_has_hand_written_reply`, which has to survive a
+    reviewer answering and so cannot share this condition.
     """
     if not thread or len(thread.comments) < 2:
         return None
@@ -1098,6 +1102,38 @@ def _is_generated_reply(body: str) -> bool:
     return all(_GENERATED_FOLLOWUP_RE.fullmatch(p) for p in paragraphs[1:])
 
 
+def _has_hand_written_reply(thread: ReportThread | None) -> bool:
+    """Whether a human wrote the newest reply of ours on this thread.
+
+    "May I edit our standing reply?" and "has a human already spoken for us
+    here?" are two different questions, and only the first turns on who spoke
+    last — so this deliberately does not go through `_our_last_reply_id`. Gating
+    the hand-written check on that one made the protection strongest while
+    nothing had happened and dropped it the moment a reviewer answered, which is
+    exactly when the thread has become a conversation worth not talking over.
+
+    The newest reply of ours is the one that stands, whatever came after it: a
+    reviewer's answer below a hand-written reply does not make the templated
+    body a better statement of our position. Our comments are read newest-first
+    so that a `--reply` posted deliberately after a hand edit still decides,
+    and the root is skipped because on a self-review it is our own review point
+    rather than an answer to one.
+
+    `--reply <id> --body-file <f>` remains the way to replace a hand-written
+    reply on purpose, so nothing is lost by never doing it automatically.
+    """
+    if not thread or len(thread.comments) < 2:
+        return False
+    login = (thread.my_login or "").lower()
+    if not login:
+        return False
+    for comment in reversed(thread.comments[1:]):
+        author = ((comment.get("author") or {}).get("login") or "").lower()
+        if author == login:
+            return not _is_generated_reply(str(comment.get("body", "")))
+    return False
+
+
 def _post_thread_replies(
     entries: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
@@ -1109,7 +1145,8 @@ def _post_thread_replies(
 
     Whichever verdict a round reaches, it lands in the same place: our standing
     reply on that thread, replaced — unless a human has rewritten that reply,
-    in which case the thread is left alone. Returns the number replied to.
+    in which case the thread is left alone for the life of the PR, answered or
+    not. Returns the number replied to.
     """
     replied = 0
     edited = 0
@@ -1118,11 +1155,11 @@ def _post_thread_replies(
         thread = threads_by_id.get(entry.id)
         if not thread or not thread.comments:
             continue
-        existing_id = _our_last_reply_id(thread)
-        if existing_id and not _is_generated_reply(str(thread.comments[-1].get("body", ""))):
+        if _has_hand_written_reply(thread):
             log.warn(f"{entry.id}: standing reply was hand-written — leaving it alone")
             kept += 1
             continue
+        existing_id = _our_last_reply_id(thread)
         # ceiling: thread.comments is not refreshed after a post, so two replies
         # to one thread within a single run would still stack. Unreachable while
         # the reply categories stay a partition of the triage verdicts; refetch

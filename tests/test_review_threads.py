@@ -2067,6 +2067,79 @@ class TestHandWrittenRepliesSurvive:
         count, _, _ = self._reply(rt, "Thanks, that works for me.")
         assert count == 0
 
+    def _reply_below_a_reviewer_answer(self, rt, body):
+        """As `_reply`, but a reviewer has since answered our standing reply."""
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1)
+        thread = _standing_reply_thread(body=body, state=ThreadState.CONTESTED)
+        thread.comments.append({
+            "databaseId": 333,
+            "body": "Agreed — I verified the rewrite at four DOM positions.",
+            "author": {"login": "kgn"},
+        })
+        with patch("pr_comments.patch_thread_reply", return_value=True) as edit, \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            count = rt._post_fix_replies(
+                [entry], {"t1": thread}, "owner/repo", 42, "abc1234",
+            )
+        return count, edit, post
+
+    def test_a_rewritten_reply_survives_a_reviewer_answering_it(self, rt):
+        """The protection used to vanish the moment the thread became a
+        conversation: a reviewer's answer retired the standing-reply id the
+        hand-written check was gated on, and the round stacked a third comment
+        restating a settled position."""
+        count, edit, post = self._reply_below_a_reviewer_answer(rt, (
+            "Applied: fix it\n\n"
+            "On reflection we are not doing this — the reviewer's premise "
+            "assumes a code path that was removed."
+        ))
+        assert count == 0
+        edit.assert_not_called()
+        post.assert_not_called()
+
+    def test_a_template_reply_is_still_reposted_once_answered(self, rt):
+        """Pairs with the case above — proves that assertion is not vacuous.
+
+        A generated standing reply is still replaced by a fresh comment under
+        the reviewer's answer; only the hand-written case is protected.
+        """
+        count, edit, post = self._reply_below_a_reviewer_answer(rt, (
+            "Applied: fix it\n\n"
+            "Fixed in [`0000000`](https://github.com/owner/repo/commit/0000000)."
+        ))
+        assert count == 1
+        edit.assert_not_called()
+        assert post.call_args[0][2] == 111
+
+    def test_the_newest_reply_of_ours_decides(self, rt):
+        """`--reply` after a hand edit is the escape hatch, and it must settle
+        the question — the older hand-written reply cannot outvote it."""
+        thread = _standing_reply_thread(body="We are not doing this, and here is why.")
+        thread.comments.append({
+            "databaseId": 333, "body": "no", "author": {"login": "kgn"}})
+        thread.comments.append({
+            "databaseId": 444,
+            "body": "Applied: fix it\n\nFixed in [`0000000`]"
+                    "(https://github.com/owner/repo/commit/0000000).",
+            "author": {"login": "me"},
+        })
+        assert rt._has_hand_written_reply(thread) is False
+
+    def test_a_thread_nobody_of_ours_has_touched_is_not_held(self, rt):
+        thread = ReportThread(id="t1", my_login="me", comments=[
+            {"databaseId": 111, "body": "the point", "author": {"login": "kgn"}},
+            {"databaseId": 222, "body": "seconded", "author": {"login": "ana"}},
+        ])
+        assert rt._has_hand_written_reply(thread) is False
+
+    def test_our_own_review_point_is_not_a_reply(self, rt):
+        """On a self-review the root is ours and is hand-written by definition;
+        reading it as our standing reply would skip every thread."""
+        thread = ReportThread(id="t1", my_login="me", comments=[
+            {"databaseId": 111, "body": "this needs a guard", "author": {"login": "me"}},
+        ])
+        assert rt._has_hand_written_reply(thread) is False
+
     @pytest.mark.parametrize("body", [
         "Applied: fix it",
         "Applied: fix it\n\nResult is in [`a.py`](https://github.com/o/r/blob/s/a.py).",

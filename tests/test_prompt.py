@@ -37,6 +37,13 @@ def test_confirm_is_false_when_there_is_no_tty():
         assert prompt.confirm("Proceed?") is False
 
 
+def test_confirm_is_false_when_input_raises_eof_at_a_tty():
+    """Ctrl-D at a real prompt is not consent either, and never falls through to /dev/tty."""
+    with patch("sys.stdin.isatty", return_value=True), \
+         patch("builtins.input", side_effect=EOFError):
+        assert prompt.confirm("Proceed?") is False
+
+
 def test_ask_returns_the_typed_answer():
     with patch("sys.stdin.isatty", return_value=True), \
          patch("builtins.input", return_value="github"):
@@ -46,6 +53,13 @@ def test_ask_returns_the_typed_answer():
 def test_ask_is_empty_when_there_is_no_tty():
     with patch("sys.stdin.isatty", return_value=False), \
          patch("builtins.open", side_effect=OSError):
+        assert prompt.ask("Provider: ") == ""
+
+
+def test_ask_is_empty_when_input_raises_eof_at_a_tty():
+    """Ctrl-D at a real prompt is the empty answer, and never falls through to /dev/tty."""
+    with patch("sys.stdin.isatty", return_value=True), \
+         patch("builtins.input", side_effect=EOFError):
         assert prompt.ask("Provider: ") == ""
 
 

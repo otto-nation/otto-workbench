@@ -4,6 +4,7 @@
 # --abbrev-ref origin/HEAD` echoes "origin/HEAD" to stdout even when it fails,
 # so the old derivation defeated its own "${DEFAULT_BRANCH:-main}" fallback.
 # `git symbolic-ref` prints nothing on failure, so the fallback actually fires.
+bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
@@ -41,7 +42,7 @@ teardown() {
 
   # Confirm the precondition this test relies on — no symref means the fix's
   # `git symbolic-ref` line (not `rev-parse --abbrev-ref`) is the one being exercised.
-  ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
+  run ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
 
   cd "$TMPDIR/repo"
   load_pr_context

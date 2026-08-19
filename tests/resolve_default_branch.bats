@@ -5,6 +5,7 @@
 # it fails, which used to defeat a "${DEFAULT_BRANCH:-main}" fallback at both
 # call sites. `git symbolic-ref` prints nothing on failure, so the fallback here
 # actually fires.
+bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
@@ -28,7 +29,7 @@ teardown() {
 
   # Confirm the precondition this test relies on — no symref means the fix's
   # `git symbolic-ref` line (not `rev-parse --abbrev-ref`) is the one being exercised.
-  ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
+  run ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
 
   cd "$TMPDIR/repo"
   run resolve_default_branch
@@ -53,8 +54,8 @@ teardown() {
 
   # Confirm the precondition: no symref, and no origin/main to fall back to —
   # only the "prefer an existing ref" branch of the fallback can produce "master".
-  ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
-  ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/main
+  run ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
+  run ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/main
 
   cd "$TMPDIR/repo"
   run resolve_default_branch
@@ -82,9 +83,9 @@ teardown() {
 @test "falls back to the literal main when neither main nor master exist" {
   _make_repo_no_default_branch "$TMPDIR" "develop"
 
-  ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
-  ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/main
-  ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/master
+  run ! git -C "$TMPDIR/repo" symbolic-ref refs/remotes/origin/HEAD &>/dev/null
+  run ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/main
+  run ! git -C "$TMPDIR/repo" show-ref --verify --quiet refs/remotes/origin/master
 
   cd "$TMPDIR/repo"
   run resolve_default_branch

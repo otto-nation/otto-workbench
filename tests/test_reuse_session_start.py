@@ -9,6 +9,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import workbench_config  # noqa: E402
+
 ISSUE_TRACKER_RULE = REPO_ROOT / "ai" / "guidelines" / "rules" / "issue-tracker.md"
 
 
@@ -41,7 +43,7 @@ def test_says_so_when_no_tracker_is_configured(rss, tmp_path, capsys):
     _run(rss, repo)
     out = capsys.readouterr().out
     assert "Issue tracker: not configured" in out
-    assert "review.issue_tracker.provider" in out
+    assert workbench_config.ISSUE_PROVIDER_KEY in out
 
 
 def test_the_rule_quotes_both_lines_the_hook_emits(rss, tmp_path):

@@ -114,14 +114,18 @@ def test_load_issue_provider_falls_back_to_the_global_config(tmp_path, monkeypat
 # ── needs_team_key ──────────────────────────────────────────────────────────
 
 
-def test_needs_team_key_is_true_for_linear_and_jira():
+def test_needs_team_key_is_true_for_linear():
     assert needs_team_key("linear") is True
-    assert needs_team_key("jira") is True
 
 
 def test_needs_team_key_is_false_for_github():
     """gh issue create takes a repo, not a team."""
     assert needs_team_key("github") is False
+
+
+def test_needs_team_key_is_false_for_jira():
+    """Jira creation is not automated, so a team key is not what blocks it."""
+    assert needs_team_key("jira") is False
 
 
 # ── ensure_issue_provider ───────────────────────────────────────────────────
@@ -142,7 +146,7 @@ def test_ensure_issue_provider_warns_and_stays_unresolved_without_a_tty(tmp_path
         result = ensure_issue_provider(str(tmp_path))
     assert result.resolved is False
     err = capsys.readouterr().err
-    assert "review.issue_tracker.provider" in err
+    assert workbench_config.ISSUE_PROVIDER_KEY in err
     assert str(tmp_path) in err
 
 

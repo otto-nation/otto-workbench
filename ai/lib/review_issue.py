@@ -122,10 +122,11 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
 
 # Providers whose issue creation needs a team or project key. GitHub is
 # addressed by repo, so requiring one there rejects a creation that would
-# have worked.
+# have worked. Jira is absent for the opposite reason: create_issue has no
+# Jira branch, so gating it on a team key blames a missing key for a
+# creation that a key would not have enabled.
 _TEAM_KEY_PROVIDERS = frozenset({
     str(workbench_config.IssueProvider.LINEAR),
-    str(workbench_config.IssueProvider.JIRA),
 })
 
 
@@ -224,13 +225,12 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
             f"({_Scope.REPO}/{_Scope.ALL}, Enter for {_Scope.REPO}): ",
         ).lower()
 
-    if scope in ("", _Scope.REPO):
-        scope_all = False
-    elif scope == _Scope.ALL:
-        scope_all = True
-    else:
+    try:
+        chosen = _Scope(scope or _Scope.REPO)
+    except ValueError:
         log.warn(f"'{scope}' is not {_Scope.REPO} or {_Scope.ALL} — nothing was recorded")
         return
+    scope_all = chosen is _Scope.ALL
 
     try:
         if scope_all:

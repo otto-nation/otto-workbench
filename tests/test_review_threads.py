@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -4545,6 +4546,100 @@ class TestNewestReviewerActivity:
         assert rt._newest_reviewer_activity(self._report()) == ""
 
 
+# ── per-line addressing commits ─────────────────────────────────────────────
+
+
+class TestAddressingCommitIsPerLine:
+    """Two threads on one file must not both be sent to the same commit.
+
+    The already-addressed reply asked which branch commit last touched the
+    *file*, so on a file two reviewers had both commented on, whichever commit
+    landed last was cited to both of them — including the reviewer whose lines
+    that commit never touched. The lookup is over the thread's line now, which
+    is the only mechanism that can answer for a change no fix pass committed.
+    """
+
+    @staticmethod
+    def _git(wt, *args):
+        subprocess.run(["git", "-C", str(wt), *args],
+                       check=True, capture_output=True)
+
+    def _sha(self, wt, rev):
+        return subprocess.run(
+            ["git", "-C", str(wt), "rev-parse", rev],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    @pytest.fixture
+    def branch(self, worktree):
+        """A branch off origin/main with one commit per line of `a.py`."""
+        # Empty hooks dir for the same reason the fix-pass fixture has one: a
+        # global core.hooksPath would run the developer's own pre-commit here.
+        hooks = worktree / ".git" / "empty-hooks"
+        hooks.mkdir()
+        self._git(worktree, "config", "user.email", "test@example.com")
+        self._git(worktree, "config", "user.name", "Test")
+        self._git(worktree, "config", "commit.gpgsign", "false")
+        self._git(worktree, "config", "core.hooksPath", str(hooks))
+        (worktree / "a.py").write_text("one\ntwo\n")
+        self._git(worktree, "add", "-A")
+        self._git(worktree, "commit", "-qm", "base")
+        self._git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+        (worktree / "a.py").write_text("ONE\ntwo\n")
+        self._git(worktree, "commit", "-qam", "address line one")
+        first = self._sha(worktree, "HEAD")
+        (worktree / "a.py").write_text("ONE\nTWO\n")
+        self._git(worktree, "commit", "-qam", "address line two")
+        return SimpleNamespace(path=worktree, first=first,
+                               second=self._sha(worktree, "HEAD"))
+
+    def test_each_line_resolves_to_the_commit_that_changed_it(self, rt, branch):
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            assert rt._find_addressing_commit(branch.path, "a.py", 1) == branch.first
+            assert rt._find_addressing_commit(branch.path, "a.py", 2) == branch.second
+
+    def test_a_thread_with_no_line_claims_no_commit(self, rt, branch):
+        """A file-wide thread has no line history to read, so it cites nothing."""
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            assert rt._find_addressing_commit(branch.path, "a.py", 0) is None
+
+    def test_a_line_past_the_end_of_the_file_claims_no_commit(self, rt, branch):
+        """git refuses the range rather than answering — nothing is invented."""
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            assert rt._find_addressing_commit(branch.path, "a.py", 99) is None
+
+    def test_two_threads_on_one_file_cite_different_commits(self, rt, branch):
+        entries = [
+            CommentItem(id="t1", summary="line one", file="a.py", line=1),
+            CommentItem(id="t2", summary="line two", file="a.py", line=2),
+        ]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
+            "t2": ReportThread(id="t2", comments=[{"databaseId": 222}]),
+        }
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            rt._post_already_addressed_replies(
+                entries, threads_by_id, "owner/repo", 42, branch.path,
+            )
+        # The "Addressed in" line only: the blob permalink beside it pins HEAD
+        # for both threads, because where to read the code is the same question
+        # for both and when it became true is not.
+        cited = {
+            call[0][2]: [ln for ln in call[0][3].splitlines()
+                         if ln.startswith("Addressed in")]
+            for call in post.call_args_list
+        }
+        assert cited[111] == [
+            f"Addressed in [`{branch.first[:7]}`]"
+            f"(https://github.com/owner/repo/commit/{branch.first}).",
+        ]
+        assert cited[222] == [
+            f"Addressed in [`{branch.second[:7]}`]"
+            f"(https://github.com/owner/repo/commit/{branch.second}).",
+        ]
+
+
 # ── default-branch resolution in commit lookups ────────────────────────────
 
 
@@ -4568,7 +4663,7 @@ class TestCommitLookupsUseDefaultBranch:
         ):
             run.return_value.returncode = 0
             run.return_value.stdout = "deadbeef\n"
-            assert rt._find_addressing_commit(tmp_path, "a.py") == "deadbeef"
+            assert rt._find_addressing_commit(tmp_path, "a.py", 10) == "deadbeef"
         assert "origin/trunk..HEAD" in run.call_args[0][0]
 
     def test_branch_commit_log_without_worktree(self, rt):

@@ -1386,14 +1386,33 @@ def _code_link(
     return f"[`{label}`]({url})"
 
 
-def _find_addressing_commit(wt_path: Path, filepath: str) -> str | None:
-    """Find the most recent branch commit that modified a file."""
+def _find_addressing_commit(
+    wt_path: Path, filepath: str, line: int = 0,
+) -> str | None:
+    """The branch commit that last changed `line` of `filepath`, or None.
+
+    `git log -1 -- <file>` answers a coarser question — the newest commit
+    touching the file at all — so every thread on one file was stamped with
+    the same SHA and at most one of them had landed there. `git log -L` traces
+    the one line the thread is about, which is the change, not the file.
+
+    A line is required, and no line means no citation. This resolves a commit
+    for an entry no fix pass ever recorded one for, so there is nothing else to
+    fall back to: the file-granular answer is the defect, not a safety net.
+    """
+    if not line:
+        return None
     base = f"origin/{_resolve_default_branch(wt_path)}"
     result = subprocess.run(
-        ["git", "-C", str(wt_path), "log", "-1", "--format=%H",
-         f"{base}..HEAD", "--", filepath],
+        ["git", "-C", str(wt_path), "log", "-1", "--format=%H", "--no-patch",
+         f"-L{line},{line}:{filepath}", f"{base}..HEAD"],
         capture_output=True, text=True,
     )
+    if result.returncode != 0:
+        # The range does not resolve at HEAD — the file was renamed away, or
+        # the line is past its end. Nothing here can say which commit carried
+        # the change, so nothing is claimed.
+        return None
     sha = result.stdout.strip()
     return sha if sha else None
 
@@ -1406,13 +1425,23 @@ def _post_already_addressed_replies(
     wt_path: Path,
 ) -> int:
     """Post replies to threads already addressed in the current code. Returns count posted."""
-    commit_cache: dict[str, str | None] = {}
+    # Keyed by location rather than by file: two threads on one file are the
+    # case this reply got wrong, so a per-file cache would re-impose the answer
+    # `_find_addressing_commit` was narrowed to stop giving.
+    commit_cache: dict[tuple[str, int], str | None] = {}
     head_sha = _get_head_sha(wt_path)
 
     def body_fn(entry: CommentItem) -> str:
-        if entry.file not in commit_cache:
-            commit_cache[entry.file] = _find_addressing_commit(wt_path, entry.file)
-        sha = commit_cache[entry.file]
+        # Triage's citation where there is one: it names the code that makes
+        # the reviewer's point already true, which is the line whose history
+        # answers "when did it become true?".
+        if entry.has_evidence():
+            where = (entry.evidence_file, entry.evidence_line)
+        else:
+            where = (entry.file, entry.line)
+        if where not in commit_cache:
+            commit_cache[where] = _find_addressing_commit(wt_path, *where)
+        sha = commit_cache[where]
         # The line was read at HEAD, so that is the tree the link has to pin to;
         # the addressing commit answers "when", not "where".
         parts = [f"{_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]

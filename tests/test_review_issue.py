@@ -81,10 +81,10 @@ def test_jira_falls_back_to_pr_body():
 # ── load_issue_provider ────────────────────────────────────────────────────
 
 
-def test_load_issue_provider_defaults_to_linear(tmp_path):
+def test_load_issue_provider_is_unresolved_without_config(tmp_path):
     result = load_issue_provider(str(tmp_path))
-    assert result.name == "linear"
-    assert result.options == {"provider": "linear"}
+    assert result.name == ""
+    assert result.options == {}
 
 
 def test_load_issue_provider_reads_the_project_config(tmp_path):

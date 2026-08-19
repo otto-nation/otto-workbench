@@ -100,9 +100,11 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     config = workbench_config.load_config_or_default(wt_path)
     tracker = config.review.issue_tracker
     # str() per value: asdict leaves an enum member as the member, and every
-    # consumer of options reads it as a string.
+    # consumer of options reads it as a string. A None provider is dropped by
+    # the same truthiness filter, so options never carries a "None" string.
     options = {k: str(v) for k, v in dataclasses.asdict(tracker).items() if v}
-    return IssueProviderInfo(name=str(tracker.provider), options=options)
+    name = str(tracker.provider) if tracker.provider is not None else ""
+    return IssueProviderInfo(name=name, options=options)
 
 
 def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:

@@ -44,8 +44,8 @@ hard to restate is itself a defect:
     ``A-Z a-z 0-9 . _ -`` with a single ``-``, then strip leading and trailing
     ``-``. Nothing else — no case fold, and the dot and underscore survive. A
     mirror that guesses ``[^a-z0-9-]`` turns ``feat/v1.2`` into ``feat-v1-2``
-    where this gives ``feat-v1.2``: two directories for one target, and #680's
-    under-locking is back for every branch with a dot in its name.
+    where this gives ``feat-v1.2``: two directories for one target, which
+    under-locks every branch with a dot in its name.
 
 Three properties of that rule a mirror has to reproduce exactly, because a run
 that disagrees about any of them looks in a directory nobody writes:
@@ -90,9 +90,9 @@ The layout is a published interface — ui-code reimplements it in TypeScript::
 
 where ``<repo-key>`` is the key above and ``<branch-slug>`` is ``slug(branch)``.
 
-``state_dir()`` rather than a literal path: #624 phase 4 moves that root to
-``XDG_STATE_HOME`` alongside the migration that carries the data, and resolving
-through the function is what makes ``pr/`` ride along instead of being stranded.
+``state_dir()`` rather than a literal path: the state root is relocatable, and
+resolving through the function is what makes ``pr/`` ride along with a move
+instead of being stranded at the old location.
 """
 
 from __future__ import annotations

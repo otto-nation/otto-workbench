@@ -73,8 +73,8 @@ class PhaseSpec:
     ``scales_with_omitted`` says whether ``max_turns`` grows with the files
     preflight had to leave out of the prompt: a phase that reads branch source
     must open those itself, and that costs turns. It defaults to on because the
-    opposite default is what #653 fixed — a phase that silently misses the bump
-    is under-budgeted, where one that takes it needlessly just finishes early.
+    opposite default fails asymmetrically — a phase that silently misses the
+    bump is under-budgeted, where one that takes it needlessly finishes early.
     A phase that reasons only over text already in its prompt opts out.
     """
 

@@ -64,7 +64,7 @@ EOF
 # Helper: source the framework and run all migrations.
 # Under `set -e`, matching the real caller (bin/otto-workbench). The marker
 # printed afterwards is what proves the run returned rather than taking its
-# caller down with it (#731) — a migration file's own `set -e` reaches this
+# caller down with it — a migration file's own `set -e` reaches this
 # subshell through the source, so the abort is not hypothetical here.
 run_migrations_in_fake() {
   (
@@ -87,7 +87,7 @@ adopt_in_fake() {
   )
 }
 
-# ─── Legacy root adoption (#624) ─────────────────────────────────────────────
+# ─── Legacy root adoption ────────────────────────────────────────────────────
 
 @test "adoption is a no-op when the legacy root does not exist" {
   run adopt_in_fake
@@ -142,10 +142,10 @@ adopt_in_fake() {
 }
 
 @test "adoption leaves behind an entry no root claims" {
-  # #730 deletes <state>/logs/ on purpose. Adoption runs before any migration
+  # <state>/logs/ is deleted on purpose. Adoption runs before any migration
   # reads its bookkeeping, so carrying logs/ across would reinstate a directory
   # the migration that removed it is already recorded as applied for, and that
-  # migration will never run again to take it back out (#732).
+  # migration will never run again to take it back out.
   mkdir -p "$FAKE_LEGACY/logs/dream-scan"
   printf '{"ts":"2026-01-01T00:00:00Z"}\n' > "$FAKE_LEGACY/logs/dream-scan/trail.jsonl"
   echo "applied" > "$FAKE_LEGACY/migrations.applied"
@@ -246,7 +246,7 @@ adopt_in_fake() {
 @test "adoption merges a trail both roots hold rather than keeping both" {
   # One history in two files: keeping both would hide the older from otto-log,
   # which globs for the exact name. Staged under reviews/, not the logs/ this
-  # used to use — logs/ belongs to no root since #730, so adoption skips it.
+  # used to use — logs/ belongs to no root any more, so adoption skips it.
   mkdir -p "$FAKE_LEGACY/reviews/repo-42" "$FAKE_STATE/reviews/repo-42"
   printf '{"ts":"2026-01-01T00:00:00Z","n":1}\n' > "$FAKE_LEGACY/reviews/repo-42/trail.jsonl"
   printf '{"ts":"2026-08-01T00:00:00Z","n":2}\n' > "$FAKE_STATE/reviews/repo-42/trail.jsonl"
@@ -349,7 +349,7 @@ EOF
   grep -qxF "mycomp/20250101-test.sh" "$FAKE_STATE/migrations.applied"
 }
 
-# ─── Adoption-sensitive migrations (#741) ────────────────────────────────────
+# ─── Adoption-sensitive migrations ───────────────────────────────────────────
 #
 # A migration that drains a path adoption writes into is undone by an adoption
 # that runs after it is recorded as applied. The marker in the migration's own
@@ -413,7 +413,7 @@ EOF
 }
 
 @test "a marked migration runs again over the data adoption just moved" {
-  # The end-to-end shape of #741: the legacy root carries both the data and the
+  # The end-to-end shape: the legacy root carries both the data and the
   # state file that says the migration which drains it is already done.
   create_sensitive_migration mycomp 20250101-sensitive.sh migration_20250101_sensitive
   create_migration mycomp 20250102-plain.sh migration_20250102_plain
@@ -668,7 +668,7 @@ EOF
   [[ "$output" == *"no migrations found"* ]]
 }
 
-# ─── Failure isolation (#731) ────────────────────────────────────────────────
+# ─── Failure isolation ───────────────────────────────────────────────────────
 
 # Helper: create a migration whose function returns non-zero, under the `set -e`
 # real migration files carry.
@@ -702,7 +702,7 @@ EOF
   # The framework sources the file and then calls the function. A file that
   # also calls itself runs on the sourcing pass too, where — under its own
   # `set -e`, and outside the `if` that turns a failure into warn-and-retry —
-  # a non-zero return used to exit the whole sync (#731). validate-migrations
+  # a non-zero return used to exit the whole sync. validate-migrations
   # rejects the shape now, but the framework has to hold for a file the
   # validator never saw.
   mkdir -p "$FAKE_ROOT/comp1/migrations"
@@ -844,7 +844,7 @@ EOF
   [[ "$output" == *"duplicate migration filename"* ]]
 }
 
-# ─── Config unification (#626) ───────────────────────────────────────────────
+# ─── Config unification ──────────────────────────────────────────────────────
 
 unify_in_fake() {
   (

@@ -1125,8 +1125,8 @@ class TestGhApi:
             assert "/tmp/payload.json" in cmd
 
     def test_returns_both_streams(self, rp):
-        # The point of #740: the API error body lands on stdout while gh's own
-        # status line lands on stderr, and a caller needs to see both.
+        # The API error body lands on stdout while gh's own status line lands
+        # on stderr, and a caller needs to see both.
         mock_result = _completed(
             1, '{"message": "Bad gateway"}', "gh: Bad gateway (HTTP 502)")
         with patch.object(rp.subprocess, "run", return_value=mock_result):
@@ -1172,8 +1172,8 @@ class TestHandleApiAttempt:
             assert wait == expected
 
     def test_server_error_on_stderr_backs_off_and_names_the_cause(self, rp, capsys):
-        # #740: gh reports a 5xx on stderr and leaves stdout empty, so a
-        # stdout-only classifier saw an unknown error with nothing to print and
+        # gh reports a 5xx on stderr and leaves stdout empty, so a stdout-only
+        # classifier saw an unknown error with nothing to print and
         # took the flat non-rate delay instead of backing off.
         r = _API_UNAVAILABLE
         with patch.object(rp.time, "sleep") as mock_sleep:

@@ -148,7 +148,7 @@ class TestBuildPrHeaderScoped:
         assert "feat: stuff" in header
 
     def test_low_effort_suppresses_a_breakdown_medium_would_show(self):
-        """The regression #622 fixes: the same PR, classified by the preset."""
+        """The same PR, classified by the preset."""
         pr = _make_pr(additions=600, deletions=150)
         assert "File breakdown" in _build_pr_header(
             pr, _make_ctx(), Effort.MEDIUM,

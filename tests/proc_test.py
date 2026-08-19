@@ -1,7 +1,7 @@
 """Tests for the subprocess result type and runner.
 
 The properties here are what let a caller name the cause of a failure, which
-is the whole of #740 — a wrapper that dropped stderr left every renderer with
+is the whole point — a wrapper that drops stderr leaves every renderer with
 nothing to print and every classifier reading the wrong stream.
 """
 
@@ -48,7 +48,7 @@ class TestCmdResult:
         assert CmdResult(1, "boom").combined_output == "boom"
 
     def test_server_error_reads_a_status_line_on_stderr(self):
-        # The #740 shape: gh reports the 5xx on stderr and leaves stdout empty.
+        # gh reports the 5xx on stderr and leaves stdout empty.
         assert CmdResult(1, "", "gh: Service unavailable (HTTP 503)").server_error
 
     def test_server_error_reads_a_status_line_on_stdout(self):

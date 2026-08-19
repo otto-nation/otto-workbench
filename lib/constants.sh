@@ -58,7 +58,7 @@ TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
 # shellcheck source=./roots.sh
 . "$(dirname "${BASH_SOURCE[0]}")/roots.sh"
 
-# The single root everything used to share, before #624 split it three ways.
+# The single root everything used to share, before the split into three.
 # Only adopt_legacy_workbench_root in lib/migrations.sh reads this — it is the
 # path being emptied, not a path anything should still write to.
 LEGACY_WORKBENCH_ROOT="$HOME/.config/workbench"

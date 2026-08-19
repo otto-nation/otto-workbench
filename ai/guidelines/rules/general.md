@@ -62,6 +62,7 @@ On failure, diagnose in this order — do NOT retry with variations:
 ### Comments & Documentation
 - Comments should be production-ready; place them above the line, never inline
 - Do not add comments that exist only to explain what a prompt change did
+- Never cite an issue or PR number in a code comment as provenance for a past bug — state the behavior the code guarantees instead. A number is only warranted when the comment is a live signal (a `ceiling:` trigger, a TODO pointing at pending work)
 - Silent fallbacks and defense-in-depth patterns require a comment explaining intent
 - Mark deliberate simplifications with a `// ceiling:` comment naming the tradeoff and upgrade trigger — e.g. `// ceiling: global lock, upgrade to per-account locks if throughput matters`
 - A trigger is a *condition*, not an intention. Write the clause that says when the shortcut stops being acceptable — one turning on `if`, `once`, `when`, `unless`, or `until`, or an explicit `Upgrade trigger:` sentence. "Upgrade when we get around to it" names nothing and reads as no trigger at all

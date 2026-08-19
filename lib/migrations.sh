@@ -43,7 +43,7 @@ _array_contains() {
 #
 #   - a top-level statement that returns non-zero, which under the `set -e` most
 #     migration files carry exits the sync mid-component — a file that invokes
-#     its own function is the way that happens in practice (#731).
+#     its own function is the way that happens in practice.
 #     validate-migrations rejects that shape now, but the framework must hold
 #     even for a file the validator never saw
 #   - the `set -e` itself, which outlives the source and would otherwise arm
@@ -249,7 +249,7 @@ _prune_stale_migration_state() {
   fi
 }
 
-# ─── Adoption of the pre-split root (#624) ───────────────────────────────────
+# ─── Adoption of the pre-split root ──────────────────────────────────────────
 #
 # Config, state, and ~200 MB of generated artifacts all used to live in
 # ~/.config/workbench. The roots now split three ways, and this carries what a
@@ -262,8 +262,8 @@ _prune_stale_migration_state() {
 
 # What stays behind in the config root; everything else the legacy root holds
 # is state. The list that has to be exhaustive is deliberately the short one:
-# the inventory in #624 found four state files that no manifest written in
-# advance had thought to list.
+# an inventory of the legacy root found four state files that no manifest
+# written in advance had thought to list.
 readonly _LEGACY_CONFIG_ENTRIES=(
   overrides reuse-level reuse-default review.yml mcp-tools.json
   config.yml config.schema.json
@@ -273,8 +273,8 @@ readonly _LEGACY_CONFIG_ENTRIES=(
 # and adoption runs ahead of the framework, before any migration reads its own
 # bookkeeping — so an entry carried into the state root here is one the
 # migration that deleted it is already recorded as applied for, and will never
-# run again to clean up after. #730 deletes <state>/logs/ deliberately; without
-# this list, a legacy root still holding logs/ would put it back (#732).
+# run again to clean up after. <state>/logs/ is deleted deliberately; without
+# this list, a legacy root still holding logs/ would put it back.
 #
 # Skipped rather than deleted: adoption moves data, it does not decide data is
 # worthless, and a legacy root left holding only these says plainly what was
@@ -290,8 +290,8 @@ readonly _LEGACY_UNCLAIMED_ENTRIES=(
 # *migrations* by what they drain. A migration that empties a path under a root
 # adoption writes into is undone by an adoption that runs later: the entry lands
 # in that path again, and the state file already records the migration as
-# applied, so nothing ever drains it a second time. #741 is that shape —
-# reviews/<x>/trail.jsonl re-seeded under the state root after
+# applied, so nothing ever drains it a second time. The trail root has that
+# shape — reviews/<x>/trail.jsonl re-seeded under the state root after
 # 20260814-unify-trail-root drained it, where otto-log's flat glob of the trail
 # root cannot see it. The trail is not lost, it is permanently invisible.
 #
@@ -439,7 +439,7 @@ _adopt_dir() {
 }
 
 # adopt_legacy_workbench_root
-# Move a pre-#624 ~/.config/workbench to whichever roots now own its contents.
+# Move a pre-split ~/.config/workbench to whichever roots now own its contents.
 # No-op once the legacy root is gone, or when a root still resolves to it.
 adopt_legacy_workbench_root() {
   local legacy="$LEGACY_WORKBENCH_ROOT"
@@ -459,7 +459,7 @@ adopt_legacy_workbench_root() {
     name="${entry##*/}"
     # All three destinations are named, none of them left to fall out of the
     # others. The state root is still where an unlisted entry goes, and that is
-    # deliberate — #624's inventory found four state files that no manifest
+    # deliberate — the legacy inventory found four state files that no manifest
     # written in advance had thought to list, so the list that has to be
     # exhaustive is the config one. What it must not also absorb is a name no
     # root holds any more, because the state root is one other code prunes.

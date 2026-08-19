@@ -58,7 +58,7 @@ discover_migration_dirs _migration_dirs
 # migration_YYYYMMDD_slug(). Everything else in the file is either inert or a
 # statement the framework never asked for, executed on the sourcing pass ahead
 # of the call the framework makes itself — which is how a self-invoking file
-# used to take a whole sync down (#731).
+# used to take a whole sync down.
 #
 # Function bodies come out by brace-counting, not by indentation, so a call
 # written flush against the left margin inside a helper is still recognised as
@@ -158,7 +158,7 @@ _validate_migration() {
   # Nothing may run at file scope — the framework sources the file for its
   # definitions and then calls the function itself. A statement here runs on the
   # sourcing pass instead, where its status decides nothing; a call to the
-  # migration's own function is how that goes wrong in practice (#731).
+  # migration's own function is how that goes wrong in practice.
   local scope_hits first_hit
   scope_hits="$(_file_scope_statements "$migration")"
   if [[ -n "$scope_hits" ]]; then

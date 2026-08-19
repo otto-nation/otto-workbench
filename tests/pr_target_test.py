@@ -47,7 +47,7 @@ def test_target_dir_is_rooted_at_the_state_dir(tmp_path, monkeypatch):
 
 
 def test_target_dir_follows_a_moved_state_root(tmp_path, monkeypatch):
-    """state_dir() resolves per call, so #624 phase 4 carries pr/ for free."""
+    """state_dir() resolves per call, so a moved state root carries pr/ along."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "old"))
     before = pr_target.target_dir("repo", "main")
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "new"))

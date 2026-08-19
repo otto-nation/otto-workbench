@@ -17,7 +17,7 @@ set -e
 # where adopt_legacy_workbench_root puts a legacy root's reviews/. Without the
 # marker an adoption running after this migration is recorded re-seeds those
 # trails for good — otto-log globs the trail root flat and never looks in
-# reviews/ (#741).
+# reviews/.
 
 migration_20260814_unify_trail_root() {
     # Defensive only: the framework always exports WORKBENCH_STATE_DIR, but
@@ -75,7 +75,7 @@ migration_20260814_unify_trail_root() {
     # dirs — promote-scan (60,325 records, 60,320 test-tainted, 17M),
     # retro-scan (7,441 / 5,100 tainted, 2.4M), dream-scan (36,536 / 0
     # tainted, 7.7M), ci-check (7 / 0 tainted, 4K). Only promote-scan is
-    # mostly the bats residue #682 fixed; dream-scan's 36,536 are genuine.
+    # mostly bats residue since fixed; dream-scan's 36,536 are genuine.
     # The drop is still right on value, not taint: dream-scan is 9,134
     # identical hook-run heartbeats ("found 0 memory files across 0 topics",
     # "found 1 signals", "report generated, 104 chars") with no repo, PR, or

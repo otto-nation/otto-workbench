@@ -2156,8 +2156,8 @@ def test_fresh_checkout_failure_returns_error(local_ref_exists):
 
 # ── _checkout_target_branch ─────────────────────────────────────────────────
 #
-# Against a real repo rather than a subprocess stub: the bug these cover (#744)
-# was `checkout -B` resetting the branch ref, and only git itself decides where
+# Against a real repo rather than a subprocess stub: the bug these cover is
+# `checkout -B` resetting the branch ref, and only git itself decides where
 # a ref lands. A stub asserting on the argv would have passed throughout.
 
 _CHECKOUT_BRANCH = "feat/checkout"
@@ -2194,7 +2194,7 @@ def _checkout_ctx():
 
 
 def test_checkout_target_branch_keeps_unpushed_commits(tmp_path):
-    """Regression (#744): a commit that was never pushed survives the checkout."""
+    """A commit that was never pushed survives the checkout."""
     repo = _repo_on_main(tmp_path)
     _git(repo, "checkout", "-q", "-b", _CHECKOUT_BRANCH)
     pushed = _commit(repo, "pushed.txt", "pushed work")
@@ -2897,8 +2897,8 @@ def test_force_push_refuses_to_retry_a_dirty_tree_after_the_ai_fix():
     """A fix that leaves the worktree dirty is not pushed.
 
     Pre-push hooks validate the worktree, not the commits being pushed, so
-    retrying past leftover edits greens a HEAD no hook ever saw — #663 pushed
-    a branch that could not be imported that way.
+    retrying past leftover edits greens a HEAD no hook ever saw, and pushes a
+    branch that cannot be imported.
     """
     push_count = [0]
 
@@ -3129,8 +3129,8 @@ def test_fix_push_failures_commits_edits_outside_the_marker_protocol(tmp_path):
     """Direct agent edits reach the commit instead of being stranded.
 
     The backend runs with acceptEdits and Bash(*), so a fix can land in a file
-    the marker protocol never names. #663 committed only the round-tripped
-    file, force-pushed, and left the real source fix uncommitted.
+    the marker protocol never names — committing only the round-tripped file,
+    force-pushing, and leaving the real source fix uncommitted.
     """
     f = tmp_path / "server_test.go"
     unchanged = "package main\n"
@@ -3361,7 +3361,7 @@ def test_auto_stash_covers_untracked_files(status_out, expected):
     """Untracked files are dirt too — they reach the hooks and the fix commit.
 
     Left in place they join what the pre-push hooks validate, and the recovery's
-    whole-tree stage would then force-push a scratch file (#663).
+    whole-tree stage would then force-push a scratch file.
     """
     calls = []
 

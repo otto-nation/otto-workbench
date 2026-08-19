@@ -971,7 +971,7 @@ class TestRunFixPassRetry:
 
 
 class TestRunFixPassOnADirtyWorktree:
-    """The pass must attribute only its own work — #782.
+    """The pass must attribute only its own work.
 
     A `tsc` run before the review left a 272KB incremental cache untracked in
     the worktree; `git add -A` committed and pushed it, and the post-hoc scan
@@ -1025,7 +1025,7 @@ class TestRunFixPassOnADirtyWorktree:
 
 
 class TestSnapshotDiffStagesEveryShapeOfChange:
-    """What the snapshot diff must survive besides a plain edit — #782.
+    """What the snapshot diff must survive besides a plain edit.
 
     Attribution is a set of path strings, so each case below is a different way
     the two snapshots can disagree about what a path is: gone, moved, or
@@ -1141,7 +1141,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
 
 
 class TestRunFixPassLeavesDeclinedFindingsAlone:
-    """`--fix` must not act on a finding a review already adjudicated — #782."""
+    """`--fix` must not act on a finding a review already adjudicated."""
 
     def _make_job(self, git_wt, tmp_path, review_content):
         review_file = tmp_path / "review.md"

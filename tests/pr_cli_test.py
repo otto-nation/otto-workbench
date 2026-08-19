@@ -906,7 +906,7 @@ def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_run
     assert cmd.count("42") == 1, f"PR number appeared {cmd.count('42')} times: {cmd}"
 
 
-# ── positional target vs. flag arity (issue #685) ──────────────────────────
+# ── positional target vs. flag arity ───────────────────────────────────────
 
 
 def _probe_real_delegates(mock_run):
@@ -942,7 +942,7 @@ def _probe_scripts(mock_run):
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
 def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_run):
-    """Regression #685: --reply's value is its argument, not the PR number."""
+    """--reply's value is its argument, not the PR number."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     _probe_real_delegates(mock_run)
     _run_main("comments", "--reply", _TEST_REPLY_ID,
@@ -958,7 +958,7 @@ def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_run):
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
 def test_body_file_path_is_not_eaten_after_an_inline_reply(mock_resolve, mock_run):
-    """Regression #685: --reply=ID self-contained, so --body-file's path survives too."""
+    """--reply=ID is self-contained, so --body-file's path survives too."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     _probe_real_delegates(mock_run)
     _run_main("comments", f"--reply={_TEST_REPLY_ID}", f"--body-file={_TEST_REPLY_BODY_FILE}")
@@ -1225,7 +1225,7 @@ class TestCmdCreate:
         assert "--" not in cmd, "empty argv should not produce a -- separator"
 
 
-# ── create takes no positional target (issue #702) ─────────────────────────
+# ── create takes no positional target ──────────────────────────────────────
 #
 # Driven through main() with the argv a user types, not through cmd_create:
 # the token was lost before cmd_create ever saw it, by a positional scan that
@@ -1253,7 +1253,7 @@ _CREATE_VALUE_FLAGS = [
 @patch("pr_cli.subprocess.run")
 @patch("pr_cli.pr_context.resolve")
 def test_create_forwards_a_flag_value_intact(mock_resolve, mock_run, flag, value):
-    """Regression #702: the value reached task pr:create as the flag's argument."""
+    """The value reaches task pr:create as the flag's argument."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     mock_run.return_value = MagicMock(returncode=0)
     assert _run_main("create", "--no-issue", "--draft", flag, value) == 0

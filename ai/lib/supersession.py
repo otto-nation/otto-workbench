@@ -1,7 +1,7 @@
 """Whether a branch's reason to exist is already gone.
 
-#703's branch had been rebased over a `main` that had deleted the code it was
-fixing, and the reviewer's "this does not exist any more" was one thread among
+A branch can be rebased over a `main` that has deleted the code it was
+fixing, and the reviewer's "this does not exist any more" is one thread among
 ten. None of that needs an AI call to notice — the skew is in the commit dates,
 the re-addition is in the diff, and the PR that removed it is one search away.
 

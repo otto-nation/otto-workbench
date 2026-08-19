@@ -250,8 +250,8 @@ def docs_reference() -> str:
     comparison in ``bin/local/generate-config-schema`` render through one code
     path, and both derive from the dataclass rather than from a second listing
     of the keys that someone has to remember to update. The prose around the
-    spliced block — what the reader is for, how the layers rank, the #626
-    migration — is hand-written and stays that way.
+    spliced block — what the reader is for, how the layers rank, the config
+    unification migration — is hand-written and stays that way.
     """
     lines = [
         "<!-- AUTO-GENERATED — do not edit directly -->",

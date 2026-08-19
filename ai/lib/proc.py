@@ -5,7 +5,7 @@ dozens of places, and each wrapper decides for itself what to keep. The ones
 that return a positional tuple have no slot for stderr, so the cause of a
 failure is gone before any caller can render it — `_gh_api` returning
 `(returncode, stdout)` is why a 5xx from `gh` used to surface as an empty
-message (#740). Widening the tuple is not the fix: a caller reading fields by
+message. Widening the tuple is not the fix: a caller reading fields by
 name keeps working when a fourth thing needs carrying, and does not have to
 learn the order.
 
@@ -73,7 +73,7 @@ class CmdResult:
         is legible from stdout alone while a 503 or a dropped connection leaves
         stdout empty and says everything on stderr. Reading one of them is how
         a transport failure classified as an unknown error with nothing to
-        print (#740).
+        print.
         """
         return "\n".join(part for part in (self.stdout, self.stderr) if part)
 
@@ -101,9 +101,8 @@ def failure_message(action: str, r: CmdResult | subprocess.CompletedProcess) -> 
         r = CmdResult(r.returncode, r.stdout or "", r.stderr or "")
     if r.server_error:
         # `server_error` reads both streams, so this branch is reached by a 5xx
-        # that arrived on stdout with nothing on stderr — the shape of #740
-        # itself. Quote stdout in that case rather than annotate a retry and
-        # then say nothing about it.
+        # that arrived on stdout with nothing on stderr. Quote stdout in that
+        # case rather than annotate a retry and then say nothing about it.
         detail = r.detail or " ".join(r.stdout.split())[:DETAIL_LIMIT]
         return f"{action} — server error, retry later: {detail}"
     if not r.detail:

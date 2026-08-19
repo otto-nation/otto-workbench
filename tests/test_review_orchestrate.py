@@ -115,8 +115,8 @@ class TestVerifyFinding:
     def test_verbatim_quote_of_any_span_passes(self, ro, tmp_path, lines):
         """Evidence copied out of the file verifies, whatever it spans.
 
-        The regression for #697: comment stripping ran on the quote only, so
-        the file kept text the quote no longer had. Every span here — over a
+        The regression: comment stripping ran on the quote only, so the file
+        kept text the quote no longer had. Every span here — over a
         whole-line comment, over a trailing comment that is not on the last
         line, or both — failed to match the file it was copied from.
         """
@@ -4884,7 +4884,7 @@ class TestCleanupScope:
         return review_dir
 
     def test_the_fix_pass_log_does_not_outlive_the_run(self, ro, monkeypatch, tmp_path):
-        """Regression for #678: the sweep used to run before the fix pass did."""
+        """The sweep runs after the fix pass, never before it."""
         review_dir = self._run(ro, monkeypatch, tmp_path, fix=True)
 
         assert not (review_dir / "fix.jsonl").exists()

@@ -2166,7 +2166,7 @@ def _checkout_target_branch(cwd: str, ctx: pr_context.ResolvedContext) -> int:
 
     ``checkout -B <branch> origin/<branch>`` resets an existing local branch to
     the remote, so a commit that was never pushed leaves the branch ref before
-    the rebase that exists to replay it ever runs (#744). It stays the way a
+    the rebase that exists to replay it ever runs. It stays the way a
     branch that is not here yet gets created, and the way one that is merely
     behind is fast-forwarded — both are lossless. An existing ref carrying its
     own commits is checked out as it stands instead, and true divergence is

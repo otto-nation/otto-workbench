@@ -22,10 +22,7 @@ def _run(rss, repo):
         rss.main()
 
 
-def test_names_the_configured_tracker(rss, tmp_path, monkeypatch, capsys):
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+def test_names_the_configured_tracker(rss, tmp_path, capsys):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".workbench.yml").write_text(
@@ -35,11 +32,8 @@ def test_names_the_configured_tracker(rss, tmp_path, monkeypatch, capsys):
     assert "Issue tracker: github" in capsys.readouterr().out
 
 
-def test_says_so_when_no_tracker_is_configured(rss, tmp_path, monkeypatch, capsys):
+def test_says_so_when_no_tracker_is_configured(rss, tmp_path, capsys):
     """Unconfigured is the state the agent most needs told, so it is not silent."""
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
     repo = tmp_path / "repo"
     repo.mkdir()
     _run(rss, repo)

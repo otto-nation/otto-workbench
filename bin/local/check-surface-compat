@@ -54,7 +54,13 @@ set -euo pipefail
 shopt -s inherit_errexit
 
 _SELF="${BASH_SOURCE[0]}"
-REPO_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+# See bin/local/validate-public-surface for why this is path arithmetic and not
+# `git rev-parse --show-toplevel`. This script needs both properties that form
+# gives: the pre-push hook runs it with GIT_DIR exported, and task commit runs it
+# by absolute path from whatever directory the contributor is standing in. Note
+# this locates the script's own repo, for sourcing lib/; the repo under
+# inspection is REPO_DIR, which --repo-dir sets.
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 # shellcheck source=../../lib/conventions.sh
@@ -112,6 +118,14 @@ while [[ $# -gt 0 ]]; do
     *) err "Unknown argument: $1"; usage; exit 2 ;;
   esac
 done
+
+# --repo-dir names the repository to inspect, so it has to outrank an inherited
+# GIT_DIR. The pre-push hook exports one; there it happens to name the same repo,
+# but git consults GIT_DIR ahead of the directory `-C` moved to, so a caller
+# passing --repo-dir for any other tree would have every git call below silently
+# answered by the exported one. Unsetting also restores discovery for the default
+# below, which would otherwise report the caller's cwd as the toplevel.
+unset GIT_DIR GIT_WORK_TREE
 
 if [[ -z "$REPO_DIR" ]]; then
   REPO_DIR="$(git rev-parse --show-toplevel)"

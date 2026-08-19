@@ -41,7 +41,10 @@ set -o pipefail
 shopt -s inherit_errexit
 
 _SELF="${BASH_SOURCE[0]}"
-REPO_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+# See bin/local/validate-public-surface for why this is path arithmetic and not
+# `git rev-parse --show-toplevel`: under a pre-push hook's exported GIT_DIR the
+# git form answers bin/local instead of the repo root.
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 

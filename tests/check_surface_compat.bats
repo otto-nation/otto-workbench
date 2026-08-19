@@ -648,3 +648,25 @@ Not-Breaking: command:beta — never installed"
   [ "$status" -eq 2 ]
   [[ "$output" == *"Unknown argument"* ]]
 }
+
+# The pre-push hook runs this gate with GIT_DIR exported. git consults GIT_DIR
+# ahead of the directory -C moved to, so an inherited one would answer every
+# `git -C "$REPO_DIR"` call here — and it broke the script's own root
+# resolution outright. A GIT_DIR naming a path that is not a git directory is
+# the strongest form of the check: anything still reading it fails hard.
+@test "an inherited GIT_DIR does not override --repo-dir" {
+  _seed_base_ab
+  _commit_head_drop_beta "feat: drop beta"
+  run env GIT_DIR="$TMPDIR/nowhere" GIT_WORK_TREE="$TMPDIR/nowhere" "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+@test "an inherited GIT_DIR does not mask a declared removal either" {
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta
+
+Not-Breaking: command:beta — it was never installed"
+  run env GIT_DIR="$TMPDIR/nowhere" GIT_WORK_TREE="$TMPDIR/nowhere" "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 0 ]
+}

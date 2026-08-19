@@ -221,6 +221,32 @@ EOF
   [ ! -e "$TMPDIR/out/ai/claude/public-surface.json" ]
 }
 
+# A git hook exports GIT_DIR, and with one set git skips discovery: the
+# `git -C "$(dirname "$_SELF")" rev-parse --show-toplevel` these scripts used to
+# resolve their own root answered bin/local, so sourcing lib/ui.sh failed and
+# pre-push died before it could run the gate at all. Nothing resolves the root
+# through git any more, so pointing GIT_DIR at a path that is not a git
+# directory is the strongest form of the check — any surviving git-based
+# resolution fails outright against it.
+@test "the generator resolves its own root with GIT_DIR exported" {
+  run env GIT_DIR="$TMPDIR/nowhere" "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR/out" --quiet
+  [ "$status" -eq 0 ]
+  [ -f "$TMPDIR/out/public-surface.json" ]
+  [ -f "$TMPDIR/out/ai/claude/public-surface.json" ]
+}
+
+@test "the validator resolves its own root with GIT_DIR exported" {
+  run env GIT_DIR="$TMPDIR/nowhere" "$REPO_ROOT/bin/local/validate-public-surface" --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "the generator resolves its own root from an unrelated directory" {
+  cd /
+  run "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR/out" --quiet
+  [ "$status" -eq 0 ]
+  [ -f "$TMPDIR/out/public-surface.json" ]
+}
+
 @test "config keys and enums nested under allOf reach the snapshot" {
   local gen
   gen="$(_generator_under_test)"

@@ -10,7 +10,13 @@
 set -e
 
 _SELF="${BASH_SOURCE[0]}"
-REPO_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+# Derived from this script's own location, not `git rev-parse --show-toplevel`.
+# A pre-push hook exports GIT_DIR, and with GIT_DIR set, `git -C <subdir>
+# rev-parse --show-toplevel` answers <subdir> rather than the repo root — so the
+# git form resolved REPO_ROOT to bin/local and the source below failed. The bare
+# `git rev-parse` form survives that but reads the caller's cwd, which the
+# sibling scripts here cannot assume. Path arithmetic answers both.
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 

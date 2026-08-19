@@ -149,10 +149,17 @@ def _parse_diff(diff_output: str) -> dict[str, set[int]]:
 
 def _resolve_diff_files(base_ref: str, repo_root: str):
     """Resolve changed files and added line numbers from a diff against base_ref."""
-    diff_output = subprocess.check_output(
-        ['git', 'diff', f'{base_ref}...HEAD'],
-        stderr=subprocess.DEVNULL,
-    ).decode()
+    try:
+        diff_output = subprocess.check_output(
+            ['git', 'diff', f'{base_ref}...HEAD'],
+            stderr=subprocess.DEVNULL,
+        ).decode()
+    except subprocess.CalledProcessError:
+        print(f"error: --diff base ref '{base_ref}' did not resolve — "
+              'is it missing or unfetched?', file=sys.stderr)
+        print("  if this is meant to be the default branch, run: "
+              'git remote set-head origin -a', file=sys.stderr)
+        sys.exit(2)
 
     added_lines = _parse_diff(diff_output)
     result = []

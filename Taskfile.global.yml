@@ -252,7 +252,12 @@ tasks:
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         NESTING_OUTPUT=$(validate-nesting --diff "origin/$TARGET_BASE" --quiet 2>&1) || {
-          echo "✗ New code introduces nesting violations — fix before creating PR"
+          NESTING_STATUS=$?
+          if [[ "$NESTING_STATUS" -eq 2 ]]; then
+            echo "✗ Nesting check could not run — fix before creating PR"
+          else
+            echo "✗ New code introduces nesting violations — fix before creating PR"
+          fi
           echo ""
           echo "$NESTING_OUTPUT"
           exit 1

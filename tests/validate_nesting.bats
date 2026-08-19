@@ -428,6 +428,23 @@ SCRIPT
   [[ "$output" == *"mutually exclusive"* ]]
 }
 
+@test "validate-nesting --diff: unresolvable base ref exits 2 with no traceback" {
+  _init_diff_repo "$TMPDIR"
+
+  cat > "$TMPDIR/script.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+func() { echo "ok"; }
+SCRIPT
+  git -C "$TMPDIR" add script.sh
+  git -C "$TMPDIR" commit -m "init" --quiet
+
+  cd "$TMPDIR"
+  run "$VALIDATE_NESTING" --diff origin/HEAD
+  [ "$status" -eq 2 ]
+  [[ "$output" != *"Traceback"* ]]
+  [[ "$output" == *"origin/HEAD"* ]]
+}
+
 @test "validate-nesting --diff: skips non-script files" {
   _init_diff_repo "$TMPDIR"
 

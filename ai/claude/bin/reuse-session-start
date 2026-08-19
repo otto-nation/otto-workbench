@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""SessionStart hook: inject reuse level and ceiling scan nudge.
+"""SessionStart hook: inject reuse level, issue tracker, and ceiling scan nudge.
 
-Two responsibilities:
+Three responsibilities:
 1. Emit the active reuse level as session context
-2. Run ceiling-scan --json; if no-trigger markers exist, nudge
+2. Emit the repo's issue tracker, configured or not
+3. Run ceiling-scan --json; if no-trigger markers exist, nudge
 
 Usage (called by settings.json SessionStart hook):
   reuse-session-start
@@ -22,6 +23,7 @@ from _reuse_levels import (  # noqa: E402
     read_default,
     read_level,
 )
+import workbench_config  # noqa: E402
 
 
 def _repo_root() -> str | None:
@@ -51,6 +53,23 @@ def _ceiling_counts(repo: str) -> dict | None:
     return None
 
 
+def _issue_tracker_line(repo: str) -> str:
+    """Where this repo files issues, as a line the agent reads in context.
+
+    Emitted in both states, unlike the reuse level. A rule that says "go look
+    up review.issue_tracker.provider" is a rule that gets skipped, so the
+    resolved answer goes into context instead of behind a lookup — and
+    "nobody has said" is the state the agent most needs to act on.
+    """
+    provider = workbench_config.load_config_or_default(repo).review.issue_tracker.provider
+    if provider is None:
+        return (
+            "Issue tracker: not configured — ask before filing, then record the"
+            f" answer in {workbench_config.ISSUE_PROVIDER_KEY}"
+        )
+    return f"Issue tracker: {provider}"
+
+
 def main() -> None:
     lines: list[str] = []
 
@@ -67,6 +86,9 @@ def main() -> None:
             f"{total} ceiling marker(s), {no_trigger} with no trigger"
             " — run /ceiling-debt to review"
         )
+
+    if repo:
+        lines.append(_issue_tracker_line(repo))
 
     if lines:
         print("\n".join(lines))

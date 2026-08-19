@@ -257,6 +257,7 @@ REVIEW_ORCHESTRATE = REPO_ROOT / "ai" / "claude" / "bin" / "review-orchestrate"
 REVIEW_THREADS = REPO_ROOT / "ai" / "claude" / "bin" / "review-threads"
 CI_CHECK = REPO_ROOT / "ai" / "claude" / "bin" / "ci-check"
 EVAL_MODELS = REPO_ROOT / "ai" / "claude" / "bin" / "eval-models"
+REUSE_SESSION_START = REPO_ROOT / "ai" / "claude" / "bin" / "reuse-session-start"
 
 
 def init_worktree(path) -> Path:
@@ -461,6 +462,19 @@ def rt():
     spec.loader.exec_module(mod)
     yield mod
     del sys.modules["review_threads"]
+
+
+@pytest.fixture(scope="session")
+def rss():
+    loader = importlib.machinery.SourceFileLoader(
+        "reuse_session_start", str(REUSE_SESSION_START),
+    )
+    spec = importlib.util.spec_from_loader("reuse_session_start", loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["reuse_session_start"] = mod
+    spec.loader.exec_module(mod)
+    yield mod
+    del sys.modules["reuse_session_start"]
 
 
 @pytest.fixture(scope="session")

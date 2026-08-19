@@ -57,6 +57,27 @@ if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
   if [[ -n "${WORKBENCH_CACHE_DIR:-}" && -d "${WORKBENCH_CACHE_DIR}" ]]; then
     PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_CACHE_DIR" && pwd -P)")
   fi
+if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
+  PROJECTS_EXCLUDED_PREFIXES=(
+    "${TMPDIR:-}" /tmp /private/tmp /var/folders /private/var/folders
+    "${WORKBENCH_STATE_DIR:-}" "${WORKBENCH_CACHE_DIR:-}"
+  )
+#
+# The state and cache roots get a resolved spelling added too, since those come
+# from env vars a caller may well have written with a symlink in them —
+# `ai/lib/workbench_projects.py`'s `excluded()` does the same. This is a one-time
+# fork at array-build time, not a per-comparison one.
+if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
+  PROJECTS_EXCLUDED_PREFIXES=(
+    "${TMPDIR:-}" /tmp /private/tmp /var/folders /private/var/folders
+    "${WORKBENCH_STATE_DIR:-}" "${WORKBENCH_CACHE_DIR:-}"
+  )
+  if [[ -n "${WORKBENCH_STATE_DIR:-}" && -d "${WORKBENCH_STATE_DIR}" ]]; then
+    PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_STATE_DIR" && pwd -P)")
+  fi
+  if [[ -n "${WORKBENCH_CACHE_DIR:-}" && -d "${WORKBENCH_CACHE_DIR}" ]]; then
+    PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_CACHE_DIR" && pwd -P)")
+  fi
 fi
 
 # _project_excluded DIR — true when DIR must never enter the registry.
@@ -119,6 +140,73 @@ _project_contains() {
 # for `pr`), so this deliberately does no discovery of its own and forks
 # nothing.
 #
+# Returns 0 when DIR is newly added to the registry, 3 when it was already
+# there, 1 when the membership rules refused it, and 2 when it qualified but
+# the registry could not be written. The callers that register as a side
+# effect treat every non-zero the same; `otto-workbench projects add` is the
+# one that has to say which happened, and "not a project" is the wrong thing
+# to tell someone whose state root is read-only. Reporting the already-
+# registered case as its own code lets that caller ask this function once
+# instead of scanning the registry itself first to find out.
+  mkdir -p "$(dirname "$PROJECTS_REGISTRY_FILE")"
+  [[ -f "$PROJECTS_REGISTRY_FILE" ]] || : > "$PROJECTS_REGISTRY_FILE"
+}
+
+# _project_contains DIR — true when DIR already has a line in the registry.
+_project_contains() {
+  [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 1
+  grep -qxF "${1%/}" "$PROJECTS_REGISTRY_FILE"
+}
+
+# project_register DIR — record DIR as a repo that uses the workbench.
+#
+# DIR must already be a resolved work-tree root — every caller has one in hand
+# (`git rev-parse --show-toplevel` for the shell callers, `ctx.worktree_root`
+# for `pr`), so this deliberately does no discovery of its own and forks
+# nothing.
+#
+  # mkdir -p's own exit status is intentionally not checked here: a failure on
+  # a state root that already exists from a prior run would still leave this
+  # function reporting success, but the `: >` (or the caller's `>>`) below hits
+  # the same permission failure and propagates it as return 2.
+  mkdir -p "$(dirname "$PROJECTS_REGISTRY_FILE")"
+  [[ -f "$PROJECTS_REGISTRY_FILE" ]] || : > "$PROJECTS_REGISTRY_FILE"
+}
+
+# _project_contains DIR — true when DIR already has a line in the registry.
+_project_contains() {
+  [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 1
+  grep -qxF "${1%/}" "$PROJECTS_REGISTRY_FILE"
+}
+
+# project_register DIR — record DIR as a repo that uses the workbench.
+#
+# DIR must already be a resolved work-tree root — every caller has one in hand
+# (`git rev-parse --show-toplevel` for the shell callers, `ctx.worktree_root`
+# for `pr`), so this deliberately does no discovery of its own and forks
+# nothing.
+#
+# Returns 0 when DIR is newly added to the registry, 3 when it was already
+# there, 1 when the membership rules refused it, and 2 when it qualified but
+# the registry could not be written. The callers that register as a side
+# effect treat every non-zero the same; `otto-workbench projects add` is the
+# one that has to say which happened, and "not a project" is the wrong thing
+# to tell someone whose state root is read-only. Reporting the already-
+# registered case as its own code lets that caller ask this function once
+# instead of scanning the registry itself first to find out.
+project_register() {
+  local dir="${1%/}"
+  if _project_excluded "$dir" || ! _project_is_worktree "$dir"; then
+    return 1
+  fi
+  if _project_contains "$dir"; then
+    return 3
+project_register() {
+  local dir="${1%/}"
+  if _project_excluded "$dir" || ! _project_is_worktree "$dir"; then
+    return 1
+  fi
+  if _project_contains "$dir"; then
 # Returns 0 when DIR is newly added to the registry, 3 when it was already
 # there, 1 when the membership rules refused it, and 2 when it qualified but
 # the registry could not be written. The callers that register as a side

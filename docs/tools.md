@@ -415,6 +415,25 @@ The Push verdict appears in the dashboard and gates the **Merge readiness** line
 | Commits ahead | `**Push**: N commit(s) not pushed` | Blocks: "N unpushed commit(s)" |
 | Up to date | `**Push**: up to date` | No block |
 
+**The undelivered closeout shows up too:**
+
+A `--fix` run that ends with open `needs_human` threads, or that runs without
+`--post`, holds back the summary comment and the per-thread replies and records
+that in state. `pr status` reads those two flags back out, so the queue is
+visible after the stderr line has scrolled past:
+
+```
+**Fix**: 11 fixed · 2 need discussion · 1 dismissed · 3 already addressed (commit: 9f2c1ab, push_held)
+  ⚠ closeout owed: summary + 15 replies — run: pr comments --finish --post
+
+**Merge readiness**: blocked — closeout not delivered (run: pr comments --finish --post)
+```
+
+The reply count is derived from the recorded outcomes — the fixed,
+already-addressed, and dismissed threads `--finish` drains. A queue that still
+owes replies but carries no outcomes to count says `replies` without a number
+rather than claiming zero.
+
 ### `otto-mcp-server`
 
 Dynamic MCP server. Discovers workbench scripts and exposes them to any MCP client over

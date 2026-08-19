@@ -628,6 +628,66 @@ def render_triage_status(t: TriageSummary) -> list[str]:
     return [f"**Triage**: {t.total} threads — {t.actionable} actionable ({t.valid} valid), {t.questions} questions"]
 
 
+# ── Closeout queue ───────────────────────────────────────────────────────
+
+
+# The one command that drains the queue. Spelled once so the status line, the
+# merge-readiness blocker, and the docs cannot drift from each other.
+CLOSEOUT_COMMAND = "pr comments --finish --post"
+
+# The three reply buckets --finish drains (`_post_pending_fix_replies` in
+# review-threads). Threads with any other outcome owe no reply, so they must
+# not inflate the count the operator is quoted.
+_REPLY_ACTIONS = frozenset({
+    ThreadAction.FIXED, ThreadAction.ALREADY_ADDRESSED, ThreadAction.DISMISSED,
+})
+
+
+@dataclass(frozen=True)
+class CloseoutDebt:
+    """What a fix pass rendered but never delivered to the PR.
+
+    The queue's only symptom is the *absence* of comments on the PR, which is
+    indistinguishable from a run that had nothing to say — so every surface
+    that reports on a fix pass has to say the debt out loud.
+    """
+
+    summary: bool = False
+    replies: bool = False
+    # Recounted from the recorded outcomes rather than read off a stored number,
+    # which makes it advisory: a queue whose outcomes were pruned still owes its
+    # replies via `replies` while this reads 0. `replies` alone decides whether
+    # anything is owed; the count only sharpens the wording.
+    reply_count: int = 0
+
+    @property
+    def owed(self) -> bool:
+        return self.summary or self.replies
+
+    def describe(self) -> str:
+        """Name what is owed — 'summary', '15 replies', or both."""
+        parts = []
+        if self.summary:
+            parts.append("summary")
+        if self.replies:
+            # An uncounted queue reads as replies owed, never as zero of them.
+            noun = "reply" if self.reply_count == 1 else "replies"
+            parts.append(f"{self.reply_count} {noun}" if self.reply_count else "replies")
+        return " + ".join(parts)
+
+
+def closeout_debt(f: FixSummary) -> CloseoutDebt:
+    """Read the undelivered closeout out of fix state.
+
+    Reads only what the fix pass already recorded — no fetch, no new state.
+    """
+    return CloseoutDebt(
+        summary=f.summary_deferred,
+        replies=f.replies_pending,
+        reply_count=sum(1 for t in f.threads if t.action in _REPLY_ACTIONS),
+    )
+
+
 def render_fix_status(f: FixSummary) -> list[str]:
     """Render fix state as status lines for the pr dashboard."""
     if not f.updated_at:
@@ -650,6 +710,9 @@ def render_fix_status(f: FixSummary) -> list[str]:
     lines = [f"**Fix**: {summary}"]
     if f.commit_sha:
         lines[0] += f" (commit: {f.commit_sha}, {f.commit_status})"
+    debt = closeout_debt(f)
+    if debt.owed:
+        lines.append(f"  ⚠ closeout owed: {debt.describe()} — run: {CLOSEOUT_COMMAND}")
     if f.deferred_issue_id:
         lines.append(f"  tracked in {f.deferred_issue_id}")
     return lines

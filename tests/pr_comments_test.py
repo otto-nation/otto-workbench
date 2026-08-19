@@ -22,6 +22,7 @@ from pr_comments import (
     load_state, save_state, empty_state, compute_thread_state, sync_threads,
     fetch_threads, render_dashboard, render_status, render_triage_status,
     render_fix_status,
+    CLOSEOUT_COMMAND,
     STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED,
 )
 
@@ -513,6 +514,94 @@ def test_render_fix_status_deferred_issue():
     lines = render_fix_status(f)
     assert any("ENG-456" in line for line in lines)
     assert any("tracked in" in line for line in lines)
+
+
+# ── closeout debt ────────────────────────────────────────────────────────
+
+
+def _fix_with_closeout(**kwargs) -> pr_state.FixSummary:
+    """A pushed fix pass with three reply-owing outcomes and one that owes none."""
+    return pr_state.FixSummary(
+        threads=[
+            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED),
+            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.ALREADY_ADDRESSED),
+            pr_state.ThreadOutcome(id="t3", action=pr_state.ThreadAction.DISMISSED),
+            pr_state.ThreadOutcome(id="t4", action=pr_state.ThreadAction.NEEDS_HUMAN),
+        ],
+        commit_sha="abc1234", commit_status="pushed",
+        updated_at="2026-07-14T00:00:00+00:00",
+        **kwargs,
+    )
+
+
+def _closeout_line(lines: list[str]) -> str | None:
+    return next((line for line in lines if "closeout owed" in line), None)
+
+
+def test_closeout_debt_reads_both_flags():
+    debt = pr_comments.closeout_debt(
+        _fix_with_closeout(summary_deferred=True, replies_pending=True),
+    )
+    assert debt.owed is True
+    assert debt.summary is True
+    assert debt.replies is True
+    # NEEDS_HUMAN owes no reply — only the three buckets --finish drains count.
+    assert debt.reply_count == 3
+
+
+def test_closeout_debt_clean_state_owes_nothing():
+    debt = pr_comments.closeout_debt(_fix_with_closeout())
+    assert debt.owed is False
+    assert debt.describe() == ""
+
+
+def test_render_fix_status_warns_when_summary_and_replies_are_owed():
+    lines = render_fix_status(
+        _fix_with_closeout(summary_deferred=True, replies_pending=True),
+    )
+    assert _closeout_line(lines) == (
+        f"  ⚠ closeout owed: summary + 3 replies — run: {CLOSEOUT_COMMAND}"
+    )
+
+
+def test_render_fix_status_warns_for_a_deferred_summary_alone():
+    lines = render_fix_status(_fix_with_closeout(summary_deferred=True))
+    assert _closeout_line(lines) == (
+        f"  ⚠ closeout owed: summary — run: {CLOSEOUT_COMMAND}"
+    )
+
+
+def test_render_fix_status_warns_for_a_pending_reply_queue_alone():
+    lines = render_fix_status(_fix_with_closeout(replies_pending=True))
+    assert _closeout_line(lines) == (
+        f"  ⚠ closeout owed: 3 replies — run: {CLOSEOUT_COMMAND}"
+    )
+
+
+def test_render_fix_status_singularises_a_one_reply_queue():
+    f = pr_state.FixSummary(
+        threads=[pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED)],
+        replies_pending=True,
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    assert _closeout_line(render_fix_status(f)) == (
+        f"  ⚠ closeout owed: 1 reply — run: {CLOSEOUT_COMMAND}"
+    )
+
+
+def test_render_fix_status_says_replies_when_no_outcome_carries_the_count():
+    """A queue whose outcomes were pruned still says replies are owed, not zero."""
+    f = pr_state.FixSummary(
+        threads=[], replies_pending=True, updated_at="2026-07-14T00:00:00+00:00",
+    )
+    assert _closeout_line(render_fix_status(f)) == (
+        f"  ⚠ closeout owed: replies — run: {CLOSEOUT_COMMAND}"
+    )
+
+
+def test_render_fix_status_silent_when_nothing_is_owed():
+    lines = render_fix_status(_fix_with_closeout())
+    assert _closeout_line(lines) is None
 
 
 # ── post_issue_comment upsert ──────────────────────────────────────────────

@@ -106,10 +106,13 @@ _ensure_gh_repo_access() {
 }
 
 # load_pr_context
-# Loads the AI command and resolves the current branch context, then verifies
-# the resolved default branch has a remote-tracking ref (resolve_default_branch
-# can fall back to a guessed name that doesn't exist locally).
-# Must be called before generate_pr_content or push_branch.
+# Loads the AI command and resolves the current branch context, then verifies the
+# *effective* base — PR_BASE when the caller passed an explicit --base, otherwise the
+# resolved default branch — has a remote-tracking ref (resolve_default_branch can fall
+# back to a guessed name that doesn't exist locally, and an explicit --base is exactly
+# the escape hatch for that case, so it must not be refused on the guess's behalf).
+# Must be called after parse_pr_flags (so PR_BASE is populated) and before
+# generate_pr_content or push_branch — load_pr does both in order.
 # Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure.
 load_pr_context() {
   load_ai_command || return 1
@@ -125,15 +128,21 @@ load_pr_context() {
   # See resolve_default_branch in lib/ai/core.sh for why this isn't rev-parse --abbrev-ref.
   DEFAULT_BRANCH=$(resolve_default_branch)
 
+  # Keyed on DEFAULT_BRANCH, not the effective base below: this guards against running PR
+  # operations while checked out on the repo's own default branch, which is nonsensical
+  # regardless of what base the PR would target.
   if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
     echo "✗ PR operations cannot be run from the $DEFAULT_BRANCH branch"
     return 1
   fi
 
-  if ! git show-ref --verify --quiet "refs/remotes/$GIT_REMOTE/$DEFAULT_BRANCH"; then
-    echo "✗ $GIT_REMOTE/$DEFAULT_BRANCH does not resolve — cannot open a PR against a base that doesn't exist"
+  local target_base="${PR_BASE:-$DEFAULT_BRANCH}"
+  if ! remote_branch_ref_exists "$target_base"; then
+    echo "✗ $GIT_REMOTE/$target_base does not resolve — cannot open a PR against a base that doesn't exist"
     echo "→ Fix with: git fetch $GIT_REMOTE"
-    echo "→ If $DEFAULT_BRANCH is a guess and the real default branch differs, also run: git remote set-head $GIT_REMOTE -a"
+    if [ -z "${PR_BASE:-}" ]; then
+      echo "→ If $DEFAULT_BRANCH is a guess and the real default branch differs, also run: git remote set-head $GIT_REMOTE -a"
+    fi
     return 1
   fi
 }

@@ -329,7 +329,7 @@ tasks:
         COMMITS=""
         COMMITTED_DIFF=""
         if [ "$BRANCH" != "$DEFAULT_BRANCH" ]; then
-          if ! git rev-parse --verify --quiet "origin/$DEFAULT_BRANCH" >/dev/null; then
+          if ! remote_branch_ref_exists "$DEFAULT_BRANCH"; then
             echo "⚠ origin/$DEFAULT_BRANCH does not resolve — committed changes omitted from this review"
           fi
           COMMITS=$(git log --oneline "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null || true)

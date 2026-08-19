@@ -81,3 +81,41 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"origin/main"* ]]
 }
+
+@test "a resolving --base override succeeds even when the guessed default does not" {
+  make_fake_gh 0 ""
+  make_fake_binary "$TMPDIR/bin" "fake-ai"
+  make_ai_config "$TMPDIR" "fake-ai"
+  export GH_TOKEN="github_pat_test"
+
+  # Same setup as the refusal test above: the guess lands on "main", which
+  # doesn't exist. An explicit --base naming the real branch ("trunk") must
+  # be honored instead of being overridden by the guess.
+  _make_repo_no_default_branch "$TMPDIR" "trunk" "feature/test"
+
+  cd "$TMPDIR/repo"
+  export PR_BASE="trunk"
+  run load_pr_context
+  unset PR_BASE
+  [ "$status" -eq 0 ]
+}
+
+@test "a non-resolving --base override still refuses, naming the branch passed" {
+  make_fake_gh 0 ""
+  make_fake_binary "$TMPDIR/bin" "fake-ai"
+  make_ai_config "$TMPDIR" "fake-ai"
+  export GH_TOKEN="github_pat_test"
+
+  # Default branch resolution succeeds fine here ("main" exists) — only the
+  # explicit --base is bogus, and the guard must refuse on that basis and
+  # name it, not silently fall through to the (perfectly fine) default.
+  _make_repo_no_default_branch "$TMPDIR" "main" "feature/test"
+
+  cd "$TMPDIR/repo"
+  export PR_BASE="does-not-exist"
+  run load_pr_context
+  unset PR_BASE
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"origin/does-not-exist"* ]]
+  [[ "$output" != *"origin/main does not resolve"* ]]
+}

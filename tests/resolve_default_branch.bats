@@ -91,3 +91,20 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = "main" ]
 }
+
+@test "remote_branch_ref_exists succeeds for a branch that has a remote-tracking ref" {
+  _make_repo_no_default_branch "$TMPDIR" "main"
+
+  cd "$TMPDIR/repo"
+  run remote_branch_ref_exists "main"
+  [ "$status" -eq 0 ]
+}
+
+@test "remote_branch_ref_exists fails for a branch with no remote-tracking ref" {
+  # Only "trunk" exists on the remote — "main" has no refs/remotes/origin/main.
+  _make_repo_no_default_branch "$TMPDIR" "trunk"
+
+  cd "$TMPDIR/repo"
+  run remote_branch_ref_exists "main"
+  [ "$status" -ne 0 ]
+}

@@ -371,6 +371,7 @@ Foundation module: AI command loading, GitHub token resolution with per-org rout
 | Function | Purpose |
 |----------|---------|
 | `resolve_default_branch` | Resolves the remote's default branch (unfetched clone, a `wt-init`-converted repo, or any remote whose HEAD was never pointed with `git remote set-head origin -a` all lack the symref this depends on). |
+| `remote_branch_ref_exists BRANCH` | True when BRANCH has a remote-tracking ref under $GIT_REMOTE (refs/remotes/$GIT_REMOTE/BRANCH). |
 | `load_ai_command` | Finds the AI config and validates the binary exists. |
 | `load_gh_token` | Resolves GH_TOKEN with per-org routing support. |
 | `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. |
@@ -398,7 +399,7 @@ PR content generation: title, description, issue linking, template loading.
 |----------|---------|
 | `push_branch BRANCH` | Pushes BRANCH to remote, handling first-push and divergence cases. |
 | `create_pr GH_ARGS...` | Runs `gh pr create` with the given arguments and reports the resulting PR URL. |
-| `load_pr_context` | Loads the AI command and resolves the current branch context, then verifies the resolved default branch has a remote-tracking ref (resolve_default_branch can fall back to a guessed name that doesn't exist locally). |
+| `load_pr_context` | Loads the AI command and resolves the current branch context, then verifies the *effective* base — PR_BASE when the caller passed an explicit --base, otherwise the resolved default branch — has a remote-tracking ref (resolve_default_branch can fall back to a guessed name that doesn't exist locally, and an explicit --base is exactly the escape hatch for that case, so it must not be refused on the guess's behalf). |
 | `parse_pr_flags ARGS` | Parses PR-specific flags from the CLI_ARGS string. |
 | `load_pr [ARGS]` | Parses PR flags from ARGS, then loads the PR context. |
 | `generate_pr_content BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set). |

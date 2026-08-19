@@ -76,6 +76,17 @@ resolve_default_branch() {
   printf 'main\n'
 }
 
+# remote_branch_ref_exists BRANCH
+# True when BRANCH has a remote-tracking ref under $GIT_REMOTE (refs/remotes/$GIT_REMOTE/BRANCH).
+# Companion to resolve_default_branch: that function derives a branch name — guessing when
+# the origin/HEAD symref is missing — and this answers whether the result actually exists as
+# a ref. Takes the branch as an argument (not just the resolved default) so callers can also
+# validate an explicit override, such as a user-supplied --base.
+remote_branch_ref_exists() {
+  local branch="$1"
+  git show-ref --verify --quiet "refs/remotes/$GIT_REMOTE/$branch"
+}
+
 # _resolve_env_file — finds the active env file (local override or global).
 # Prints the path to stdout. Returns 1 if neither exists.
 _resolve_env_file() {

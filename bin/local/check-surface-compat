@@ -131,10 +131,17 @@ fi
 # safe. A footer with an empty reason names nothing and is skipped: the reason
 # reaching git history is the whole point of the footer.
 #
+# A CRLF commit body leaves a carriage return at the end of every line, and a
+# lone "\r" is not whitespace to the empty-reason guard — so "Not-Breaking:
+# <entry> — \r" would declare an entry while carrying no reason at all, which
+# is the one thing this footer exists to prevent. The CR comes off the record
+# before anything reads it.
+#
 # One awk, no pipeline: awk exits 0 on no matches, so there is no grep-exit-1
 # case to make an escape hatch for, and nothing downstream to hide a failure.
 _declared_keys() {
   awk -v prefix="${NOT_BREAKING_FOOTER}: " '
+    { sub(/\r$/, "") }
     index($0, prefix) != 1 { next }
     {
       rest = substr($0, length(prefix) + 1)
@@ -202,17 +209,25 @@ _tree_entries() {
   jq -cs --arg src "$head_file" "$_ENTRIES_JQ" "$head_file"
 }
 
-# _head_entries SNAPSHOT — the entries array as HEAD has it, or nothing at all
-# when there is no HEAD-side snapshot to read. Empty output means "no HEAD
-# constraint", not "an empty surface at HEAD": before the first commit, and on
-# the commit that introduces a snapshot, HEAD legitimately has no such blob,
-# and treating that as an empty surface would report the whole base surface as
-# removed. Every git call is bare or handled at its own call site, so a git
-# failure aborts instead of arriving here as an empty capture.
+# _head_entries SNAPSHOT — the entries array as HEAD has it. A snapshot absent
+# at HEAD reads as the empty array, the same shape _tree_entries uses, because
+# by the time this runs the merge base provably holds the blob — the caller
+# skipped the snapshot otherwise — and HEAD descends from that merge base. The
+# only way the blob can be gone is that the branch deleted it, and `git push`
+# publishes that deletion, so it has to report the whole surface as removed.
+# The bootstrap case (a snapshot this branch introduces) never reaches here.
+#
+# Empty output, meaning "no HEAD constraint", is left for the one state this
+# cannot read: a path at HEAD that is not a blob at all. Every git call is bare
+# or handled at its own call site, so a git failure aborts instead of arriving
+# here as an empty capture.
 _head_entries() {
   local snapshot="$1" head_type head_json
-  git -C "$REPO_DIR" rev-parse --verify --quiet HEAD >/dev/null || return 0
-  git -C "$REPO_DIR" cat-file -e "HEAD:$snapshot" 2>/dev/null || return 0
+  # cat-file -e is allowed to fail: non-zero means the path is absent at HEAD.
+  if ! git -C "$REPO_DIR" cat-file -e "HEAD:$snapshot" 2>/dev/null; then
+    printf '[]\n'
+    return
+  fi
   head_type=$(git -C "$REPO_DIR" cat-file -t "HEAD:$snapshot")
   [[ "$head_type" == "blob" ]] || return 0
   head_json=$(git -C "$REPO_DIR" show "HEAD:$snapshot")

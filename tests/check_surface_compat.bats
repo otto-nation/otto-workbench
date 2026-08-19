@@ -48,6 +48,17 @@ _commit_head() {
   git -C "$LOCAL" commit -m "$2" --quiet
 }
 
+# _commit_head_verbatim ENTRIES_JSON MESSAGE_FILE — the same, with the message
+# taken byte for byte from MESSAGE_FILE. git's default cleanup strips trailing
+# whitespace from every line and would rewrite a footer whose reason is only
+# whitespace into one with no separator at all — a different code path from the
+# one such a test means to exercise. A CRLF body needs the same treatment.
+_commit_head_verbatim() {
+  _write_snapshot "public-surface.json" "otto-workbench" "$1"
+  git -C "$LOCAL" add -A
+  git -C "$LOCAL" commit --cleanup=verbatim -F "$2" --quiet
+}
+
 @test "passes when nothing was removed" {
   _seed_base '["command:alpha","command:beta"]'
   _commit_head '["command:alpha","command:beta","command:gamma"]' "feat: add gamma"
@@ -161,7 +172,8 @@ Not-Breaking: setting:permissions deny — it was never a documented key"
 
 # The reason landing in git history is the entire argument for a footer over a
 # checked-in allowlist, so a footer that carries no reason has declared nothing.
-@test "a Not-Breaking footer with no reason declares nothing" {
+# This one carries no separator either, so it never reaches the reason check.
+@test "a Not-Breaking footer with no separator declares nothing" {
   _seed_base '["command:alpha","command:beta"]'
   _commit_head '["command:alpha"]' "chore: unpublish beta
 
@@ -171,14 +183,52 @@ Not-Breaking: command:beta"
   [[ "$output" == *"REMOVED command:beta"* ]]
 }
 
+# The separator is there and the reason is not, which is the case the parser's
+# empty-reason guard exists for. Committed verbatim on purpose: git's default
+# cleanup would strip the trailing space and turn this into the no-separator
+# test above, leaving the guard covered by nothing.
 @test "a Not-Breaking footer whose reason is only whitespace declares nothing" {
   _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta
-
-Not-Breaking: command:beta — "
+  printf 'chore: unpublish beta\n\nNot-Breaking: command:beta \xe2\x80\x94 \n' > "$TMPDIR/msg"
+  _commit_head_verbatim '["command:alpha"]' "$TMPDIR/msg"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 1 ]
   [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+# A CRLF body ends every line with a carriage return, and "\r" is not
+# whitespace — so a reason of nothing but the line ending would read as a real
+# reason and declare the entry, defeating the guard above.
+@test "a carriage return is not a Not-Breaking reason" {
+  _seed_base '["command:alpha","command:beta"]'
+  printf 'chore: unpublish beta\r\n\r\nNot-Breaking: command:beta \xe2\x80\x94 \r\n' > "$TMPDIR/msg"
+  _commit_head_verbatim '["command:alpha"]' "$TMPDIR/msg"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+# A CRLF body must still declare a footer that does carry a reason: stripping
+# the carriage return is what keeps the reason from being whitespace-only, and
+# it must not take anything else with it.
+@test "a CRLF footer with a real reason still declares its entry" {
+  _seed_base '["command:alpha","command:beta"]'
+  printf 'chore: unpublish beta\r\n\r\nNot-Breaking: command:beta \xe2\x80\x94 never installed\r\n' > "$TMPDIR/msg"
+  _commit_head_verbatim '["command:alpha"]' "$TMPDIR/msg"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 0 ]
+}
+
+# A second space before the separator lands inside the key, so without the trim
+# the gate would look for "command:beta " and no footer could ever declare the
+# entry — the author's only escape left being BREAKING CHANGE.
+@test "extra space before the separator does not change the declared key" {
+  _seed_base '["command:alpha","command:beta"]'
+  _commit_head '["command:alpha"]' "chore: unpublish beta
+
+Not-Breaking: command:beta  — never installed"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 0 ]
 }
 
 # A human or a model typing the footer by hand reaches for "-" or "--" long
@@ -308,6 +358,43 @@ Not-Breaking: command:beta — never installed"
   _seed_base '["command:alpha","command:beta"]'
   git -C "$LOCAL" rm -q public-surface.json
   git -C "$LOCAL" commit -m "chore: delete the snapshot" --quiet
+
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:alpha"* ]]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+# The deletion equivalent of the restored-removal case above, and the same
+# reasoning: `git push` publishes the deletion whatever the working tree holds.
+# Reading an absent blob at HEAD as "no HEAD constraint" made this the quietest
+# way to wipe a package's whole surface — a committed `git rm` plus a stash pop,
+# an uncommitted revert, or a generator re-run that was never staged. By the
+# time the HEAD side is read the merge base is known to hold the snapshot and
+# HEAD descends from it, so absent there can only mean the branch deleted it.
+@test "a snapshot deleted at HEAD is caught even when the working tree restores it" {
+  _seed_base '["command:alpha","command:beta"]'
+  git -C "$LOCAL" rm -q public-surface.json
+  git -C "$LOCAL" commit -m "chore: delete the snapshot" --quiet
+  _write_snapshot "public-surface.json" "otto-workbench" '["command:alpha","command:beta"]'
+
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:alpha"* ]]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+# Replacing the snapshot with a directory is a deletion wearing a hat. `git show
+# HEAD:<tree>` exits 0 and prints a tree listing, so without the type check that
+# listing would reach jq and the run would end in a parse error rather than the
+# verdict the surface actually deserves.
+@test "a directory at the snapshot path at HEAD reports every entry as removed" {
+  _seed_base '["command:alpha","command:beta"]'
+  git -C "$LOCAL" rm -q public-surface.json
+  mkdir -p "$LOCAL/public-surface.json"
+  echo "placeholder" > "$LOCAL/public-surface.json/README"
+  git -C "$LOCAL" add -A
+  git -C "$LOCAL" commit -m "chore: put a directory where the snapshot goes" --quiet
 
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 1 ]
@@ -450,6 +537,23 @@ Not-Breaking: command:beta — never installed"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 5 ]
   [[ "$output" == *"not a single JSON document"* ]]
+  [[ "$output" != *"public surface compatible"* ]]
+}
+
+# The same hole one read further in. The test above is caught by the package
+# read, which runs first and against the working-tree file, so it says nothing
+# about the entries read — leave a valid file in the tree and the empty document
+# reaches only the HEAD-side entries read, where slurping is the sole guard.
+@test "an empty snapshot at HEAD fails loudly instead of reading as no entries" {
+  _seed_base '["command:alpha","command:beta"]'
+  : > "$LOCAL/public-surface.json"
+  git -C "$LOCAL" add -A
+  git -C "$LOCAL" commit -m "chore: empty the snapshot" --quiet
+  _write_snapshot "public-surface.json" "otto-workbench" '["command:alpha","command:beta"]'
+
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 5 ]
+  [[ "$output" == *"HEAD:public-surface.json: not a single JSON document"* ]]
   [[ "$output" != *"public surface compatible"* ]]
 }
 

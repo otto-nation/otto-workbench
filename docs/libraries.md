@@ -46,7 +46,7 @@ WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 
 Machines set up before the split keep everything in `~/.config/workbench`. `adopt_legacy_workbench_root` in [`lib/migrations.sh`](../lib/migrations.sh) carries that directory across on the next sync, entry by entry, and runs ahead of the migration framework because `migrations.applied` is one of the files it moves. Nothing falls back to the old path once it has run — the adoption is the entire compatibility story.
 
-Routing is by name and spelled out in three branches, not two plus a fallthrough: `_LEGACY_CONFIG_ENTRIES` goes to the config root, `_LEGACY_UNCLAIMED_ENTRIES` is skipped and left in the legacy root, and everything else goes to the state root. That last default is deliberate — the #624 inventory found state files no manifest written in advance had listed — but it must not also absorb a name no root holds any more: adoption runs before any migration reads its bookkeeping, so an entry a completed migration deleted on purpose (`logs/`, removed by #730) would come back with nothing left to take it out again. Adding one to the unclaimed list is the fix whenever a migration prunes a top-level name from a root.
+Routing is by name and spelled out in three branches, not two plus a fallthrough: `_LEGACY_CONFIG_ENTRIES` goes to the config root, `_LEGACY_UNCLAIMED_ENTRIES` is skipped and left in the legacy root, and everything else goes to the state root. That last default is deliberate — the inventory behind the split found state files no manifest written in advance had listed — but it must not also absorb a name no root holds any more: adoption runs before any migration reads its bookkeeping, so an entry a completed migration deleted on purpose (`logs/`, for one) would come back with nothing left to take it out again. Adding one to the unclaimed list is the fix whenever a migration prunes a top-level name from a root.
 
 A file the new root already holds is normally kept on both sides and warned about rather than clobbered. The exception is the append-only ledgers — `trail.jsonl` and `usage/*.jsonl` — which are concatenated instead: their only writers open them in append mode, and `otto-log` sorts every record by `ts` after loading, so one history split across two files reassembles either way. The rule is keyed on those names, not on the `.jsonl` extension, because the review artifacts (`session.jsonl`, `post.jsonl`, `*.holistic.jsonl`) are whole-file writes whose convention is prior-content-first.
 
@@ -253,7 +253,7 @@ Five layers decide a review value, highest first:
 
 Within one file a `review.phases.<phase>` entry outranks the `review.*` section it sits under. Layers 4 and 5 deep-merge, so a project file that sets one phase keeps every global sibling.
 
-A repo still holding the pre-#626 `.claude/review.yml` is converted to `.workbench.yml` the first time a review reads its issue tracker; the old file is left in place, since it is usually tracked in the consumer repo. The machine-wide files — `reuse-level`, `reuse-default`, `review.yml` — are folded into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
+A repo still holding the legacy `.claude/review.yml` is converted to `.workbench.yml` the first time a review reads its issue tracker; the old file is left in place, since it is usually tracked in the consumer repo. The machine-wide files — `reuse-level`, `reuse-default`, `review.yml` — are folded into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 
 ### migrations.sh
 
@@ -263,7 +263,7 @@ Migration framework with state tracking.
 | Function | Purpose |
 |----------|---------|
 | `run_component_migrations DIR` | Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs each function, and records success. |
-| `adopt_legacy_workbench_root` | Move a pre-#624 ~/.config/workbench to whichever roots now own its contents. |
+| `adopt_legacy_workbench_root` | Move a pre-split ~/.config/workbench to whichever roots now own its contents. |
 | `run_all_migrations` | Discovers and runs migrations across all components, then prunes stale state. |
 <!-- LIB-FUNCTIONS:migrations.sh-END -->
 

@@ -256,19 +256,41 @@ def _repo_key(url: str) -> str | None:
     return f"{readable}-{digest}" if readable else digest
 
 
-def repo_key_from_origin(cwd: str | None = None) -> str | None:
-    """The repo's key per its ``origin`` remote, or None if it has none.
-
-    Not ``gh repo view``: the key must be derivable without the network, and two
-    sources for one component is how the two derivations below drift apart.
-    """
+def _origin_url(cwd: str | None) -> str | None:
+    """The ``origin`` remote's URL as git records it, or None if it has none."""
     r = subprocess.run(
         ["git", "remote", "get-url", "origin"],
         capture_output=True, text=True, cwd=cwd,
     )
     if r.returncode != 0 or not r.stdout.strip():
         return None
-    return _repo_key(r.stdout.strip())
+    return r.stdout.strip()
+
+
+def repo_key_from_origin(cwd: str | None = None) -> str | None:
+    """The repo's key per its ``origin`` remote, or None if it has none.
+
+    Not ``gh repo view``: the key must be derivable without the network, and two
+    sources for one component is how the two derivations below drift apart.
+    """
+    url = _origin_url(cwd)
+    return _repo_key(url) if url else None
+
+
+def repo_label_from_origin(cwd: str | None = None) -> str | None:
+    """The repo named readably — the canonical form behind its key, or None.
+
+    ``acme/widget`` for every spelling of that remote. For callers that want to
+    *show* the repo without paying for ``gh repo view``: it is the same string
+    the key is derived from, so a label and a key read from one checkout cannot
+    name different repos.
+
+    Not interchangeable with ``gh``'s ``owner/repo`` — the host is dropped and
+    ``A``-``Z`` folded (see ``_canonical``), and a local remote reduces to its
+    trailing segment. Fine for a header, wrong for an API call.
+    """
+    url = _origin_url(cwd)
+    return (_canonical(url) or None) if url else None
 
 
 def targets_root() -> Path:

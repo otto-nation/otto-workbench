@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -260,6 +261,34 @@ def test_internal_commands_have_no_script():
 
 def test_sub_command_prefix():
     assert pr_cli._COMMANDS["gc"].get("prefix") is None
+
+
+# ── declared dispatch needs ───────────────────────────────────────────────
+
+
+def test_every_command_declares_a_need():
+    """No command may be silent about depth, fetch, and lock."""
+    for name, entry in pr_cli._COMMANDS.items():
+        assert isinstance(entry.get("need"), pr_cli.Need), \
+            f"{name} declares no dispatch need"
+
+
+def test_a_command_without_a_need_is_rejected():
+    """The check that replaced the two opt-out sets. Forgetting used to be
+    silent — the command simply got whatever not being listed meant."""
+    with pytest.raises(RuntimeError, match="listing"):
+        pr_cli._validate_needs({"listing": {"help": "list reviews"}})
+
+
+def test_a_need_of_the_wrong_shape_is_rejected():
+    """A registry entry carrying anything but a Need is undeclared too — the
+    axes have to be readable off the declaration, not guessed from a truthy."""
+    with pytest.raises(RuntimeError, match="listing"):
+        pr_cli._validate_needs({"listing": {"help": "list reviews", "need": True}})
+
+
+def test_the_real_registry_passes_its_own_check():
+    pr_cli._validate_needs(pr_cli._COMMANDS)
 
 
 # ── help passthrough ─────────────────────────────────────────────────────
@@ -1021,7 +1050,7 @@ def test_no_positional_candidate_skips_the_probe(mock_resolve, mock_run):
 
 
 @patch("pr_cli.subprocess.run")
-@patch("pr_cli.pr_context.resolve")
+@patch("pr_cli.pr_context.resolve_local")
 def test_status_needs_no_delegate_to_classify(mock_resolve, mock_run, worktree):
     """`pr status` is internal, has no delegate, and takes no positional."""
     mock_resolve.return_value = make_ctx(worktree_root=worktree)
@@ -1345,6 +1374,17 @@ def test_cmd_status_without_a_worktree_exits_with_guidance(capsys):
                             [], make_ctx(worktree_root=None))
 
 
+def test_status_header_names_the_repo_from_the_context_without_state(worktree, capsys):
+    """The user-visible consequence of resolving status locally: with no
+    state.json to read the identity from, the header shows the origin-derived
+    label the local rung returns, where it used to show `gh repo view`'s name."""
+    ctx = make_ctx(repo="acme/widget", branch="feat/x", worktree_root=worktree,
+                   target_dir=worktree / "target")
+    with patch("pr_cli.pr_state.load_state", return_value=None):
+        assert pr_cli.cmd_status([], ctx) == 0
+    assert "## PR Status — acme/widget (no PR) (feat/x)" in capsys.readouterr().err
+
+
 def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):
     assert_no_worktree_exit(capsys, "feat/test", pr_cli.cmd_fix,
                             [], make_ctx(worktree_root=None))
@@ -1421,7 +1461,7 @@ def test_main_locks_a_bare_repo_run(mock_resolve, mock_run, tmp_path):
 
 
 @patch("pr_cli.subprocess.run")
-@patch("pr_cli.pr_context.resolve")
+@patch("pr_cli.pr_context.resolve_local")
 def test_main_does_not_lock_for_status(mock_resolve, mock_run, worktree):
     """status is read-only, so it must never block on a run in flight."""
     target = worktree / "target"
@@ -1491,6 +1531,95 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
     err = capsys.readouterr().err
     assert "pr review --self --fix" in err
     assert "15461" in err
+
+
+# ── dispatch axes ───────────────────────────────────────────────────────────
+#
+# One table per axis, because the axes are independent and a command routinely
+# wants one without the others. Each is the behaviour that shipped before the
+# needs were declared — spelled out rather than read off _COMMANDS, since a
+# table derived from the declaration it checks would pass whatever it said.
+
+# Which commands resolve with git alone. Only status: the rest need `gh` to
+# name the repo and the PR.
+_RESOLVES_LOCALLY = {
+    "create": False, "status": True, "ci": False, "review": False,
+    "comments": False, "fix": False, "rebase": False, "describe": False,
+    "gc": False,
+}
+
+# Which commands fetch and fast-forward the worktree first. The old
+# _NO_UPDATE_COMMANDS, inverted: rebase does its own fetch, and the other three
+# touch no remote state.
+_FETCHES = {
+    "create": False, "status": False, "ci": True, "review": True,
+    "comments": True, "fix": True, "rebase": False, "describe": True,
+    "gc": False,
+}
+
+# Which commands hold the run lock. The old _NO_LOCK_COMMANDS, inverted: gc is
+# in here because deleting the state directory is the opposite of read-only.
+_LOCKS = {
+    "create": True, "status": False, "ci": True, "review": True,
+    "comments": True, "fix": True, "rebase": True, "describe": True,
+    "gc": True,
+}
+
+
+def _dispatch_stage(*argv, ctx):
+    """Run main() as far as dispatch, with the handler stubbed out.
+
+    Resolution, fetch and lock all happen before _dispatch, so stubbing it is
+    what lets one parametrized test cover every command without nine sets of
+    handler mocks.
+    """
+    with patch("pr_cli.pr_context.resolve", return_value=ctx) as remote, \
+         patch("pr_cli.pr_context.resolve_local", return_value=ctx) as local, \
+         patch("pr_cli.pr_context.update_to_remote", return_value=ctx) as update, \
+         patch("pr_cli._dispatch", return_value=0):
+        _run_main(*argv)
+    return SimpleNamespace(remote=remote, local=local, update=update)
+
+
+def test_axis_tables_cover_every_command():
+    """A new command has to answer all three axes, here as well as in the
+    registry — otherwise it ships untested on the axis nobody thought about."""
+    for table in (_RESOLVES_LOCALLY, _FETCHES, _LOCKS):
+        assert set(table) == set(pr_cli._COMMANDS)
+
+
+@pytest.mark.parametrize("command", sorted(_RESOLVES_LOCALLY))
+def test_command_resolves_at_its_declared_depth(command, tmp_path):
+    stage = _dispatch_stage(command, ctx=make_ctx(target_dir=tmp_path / "target"))
+    local = _RESOLVES_LOCALLY[command]
+    assert stage.local.called is local
+    assert stage.remote.called is not local
+
+
+@pytest.mark.parametrize("command", sorted(_FETCHES))
+def test_command_fetches_only_if_it_always_did(command, tmp_path):
+    stage = _dispatch_stage(command, ctx=make_ctx(target_dir=tmp_path / "target"))
+    assert stage.update.called is _FETCHES[command]
+
+
+@pytest.mark.parametrize("command", sorted(_LOCKS))
+def test_command_locks_only_if_it_always_did(command, tmp_path):
+    target = tmp_path / "target"
+    _dispatch_stage(command, ctx=make_ctx(target_dir=target))
+    assert _lock_file(target).is_file() is _LOCKS[command]
+
+
+def test_an_explicit_pr_escalates_the_depth_and_nothing_else(tmp_path):
+    """A PR number names a branch only `gh` can report, and the branch is half
+    the run's target key — resolving status locally anyway would read the
+    directory of whatever branch happened to be checked out. The other two axes
+    are independent, so escalating must not drag them along."""
+    target = tmp_path / "target"
+    stage = _dispatch_stage("--pr", _TEST_PR, "status", ctx=make_ctx(target_dir=target))
+    assert stage.remote.called
+    assert not stage.local.called
+    assert not stage.update.called
+    assert not _lock_file(target).exists()
 
 
 def test_gc_sweeps_every_legacy_worktree_artifact(tmp_path):

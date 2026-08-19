@@ -346,6 +346,41 @@ def test_repo_key_from_origin_is_none_without_an_origin(tmp_path):
     assert pr_target.repo_key_from_origin(str(path)) is None
 
 
+@pytest.mark.parametrize("origin,expected", [
+    ("git@github.com:acme/widget.git", "acme/widget"),
+    ("https://github.com/Acme/Widget.GIT", "acme/widget"),
+    ("https://gitlab.com/group/subgroup/widget.git", "group/subgroup/widget"),
+    ("/srv/git/widget.git", "widget"),
+])
+def test_repo_label_from_origin_reads_the_remote(tmp_path, origin, expected):
+    """The readable name, for callers that must not pay for `gh repo view`."""
+    assert pr_target.repo_label_from_origin(
+        str(_git_repo(tmp_path / "wt", origin))) == expected
+
+
+def test_repo_label_from_origin_is_none_without_an_origin(tmp_path):
+    path = tmp_path / "wt"
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    assert pr_target.repo_label_from_origin(str(path)) is None
+
+
+def test_repo_label_from_origin_is_none_when_the_remote_names_no_repo(tmp_path):
+    """An origin with no path has no canonical form, so it has no label — the
+    same condition under which it has no key."""
+    wt = _git_repo(tmp_path / "wt", "ssh://git@github.com/")
+    assert pr_target.repo_label_from_origin(str(wt)) is None
+    assert pr_target.repo_key_from_origin(str(wt)) is None
+
+
+def test_repo_label_and_key_name_one_repo(tmp_path):
+    """Both derive from the canonical form, so a checkout cannot report a label
+    and a key that disagree about which repo it is."""
+    wt = _git_repo(tmp_path / "wt", "https://github.com/Acme/Widget.git")
+    label = pr_target.repo_label_from_origin(str(wt))
+    assert pr_target.repo_key_from_origin(str(wt)).startswith(pr_target.slug(label))
+
+
 def test_target_dir_for_checkout_matches_target_dir(tmp_path, monkeypatch):
     """The two derivations of one identity, asserted equal rather than assumed."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))

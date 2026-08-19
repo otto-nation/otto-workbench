@@ -686,6 +686,45 @@ and its module docstring states the rule in full; a reimplementation should
 assert against both published fixtures in `tests/pr_target_test.py` —
 `SLUG_VECTORS` for the branch slug and `REPO_KEY_VECTORS` for the repo key.
 
+### What each `pr` command needs before it runs
+
+Every subcommand declares what dispatch owes it, in its `_COMMANDS` entry in
+[`ai/claude/bin/pr`](../ai/claude/bin/pr). Three independent axes, because they
+routinely disagree:
+
+| Axis | What it decides |
+|---|---|
+| **depth** | `local` resolves from git alone; `remote` adds the `gh` calls that name the repo and the PR |
+| **fetch** | whether the worktree is fetched and fast-forwarded first |
+| **lock** | whether the target's `run.lock` is held for the whole run |
+
+| Command | Depth | Fetch | Lock |
+|---|---|---|---|
+| `create` | remote | no | yes |
+| `status` | local | no | **no** |
+| `ci` | remote | yes | yes |
+| `review` | remote | yes | yes |
+| `comments` | remote | yes | yes |
+| `fix` | remote | yes | yes |
+| `rebase` | remote | no | yes |
+| `describe` | remote | yes | yes |
+| `gc` | remote | no | yes |
+
+`rebase` is the reason the axes are separate: it needs `gh` to name its PR and
+does its own fetch, so a single "is this command remote?" flag would either
+strand it or reset the worktree under it.
+
+A command that declares nothing fails at import rather than silently picking up
+a default — `_validate_needs` is the check, and it is what makes adding a
+command a one-line edit in one place.
+
+`status` is the only local one. It reads `state.json` and the worktree's push
+state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
+`state.json` yet, the header names the repo from the origin-derived label
+behind the repo key (`acme/widget`) rather than from `gh`. An explicit
+`--pr <n>` escalates it to `remote` anyway — a PR number names a branch only
+`gh` can report, and the branch is half the target key.
+
 Every script's trail goes to one root — `~/.local/state/workbench/trail/YYYY-MM.jsonl`,
 one file per month. `otto-log recent --repo <org/repo>` narrows it to one repo;
 `otto-log query --pr <n>` finds every record for one PR, including the terminal

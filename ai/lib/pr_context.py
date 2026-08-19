@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field, replace as dataclass_replace
+from enum import Enum
 from pathlib import Path
 
 import log
@@ -100,6 +101,38 @@ class ResolvedContext:
         return self.worktree_root
 
 
+class ContextDepth(Enum):
+    """How far a caller needs context resolved — which rung of the ladder runs.
+
+    The values name the deepest source consulted: LOCAL is git alone, REMOTE
+    adds ``gh``. Independent of whether the caller then fetches
+    (``update_to_remote``) or takes the run lock — a command declares all three
+    separately.
+    """
+
+    LOCAL = "local"
+    REMOTE = "remote"
+
+
+def resolve_at(
+    depth: ContextDepth,
+    *,
+    pr: str | None = None,
+    branch: str | None = None,
+    repo_dir: str | None = None,
+) -> ResolvedContext:
+    """Resolve at *depth*, escalating to REMOTE when a ``--pr`` demands it.
+
+    A PR number names a branch only ``gh`` can report, and the branch is half
+    the run's target key — resolving locally anyway would take the lock and
+    write state under whatever branch happens to be checked out. So an explicit
+    PR reference wins over the declared depth rather than being ignored.
+    """
+    if depth is ContextDepth.LOCAL and pr is None:
+        return resolve_local(branch=branch, repo_dir=repo_dir)
+    return resolve(pr=pr, branch=branch, repo_dir=repo_dir)
+
+
 def resolve(
     *,
     pr: str | None = None,
@@ -161,6 +194,58 @@ def resolve(
         current_branch=current,
         target_dir=pr_target.target_dir(_target_repo_key(cwd), branch_name),
     )
+
+
+def resolve_local(
+    *,
+    branch: str | None = None,
+    repo_dir: str | None = None,
+) -> ResolvedContext:
+    """Resolve as much context as git alone can answer — no ``gh``, no network.
+
+    The shallow rung of ``ContextDepth``, for commands that only need to find
+    the run's target directory and its worktree. Two consequences the caller
+    signs up for by asking for this depth:
+
+    * ``pr_number`` is always None and ``repo`` is the canonical form behind the
+      repo key (``acme/widget``), not ``gh``'s ``owner/repo`` — see
+      ``pr_target.repo_label_from_origin``.
+    * A bare repo hands back an existing worktree but never creates one, so
+      ``worktree_root`` can be None where ``resolve`` would have made a
+      checkout. Commands needing one call ``require_worktree``.
+
+    ``target_dir`` is identical to what ``resolve`` computes for the same
+    branch: both key on ``(origin repo key, branch)``, neither reads the network.
+    """
+    cwd = repo_dir
+
+    worktree_root, cwd = _resolve_worktree(
+        cwd, pr=None, branch=branch, create_missing=False,
+    )
+
+    branch_name = _resolve_branch(branch, cwd) if branch else _current_branch(cwd)
+
+    return ResolvedContext(
+        repo=_target_repo_label(cwd),
+        pr_number=None,
+        branch=branch_name,
+        worktree_root=worktree_root,
+        head_sha=_head_sha(cwd) if worktree_root else "",
+        current_branch=_current_branch_quiet(cwd) if worktree_root else None,
+        target_dir=pr_target.target_dir(_target_repo_key(cwd), branch_name),
+    )
+
+
+def _target_repo_label(cwd: str | None) -> str:
+    """The repo named readably, or exit 1 for the same reason the key would.
+
+    Both come from ``origin``, so a checkout that cannot name one cannot name
+    the other — failing here keeps the message identical either way.
+    """
+    label = pr_target.repo_label_from_origin(cwd)
+    if label:
+        return label
+    return _target_repo_key(cwd)
 
 
 def _target_repo_key(cwd: str | None) -> str:
@@ -353,11 +438,19 @@ def _resolve_worktree(
     *,
     pr: str | None,
     branch: str | None,
+    create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
-    """Resolve worktree root, handling bare repos transparently."""
+    """Resolve worktree root, handling bare repos transparently.
+
+    ``create_missing`` is the bare-repo escape hatch: with it False a bare repo
+    hands back only worktrees that already exist. Defaulted True and left unset
+    by ``resolve`` so that the deep rung keeps creating them.
+    """
     toplevel = _git_toplevel(cwd)
     if toplevel is None:
-        return _resolve_non_worktree(cwd, pr=pr, branch=branch)
+        return _resolve_non_worktree(
+            cwd, pr=pr, branch=branch, create_missing=create_missing,
+        )
 
     if branch:
         wt = _redirect_to_branch_worktree(branch, cwd or str(toplevel))
@@ -371,10 +464,13 @@ def _resolve_non_worktree(
     *,
     pr: str | None,
     branch: str | None,
+    create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
     """Handle bare repos and non-git directories."""
     if is_bare_repo(cwd):
-        return _resolve_bare(cwd, pr=pr, branch=branch)
+        return _resolve_bare(
+            cwd, pr=pr, branch=branch, create_missing=create_missing,
+        )
 
     if not pr and not branch:
         log.error("Not in a git repository")
@@ -387,9 +483,11 @@ def _resolve_bare(
     *,
     pr: str | None,
     branch: str | None,
+    create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree from a bare repo."""
-    wt = resolve_bare_repo_worktree(cwd, branch)
+    wt = (resolve_bare_repo_worktree(cwd, branch) if create_missing
+          else find_bare_repo_worktree(cwd, branch))
     if wt:
         return wt, str(wt)
     if not pr and not branch:
@@ -687,24 +785,20 @@ def default_branch(cwd: str | Path | None = None) -> str:
     return ref.replace("refs/remotes/origin/", "") if ref else "main"
 
 
-def resolve_bare_repo_worktree(
+def find_bare_repo_worktree(
     cwd: str | None, branch: str | None,
 ) -> Path | None:
-    """Best-effort worktree discovery for bare repos.
+    """Worktree discovery for bare repos, creating nothing.
 
-    Tries the requested branch first (with fuzzy resolution), then creates a
-    worktree for it. Only falls back to the default branch's worktree when no
-    branch was requested at all.
+    Tries the requested branch (with fuzzy resolution). Only falls back to the
+    default branch's worktree when no branch was requested at all.
 
     Never substitutes another branch's worktree for an explicitly requested
     branch: callers check the branch out, so handing back the default branch's
-    worktree makes them displace it. See create_worktree_for_branch.
+    worktree makes them displace it.
     """
     if branch:
-        wt = _find_worktree_by_branch(branch, cwd)
-        if wt:
-            return wt
-        return create_worktree_for_branch(branch, cwd)
+        return _find_worktree_by_branch(branch, cwd)
 
     # With no branch requested this is "give me a working directory for this
     # repo", not "is this worktree on <default>" — so the directory named after
@@ -716,3 +810,18 @@ def resolve_bare_repo_worktree(
         find_worktree_for_branch(default, cwd)
         or find_worktree_dir_named(default, cwd)
     )
+
+
+def resolve_bare_repo_worktree(
+    cwd: str | None, branch: str | None,
+) -> Path | None:
+    """The same discovery, creating a worktree for *branch* when it is missing.
+
+    Creating a checkout is a side effect a caller has to ask for, which is why
+    it lives here rather than in find_bare_repo_worktree: a command that only
+    reads state should not leave a worktree behind. See create_worktree_for_branch.
+    """
+    wt = find_bare_repo_worktree(cwd, branch)
+    if wt or not branch:
+        return wt
+    return create_worktree_for_branch(branch, cwd)

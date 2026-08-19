@@ -108,6 +108,32 @@ class TestExtractPath:
         path, line, end = rp._extract_path("`session_log` defaults to empty")
         assert (path, line, end) == ("", None, None)
 
+    def test_path_with_space(self, rp):
+        path, line, end = rp._extract_path("**`src/my notes.py`**")
+        assert (path, line, end) == ("src/my notes.py", None, None)
+
+    def test_path_with_space_and_line_number(self, rp):
+        path, line, end = rp._extract_path("**`src/my notes.py:42`**")
+        assert (path, line, end) == ("src/my notes.py", 42, None)
+
+    def test_non_ascii_path(self, rp):
+        path, line, end = rp._extract_path("**`src/café.py:7`**")
+        assert (path, line, end) == ("src/café.py", 7, None)
+
+    def test_space_and_non_ascii_path_with_line_range(self, rp):
+        path, line, end = rp._extract_path("**`src/café brûlé.py:12-18`**")
+        assert (path, line, end) == ("src/café brûlé.py", 12, 18)
+
+    def test_spaced_prose_span_is_not_a_path(self, rp):
+        """Admitting spaces must not let a sentence read as a filename."""
+        path, line, end = rp._extract_path("**the retry loop never terminates**")
+        assert (path, line, end) == ("", None, None)
+
+    def test_spaced_prose_span_with_a_version_number_is_not_a_path(self, rp):
+        """A dotted token mid-sentence is not the extension of a spaced path."""
+        path, line, end = rp._extract_path("**the fix lands in v2.0 of the tool**")
+        assert (path, line, end) == ("", None, None)
+
 
 class TestExtractBodyText:
     def test_em_dash_separator(self, rp):

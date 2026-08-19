@@ -639,16 +639,15 @@ class CloseoutDebt:
 
     The queue's only symptom is the *absence* of comments on the PR, which is
     indistinguishable from a run that had nothing to say — so every surface
-    that reports on a fix pass has to say the debt out loud (#774).
+    that reports on a fix pass has to say the debt out loud.
     """
 
     summary: bool = False
     replies: bool = False
-    # How many replies are owed, recounted here from the recorded outcomes
-    # rather than read off a number the fix pass stored. That makes it advisory
-    # only — a queue whose outcome list was pruned still owes its replies via
-    # `replies` while this reads 0. `replies` alone decides whether anything is
-    # owed; this only sharpens the wording when the outcomes are still around.
+    # Recounted from the recorded outcomes rather than read off a stored number,
+    # which makes it advisory: a queue whose outcomes were pruned still owes its
+    # replies via `replies` while this reads 0. `replies` alone decides whether
+    # anything is owed; the count only sharpens the wording.
     reply_count: int = 0
 
     @property
@@ -661,8 +660,7 @@ class CloseoutDebt:
         if self.summary:
             parts.append("summary")
         if self.replies:
-            # A queue whose outcomes were pruned still says replies are owed
-            # rather than claiming zero of them.
+            # An uncounted queue reads as replies owed, never as zero of them.
             noun = "reply" if self.reply_count == 1 else "replies"
             parts.append(f"{self.reply_count} {noun}" if self.reply_count else "replies")
         return " + ".join(parts)

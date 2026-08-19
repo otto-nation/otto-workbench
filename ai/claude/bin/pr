@@ -288,9 +288,9 @@ def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> st
     has_must_fix = state.review.finding_counts.get("M", 0) > 0 if state.review.updated_at else None
     has_blockers = bool(state.comments.blocking_reviewers) if state.comments.updated_at else None
     review_incomplete = state.review.status in ("partial", "error") if state.review.updated_at else False
-    # A summary or a reply queue the fix pass rendered and never sent. The PR
-    # reads as un-reviewed until --finish drains it, so merging on it merges
-    # work no reviewer was told about (#774).
+    # A summary or reply queue the fix pass rendered and never sent. The PR reads
+    # as un-reviewed until --finish drains it, so merging leaves reviewers with no
+    # record of the work.
     closeout_owed = pr_comments.closeout_debt(state.fix).owed
 
     pushed = unpushed == 0

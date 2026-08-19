@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import log
+import prompt
 import publishing
 import workbench_config
 from workbench_config import yaml_dump
@@ -32,10 +33,18 @@ class IssueProviderInfo:
 
     Named apart from ``workbench_config.IssueProvider``, the enum of provider
     names this carries in ``name`` — the two are in scope together here.
+
+    An empty ``name`` means no repo and no machine has said where issues go.
+    Read ``resolved`` rather than testing the string, so a call site states
+    what it is asking.
     """
 
-    name: str = str(workbench_config.IssueProvider.LINEAR)
+    name: str = ""
     options: dict = field(default_factory=dict)
+
+    @property
+    def resolved(self) -> bool:
+        return bool(self.name)
 
 
 @dataclass(frozen=True)
@@ -105,6 +114,91 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     options = {k: str(v) for k, v in dataclasses.asdict(tracker).items() if v}
     name = str(tracker.provider) if tracker.provider is not None else ""
     return IssueProviderInfo(name=name, options=options)
+
+
+# Providers whose issue creation needs a team or project key. GitHub is
+# addressed by repo, so requiring one there rejects a creation that would
+# have worked.
+_TEAM_KEY_PROVIDERS = frozenset({
+    str(workbench_config.IssueProvider.LINEAR),
+    str(workbench_config.IssueProvider.JIRA),
+})
+
+_SCOPE_ALL = "all"
+
+
+def needs_team_key(provider: str) -> bool:
+    """Whether creating an issue with this provider requires a team key."""
+    return provider in _TEAM_KEY_PROVIDERS
+
+
+def ensure_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
+    """The issue tracker for this scope, asking for it when nothing has said.
+
+    For callers that are about to file. ``load_issue_provider`` is the one to
+    use when a missing tracker is survivable — enriching a review with issue
+    context needs no tracker and must not stop to ask for one.
+
+    An unanswered, declined, or unrecognised question leaves the provider
+    unresolved. Nothing is written in those cases: a prompt that records
+    something on a non-answer is another way to arrive at a guess, which is
+    what this function exists to remove.
+    """
+    info = load_issue_provider(wt_path)
+    if info.resolved:
+        return info
+
+    where = wt_path or "this repo"
+    accepted = [str(p) for p in workbench_config.IssueProvider]
+    if not prompt.interactive():
+        log.warn(
+            f"No issue tracker configured for {where} — set "
+            f"{workbench_config.ISSUE_PROVIDER_KEY} to one of "
+            f"{', '.join(accepted)} in {workbench_config.PROJECT_CONFIG_NAME}",
+        )
+        return info
+
+    answer = prompt.ask(
+        f"Where does {where} file issues? ({'/'.join(accepted)}, Enter to skip): ",
+    ).lower()
+    if not answer:
+        log.warn(
+            f"No issue tracker recorded for {where} — nothing was filed",
+        )
+        return info
+    if answer not in accepted:
+        log.warn(f"'{answer}' is not one of {', '.join(accepted)} — nothing was recorded")
+        return info
+
+    _record_issue_provider(answer, wt_path)
+    return IssueProviderInfo(name=answer, options={**info.options, "provider": answer})
+
+
+def _record_issue_provider(provider: str, wt_path: str | None) -> None:
+    """Persist the answer at the scope the user picks.
+
+    A failed write is reported and swallowed: the caller has an answer for
+    this run either way, and a read-only checkout should cost the recording
+    rather than the filing. ``adopt_project_review_yml`` makes the same trade.
+    """
+    scope = prompt.ask(
+        f"Record for this repo or all repos? (repo/{_SCOPE_ALL}, Enter for repo): ",
+    ).lower() if wt_path else _SCOPE_ALL
+    scope_all = scope == _SCOPE_ALL
+    try:
+        if scope_all:
+            workbench_config.set_value(workbench_config.ISSUE_PROVIDER_KEY, provider)
+            log.ok(f"Recorded {provider} as the tracker for all repos")
+            return
+        workbench_config.set_project_value(
+            workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
+        )
+        log.ok(
+            f"Recorded {provider} in {workbench_config.PROJECT_CONFIG_NAME} "
+            f"— commit it so the repo keeps the answer",
+        )
+    except workbench_config.ConfigError as exc:
+        log.dim(f"could not record the tracker ({exc}) — using {provider} for this run")
 
 
 def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:

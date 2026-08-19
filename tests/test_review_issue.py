@@ -13,9 +13,10 @@ if str(LIB_DIR) not in sys.path:
 
 from review_issue import (
     IssueContext, IssueProviderInfo, CreatedIssue,
-    load_issue_provider, extract_issue_id,
-    fetch_issue_context, create_issue, update_issue,
+    load_issue_provider, ensure_issue_provider, extract_issue_id,
+    needs_team_key, fetch_issue_context, create_issue, update_issue,
 )
+import workbench_config
 
 
 # ── extract_issue_id: ported from bats ─────────────────────────────────────
@@ -84,6 +85,7 @@ def test_jira_falls_back_to_pr_body():
 def test_load_issue_provider_is_unresolved_without_config(tmp_path):
     result = load_issue_provider(str(tmp_path))
     assert result.name == ""
+    assert result.resolved is False
     assert result.options == {}
 
 
@@ -106,6 +108,113 @@ def test_load_issue_provider_falls_back_to_the_global_config(tmp_path, monkeypat
     result = load_issue_provider(str(tmp_path / "elsewhere"))
     assert result.name == "jira"
     assert result.options["jira_url"] == "https://j.example"
+
+
+# ── needs_team_key ──────────────────────────────────────────────────────────
+
+
+def test_needs_team_key_is_true_for_linear_and_jira():
+    assert needs_team_key("linear") is True
+    assert needs_team_key("jira") is True
+
+
+def test_needs_team_key_is_false_for_github():
+    """gh issue create takes a repo, not a team."""
+    assert needs_team_key("github") is False
+
+
+# ── ensure_issue_provider ───────────────────────────────────────────────────
+
+
+def test_ensure_issue_provider_returns_a_declared_provider_without_asking(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+    (tmp_path / ".workbench.yml").write_text(
+        "review:\n  issue_tracker:\n    provider: github\n",
+    )
+    with patch("review_issue.prompt.ask") as asked:
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.name == "github"
+    asked.assert_not_called()
+
+
+def test_ensure_issue_provider_warns_and_stays_unresolved_without_a_tty(
+    tmp_path, monkeypatch, capsys,
+):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+    with patch("review_issue.prompt.interactive", return_value=False):
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.resolved is False
+    err = capsys.readouterr().err
+    assert "review.issue_tracker.provider" in err
+    assert str(tmp_path) in err
+
+
+def test_ensure_issue_provider_records_the_answer_for_the_repo(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", side_effect=["github", "repo"]):
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.name == "github"
+    assert "provider: github" in (tmp_path / ".workbench.yml").read_text()
+    assert not (config_dir / "config.yml").exists()
+
+
+def test_ensure_issue_provider_records_the_answer_for_all_repos(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", side_effect=["linear", "all"]):
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.name == "linear"
+    assert "provider: linear" in (config_dir / "config.yml").read_text()
+    assert not (tmp_path / ".workbench.yml").exists()
+
+
+def test_ensure_issue_provider_does_not_record_a_declined_answer(tmp_path, monkeypatch):
+    """An empty answer must not write a value — that is how a guess gets in."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", return_value=""):
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.resolved is False
+    assert not (tmp_path / ".workbench.yml").exists()
+    assert not (config_dir / "config.yml").exists()
+
+
+def test_ensure_issue_provider_rejects_an_unrecognised_answer(tmp_path, monkeypatch, capsys):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", return_value="bitbucket"):
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.resolved is False
+    assert "bitbucket" in capsys.readouterr().err
+    assert not (tmp_path / ".workbench.yml").exists()
+
+
+def test_ensure_issue_provider_still_resolves_when_the_write_fails(tmp_path, monkeypatch):
+    """A read-only checkout costs the recording, not the run."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", side_effect=["github", "repo"]), \
+         patch(
+             "review_issue.workbench_config.set_project_value",
+             side_effect=workbench_config.ConfigError("read-only"),
+         ):
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.name == "github"
 
 
 # ── fetch_issue_context ────────────────────────────────────────────────────

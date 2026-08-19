@@ -106,7 +106,9 @@ _ensure_gh_repo_access() {
 }
 
 # load_pr_context
-# Loads the AI command and resolves the current branch context.
+# Loads the AI command and resolves the current branch context, then verifies
+# the resolved default branch has a remote-tracking ref (resolve_default_branch
+# can fall back to a guessed name that doesn't exist locally).
 # Must be called before generate_pr_content or push_branch.
 # Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure.
 load_pr_context() {
@@ -125,6 +127,13 @@ load_pr_context() {
 
   if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
     echo "✗ PR operations cannot be run from the $DEFAULT_BRANCH branch"
+    return 1
+  fi
+
+  if ! git show-ref --verify --quiet "refs/remotes/$GIT_REMOTE/$DEFAULT_BRANCH"; then
+    echo "✗ $GIT_REMOTE/$DEFAULT_BRANCH does not resolve — cannot open a PR against a base that doesn't exist"
+    echo "→ Fix with: git fetch $GIT_REMOTE"
+    echo "→ If $DEFAULT_BRANCH is a guess and the real default branch differs, also run: git remote set-head $GIT_REMOTE -a"
     return 1
   fi
 }

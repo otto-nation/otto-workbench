@@ -398,7 +398,7 @@ PR content generation: title, description, issue linking, template loading.
 |----------|---------|
 | `push_branch BRANCH` | Pushes BRANCH to remote, handling first-push and divergence cases. |
 | `create_pr GH_ARGS...` | Runs `gh pr create` with the given arguments and reports the resulting PR URL. |
-| `load_pr_context` | Loads the AI command and resolves the current branch context. |
+| `load_pr_context` | Loads the AI command and resolves the current branch context, then verifies the resolved default branch has a remote-tracking ref (resolve_default_branch can fall back to a guessed name that doesn't exist locally). |
 | `parse_pr_flags ARGS` | Parses PR-specific flags from the CLI_ARGS string. |
 | `load_pr [ARGS]` | Parses PR flags from ARGS, then loads the PR context. |
 | `generate_pr_content BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set). |

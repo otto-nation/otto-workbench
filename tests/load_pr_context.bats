@@ -63,3 +63,21 @@ teardown() {
   load_pr_context
   [ "$DEFAULT_BRANCH" = "trunk" ]
 }
+
+@test "refuses when the resolved default branch has no remote-tracking ref" {
+  make_fake_gh 0 ""
+  make_fake_binary "$TMPDIR/bin" "fake-ai"
+  make_ai_config "$TMPDIR" "fake-ai"
+  export GH_TOKEN="github_pat_test"
+
+  # No origin/HEAD symref (no `remote set-head` call) and the remote's only
+  # branch is "trunk" — resolve_default_branch finds neither a symref nor an
+  # origin/main or origin/master ref, so it falls back to the literal guess
+  # "main", which does not exist as a remote-tracking ref in this repo.
+  _make_repo_no_default_branch "$TMPDIR" "trunk" "feature/test"
+
+  cd "$TMPDIR/repo"
+  run load_pr_context
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"origin/main"* ]]
+}

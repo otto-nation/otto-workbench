@@ -34,6 +34,11 @@ DEFAULT_CACHE_DIR = "~/.cache/workbench"
 TRAIL_DIRNAME = "trail"
 REVIEWS_DIRNAME = "reviews"
 
+# The registry of repos on this machine that use the workbench. ``lib/
+# constants.sh`` spells the same filename as PROJECTS_REGISTRY_NAME;
+# ``tests/workbench_roots.bats`` fails when the two drift.
+PROJECTS_REGISTRY_NAME = "projects.registry"
+
 
 def _root(env_var: str, xdg_var: str, fallback: str) -> Path:
     override = os.environ.get(env_var)
@@ -106,6 +111,18 @@ def reviews_dir() -> Path:
     ``tests/workbench_roots.bats`` holds to this value.
     """
     return state_dir() / REVIEWS_DIRNAME
+
+
+def projects_registry() -> Path:
+    """The repos that use the workbench, one absolute path per line.
+
+    ``lib/projects.sh`` is the shell owner of the same file — it holds the
+    membership rules and the CLI, and this side holds the writes the Python
+    tools make. ``workbench_projects`` is where those reads and writes live;
+    this function only names the path, so the two languages cannot disagree
+    about it.
+    """
+    return state_dir() / PROJECTS_REGISTRY_NAME
 
 
 # Where per-worktree state lived before the roots were split. Nothing writes

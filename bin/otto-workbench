@@ -87,8 +87,17 @@ COMMANDS=(
   "sync"                              "Re-apply all workbench configuration to ~/"
   "ai <subcmd>"                       "Manage AI tools — scaffold projects, sync config, manage overrides"
   "discover [regenerate]"             "Show installed components, scripts, and launchd agents"
+  "projects <subcmd>"                 "The repos on this machine that use the workbench"
   "maintenance <subcmd>"              "Scheduled pull, sync, and cleanup via launchd"
   "changelog"                         "Show recent changes from conventional commits"
+)
+
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS_PROJECTS=(
+  "list"           "List the registered repos that still exist"
+  "add [DIR]"      "Register DIR's repo (default: the current one)"
+  "forget DIR"     "Drop DIR's entry"
+  "prune"          "Delete entries whose directory is gone, and repeats"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
@@ -435,6 +444,10 @@ EOF
 
   cd "$project_root"
 
+  # Scaffolding a repo is as clear a statement that it uses the workbench as
+  # there is, and the root is already resolved here.
+  project_register "$project_root" || true
+
   local did_scaffold=false
   if [[ -d ".claude" ]] && [[ -z "$force_flag" ]]; then
     info "Project .claude/ exists — skipping scaffold (use --force to re-scaffold)"
@@ -517,6 +530,124 @@ cmd_ai() {
 
 cmd_changelog() {
   bash "$WORKBENCH_DIR/git/bin/generate-changelog" "$@"
+}
+
+# ─── Project registry ────────────────────────────────────────────────────────
+#
+# The list itself lives in lib/projects.sh; everything here is presentation.
+
+_projects_usage() {
+  cat <<EOF
+Usage: otto-workbench projects [command]
+
+The repos on this machine that use otto-workbench. A repo joins the list the
+first time a workbench command runs in it — no directory is ever scanned for
+candidates. Entries whose directory is gone are skipped on read; 'prune' is
+what deletes them.
+
+Commands:
+$(commands_usage COMMANDS_PROJECTS)
+EOF
+}
+
+# _projects_abs DIR — DIR as the path the registry would have stored for it.
+#
+# Entries are always what `git rev-parse --show-toplevel` returned: absolute,
+# symlink-resolved, and the work-tree root rather than whatever subdirectory the
+# caller happened to be in. `forget` compares by exact string, so anything the
+# user can reasonably type — a relative path, one with `..` in it, one reaching
+# through a symlink, a path inside the repo — has to arrive in that same form or
+# a valid request fails as "not in the registry".
+#
+# A directory that is gone can only be normalised lexically, which is the right
+# answer for it: the entry it matches was written while it still existed.
+_projects_abs() {
+  local dir="${1%/}" root
+  root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || root=""
+  if [[ -n "$root" ]]; then
+    printf '%s\n' "$root"
+    return 0
+  fi
+  if [[ -d "$dir" ]]; then
+    (cd "$dir" && pwd -P)
+    return 0
+  fi
+  if [[ "$dir" == /* ]]; then
+    printf '%s\n' "$dir"
+    return 0
+  fi
+  printf '%s\n' "${PWD%/}/${dir#./}"
+}
+
+cmd_projects_list() {
+  local dir count=0
+  while IFS= read -r dir; do
+    printf '  %s\n' "${dir/#$HOME/~}"
+    count=$(( count + 1 ))
+  done < <(project_registered | sort)
+
+  if (( count == 0 )); then
+    info "No repos registered yet — one joins the list the first time a workbench command runs in it"
+    return 0
+  fi
+  echo
+  info "$count repo(s) — ${PROJECTS_REGISTRY_FILE/#$HOME/~}"
+}
+
+cmd_projects_add() {
+  local dir="${1:-$PWD}" root rc=0
+  root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || root=""
+  if [[ -z "$root" ]]; then
+    err "Not a git work tree: $dir"
+    return 1
+  fi
+
+  project_register "$root" || rc=$?
+  if (( rc == 0 )); then
+    success "Registered $root"
+    return 0
+  fi
+  if (( rc == 2 )); then
+    err "Could not write ${PROJECTS_REGISTRY_FILE/#$HOME/~} — $root qualifies but the registry is unwritable"
+    return 1
+  fi
+  err "Refused $root — a temporary path or a bare repo's container, not a project"
+  return 1
+}
+
+cmd_projects_forget() {
+  if [[ -z "${1:-}" ]]; then
+    err "Usage: otto-workbench projects forget DIR"
+    return 1
+  fi
+  local dir
+  dir="$(_projects_abs "$1")"
+  if project_forget "$dir"; then
+    success "Forgot $dir"
+    return 0
+  fi
+  err "Not in the registry: $dir"
+  return 1
+}
+
+cmd_projects_prune() {
+  local dropped
+  dropped="$(project_prune)"
+  success "Pruned $dropped entry(s)"
+}
+
+cmd_projects() {
+  local subcmd="${1:-list}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    list)      cmd_projects_list ;;
+    add)       cmd_projects_add "${1:-$PWD}" ;;
+    forget)    cmd_projects_forget "${1:-}" ;;
+    prune)     cmd_projects_prune ;;
+    -h|--help) _projects_usage; return 0 ;;
+    *)         _projects_usage >&2; return 1 ;;
+  esac
 }
 
 # ─── Maintenance ─────────────────────────────────────────────────────────────
@@ -1126,6 +1257,7 @@ case "${1:-}" in
   sync)       cmd_sync ;;
   ai)         shift; cmd_ai "$@" ;;
   discover)   shift; cmd_discover "$@" ;;
+  projects)   shift; cmd_projects "$@" ;;
   maintenance) shift; cmd_maintenance "$@" ;;
   changelog)  shift; cmd_changelog "$@" ;;
   -h|--help) usage; exit 0 ;;

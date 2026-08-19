@@ -16,7 +16,7 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 . "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 ```
 
-`ui.sh` is a facade — it sources `output.sh`, `prompts.sh`, `files.sh`, `constants.sh`, `setup.sh`, `state.sh`, and `migrations.sh`. Modules not in the facade (`registries.sh`, `summary.sh`, `conventions.sh`, `lib/ai/*`) are sourced directly by their consumers. `roots.sh` reaches the facade through `constants.sh`, and is also sourced on its own by consumers that need the roots without the rest of the framework.
+`ui.sh` is a facade — it sources `output.sh`, `prompts.sh`, `files.sh`, `constants.sh`, `setup.sh`, `state.sh`, `projects.sh`, and `migrations.sh`. Modules not in the facade (`registries.sh`, `summary.sh`, `conventions.sh`, `lib/ai/*`) are sourced directly by their consumers. `roots.sh` reaches the facade through `constants.sh`, and is also sourced on its own by consumers that need the roots without the rest of the framework.
 
 ## Core Modules
 
@@ -189,6 +189,38 @@ Component installation state tracking.
 <!-- LIB-FUNCTIONS:state.sh-END -->
 
 State file: `$INSTALL_YML_FILE` — `install.yml` under the [state root](#rootssh). The flat `installed.components` it replaced survives only as the second half of `state_file_exists`. Loaded via `ui.sh`.
+
+### projects.sh
+
+The repos on this machine that use otto-workbench.
+
+<!-- LIB-FUNCTIONS:projects.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `project_register DIR` | record DIR as a repo that uses the workbench. |
+| `project_registered` | print every registered repo that still exists, one per line. |
+| `project_forget DIR` | drop DIR's entry. Returns 1 when it had none. |
+| `project_prune` | drop entries whose directory is gone, and repeats. Prints how many went. |
+<!-- LIB-FUNCTIONS:projects.sh-END -->
+
+State file: `$PROJECTS_REGISTRY_FILE` — `projects.registry` under the [state root](#rootssh), one absolute path per line with `#` comment lines. Text rather than YAML for the reason `migrations.applied` is: every write is an append and every read is a scan, and YAML would pay a `yq` fork on each of them. Loaded via `ui.sh`.
+
+Membership means a workbench command actually ran in a repo. Nothing scans for candidates — the two consumers that used to, the machine profile generator and the project-scoped migrations, each carried their own guessed-at list of git roots and a depth limit, so a repo cloned anywhere else was invisible and the migration recorded itself applied all the same. Registration is an observation, so it can only ever be late; `otto-workbench projects add` is what covers a repo that joined after something needed to see it. The registrations are:
+
+| Caller | Where the root comes from |
+|--------|---------------------------|
+| Claude's SessionStart hook (`reuse-session-start`) | already resolved for the ceiling scan |
+| `pr` | `ctx.worktree_root` |
+| `otto-workbench ai init` | the repo being scaffolded |
+| `otto-workbench projects add [DIR]` | by hand, for a repo that uses neither |
+
+`project_register` does no discovery of its own and forks nothing: every caller has a resolved work-tree root in hand. A path under `$TMPDIR`, `/tmp`, `/var/folders`, or the workbench's own state or cache root is refused — `bats` builds throwaway repos there and runs validators and pre-commit hooks inside them. The `/private` twins of the temp roots are listed too, because callers hand over a path `git rev-parse --show-toplevel` already resolved and those two are symlinks into `/private` on macOS. A bare repo's container is refused as well, holding worktrees rather than being one. `PROJECTS_EXCLUDED_PREFIXES` is assignable so a test can register the repos it builds, which are all temporary.
+
+Reads drop entries whose directory is gone, which is what saves the registry from needing a pruning job; `otto-workbench projects prune` makes the drop permanent. Repeats are dropped on read for a related reason: registration is an append guarded by a membership check rather than a lock, so two workbench commands starting in one repo at the same moment can each read "absent" and each append. Absorbing that where it is read costs nothing; a lock would tax every hook to prevent a duplicate line.
+
+`otto-workbench projects forget DIR` canonicalises `DIR` before matching — entries are stored as `git rev-parse --show-toplevel` returned them, and the comparison is an exact string, so a relative path, one holding `..`, one reaching through a symlink, or one naming a subdirectory of the repo all have to arrive in that form or a valid request reads as "not in the registry". A directory that is already gone can only be normalised lexically, which is the right answer for it: whatever entry it matches was written while it still existed.
+
+[`ai/lib/workbench_projects.py`](../ai/lib/workbench_projects.py) is the Python half — the SessionStart hook and `pr` register through it, against the same file in the same shape. It raises nothing: registration is a side effect of a command run for some other reason, and a hook that died on an unwritable state file would cost a session for a bookkeeping entry. The filename is declared once in [`constants.sh`](#constantssh) as `PROJECTS_REGISTRY_NAME` and once in `workbench_paths.py`; `tests/workbench_roots.bats` fails when the two drift, and `tests/projects.bats` cross-validates the halves against one file.
 
 ### config.sh
 

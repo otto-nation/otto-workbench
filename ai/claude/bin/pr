@@ -31,6 +31,7 @@ import log
 import review_common
 import supersession
 import workbench_paths
+import workbench_projects
 import run_lock
 from review_common import (
     ReviewType, build_review_summary, find_review_file, json_summary, review_file_path,
@@ -823,6 +824,12 @@ def main():
         branch=original_branch,
         repo_dir=getattr(args, "repo_dir", None),
     )
+
+    # The CLI-only half of the project registry: a repo whose whole workbench
+    # use is `pr` never opens a Claude session, so the SessionStart hook never
+    # sees it. The root is already resolved, so this costs no subprocess.
+    if ctx.worktree_root:
+        workbench_projects.register(ctx.worktree_root)
 
     if need.update:
         ctx = pr_context.update_to_remote(ctx)

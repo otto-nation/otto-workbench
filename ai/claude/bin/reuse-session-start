@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """SessionStart hook: inject reuse level, ceiling scan nudge, and issue tracker.
 
-Three responsibilities, in the order main() emits them:
+Four responsibilities, in the order main() handles them:
 1. Emit the active reuse level as session context
-2. Run ceiling-scan --json; if no-trigger markers exist, nudge
-3. Emit the repo's issue tracker, configured or not
+2. Register the repo in the project registry
+3. Run ceiling-scan --json; if no-trigger markers exist, nudge
+4. Emit the repo's issue tracker, configured or not
 
-Usage (called by settings.json SessionStart hook):
-  reuse-session-start
+The registration rides along here because this hook already resolves the repo
+root for the ceiling scan, so it costs nothing extra and it is the cheapest
+observation of "a workbench-managed session ran in this repo" the machine has.
 """
 
 from __future__ import annotations
@@ -17,7 +19,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+BIN_DIR = Path(__file__).resolve().parent
+# ai/lib goes after this script's own directory, not in front of it: a module
+# named the same in both belongs to the hook, and ai/lib is only on the path at
+# all for workbench_projects.
+sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
+sys.path.insert(0, str(BIN_DIR))
+
+import workbench_projects  # noqa: E402
 from _reuse_levels import (  # noqa: E402
     LEVEL_DESCRIPTIONS,
     read_default,
@@ -78,6 +87,7 @@ def main() -> None:
         lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
 
     repo = _repo_root()
+    workbench_projects.register(repo)
     counts = _ceiling_counts(repo) if repo else None
     if counts and counts.get("no_trigger", 0) > 0:
         total = counts["total"]

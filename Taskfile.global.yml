@@ -323,8 +323,8 @@ tasks:
         UNSTAGED=$(git diff --no-color)
 
         BRANCH=$(git branch --show-current)
-        DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
-        DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+        # See resolve_default_branch (sourced above) for why this isn't rev-parse --abbrev-ref.
+        DEFAULT_BRANCH=$(resolve_default_branch)
 
         COMMITS=""
         COMMITTED_DIFF=""

@@ -120,12 +120,8 @@ load_pr_context() {
   fi
 
   BRANCH=$(git branch --show-current)
-  # symbolic-ref, not rev-parse --abbrev-ref: when refs/remotes/$GIT_REMOTE/HEAD is
-  # missing, rev-parse still echoes "$GIT_REMOTE/HEAD" to stdout (then exits 128), so
-  # the string survives the sed strip as a non-empty "HEAD" and defeats the :-main
-  # fallback below. symbolic-ref prints nothing on failure, so the fallback works.
-  DEFAULT_BRANCH=$(git symbolic-ref "refs/remotes/$GIT_REMOTE/HEAD" 2>/dev/null | sed "s@^refs/remotes/$GIT_REMOTE/@@")
-  DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+  # See resolve_default_branch in lib/ai/core.sh for why this isn't rev-parse --abbrev-ref.
+  DEFAULT_BRANCH=$(resolve_default_branch)
 
   if [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
     echo "✗ PR operations cannot be run from the $DEFAULT_BRANCH branch"

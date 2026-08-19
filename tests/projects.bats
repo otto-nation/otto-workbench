@@ -512,3 +512,4 @@ print(workbench_projects.register('$TMPDIR/container'))
   [ "$status" -eq 0 ]
   [ "$(cat "$TMPDIR/alpha/.claude/architecture.md")" = "current" ]
 }
+

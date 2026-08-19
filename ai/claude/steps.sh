@@ -405,7 +405,11 @@ _export_claude_config() {
 
   mkdir -p "$dest/rules" "$dest/agents" "$dest/skills"
 
-  # Settings: copy base template without user overrides or registry permissions
+  # Settings: copy base template without user overrides or registry permissions.
+  # Registry permissions are a sync-time injection against the local registries,
+  # so an exported session carries the handwritten allow list only and prompts
+  # for registry tools. Deriving them here would ship the exporting machine's
+  # tool set to a host that may not have it installed.
   if [[ -f "$CLAUDE_SETTINGS_SRC" ]]; then
     cp "$CLAUDE_SETTINGS_SRC" "$dest/settings.json"
   fi

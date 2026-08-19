@@ -97,7 +97,7 @@ COMMANDS_PROJECTS=(
   "list"           "List the registered repos that still exist"
   "add [DIR]"      "Register DIR's repo (default: the current one)"
   "forget DIR"     "Drop DIR's entry"
-  "prune"          "Delete entries whose directory is gone"
+  "prune"          "Delete entries whose directory is gone, and repeats"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
@@ -550,9 +550,28 @@ $(commands_usage COMMANDS_PROJECTS)
 EOF
 }
 
-# _projects_abs DIR — DIR as an absolute path, without requiring it to exist.
+# _projects_abs DIR — DIR as the path the registry would have stored for it.
+#
+# Entries are always what `git rev-parse --show-toplevel` returned: absolute,
+# symlink-resolved, and the work-tree root rather than whatever subdirectory the
+# caller happened to be in. `forget` compares by exact string, so anything the
+# user can reasonably type — a relative path, one with `..` in it, one reaching
+# through a symlink, a path inside the repo — has to arrive in that same form or
+# a valid request fails as "not in the registry".
+#
+# A directory that is gone can only be normalised lexically, which is the right
+# answer for it: the entry it matches was written while it still existed.
 _projects_abs() {
-  local dir="${1%/}"
+  local dir="${1%/}" root
+  root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || root=""
+  if [[ -n "$root" ]]; then
+    printf '%s\n' "$root"
+    return 0
+  fi
+  if [[ -d "$dir" ]]; then
+    (cd "$dir" && pwd -P)
+    return 0
+  fi
   if [[ "$dir" == /* ]]; then
     printf '%s\n' "$dir"
     return 0
@@ -591,12 +610,12 @@ cmd_projects_add() {
 }
 
 cmd_projects_forget() {
-  local dir
-  dir="$(_projects_abs "${1:-}")"
   if [[ -z "${1:-}" ]]; then
     err "Usage: otto-workbench projects forget DIR"
     return 1
   fi
+  local dir
+  dir="$(_projects_abs "$1")"
   if project_forget "$dir"; then
     success "Forgot $dir"
     return 0
@@ -608,7 +627,7 @@ cmd_projects_forget() {
 cmd_projects_prune() {
   local dropped
   dropped="$(project_prune)"
-  success "Pruned $dropped stale entry(s)"
+  success "Pruned $dropped entry(s)"
 }
 
 cmd_projects() {

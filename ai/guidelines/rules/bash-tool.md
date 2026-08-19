@@ -84,6 +84,15 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 - Capturing another command's *output* to a file (`some-cmd > report.json`) is fine too; the tools have no equivalent. Only `echo` and `printf`, which emit literal content you already have, are blocked
 - A path in a repo the session isn't working in prompts regardless of the tool. Add it with `--add-dir` or `permissions.additionalDirectories` in that project's settings rather than approving each subdirectory
 
+## Avoid Backgrounding with `&`
+
+- Never use a standalone `&` in a Bash tool command, wherever it falls, and never reach for `nohup` — the tool has a `run_in_background` parameter that does the same thing and keeps the shell under its control, so it can be read and stopped through the harness. A shell backgrounded with `&` outlives the call and belongs to nobody: the only way left to stop it is `pkill -f <pattern>` or `lsof -ti:PORT | xargs kill`, and `pkill` is not on the allow list, so every cleanup is a fresh permission prompt. Like the redirect rule above, the prompt is a consequence of the shape rather than a static-analysis failure
+  - `run_in_background: true` for a dev server, a watcher, or anything else meant to outlive the call — then a separate call for the request you wanted to make against it
+  - Start the server and probe it in two calls, not one. `cmd & sleep 5; curl localhost:3000` is the shape this rule exists to replace, and it is also a compound command
+  - `&&`, `2>&1`, `&>`, `|&`, and a case statement's `;&` are not backgrounding and are left alone
+- The same orphans arrive from the other direction when a long suite is cut off mid-run: the Bash tool's default timeout is two minutes, and a killed `bats tests/` leaves `bats-exec-suite` children behind that the next run trips over. Pass an explicit `timeout` (milliseconds, up to 600000) when starting a full-suite run instead of discovering the limit by hitting it
+- When a stray process does need killing, `pkill` prompting is correct — pattern-killing processes is worth a confirmation. Do not add allow-list entries for it; fix the call that leaked the process
+
 ## Avoid Nesting Quotes of the Same Type
 
 - Never nest a quoted string inside another quote of the same type — the analyzer re-pairs the quotes differently than you intended and reports "Parser skipped input between top-level statements", which no permission rule can suppress. The quote counts stay even, so this is not something the guard hook can detect; it is on you to avoid the shape

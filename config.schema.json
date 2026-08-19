@@ -133,11 +133,18 @@
           "type": "object",
           "properties": {
             "provider": {
-              "type": "string",
-              "enum": [
-                "linear",
-                "github",
-                "jira"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "linear",
+                    "github",
+                    "jira"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "team": {

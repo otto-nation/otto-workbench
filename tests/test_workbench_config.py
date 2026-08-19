@@ -50,7 +50,7 @@ def test_missing_files_give_built_in_defaults(roots):
     assert cfg.reuse.level is None
     assert cfg.review.model is None
     assert cfg.review.phases == {}
-    assert cfg.review.issue_tracker.provider is wc.IssueProvider.LINEAR
+    assert cfg.review.issue_tracker.provider is None
 
 
 def test_global_config_is_typed(roots):
@@ -200,6 +200,7 @@ def test_every_written_key_resolves_to_a_field():
     keys = {key for key, _, _ in wc._reference_rows(wc.WorkbenchConfig)}
     assert wc.REUSE_LEVEL_KEY in keys
     assert wc.REUSE_DEFAULT_KEY in keys
+    assert wc.ISSUE_PROVIDER_KEY in keys
 
 
 def test_the_generator_banner_names_a_script_that_exists():
@@ -552,3 +553,47 @@ def test_reuse_reader_survives_a_bad_config(reuse_levels, roots):
     config_root, _ = roots
     _write(config_root / "config.yml", "reuse:\n  level: turbo\n")
     assert reuse_levels.read_level() == "full"
+
+
+def test_a_declared_issue_provider_is_still_read(roots):
+    _, project = roots
+    _write(project / wc.PROJECT_CONFIG_NAME, """
+review:
+  issue_tracker:
+    provider: github
+""")
+    assert wc.load_config(project).review.issue_tracker.provider is wc.IssueProvider.GITHUB
+
+
+def test_set_project_value_writes_the_repo_config(roots):
+    _, project = roots
+    wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
+    cfg = wc.load_config(project)
+    assert cfg.review.issue_tracker.provider is wc.IssueProvider.GITHUB
+
+
+def test_set_project_value_preserves_hand_written_comments(roots):
+    """yq goes first precisely so a hand-authored file keeps its comments."""
+    _, project = roots
+    _write(project / wc.PROJECT_CONFIG_NAME, """
+# we file on GitHub, not Linear
+review:
+  issue_tracker:
+    team: ENG
+""")
+    wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
+    assert "# we file on GitHub, not Linear" in (project / wc.PROJECT_CONFIG_NAME).read_text()
+    assert wc.load_config(project).review.issue_tracker.team == "ENG"
+
+
+def test_set_project_value_seeds_the_schema_modeline(roots):
+    """A file the workbench creates gets completion, same as the global one."""
+    _, project = roots
+    wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
+    assert (project / wc.PROJECT_CONFIG_NAME).read_text().startswith(wc.CONFIG_HEADER)
+
+
+def test_set_project_value_does_not_touch_the_global_config(roots):
+    config_root, project = roots
+    wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
+    assert not (config_root / wc.CONFIG_NAME).exists()

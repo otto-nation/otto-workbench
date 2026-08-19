@@ -48,6 +48,15 @@ That flag is what keeps the finding out of `run_fix_pass`'s work set, out of
 or `ceiling-permanent:` marked tradeoff as grounds for declining rather than a
 defect to raise.
 
+`*(skipped — reason)*` is the second annotation vocabulary, written by the fix
+pass rather than by a review, and `match_skip()` is its single owner. A skip
+still belongs to the work set — the next `--fix` retries it — but it is barred
+from `_reconcile_checkboxes` for the same reason a decline is: auto-checking
+matches on file path alone, so a fix to one finding would otherwise check off
+every skip sharing its file, and `_diff_findings` reports the difference as
+fixed. Anything that acts on a skip asks `match_skip()`, so the auto-check
+guard and the fix summary cannot disagree about what was skipped.
+
 ## Debugging claude-review
 
 Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}/`:

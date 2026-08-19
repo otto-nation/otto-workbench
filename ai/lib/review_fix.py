@@ -28,7 +28,9 @@ from review_common import (
     TEMPLATE_FIX,
     preserve_log, restore_preserved,
 )
-from review_findings import Finding, extract_skip_reasons, parse_findings
+from review_findings import (
+    Finding, extract_skip_reasons, match_skip, parse_findings,
+)
 from review_phases import PHASES, PhaseRunner
 from review_preflight import ReviewJob
 from review_prompt import build_prompt
@@ -238,9 +240,13 @@ def _reconcile_checkboxes(review_file: str, changed: set[str]) -> None:
     findings = parse_findings(text)
     updated = False
     for f in findings:
-        # A declined finding is never checked off: nobody claimed to fix it,
-        # and an incidental edit to the same file is not a fix for it.
-        if f.checked or f.declined or not f.path:
+        # A declined or skipped finding is never checked off: nobody claimed to
+        # fix it, and an incidental edit to the same file is not a fix for it.
+        # Attribution is by path, so one file's other findings would otherwise
+        # check off every skip in it — and `_diff_findings` reads that as fixed,
+        # putting work that never happened in the review file, the counts, and
+        # the commit message, with the skip reason dropped on the way.
+        if f.checked or f.declined or match_skip(f) or not f.path:
             continue
         old = f"- [ ] **[{f.id}]**"
         new = f"- [x] **[{f.id}]**"

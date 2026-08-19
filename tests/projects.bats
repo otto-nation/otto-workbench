@@ -467,7 +467,7 @@ print(*workbench_projects.registered())
 
   run python3 -c "
 import sys
-sys.path.insert(0, '$REPO_ROO/ai/lib')
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
 import workbench_projects
 print('\n'.join(sorted(workbench_projects.TEMP_ROOTS)))
 "

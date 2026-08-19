@@ -35,6 +35,10 @@ COMMENT_PREFIX = "#"
 #
 # The /private twins are not redundant: /tmp and /var/folders are symlinks into
 # /private on macOS, and callers hand over a path git already resolved.
+#
+# The /var/folders and /private/var/folders entries are macOS-only paths — on
+# Linux they simply never match, which is harmless, not wrong. /tmp is the
+# shared entry that still does the job on both.
 TEMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
 
 

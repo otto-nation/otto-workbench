@@ -41,11 +41,22 @@ fi
 # The /private twins are not redundant: /tmp and /var/folders are symlinks into
 # /private on macOS, and every caller resolves its path through `git rev-parse
 # --show-toplevel`, which hands back the realpath.
+#
+# The state and cache roots get a resolved spelling added too, since those come
+# from env vars a caller may well have written with a symlink in them —
+# `ai/lib/workbench_projects.py`'s `excluded()` does the same. This is a one-time
+# fork at array-build time, not a per-comparison one.
 if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
   PROJECTS_EXCLUDED_PREFIXES=(
     "${TMPDIR:-}" /tmp /private/tmp /var/folders /private/var/folders
     "${WORKBENCH_STATE_DIR:-}" "${WORKBENCH_CACHE_DIR:-}"
   )
+  if [[ -n "${WORKBENCH_STATE_DIR:-}" && -d "${WORKBENCH_STATE_DIR}" ]]; then
+    PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_STATE_DIR" && pwd -P)")
+  fi
+  if [[ -n "${WORKBENCH_CACHE_DIR:-}" && -d "${WORKBENCH_CACHE_DIR}" ]]; then
+    PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_CACHE_DIR" && pwd -P)")
+  fi
 fi
 
 # _project_excluded DIR — true when DIR must never enter the registry.
@@ -87,6 +98,10 @@ _project_is_worktree() {
 
 # _project_ensure_file — create the registry, and the state root it sits in.
 _project_ensure_file() {
+  # mkdir -p's own exit status is intentionally not checked here: a failure on
+  # a state root that already exists from a prior run would still leave this
+  # function reporting success, but the `: >` (or the caller's `>>`) below hits
+  # the same permission failure and propagates it as return 2.
   mkdir -p "$(dirname "$PROJECTS_REGISTRY_FILE")"
   [[ -f "$PROJECTS_REGISTRY_FILE" ]] || : > "$PROJECTS_REGISTRY_FILE"
 }

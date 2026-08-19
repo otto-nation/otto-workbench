@@ -134,6 +134,25 @@ make_bare_container() {
   [ "$status" -eq 1 ]
 }
 
+@test "a state root reached through a symlink is excluded" {
+  # WORKBENCH_STATE_DIR may be set to a symlink in a dotfiles-managed setup,
+  # and every caller hands over a path git already resolved — so the guard has
+  # to compare against the resolved spelling too, or a throwaway review
+  # worktree slips into a file the machine profile renders. Mirrors
+  # test_a_state_root_reached_through_a_symlink_is_excluded on the Python side.
+  local real="$TMPDIR/real-state"
+  local link="$TMPDIR/link-state"
+  mkdir -p "$real"
+  ln -s "$real" "$link"
+  WORKBENCH_STATE_DIR="$link"
+  unset PROJECTS_EXCLUDED_PREFIXES
+  # shellcheck source=../lib/projects.sh
+  . "$REPO_ROOT/lib/projects.sh"
+
+  run _project_excluded "$real/reviews/wt"
+  [ "$status" -eq 0 ]
+}
+
 # ─── Reads ───────────────────────────────────────────────────────────────────
 
 @test "project_registered on a machine with no registry is empty and succeeds" {
@@ -406,6 +425,22 @@ print(workbench_projects.register('$TMPDIR/container'))
   printf '%s\n' "$TMPDIR/canon/repo" > "$PROJECTS_REGISTRY_FILE"
 
   run "$REPO_ROOT/bin/otto-workbench" projects forget "$TMPDIR/canon/repo/sub/.."
+  [ "$status" -eq 0 ]
+  run grep -c . "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "0" ]
+}
+
+@test "projects forget resolves .. lexically when the directory is gone" {
+  # _projects_abs can't cd into a directory that no longer exists to resolve ..
+  # the normal way — it has to collapse the path components itself.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/deleted-repo"
+  mkdir -p "$TMPDIR/elsewhere"
+  printf '%s\n' "$TMPDIR/deleted-repo" > "$PROJECTS_REGISTRY_FILE"
+  rm -rf "$TMPDIR/deleted-repo"
+
+  cd "$TMPDIR/elsewhere"
+  run "$REPO_ROOT/bin/otto-workbench" projects forget "../deleted-repo"
   [ "$status" -eq 0 ]
   run grep -c . "$PROJECTS_REGISTRY_FILE"
   [ "$output" = "0" ]

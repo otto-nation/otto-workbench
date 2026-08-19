@@ -2561,6 +2561,8 @@ def main():
         debug=args.debug,
     )
     try:
+        target_ref = _resolve_target_ref(cwd, ctx, args.onto)
+
         if args.abort:
             _trail.decision("mode", "selected abort", reason="--abort flag set")
             # Abort is the escape hatch for a broken or hung rebase — it should

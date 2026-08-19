@@ -1820,6 +1820,31 @@ def _update_deferred_issue(
     return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id, url=url))
 
 
+def _no_team_key(
+    provider: str, trail: Trail | None, *, publishing_open: bool,
+) -> IssueResult:
+    """Report a tracker this run cannot address, and say what it costs.
+
+    A provider that keys issues by team with no team to name is a fourth route
+    to the outcome the closeout debt exists to catch: nothing gets filed and the
+    deferred threads have no home. So it is owed while the gate is open, and a
+    non-event while it is shut — a draft run has failed at nothing it would
+    otherwise have attempted.
+    """
+    if not publishing_open:
+        log.dim(f"Cannot determine team key for {provider} issue creation — skipping")
+        if trail:
+            trail.info("deferred_issue", "skipped — no team key")
+        return IssueResult(IssueDelivery.SKIPPED)
+
+    log.error(
+        f"Cannot determine team key for {provider} — deferred tracking issue not filed",
+    )
+    if trail:
+        trail.error("deferred_issue", "no team key")
+    return IssueResult(IssueDelivery.UNDELIVERED)
+
+
 def _create_deferred_issue(
     provider: str,
     body: str,
@@ -1828,6 +1853,8 @@ def _create_deferred_issue(
     pr_number: int,
     opts: dict | None,
     trail: Trail | None,
+    *,
+    publishing_open: bool,
 ) -> IssueResult:
     parent_id = review_issue.extract_issue_id(provider, ctx.branch)
     # The configured team wins over the one implied by the branch: it is
@@ -1837,10 +1864,7 @@ def _create_deferred_issue(
     if not team and parent_id and "-" in parent_id:
         team = parent_id.split("-", 1)[0]
     if not team and review_issue.needs_team_key(provider):
-        log.dim(f"Cannot determine team key for {provider} issue creation — skipping")
-        if trail:
-            trail.info("deferred_issue", "skipped — no team key")
-        return IssueResult(IssueDelivery.SKIPPED)
+        return _no_team_key(provider, trail, publishing_open=publishing_open)
 
     title = f"fix(review): deferred review comments — PR #{pr_number}"
     result = review_issue.create_issue(
@@ -1922,6 +1946,7 @@ def _create_or_update_deferred_issue(
 
     return _create_deferred_issue(
         provider, body, ctx, repo, pr_number, provider_info.options, trail,
+        publishing_open=publishing_open,
     )
 
 

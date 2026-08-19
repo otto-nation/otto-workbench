@@ -4992,12 +4992,14 @@ class TestDeferredIssueProvider:
         )
 
     def test_linear_still_skips_with_no_team_anywhere(self, rt, publishing_on):
+        """Skipped, but owed: nothing was filed and the deferrals have no home."""
         import review_issue
         info = review_issue.IssueProviderInfo(name="linear", options={})
         with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
              patch.object(review_issue, "create_issue") as created:
             result = self._create(rt)
         assert result.issue.id == ""
+        assert result.owed is True
         created.assert_not_called()
 
     def test_a_draft_run_does_not_ask_which_tracker(self, rt):
@@ -5135,6 +5137,18 @@ class TestUndeliveredDeferredIssueReachesTheState:
     def test_no_tracker_configured_is_recorded(self, rt, worktree, publishing_on):
         fix = self._finalize(rt, worktree, self._provider(""))
         assert fix.deferred_issue_pending is True
+
+    def test_a_tracker_with_no_team_key_is_recorded(self, rt, worktree, publishing_on):
+        """A branch with no ABC-123 and no configured team files nothing either."""
+        import pr_comments
+        fix = self._finalize(rt, worktree, self._provider("linear"))
+        assert fix.deferred_issue_pending is True
+        assert pr_comments.closeout_debt(fix).owed is True
+
+    def test_a_draft_run_with_no_team_key_owes_nothing(self, rt, worktree):
+        """Nothing was attempted, so the missing key cost the run nothing."""
+        fix = self._finalize(rt, worktree, self._provider("linear"))
+        assert fix.deferred_issue_pending is False
 
     def test_a_filed_issue_owes_nothing(self, rt, worktree, publishing_on):
         fix = self._finalize(

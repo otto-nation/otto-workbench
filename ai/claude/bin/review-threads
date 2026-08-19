@@ -3126,18 +3126,52 @@ def _reconciled_commit(
     pass. That commit is only worth naming if a reviewer can open it, so an
     unpushed one falls back to the same non-committal cell a reconciled
     outcome gets.
+
+    It can also mean someone committed outside the pass *several times*, and
+    this function has no per-row input with which to tell those commits apart.
+    It still answers "is this branch's work published?" in that case, but hands
+    the SHA on as `UNDETERMINED` — a tree for the permalinks to pin to, which
+    the resolver will not let any surface cite as the commit carrying a row.
     """
     if fix.commit_sha or not wt_path or not fix.head_sha:
         return CommitPushResult(fix.commit_sha or None, status, "")
     current = _get_head_sha(wt_path)
     if not current or current == fix.head_sha:
         return CommitPushResult(None, status, "")
-    if _is_pushed(wt_path, current):
-        log.info(f"Attributing fixes to {current} — HEAD moved past the fix snapshot")
-        return CommitPushResult(
-            current, CommitStatus.PUSHED, "", claim=CommitClaim.RECONCILED,
+    if not _is_pushed(wt_path, current):
+        return CommitPushResult(None, CommitStatus.RECONCILED, "")
+    landed = _commits_since(wt_path, fix.head_sha, current)
+    if len(landed) > 1:
+        log.warn(
+            f"{len(landed)} commits landed outside the fix pass — rows it did "
+            "not record are left unattributed rather than credited to HEAD"
         )
-    return CommitPushResult(None, CommitStatus.RECONCILED, "")
+        return CommitPushResult(
+            current, CommitStatus.PUSHED, "", claim=CommitClaim.UNDETERMINED,
+        )
+    log.info(f"Attributing fixes to {current} — HEAD moved past the fix snapshot")
+    return CommitPushResult(
+        current, CommitStatus.PUSHED, "", claim=CommitClaim.RECONCILED,
+    )
+
+
+def _commits_since(wt_path: Path, base: str, head: str) -> list[str]:
+    """The commits `head` has that `base` does not, newest first.
+
+    Empty covers both "nothing landed" and "git could not say", and the two are
+    deliberately not told apart. The only caller uses this to *withhold* a
+    citation on positive evidence of more than one commit, so a range git
+    cannot resolve — a rebased-away snapshot, most likely — leaves the
+    single-commit reading it already had rather than silently dropping every
+    attribution on the branch.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "rev-list", f"{base}..{head}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return []
+    return result.stdout.split()
 
 
 def _render_deferred_summary(

@@ -1604,6 +1604,41 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         assert "no commit needed" not in body
         assert rt._UNATTRIBUTED_STATUS_TEXT not in body
 
+    def test_several_hand_commits_credit_none_of_them(self, rt):
+        """Reconciliation is one yes/no about the branch, not per-row evidence.
+
+        HEAD moved by more than one commit, so "the operator landed the pass's
+        work" stops identifying a commit. Naming HEAD anyway would credit the
+        last commit for every row, including rows that landed two commits
+        earlier — a link that opens a diff the reviewer's thread is not in.
+        """
+        fix = FixSummary(
+            threads=[ThreadOutcome(id="t1", summary="t1 summary", file="f.go",
+                                   line=10, action=ThreadAction.FIXED)],
+            commit_status="commit_failed", head_sha="aaa1111",
+            summary_deferred=True,
+        )
+        with patch.object(rt, "_get_head_sha", return_value="ccc3333"), \
+             patch.object(rt, "_is_pushed", return_value=True), \
+             patch.object(rt, "_commits_since", return_value=["ccc3333", "bbb2222"]), \
+             patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        assert "Fixed in" not in body
+        # Where to look stays knowable even when who landed it does not: the
+        # file cell pins the tree that holds the work.
+        assert "/blob/ccc3333/f.go" in body
+
+    def test_a_range_git_cannot_read_keeps_the_single_commit_reading(self, rt):
+        """An unresolvable range must not withdraw every attribution on the branch.
+
+        The multi-commit guard fires on positive evidence of more than one
+        commit. A rebased-away snapshot makes `rev-list` fail, which is not
+        that evidence.
+        """
+        assert rt._commits_since(Path("/nonexistent-worktree"), "aaa1111", "bbb2222") == []
+
     def test_an_unpushed_hand_commit_claims_nothing(self, rt):
         """A SHA a reviewer cannot open is not worth naming."""
         fix = FixSummary(

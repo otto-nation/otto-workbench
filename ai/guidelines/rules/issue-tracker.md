@@ -6,8 +6,8 @@ description: "Issue trackers — how the provider resolves, and per-provider CLI
 
 ## Which tracker this repo uses
 
-- The SessionStart context line answers this: a configured repo shows `Issue tracker: {provider}` (e.g. `Issue tracker: github`); an unconfigured one shows `Issue tracker: not configured — ask before filing, then record the answer in review.issue_tracker.provider`. Use it — do not infer a tracker from a branch name, a CLI that happens to be installed, or another repo's convention
-- When it reads unconfigured, ask before filing, then record the answer in `review.issue_tracker.provider` — project `.workbench.yml` for one repo, `~/.config/workbench/config.yml` for all of them. Never pick one silently
+- The SessionStart context line answers this: a configured repo shows `Issue tracker: {provider}` (e.g. `Issue tracker: github`); an unconfigured one shows `Issue tracker: not configured — ask before filing, then record the answer in issue_tracker.provider`. Use it — do not infer a tracker from a branch name, a CLI that happens to be installed, or another repo's convention
+- When it reads unconfigured, ask before filing, then record the answer in `issue_tracker.provider` — project `.workbench.yml` for one repo, `~/.config/workbench/config.yml` for all of them. Never pick one silently
 - Only the section below matching the resolved provider applies. The others describe CLIs this repo does not file to
 
 ## Writing an issue (any tracker)
@@ -64,5 +64,5 @@ Applies only when the resolved provider is `github`.
 
 Applies only when the resolved provider is `jira`.
 
-- No Jira CLI ships with this workbench. Issue links are built from `review.issue_tracker.jira_url`, and issue IDs are `PROJ-123` shaped — the same pattern Linear uses
+- No Jira CLI ships with this workbench. Issue links are built from `issue_tracker.jira_url`, and issue IDs are `PROJ-123` shaped — the same pattern Linear uses
 - Creating and updating issues is not automated for Jira. Report what would have been filed and let the user file it

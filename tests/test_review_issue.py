@@ -91,7 +91,7 @@ def test_load_issue_provider_is_unresolved_without_config(tmp_path):
 
 def test_load_issue_provider_reads_the_project_config(tmp_path):
     (tmp_path / ".workbench.yml").write_text(
-        "review:\n  issue_tracker:\n    provider: github\n    team: ENG\n",
+        "issue_tracker:\n  provider: github\n  team: ENG\n",
     )
     result = load_issue_provider(str(tmp_path))
     assert result.name == "github"
@@ -104,7 +104,7 @@ def test_load_issue_provider_falls_back_to_the_global_config(tmp_path, monkeypat
     config_dir.mkdir()
     monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
     (config_dir / "config.yml").write_text(
-        "review:\n  issue_tracker:\n    provider: jira\n    jira_url: https://j.example\n",
+        "issue_tracker:\n  provider: jira\n  jira_url: https://j.example\n",
     )
     result = load_issue_provider(str(tmp_path / "elsewhere"))
     assert result.name == "jira"
@@ -133,7 +133,7 @@ def test_needs_team_key_is_false_for_jira():
 
 def test_ensure_issue_provider_returns_a_declared_provider_without_asking(tmp_path):
     (tmp_path / ".workbench.yml").write_text(
-        "review:\n  issue_tracker:\n    provider: github\n",
+        "issue_tracker:\n  provider: github\n",
     )
     with patch("review_issue.prompt.ask") as asked:
         result = ensure_issue_provider(str(tmp_path))
@@ -162,7 +162,7 @@ def test_ensure_issue_provider_names_both_scopes_without_a_tty(tmp_path, capsys)
 def test_ensure_issue_provider_reports_a_broken_project_config(tmp_path, capsys):
     """A typo is not an unset provider — recording over it would be shadowed."""
     (tmp_path / ".workbench.yml").write_text(
-        "review:\n  issue_tracker:\n    provider: gihtub\n",
+        "issue_tracker:\n  provider: gihtub\n",
     )
     with patch("review_issue.prompt.interactive", return_value=True), \
          patch("review_issue.prompt.ask") as asked:

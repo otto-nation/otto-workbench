@@ -770,7 +770,7 @@ A draft run leaves state untouched, so nothing is recorded as posted and a later
 `--post` run picks up the same queue.
 
 Filing the deferral tracking issue is the one thing `--post` may stop to ask
-about. Nothing assumes a tracker: if `review.issue_tracker.provider` is unset for
+about. Nothing assumes a tracker: if `issue_tracker.provider` is unset for
 the repo, a `--post` run asks where the repo files issues, then whether to record
 the answer for this repo or for all of them. A repo-scoped answer is written to
 `.workbench.yml` at the repo root — commit it and nobody is asked again. A

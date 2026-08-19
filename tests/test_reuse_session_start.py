@@ -30,7 +30,7 @@ def test_names_the_configured_tracker(rss, tmp_path, capsys):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".workbench.yml").write_text(
-        "review:\n  issue_tracker:\n    provider: github\n",
+        "issue_tracker:\n  provider: github\n",
     )
     _run(rss, repo)
     assert "Issue tracker: github" in capsys.readouterr().out
@@ -56,7 +56,7 @@ def test_the_rule_quotes_both_lines_the_hook_emits(rss, tmp_path):
     configured = tmp_path / "configured"
     configured.mkdir()
     (configured / ".workbench.yml").write_text(
-        "review:\n  issue_tracker:\n    provider: github\n",
+        "issue_tracker:\n  provider: github\n",
     )
     unconfigured = tmp_path / "unconfigured"
     unconfigured.mkdir()

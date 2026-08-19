@@ -50,7 +50,7 @@ def test_missing_files_give_built_in_defaults(roots):
     assert cfg.reuse.level is None
     assert cfg.review.model is None
     assert cfg.review.phases == {}
-    assert cfg.review.issue_tracker.provider is None
+    assert cfg.issue_tracker.provider is None
 
 
 def test_global_config_is_typed(roots):
@@ -84,15 +84,17 @@ def test_project_config_does_not_discard_global_siblings(roots):
     _write(config_root / "config.yml", """
 review:
   model: sonnet
-  issue_tracker:
-    provider: github
-    team: ENG
+  thinking: medium
+issue_tracker:
+  provider: github
+  team: ENG
 """)
     _write(project / ".workbench.yml", "review:\n  phases:\n    fix:\n      model: opus\n")
     cfg = wc.load_config(project)
     assert cfg.review.model == "sonnet"
-    assert cfg.review.issue_tracker.provider is wc.IssueProvider.GITHUB
-    assert cfg.review.issue_tracker.team == "ENG"
+    assert cfg.review.thinking is Thinking.MEDIUM
+    assert cfg.issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert cfg.issue_tracker.team == "ENG"
     assert cfg.review.phases[Phase.FIX].model == "opus"
 
 
@@ -470,8 +472,20 @@ def test_adopt_converts_a_project_review_yml(roots):
     assert review_issue.adopt_project_review_yml(str(project)) is True
 
     cfg = wc.load_config(project)
-    assert cfg.review.issue_tracker.provider is wc.IssueProvider.GITHUB
-    assert cfg.review.issue_tracker.team == "ENG"
+    assert cfg.issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert cfg.issue_tracker.team == "ENG"
+
+
+def test_adopt_writes_the_top_level_key_not_the_legacy_nesting(roots):
+    """The old file's key was review-namespaced; the config's is not."""
+    import review_issue
+
+    _, project = roots
+    (project / ".claude").mkdir()
+    _write(project / ".claude" / "review.yml", "issue_tracker:\n  provider: github\n")
+
+    review_issue.adopt_project_review_yml(str(project))
+    assert "review:" not in (project / ".workbench.yml").read_text()
 
 
 def test_adopt_seeds_the_modeline_like_every_other_creator(roots):
@@ -503,10 +517,10 @@ def test_adopt_is_a_no_op_when_workbench_yml_exists(roots):
     _, project = roots
     (project / ".claude").mkdir()
     _write(project / ".claude" / "review.yml", "issue_tracker:\n  provider: github\n")
-    _write(project / ".workbench.yml", "review:\n  issue_tracker:\n    provider: jira\n")
+    _write(project / ".workbench.yml", "issue_tracker:\n  provider: jira\n")
 
     assert review_issue.adopt_project_review_yml(str(project)) is False
-    assert wc.load_config(project).review.issue_tracker.provider is wc.IssueProvider.JIRA
+    assert wc.load_config(project).issue_tracker.provider is wc.IssueProvider.JIRA
 
 
 def test_adopt_is_a_no_op_without_an_old_file(roots):
@@ -570,18 +584,17 @@ def test_reuse_reader_survives_a_bad_config(reuse_levels, roots):
 def test_a_declared_issue_provider_is_still_read(roots):
     _, project = roots
     _write(project / wc.PROJECT_CONFIG_NAME, """
-review:
-  issue_tracker:
-    provider: github
+issue_tracker:
+  provider: github
 """)
-    assert wc.load_config(project).review.issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert wc.load_config(project).issue_tracker.provider is wc.IssueProvider.GITHUB
 
 
 def test_set_project_value_writes_the_repo_config(roots):
     _, project = roots
     wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     cfg = wc.load_config(project)
-    assert cfg.review.issue_tracker.provider is wc.IssueProvider.GITHUB
+    assert cfg.issue_tracker.provider is wc.IssueProvider.GITHUB
 
 
 def test_set_project_value_preserves_hand_written_comments(roots):
@@ -589,13 +602,12 @@ def test_set_project_value_preserves_hand_written_comments(roots):
     _, project = roots
     _write(project / wc.PROJECT_CONFIG_NAME, """
 # we file on GitHub, not Linear
-review:
-  issue_tracker:
-    team: ENG
+issue_tracker:
+  team: ENG
 """)
     wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     assert "# we file on GitHub, not Linear" in (project / wc.PROJECT_CONFIG_NAME).read_text()
-    assert wc.load_config(project).review.issue_tracker.team == "ENG"
+    assert wc.load_config(project).issue_tracker.team == "ENG"
 
 
 def test_set_project_value_seeds_the_schema_modeline(roots):

@@ -128,32 +128,32 @@
               "fix"
             ]
           }
-        },
-        "issue_tracker": {
-          "type": "object",
-          "properties": {
-            "provider": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "linear",
-                    "github",
-                    "jira"
-                  ]
-                },
-                {
-                  "type": "null"
-                }
+        }
+      }
+    },
+    "issue_tracker": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "linear",
+                "github",
+                "jira"
               ]
             },
-            "team": {
-              "type": "string"
-            },
-            "jira_url": {
-              "type": "string"
+            {
+              "type": "null"
             }
-          }
+          ]
+        },
+        "team": {
+          "type": "string"
+        },
+        "jira_url": {
+          "type": "string"
         }
       }
     }

@@ -4913,7 +4913,7 @@ class TestDeferredIssueProvider:
         created.assert_called_once()
 
     def test_linear_prefers_the_configured_team(self, rt, publishing_on):
-        """review.issue_tracker.team is published config; it should be read."""
+        """issue_tracker.team is published config; it should be read."""
         import review_issue
         info = review_issue.IssueProviderInfo(name="linear", options={"team": "ENG"})
         with patch.object(review_issue, "ensure_issue_provider", return_value=info), \

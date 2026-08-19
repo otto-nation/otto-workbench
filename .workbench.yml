@@ -1,4 +1,3 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/otto-nation/otto-workbench/main/config.schema.json
-review:
-  issue_tracker:
-    provider: github
+issue_tracker:
+  provider: github

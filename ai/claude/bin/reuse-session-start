@@ -57,11 +57,11 @@ def _issue_tracker_line(repo: str) -> str:
     """Where this repo files issues, as a line the agent reads in context.
 
     Emitted in both states, unlike the reuse level. A rule that says "go look
-    up review.issue_tracker.provider" is a rule that gets skipped, so the
-    resolved answer goes into context instead of behind a lookup — and
-    "nobody has said" is the state the agent most needs to act on.
+    up issue_tracker.provider" is a rule that gets skipped, so the resolved
+    answer goes into context instead of behind a lookup — and "nobody has
+    said" is the state the agent most needs to act on.
     """
-    provider = workbench_config.load_config_or_default(repo).review.issue_tracker.provider
+    provider = workbench_config.load_config_or_default(repo).issue_tracker.provider
     if provider is None:
         return (
             "Issue tracker: not configured — ask before filing, then record the"

@@ -38,17 +38,21 @@ _unify_workbench_config_fold_scalar() {
   mv "$source_file" "$source_file.migrated"
 }
 
-# Carry review.yml's issue_tracker mapping into .review.issue_tracker.
+# Carry review.yml's issue_tracker mapping into .issue_tracker.
 #
 # Same precedence and same rename contract as the scalar folder above. A
 # review.yml holding no issue_tracker has nothing to carry, so it is only
 # renamed — writing its null over the key would erase a real setting.
+#
+# This wrote .review.issue_tracker until the key moved to the top level; a
+# machine that ran that version is carried across by
+# 20260819-lift-issue-tracker-key rather than by a second path here.
 _unify_workbench_config_fold_review() {
   local source_file="$1"
   [[ -f "$source_file" ]] || return 0
 
   local existing incoming
-  existing="$(yq '.review.issue_tracker // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
+  existing="$(yq '.issue_tracker // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
   incoming="$(yq '.issue_tracker // ""' "$source_file")" || return 1
   if [[ -z "$existing" && -n "$incoming" ]]; then
     # load() rather than a rendered value, so the mapping lands in block style
@@ -56,7 +60,7 @@ _unify_workbench_config_fold_review() {
     # through strenv for the same reason the scalar folder passes its value that
     # way: nothing this script controls is spliced into a yq expression.
     src="$source_file" yq -i \
-      '.review.issue_tracker = load(strenv(src)).issue_tracker' \
+      '.issue_tracker = load(strenv(src)).issue_tracker' \
       "$WORKBENCH_CONFIG_FILE" || return 1
   fi
 

@@ -75,7 +75,7 @@ GENERATOR_PATH = "bin/local/generate-config-schema"
 # WorkbenchConfig and fails on a key no field answers to.
 REUSE_LEVEL_KEY = "reuse.level"
 REUSE_DEFAULT_KEY = "reuse.default"
-ISSUE_PROVIDER_KEY = "review.issue_tracker.provider"
+ISSUE_PROVIDER_KEY = "issue_tracker.provider"
 
 _YQ_TIMEOUT = 10
 
@@ -117,6 +117,10 @@ class PhaseOverride:
 class IssueTrackerConfig:
     """Where a repo files its issues.
 
+    Top-level rather than under ``review``: where a repo files issues is a
+    fact about the repo, read by the SessionStart context line and by every
+    rule in ``issue-tracker.md``, of which only two callers are reviews.
+
     ``provider`` has no default on purpose. A repo that has never said
     anything about its tracker is unknown, not Linear — the callers that
     need one ask rather than guess, and the one that only enriches a
@@ -143,7 +147,6 @@ class ReviewConfig:
     provider: str | None = None
     effort: Effort | None = None
     phases: dict[Phase, PhaseOverride] = field(default_factory=dict)
-    issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
 
 
 @dataclass(frozen=True)
@@ -158,6 +161,7 @@ class ReuseConfig:
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
 
 
 def schema_json() -> str:

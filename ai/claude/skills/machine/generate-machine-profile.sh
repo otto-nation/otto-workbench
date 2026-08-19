@@ -16,7 +16,9 @@
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/constants.sh"
+# ui.sh rather than constants.sh alone: a location that does not resolve is
+# reported with warn, and the facade is what puts the output helpers in scope.
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
 
 MACHINE_DIR="$CLAUDE_DIR/machine"
 PROFILE_FILE="$MACHINE_DIR/machine.md"
@@ -121,14 +123,19 @@ has_mise=$(command -v mise >/dev/null 2>&1 && echo "yes" || echo "no")
 has_uv=$(command -v uv >/dev/null 2>&1 && echo "yes" || echo "no")
 has_task=$(command -v task >/dev/null 2>&1 && echo "yes" || echo "no")
 
-# Workbench location
-workbench_dir=""
-for candidate in \
-    "$HOME/git/otto-nation/otto-workbench" \
-    "$HOME/src/otto-nation/otto-workbench" \
-    "$HOME/otto-workbench"; do
-  if [[ -d "$candidate" ]]; then workbench_dir="$candidate"; break; fi
-done
+# Workbench location — this script's own repo, not a guess at where it might be.
+#
+# constants.sh derives WORKBENCH_DIR from its own file location and resolves the
+# main worktree for a bare-repo layout, so WORKBENCH_STABLE_DIR is the path that
+# stays put across worktree switches. What this replaces was a list of three
+# hardcoded candidate paths that matched nothing on a bare-repo machine, leaving
+# the location silently absent from the profile — so a miss is now reported in
+# the profile and on stderr rather than dropped.
+workbench_dir="$WORKBENCH_STABLE_DIR"
+if [[ ! -d "$workbench_dir" ]]; then
+  warn "otto-workbench location did not resolve: $workbench_dir is not a directory"
+  workbench_dir=""
+fi
 
 # ── Project registry ──────────────────────────────────────────────────────────
 # Discover git repos and cross-reference with ~/.claude/projects/ for memory status.
@@ -202,7 +209,12 @@ today=$(date +%Y-%m-%d)
   printf '%s\n' "## Key Tools"
   printf '%s\n' "- Homebrew (${brew_count} packages)"
   [[ "$has_task" == "yes" ]] && printf '%s\n' "- task (task runner)"
-  [[ -n "$workbench_dir" ]] && printf '%s\n' "- otto-workbench: ${workbench_dir/#$HOME/~}"
+  if [[ -n "$workbench_dir" ]]; then
+    printf '%s\n' "- otto-workbench: ${workbench_dir/#$HOME/~}"
+  else
+    printf '%s\n' "- otto-workbench: location unresolved" \
+      "  (expected ${WORKBENCH_STABLE_DIR/#$HOME/~} — re-run \`otto-workbench sync\`)"
+  fi
   printf '\n'
 
   if [[ ${#project_rows[@]} -gt 0 ]]; then

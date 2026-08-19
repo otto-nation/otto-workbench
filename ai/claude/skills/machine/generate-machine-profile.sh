@@ -24,7 +24,6 @@ MACHINE_DIR="$CLAUDE_DIR/machine"
 PROFILE_FILE="$MACHINE_DIR/machine.md"
 STAMP_FILE="$MACHINE_DIR/.last-updated"
 STALE_HOURS=24
-GIT_ROOTS=("$HOME/git" "$HOME/src" "$HOME/projects" "$HOME/code")
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 
@@ -138,7 +137,13 @@ if [[ ! -d "$workbench_dir" ]]; then
 fi
 
 # ── Project registry ──────────────────────────────────────────────────────────
-# Discover git repos and cross-reference with ~/.claude/projects/ for memory status.
+# The repos that use the workbench, from lib/projects.sh, cross-referenced with
+# ~/.claude/projects/ for memory status.
+#
+# The list used to be a `find` over four guessed-at git roots, which missed any
+# repo cloned elsewhere and any repo nested past its depth limit. Membership is
+# now recorded when a workbench command runs in a repo, so this reads one list
+# instead of re-deriving its own.
 
 declare -A memory_status=()
 for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
@@ -151,30 +156,25 @@ for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
 done
 
 declare -a project_rows=()
-for git_root in "${GIT_ROOTS[@]}"; do
-  [[ -d "$git_root" ]] || continue
-  while IFS= read -r -d '' repo_dir; do
-    [[ -d "$repo_dir/.git" ]] || continue
-    local_path="${repo_dir/#$HOME/~}"
-    name=$(basename "$repo_dir")
-    slug="${repo_dir//\//-}"
-    mem="${memory_status[$slug]:-no}"
-    # Detect primary stack from presence of key files
-    stack=""
-    [[ -d "$repo_dir/ansible" ]] && stack="ansible"
-    [[ -f "$repo_dir/go.mod" ]] && stack="${stack:+$stack,}go"
-    [[ -f "$repo_dir/package.json" ]] && stack="${stack:+$stack,}node"
-    [[ -f "$repo_dir/pyproject.toml" || -f "$repo_dir/requirements.txt" ]] && \
-      stack="${stack:+$stack,}python"
-    [[ -f "$repo_dir/build.gradle.kts" || -f "$repo_dir/pom.xml" ]] && \
-      stack="${stack:+$stack,}java"
-    [[ $(find "$repo_dir" -maxdepth 2 -name '*.sh' 2>/dev/null | wc -l) -gt 3 ]] && \
-      [[ -z "$stack" ]] && stack="bash"
-    [[ -z "$stack" ]] && stack="—"
-    project_rows+=("| $name | $local_path | $stack | $mem |")
-  done < <(find "$git_root" -maxdepth 3 -name ".git" -type d -print0 2>/dev/null \
-    | sed 's|/.git||g' | tr '\n' '\0' | sort -z)
-done
+while IFS= read -r repo_dir; do
+  local_path="${repo_dir/#$HOME/~}"
+  name=$(basename "$repo_dir")
+  slug="${repo_dir//\//-}"
+  mem="${memory_status[$slug]:-no}"
+  # Detect primary stack from presence of key files
+  stack=""
+  [[ -d "$repo_dir/ansible" ]] && stack="ansible"
+  [[ -f "$repo_dir/go.mod" ]] && stack="${stack:+$stack,}go"
+  [[ -f "$repo_dir/package.json" ]] && stack="${stack:+$stack,}node"
+  [[ -f "$repo_dir/pyproject.toml" || -f "$repo_dir/requirements.txt" ]] && \
+    stack="${stack:+$stack,}python"
+  [[ -f "$repo_dir/build.gradle.kts" || -f "$repo_dir/pom.xml" ]] && \
+    stack="${stack:+$stack,}java"
+  [[ $(find "$repo_dir" -maxdepth 2 -name '*.sh' 2>/dev/null | wc -l) -gt 3 ]] && \
+    [[ -z "$stack" ]] && stack="bash"
+  [[ -z "$stack" ]] && stack="—"
+  project_rows+=("| $name | $local_path | $stack | $mem |")
+done < <(project_registered | sort)
 
 # ── Write profile ─────────────────────────────────────────────────────────────
 
@@ -217,15 +217,18 @@ today=$(date +%Y-%m-%d)
   fi
   printf '\n'
 
+  printf '## Project Registry\n\n'
   if [[ ${#project_rows[@]} -gt 0 ]]; then
-    printf '## Project Registry\n\n'
     printf '| Project | Path | Stack | Memory |\n'
     printf '|---------|------|-------|--------|\n'
     for row in "${project_rows[@]}"; do
       printf '%s\n' "$row"
     done
-    printf '\n'
+  else
+    printf '%s\n' "_No repos registered yet. A repo joins the registry the first" \
+      "time a workbench command runs in it — see \`otto-workbench projects\`._"
   fi
+  printf '\n'
 } > "$tmp_file"
 
 mv "$tmp_file" "$PROFILE_FILE"

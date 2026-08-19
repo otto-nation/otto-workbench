@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
-# Tests for ai/claude/skills/machine/generate-machine-profile.sh — specifically
-# how it names the workbench's own location, which used to be a list of three
-# hardcoded candidate paths (#780).
+# Tests for ai/claude/skills/machine/generate-machine-profile.sh — how it names
+# the workbench's own location, which used to be a list of three hardcoded
+# candidate paths, and how it names the repos on the machine, which used to be a
+# `find` over four guessed-at git roots.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -11,11 +12,24 @@ setup() {
   export WORKBENCH_STATE_DIR="$TMPDIR/state"
   export WORKBENCH_CACHE_DIR="$TMPDIR/cache"
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
+
+  # A test's repos are all temporary, which is what the default exclusion list
+  # refuses; the sandboxed state root keeps the writes out of the real registry.
+  PROJECTS_EXCLUDED_PREFIXES=("$WORKBENCH_STATE_DIR" "$WORKBENCH_CACHE_DIR")
+
+  # shellcheck source=../lib/ui.sh
+  . "$REPO_ROOT/lib/ui.sh"
 }
 
 teardown() {
   rm -rf "$TMPDIR"
   common_teardown
+}
+
+# make_repo DIR — a git work tree at DIR.
+make_repo() {
+  mkdir -p "$1"
+  GIT_CEILING_DIRECTORIES="$(dirname "$1")" git -C "$1" init --quiet
 }
 
 @test "the machine profile names a workbench location that really exists" {
@@ -40,4 +54,23 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"did not resolve"* ]]
   grep -q '^- otto-workbench: location unresolved' "$TMPDIR/home/.claude/machine/machine.md"
+}
+
+@test "the machine profile lists the registered repos" {
+  make_repo "$TMPDIR/alpha"
+  project_register "$TMPDIR/alpha"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  grep -q "| alpha | $TMPDIR/alpha |" "$TMPDIR/home/.claude/machine/machine.md"
+}
+
+@test "the machine profile says so when nothing is registered" {
+  # The heading used to be inside the conditional, so an empty list took the
+  # whole section with it and the profile read as though the machine had no
+  # repos rather than as though nothing had registered yet.
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  grep -q '^## Project Registry' "$TMPDIR/home/.claude/machine/machine.md"
+  grep -q 'No repos registered yet' "$TMPDIR/home/.claude/machine/machine.md"
 }

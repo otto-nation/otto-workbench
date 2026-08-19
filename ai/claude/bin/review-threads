@@ -1818,9 +1818,14 @@ def _create_deferred_issue(
     trail: Trail | None,
 ) -> CreatedIssue:
     parent_id = review_issue.extract_issue_id(provider, ctx.branch)
-    team = parent_id.split("-", 1)[0] if parent_id and "-" in parent_id else ""
-    if not team:
-        log.dim("Cannot determine team key for issue creation — skipping")
+    # The configured team wins over the one implied by the branch: it is
+    # what the repo declared, while the branch prefix is an inference from
+    # whatever issue happened to name it.
+    team = (opts or {}).get("team", "")
+    if not team and parent_id and "-" in parent_id:
+        team = parent_id.split("-", 1)[0]
+    if not team and review_issue.needs_team_key(provider):
+        log.dim(f"Cannot determine team key for {provider} issue creation — skipping")
         if trail:
             trail.info("deferred_issue", "skipped — no team key")
         return CreatedIssue()
@@ -1854,7 +1859,23 @@ def _create_or_update_deferred_issue(
     if not deferred:
         return CreatedIssue(id=existing_issue_id)
 
-    provider_info = review_issue.load_issue_provider(str(ctx.require_worktree()))
+    worktree = str(ctx.require_worktree())
+    # A draft run files nothing — create_issue gates on publishing.enabled() —
+    # so asking which tracker to file to would be a question with no consequence.
+    if publishing.enabled():
+        provider_info = review_issue.ensure_issue_provider(worktree)
+    else:
+        provider_info = review_issue.load_issue_provider(worktree)
+    if not provider_info.resolved:
+        # ensure_issue_provider has already said why. Recording it on the trail
+        # is what puts the undelivered closeout in `pr status` rather than
+        # leaving the queue looking filed. Not an error while the gate is
+        # closed, though: a draft that files nothing has failed at nothing.
+        if trail and publishing.enabled():
+            trail.error("deferred_issue", "no issue tracker configured")
+        elif trail:
+            trail.info("deferred_issue", "skipped — no issue tracker configured")
+        return CreatedIssue()
     provider = provider_info.name
 
     body = _build_deferred_issue_body(deferred, repo, pr_number, threads_by_id)

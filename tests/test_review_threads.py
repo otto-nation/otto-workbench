@@ -29,6 +29,7 @@ from pr_thread_models import (
     TriageStats, triage_result_from_dict,
 )
 from review_common import SECTION_PRIOR_FINDINGS, Diagnosis, DiagnosisKind
+from review_issue import CreatedIssue
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -4864,3 +4865,83 @@ class TestFoldedRowsAreNotCarriedBack:
         other = self.THREAD_ROW.replace("discussion_r5", "discussion_r9")
         published = f"{self.THREAD_ROW}\n{other}"
         assert rt._carried_over_rows(published, self.THREAD_ROW) == [other]
+
+
+class TestDeferredIssueProvider:
+    """#795: a GitHub repo was skipped for a Linear-shaped reason.
+
+    ``ensure_issue_provider`` only runs once publishing is enabled — a draft
+    run files nothing, so asking which tracker to use has no consequence.
+    Every case here that expects the resolved-provider path to run therefore
+    opens the gate with ``publishing_on``; the one exception is the gate test
+    itself, which relies on the default closed gate.
+    """
+
+    def _deferred(self):
+        return [CommentItem(id="t1", summary="fix regex", file="parsers.py", line=10)]
+
+    def _create(self, rt, **overrides):
+        kwargs = dict(
+            deferred=self._deferred(), repo="owner/repo", pr_number=1,
+            threads_by_id={}, ctx=make_ctx(), existing_issue_id="", trail=None,
+        )
+        kwargs.update(overrides)
+        return rt._create_or_update_deferred_issue(**kwargs)
+
+    def test_stops_when_no_tracker_is_configured(self, rt, publishing_on):
+        """An unset provider must report, not quietly file nothing."""
+        import review_issue
+        with patch.object(
+            review_issue, "ensure_issue_provider",
+            return_value=review_issue.IssueProviderInfo(),
+        ), patch.object(review_issue, "create_issue") as created:
+            result = self._create(rt)
+        assert result.id == ""
+        created.assert_not_called()
+
+    def test_github_needs_no_team_key(self, rt, publishing_on):
+        """gh issue create is addressed by repo; a branch with no ABC-123 is fine."""
+        import review_issue
+        info = review_issue.IssueProviderInfo(name="github", options={})
+        with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
+             patch.object(
+                 review_issue, "create_issue",
+                 return_value=CreatedIssue(id="#42", url="https://gh/42"),
+             ) as created:
+            result = self._create(rt)
+        assert result.id == "#42"
+        created.assert_called_once()
+
+    def test_linear_prefers_the_configured_team(self, rt, publishing_on):
+        """review.issue_tracker.team is published config; it should be read."""
+        import review_issue
+        info = review_issue.IssueProviderInfo(name="linear", options={"team": "ENG"})
+        with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
+             patch.object(
+                 review_issue, "create_issue",
+                 return_value=CreatedIssue(id="ENG-9", url="https://linear/ENG-9"),
+             ) as created:
+            self._create(rt)
+        assert created.call_args.args[1] == "ENG"
+
+    def test_linear_still_skips_with_no_team_anywhere(self, rt, publishing_on):
+        import review_issue
+        info = review_issue.IssueProviderInfo(name="linear", options={})
+        with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
+             patch.object(review_issue, "create_issue") as created:
+            result = self._create(rt)
+        assert result.id == ""
+        created.assert_not_called()
+
+    def test_a_draft_run_does_not_ask_which_tracker(self, rt):
+        """create_issue files nothing while publishing is off, so asking is pointless."""
+        import publishing
+        import review_issue
+        with patch.object(publishing, "enabled", return_value=False), \
+             patch.object(review_issue, "ensure_issue_provider") as asked, \
+             patch.object(
+                 review_issue, "load_issue_provider",
+                 return_value=review_issue.IssueProviderInfo(),
+             ):
+            self._create(rt)
+        asked.assert_not_called()

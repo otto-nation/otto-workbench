@@ -57,27 +57,7 @@ if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
   if [[ -n "${WORKBENCH_CACHE_DIR:-}" && -d "${WORKBENCH_CACHE_DIR}" ]]; then
     PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_CACHE_DIR" && pwd -P)")
   fi
-if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
-  PROJECTS_EXCLUDED_PREFIXES=(
-    "${TMPDIR:-}" /tmp /private/tmp /var/folders /private/var/folders
-    "${WORKBENCH_STATE_DIR:-}" "${WORKBENCH_CACHE_DIR:-}"
-  )
-#
-# The state and cache roots get a resolved spelling added too, since those come
-# from env vars a caller may well have written with a symlink in them —
-# `ai/lib/workbench_projects.py`'s `excluded()` does the same. This is a one-time
-# fork at array-build time, not a per-comparison one.
-if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
-  PROJECTS_EXCLUDED_PREFIXES=(
-    "${TMPDIR:-}" /tmp /private/tmp /var/folders /private/var/folders
-    "${WORKBENCH_STATE_DIR:-}" "${WORKBENCH_CACHE_DIR:-}"
-  )
-  if [[ -n "${WORKBENCH_STATE_DIR:-}" && -d "${WORKBENCH_STATE_DIR}" ]]; then
-    PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_STATE_DIR" && pwd -P)")
-  fi
-  if [[ -n "${WORKBENCH_CACHE_DIR:-}" && -d "${WORKBENCH_CACHE_DIR}" ]]; then
-    PROJECTS_EXCLUDED_PREFIXES+=("$(cd "$WORKBENCH_CACHE_DIR" && pwd -P)")
-  fi
+
 fi
 
 # _project_excluded DIR — true when DIR must never enter the registry.

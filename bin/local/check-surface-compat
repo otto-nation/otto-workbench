@@ -9,6 +9,14 @@
 #   BREAKING CHANGE: <what broke>       covers every removal, cuts a major
 #   Not-Breaking: <entry> — <reason>    covers one named entry, cuts no major
 #
+# The Not-Breaking separator is documented as an em dash, but an en dash and a
+# run of ASCII hyphens surrounded by spaces are accepted too — a human or a
+# model reaching for "-" or "--" has still declared the entry, and rejecting
+# that spelling only pushes the author toward BREAKING CHANGE, which majors
+# both packages. The reason is not optional: a footer with nothing after the
+# separator declares nothing, because the reason landing in git history is the
+# entire argument for a footer over a checked-in allowlist.
+#
 # BREAKING-CHANGE (hyphenated) is accepted wherever BREAKING CHANGE is:
 # Conventional Commits v1.0.0 lists it as a synonym and release-please honours
 # it, so rejecting it would fail a contributor who declared correctly.
@@ -21,7 +29,9 @@
 # Exit codes:
 #   0    every removal is declared, or there was nothing to compare
 #   1    a removal is undeclared, or a `!` header carries no footer
-#   2    a usage error, or a snapshot path at the base is not a file
+#   2    a usage error, or the snapshot path is a tree at the base. A symlink
+#        is mode 120000 and cat-file -t calls it a blob, so it is not caught
+#        here — jq fails on the link target and the run ends at 5 instead.
 #   5    jq aborted on a malformed snapshot (.entries not an array, or
 #        .package missing or not a string) — jq's own status, passed through
 #   128  git's status from an unresolvable merge base (bad ref, not a repo)
@@ -56,11 +66,20 @@ BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER/ /-}"
 # ERE alternation matching either spelling at the start of a footer line.
 BREAKING_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}): .+"
 
-# jq program shared by both snapshot reads. A snapshot whose .entries is
-# missing or not an array must abort, not read as "no entries" and therefore
-# "nothing was removed" — that silent-truncation shape is the defect class this
-# feature's generator was patched for three times.
-_ENTRIES_JQ='.entries | if type == "array" then . else error("\($src): .entries is not an array") end'
+# jq program shared by every snapshot read, always run with -s (slurp). A
+# snapshot whose .entries is missing or not an array must abort, not read as
+# "no entries" and therefore "nothing was removed" — that silent-truncation
+# shape is the defect class this feature's generator was patched for three
+# times. Slurping closes the same hole one level up: on empty input jq's
+# program never runs at all, so a zero-byte snapshot would print nothing and
+# exit 0, and the caller would read that empty capture as an empty surface.
+# With -s the input becomes an array of documents and the length check fires.
+_ENTRIES_JQ='if length != 1 then error("\($src): not a single JSON document") else .[0] end
+  | .entries | if type == "array" then . else error("\($src): .entries is not an array") end'
+
+# jq program reading a snapshot's package name, run with -s for the same reason.
+_PACKAGE_JQ='if length != 1 then error("\($src): not a single JSON document") else .[0] end
+  | if (.package | type) == "string" then .package else error("\($src): .package is missing or not a string") end'
 
 usage() {
   cat <<EOF
@@ -102,13 +121,31 @@ fi
 
 # _declared_keys — prints the surface entry named by each Not-Breaking footer
 # on the branch, one per line. The footer's shape is
-# "Not-Breaking: <entry> — <reason>", so the entry is the second field.
-# `|| [[ $? -eq 1 ]]` is a pipefail escape hatch scoped to exactly one status:
-# grep exits 1 when the branch carries no such footer, which is a valid empty
-# result. Exit 2 (a real grep error) still fails the pipeline.
+# "Not-Breaking: <entry> — <reason>", so the key is everything between the
+# prefix and the first separator, not a whitespace field: entries may contain
+# spaces (setting names, skill names), and reading only the first field would
+# truncate such a key so that no footer could ever declare it, leaving
+# BREAKING CHANGE — which majors both packages — as the author's only escape.
+#
+# Splitting on the *first* separator keeps a reason that itself contains a dash
+# safe. A footer with an empty reason names nothing and is skipped: the reason
+# reaching git history is the whole point of the footer.
+#
+# One awk, no pipeline: awk exits 0 on no matches, so there is no grep-exit-1
+# case to make an escape hatch for, and nothing downstream to hide a failure.
 _declared_keys() {
-  # shellcheck disable=SC2181  # $? is grep's status, read in its || branch
-  { grep -E "^${NOT_BREAKING_FOOTER}: " <<<"$COMMIT_BODIES" || [[ $? -eq 1 ]]; } | awk '{print $2}'
+  awk -v prefix="${NOT_BREAKING_FOOTER}: " '
+    index($0, prefix) != 1 { next }
+    {
+      rest = substr($0, length(prefix) + 1)
+      if (match(rest, / (—|–|-+) /) == 0) next
+      key = substr(rest, 1, RSTART - 1)
+      reason = substr(rest, RSTART + RLENGTH)
+      sub(/[ \t]+$/, "", key)
+      if (key == "" || reason ~ /^[ \t]*$/) next
+      print key
+    }
+  ' <<<"$COMMIT_BODIES"
 }
 
 # _bang_subjects — prints each commit subject on the branch that uses the `!`
@@ -137,15 +174,72 @@ _undeclared() {
   done <<<"$removed"
 }
 
-# _removed_entries BASE_JSON BASE_LABEL HEAD_FILE — prints the entries present
-# in the base snapshot and absent from the head one. jq's array difference
-# keeps the base snapshot's ordering, so the report is stable without a
-# locale-sensitive sort.
+# _package_name SNAPSHOT HEAD_FILE BASE_JSON — the package a snapshot belongs
+# to, for the report. Read from the working tree when it still has the file,
+# and from the base snapshot when it does not — a deleted snapshot still has
+# every one of its entries removed, and that report needs a package name.
+_package_name() {
+  local snapshot="$1" head_file="$2" base_json="$3"
+  if [[ -f "$head_file" ]]; then
+    jq -rs --arg src "$snapshot" "$_PACKAGE_JQ" "$head_file"
+    return
+  fi
+  jq -rs --arg src "$MERGE_BASE:$snapshot" "$_PACKAGE_JQ" <<<"$base_json"
+}
+
+# _tree_entries HEAD_FILE — the entries array as the working tree has it.
+# A snapshot the working tree no longer has is not "nothing to compare": every
+# entry the base held is gone from it, so it reads as the empty array and the
+# whole surface reports as removed. Deleting the file must not be a way past
+# the gate. The other direction — absent at the base, present now — is the
+# bootstrap case and never reaches here; the caller skips it.
+_tree_entries() {
+  local head_file="$1"
+  if [[ ! -f "$head_file" ]]; then
+    printf '[]\n'
+    return
+  fi
+  jq -cs --arg src "$head_file" "$_ENTRIES_JQ" "$head_file"
+}
+
+# _head_entries SNAPSHOT — the entries array as HEAD has it, or nothing at all
+# when there is no HEAD-side snapshot to read. Empty output means "no HEAD
+# constraint", not "an empty surface at HEAD": before the first commit, and on
+# the commit that introduces a snapshot, HEAD legitimately has no such blob,
+# and treating that as an empty surface would report the whole base surface as
+# removed. Every git call is bare or handled at its own call site, so a git
+# failure aborts instead of arriving here as an empty capture.
+_head_entries() {
+  local snapshot="$1" head_type head_json
+  git -C "$REPO_DIR" rev-parse --verify --quiet HEAD >/dev/null || return 0
+  git -C "$REPO_DIR" cat-file -e "HEAD:$snapshot" 2>/dev/null || return 0
+  head_type=$(git -C "$REPO_DIR" cat-file -t "HEAD:$snapshot")
+  [[ "$head_type" == "blob" ]] || return 0
+  head_json=$(git -C "$REPO_DIR" show "HEAD:$snapshot")
+  jq -cs --arg src "HEAD:$snapshot" "$_ENTRIES_JQ" <<<"$head_json"
+}
+
+# _removed_entries BASE TREE [HEAD] — prints the entries the base snapshot held
+# that the head side no longer keeps, as JSON arrays of entries. jq's array
+# difference keeps the base snapshot's ordering, so the report is stable
+# without a locale-sensitive sort.
+#
+# The head side is the *union* of two removals: one against the working tree,
+# one against HEAD. Neither alone is sound. The working tree read is what lets
+# lib/ai/commit.sh consult this gate before a commit exists, but `git push`
+# publishes HEAD, so a removal committed in HEAD and then reverted in the tree
+# (git stash, an uncommitted revert, a partially staged one) would sail through
+# pre-push on a tree-only read. An entry present in only one of the two is
+# still removed by the push, so an entry is kept only when both sides have it —
+# hence base minus the intersection. HEAD empty means the HEAD side is skipped.
 _removed_entries() {
-  local base_json="$1" base_label="$2" head_file="$3" base_entries head_entries
-  base_entries=$(jq -c --arg src "$base_label" "$_ENTRIES_JQ" <<<"$base_json")
-  head_entries=$(jq -c --arg src "$head_file" "$_ENTRIES_JQ" "$head_file")
-  jq -rn --argjson base "$base_entries" --argjson head "$head_entries" '($base - $head)[]'
+  local base="$1" tree="$2" head="${3:-}"
+  if [[ -z "$head" ]]; then
+    jq -rn --argjson base "$base" --argjson tree "$tree" '($base - $tree)[]'
+    return
+  fi
+  jq -rn --argjson base "$base" --argjson tree "$tree" --argjson head "$head" \
+    '($base - ($tree - ($tree - $head)))[]'
 }
 
 # ── Base resolution ─────────────────────────────────────────────────────────
@@ -225,12 +319,7 @@ DECLARED_KEYS=$(_declared_keys)
 
 # ── Removal check, per package ──────────────────────────────────────────────
 for snapshot in "${PUBLIC_SURFACE_RELPATHS[@]}"; do
-  # Read at the working tree, not at HEAD, on purpose. The asymmetry with the
-  # committed bodies below is deliberate: task automation runs this gate before
-  # the commit exists, to feed the removed keys into the commit-message prompt.
-  # Reading at HEAD would make that pre-commit call see nothing.
   head_file="$REPO_DIR/$snapshot"
-  [[ -f "$head_file" ]] || continue
 
   # cat-file -e is allowed to fail: a non-zero status means the path is absent
   # at the base, i.e. this branch introduces the snapshot. Probing separately is
@@ -248,10 +337,11 @@ for snapshot in "${PUBLIC_SURFACE_RELPATHS[@]}"; do
   base_json=$(git -C "$REPO_DIR" show "$MERGE_BASE:$snapshot")
 
   # Fail loudly on a snapshot with no .package rather than reporting "null:".
-  package=$(jq -r --arg src "$snapshot" \
-    'if (.package | type) == "string" then .package else error("\($src): .package is missing or not a string") end' \
-    "$head_file")
-  removed=$(_removed_entries "$base_json" "$MERGE_BASE:$snapshot" "$head_file")
+  package=$(_package_name "$snapshot" "$head_file" "$base_json")
+  base_entries=$(jq -cs --arg src "$MERGE_BASE:$snapshot" "$_ENTRIES_JQ" <<<"$base_json")
+  tree_entries=$(_tree_entries "$head_file")
+  head_entries=$(_head_entries "$snapshot")
+  removed=$(_removed_entries "$base_entries" "$tree_entries" "$head_entries")
   [[ -n "$removed" ]] || continue
 
   if $HAS_BREAKING; then

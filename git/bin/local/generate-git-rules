@@ -31,9 +31,19 @@ QUIET=false
 CONVENTIONS_SH="${CONVENTIONS_SH:-"$REPO_ROOT/lib/conventions.sh"}"
 OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
 
-# Extract constants directly from the source file
+# Extract constants directly from the source file, printing nothing when the
+# constant is absent so the emptiness guard below is the thing that reports it.
+# Under `set -o pipefail` an unguarded grep exits 1 on no match and errexit
+# aborts the script at the assignment, so the guard could never fire and the
+# script died with no message at all.
+#
+# `|| [[ $? -eq 1 ]]` is scoped to exactly that status: grep exit 1 is "no such
+# constant", a valid empty result. Exit 2 — an unreadable or missing
+# conventions file — still fails the pipeline and aborts, which is right,
+# because that is not a missing constant but a missing source of truth.
 _extract_const() {
-  grep -E "^${1}=" "$CONVENTIONS_SH" | head -1 | cut -d'=' -f2- | tr -d '"'
+  # shellcheck disable=SC2181  # $? is grep's status, read in its || branch
+  { grep -E "^${1}=" "$CONVENTIONS_SH" || [[ $? -eq 1 ]]; } | head -1 | cut -d'=' -f2- | tr -d '"'
 }
 
 COMMIT_TYPES=$(_extract_const "COMMIT_TYPES")
@@ -48,7 +58,7 @@ NOT_BREAKING_FOOTER=$(_extract_const "NOT_BREAKING_FOOTER")
 BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER/ /-}"
 
 if [[ -z "$COMMIT_TYPES" || -z "$COMMIT_HEADER_MAX_LEN" || -z "$COMMIT_BODY_MAX_LEN" || -z "$BREAKING_CHANGE_FOOTER" || -z "$NOT_BREAKING_FOOTER" ]]; then
-  err "Could not extract constants from $AI_CORE_SH"
+  err "Could not extract constants from $CONVENTIONS_SH"
   exit 1
 fi
 
@@ -93,7 +103,8 @@ _budget_line() {
     "- \`${BREAKING_CHANGE_FOOTER_ALT}:\` is accepted as an equivalent spelling — Conventional Commits lists it as a synonym and release-please honours it" \
     "- The \`!\` marker (e.g. \`feat!:\`) is encouraged for readability but never replaces the footer — this repo squash-merges, and on a multi-commit PR the PR title replaces your subject, so a header-only marker is silently lost" \
     "- A removal that is deliberately not breaking takes a \`${NOT_BREAKING_FOOTER}: <entry> — <reason>\` footer instead, one per removed entry" \
-    "- \`bin/local/check-surface-compat\` enforces both footers against the committed public surface snapshots — it runs in pre-push and CI"
+    "- The reason after \`${NOT_BREAKING_FOOTER}:\` is required, and an em dash, an en dash, or a plain \`-\` all separate the entry from it — a footer with no reason declares nothing" \
+    "- \`bin/local/check-surface-compat\` enforces both footers by comparing the public surface snapshots in your working tree *and* at \`HEAD\` against the ones committed at the merge base — it runs in pre-push and CI"
   printf '%s\n' \
     "" \
     "## Pull Requests" \

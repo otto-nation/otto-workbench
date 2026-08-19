@@ -6,6 +6,7 @@ setup() {
   load 'test_helper'
   common_setup
   source_lib
+  # shellcheck disable=SC2034  # read by the commit-msg helpers in lib/ai/commit.sh
   COMMITLINT_CONFIG=""
   # Production always calls this before generate_commit_msg (Taskfile.global.yml)
   # — call it here too so COMMIT_RULES reflects the real prompt shape the
@@ -147,11 +148,13 @@ setup() {
   local fake_gate="$BATS_TEST_TMPDIR/check-surface-compat"
   printf '#!/bin/bash\nexit 0\n' > "$fake_gate"
   chmod +x "$fake_gate"
+  # shellcheck disable=SC2034  # read by _surface_removals in lib/ai/commit.sh
   WORKBENCH_SURFACE_GATE="$fake_gate"
 
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   printf '#!/bin/bash\ncat\n' > "$BATS_TEST_TMPDIR/bin/fake-ai"
   chmod +x "$BATS_TEST_TMPDIR/bin/fake-ai"
+  # shellcheck disable=SC2034  # read by run_ai in lib/ai/core.sh
   AI_COMMAND="fake-ai"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 

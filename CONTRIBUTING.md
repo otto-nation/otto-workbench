@@ -112,15 +112,30 @@ that instead, one footer per removed entry:
 
     Not-Breaking: command:old-name — renamed, old name still symlinked
 
-`bin/local/check-surface-compat` diffs your working tree's snapshots against the
-ones committed at the merge base with `origin/main`, and fails an undeclared
-removal. It runs in pre-push and in the `Surface Compatibility` CI job; run it by
-hand with `bin/local/check-surface-compat [--base REF]`.
+The reason is required — a `Not-Breaking:` footer with nothing after the separator
+declares nothing, because the reason reaching git history is the whole point of a
+footer over a checked-in allowlist. An en dash or a plain `-`/`--` separates the
+entry from the reason just as well as the em dash above; a colon does not. The
+entry is everything up to the *first* separator, so it may contain spaces and the
+reason may contain further dashes.
+
+`bin/local/check-surface-compat` diffs the snapshots against the ones committed at
+the merge base with `origin/main`, and fails an undeclared removal. It reads the
+head side twice — your working tree *and* `HEAD` — and treats an entry as removed
+when either read has lost it. Both halves are load-bearing: the working-tree read
+is what lets `task commit` consult the gate before a commit exists, and the `HEAD`
+read is what `git push` actually publishes, so restoring a snapshot in the tree
+without committing it (a stash, an uncommitted `git revert --no-commit`) cannot
+turn pre-push green. Deleting a snapshot outright counts as removing every entry
+it held. The gate runs in pre-push and in the `Surface Compatibility` CI job; run
+it by hand with `bin/local/check-surface-compat [--base REF]`.
 
 ### `task commit` catches it early
 
-`task --global commit` runs the same gate against your working tree before asking
-the AI to write the message. If it finds an undeclared removal, the AI is told
+`task --global commit` runs the same gate before asking the AI to write the
+message — this is the call the working-tree read exists for, since at that point
+the commit that would carry the footer does not exist yet. If it finds an
+undeclared removal, the AI is told
 which entries disappeared and is instructed to add either a `BREAKING CHANGE:`
 footer or a `Not-Breaking:` footer per entry, depending on whether the removal is
 actually breaking — so you see the correction while writing the commit, not as a

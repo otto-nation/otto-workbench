@@ -146,6 +146,10 @@ EOF
   run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
   [ "$status" -ne 0 ]
   [ ! -e "$TMPDIR/out" ]
+  # Exit 1 alone is not enough: --check uses 1 for "the snapshot is stale",
+  # which sends the contributor to this same script to fix a broken jq by
+  # re-running it. The abort has to name the category that failed.
+  [[ "$output" == *"config entries failed"* ]]
 }
 
 @test "a broken yq call inside _registries_for aborts instead of truncating" {
@@ -177,6 +181,9 @@ EOF
   run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
   [ "$status" -ne 0 ]
   [ ! -e "$TMPDIR/out" ]
+  # See the note on the jq test above — a silent exit 1 reads as a stale
+  # snapshot, and re-running the generator "to fix it" exits 1 again.
+  [[ "$output" == *"_registries_for failed for otto-workbench"* ]]
 }
 
 @test "a broken jq call inside _write_snapshot's render pipeline aborts instead of writing an empty snapshot" {

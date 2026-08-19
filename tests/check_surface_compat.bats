@@ -144,6 +144,81 @@ Not-Breaking: command:beta — the shorter name, not the one removed"
   [[ "$output" == *"command:beta-two"* ]]
 }
 
+# An entry with a space in it (a settings key, a skill name) is the case a
+# whitespace-field read of the footer can never declare: it truncates the key
+# at the first space, no footer ever matches, and the author's only remaining
+# escape is BREAKING CHANGE — which majors both packages, the exact outcome
+# CONTRIBUTING.md tells them to avoid. No committed snapshot holds such an
+# entry today, so this guards a latent hole rather than a live one.
+@test "a Not-Breaking footer declares an entry containing a space" {
+  _seed_base '["command:alpha","setting:permissions deny"]'
+  _commit_head '["command:alpha"]' "chore: unpublish the spaced entry
+
+Not-Breaking: setting:permissions deny — it was never a documented key"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 0 ]
+}
+
+# The reason landing in git history is the entire argument for a footer over a
+# checked-in allowlist, so a footer that carries no reason has declared nothing.
+@test "a Not-Breaking footer with no reason declares nothing" {
+  _seed_base '["command:alpha","command:beta"]'
+  _commit_head '["command:alpha"]' "chore: unpublish beta
+
+Not-Breaking: command:beta"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+@test "a Not-Breaking footer whose reason is only whitespace declares nothing" {
+  _seed_base '["command:alpha","command:beta"]'
+  _commit_head '["command:alpha"]' "chore: unpublish beta
+
+Not-Breaking: command:beta — "
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+# A human or a model typing the footer by hand reaches for "-" or "--" long
+# before U+2014. Rejecting those spellings would push a correct declaration
+# toward BREAKING CHANGE for a formatting reason.
+@test "an ASCII hyphen or an en dash separates the entry from its reason" {
+  _seed_base '["command:alpha","command:beta","command:gamma","command:delta"]'
+  _commit_head '["command:alpha"]' "chore: unpublish three
+
+Not-Breaking: command:beta - never installed
+Not-Breaking: command:gamma -- never installed
+Not-Breaking: command:delta – never installed"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 0 ]
+}
+
+# Splitting on the last separator instead of the first would read the key as
+# "command:beta — renamed" and leave command:beta undeclared.
+@test "a reason containing another dash does not extend the declared key" {
+  _seed_base '["command:alpha","command:beta"]'
+  _commit_head '["command:alpha"]' "chore: unpublish beta
+
+Not-Breaking: command:beta — renamed — the old name is still symlinked"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 0 ]
+}
+
+# A colon is not a separator: "Not-Breaking: command:beta: gone" names no
+# reason the gate can find, and treating the key's own colon as the split point
+# would declare "command" instead.
+@test "a colon does not separate the entry from its reason" {
+  _seed_base '["command:alpha","command:beta"]'
+  _commit_head '["command:alpha"]' "chore: unpublish beta
+
+Not-Breaking: command:beta: it was never installed"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
 @test "declares each removal separately when several disappear" {
   _seed_base '["command:alpha","command:beta","command:gamma"]'
   _commit_head '["command:alpha"]' "chore: unpublish two
@@ -169,6 +244,75 @@ Not-Breaking: command:gamma — never installed"
 BREAKING CHANGE: beta replaces the old entrypoint"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 0 ]
+}
+
+# ── Head side: the working tree and HEAD are both read ─────────────────────
+
+# `git push` publishes HEAD, so a gate that judges only the working tree can be
+# talked into a green pre-push by restoring the snapshot without committing it
+# — git stash, an uncommitted `git revert --no-commit`, a partially staged
+# revert. validate-all does not save it either: with the registry reverted too,
+# the tree is self-consistent and every validator is green.
+@test "a removal committed at HEAD is caught even when the working tree restores it" {
+  _seed_base '["command:alpha","command:beta"]'
+  _commit_head '["command:alpha"]' "feat: drop beta"
+  _write_snapshot "public-surface.json" "otto-workbench" '["command:alpha","command:beta"]'
+
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+# The other half of the union, and the reason the working-tree read cannot just
+# be swapped for a HEAD one: lib/ai/commit.sh consults this gate before the
+# commit exists, so an uncommitted removal has to be visible or the
+# commit-message prompt loses the entries it is supposed to name.
+@test "an uncommitted working-tree removal is still reported" {
+  _seed_base '["command:alpha","command:beta"]'
+  _write_snapshot "public-surface.json" "otto-workbench" '["command:alpha"]'
+
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+}
+
+# A declared removal must stay declared under the union — the HEAD side adds
+# entries to the removal set, and a footer covering them has to be honoured on
+# both sides or the gate fails a contributor who did everything right.
+@test "a Not-Breaking footer still covers a removal both sides agree on" {
+  _seed_base '["command:alpha","command:beta"]'
+  _commit_head '["command:alpha"]' "chore: unpublish beta
+
+Not-Breaking: command:beta — never installed"
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 0 ]
+}
+
+# Deleting the snapshot wipes a whole package's surface. Treating an absent
+# head-side file as "nothing to compare" made that the quietest way past the
+# gate; every entry the base held is gone, so that is what it must report.
+@test "deleting the working-tree snapshot reports every entry as removed" {
+  _seed_base '["command:alpha","command:beta"]'
+  rm "$LOCAL/public-surface.json"
+
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:alpha"* ]]
+  [[ "$output" == *"REMOVED command:beta"* ]]
+  # The package name has to come from the base snapshot — there is no
+  # working-tree file left to read it from.
+  [[ "$output" == *"otto-workbench"* ]]
+}
+
+@test "committing a snapshot deletion reports every entry as removed" {
+  _seed_base '["command:alpha","command:beta"]'
+  git -C "$LOCAL" rm -q public-surface.json
+  git -C "$LOCAL" commit -m "chore: delete the snapshot" --quiet
+
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REMOVED command:alpha"* ]]
+  [[ "$output" == *"REMOVED command:beta"* ]]
 }
 
 @test "passes when the base has no snapshot at all" {
@@ -238,12 +382,16 @@ BREAKING CHANGE: beta replaces the old entrypoint"
 # A base ref that does not resolve is not "nothing to compare against" — it is
 # the check never running. Reporting it as a pass is how a green tick in CI
 # comes to mean nothing.
-@test "fails when the base ref does not resolve" {
+#
+# The status is pinned to git's own 128, not merely asserted non-zero: the
+# script's header tells callers they may branch on 2 vs 5 vs 128, and an
+# assertion of "not 0 and not 1" makes all three interchangeable, so nothing
+# guards the contract the header advertises.
+@test "fails with git's own status when the base ref does not resolve" {
   _seed_base '["command:alpha","command:beta"]'
   _commit_head '["command:alpha"]' "feat: drop beta"
   run "$GATE" --repo-dir "$LOCAL" --base origin/nonexistent
-  [ "$status" -ne 0 ]
-  [ "$status" -ne 1 ]
+  [ "$status" -eq 128 ]
   [[ "$output" == *"Could not resolve a merge base"* ]]
   [[ "$output" != *"skipping surface comparison"* ]]
 }
@@ -263,22 +411,45 @@ BREAKING CHANGE: beta replaces the old entrypoint"
   [[ "$output" != *"invalid object name"* ]]
 }
 
-@test "fails when the repo dir is not a git repository" {
+@test "fails with git's own status when the repo dir is not a git repository" {
   mkdir -p "$TMPDIR/notarepo"
   run "$GATE" --repo-dir "$TMPDIR/notarepo"
-  [ "$status" -ne 0 ]
-  [ "$status" -ne 1 ]
+  [ "$status" -eq 128 ]
   [[ "$output" == *"Could not resolve a merge base"* ]]
   [[ "$output" != *"skipping surface comparison"* ]]
 }
 
-@test "a corrupt head snapshot fails loudly instead of reporting no removals" {
+# jq's status is passed through rather than translated, so this asserts the
+# gate's status *is* what jq itself returns for the same input instead of
+# hardcoding a number that has moved between jq releases (a parse error is not
+# one of the statuses the script's header enumerates).
+@test "a corrupt head snapshot exits with jq's own parse-error status" {
   _seed_base '["command:alpha","command:beta"]'
   echo 'not json at all' > "$LOCAL/public-surface.json"
   git -C "$LOCAL" add -A
   git -C "$LOCAL" commit -m "chore: corrupt the snapshot" --quiet
+
+  local jq_status=0
+  jq -s '.' "$LOCAL/public-surface.json" >/dev/null 2>&1 || jq_status=$?
+  [ "$jq_status" -ne 0 ]
+
   run "$GATE" --repo-dir "$LOCAL"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq "$jq_status" ]
+  [[ "$output" != *"public surface compatible"* ]]
+}
+
+# An empty snapshot is the shape jq reads as "no input at all": the program
+# never runs, jq prints nothing and exits 0, and the caller would take that
+# empty capture for an empty surface — reporting either the whole base surface
+# as removed or nothing at all, both lies.
+@test "an empty head snapshot fails loudly instead of reading as no entries" {
+  _seed_base '["command:alpha","command:beta"]'
+  : > "$LOCAL/public-surface.json"
+  git -C "$LOCAL" add -A
+  git -C "$LOCAL" commit -m "chore: empty the snapshot" --quiet
+  run "$GATE" --repo-dir "$LOCAL"
+  [ "$status" -eq 5 ]
+  [[ "$output" == *"not a single JSON document"* ]]
   [[ "$output" != *"public surface compatible"* ]]
 }
 
@@ -292,8 +463,9 @@ BREAKING CHANGE: beta replaces the old entrypoint"
   git -C "$LOCAL" add -A
   git -C "$LOCAL" commit -m "chore: break the entries array" --quiet
   run "$GATE" --repo-dir "$LOCAL"
-  [ "$status" -ne 0 ]
-  [ "$status" -ne 1 ]
+  # 5 exactly: jq's status for an uncaught error(), passed through. "Not 0 and
+  # not 1" would let this swap places with 2 or 128 unnoticed.
+  [ "$status" -eq 5 ]
   [[ "$output" == *".entries is not an array"* ]]
   [[ "$output" != *"public surface compatible"* ]]
 }
@@ -304,8 +476,7 @@ BREAKING CHANGE: beta replaces the old entrypoint"
   git -C "$LOCAL" add -A
   git -C "$LOCAL" commit -m "chore: drop the package field" --quiet
   run "$GATE" --repo-dir "$LOCAL"
-  [ "$status" -ne 0 ]
-  [ "$status" -ne 1 ]
+  [ "$status" -eq 5 ]
   [[ "$output" == *".package is missing"* ]]
   [[ "$output" != *"null:"* ]]
 }

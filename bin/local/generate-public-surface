@@ -102,12 +102,20 @@ _registries_for() {
 # process substitution's exit status — it just sees a short stream and
 # returns 0. Capturing into a variable first, with an explicit status check,
 # closes that gap the same way _collect does for the category functions.
+#
+# The capture runs in a `set +e` window so the status check is reachable: on a
+# bare assignment errexit aborts the script at the assignment itself, and the
+# diagnostic below never prints — leaving a broken yq indistinguishable from
+# the documented exit 1 of `--check` finding a stale snapshot. See _collect for
+# why the window carries its own `set -e` rather than an `if` or a `||`.
 _commands() {
   local package="$1" registries rc f
-  registries="$(_registries_for "$package")"
+  set +e
+  registries="$(set -e; _registries_for "$package")"
   rc=$?
+  set -e
   if [[ "$rc" -ne 0 ]]; then
-    err "_registries_for failed for $package"
+    err "_registries_for failed for $package (exit $rc)"
     exit 1
   fi
   while IFS= read -r f; do
@@ -182,13 +190,27 @@ _claude_artifacts() {
 # substitution, which swallows the substitution's exit status even under
 # set -e: one broken jq call in an earlier category turned the whole snapshot
 # into zero entries with a clean exit, and later categories never ran either.
+#
+# The `set +e` window is what makes the status check reachable. A bare
+# assignment aborts the script at the assignment, so `err` never runs and the
+# script exits 1 — the same status --check uses for "the snapshot is stale",
+# which sends the contributor to bin/local/generate-public-surface to fix a
+# broken jq by re-running it. The two alternatives that also keep the status
+# are worse: `out=$(...) || rc=$?` and `if out=$(...)` both put the capture in
+# a context where errexit is ignored, and bash propagates that suspension into
+# the substitution's subshell, so a category function's failing pipeline would
+# no longer abort it. The window's own `set -e` restores errexit inside the
+# subshell, which is the property that has to survive; the parent's is off only
+# for the length of the assignment.
 _collect() {
   local label="$1"; shift
   local out rc
-  out="$("$@")"
+  set +e
+  out="$(set -e; "$@")"
   rc=$?
+  set -e
   if [[ "$rc" -ne 0 ]]; then
-    err "$label failed"
+    err "$label failed (exit $rc)"
     exit 1
   fi
   [[ -n "$out" ]] || { err "$label produced no entries"; exit 1; }

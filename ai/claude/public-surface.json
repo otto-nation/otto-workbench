@@ -38,7 +38,6 @@
     "command:validate-review-positions",
     "command:workbench-reference",
     "command:workbench-statusline",
-    "setting:_generated_permissions",
     "setting:enabledPlugins",
     "setting:hooks",
     "setting:permissions",

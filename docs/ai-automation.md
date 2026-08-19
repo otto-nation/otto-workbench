@@ -732,6 +732,11 @@ pr comments --fix --post   # commits; holds the push, one thread is contested
 pr comments --finish --post   # pushes, then drains the replies and the summary
 ```
 
+Until that second command runs, the queue sits in state and the PR shows nothing
+— an undelivered summary is indistinguishable from a run that had nothing to
+say. `pr status` names it (`⚠ closeout owed: summary + 15 replies`) and counts
+it as a merge blocker, so the hold survives the session that created it.
+
 This exists because threads are triaged independently. A reviewer saying "the
 root cause you describe does not exist" removes that one thread from the fixable
 set and leaves the pass free to fix, push, and report success on everything else

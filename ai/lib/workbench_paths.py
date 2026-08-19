@@ -117,8 +117,8 @@ def projects_registry() -> Path:
     """The repos that use the workbench, one absolute path per line.
 
     ``lib/projects.sh`` is the shell owner of the same file — it holds the
-    membership rules and the CLI, and this side holds the writes the Python
-    tools make. ``workbench_projects`` is where those reads and writes live;
+    membership rules, the backfill, and the CLI, and this side holds the writes
+    the Python tools make. ``workbench_projects`` is where those reads and writes live;
     this function only names the path, so the two languages cannot disagree
     about it.
     """

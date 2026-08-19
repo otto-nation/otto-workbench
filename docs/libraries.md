@@ -201,6 +201,7 @@ The repos on this machine that use otto-workbench.
 | `project_registered` | print every registered repo that still exists, one per line. |
 | `project_forget DIR` | drop DIR's entry. Returns 1 when it had none. |
 | `project_prune` | drop entries whose directory is gone, and repeats. Prints how many went. |
+| `seed_project_registry` | backfill the repos that predate the registry, once. |
 <!-- LIB-FUNCTIONS:projects.sh-END -->
 
 State file: `$PROJECTS_REGISTRY_FILE` — `projects.registry` under the [state root](#rootssh), one absolute path per line with `#` comment lines. Text rather than YAML for the reason `migrations.applied` is: every write is an append and every read is a scan, and YAML would pay a `yq` fork on each of them. Loaded via `ui.sh`.
@@ -219,6 +220,10 @@ Membership means a workbench command actually ran in a repo. Nothing scans for c
 Reads drop entries whose directory is gone, which is what saves the registry from needing a pruning job; `otto-workbench projects prune` makes the drop permanent. Repeats are dropped on read for a related reason: registration is an append guarded by a membership check rather than a lock, so two workbench commands starting in one repo at the same moment can each read "absent" and each append. Absorbing that where it is read costs nothing; a lock would tax every hook to prevent a duplicate line.
 
 `otto-workbench projects forget DIR` canonicalises `DIR` before matching — entries are stored as `git rev-parse --show-toplevel` returned them, and the comparison is an exact string, so a relative path, one holding `..`, one reaching through a symlink, or one naming a subdirectory of the repo all have to arrive in that form or a valid request reads as "not in the registry". A directory that is already gone can only be normalised lexically, which is the right answer for it: whatever entry it matches was written while it still existed.
+
+`seed_project_registry` backfills the repos that predate the registry, once per machine, from the `.projects` map in `~/.claude.json` — an observation Claude Code wrote, not another guess at where repos live. Each key is a session cwd, so `_project_seed_roots` turns one into a work-tree root: `git rev-parse --show-toplevel` for a normal checkout, and for a bare-repo container — a directory that refuses `--show-toplevel` outright — the worktree checked out on the branch the container's HEAD names, the same choice `WORKBENCH_STABLE_DIR` makes. A container's feature worktrees are deliberately left out: they come and go, each would be a row of its own everywhere the registry is read, and any still around registers itself the next time a workbench command runs in it.
+
+A `# backfilled from <path>` line inside the file records that the backfill ran: the Python half creates the file the first time `pr` registers anything, so a backfill keyed on the file's existence would be skipped forever on a machine that used a tool before it next synced. Without `jq` it writes no marker and returns — no candidates for want of a reader is indistinguishable from a machine that has none, and recording the marker on that reading would retire the backfill before it ever ran. It is called from `run_all_migrations` ahead of the framework rather than written as a migration, for the reason adoption is — see [Execution Flow — Migrations](execution-flow.md#migrations).
 
 [`ai/lib/workbench_projects.py`](../ai/lib/workbench_projects.py) is the Python half — the SessionStart hook and `pr` register through it, against the same file in the same shape. It raises nothing: registration is a side effect of a command run for some other reason, and a hook that died on an unwritable state file would cost a session for a bookkeeping entry. The filename is declared once in [`constants.sh`](#constantssh) as `PROJECTS_REGISTRY_NAME` and once in `workbench_paths.py`; `tests/workbench_roots.bats` fails when the two drift, and `tests/projects.bats` cross-validates the halves against one file.
 
@@ -296,7 +301,7 @@ Migration framework with state tracking.
 |----------|---------|
 | `run_component_migrations DIR` | Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs each function, and records success. |
 | `adopt_legacy_workbench_root` | Move a pre-split ~/.config/workbench to whichever roots now own its contents. |
-| `run_all_migrations` | Discovers and runs migrations across all components, then prunes stale state. |
+| `run_all_migrations` | Adopts the legacy root, backfills the project registry, prunes stale state, then runs every component's migrations. |
 <!-- LIB-FUNCTIONS:migrations.sh-END -->
 
 State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state root](#rootssh). Loaded via `ui.sh`. See [Execution Flow — Migrations](execution-flow.md#migrations).

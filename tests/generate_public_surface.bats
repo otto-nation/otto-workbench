@@ -11,6 +11,14 @@ teardown() {
   common_teardown
 }
 
+# _generator_under_test — prints the generator the fault-injection tests run.
+# GENERATOR_UNDER_TEST lets the same test run against an older copy of the
+# generator (see task-2-report.md) to prove it actually discriminates the bug it
+# targets, rather than passing against any implementation.
+_generator_under_test() {
+  echo "${GENERATOR_UNDER_TEST:-$REPO_ROOT/bin/local/generate-public-surface}"
+}
+
 @test "generator writes both package snapshots" {
   run "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
   [ "$status" -eq 0 ]
@@ -119,10 +127,8 @@ teardown() {
 }
 
 @test "a broken jq call aborts instead of writing a truncated snapshot" {
-  # GENERATOR_UNDER_TEST lets this same test run against an older copy of the
-  # generator (see task-2-report.md) to prove it actually discriminates the
-  # bug it targets, rather than passing against any implementation.
-  local gen="${GENERATOR_UNDER_TEST:-$REPO_ROOT/bin/local/generate-public-surface}"
+  local gen
+  gen="$(_generator_under_test)"
   local fakebin="$TMPDIR/fakebin" real_jq
   mkdir -p "$fakebin"
   real_jq="$(command -v jq)"
@@ -153,8 +159,8 @@ EOF
 }
 
 @test "a broken yq call inside _registries_for aborts instead of truncating" {
-  # GENERATOR_UNDER_TEST — see the note on the jq fault-injection test above.
-  local gen="${GENERATOR_UNDER_TEST:-$REPO_ROOT/bin/local/generate-public-surface}"
+  local gen
+  gen="$(_generator_under_test)"
   local fakebin="$TMPDIR/fakebin" real_yq
   mkdir -p "$fakebin"
   real_yq="$(command -v yq)"
@@ -187,8 +193,8 @@ EOF
 }
 
 @test "a broken jq call inside _write_snapshot's render pipeline aborts instead of writing an empty snapshot" {
-  # GENERATOR_UNDER_TEST — see the note on the jq fault-injection test above.
-  local gen="${GENERATOR_UNDER_TEST:-$REPO_ROOT/bin/local/generate-public-surface}"
+  local gen
+  gen="$(_generator_under_test)"
   local fakebin="$TMPDIR/fakebin" real_jq
   mkdir -p "$fakebin"
   real_jq="$(command -v jq)"
@@ -213,4 +219,52 @@ EOF
   [ "$status" -ne 0 ]
   [ ! -e "$TMPDIR/out/public-surface.json" ]
   [ ! -e "$TMPDIR/out/ai/claude/public-surface.json" ]
+}
+
+@test "config keys and enums nested under allOf reach the snapshot" {
+  local gen
+  gen="$(_generator_under_test)"
+  local fakebin="$TMPDIR/fakebin" real_jq
+  mkdir -p "$fakebin"
+  real_jq="$(command -v jq)"
+  # config.schema.json uses no allOf today, so the walk can only be exercised
+  # against a fixture. This shim swaps the schema path for exactly the two
+  # _config_entries jq calls (identified by a fragment of their programs) and
+  # passes every other invocation through untouched — the same substitution
+  # idiom as the fault-injection tests above, rather than an override flag on
+  # the generator that nothing in production would ever set.
+  cat > "$TMPDIR/schema.json" <<'JSON'
+{
+  "properties": {"plain": {"type": "string"}},
+  "allOf": [
+    {"properties": {"composed": {"type": "string", "enum": ["one"]}}}
+  ]
+}
+JSON
+  cat > "$fakebin/jq" <<EOF
+#!/usr/bin/env bash
+saw_program=false
+args=()
+for a in "\$@"; do
+  if [[ "\$a" == *"def props("* || "\$a" == *"def enums("* ]]; then
+    saw_program=true
+  elif [[ "\$saw_program" == true && "\$a" == *"/config.schema.json" ]]; then
+    a="$TMPDIR/schema.json"
+  fi
+  args+=("\$a")
+done
+exec "$real_jq" "\${args[@]}"
+EOF
+  chmod +x "$fakebin/jq"
+
+  run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
+  [ "$status" -eq 0 ]
+  run jq -e '.entries | index("config:plain")' "$TMPDIR/out/public-surface.json"
+  [ "$status" -eq 0 ]
+  # The two the pre-fix walk dropped: a key reachable only through allOf, and
+  # its enum values.
+  run jq -e '.entries | index("config:composed")' "$TMPDIR/out/public-surface.json"
+  [ "$status" -eq 0 ]
+  run jq -e '.entries | index("config:composed=one")' "$TMPDIR/out/public-surface.json"
+  [ "$status" -eq 0 ]
 }

@@ -130,17 +130,23 @@ _commands() {
 #
 # Recurses through additionalProperties (dynamic keys, rendered as a literal
 # "*" segment — e.g. review.phases.*.model) and items (array element schemas),
-# alongside properties/oneOf/anyOf, so a dynamic-key or array-valued section
-# is not silently dropped. propertyNames.enum (the allowed dynamic-key names,
-# e.g. review.phases' single/holistic/scout/...) is emitted with the same
-# "key=value" shape as a value enum.
+# alongside properties and the three composition keywords oneOf/anyOf/allOf,
+# so a dynamic-key, array-valued, or composed section is not silently dropped.
+# propertyNames.enum (the allowed dynamic-key names, e.g. review.phases'
+# single/holistic/scout/...) is emitted with the same "key=value" shape as a
+# value enum.
+#
+# `not` is the one schema keyword deliberately left unwalked: its subschema
+# describes shapes the config must NOT match, so the keys under it are the
+# rejected ones. Emitting them would put keys nobody can set into the semver
+# contract and make removing a prohibition read as a breaking change.
 _config_entries() {
   jq -r '
     def props($prefix):
       ((.properties // {}) | to_entries[] |
          ($prefix + .key) as $p |
          $p, (.value | props($p + "."))),
-      (((.oneOf // []) + (.anyOf // []))[] | props($prefix)),
+      (((.oneOf // []) + (.anyOf // []) + (.allOf // []))[] | props($prefix)),
       ((.items // empty) | objects | props($prefix)),
       ((.additionalProperties // empty) | objects | props($prefix + "*."));
     props("")
@@ -151,7 +157,7 @@ _config_entries() {
       ((.properties // {}) | to_entries[] |
          ($prefix + .key) as $p |
          (.value | enums($p + "."))),
-      (((.oneOf // []) + (.anyOf // []))[] | enums($prefix)),
+      (((.oneOf // []) + (.anyOf // []) + (.allOf // []))[] | enums($prefix)),
       ((.items // empty) | objects | enums($prefix)),
       ((.additionalProperties // empty) | objects | enums($prefix + "*.")),
       ((.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)"),
@@ -266,4 +272,6 @@ _ai_entries="$_ai_entries"$'\n'"$(_collect "claude artifacts" _claude_artifacts)
 _write_snapshot "otto-workbench" "$WORKBENCH_SURFACE_RELPATH" "$_wb_entries"
 _write_snapshot "otto-ai-tools" "$AI_TOOLS_SURFACE_RELPATH" "$_ai_entries"
 
-$QUIET || success "Generated 2 public surface snapshots"
+# The count comes from the array in lib/constants.sh rather than a literal, so
+# adding a package cannot leave this message reporting a stale number.
+$QUIET || success "Generated ${#PUBLIC_SURFACE_RELPATHS[@]} public surface snapshots"

@@ -14,8 +14,27 @@ REPO_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 # shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
 
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Check that the committed public surface snapshots match the source registries.
+
+Options:
+  --quiet     Suppress output on success
+  -h, --help  Show this help
+EOF
+}
+
 QUIET=false
-[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) QUIET=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) err "Unknown argument: $1"; usage; exit 1 ;;
+  esac
+done
 
 if ! "$REPO_ROOT/bin/local/generate-public-surface" --check --quiet; then
   err "Public surface snapshots are stale"
@@ -23,4 +42,6 @@ if ! "$REPO_ROOT/bin/local/generate-public-surface" --check --quiet; then
   exit 1
 fi
 
-$QUIET || success "public surface snapshots current (2 checks)"
+# The count comes from the array in lib/constants.sh rather than a literal, so
+# adding a package cannot leave this message reporting a stale number.
+$QUIET || success "public surface snapshots current (${#PUBLIC_SURFACE_RELPATHS[@]} checks)"

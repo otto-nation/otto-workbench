@@ -31,16 +31,12 @@ QUIET=false
 CONVENTIONS_SH="${CONVENTIONS_SH:-"$REPO_ROOT/lib/conventions.sh"}"
 OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
 
-# Extract constants directly from the source file, printing nothing when the
-# constant is absent so the emptiness guard below is the thing that reports it.
-# Under `set -o pipefail` an unguarded grep exits 1 on no match and errexit
-# aborts the script at the assignment, so the guard could never fire and the
-# script died with no message at all.
-#
-# `|| [[ $? -eq 1 ]]` is scoped to exactly that status: grep exit 1 is "no such
-# constant", a valid empty result. Exit 2 — an unreadable or missing
-# conventions file — still fails the pipeline and aborts, which is right,
-# because that is not a missing constant but a missing source of truth.
+# Extract a constant from the source file, printing nothing when it is absent
+# so the emptiness guard below is what reports it. The guard is only reachable
+# because `|| [[ $? -eq 1 ]]` is scoped to grep's exit 1 ("no match", a valid
+# empty result); exit 2 — an unreadable conventions file — still aborts, which
+# is right, because that is a missing source of truth rather than a missing
+# constant.
 _extract_const() {
   # shellcheck disable=SC2181  # $? is grep's status, read in its || branch
   { grep -E "^${1}=" "$CONVENTIONS_SH" || [[ $? -eq 1 ]]; } | head -1 | cut -d'=' -f2- | tr -d '"'

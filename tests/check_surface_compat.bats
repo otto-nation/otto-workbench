@@ -59,32 +59,54 @@ _commit_head_verbatim() {
   git -C "$LOCAL" commit --cleanup=verbatim -F "$2" --quiet
 }
 
-@test "passes when nothing was removed" {
+# Most tests here care about what the gate does with a removal, not about which
+# entries were involved, so they share one fixture: a two-entry base that loses
+# command:beta at HEAD. Tests whose subject IS the entry set spell their literals
+# out — a base holding a spaced or longer-named entry, or losing several at once,
+# because there the helper's name would misreport what was removed.
+
+# _seed_base_ab — the standard base: command:alpha and command:beta.
+_seed_base_ab() {
   _seed_base '["command:alpha","command:beta"]'
+}
+
+# _commit_head_drop_beta MESSAGE — removes command:beta from the base at HEAD.
+_commit_head_drop_beta() {
+  _commit_head '["command:alpha"]' "$1"
+}
+
+# _commit_head_drop_beta_verbatim MESSAGE_FILE — the same removal, with the
+# message taken byte for byte from MESSAGE_FILE.
+_commit_head_drop_beta_verbatim() {
+  _commit_head_verbatim '["command:alpha"]' "$1"
+}
+
+@test "passes when nothing was removed" {
+  _seed_base_ab
   _commit_head '["command:alpha","command:beta","command:gamma"]' "feat: add gamma"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 0 ]
 }
 
 @test "fails when an entry disappears with no declaration" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "feat: drop beta"
+  _seed_base_ab
+  _commit_head_drop_beta "feat: drop beta"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 1 ]
   [[ "$output" == *"command:beta"* ]]
 }
 
 @test "prints REMOVED lines on stdout for machine consumption" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "feat: drop beta"
+  _seed_base_ab
+  _commit_head_drop_beta "feat: drop beta"
   run --separate-stderr "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 1 ]
   [ "$output" = "REMOVED command:beta" ]
 }
 
 @test "passes when a BREAKING CHANGE footer is present" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "feat: drop beta
+  _seed_base_ab
+  _commit_head_drop_beta "feat: drop beta
 
 BREAKING CHANGE: the beta command was removed"
   run "$GATE" --repo-dir "$LOCAL"
@@ -95,8 +117,8 @@ BREAKING CHANGE: the beta command was removed"
 # release-please honours it, so rejecting it would fail a contributor who
 # declared correctly — a false failure on the one thing this gate rewards.
 @test "accepts the hyphenated BREAKING-CHANGE spelling" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "feat: drop beta
+  _seed_base_ab
+  _commit_head_drop_beta "feat: drop beta
 
 BREAKING-CHANGE: the beta command was removed"
   run "$GATE" --repo-dir "$LOCAL"
@@ -113,8 +135,8 @@ BREAKING-CHANGE: beta replaces the old entrypoint"
 }
 
 @test "passes when a matching Not-Breaking footer is present" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta
 
 Not-Breaking: command:beta — was never installed, registry entry was wrong"
   run "$GATE" --repo-dir "$LOCAL"
@@ -122,8 +144,8 @@ Not-Breaking: command:beta — was never installed, registry entry was wrong"
 }
 
 @test "fails when Not-Breaking names a different entry" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta
 
 Not-Breaking: command:zeta — wrong entry named"
   run "$GATE" --repo-dir "$LOCAL"
@@ -136,8 +158,8 @@ Not-Breaking: command:zeta — wrong entry named"
 # "Not-Breaking: command:beta-two" and silently covers a removal nobody
 # declared. Only a whole-line fixed-string match rejects it.
 @test "a Not-Breaking footer for a longer key does not cover a shorter removal" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta-two
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta-two
 
 Not-Breaking: command:beta-two — a longer key, not the one removed"
   run "$GATE" --repo-dir "$LOCAL"
@@ -174,8 +196,8 @@ Not-Breaking: setting:permissions deny — it was never a documented key"
 # checked-in allowlist, so a footer that carries no reason has declared nothing.
 # This one carries no separator either, so it never reaches the reason check.
 @test "a Not-Breaking footer with no separator declares nothing" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta
 
 Not-Breaking: command:beta"
   run "$GATE" --repo-dir "$LOCAL"
@@ -188,9 +210,9 @@ Not-Breaking: command:beta"
 # cleanup would strip the trailing space and turn this into the no-separator
 # test above, leaving the guard covered by nothing.
 @test "a Not-Breaking footer whose reason is only whitespace declares nothing" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   printf 'chore: unpublish beta\n\nNot-Breaking: command:beta \xe2\x80\x94 \n' > "$TMPDIR/msg"
-  _commit_head_verbatim '["command:alpha"]' "$TMPDIR/msg"
+  _commit_head_drop_beta_verbatim "$TMPDIR/msg"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 1 ]
   [[ "$output" == *"REMOVED command:beta"* ]]
@@ -200,9 +222,9 @@ Not-Breaking: command:beta"
 # whitespace — so a reason of nothing but the line ending would read as a real
 # reason and declare the entry, defeating the guard above.
 @test "a carriage return is not a Not-Breaking reason" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   printf 'chore: unpublish beta\r\n\r\nNot-Breaking: command:beta \xe2\x80\x94 \r\n' > "$TMPDIR/msg"
-  _commit_head_verbatim '["command:alpha"]' "$TMPDIR/msg"
+  _commit_head_drop_beta_verbatim "$TMPDIR/msg"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 1 ]
   [[ "$output" == *"REMOVED command:beta"* ]]
@@ -212,9 +234,9 @@ Not-Breaking: command:beta"
 # the carriage return is what keeps the reason from being whitespace-only, and
 # it must not take anything else with it.
 @test "a CRLF footer with a real reason still declares its entry" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   printf 'chore: unpublish beta\r\n\r\nNot-Breaking: command:beta \xe2\x80\x94 never installed\r\n' > "$TMPDIR/msg"
-  _commit_head_verbatim '["command:alpha"]' "$TMPDIR/msg"
+  _commit_head_drop_beta_verbatim "$TMPDIR/msg"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 0 ]
 }
@@ -223,8 +245,8 @@ Not-Breaking: command:beta"
 # the gate would look for "command:beta " and no footer could ever declare the
 # entry — the author's only escape left being BREAKING CHANGE.
 @test "extra space before the separator does not change the declared key" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta
 
 Not-Breaking: command:beta  — never installed"
   run "$GATE" --repo-dir "$LOCAL"
@@ -248,8 +270,8 @@ Not-Breaking: command:delta – never installed"
 # Splitting on the last separator instead of the first would read the key as
 # "command:beta — renamed" and leave command:beta undeclared.
 @test "a reason containing another dash does not extend the declared key" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta
 
 Not-Breaking: command:beta — renamed — the old name is still symlinked"
   run "$GATE" --repo-dir "$LOCAL"
@@ -260,8 +282,8 @@ Not-Breaking: command:beta — renamed — the old name is still symlinked"
 # reason the gate can find, and treating the key's own colon as the split point
 # would declare "command" instead.
 @test "a colon does not separate the entry from its reason" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta
 
 Not-Breaking: command:beta: it was never installed"
   run "$GATE" --repo-dir "$LOCAL"
@@ -304,8 +326,8 @@ BREAKING CHANGE: beta replaces the old entrypoint"
 # revert. validate-all does not save it either: with the registry reverted too,
 # the tree is self-consistent and every validator is green.
 @test "a removal committed at HEAD is caught even when the working tree restores it" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "feat: drop beta"
+  _seed_base_ab
+  _commit_head_drop_beta "feat: drop beta"
   _write_snapshot "public-surface.json" "otto-workbench" '["command:alpha","command:beta"]'
 
   run "$GATE" --repo-dir "$LOCAL"
@@ -318,7 +340,7 @@ BREAKING CHANGE: beta replaces the old entrypoint"
 # commit exists, so an uncommitted removal has to be visible or the
 # commit-message prompt loses the entries it is supposed to name.
 @test "an uncommitted working-tree removal is still reported" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   _write_snapshot "public-surface.json" "otto-workbench" '["command:alpha"]'
 
   run "$GATE" --repo-dir "$LOCAL"
@@ -330,8 +352,8 @@ BREAKING CHANGE: beta replaces the old entrypoint"
 # entries to the removal set, and a footer covering them has to be honoured on
 # both sides or the gate fails a contributor who did everything right.
 @test "a Not-Breaking footer still covers a removal both sides agree on" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "chore: unpublish beta
+  _seed_base_ab
+  _commit_head_drop_beta "chore: unpublish beta
 
 Not-Breaking: command:beta — never installed"
   run "$GATE" --repo-dir "$LOCAL"
@@ -342,7 +364,7 @@ Not-Breaking: command:beta — never installed"
 # head-side file as "nothing to compare" made that the quietest way past the
 # gate; every entry the base held is gone, so that is what it must report.
 @test "deleting the working-tree snapshot reports every entry as removed" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   rm "$LOCAL/public-surface.json"
 
   run "$GATE" --repo-dir "$LOCAL"
@@ -355,7 +377,7 @@ Not-Breaking: command:beta — never installed"
 }
 
 @test "committing a snapshot deletion reports every entry as removed" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   git -C "$LOCAL" rm -q public-surface.json
   git -C "$LOCAL" commit -m "chore: delete the snapshot" --quiet
 
@@ -373,7 +395,7 @@ Not-Breaking: command:beta — never installed"
 # time the HEAD side is read the merge base is known to hold the snapshot and
 # HEAD descends from it, so absent there can only mean the branch deleted it.
 @test "a snapshot deleted at HEAD is caught even when the working tree restores it" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   git -C "$LOCAL" rm -q public-surface.json
   git -C "$LOCAL" commit -m "chore: delete the snapshot" --quiet
   _write_snapshot "public-surface.json" "otto-workbench" '["command:alpha","command:beta"]'
@@ -389,7 +411,7 @@ Not-Breaking: command:beta — never installed"
 # listing would reach jq and the run would end in a parse error rather than the
 # verdict the surface actually deserves.
 @test "a directory at the snapshot path at HEAD reports every entry as removed" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   git -C "$LOCAL" rm -q public-surface.json
   mkdir -p "$LOCAL/public-surface.json"
   echo "placeholder" > "$LOCAL/public-surface.json/README"
@@ -447,8 +469,8 @@ Not-Breaking: command:beta — never installed"
 }
 
 @test "does not advise splitting when only one package shrinks" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "feat: drop beta"
+  _seed_base_ab
+  _commit_head_drop_beta "feat: drop beta"
   run "$GATE" --repo-dir "$LOCAL"
   [ "$status" -eq 1 ]
   [[ "$output" != *"Split the commit"* ]]
@@ -475,8 +497,8 @@ Not-Breaking: command:beta — never installed"
 # assertion of "not 0 and not 1" makes all three interchangeable, so nothing
 # guards the contract the header advertises.
 @test "fails with git's own status when the base ref does not resolve" {
-  _seed_base '["command:alpha","command:beta"]'
-  _commit_head '["command:alpha"]' "feat: drop beta"
+  _seed_base_ab
+  _commit_head_drop_beta "feat: drop beta"
   run "$GATE" --repo-dir "$LOCAL" --base origin/nonexistent
   [ "$status" -eq 128 ]
   [[ "$output" == *"Could not resolve a merge base"* ]]
@@ -511,7 +533,7 @@ Not-Breaking: command:beta — never installed"
 # hardcoding a number that has moved between jq releases (a parse error is not
 # one of the statuses the script's header enumerates).
 @test "a corrupt head snapshot exits with jq's own parse-error status" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   echo 'not json at all' > "$LOCAL/public-surface.json"
   git -C "$LOCAL" add -A
   git -C "$LOCAL" commit -m "chore: corrupt the snapshot" --quiet
@@ -530,7 +552,7 @@ Not-Breaking: command:beta — never installed"
 # empty capture for an empty surface — reporting either the whole base surface
 # as removed or nothing at all, both lies.
 @test "an empty head snapshot fails loudly instead of reading as no entries" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   : > "$LOCAL/public-surface.json"
   git -C "$LOCAL" add -A
   git -C "$LOCAL" commit -m "chore: empty the snapshot" --quiet
@@ -545,7 +567,7 @@ Not-Breaking: command:beta — never installed"
 # about the entries read — leave a valid file in the tree and the empty document
 # reaches only the HEAD-side entries read, where slurping is the sole guard.
 @test "an empty snapshot at HEAD fails loudly instead of reading as no entries" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   : > "$LOCAL/public-surface.json"
   git -C "$LOCAL" add -A
   git -C "$LOCAL" commit -m "chore: empty the snapshot" --quiet
@@ -562,7 +584,7 @@ Not-Breaking: command:beta — never installed"
 # read as "no entries" here would report either the whole base surface as
 # removed or nothing at all — both lies.
 @test "a head snapshot whose entries is not an array fails loudly" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   echo '{"package":"otto-workbench","entries":"command:alpha"}' > "$LOCAL/public-surface.json"
   git -C "$LOCAL" add -A
   git -C "$LOCAL" commit -m "chore: break the entries array" --quiet
@@ -575,7 +597,7 @@ Not-Breaking: command:beta — never installed"
 }
 
 @test "a head snapshot with no package field fails loudly" {
-  _seed_base '["command:alpha","command:beta"]'
+  _seed_base_ab
   echo '{"entries":["command:alpha"]}' > "$LOCAL/public-surface.json"
   git -C "$LOCAL" add -A
   git -C "$LOCAL" commit -m "chore: drop the package field" --quiet

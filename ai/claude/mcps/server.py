@@ -183,10 +183,14 @@ class ProbeResult:
 def probe_tool(script: Path) -> ProbeResult:
     """Run ``script --tool-schema`` and return its schema or a failure reason.
 
-    Callers pass a candidate that already carries a marker — ``tool_candidates``
-    applies that filter, and running a script that does not would make it do its
-    real work instead of answering.
+    The marker check is re-applied here rather than left to the caller.
+    ``tool_candidates`` already filters, but probing is execution: a script that
+    ignores unknown flags does its real work instead of answering, and
+    ``build-otto-ai-tools-tarball`` wrote a release archive into the CWD that
+    way. The invariant travels with the function that would break it.
     """
+    if not declares_tool_schema(script):
+        return ProbeResult(script, reason="no protocol marker in its source")
     try:
         result = subprocess.run(
             [str(script), TOOL_SCHEMA_FLAG],

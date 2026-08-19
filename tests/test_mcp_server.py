@@ -210,6 +210,24 @@ class TestDiscovery:
         assert tools == {}
         assert not marker.exists()
 
+    def test_probing_an_unmarked_script_refuses_to_run_it(self, tmp_path):
+        """The guard travels with probe_tool, not with the caller that filters.
+
+        ``tool_candidates`` screens for the marker, but probe_tool is importable
+        on its own and running an unmarked script is what wrote a release
+        archive into the CWD.
+        """
+        marker = tmp_path / "side-effect"
+        script = tmp_path / "destructive-script"
+        script.write_text(f"#!/bin/bash\ntouch '{marker}'\n")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        result = server.probe_tool(script)
+
+        assert result.ok is False
+        assert "no protocol marker" in result.reason
+        assert not marker.exists()
+
     def test_tool_parser_import_counts_as_a_declaration(self, tmp_path):
         """ToolParser-based scripts inherit the flag without naming it."""
         script = tmp_path / "framework-tool"

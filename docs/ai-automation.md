@@ -927,7 +927,8 @@ Naming the flag in a script under one of those directories is therefore a claim,
 `bin/local/validate-tool-schema` holds the build to it: it probes every candidate
 discovery would and fails when one cannot answer. `bin/local/validate-skills` asserts the
 converse for the tool a skill's `output_schema` names — that one must implement the
-protocol, marker or not, or the skill cites a contract nothing publishes.
+protocol whether or not it carries a marker, or the skill cites a contract nothing
+publishes.
 
 The output schema is generated from the tool's dataclass by
 [`ai/lib/schema_gen.py`](../ai/lib/schema_gen.py), which describes what

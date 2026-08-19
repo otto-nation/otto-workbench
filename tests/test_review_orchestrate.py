@@ -249,6 +249,48 @@ class TestParseVerificationStripsLine:
         assert findings[0]["path"] == "handler.go"
 
 
+class TestParseVerificationSpacedPaths:
+    def test_spaced_path_finding_is_not_swallowed_by_the_previous_one(self, ro):
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** **`pkg/a.go:1`** — First finding\n"
+            "- [ ] **[M2]** **`src/my notes.py:2`** — Second finding, spaced path\n"
+            "- [ ] **[M3]** **`pkg/c.go:3`** — Third finding\n"
+        )
+        findings = ro._parse_findings_for_verification(text)
+        assert [f["id"] for f in findings] == ["M1", "M2", "M3"]
+        assert findings[0]["body"] == "First finding"
+        assert findings[1]["path"] == "src/my notes.py"
+
+    def test_spaced_path_with_line_range(self, ro):
+        text = '- **[S1]** **`src/my notes.py:12-18`** — issue\n'
+        findings = ro._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "src/my notes.py"
+
+    def test_non_ascii_spaced_path(self, ro):
+        text = '- [ ] **[M1]** **`src/café brûlé.py:42`** — desc\n'
+        findings = ro._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "src/café brûlé.py"
+
+    def test_spaced_path_in_a_bare_code_span(self, ro):
+        text = '- **[N1]** `docs/release notes.md:3` — stale\n'
+        findings = ro._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "docs/release notes.md"
+
+    def test_unchecked_and_plain_forms_both_parse(self, ro):
+        text = (
+            "- [ ] **[M1]** **`pkg/a.go:1`** — checkbox form\n"
+            "- **[M2]** **`pkg/b.go:2`** — plain form\n"
+        )
+        findings = ro._parse_findings_for_verification(text)
+        assert [f["id"] for f in findings] == ["M1", "M2"]
+        assert [f["body"] for f in findings] == ["checkbox form", "plain form"]
+
+    def test_checked_finding_is_not_returned(self, ro):
+        text = '- [x] **[M1]** **`src/my notes.py:2`** — done\n'
+        assert ro._parse_findings_for_verification(text) == []
+
+
 class TestStripEvidenceBlocks:
     def test_strips_evidence_preserves_finding(self, ro):
         text = (

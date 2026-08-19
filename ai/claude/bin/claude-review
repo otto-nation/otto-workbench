@@ -42,6 +42,7 @@ from review_common import (
     review_file_path, review_meta_from_dict,
 )
 from ai_usage import SessionUsage, parse_session_log
+import prompt
 import review_issue
 import review_worktree
 import supersession
@@ -133,37 +134,6 @@ def _migrate_flat_reviews() -> None:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _confirm(prompt: str) -> bool:
-    try:
-        is_tty = sys.stdin.isatty()
-    except (EOFError, OSError):
-        return False
-    if is_tty:
-        try:
-            answer = input(f"{prompt} [Y/n] ")
-        except (EOFError, OSError):
-            return False
-        return answer.lower() in ("", "y", "yes")
-    try:
-        with open("/dev/tty") as tty:
-            print(f"{prompt} [Y/n] ", end="", flush=True, file=sys.stderr)
-            answer = tty.readline().strip()
-    except (EOFError, OSError):
-        return False
-    return answer.lower() in ("", "y", "yes")
-
-
-def _prompt_optional(prompt: str) -> str:
-    try:
-        if sys.stdin.isatty():
-            return input(prompt)
-        with open("/dev/tty") as tty:
-            print(prompt, end="", flush=True, file=sys.stderr)
-            return tty.readline().strip()
-    except (EOFError, OSError):
-        return ""
-
 
 def _is_pr_ref(s: str) -> bool:
     return pr_context.is_pr_ref(s)
@@ -443,7 +413,7 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
         pass
 
     log.warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
-    if not _confirm("Delete the pending review before re-reviewing?"):
+    if not prompt.confirm("Delete the pending review before re-reviewing?"):
         log.info("Keeping pending review — new review will replace it at post time")
         return
 
@@ -573,7 +543,7 @@ def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: boo
             return
 
         log.warn(f"No new commits since the last review (HEAD {pr_head_sha[:7]})")
-        if not _confirm("Re-review anyway?"):
+        if not prompt.confirm("Re-review anyway?"):
             sys.exit(0)
     else:
         log.info(f"Incremental review: new commits since last review ({review_sha[:7]}..{pr_head_sha[:7]})")
@@ -643,7 +613,7 @@ def _verify_pr_ownership(pr_number: str, repo: str) -> None:
         return
 
     log.warn(f"PR #{pr_number} is owned by {pr_author}, not {gh_user}")
-    if not _confirm("Continue with self-review?"):
+    if not prompt.confirm("Continue with self-review?"):
         sys.exit(0)
 
 
@@ -877,13 +847,13 @@ def _run_review_body(
         _print_summary(str(review_file), session_log, pr_url, post_session_log, wall_clock_ms=wall_ms)
         return
 
-    if not _confirm("Satisfied with the review?"):
+    if not prompt.confirm("Satisfied with the review?"):
         _print_summary(str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
         log.dim("Edit the review:  $EDITOR " + str(review_file))
         log.dim("Post to GitHub:   pr review --post")
         sys.exit(0)
 
-    if not _confirm("Post review to GitHub?"):
+    if not prompt.confirm("Post review to GitHub?"):
         _print_summary(str(review_file), session_log, pr_url, wall_clock_ms=wall_ms)
         log.dim("Post to GitHub:  pr review --post")
         return
@@ -891,7 +861,7 @@ def _run_review_body(
     _post_review(repo, pr_number, str(review_file), False)
     post_session_log = str(review_dir / FILENAME_POST_SESSION)
 
-    if _confirm("Submit review now?"):
+    if prompt.confirm("Submit review now?"):
         _submit_pending_review(repo, pr_number, str(review_file))
 
     _print_summary(str(review_file), session_log, pr_url, post_session_log, wall_clock_ms=wall_ms)
@@ -940,7 +910,7 @@ def _run_review_pr(
             issue_link = detected_link
 
         if not no_post and not auto_post and not issue_link and not issue_context:
-            issue_link = _prompt_optional("Issue link (optional, Enter to skip): ")
+            issue_link = prompt.ask("Issue link (optional, Enter to skip): ")
 
     if issue_link or issue_context:
         trail.info("issue_context", "issue context available",

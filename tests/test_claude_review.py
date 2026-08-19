@@ -1610,35 +1610,6 @@ def test_stamp_reviewed_leaves_an_unreadable_sidecar_as_it_found_it(cr, reviews_
     assert (d / "meta.json").read_text() == "{ truncated"
 
 
-# ── _confirm ──────────────────────────────────────────────────────────────────
-
-
-def _patch_confirm_input(monkeypatch, answer):
-    monkeypatch.setattr("builtins.input", lambda _: answer)
-    monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-
-
-def test_confirm_yes(cr, monkeypatch):
-    _patch_confirm_input(monkeypatch, "y")
-    assert cr._confirm("Continue?") is True
-
-
-def test_confirm_empty_defaults_yes(cr, monkeypatch):
-    _patch_confirm_input(monkeypatch, "")
-    assert cr._confirm("Continue?") is True
-
-
-def test_confirm_no(cr, monkeypatch):
-    _patch_confirm_input(monkeypatch, "n")
-    assert cr._confirm("Continue?") is False
-
-
-def test_confirm_eof_defaults_no(cr, monkeypatch):
-    monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-    monkeypatch.setattr("builtins.input", MagicMock(side_effect=EOFError))
-    assert cr._confirm("Continue?") is False
-
-
 # ── CLI argument parsing ──────────────────────────────────────────────────────
 
 
@@ -2162,8 +2133,8 @@ def test_check_stale_review_auto_recovers_on_failures(cr, tmp_path, monkeypatch)
 
     # Mock gh to return matching HEAD
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
-    # Verify _confirm is never called — auto-recovery must skip the prompt
-    monkeypatch.setattr(cr, "_confirm", MagicMock(side_effect=AssertionError("_confirm called unexpectedly")))
+    # Verify prompt.confirm is never called — auto-recovery must skip the prompt
+    monkeypatch.setattr(cr.prompt, "confirm", MagicMock(side_effect=AssertionError("confirm called unexpectedly")))
 
     cr._check_stale_review("owner/repo", "1", review_file, force=False)
 
@@ -2180,7 +2151,7 @@ def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch
     }))
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
-    monkeypatch.setattr(cr, "_confirm", lambda msg: False)
+    monkeypatch.setattr(cr.prompt, "confirm", lambda msg: False)
 
     with pytest.raises(SystemExit):
         cr._check_stale_review("owner/repo", "1", review_file, force=False)

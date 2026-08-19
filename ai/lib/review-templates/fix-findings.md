@@ -6,7 +6,8 @@ ${review_content}
 
 ## Task
 
-For each unchecked finding (`- [ ]`) in the review above:
+For each unchecked finding (`- [ ]`) in the review above that is NOT annotated
+`*(declined — ...)*`:
 
 1. Read the referenced file at the specified line
 2. Determine if the finding is auto-fixable:
@@ -22,6 +23,8 @@ For each unchecked finding (`- [ ]`) in the review above:
 - Fix findings in severity order: Must fix first, then Should fix, then Nit, then Idioms
 - For each fix, make the minimal correct change — do not refactor surrounding code
 - If a finding is ambiguous or requires a design choice, skip it with a reason
+- NEVER touch a finding annotated `*(declined — reason)*`. It was raised, considered, and rejected on the merits — leave the line exactly as it is, do not check its box, and do not change the code it points at
+- If the code a finding points at carries a `// ceiling:` or `// ceiling-permanent:` comment naming that exact tradeoff, the tradeoff is a documented decision. Do not "fix" it — decline it instead: leave the box unchecked and annotate `*(declined — documented \`ceiling:\` tradeoff)*`
 - When a generated file needs fixing, fix the source template AND the generated output
 
 ## Review file location

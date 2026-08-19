@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -18,6 +19,62 @@ _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
 _AGENT_ERROR = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded")
 
 
+def _git(wt: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(wt), *args],
+        capture_output=True, text=True,
+    )
+    # Raised rather than `check=True`: a CalledProcessError renders as its exit
+    # code alone, so a broken fixture arrives without the git error that says
+    # what broke.
+    if result.returncode != 0:
+        raise AssertionError(
+            f"git {' '.join(args)} failed ({result.returncode}) in {wt}\n"
+            f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"
+        )
+    return result.stdout
+
+
+@pytest.fixture
+def git_wt(tmp_path):
+    """A real repo with one commit — the fix pass's staging is git behaviour."""
+    wt = tmp_path / "worktree"
+    wt.mkdir()
+    # Empty hooks dir: the developer's own `core.hooksPath` is global, so
+    # without this the fixture runs their pre-commit hook and the suite passes
+    # or fails on whatever that machine has installed.
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    _git(wt, "init", "-q", "-b", "main")
+    _git(wt, "config", "user.email", "test@example.com")
+    _git(wt, "config", "user.name", "Test")
+    _git(wt, "config", "commit.gpgsign", "false")
+    _git(wt, "config", "core.hooksPath", str(hooks))
+    (wt / "src.py").write_text("original\n")
+    (wt / ".gitignore").write_text("*.cache\n")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-qm", "initial")
+    return wt
+
+
+def _install_failing_pre_commit(tmp_path, message: str = "gate refused") -> None:
+    """Make every later `git commit` in `git_wt` fail, the way a hook does."""
+    hook = tmp_path / "hooks" / "pre-commit"
+    hook.write_text(f"#!/bin/sh\necho '{message}' >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+
+def _committed_paths(wt: Path) -> set[str]:
+    # quotePath=false for the same reason `_changed_source_files` sets it: git
+    # escapes a non-ASCII name by default, and the assertion would compare the
+    # escaped spelling against the real one.
+    out = _git(
+        wt, "-c", "core.quotePath=false",
+        "show", "--name-only", "--pretty=format:", "HEAD",
+    )
+    return {line for line in out.strip().splitlines() if line}
+
+
 class TestCommitFixes:
     def _make_job(self, tmp_path):
         job = MagicMock()
@@ -25,58 +82,137 @@ class TestCommitFixes:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_fix.has_uncommitted_changes", return_value=False)
     @patch("review_fix.subprocess.run")
-    def test_no_diff_returns_early(self, mock_run, mock_dirty, tmp_path):
-        review_fix._commit_fixes(self._make_job(tmp_path), fixed=3, skipped=1)
+    def test_no_agent_changes_returns_early(self, mock_run, tmp_path):
+        review_fix._commit_fixes(self._make_job(tmp_path), set(), fixed=3, skipped=1)
         mock_run.assert_not_called()
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
-    def test_commits_with_counts(self, mock_run, mock_push, mock_dirty, tmp_path):
+    def test_commits_with_counts(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_fix._commit_fixes(job, fixed=3, skipped=1)
+        review_fix._commit_fixes(job, {"a.go"}, fixed=3, skipped=1)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "3 fixed, 1 skipped" in msg
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
     def test_zero_fixed_omits_count_from_message(
-        self, mock_run, mock_push, mock_dirty, tmp_path,
+        self, mock_run, mock_push, tmp_path,
     ):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_fix._commit_fixes(job, fixed=0, skipped=2)
+        review_fix._commit_fixes(job, {"a.go"}, fixed=0, skipped=2)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert msg == "fix: self-review findings"
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
-    def test_untracked_only_changes_are_staged(
-        self, mock_run, mock_push, mock_dirty, tmp_path,
-    ):
-        """A fix agent that only adds new files must still get them committed."""
+    def test_stages_only_the_named_paths(self, mock_run, mock_push, tmp_path):
+        """`git add -A` swept up whatever else was sitting in the worktree."""
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_fix._commit_fixes(job, fixed=1, skipped=0)
+        review_fix._commit_fixes(job, {"b.go", "a.go"}, fixed=1, skipped=0)
         add_call = mock_run.call_args_list[0][0][0]
-        assert add_call[-2:] == ["add", "-A"]
+        assert add_call[-3:] == ["--", ":(literal)a.go", ":(literal)b.go"]
+        assert "-A" not in add_call
         assert mock_run.call_count == 2
+
+
+class TestCommitFixesStaging:
+    """End-to-end against a real repo — the leak was in what git ended up with."""
+
+    def _make_job(self, wt):
+        job = MagicMock()
+        job.wt_path = str(wt)
+        return job
+
+    @patch("review_fix._push_fixes")
+    def test_pre_existing_untracked_file_stays_out(self, mock_push, git_wt):
+        (git_wt / "tsconfig.tsbuildinfo").write_text("stale cache\n")
+        (git_wt / "tests_new.py").write_text("def test_x(): pass\n")
+
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"tests_new.py"}, fixed=1, skipped=0,
+        )
+
+        assert _committed_paths(git_wt) == {"tests_new.py"}
+        assert "tsconfig.tsbuildinfo" in _git(git_wt, "status", "--porcelain")
+
+    @patch("review_fix._push_fixes")
+    def test_agent_created_file_is_committed(self, mock_push, git_wt):
+        (git_wt / "fixture.json").write_text("{}\n")
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"fixture.json"}, fixed=1, skipped=0,
+        )
+        assert _committed_paths(git_wt) == {"fixture.json"}
+
+    @patch("review_fix._push_fixes")
+    def test_content_staged_before_the_pass_is_not_committed(self, mock_push, git_wt):
+        (git_wt / "src.py").write_text("operator work in progress\n")
+        _git(git_wt, "add", "src.py")
+        (git_wt / "fixture.json").write_text("{}\n")
+
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"fixture.json"}, fixed=1, skipped=0,
+        )
+
+        assert _committed_paths(git_wt) == {"fixture.json"}
+        assert _git(git_wt, "show", "HEAD:src.py") == "original\n"
+
+    @patch("review_fix._push_fixes")
+    def test_a_glob_metacharacter_in_a_name_matches_only_itself(
+        self, mock_push, git_wt,
+    ):
+        """git reads the staged names as pathspecs, so a bracket is a glob.
+
+        `report[1].md` as a pattern matches `report1.md` and not the file it was
+        spelled from — so the decoy here is what a non-literal pathspec commits,
+        while the file the agent actually changed is left behind.
+        """
+        (git_wt / "report[1].md").write_text("the agent's work\n")
+        (git_wt / "report1.md").write_text("unrelated, still in progress\n")
+
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"report[1].md"}, fixed=1, skipped=0,
+        )
+
+        assert _committed_paths(git_wt) == {"report[1].md"}
+        assert "report1.md" in _git(git_wt, "status", "--porcelain")
+
+    @patch("review_fix.log")
+    @patch("review_fix._push_fixes")
+    def test_nothing_is_pushed_when_the_commit_fails(
+        self, mock_push, mock_log, git_wt, tmp_path,
+    ):
+        """A commit git refused must not reach the push — there is nothing there.
+
+        Driven by a real pre-commit hook rather than an empty path set: the
+        empty set returns at the guard above, never reaching the commit whose
+        failure this is about.
+        """
+        _install_failing_pre_commit(tmp_path)
+        (git_wt / "fixture.json").write_text("{}\n")
+
+        review_fix._commit_fixes(
+            self._make_job(git_wt), {"fixture.json"}, fixed=1, skipped=0,
+        )
+
+        mock_push.assert_not_called()
+        assert _git(git_wt, "log", "--oneline").count("\n") == 1
+        assert "gate refused" in mock_log.warn.call_args[0][0]
 
 
 class TestParseCheckboxState:
@@ -148,15 +284,91 @@ class TestExtractSkipReasons:
         assert findings[0].skip_reason == ""
 
 
+class TestParseDeclinedFindings:
+    """`*(declined — reason)*` is where an adjudicated verdict survives.
+
+    The `## Prior findings` ledger is stripped before the review file is
+    finished, so a decline recorded only there would reach the next fix pass
+    looking like an ordinary open finding.
+    """
+
+    def test_reads_the_reason_off_the_line(self):
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `a.go:1` — *(declined — documented `ceiling:` tradeoff)* "
+            "— Global lock serialises writes\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is True
+        assert findings[0].decline_reason == "documented `ceiling:` tradeoff"
+
+    def test_a_decline_without_a_reason_still_registers(self):
+        text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(declined)* — Body\n"
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is True
+        assert findings[0].decline_reason == ""
+
+    def test_a_trailing_annotation_registers(self):
+        """The templates also let the annotation close the line."""
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `a.go:1` — Global lock *(declined — by design)*\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is True
+        assert findings[0].decline_reason == "by design"
+
+    def test_a_finding_that_only_describes_the_annotation_is_not_declined(self):
+        """Reviewing this parser writes the annotation into a finding's prose.
+
+        Read as a decline, the finding leaves `run_fix_pass`'s work set and
+        `_reconcile_checkboxes` permanently, and nothing warns that it did.
+        """
+        text = (
+            "## Must fix\n"
+            "- [ ] **[M1]** `review_findings.py:99` — The `*(declined — reason)*` "
+            "annotation is matched anywhere in the line, so prose trips it\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is False
+        assert findings[0].decline_reason == ""
+
+    def test_a_skip_is_not_a_decline(self):
+        """A skip is work deferred; a decline is work rejected."""
+        text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(skipped — needs design)* — Body\n"
+        findings = review_findings.parse_findings(text)
+        assert findings[0].declined is False
+
+    def test_a_file_without_declines_parses_unchanged(self):
+        """Review files predating `Declined` must keep parsing."""
+        text = (
+            "## Must fix\n"
+            "- [x] **[M1]** `a.go:1` — Fixed\n"
+            "- [ ] **[M2]** `b.go:2` — Still open\n"
+        )
+        findings = review_findings.parse_findings(text)
+        assert [f.declined for f in findings] == [False, False]
+        assert [f.decline_reason for f in findings] == ["", ""]
+
+
 class TestDiffFindings:
-    def _finding(self, fid, checked=False, skip_reason=""):
+    def _finding(self, fid, checked=False, skip_reason="", declined=False):
         sev = fid[0]
         seq = int(fid[1:])
         return Finding(
             id=fid, severity=sev, seq=seq, path="file.go",
             line=1, end_line=None, body="body",
-            checked=checked, skip_reason=skip_reason,
+            checked=checked, skip_reason=skip_reason, declined=declined,
         )
+
+    def test_declined_is_bucketed_apart_from_skipped(self):
+        """A skip gets retried next pass; a decline must not be."""
+        before = [self._finding("M1", checked=False)]
+        after = [self._finding("M1", checked=False, declined=True)]
+        result = review_fix._diff_findings(before, after)
+        assert [f.id for f in result.declined] == ["M1"]
+        assert result.skipped == []
+        assert result.fixed_count == 0
 
     def test_finding_fixed(self):
         before = [self._finding("M1", checked=False)]
@@ -242,6 +454,26 @@ class TestFormatFixSummary:
         summary = review_fix._format_fix_summary(result)
         assert "no auto-fix" in summary
 
+    def test_declined_renders_under_its_own_heading(self):
+        declined = self._finding("M2", body="body")
+        declined.declined = True
+        declined.decline_reason = "documented `ceiling:` tradeoff"
+        result = review_fix.FixPassResult(
+            fixed=[], skipped=[], unchanged=[], declined=[declined],
+        )
+        summary = review_fix._format_fix_summary(result)
+        assert "Declined:" in summary
+        assert "[M2] documented `ceiling:` tradeoff" in summary
+        assert "Skipped:" not in summary
+
+    def test_declined_without_a_reason_uses_default(self):
+        declined = self._finding("N1", body="body")
+        declined.declined = True
+        result = review_fix.FixPassResult(
+            fixed=[], skipped=[], unchanged=[], declined=[declined],
+        )
+        assert "adjudicated, not a defect" in review_fix._format_fix_summary(result)
+
 
 class TestCommitFixesWithSummary:
     def _make_job(self, tmp_path):
@@ -250,33 +482,31 @@ class TestCommitFixesWithSummary:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
-    def test_commit_includes_summary(self, mock_run, mock_push, mock_dirty, tmp_path):
+    def test_commit_includes_summary(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
         summary = "Fixed:\n  - [M1] corrected condition\nSkipped:\n  - [S1] needs design"
-        review_fix._commit_fixes(job, fixed=1, skipped=1, summary=summary)
+        review_fix._commit_fixes(job, {"a.go"}, fixed=1, skipped=1, summary=summary)
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "1 fixed, 1 skipped" in msg
         assert "corrected condition" in msg
         assert "needs design" in msg
 
-    @patch("review_fix.has_uncommitted_changes", return_value=True)
     @patch("review_fix._push_fixes")
     @patch("review_fix.subprocess.run")
-    def test_commit_without_summary(self, mock_run, mock_push, mock_dirty, tmp_path):
+    def test_commit_without_summary(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
         mock_run.side_effect = [
             MagicMock(returncode=0),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
-        review_fix._commit_fixes(job, fixed=2, skipped=0, summary="")
+        review_fix._commit_fixes(job, {"a.go"}, fixed=2, skipped=0, summary="")
         commit_call = mock_run.call_args_list[1]
         msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
         assert "2 fixed, 0 skipped" in msg
@@ -458,9 +688,7 @@ class TestHeadSha:
 
 
 class TestReconcileCheckboxes:
-    @patch("review_fix._changed_source_files")
-    def test_checks_matching_findings(self, mock_changed, tmp_path):
-        mock_changed.return_value = {"src/auth.go", "src/config.go"}
+    def test_checks_matching_findings(self, tmp_path):
         review = tmp_path / "review.md"
         review.write_text(
             "## Must fix\n"
@@ -468,39 +696,45 @@ class TestReconcileCheckboxes:
             "## Nit\n"
             "- [ ] **[N1]** **`src/unrelated.go:5`** — Style issue\n"
         )
-        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(
+            str(review), {"src/auth.go", "src/config.go"},
+        )
         text = review.read_text()
         assert "- [x] **[M1]**" in text
         assert "- [ ] **[N1]**" in text
 
-    @patch("review_fix._changed_source_files")
-    def test_no_changes_is_noop(self, mock_changed, tmp_path):
-        mock_changed.return_value = set()
+    def test_no_changes_is_noop(self, tmp_path):
         review = tmp_path / "review.md"
         original = "- [ ] **[M1]** **`src/auth.go:10`** — Bug\n"
         review.write_text(original)
-        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), set())
         assert review.read_text() == original
 
-    @patch("review_fix._changed_source_files")
-    def test_already_checked_not_modified(self, mock_changed, tmp_path):
-        mock_changed.return_value = {"src/auth.go"}
+    def test_already_checked_not_modified(self, tmp_path):
         review = tmp_path / "review.md"
         original = "- [x] **[M1]** **`src/auth.go:10`** — Already fixed\n"
         review.write_text(original)
-        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
         assert review.read_text() == original
 
-    @patch("review_fix._changed_source_files")
-    def test_checks_findings_on_extensionless_scripts(self, mock_changed, tmp_path):
+    def test_a_declined_finding_is_never_checked_off(self, tmp_path):
+        """An incidental edit to the same file is not a fix for a decline."""
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** `src/auth.go:10` — *(declined — documented tradeoff)* — Lock\n"
+        )
+        review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
+        assert "- [ ] **[M1]**" in review.read_text()
+
+    def test_checks_findings_on_extensionless_scripts(self, tmp_path):
         """A finding on a bin script must reconcile, or it reports as skipped."""
-        mock_changed.return_value = {"ai/claude/bin/ci-check"}
         review = tmp_path / "review.md"
         review.write_text(
             "## Must fix\n"
             "- [ ] **[M1]** `ai/claude/bin/ci-check:777` — No session_log\n"
         )
-        review_fix._reconcile_checkboxes(str(review), str(tmp_path))
+        review_fix._reconcile_checkboxes(str(review), {"ai/claude/bin/ci-check"})
         assert "- [x] **[M1]**" in review.read_text()
 
 
@@ -532,6 +766,11 @@ class TestChangedSourceFiles:
             MagicMock(returncode=0, stdout="tests/new.bats\n"),
         ]
         assert review_fix._changed_source_files("/wt") == {"tests/new.bats"}
+
+    def test_gitignored_paths_are_in_neither_snapshot(self, git_wt):
+        (git_wt / "build.cache").write_text("artifact\n")
+        (git_wt / "real.py").write_text("x = 1\n")
+        assert review_fix._changed_source_files(str(git_wt)) == {"real.py"}
 
 
 class TestTurnBudgetScaling:
@@ -729,3 +968,225 @@ class TestRunFixPassRetry:
         assert mock_invoke.call_count == 2
         agents = [c.args[0].agent for c in mock_invoke.call_args_list]
         assert agents == [None, None]
+
+
+class TestRunFixPassOnADirtyWorktree:
+    """The pass must attribute only its own work — #782.
+
+    A `tsc` run before the review left a 272KB incremental cache untracked in
+    the worktree; `git add -A` committed and pushed it, and the post-hoc scan
+    checked off a finding on a file that was dirty before the agent started.
+    """
+
+    REVIEW_CONTENT = (
+        "## Must fix\n"
+        "- [ ] **[M1]** `src.py:1` — Was already being edited by hand\n"
+        "- [ ] **[M2]** `helper.py:1` — Missing helper\n"
+    )
+
+    def _make_job(self, git_wt, tmp_path):
+        review_file = tmp_path / "review.md"
+        review_file.write_text(self.REVIEW_CONTENT)
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(git_wt)
+        job.model = None
+        job.effort = Effort.MEDIUM
+        return job
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_only_the_agents_own_changes_are_committed_and_credited(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        (git_wt / "tsconfig.tsbuildinfo").write_text("272KB of cache\n")
+        (git_wt / "src.py").write_text("hand-edited, not by the fix agent\n")
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "helper.py").write_text("def helper(): pass\n")
+            (git_wt / "build.cache").write_text("artifact\n")
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(git_wt, tmp_path)
+        review_fix.run_fix_pass(job)
+
+        assert _committed_paths(git_wt) == {"helper.py"}
+
+        status = _git(git_wt, "status", "--porcelain")
+        assert "tsconfig.tsbuildinfo" in status
+        assert " M src.py" in status
+        assert "build.cache" not in status
+
+        review = Path(job.review_file).read_text()
+        assert "- [ ] **[M1]**" in review
+        assert "- [x] **[M2]**" in review
+        mock_push.assert_called_once()
+
+
+class TestSnapshotDiffStagesEveryShapeOfChange:
+    """What the snapshot diff must survive besides a plain edit — #782.
+
+    Attribution is a set of path strings, so each case below is a different way
+    the two snapshots can disagree about what a path is: gone, moved, or
+    spelled with bytes git escapes before it prints them.
+    """
+
+    def _make_job(self, git_wt, tmp_path=None, review_content=""):
+        job = MagicMock()
+        job.wt_path = str(git_wt)
+        job.model = None
+        job.effort = Effort.MEDIUM
+        if tmp_path is not None:
+            review_file = tmp_path / "review.md"
+            review_file.write_text(review_content)
+            job.review_file = str(review_file)
+        return job
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_file_the_agent_deletes_is_committed_as_a_deletion(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        (git_wt / "dead_code.py").write_text("unused = 1\n")
+        _git(git_wt, "add", "dead_code.py")
+        _git(git_wt, "commit", "-qm", "add dead code")
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "dead_code.py").unlink()
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Nit\n- [ ] **[N1]** `dead_code.py:1` — Dead code, delete it\n",
+        )
+        review_fix.run_fix_pass(job)
+
+        assert _committed_paths(git_wt) == {"dead_code.py"}
+        assert _git(git_wt, "status", "--porcelain").strip() == ""
+        assert "- [x] **[N1]**" in Path(job.review_file).read_text()
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_rename_commits_both_halves(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        """The old path leaves via the diff, the new one via the untracked list."""
+        def agent_run(*args, **kwargs):
+            (git_wt / "src.py").rename(git_wt / "renamed.py")
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Nit\n- [ ] **[N1]** `src.py:1` — Misnamed module\n",
+        )
+        review_fix.run_fix_pass(job)
+
+        tracked = _git(git_wt, "ls-tree", "--name-only", "HEAD").split()
+        assert "renamed.py" in tracked
+        assert "src.py" not in tracked
+        assert _git(git_wt, "status", "--porcelain").strip() == ""
+        assert "- [x] **[N1]**" in Path(job.review_file).read_text()
+
+    @patch("review_fix._push_fixes")
+    def test_a_path_git_would_escape_is_staged_verbatim(self, mock_push, git_wt):
+        """`core.quotePath=false` is what keeps the name a pathspec git resolves.
+
+        Escaped, the name reaches `git add` as `caf\\303\\251...`, which matches
+        nothing — and that `add` runs under `check=True`, so the whole pass dies
+        on a file whose only crime is an accent.
+        """
+        before = review_fix._changed_source_files(str(git_wt))
+        (git_wt / "café brûlé.py").write_text("crème\n")
+        agent_changed = review_fix._changed_source_files(str(git_wt)) - before
+
+        assert agent_changed == {"café brûlé.py"}
+        review_fix._commit_fixes(
+            self._make_job(git_wt), paths=agent_changed, fixed=1, skipped=0,
+        )
+        assert _committed_paths(git_wt) == {"café brûlé.py"}
+
+    @patch("review_fix._push_fixes")
+    @patch("review_fix.diagnose_missing_output", return_value=_AGENT_ERROR)
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_path_dirty_before_the_pass_is_not_credited_even_when_edited(
+        self, mock_prompt, mock_invoke, mock_diag, mock_push, git_wt, tmp_path,
+    ):
+        """The `ceiling:` in `run_fix_pass`, asserted rather than only described.
+
+        Attribution is by path, so a path in both snapshots is in neither
+        delta — the agent's edit to it is left uncommitted and the finding on
+        it is left unchecked. The day attribution compares content across the
+        snapshot, this test is what says the tradeoff is gone.
+        """
+        (git_wt / "src.py").write_text("hand edit in progress\n")
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "src.py").write_text("hand edit in progress\nagent fix\n")
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Must fix\n- [ ] **[M1]** `src.py:1` — Missing guard\n",
+        )
+        review_fix.run_fix_pass(job)
+
+        assert _git(git_wt, "log", "--oneline").strip().count("\n") == 0
+        assert " M src.py" in _git(git_wt, "status", "--porcelain")
+        assert "- [ ] **[M1]**" in Path(job.review_file).read_text()
+        mock_push.assert_not_called()
+
+
+class TestRunFixPassLeavesDeclinedFindingsAlone:
+    """`--fix` must not act on a finding a review already adjudicated — #782."""
+
+    def _make_job(self, git_wt, tmp_path, review_content):
+        review_file = tmp_path / "review.md"
+        review_file.write_text(review_content)
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(git_wt)
+        job.model = None
+        job.effort = Effort.MEDIUM
+        return job
+
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_review_of_only_declines_never_runs_the_agent(
+        self, mock_prompt, mock_invoke, git_wt, tmp_path,
+    ):
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Must fix\n"
+            "- [ ] **[M1]** `src.py:1` — *(declined — documented tradeoff)* — Lock\n",
+        )
+        review_fix.run_fix_pass(job)
+        mock_invoke.assert_not_called()
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_decline_survives_a_pass_that_touches_its_file(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        job = self._make_job(
+            git_wt, tmp_path,
+            "## Must fix\n"
+            "- [ ] **[M1]** `src.py:1` — *(declined — documented tradeoff)* — Lock\n"
+            "- [ ] **[M2]** `helper.py:1` — Missing helper\n",
+        )
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "src.py").write_text("agent touched this for M2's sake\n")
+            (git_wt / "helper.py").write_text("def helper(): pass\n")
+
+        mock_invoke.side_effect = agent_run
+        review_fix.run_fix_pass(job)
+
+        review = Path(job.review_file).read_text()
+        assert "- [ ] **[M1]**" in review
+        assert "*(declined — documented tradeoff)*" in review
+        assert "- [x] **[M2]**" in review

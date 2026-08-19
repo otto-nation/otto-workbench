@@ -15,8 +15,8 @@ import log
 from pr_state import ReviewVerdict
 from review_common import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
-    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, PriorDisposition, plural,
-    severity_by_key,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, PriorDisposition,
+    disposition_precedence, plural, severity_by_key,
 )
 
 # Severity header name -> key mapping (section + aliases, lowercased)
@@ -51,6 +51,11 @@ class Finding:
     classification: str = ""
     skip_reason: str = ""
     checked: bool = False
+    # Adjudicated, not outstanding: the finding was considered and rejected on
+    # the merits. A skip is the fix pass saying "not me"; a decline is the
+    # review saying "not at all", and the fix pass must not revisit it.
+    declined: bool = False
+    decline_reason: str = ""
 
 
 BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
@@ -86,6 +91,25 @@ FIRST_FILE_RE = re.compile(
 STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
 
 SKIP_REASON_RE = re.compile(r"\*\(skipped\s*[—–-]+\s*(.+?)\)\*")
+
+# The review file's record of `PriorDisposition.DECLINED`. The ledger is
+# stripped before the file is finished, so the verdict has to survive on the
+# finding line itself or the next `--fix` sees an ordinary open finding. The
+# reason is optional so a decline written without one still registers.
+_DECLINED = r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*"
+
+# An annotation, not prose. Matched anywhere in the line, a finding that merely
+# quotes the annotation — which any review of this parser writes — reads as
+# declined and is silently dropped from the fix pass's work set with no warning
+# anywhere. So the match is anchored to the two places the templates put an
+# annotation: at the head of the finding body, and at the end of the line.
+DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
+DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
+
+
+def match_decline(body: str, line: str) -> re.Match[str] | None:
+    """The decline annotation a finding line carries, if it carries one."""
+    return DECLINED_HEAD_RE.match(body) or DECLINED_TAIL_RE.search(line)
 
 
 def _extract_path(after_id: str) -> tuple[str, int | None, int | None]:
@@ -127,10 +151,13 @@ def _parse_finding_line(stripped: str) -> Finding | None:
         body = _extract_body_text(stripped)
     else:
         body = after_id.strip()
+    declined = match_decline(body, stripped)
     return Finding(
         id=f"{sev}{seq}", severity=sev, seq=seq,
         path=path, line=line_num, end_line=end_line, body=body,
         checked=(checkbox is not None and checkbox.lower() == "x"),
+        declined=declined is not None,
+        decline_reason=(declined.group(1) or "").strip() if declined else "",
     )
 
 
@@ -552,8 +579,9 @@ def _dedup_triage(triage: str) -> str:
 def _dedup_ledger(ledger: str) -> str:
     """Collapse repeats — two groups can disposition the same prior finding.
 
-    When two groups disagree about one finding, the group that still sees it
-    wins: a finding is gone only when no group reports it.
+    When two groups disagree about one finding, the strongest verdict wins:
+    a finding is gone only when no group reports it, and a declined one stays
+    declined however many groups still see the code it describes.
     """
     slot: dict[FindingRef, int] = {}
     seen_prose: set[str] = set()
@@ -561,7 +589,7 @@ def _dedup_ledger(ledger: str) -> str:
     for line in ledger.split("\n"):
         entry = _parse_ledger_line(line)
         if entry and entry.ref in slot:
-            _keep_open_disposition(lines, slot[entry.ref], entry)
+            _keep_strongest_disposition(lines, slot[entry.ref], entry)
             continue
         if not entry and line.strip() in seen_prose:
             continue
@@ -573,9 +601,18 @@ def _dedup_ledger(ledger: str) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def _keep_open_disposition(lines: list[str], index: int, entry: LedgerEntry) -> None:
-    """Let a still-open verdict overwrite the one already kept for its finding."""
-    if entry.disposition is PriorDisposition.STILL_OPEN:
+def _keep_strongest_disposition(
+    lines: list[str], index: int, entry: LedgerEntry,
+) -> None:
+    """Let a stronger verdict overwrite the one already kept for its finding.
+
+    Strictly stronger, so the first group to reach a verdict keeps the wording
+    when a later one only repeats it. The ordering is `PriorDisposition`'s —
+    a still-open verdict cannot reopen a finding another group declined.
+    """
+    kept = _parse_ledger_line(lines[index])
+    kept_rank = disposition_precedence(kept.disposition if kept else None)
+    if disposition_precedence(entry.disposition) > kept_rank:
         lines[index] = entry.text
 
 

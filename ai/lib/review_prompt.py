@@ -572,7 +572,7 @@ def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
 # prior finding on its ID or its path — the two parts an agent restates
 # verbatim — so the instruction asks for exactly those, and never for the
 # internal sid marker, which nothing downstream requires the agent to echo. The
-# two verdict words come from the enum the ledger is parsed with, so asking for
+# verdict words come from the enum the ledger is parsed with, so asking for
 # a word the parser does not know is not expressible here.
 _LEDGER_INSTRUCTION = f"""
 End your output with a `## {SECTION_PRIOR_FINDINGS}` section listing EVERY prior
@@ -580,6 +580,12 @@ finding above, one line each, copying its ID and path exactly as written there:
 - `- **[M1]** \\`path/to/file.py\\` — {PriorDisposition.FIXED}` when the change resolves it
 - `- **[M1]** \\`path/to/file.py\\` — {PriorDisposition.STILL_OPEN}` when it does not, and
   carry the finding forward into the severity sections as well
+- `- **[M1]** \\`path/to/file.py\\` — {PriorDisposition.DECLINED}` when it was considered and
+  rejected on the merits — a documented tradeoff (a `ceiling:` marker, a commit
+  message or a prior reply explaining the choice), or something the prior review
+  itself already recorded as declined. Carry it forward too, but annotated
+  `*(declined — one-line reason)*` so it is not raised or auto-fixed again. A
+  declined finding stays declined: never downgrade one to {PriorDisposition.STILL_OPEN}
 This section is bookkeeping — it is stripped before the review is published, and
 a prior finding missing from it is reported as unaccounted for."""
 

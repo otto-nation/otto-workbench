@@ -249,6 +249,21 @@ print(workbench_paths.state_dir() / mod.CONSUMED_REVIEWS_NAME, end='')
   [ "$(resolve_constants RETRO_CONSUMED_REVIEWS_FILE)" = "$(resolve_python_retro_consumed)" ]
 }
 
+@test "bash and Python agree on the project registry file" {
+  # lib/projects.sh appends to it and ai/lib/workbench_projects.py appends to it
+  # — two writers, so a drift here is two registries, each holding half the
+  # repos the machine profile and the project migrations are meant to visit.
+  [ "$(resolve_constants PROJECTS_REGISTRY_FILE)" = "$(resolve_python projects_registry)" ]
+}
+
+@test "the project registry rides along when the state root moves" {
+  export WORKBENCH_STATE_DIR="$TMPDIR/explicit-state"
+  local registry="$TMPDIR/explicit-state/projects.registry"
+
+  [ "$(resolve_constants PROJECTS_REGISTRY_FILE)" = "$registry" ]
+  [ "$(resolve_python projects_registry)" = "$registry" ]
+}
+
 @test "both joins ride along when the state root moves" {
   # retro-scan writes the consumed list in Python and retro-complete.sh deletes
   # the directories it names in bash. A root that moves for one and not the

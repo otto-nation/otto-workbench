@@ -20,7 +20,7 @@ tools:
     visibility: full
     description: "Manage your workbench developer environment"
     when_to_use: "After pulling workbench updates or when config gets out of sync"
-    usage: "otto-workbench sync  |  otto-workbench ai init  |  otto-workbench ai sync  |  otto-workbench changelog"
+    usage: "otto-workbench sync  |  otto-workbench ai init  |  otto-workbench ai sync  |  otto-workbench projects  |  otto-workbench changelog"
     commands:
       - name: sync
         description: "Re-apply all workbench config — migrations, symlinks, tool context, AI settings"
@@ -59,6 +59,23 @@ tools:
         description: "Show recent changes from conventional commits"
         scope: "Git history"
         when: "Reviewing recent changes from conventional commits"
+      - name: projects
+        description: "List the repos on this machine that use the workbench"
+        scope: "Machine"
+        when: "Checking which repos the machine profile and project migrations will visit"
+        detail: "Lists the project registry. A repo joins it the first time a workbench command runs in it — nothing is discovered by scanning directories."
+      - name: "projects add [DIR]"
+        description: "Register a repo that hasn't run a workbench command yet"
+        scope: "Machine"
+        when: "Backfilling a repo into the registry ahead of its first workbench command"
+      - name: "projects forget DIR"
+        description: "Drop a repo's entry from the registry"
+        scope: "Machine"
+        when: "Removing a repo that should no longer be visited"
+      - name: "projects prune"
+        description: "Drop registry entries whose directory is gone"
+        scope: "Machine"
+        when: "Cleaning up entries left behind by deleted repos"
 
   - name: mem-analyze
     permission: true

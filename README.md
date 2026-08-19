@@ -52,6 +52,10 @@ Secrets and machine-specific env vars go in `~/.env.local` — sourced first by 
 | `otto-workbench ai sync` | Machine | Sync machine-level AI config (settings, rules, skills, agents, MCPs) |
 | `otto-workbench ai override` | Machine | Manage user overrides for AI agents, skills, and rules |
 | `otto-workbench changelog` | Git history | Show recent changes from conventional commits |
+| `otto-workbench projects` | Machine | List the repos on this machine that use the workbench |
+| `otto-workbench projects add [DIR]` | Machine | Register a repo that hasn't run a workbench command yet |
+| `otto-workbench projects forget DIR` | Machine | Drop a repo's entry from the registry |
+| `otto-workbench projects prune` | Machine | Drop registry entries whose directory is gone |
 <!-- WORKBENCH-COMMANDS-END -->
 
 ## What's Included

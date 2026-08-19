@@ -17,6 +17,28 @@
 # Exit code: 0 on success; 1 if --check finds a committed snapshot out of date.
 
 set -e
+# pipefail closes the gap set -e alone leaves open: every category function
+# below ends its jq/yq stage in a trailing sed/grep filter, and a failing
+# upstream command's non-zero status is invisible once a downstream command
+# in the same pipe exits 0. Without pipefail, a jq syntax error prints to
+# stderr and the pipeline still reports success, so the category "succeeds"
+# with silently truncated output instead of aborting — and because config
+# entries are split across two independent jq calls, only one of the two
+# needs to break for the combined category to still look non-empty to a
+# whole-category emptiness check. See the two `grep -v` guards below for the
+# one place pipefail's stricter accounting needs an explicit escape hatch.
+set -o pipefail
+# Bash does not apply errexit inside a `$(...)` command substitution unless
+# inherit_errexit is on — by default a failing pipeline deep inside a
+# category function (invoked as `out="$(_config_entries)"` in _collect) is
+# swallowed by that subshell instead of aborting it, and the function runs
+# to completion on whatever later commands still succeed. inherit_errexit
+# makes the substitution's subshell honor -e/pipefail the same way top-level
+# code does. (_collect still checks the substitution's exit status in a
+# separate statement rather than `... || { ...; }` on the same line — putting
+# the substitution on the left of `||` re-suspends errexit for everything
+# inside it, undoing this.)
+shopt -s inherit_errexit
 
 _SELF="${BASH_SOURCE[0]}"
 REPO_ROOT="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
@@ -114,12 +136,17 @@ _config_entries() {
       ((.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)"),
       ((.propertyNames.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)");
     enums("")
-  ' "$REPO_ROOT/config.schema.json" | grep -v '^=' | sed 's/^/config:/'
+  ' "$REPO_ROOT/config.schema.json" | { grep -v '^=' || true; } | sed 's/^/config:/'
 }
 
 # _component_entries — prints "component:<name>" from install.components.
+# The `|| true` on grep is a pipefail escape hatch, not an error swallow: with
+# pipefail set, `grep -v` legitimately exits 1 when every line is filtered
+# out (e.g. a file that is all comments), and that is a valid empty result,
+# not a broken pipeline — a real read failure still surfaces because
+# _collect's non-empty check catches the resulting empty category.
 _component_entries() {
-  grep -vE '^\s*(#|$)' "$REPO_ROOT/install.components" | tr -d ' ' | sed 's/^/component:/'
+  { grep -vE '^\s*(#|$)' "$REPO_ROOT/install.components" || true; } | tr -d ' ' | sed 's/^/component:/'
 }
 
 # _claude_artifacts — prints agent, skill, and settings entries for otto-ai-tools.
@@ -144,8 +171,13 @@ _claude_artifacts() {
 # into zero entries with a clean exit, and later categories never ran either.
 _collect() {
   local label="$1"; shift
-  local out
-  out="$("$@")" || { err "$label failed"; exit 1; }
+  local out rc
+  out="$("$@")"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    err "$label failed"
+    exit 1
+  fi
   [[ -n "$out" ]] || { err "$label produced no entries"; exit 1; }
   printf '%s\n' "$out"
 }

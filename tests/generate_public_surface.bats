@@ -117,3 +117,33 @@ teardown() {
     [ "$status" -eq 0 ]
   done
 }
+
+@test "a broken jq call aborts instead of writing a truncated snapshot" {
+  # GENERATOR_UNDER_TEST lets this same test run against an older copy of the
+  # generator (see task-2-report.md) to prove it actually discriminates the
+  # bug it targets, rather than passing against any implementation.
+  local gen="${GENERATOR_UNDER_TEST:-$REPO_ROOT/bin/local/generate-public-surface}"
+  local fakebin="$TMPDIR/fakebin" real_jq
+  mkdir -p "$fakebin"
+  real_jq="$(command -v jq)"
+  # Fails only the _config_entries "props" jq call (matched by a fragment of
+  # its jq program) and passes every other jq invocation through to the real
+  # binary — this reproduces one broken pipeline stage among several, not a
+  # total tool outage, since a total outage is already caught by _collect's
+  # empty-category check and would not discriminate this bug.
+  cat > "$fakebin/jq" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == *"def props("* ]]; then
+    echo "jq: 1 compile error" >&2
+    exit 1
+  fi
+done
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$fakebin/jq"
+
+  run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
+  [ "$status" -ne 0 ]
+  [ ! -e "$TMPDIR/out" ]
+}

@@ -137,6 +137,19 @@ jobs:
       - name: Run pytest
         run: pytest tests/ -v
 
+  surface-compat:
+    name: Surface Compatibility
+    runs-on: ubuntu-24.04
+    steps:
+      # fetch-depth: 0 is required — the gate resolves a merge base against the
+      # target branch, which a shallow clone cannot do.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Check public surface compatibility
+        run: bin/local/check-surface-compat --base origin/${{ github.base_ref || 'main' }}
+
   site:
     name: Site
     runs-on: ubuntu-24.04

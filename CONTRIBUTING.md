@@ -69,6 +69,56 @@ See [Registries](docs/registries.md#adding-an-entry) for the full schema, valida
 | `NO_COLOR` | shell environment | Disables all ANSI color output from `lib/ui.sh` helpers (follows [no-color.org](https://no-color.org)) |
 | `WORKBENCH_DIR` | auto-derived or caller | Override the repo root; set by `install.sh` and auto-derived from `lib/constants.sh` otherwise |
 
+## Versioning & breaking changes
+
+Two packages release independently via release-please: `otto-workbench` (repo root)
+and `otto-ai-tools` (`ai/claude`).
+
+### What is public
+
+| Package | Public surface |
+|---|---|
+| `otto-workbench` | Command names installed to `~/.local/bin`, config keys and enum values in `config.schema.json`, component names in `install.components` |
+| `otto-ai-tools` | Command names from `ai/claude/registry.yml`, shipped agent and skill names, top-level `settings.json` keys |
+
+`bin/local/generate-public-surface` renders this into `public-surface.json` and
+`ai/claude/public-surface.json`. Both are generated — never edit them by hand.
+`bin/local/validate-public-surface` (run by `bin/local/validate-all`) fails when
+either is stale.
+
+Repo-internal scripts (`bin/local/*`, anything in a registry with
+`meta.scope: workbench`) and third-party tools installed via brew are not public.
+
+On-disk state and config layout is breaking **unless the change ships a migration**.
+The migration framework is this repo's compatibility mechanism for on-disk change.
+
+### Declaring a breaking change
+
+Put the footer in the **commit body**:
+
+    BREAKING CHANGE: `pr review --post` renamed to `--publish`
+
+A `!` in the header (`feat!: …`) is encouraged for readability but never enough on
+its own. This repo squash-merges with `COMMIT_OR_PR_TITLE`, so on a multi-commit PR
+the PR title replaces your subject and a header-only marker is silently lost.
+`bin/local/check-surface-compat` fails a `!` header with no matching footer.
+
+If an entry disappears but the change genuinely is not breaking — an internal tool
+that was wrongly marked public, or a rename that ships a back-compat alias — declare
+that instead, one footer per removed entry:
+
+    Not-Breaking: command:old-name — renamed, old name still symlinked
+
+`bin/local/check-surface-compat` diffs the committed snapshots against the merge
+base with `origin/main` and fails an undeclared removal. It runs in pre-push and in
+the `Surface Compatibility` CI job; run it by hand with
+`bin/local/check-surface-compat [--base REF]`.
+
+### One caveat
+
+A single commit touching both packages majors **both**: release-please has no
+per-package footer syntax. Split the commit if you only mean to break one.
+
 ## Code Conventions
 
 - Quote all variables: `"$VAR"` not `$VAR`.

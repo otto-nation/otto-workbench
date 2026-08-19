@@ -103,7 +103,8 @@ v1.0.0 lists it as a synonym, release-please honours it, and so does the gate.
 
 A `!` in the header (`feat!: …`) is encouraged for readability but never enough on
 its own. This repo squash-merges with `COMMIT_OR_PR_TITLE`, so on a multi-commit PR
-the PR title replaces your subject and a header-only marker is silently lost.
+the PR title replaces your subject and a header-only marker is silently lost. Commit
+bodies are always concatenated into the squashed message, so the footer survives.
 `bin/local/check-surface-compat` fails a `!` header with no matching footer.
 
 If an entry disappears but the change genuinely is not breaking — an internal tool

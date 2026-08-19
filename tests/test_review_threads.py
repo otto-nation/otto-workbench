@@ -2478,9 +2478,14 @@ class TestReconcileFixSnapshot:
         assert state.fix.threads[0].action == ThreadAction.DEFERRED
 
     def test_a_thread_absent_from_github_stays_deferred(self, rt):
-        """Comment items carry synthetic ids that are not review threads."""
+        """An id nothing on GitHub knows anything about settles nothing.
+
+        Still the right answer for a genuinely unknown thread id. A comment item
+        is no longer the same case: it is absent from this map by construction,
+        and TestCommentItemsSettleThroughTheirSource covers what does settle it.
+        """
         state = self._state()
-        assert rt._reconcile_fix_snapshot(state, {}) == 0
+        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 0
         assert state.fix.threads[0].action == ThreadAction.DEFERRED
 
     def test_a_needs_human_thread_settled_by_hand_is_reclaimed(self, rt):
@@ -4572,3 +4577,290 @@ class TestHumanReason:
         body = rt._build_summary_body([], [outcome], [], cp, "owner/repo", 1, {})
         rows = rt._summary_table_rows(body)
         assert rt._row_cells(rows[0])[-1] == rt.HumanReason.CONTESTED.prose
+
+
+# ── comment items settle through their source comment ─────────────────────
+
+
+def _fetches(comments):
+    """Stub the PR's issue-comment listing with `comments`."""
+    return patch("pr_comments.fetch_issue_comments", return_value=comments)
+
+
+def _our_reply(anchor, prefix="Applied:", user="me"):
+    return {
+        "user": user,
+        "body": f"{prefix} drop the retry\n\n"
+                f"See https://github.com/owner/repo/pull/42{anchor}.",
+    }
+
+
+class TestAnsweredCommentSources:
+    """A comment item has no thread, so the evidence is on the comment itself."""
+
+    def _outcomes(self, action=ThreadAction.NEEDS_HUMAN, iid="ic-77-0"):
+        return [ThreadOutcome(id=iid, action=action, reason="contested")]
+
+    def test_our_handled_reply_marks_its_source_answered(self, rt):
+        with _fetches([_our_reply("#issuecomment-77")]):
+            answered = rt._answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset({"77"})
+
+    def test_the_listing_is_asked_to_keep_our_own_comments(self, rt):
+        """The reply being looked for is ours, so the self filter has to be off."""
+        with _fetches([_our_reply("#issuecomment-77")]) as fetch:
+            rt._answered_comment_sources(self._outcomes(), "owner/repo", 42, "me")
+        assert fetch.call_args.kwargs["include_self"] is True
+
+    def test_a_review_body_is_answered_through_its_own_anchor(self, rt):
+        with _fetches([_our_reply("#pullrequestreview-88")]):
+            answered = rt._answered_comment_sources(
+                self._outcomes(iid="rb-88-1"), "owner/repo", 42, "me")
+        assert answered == frozenset({"88"})
+
+    def test_the_login_match_ignores_case(self, rt):
+        with _fetches([_our_reply("#issuecomment-77", user="Me")]):
+            answered = rt._answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset({"77"})
+
+    def test_the_reviewer_restating_their_point_is_not_an_answer(self, rt):
+        with _fetches([_our_reply("#issuecomment-77", user="kgn")]):
+            answered = rt._answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset()
+
+    def test_a_deferred_reply_says_the_opposite(self, rt):
+        """Same carve-out the thread evidence makes — it is not a settlement."""
+        with _fetches([_our_reply("#issuecomment-77", prefix="Deferred:")]):
+            answered = rt._answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset()
+
+    def test_a_reply_that_cites_nothing_settles_nothing(self, rt):
+        with _fetches([{"user": "me", "body": "Applied: drop the retry"}]):
+            answered = rt._answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "me")
+        assert answered == frozenset()
+
+    def test_a_non_comment_item_is_not_worth_a_listing(self, rt):
+        """`t1` is open, but a thread-shaped id has no source comment to read."""
+        with _fetches([]) as fetch:
+            answered = rt._answered_comment_sources(
+                [ThreadOutcome(id="t1", action=ThreadAction.DEFERRED)],
+                "owner/repo", 42, "me")
+        assert answered == frozenset()
+        fetch.assert_not_called()
+
+    def test_a_settled_item_is_not_worth_a_listing_either(self, rt):
+        with _fetches([]) as fetch:
+            rt._answered_comment_sources(
+                self._outcomes(action=ThreadAction.FIXED), "owner/repo", 42, "me")
+        fetch.assert_not_called()
+
+    def test_without_our_login_no_reply_can_be_called_ours(self, rt):
+        with _fetches([_our_reply("#issuecomment-77")]) as fetch:
+            answered = rt._answered_comment_sources(
+                self._outcomes(), "owner/repo", 42, "")
+        assert answered == frozenset()
+        fetch.assert_not_called()
+
+
+class TestCommentItemsSettleThroughTheirSource:
+    """The outcome the fix pass handed to the operator has to be clearable."""
+
+    def _state(self, action=ThreadAction.NEEDS_HUMAN, iid="ic-77-0"):
+        return _make_state(FixSummary(head_sha="aaaaaaa", threads=[
+            ThreadOutcome(id=iid, file="a.go", line=7, reviewer="kgn",
+                          summary="drop the retry", action=action,
+                          reason="contested"),
+        ]))
+
+    def test_an_answered_item_reconciles_to_fixed(self, rt):
+        state = self._state()
+        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 1
+        assert state.fix.threads[0].action == ThreadAction.FIXED
+        assert "reconciled" in state.fix.threads[0].reason
+
+    def test_a_deferred_item_reconciles_the_same_way(self, rt):
+        state = self._state(action=ThreadAction.DEFERRED)
+        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"77"})) == 1
+        assert state.fix.threads[0].action == ThreadAction.FIXED
+
+    def test_a_review_body_item_reconciles_through_its_review(self, rt):
+        state = self._state(iid="rb-88-1")
+        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"88"})) == 1
+        assert state.fix.threads[0].action == ThreadAction.FIXED
+
+    def test_an_answer_to_another_comment_is_not_this_items_answer(self, rt):
+        state = self._state()
+        assert rt._reconcile_fix_snapshot(state, {}, frozenset({"99"})) == 0
+        assert state.fix.threads[0].action == ThreadAction.NEEDS_HUMAN
+
+    def test_an_unanswered_item_still_holds_the_summary_back(self, rt):
+        state = self._state()
+        assert rt._reconcile_fix_snapshot(state, {}, frozenset()) == 0
+        needs_human = [t for t in state.fix.threads
+                       if t.action == ThreadAction.NEEDS_HUMAN]
+        assert needs_human
+        assert rt._summary_still_owed(
+            [], needs_human, [], [], CommitStatus.PUSHED, False) is True
+
+    def test_an_item_restating_a_settled_thread_settles_with_it(self, rt):
+        """The duplicate is one finding; one of its two copies being closed closes it."""
+        state = self._state()
+        threads = {"t1": ReportThread(
+            id="t1", file="a.go", line=7, reviewer="kgn",
+            state=ThreadState.RESOLVED, is_resolved=True, comments=[{"body": "x"}],
+        )}
+        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert state.fix.threads[0].action == ThreadAction.FIXED
+
+    def test_an_item_restating_an_open_thread_stays_open(self, rt):
+        state = self._state()
+        threads = {"t1": ReportThread(
+            id="t1", file="a.go", line=7, reviewer="kgn",
+            state=ThreadState.NEW, is_resolved=False,
+            comments=[{"body": "why not the other way?"}],
+        )}
+        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert state.fix.threads[0].action == ThreadAction.NEEDS_HUMAN
+
+    def test_a_settled_thread_elsewhere_settles_nothing_here(self, rt):
+        state = self._state()
+        threads = {"t1": ReportThread(
+            id="t1", file="b.go", line=3, reviewer="kgn",
+            state=ThreadState.RESOLVED, is_resolved=True, comments=[{"body": "x"}],
+        )}
+        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert state.fix.threads[0].action == ThreadAction.NEEDS_HUMAN
+
+
+class TestFinishReconcilesCommentItems:
+    """The wiring: --finish is what asks GitHub about the source comments."""
+
+    def _save(self, worktree):
+        pr_state.save_state(worktree / "target", PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="aaaaaaa", worktree_root=str(worktree)),
+            fix=FixSummary(head_sha="aaaaaaa", threads=[
+                ThreadOutcome(id="ic-77-0", file="a.go", line=7, reviewer="kgn",
+                              summary="drop the retry",
+                              action=ThreadAction.NEEDS_HUMAN, reason="contested"),
+            ]),
+        ))
+        return make_ctx(branch="b", worktree_root=worktree, head_sha="aaaaaaa",
+                        target_dir=worktree / "target")
+
+    def _run(self, rt, ctx, comments):
+        with patch.object(rt, "_get_head_sha", return_value="aaaaaaa"), \
+                _fetches(comments), \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(ctx, PRReport(my_login="me"))
+
+    def test_the_answered_item_is_persisted_as_fixed(self, rt, worktree):
+        ctx = self._save(worktree)
+        self._run(rt, ctx, [_our_reply("#issuecomment-77")])
+        saved = pr_state.load_state(worktree / "target")
+        assert saved.fix.threads[0].action == ThreadAction.FIXED
+
+    def test_an_unanswered_item_survives_the_round(self, rt, worktree):
+        ctx = self._save(worktree)
+        self._run(rt, ctx, [_our_reply("#issuecomment-99")])
+        saved = pr_state.load_state(worktree / "target")
+        assert saved.fix.threads[0].action == ThreadAction.NEEDS_HUMAN
+
+
+class TestDuplicateFindingRendersOnce:
+    """One review point that arrived twice is still one row in the table."""
+
+    def _thread(self, **kw):
+        defaults = {"id": "t1", "file": "a.go", "line": 7, "reviewer": "kgn",
+                    "summary": "drop the retry", "action": ThreadAction.FIXED}
+        defaults.update(kw)
+        return ThreadOutcome(**defaults)
+
+    def _item(self, **kw):
+        defaults = {"id": "ic-77-0", "file": "a.go", "line": 7, "reviewer": "kgn",
+                    "summary": "also drop the retry",
+                    "action": ThreadAction.NEEDS_HUMAN, "reason": "contested"}
+        defaults.update(kw)
+        return ThreadOutcome(**defaults)
+
+    def _body(self, rt, fixed, needs_human, threads_by_id=None):
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        return rt._build_summary_body(
+            fixed, needs_human, [], cp, "owner/repo", 42,
+            threads_by_id if threads_by_id is not None else self._threads(),
+        )
+
+    def _threads(self):
+        return {"t1": ReportThread(id="t1", file="a.go", line=7, reviewer="kgn",
+                                   comments=[{"databaseId": 5}])}
+
+    def test_the_item_folds_into_the_thread_it_restates(self, rt):
+        body = self._body(rt, [self._thread()], [self._item()])
+        assert len(rt._summary_table_rows(body)) == 1
+        assert "#issuecomment-77" not in body
+        assert "#discussion_r5" in body
+
+    def test_the_counts_line_never_promises_a_row_it_folded(self, rt):
+        body = self._body(rt, [self._thread()], [self._item()])
+        assert "need discussion" not in body
+        assert "1 fixed" in body
+
+    def test_another_line_is_another_finding(self, rt):
+        body = self._body(rt, [self._thread()], [self._item(line=9)])
+        assert len(rt._summary_table_rows(body)) == 2
+
+    def test_an_item_naming_no_line_is_never_folded(self, rt):
+        """Without a line there is nothing precise enough to call it the same point."""
+        body = self._body(rt, [self._thread()], [self._item(line=0)])
+        assert len(rt._summary_table_rows(body)) == 2
+
+    def test_another_reviewers_point_is_another_finding(self, rt):
+        body = self._body(rt, [self._thread()], [self._item(reviewer="amp")])
+        assert len(rt._summary_table_rows(body)) == 2
+
+    def test_two_real_threads_are_never_folded_together(self, rt):
+        threads = self._threads()
+        threads["t2"] = ReportThread(id="t2", file="a.go", line=7, reviewer="kgn",
+                                     comments=[{"databaseId": 6}])
+        body = self._body(
+            rt, [self._thread()],
+            [self._thread(id="t2", action=ThreadAction.NEEDS_HUMAN,
+                          summary="and rename it")],
+            threads,
+        )
+        assert len(rt._summary_table_rows(body)) == 2
+
+    def test_an_item_with_no_thread_to_fold_into_still_renders(self, rt):
+        body = self._body(rt, [], [self._item()], {})
+        rows = rt._summary_table_rows(body)
+        assert len(rows) == 1
+        assert "#issuecomment-77" in body
+
+
+class TestFoldedRowsAreNotCarriedBack:
+    """A round that folded a duplicate must not read its own removal as a loss."""
+
+    THREAD_ROW = ("| [drop the retry](https://github.com/o/r/pull/1#discussion_r5) "
+                  "| @kgn | [`a.go:7`](https://github.com/o/r/blob/abc/a.go#L7) | Fixed |")
+    ITEM_ROW = ("| [also drop the retry](https://github.com/o/r/pull/1"
+                "#issuecomment-77) | @kgn | `a.go:7` | contested |")
+
+    def test_the_published_duplicate_is_accounted_for(self, rt):
+        published = f"{self.THREAD_ROW}\n{self.ITEM_ROW}"
+        assert rt._carried_over_rows(published, self.THREAD_ROW) == []
+
+    def test_an_item_row_elsewhere_is_still_carried(self, rt):
+        elsewhere = self.ITEM_ROW.replace("a.go:7", "b.go:3")
+        published = f"{self.THREAD_ROW}\n{elsewhere}"
+        assert rt._carried_over_rows(published, self.THREAD_ROW) == [elsewhere]
+
+    def test_a_published_thread_row_is_carried_as_before(self, rt):
+        """Only comment items fold; a thread row this render lost is still a loss."""
+        other = self.THREAD_ROW.replace("discussion_r5", "discussion_r9")
+        published = f"{self.THREAD_ROW}\n{other}"
+        assert rt._carried_over_rows(published, self.THREAD_ROW) == [other]

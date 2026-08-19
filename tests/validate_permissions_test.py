@@ -105,17 +105,15 @@ def test_every_bucket_is_scanned(tmp_path):
             "deny": ["Bash(b/*:*)"],
             "ask": ["Bash(c/*:*)"],
         },
-        "_generated_permissions": ["Bash(d/*:*)"],
     })
     assert [v.rule for v in vp.check_file(str(path))] == [
-        "Bash(a/*:*)", "Bash(b/*:*)", "Bash(c/*:*)", "Bash(d/*:*)"
+        "Bash(a/*:*)", "Bash(b/*:*)", "Bash(c/*:*)"
     ]
 
 
 def test_a_rule_repeated_across_buckets_is_reported_once(tmp_path):
     path = _settings(tmp_path, {
-        "permissions": {"allow": ["Bash(a/*:*)"]},
-        "_generated_permissions": ["Bash(a/*:*)"],
+        "permissions": {"allow": ["Bash(a/*:*)"], "deny": ["Bash(a/*:*)"]},
     })
     assert len(vp.check_file(str(path))) == 1
 

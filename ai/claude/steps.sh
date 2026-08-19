@@ -142,6 +142,8 @@ step_claude_rules() {
 # step_claude_settings — merges workbench settings.json template into the live
 # settings file, preserving any existing user customisations.
 # Supports user overrides: user/ai/claude/settings.json is deep-merged on top.
+# The committed template carries handwritten permissions only; registry-derived
+# ones are collected here, so the live file is where the two halves meet.
 step_claude_settings() {
   mkdir -p "$CLAUDE_DIR"
 
@@ -153,9 +155,6 @@ step_claude_settings() {
 
   local template
   template=$(cat "$CLAUDE_SETTINGS_SRC")
-
-  # Strip repo bookkeeping key before injecting into user settings
-  template=$(jq 'del(._generated_permissions)' <<< "$template")
 
   # Merge user override settings into the template before applying
   if [[ -f "$USER_SETTINGS_SRC" ]]; then
@@ -406,7 +405,11 @@ _export_claude_config() {
 
   mkdir -p "$dest/rules" "$dest/agents" "$dest/skills"
 
-  # Settings: copy base template without user overrides or registry permissions
+  # Settings: copy base template without user overrides or registry permissions.
+  # Registry permissions are a sync-time injection against the local registries,
+  # so an exported session carries the handwritten allow list only and prompts
+  # for registry tools. Deriving them here would ship the exporting machine's
+  # tool set to a host that may not have it installed.
   if [[ -f "$CLAUDE_SETTINGS_SRC" ]]; then
     cp "$CLAUDE_SETTINGS_SRC" "$dest/settings.json"
   fi

@@ -2606,9 +2606,23 @@ def _post_pending_fix_replies(
     # itself. A draft returns 0 here, so a drafted drain adds nothing.
     fixed = bucket(FA.FIXED)
     if fixed:
-        fix.replies_posted += _post_fix_replies(
-            fixed, threads_by_id, repo, pr_number, fix.commit_sha,
-        )
+        # The same reconciliation the summary rows get. A pass whose commit a
+        # hook rejected records no SHA of its own, so an operator who then lands
+        # those fixes by hand would otherwise be replying "Fixed in ``" with an
+        # empty commit link and an empty blob permalink under it.
+        pass_sha = _reconciled_commit(fix, fix.commit_status, wt_path).sha or ""
+        attributed = [e for e in fixed if _entry_commit_sha(e, pass_sha)]
+        # Nothing a reviewer can open, so the linkless shape rather than a reply
+        # whose every link 404s. Mirrors the fix pass's own fallback.
+        unattributed = [e for e in fixed if not _entry_commit_sha(e, pass_sha)]
+        if attributed:
+            fix.replies_posted += _post_fix_replies(
+                attributed, threads_by_id, repo, pr_number, pass_sha,
+            )
+        if unattributed:
+            fix.replies_posted += _post_already_addressed_replies(
+                unattributed, threads_by_id, repo, pr_number, wt_path,
+            )
         _resolve_fixed_threads(fixed, threads_by_id)
 
     addressed = bucket(FA.ALREADY_ADDRESSED)

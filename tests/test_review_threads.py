@@ -1683,13 +1683,13 @@ class TestPendingFixReplies:
         So the seeds stay fixed and each test names only the fields it turns on.
         """
         seeds = self._SEEDS[:count]
+        fix_kw.setdefault("commit_sha", "abc1234")
         fix = FixSummary(
             threads=[
                 ThreadOutcome(id=tid, summary=summary, file=path, line=line,
                               action=ThreadAction.FIXED)
                 for tid, summary, path, line, _ in seeds
             ],
-            commit_sha="abc1234",
             **fix_kw,
         )
         threads_by_id = {
@@ -1775,6 +1775,50 @@ class TestPendingFixReplies:
         with patch("pr_comments.post_thread_reply") as mock_reply:
             rt._post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
+
+    def test_attributes_the_commit_the_operator_landed_by_hand(self, rt, publishing_on):
+        """A hook-rejected commit records no SHA; the summary reconciled, the reply did not.
+
+        The pass edits the files, a pre-commit hook rejects the commit, and the
+        operator commits and pushes the same work themselves. The summary rows
+        pick that commit up off the moved HEAD, so the reply has to as well —
+        otherwise the reviewer gets "Fixed in ``" over an empty commit link.
+        """
+        fix, threads_by_id = self._queue(
+            commit_status="commit_failed", commit_sha="", replies_pending=True,
+            head_sha="abc1234",
+        )
+        state = _make_state(fix)
+        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
+             patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        body = mock_reply.call_args[0][3]
+        assert "Fixed in [`def5678`](https://github.com/owner/repo/commit/def5678)" in body
+        assert "owner/repo/blob/def5678/x.py" in body
+        assert fix.replies_pending is False
+
+    def test_falls_back_to_the_linkless_shape_when_no_commit_can_be_named(
+        self, rt, publishing_on,
+    ):
+        """HEAD never moved, so there is no commit to cite and none is invented."""
+        fix, threads_by_id = self._queue(
+            commit_status="commit_failed", commit_sha="", replies_pending=True,
+            head_sha="abc1234",
+        )
+        state = _make_state(fix)
+        with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
+             patch.object(rt, "_is_pushed", return_value=True), \
+             patch.object(rt, "_find_addressing_commit", return_value=None), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
+             patch("pr_comments.resolve_thread", return_value=True):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        body = mock_reply.call_args[0][3]
+        assert "Fixed in" not in body
+        assert "/commit/)" not in body
+        assert "/blob//" not in body
+        assert fix.replies_pending is False
 
 
 class TestTriageOnlyPassQueue:

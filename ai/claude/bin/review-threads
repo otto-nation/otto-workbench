@@ -1340,7 +1340,8 @@ def _stamp_pass_commit(fixed: list[CommentItem], sha: str) -> None:
     Idempotent by design, not by accident: an entry that already names a
     commit keeps it, so calling this again on the same entries (e.g. once
     before replying to fixed threads, again when the outcomes are built) is
-    safe and a no-op on the second call.
+    safe and a no-op on the second call. The reply queue spans rounds too, so
+    a drained entry keeps the commit that actually fixed it.
     """
     if not sha:
         return
@@ -3404,10 +3405,10 @@ def _build_thread_outcomes(
     """Build ThreadOutcome list from categorized entries.
 
     `commit_sha` is stamped on the fixed entries only, through `_stamp_pass_commit`
-    — safe to call here even when a caller already stamped `fixed` upstream,
-    since the writer is a no-op on an entry that already names a commit. The
-    others were not landed by this commit, and a SHA on them would read as if
-    they had been.
+    — the one writer of that field, and safe to call here even when a caller
+    already stamped `fixed` upstream, since the writer is a no-op on an entry
+    that already names a commit. The others were not landed by this commit, and
+    a SHA on them would read as if they had been.
     """
     FA = pr_state.ThreadAction
     _stamp_pass_commit(fixed, commit_sha)

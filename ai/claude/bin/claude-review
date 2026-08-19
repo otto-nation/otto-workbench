@@ -880,6 +880,15 @@ def _run_review_pr(
     trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
                data={"pr": pr_number, "repo": repo, "branch": ctx.branch})
 
+    # Resolved before the issue lookup below, not with the worktree setup it
+    # feeds further down: the repo's own .workbench.yml is what says which
+    # tracker to read, and looking it up without one resolves to nothing.
+    repo_root = _find_repo_root(repo, repo_dir)
+    if not repo_root:
+        trail.error("setup_worktree", f"cannot find local clone of {repo}")
+        log.error(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
+        sys.exit(1)
+
     # Issue detection
     pr_meta = {}
     try:
@@ -899,7 +908,7 @@ def _run_review_pr(
     issue_context = ""
     detected_link = ""
     if not issue_link:
-        provider_info = review_issue.load_issue_provider()
+        provider_info = review_issue.load_issue_provider(repo_root)
         issue_id = review_issue.extract_issue_id(provider_info.name, pr_head, pr_body)
         issue_result = review_issue.fetch_issue_context(
             provider_info.name, issue_id, repo, provider_info.options,
@@ -941,12 +950,6 @@ def _run_review_pr(
     _check_pending_review(repo, pr_number, force)
 
     # Worktree setup
-    repo_root = _find_repo_root(repo, repo_dir)
-    if not repo_root:
-        trail.error("setup_worktree", f"cannot find local clone of {repo}")
-        log.error(f"Cannot find local clone of {repo}. Clone it first and re-run from within the repo.")
-        sys.exit(1)
-
     trail.info("setup_worktree", f"setting up PR worktree",
                data={"repo_root": repo_root, "pr_head": pr_head})
 

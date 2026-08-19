@@ -2011,6 +2011,45 @@ def test_self_review_recover_reads_head_after_worktree_switch(
     assert body.call_args.kwargs["head_sha"] == "fresh11"
 
 
+def test_pr_review_reads_the_tracker_from_the_repo_config(cr, tmp_path, monkeypatch):
+    """The PR path resolves the provider against the clone, like --self does.
+
+    Called with no path it reads the machine config only, so a repo that
+    declares its tracker in .workbench.yml would review as if none were set.
+    """
+    (tmp_path / ".workbench.yml").write_text(
+        "review:\n  issue_tracker:\n    provider: github\n",
+    )
+    monkeypatch.setattr(cr, "_find_repo_root", lambda repo, repo_dir="": str(tmp_path))
+    real_run = cr.subprocess.run
+
+    def _fake_run(cmd, *args, **kwargs):
+        # Only the PR lookup is stubbed: cr.subprocess is the module every
+        # other caller shares, and the config reader shells out to yq.
+        if cmd[:2] == ["gh", "pr"]:
+            return SimpleNamespace(returncode=1, stdout="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(cr.subprocess, "run", _fake_run)
+    seen = []
+
+    def _record(provider, *args):
+        seen.append(provider)
+        raise SystemExit(7)
+
+    monkeypatch.setattr(cr.review_issue, "extract_issue_id", _record)
+
+    with pytest.raises(SystemExit) as exc:
+        cr._run_review_pr(
+            MagicMock(), make_ctx(), 42, "owner/repo", tmp_path,
+            tmp_path / "review.md", "", True, False, False,
+            False, str(tmp_path), 1, False, None, None,
+        )
+
+    assert exc.value.code == 7
+    assert seen == ["github"]
+
+
 def _self_ctx(tmp_path, branch="feat/x"):
     """The identity a --self run resolves once and threads down."""
     return SimpleNamespace(

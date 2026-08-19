@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -4922,7 +4922,23 @@ class TestDeferredIssueProvider:
                  return_value=CreatedIssue(id="ENG-9", url="https://linear/ENG-9"),
              ) as created:
             self._create(rt)
-        assert created.call_args.args[1] == "ENG"
+        created.assert_called_once_with(
+            "linear", "ENG", ANY, ANY, parent_id=None, repo="owner/repo", opts={"team": "ENG"},
+        )
+
+    def test_linear_falls_back_to_the_branch_derived_team(self, rt, publishing_on):
+        """With no configured team, the branch-derived id still supplies one."""
+        import review_issue
+        info = review_issue.IssueProviderInfo(name="linear", options={})
+        with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
+             patch.object(
+                 review_issue, "create_issue",
+                 return_value=CreatedIssue(id="ENG-9", url="https://linear/ENG-9"),
+             ) as created:
+            self._create(rt, ctx=make_ctx(branch="isaac/ENG-1/x"))
+        created.assert_called_once_with(
+            "linear", "ENG", ANY, ANY, parent_id="ENG-1", repo="owner/repo", opts={},
+        )
 
     def test_linear_still_skips_with_no_team_anywhere(self, rt, publishing_on):
         import review_issue
@@ -4942,6 +4958,40 @@ class TestDeferredIssueProvider:
              patch.object(
                  review_issue, "load_issue_provider",
                  return_value=review_issue.IssueProviderInfo(),
-             ):
-            self._create(rt)
+             ) as loaded:
+            result = self._create(rt)
         asked.assert_not_called()
+        loaded.assert_called_once_with("/wt")
+        assert result == CreatedIssue()
+
+    def test_unresolved_provider_reaches_the_trail_as_an_error(self, rt, publishing_on):
+        """Deleting the trail.error call would leave the suite green without this."""
+        import review_issue
+        trail = MagicMock()
+        with patch.object(
+            review_issue, "ensure_issue_provider",
+            return_value=review_issue.IssueProviderInfo(),
+        ), patch.object(review_issue, "create_issue"):
+            self._create(rt, trail=trail)
+        trail.error.assert_called_once_with("deferred_issue", "no issue tracker configured")
+        trail.info.assert_not_called()
+
+    def test_unresolved_provider_in_draft_mode_reaches_the_trail_as_info(self, rt):
+        """The unresolved-path event fires here too, but as info — and only here.
+
+        A resolved provider that later fails in draft mode still reaches
+        ``trail.error("deferred_issue", "creation failed")`` in
+        ``_create_deferred_issue`` — this asserts the unresolved path never
+        does, and never calls ``trail.error`` at all while the gate is shut.
+        """
+        import review_issue
+        trail = MagicMock()
+        with patch.object(
+            review_issue, "load_issue_provider",
+            return_value=review_issue.IssueProviderInfo(),
+        ), patch.object(review_issue, "create_issue"):
+            self._create(rt, trail=trail)
+        trail.info.assert_called_once_with(
+            "deferred_issue", "skipped — no issue tracker configured",
+        )
+        trail.error.assert_not_called()

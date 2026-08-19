@@ -1860,9 +1860,10 @@ def _create_or_update_deferred_issue(
         return CreatedIssue(id=existing_issue_id)
 
     worktree = str(ctx.require_worktree())
+    publishing_open = publishing.enabled()
     # A draft run files nothing — create_issue gates on publishing.enabled() —
     # so asking which tracker to file to would be a question with no consequence.
-    if publishing.enabled():
+    if publishing_open:
         provider_info = review_issue.ensure_issue_provider(worktree)
     else:
         provider_info = review_issue.load_issue_provider(worktree)
@@ -1870,8 +1871,9 @@ def _create_or_update_deferred_issue(
         # ensure_issue_provider has already said why. Recording it on the trail
         # is what puts the undelivered closeout in `pr status` rather than
         # leaving the queue looking filed. Not an error while the gate is
-        # closed, though: a draft that files nothing has failed at nothing.
-        if trail and publishing.enabled():
+        # closed, though: with nothing configured to file to, a draft run
+        # has failed at nothing it would otherwise have attempted.
+        if trail and publishing_open:
             trail.error("deferred_issue", "no issue tracker configured")
         elif trail:
             trail.info("deferred_issue", "skipped — no issue tracker configured")

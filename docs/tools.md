@@ -63,6 +63,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
 | `validate-permissions` | Validates that every Bash permission rule can match a command — no literal * inside a :* prefix, no unexpanded ~ |
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |
+| `validate-tool-schema` | Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
@@ -492,6 +493,11 @@ non-zero exit, malformed JSON, a schema missing `name` or `input_schema`, or a p
 outruns the timeout — is logged at warning level on stderr with the reason. A tool you
 added that never appears in an MCP client is explained there. Executables with no marker
 are not tools and are skipped without comment.
+
+That stderr belongs to whichever MCP client spawned the server, so the same claim is
+checked at build time by `bin/local/validate-tool-schema`. It imports this discovery —
+the directories, the candidate filter, and the probe itself — and fails when a candidate
+in the checkout cannot answer, rather than leaving the tool to vanish at runtime.
 
 ### `serena-mcp`
 

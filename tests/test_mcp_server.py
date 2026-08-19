@@ -20,8 +20,8 @@ import server
 from server import (
     WORKBENCH_DIR,
     _args_to_cli,
-    _declares_tool_schema,
     _extract_json,
+    declares_tool_schema,
     discover_tool_dirs,
     discover_tools,
 )
@@ -134,6 +134,23 @@ def _write_tool_script(path: Path, name: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def _side_effect_of(script: Path) -> Path:
+    """The file _write_destructive_script's subject touches when it runs."""
+    return script.parent / "side-effect"
+
+
+def _write_destructive_script(directory: Path) -> Path:
+    """Write an unmarked executable whose only act is a visible side effect.
+
+    Nothing here answers the protocol, so anything that runs it has skipped the
+    marker check — which is the whole assertion.
+    """
+    script = directory / "destructive-script"
+    script.write_text(f"#!/bin/bash\ntouch '{_side_effect_of(script)}'\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return script
+
+
 def _write_counting_tool(directory: Path) -> Path:
     """Write a tool into *directory* that records each probe; return the log.
 
@@ -199,23 +216,35 @@ class TestDiscovery:
 
     def test_script_without_the_flag_is_never_executed(self, tmp_path):
         """A script that ignores unknown flags must not run during discovery."""
-        marker = tmp_path / "side-effect"
-        script = tmp_path / "destructive-script"
-        script.write_text(f"#!/bin/bash\ntouch '{marker}'\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        script = _write_destructive_script(tmp_path)
 
         config = {"tool_dirs": [str(tmp_path)], "plugin_dirs": []}
         tools = discover_tools(config)
 
         assert tools == {}
-        assert not marker.exists()
+        assert not _side_effect_of(script).exists()
+
+    def test_probing_an_unmarked_script_refuses_to_run_it(self, tmp_path):
+        """The guard travels with probe_tool, not with the caller that filters.
+
+        ``tool_candidates`` screens for the marker, but probe_tool is importable
+        on its own and running an unmarked script is what wrote a release
+        archive into the CWD.
+        """
+        script = _write_destructive_script(tmp_path)
+
+        result = server.probe_tool(script)
+
+        assert result.ok is False
+        assert "no protocol marker" in result.reason
+        assert not _side_effect_of(script).exists()
 
     def test_tool_parser_import_counts_as_a_declaration(self, tmp_path):
         """ToolParser-based scripts inherit the flag without naming it."""
         script = tmp_path / "framework-tool"
         script.write_text("#!/usr/bin/env python3\nfrom tool_parser import ToolParser\n")
 
-        assert _declares_tool_schema(script) is True
+        assert declares_tool_schema(script) is True
 
     def test_tarball_builder_is_not_a_probe_candidate(self):
         """The script that motivated the guard must stay out of the probe path.
@@ -230,7 +259,7 @@ class TestDiscovery:
         if not builder.exists():
             pytest.skip("builder not found")
 
-        assert _declares_tool_schema(builder) is False
+        assert declares_tool_schema(builder) is False
 
     def test_launcher_is_not_a_probe_candidate(self):
         """Probing the launcher would exec the server and hang until the timeout.
@@ -246,14 +275,14 @@ class TestDiscovery:
         if not launcher.exists():
             pytest.skip("launcher not found")
 
-        assert _declares_tool_schema(launcher) is False
+        assert declares_tool_schema(launcher) is False
 
     def test_skips_unreadable_script(self, tmp_path):
         script = tmp_path / "unreadable"
         script.write_text("#!/bin/bash\necho --tool-schema\n")
         script.chmod(stat.S_IXUSR)
 
-        assert _declares_tool_schema(script) is False
+        assert declares_tool_schema(script) is False
 
     def test_skips_hidden_files(self, tmp_path):
         script = tmp_path / ".hidden-tool"
@@ -417,6 +446,17 @@ class TestWorkbenchToolDirs:
         }
 
         assert tracked <= set(discover_tool_dirs())
+
+    def test_another_root_can_be_named(self, tmp_path):
+        """bin/local/validate-tool-schema points this at a fixture tree.
+
+        Re-deriving the layout there would be a second copy of the rule the
+        server owns, which is the drift this parameter exists to prevent.
+        """
+        (tmp_path / "git" / "bin").mkdir(parents=True)
+        (tmp_path / "bin").mkdir()
+
+        assert discover_tool_dirs(tmp_path) == [tmp_path / "bin", tmp_path / "git" / "bin"]
 
     def test_absent_tool_dirs_still_discovers_tools(self):
         """The regression guard: an empty config used to yield no tools at all."""

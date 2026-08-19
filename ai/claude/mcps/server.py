@@ -17,6 +17,7 @@ import os
 import stat
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
@@ -93,7 +94,7 @@ def _scan_plugin_dir(plugin_dir: Path) -> list[Path]:
     return results
 
 
-def discover_tool_dirs() -> list[Path]:
+def discover_tool_dirs(root: Path | None = None) -> list[Path]:
     """Return the workbench's own script directories.
 
     A component keeps its scripts in ``<component>/bin`` and the root ``bin/``
@@ -107,8 +108,12 @@ def discover_tool_dirs() -> list[Path]:
     ``mcp-tools.json``, so a server that only looked at that file exposed no
     tools on any install. ``tool_dirs`` names directories to scan *in
     addition*.
+
+    *root* defaults to the running checkout. ``bin/local/validate-tool-schema``
+    passes one so its tests can point the same derivation at a fixture tree.
     """
-    dirs = {d for pattern in COMPONENT_BIN_GLOBS for d in WORKBENCH_DIR.glob(pattern) if d.is_dir()}
+    base = WORKBENCH_DIR if root is None else Path(root)
+    dirs = {d for pattern in COMPONENT_BIN_GLOBS for d in base.glob(pattern) if d.is_dir()}
     return sorted(dirs)
 
 
@@ -140,7 +145,7 @@ def _is_executable(path: Path) -> bool:
         return False
 
 
-def _declares_tool_schema(script: Path) -> bool:
+def declares_tool_schema(script: Path) -> bool:
     """True if *script* carries a protocol marker in its source.
 
     Probing means executing, and a script that ignores unknown flags runs its
@@ -157,17 +162,35 @@ def _declares_tool_schema(script: Path) -> bool:
     return any(marker in head for marker in DECLARATION_MARKERS)
 
 
-def _probe_tool(script: Path) -> dict | None:
-    """Run ``script --tool-schema`` and return the JSON, or None.
+@dataclass(frozen=True)
+class ProbeResult:
+    """What ``script --tool-schema`` answered, or why it did not.
 
-    A script that carries a marker meant to be a tool, so every way it can then
-    fail to answer is logged at warning level. Silence here reads as "no tool
-    here" and leaves nothing to debug — the scan covers every component's
-    ``bin/``, so the author of a broken tool is rarely the person reading these
-    logs. Candidates with no marker are not tools and stay quiet.
+    The reason travels with the result rather than going straight to the log,
+    so a caller that is not the server — ``bin/local/validate-tool-schema`` —
+    can report the same failure to whoever broke the script.
     """
-    if not _declares_tool_schema(script):
-        return None
+
+    script: Path
+    schema: dict | None = None
+    reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.schema is not None
+
+
+def probe_tool(script: Path) -> ProbeResult:
+    """Run ``script --tool-schema`` and return its schema or a failure reason.
+
+    The marker check is re-applied here rather than left to the caller.
+    ``tool_candidates`` already filters, but probing is execution: a script that
+    ignores unknown flags does its real work instead of answering, and
+    ``build-otto-ai-tools-tarball`` wrote a release archive into the CWD that
+    way. The invariant travels with the function that would break it.
+    """
+    if not declares_tool_schema(script):
+        return ProbeResult(script, reason="no protocol marker in its source")
     try:
         result = subprocess.run(
             [str(script), TOOL_SCHEMA_FLAG],
@@ -177,39 +200,56 @@ def _probe_tool(script: Path) -> dict | None:
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
         if result.returncode != 0:
-            logger.warning(
-                "Skipping %s: %s exited %d: %s",
-                script, TOOL_SCHEMA_FLAG, result.returncode,
-                result.stderr.strip() or "(no stderr)",
-            )
-            return None
+            return ProbeResult(script, reason=(
+                f"{TOOL_SCHEMA_FLAG} exited {result.returncode}: "
+                f"{result.stderr.strip() or '(no stderr)'}"
+            ))
         schema = json.loads(result.stdout)
         missing = [key for key in REQUIRED_SCHEMA_KEYS if key not in schema]
         if missing:
-            logger.warning("Skipping %s: schema is missing %s", script, ", ".join(missing))
-            return None
+            return ProbeResult(script, reason=f"schema is missing {', '.join(missing)}")
         schema["_script"] = str(script)
-        return schema
+        return ProbeResult(script, schema=schema)
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
         # Name the exception type rather than trusting its str() to say which
         # of the three it was — docs/tools.md tells readers these are distinct.
-        logger.warning("Skipping %s: %s: %s", script, type(exc).__name__, exc)
-        return None
+        return ProbeResult(script, reason=f"{type(exc).__name__}: {exc}")
 
 
-def _scan_tool_dir(d: Path) -> list[dict]:
-    """Return tool schemas from executable scripts in *d*."""
+def tool_candidates(d: Path) -> list[Path]:
+    """Return the scripts in *d* that discovery would probe.
+
+    Executable, not hidden or underscore-prefixed, and carrying a protocol
+    marker. This is the whole of "what is a tool here" up to running it, so the
+    validator asks this rather than restating the filter.
+    """
     try:
         entries = sorted(d.iterdir())
     except OSError as exc:
         logger.warning("Skipping inaccessible directory %s: %s", d, exc)
         return []
-    candidates = [e for e in entries if _is_executable(e) and not e.name.startswith((".", "_"))]
+    return [e for e in entries
+            if _is_executable(e)
+            and not e.name.startswith((".", "_"))
+            and declares_tool_schema(e)]
+
+
+def _scan_tool_dir(d: Path) -> list[dict]:
+    """Return tool schemas from executable scripts in *d*.
+
+    A script that carries a marker meant to be a tool, so every way it can then
+    fail to answer is logged at warning level. Silence here reads as "no tool
+    here" and leaves nothing to debug — the scan covers every component's
+    ``bin/``, so the author of a broken tool is rarely the person reading these
+    logs. Executables with no marker are not tools and stay quiet.
+    """
     results = []
-    for entry in candidates:
-        schema = _probe_tool(entry)
-        if schema is not None:
-            results.append(schema)
+    for entry in tool_candidates(d):
+        probed = probe_tool(entry)
+        if probed.ok:
+            results.append(probed.schema)
+        else:
+            logger.warning("Skipping %s: %s", entry, probed.reason)
     return results
 
 

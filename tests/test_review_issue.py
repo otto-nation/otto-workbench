@@ -95,6 +95,7 @@ def test_load_issue_provider_reads_the_project_config(tmp_path):
     )
     result = load_issue_provider(str(tmp_path))
     assert result.name == "github"
+    assert result.resolved is True
     assert result.options["team"] == "ENG"
 
 
@@ -126,10 +127,7 @@ def test_needs_team_key_is_false_for_github():
 # ── ensure_issue_provider ───────────────────────────────────────────────────
 
 
-def test_ensure_issue_provider_returns_a_declared_provider_without_asking(tmp_path, monkeypatch):
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+def test_ensure_issue_provider_returns_a_declared_provider_without_asking(tmp_path):
     (tmp_path / ".workbench.yml").write_text(
         "review:\n  issue_tracker:\n    provider: github\n",
     )
@@ -139,12 +137,7 @@ def test_ensure_issue_provider_returns_a_declared_provider_without_asking(tmp_pa
     asked.assert_not_called()
 
 
-def test_ensure_issue_provider_warns_and_stays_unresolved_without_a_tty(
-    tmp_path, monkeypatch, capsys,
-):
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+def test_ensure_issue_provider_warns_and_stays_unresolved_without_a_tty(tmp_path, capsys):
     with patch("review_issue.prompt.interactive", return_value=False):
         result = ensure_issue_provider(str(tmp_path))
     assert result.resolved is False
@@ -153,47 +146,47 @@ def test_ensure_issue_provider_warns_and_stays_unresolved_without_a_tty(
     assert str(tmp_path) in err
 
 
-def test_ensure_issue_provider_records_the_answer_for_the_repo(tmp_path, monkeypatch):
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+def test_ensure_issue_provider_records_the_answer_for_the_repo(tmp_path):
     with patch("review_issue.prompt.interactive", return_value=True), \
          patch("review_issue.prompt.ask", side_effect=["github", "repo"]):
         result = ensure_issue_provider(str(tmp_path))
     assert result.name == "github"
     assert "provider: github" in (tmp_path / ".workbench.yml").read_text()
-    assert not (config_dir / "config.yml").exists()
+    assert not (tmp_path / "workbench-config" / "config.yml").exists()
 
 
-def test_ensure_issue_provider_records_the_answer_for_all_repos(tmp_path, monkeypatch):
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+def test_ensure_issue_provider_records_the_answer_for_all_repos(tmp_path):
     with patch("review_issue.prompt.interactive", return_value=True), \
          patch("review_issue.prompt.ask", side_effect=["linear", "all"]):
         result = ensure_issue_provider(str(tmp_path))
     assert result.name == "linear"
-    assert "provider: linear" in (config_dir / "config.yml").read_text()
+    config_path = tmp_path / "workbench-config" / "config.yml"
+    assert "provider: linear" in config_path.read_text()
     assert not (tmp_path / ".workbench.yml").exists()
 
 
-def test_ensure_issue_provider_does_not_record_a_declined_answer(tmp_path, monkeypatch):
+def test_ensure_issue_provider_with_no_path_asks_once_and_writes_globally(tmp_path):
+    """No repo to write to, so there is no scope question — just the provider one."""
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", return_value="linear") as asked:
+        result = ensure_issue_provider()
+    assert result.name == "linear"
+    assert asked.call_count == 1
+    config_path = tmp_path / "workbench-config" / "config.yml"
+    assert "provider: linear" in config_path.read_text()
+
+
+def test_ensure_issue_provider_does_not_record_a_declined_answer(tmp_path):
     """An empty answer must not write a value — that is how a guess gets in."""
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
     with patch("review_issue.prompt.interactive", return_value=True), \
          patch("review_issue.prompt.ask", return_value=""):
         result = ensure_issue_provider(str(tmp_path))
     assert result.resolved is False
     assert not (tmp_path / ".workbench.yml").exists()
-    assert not (config_dir / "config.yml").exists()
+    assert not (tmp_path / "workbench-config" / "config.yml").exists()
 
 
-def test_ensure_issue_provider_rejects_an_unrecognised_answer(tmp_path, monkeypatch, capsys):
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+def test_ensure_issue_provider_rejects_an_unrecognised_answer(tmp_path, capsys):
     with patch("review_issue.prompt.interactive", return_value=True), \
          patch("review_issue.prompt.ask", return_value="bitbucket"):
         result = ensure_issue_provider(str(tmp_path))
@@ -202,11 +195,19 @@ def test_ensure_issue_provider_rejects_an_unrecognised_answer(tmp_path, monkeypa
     assert not (tmp_path / ".workbench.yml").exists()
 
 
-def test_ensure_issue_provider_still_resolves_when_the_write_fails(tmp_path, monkeypatch):
+def test_ensure_issue_provider_rejects_an_unrecognised_scope(tmp_path, capsys):
+    """A garbled scope answer must not silently pick a scope, repo or global."""
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", side_effect=["github", "global"]):
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.name == "github"
+    assert "global" in capsys.readouterr().err
+    assert not (tmp_path / ".workbench.yml").exists()
+    assert not (tmp_path / "workbench-config" / "config.yml").exists()
+
+
+def test_ensure_issue_provider_still_resolves_when_the_write_fails(tmp_path, capsys):
     """A read-only checkout costs the recording, not the run."""
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
     with patch("review_issue.prompt.interactive", return_value=True), \
          patch("review_issue.prompt.ask", side_effect=["github", "repo"]), \
          patch(
@@ -215,6 +216,7 @@ def test_ensure_issue_provider_still_resolves_when_the_write_fails(tmp_path, mon
          ):
         result = ensure_issue_provider(str(tmp_path))
     assert result.name == "github"
+    assert "could not record the tracker" in capsys.readouterr().err
 
 
 # ── fetch_issue_context ────────────────────────────────────────────────────

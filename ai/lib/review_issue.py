@@ -177,14 +177,27 @@ def ensure_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
 def _record_issue_provider(provider: str, wt_path: str | None) -> None:
     """Persist the answer at the scope the user picks.
 
-    A failed write is reported and swallowed: the caller has an answer for
-    this run either way, and a read-only checkout should cost the recording
-    rather than the filing. ``adopt_project_review_yml`` makes the same trade.
+    A failed write, or an unrecognised scope answer, is reported and
+    swallowed: the caller has an answer for this run either way, and a
+    read-only checkout — or a garbled scope — should cost the recording
+    rather than the filing. ``adopt_project_review_yml`` makes the same
+    trade on a failed write.
     """
-    scope = prompt.ask(
-        f"Record for this repo or all repos? (repo/{_SCOPE_ALL}, Enter for repo): ",
-    ).lower() if wt_path else _SCOPE_ALL
-    scope_all = scope == _SCOPE_ALL
+    if wt_path is None:
+        scope = _SCOPE_ALL
+    else:
+        scope = prompt.ask(
+            f"Record for this repo or all repos? (repo/{_SCOPE_ALL}, Enter for repo): ",
+        ).lower()
+
+    if scope in ("", "repo"):
+        scope_all = False
+    elif scope == _SCOPE_ALL:
+        scope_all = True
+    else:
+        log.warn(f"'{scope}' is not repo or {_SCOPE_ALL} — nothing was recorded")
+        return
+
     try:
         if scope_all:
             workbench_config.set_value(workbench_config.ISSUE_PROVIDER_KEY, provider)

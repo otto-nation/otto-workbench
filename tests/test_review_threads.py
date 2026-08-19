@@ -1,5 +1,6 @@
 """Tests for review-threads: JSON extraction, thread classification, and prompt formatting."""
 
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -2245,7 +2246,7 @@ class TestFinalizeDeferredCarriesTheReason:
         with patch.object(rt, "_create_or_update_deferred_issue") as create, \
                 patch.object(rt, "_post_deferred_replies"):
             create.side_effect = lambda deferred, *a, **kw: (
-                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
+                captured.extend(deferred) or _filed("I_1", "u")
             )
             rt._finalize_deferred(state, ctx, {}, track={"t1"})
         return captured
@@ -2302,7 +2303,7 @@ class TestDeferralRequiresAChoice:
         with patch.object(rt, "_create_or_update_deferred_issue") as create, \
                 patch.object(rt, "_post_deferred_replies") as reply:
             create.side_effect = lambda deferred, *a, **kw: (
-                captured.extend(deferred) or rt.CreatedIssue("I_1", "u")
+                captured.extend(deferred) or _filed("I_1", "u")
             )
             rt._finalize_deferred(state, ctx, {}, track=track)
         return captured, create, reply
@@ -4945,7 +4946,8 @@ class TestDeferredIssueProvider:
             return_value=review_issue.IssueProviderInfo(),
         ), patch.object(review_issue, "create_issue") as created:
             result = self._create(rt)
-        assert result.id == ""
+        assert result.issue.id == ""
+        assert result.owed is True
         created.assert_not_called()
 
     def test_github_needs_no_team_key(self, rt, publishing_on):
@@ -4958,7 +4960,7 @@ class TestDeferredIssueProvider:
                  return_value=_filed("#42", "https://gh/42"),
              ) as created:
             result = self._create(rt)
-        assert result.id == "#42"
+        assert result.issue.id == "#42"
         created.assert_called_once()
 
     def test_linear_prefers_the_configured_team(self, rt, publishing_on):
@@ -4995,7 +4997,7 @@ class TestDeferredIssueProvider:
         with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
              patch.object(review_issue, "create_issue") as created:
             result = self._create(rt)
-        assert result.id == ""
+        assert result.issue.id == ""
         created.assert_not_called()
 
     def test_a_draft_run_does_not_ask_which_tracker(self, rt):
@@ -5011,7 +5013,8 @@ class TestDeferredIssueProvider:
             result = self._create(rt)
         asked.assert_not_called()
         loaded.assert_called_once_with("/wt")
-        assert result == CreatedIssue()
+        assert result.issue == CreatedIssue()
+        assert result.owed is False
 
     def test_unresolved_provider_reaches_the_trail_as_an_error(self, rt, publishing_on):
         """Deleting the trail.error call would leave the suite green without this."""
@@ -5082,3 +5085,65 @@ class TestDeferredIssueDraftIsNotAFailure:
         trail.error.assert_called_once_with("deferred_issue", "creation failed")
         trail.info.assert_not_called()
         assert "Failed to create deferred tracking issue" in capsys.readouterr().err
+
+
+class TestUndeliveredDeferredIssueReachesTheState:
+    """#805: threads were filed against a tracking issue that never existed.
+
+    The only record was a trail event, and nobody reads the trail to decide
+    whether a PR is safe to merge — so `pr status` said ready while the
+    deferred comments had no home.
+    """
+
+    def _finalize(self, rt, worktree, provider, create=None):
+        import review_issue
+        state = PRState(
+            identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
+                                head_sha="abc1234", worktree_root=str(worktree)),
+            fix=FixSummary(threads=[
+                ThreadOutcome(id="t1", file="a.go", line=7, reviewer="kgn",
+                              summary="rename the guard", action=ThreadAction.DEFERRED),
+            ]),
+        )
+        ctx = make_ctx(branch="b", worktree_root=worktree, head_sha="abc1234",
+                       target_dir=worktree / "target")
+        creation = patch.object(review_issue, "create_issue", return_value=create) \
+            if create is not None else contextlib.nullcontext()
+        with patch.object(review_issue, "ensure_issue_provider", return_value=provider), \
+                patch.object(review_issue, "load_issue_provider", return_value=provider), \
+                patch.object(rt, "_post_deferred_replies"), creation:
+            rt._finalize_deferred(state, ctx, {}, track={"t1"})
+        return state.fix
+
+    def _provider(self, name):
+        import review_issue
+        return review_issue.IssueProviderInfo(name=name, options={})
+
+    def test_a_creation_failure_is_recorded(self, rt, worktree, publishing_on):
+        fix = self._finalize(
+            rt, worktree, self._provider("github"),
+            create=IssueResult(IssueDelivery.UNDELIVERED),
+        )
+        assert fix.deferred_issue_pending is True
+
+    def test_a_provider_that_cannot_create_issues_is_recorded(
+        self, rt, worktree, publishing_on,
+    ):
+        fix = self._finalize(rt, worktree, self._provider("jira"))
+        assert fix.deferred_issue_pending is True
+
+    def test_no_tracker_configured_is_recorded(self, rt, worktree, publishing_on):
+        fix = self._finalize(rt, worktree, self._provider(""))
+        assert fix.deferred_issue_pending is True
+
+    def test_a_filed_issue_owes_nothing(self, rt, worktree, publishing_on):
+        fix = self._finalize(
+            rt, worktree, self._provider("github"), create=_filed("#42", "https://gh/42"),
+        )
+        assert fix.deferred_issue_pending is False
+        assert fix.deferred_issue_id == "#42"
+
+    def test_a_draft_run_owes_nothing(self, rt, worktree):
+        """The gate declining the write is not a tracking issue gone missing."""
+        fix = self._finalize(rt, worktree, self._provider("github"))
+        assert fix.deferred_issue_pending is False

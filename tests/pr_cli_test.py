@@ -206,6 +206,16 @@ def test_merge_readiness_blocked_by_a_pending_reply_queue():
     assert "closeout not delivered" in pr_cli._merge_readiness(state)
 
 
+def test_merge_readiness_blocked_by_an_unfiled_tracking_issue():
+    """Deferred comments with nowhere to live are not a mergeable state."""
+    import pr_state
+    state = _green_state()
+    pr_state.apply(state, pr_state.FixSummary(deferred_issue_pending=True, updated_at="t"))
+    result = pr_cli._merge_readiness(state)
+    assert "ready" not in result.lower()
+    assert "closeout not delivered" in result
+
+
 def test_merge_readiness_ignores_a_drained_closeout():
     import pr_state
     state = _green_state()

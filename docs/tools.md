@@ -420,8 +420,10 @@ The Push verdict appears in the dashboard and gates the **Merge readiness** line
 
 A `--fix` run that ends with open `needs_human` threads, or that runs without
 `--post`, holds back the summary comment and the per-thread replies and records
-that in state. `pr status` reads those two flags back out, so the queue is
-visible after the stderr line has scrolled past:
+that in state. A tracking issue that was owed for the deferred threads and could
+not be filed — no tracker configured, a provider that cannot create issues, or a
+creation that failed — is recorded the same way. `pr status` reads those flags
+back out, so the debt is visible after the stderr line has scrolled past:
 
 ```
 **Fix**: 11 fixed · 2 need discussion · 1 dismissed · 3 already addressed (commit: 9f2c1ab, push_held)
@@ -433,7 +435,12 @@ visible after the stderr line has scrolled past:
 The reply count is derived from the recorded outcomes — the fixed,
 already-addressed, and dismissed threads `--finish` drains. A queue that still
 owes replies but carries no outcomes to count says `replies` without a number
-rather than claiming zero.
+rather than claiming zero. An unfiled tracking issue reads as
+`deferred tracking issue` in the same line.
+
+A draft run owes nothing: the publishing gate declining a write is the gate
+working, so it neither posts an error to the trail nor counts against merge
+readiness.
 
 ### `otto-mcp-server`
 

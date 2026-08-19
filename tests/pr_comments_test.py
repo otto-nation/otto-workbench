@@ -555,6 +555,19 @@ def test_closeout_debt_clean_state_owes_nothing():
     assert debt.describe() == ""
 
 
+def test_closeout_debt_counts_a_tracking_issue_that_was_never_filed():
+    """Deferred threads with no issue behind them are undelivered closeout."""
+    debt = pr_comments.closeout_debt(_fix_with_closeout(deferred_issue_pending=True))
+    assert debt.owed is True
+    assert debt.deferred_issue is True
+    assert debt.describe() == "deferred tracking issue"
+
+
+def test_closeout_debt_ignores_a_tracking_issue_that_was_filed():
+    debt = pr_comments.closeout_debt(_fix_with_closeout(deferred_issue_id="ENG-456"))
+    assert debt.owed is False
+
+
 def test_render_fix_status_warns_when_summary_and_replies_are_owed():
     lines = render_fix_status(
         _fix_with_closeout(summary_deferred=True, replies_pending=True),
@@ -575,6 +588,13 @@ def test_render_fix_status_warns_for_a_pending_reply_queue_alone():
     lines = render_fix_status(_fix_with_closeout(replies_pending=True))
     assert _closeout_line(lines) == (
         f"  ⚠ closeout owed: 3 replies — run: {CLOSEOUT_COMMAND}"
+    )
+
+
+def test_render_fix_status_warns_for_an_unfiled_tracking_issue():
+    lines = render_fix_status(_fix_with_closeout(deferred_issue_pending=True))
+    assert _closeout_line(lines) == (
+        f"  ⚠ closeout owed: deferred tracking issue — run: {CLOSEOUT_COMMAND}"
     )
 
 

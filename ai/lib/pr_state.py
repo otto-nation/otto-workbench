@@ -490,6 +490,12 @@ class FixSummary(Domain):
     summary_deferred: bool = False
     deferred_issue_id: str = ""
     deferred_issue_url: str = ""
+    # A tracking issue was owed for the threads filed this cycle and did not
+    # get created — no tracker configured, a provider that cannot create
+    # issues, or a creation that failed. The deferred comments have no home
+    # until one exists, so `pr_comments.closeout_debt` counts it. A draft run
+    # is not this: the publishing gate declining the write owes nothing.
+    deferred_issue_pending: bool = False
     has_comment_items: bool = False
 
     def merge_into(self, prior: "FixSummary") -> "FixSummary":
@@ -509,7 +515,9 @@ class FixSummary(Domain):
         and updated on later rounds.  A fix pass builds its FixSummary before
         knowing about it, so an empty id/url means "not set this round", not
         "cleared" — dropping it would make the next deferred round open a
-        duplicate issue.
+        duplicate issue.  A pending one is owed for the same span: only the
+        --finish phase that files the issue can settle the debt, so a fix pass
+        that says nothing about it must not clear it either.
 
         The summary comment is cycle-scoped for the same reason.  A round that
         posts nothing — no fixables, nothing dismissed, no discussion pending —
@@ -541,6 +549,9 @@ class FixSummary(Domain):
             threads=list(merged.values()) + no_id,
             deferred_issue_id=self.deferred_issue_id or prior.deferred_issue_id,
             deferred_issue_url=self.deferred_issue_url or prior.deferred_issue_url,
+            deferred_issue_pending=(
+                self.deferred_issue_pending or prior.deferred_issue_pending
+            ),
             summary_url=self.summary_url or prior.summary_url,
         )
 

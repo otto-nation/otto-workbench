@@ -1868,11 +1868,13 @@ def _create_or_update_deferred_issue(
     else:
         provider_info = review_issue.load_issue_provider(worktree)
     if not provider_info.resolved:
-        # ensure_issue_provider has already said why. Recording it on the trail
-        # is what puts the undelivered closeout in `pr status` rather than
-        # leaving the queue looking filed. Not an error while the gate is
-        # closed, though: with nothing configured to file to, a draft run
-        # has failed at nothing it would otherwise have attempted.
+        # ensure_issue_provider has already said why. The trail record is an
+        # audit signal only — `pr status` reads the deferred summary and the
+        # pending replies, so an unfiled tracking issue is not surfaced there
+        # yet; https://github.com/otto-nation/otto-workbench/issues/805 tracks
+        # making it so. Not an error while the gate is closed, though: with
+        # nothing configured to file to, a draft run has failed at nothing it
+        # would otherwise have attempted.
         if trail and publishing_open:
             trail.error("deferred_issue", "no issue tracker configured")
         elif trail:

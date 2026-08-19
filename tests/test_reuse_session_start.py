@@ -9,6 +9,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+ISSUE_TRACKER_RULE = REPO_ROOT / "ai" / "guidelines" / "rules" / "issue-tracker.md"
+
 
 def _run(rss, repo):
     """Drive main() with the repo fixed and the ceiling scan stubbed out.
@@ -40,3 +42,23 @@ def test_says_so_when_no_tracker_is_configured(rss, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Issue tracker: not configured" in out
     assert "review.issue_tracker.provider" in out
+
+
+def test_the_rule_quotes_both_lines_the_hook_emits(rss, tmp_path):
+    """The rule tells the agent to read a line this hook owns the wording of.
+
+    It quotes both states verbatim, so a reworded hook would otherwise point
+    the agent at a line that no longer exists. Reword the rule to match, not
+    the other way round.
+    """
+    configured = tmp_path / "configured"
+    configured.mkdir()
+    (configured / ".workbench.yml").write_text(
+        "review:\n  issue_tracker:\n    provider: github\n",
+    )
+    unconfigured = tmp_path / "unconfigured"
+    unconfigured.mkdir()
+
+    rule = ISSUE_TRACKER_RULE.read_text()
+    assert rss._issue_tracker_line(str(configured)) in rule
+    assert rss._issue_tracker_line(str(unconfigured)) in rule

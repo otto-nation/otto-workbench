@@ -50,7 +50,7 @@ from pr_thread_models import (
     triage_result_from_dict,
 )
 from review_github import fetch_pr_data
-from review_issue import CreatedIssue
+from review_issue import CreatedIssue, IssueDelivery, IssueResult
 import supersession
 from tool_parser import handle_value_flags
 from trail import Trail, add_trail_args
@@ -1816,7 +1816,7 @@ def _create_deferred_issue(
     pr_number: int,
     opts: dict | None,
     trail: Trail | None,
-) -> CreatedIssue:
+) -> IssueResult:
     parent_id = review_issue.extract_issue_id(provider, ctx.branch)
     # The configured team wins over the one implied by the branch: it is
     # what the repo declared, while the branch prefix is an inference from
@@ -1828,21 +1828,33 @@ def _create_deferred_issue(
         log.dim(f"Cannot determine team key for {provider} issue creation — skipping")
         if trail:
             trail.info("deferred_issue", "skipped — no team key")
-        return CreatedIssue()
+        return IssueResult(IssueDelivery.SKIPPED)
 
     title = f"fix(review): deferred review comments — PR #{pr_number}"
-    created = review_issue.create_issue(
+    result = review_issue.create_issue(
         provider, team, title, body, parent_id=parent_id, repo=repo, opts=opts,
     )
-    if not created:
+    if result.filed:
+        if trail:
+            trail.info(
+                "deferred_issue",
+                f"created {result.issue.id}",
+                data={"url": result.issue.url},
+            )
+        return result
+    if result.owed:
         log.error("Failed to create deferred tracking issue")
         if trail:
             trail.error("deferred_issue", "creation failed")
-        return CreatedIssue()
+        return result
 
+    # The publishing gate declined the write, which is the gate working. Saying
+    # it failed here would put a spurious error in the closeout `pr status`
+    # reads, on every draft run.
+    log.dim("Deferred tracking issue not filed — publishing is off")
     if trail:
-        trail.info("deferred_issue", f"created {created.id}", data={"url": created.url})
-    return created
+        trail.info("deferred_issue", "skipped — publishing off")
+    return result
 
 
 def _create_or_update_deferred_issue(
@@ -1890,7 +1902,10 @@ def _create_or_update_deferred_issue(
         )
         return CreatedIssue(id=issue.id, url=issue.url or existing_issue_url)
 
-    return _create_deferred_issue(provider, body, ctx, repo, pr_number, provider_info.options, trail)
+    created = _create_deferred_issue(
+        provider, body, ctx, repo, pr_number, provider_info.options, trail,
+    )
+    return created.issue
 
 
 def _fixed_status_for(

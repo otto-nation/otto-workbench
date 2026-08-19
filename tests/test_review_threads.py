@@ -29,7 +29,7 @@ from pr_thread_models import (
     TriageStats, triage_result_from_dict,
 )
 from review_common import SECTION_PRIOR_FINDINGS, Diagnosis, DiagnosisKind
-from review_issue import CreatedIssue
+from review_issue import CreatedIssue, IssueDelivery, IssueResult
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -4911,6 +4911,11 @@ class TestFoldedRowsAreNotCarriedBack:
         assert rt._carried_over_rows(published, self.THREAD_ROW) == [other]
 
 
+def _filed(issue_id: str, url: str) -> IssueResult:
+    """What create_issue answers once a tracker accepted the write."""
+    return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id, url=url))
+
+
 class TestDeferredIssueProvider:
     """#795: a GitHub repo was skipped for a Linear-shaped reason.
 
@@ -4950,7 +4955,7 @@ class TestDeferredIssueProvider:
         with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
              patch.object(
                  review_issue, "create_issue",
-                 return_value=CreatedIssue(id="#42", url="https://gh/42"),
+                 return_value=_filed("#42", "https://gh/42"),
              ) as created:
             result = self._create(rt)
         assert result.id == "#42"
@@ -4963,7 +4968,7 @@ class TestDeferredIssueProvider:
         with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
              patch.object(
                  review_issue, "create_issue",
-                 return_value=CreatedIssue(id="ENG-9", url="https://linear/ENG-9"),
+                 return_value=_filed("ENG-9", "https://linear/ENG-9"),
              ) as created:
             self._create(rt)
         created.assert_called_once_with(
@@ -4977,7 +4982,7 @@ class TestDeferredIssueProvider:
         with patch.object(review_issue, "ensure_issue_provider", return_value=info), \
              patch.object(
                  review_issue, "create_issue",
-                 return_value=CreatedIssue(id="ENG-9", url="https://linear/ENG-9"),
+                 return_value=_filed("ENG-9", "https://linear/ENG-9"),
              ) as created:
             self._create(rt, ctx=make_ctx(branch="isaac/ENG-1/x"))
         created.assert_called_once_with(
@@ -5023,10 +5028,10 @@ class TestDeferredIssueProvider:
     def test_unresolved_provider_in_draft_mode_reaches_the_trail_as_info(self, rt):
         """The unresolved-path event fires here too, but as info — and only here.
 
-        A resolved provider that later fails in draft mode still reaches
+        A resolved provider whose creation genuinely fails still reaches
         ``trail.error("deferred_issue", "creation failed")`` in
-        ``_create_deferred_issue`` — this asserts the unresolved path never
-        does, and never calls ``trail.error`` at all while the gate is shut.
+        ``_create_deferred_issue`` whether or not the gate is open — this
+        asserts the unresolved path never does while the gate is shut.
         """
         import review_issue
         trail = MagicMock()
@@ -5039,3 +5044,41 @@ class TestDeferredIssueProvider:
             "deferred_issue", "skipped — no issue tracker configured",
         )
         trail.error.assert_not_called()
+
+
+class TestDeferredIssueDraftIsNotAFailure:
+    """#804: a draft run and a refused tracker both used to arrive as ``None``.
+
+    The gate declining a write is the gate working, so it must not reach the
+    closeout `pr status` reads — while a creation that genuinely failed must,
+    gate open or shut.
+    """
+
+    def _create(self, rt, delivery, trail):
+        import review_issue
+        info = review_issue.IssueProviderInfo(name="github", options={})
+        with patch.object(review_issue, "load_issue_provider", return_value=info), \
+             patch.object(
+                 review_issue, "create_issue",
+                 return_value=IssueResult(delivery),
+             ):
+            return rt._create_or_update_deferred_issue(
+                deferred=[CommentItem(id="t1", summary="fix regex")],
+                repo="owner/repo", pr_number=1, threads_by_id={},
+                ctx=make_ctx(), existing_issue_id="", trail=trail,
+            )
+
+    def test_a_declined_write_is_reported_as_deferral(self, rt, capsys):
+        trail = MagicMock()
+        self._create(rt, IssueDelivery.SKIPPED, trail)
+        trail.info.assert_called_once_with("deferred_issue", "skipped — publishing off")
+        trail.error.assert_not_called()
+        assert "Failed to create" not in capsys.readouterr().err
+
+    def test_a_failed_creation_is_an_error_even_while_the_gate_is_shut(self, rt, capsys):
+        """Reading the gate again instead of the return value would lose this."""
+        trail = MagicMock()
+        self._create(rt, IssueDelivery.UNDELIVERED, trail)
+        trail.error.assert_called_once_with("deferred_issue", "creation failed")
+        trail.info.assert_not_called()
+        assert "Failed to create deferred tracking issue" in capsys.readouterr().err

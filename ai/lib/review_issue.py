@@ -54,6 +54,42 @@ class CreatedIssue:
     url: str = ""
 
 
+class IssueDelivery(StrEnum):
+    """What became of an issue write, for a caller that has to report it.
+
+    ``create_issue`` used to answer ``None`` both when the publishing gate
+    declined the write and when the tracker refused it, so every caller read a
+    draft run as a failure. Naming the two apart is what lets a call site say
+    which one happened without asking ``publishing.enabled()`` a second time.
+    """
+
+    FILED = "filed"
+    # Nothing was attempted and nothing is owed: the publishing gate declined
+    # the write, or the caller had nothing to address it to while the gate was
+    # shut. A draft run belongs here — the gate doing its job is not a failure.
+    SKIPPED = "skipped"
+    # The write was owed and did not land: the tracker refused it, the provider
+    # cannot create issues, or no tracker is configured. Whoever was counting on
+    # the issue is still owed one.
+    UNDELIVERED = "undelivered"
+
+
+@dataclass(frozen=True)
+class IssueResult:
+    """An issue write: what it produced, and whether anything is still owed."""
+
+    delivery: IssueDelivery
+    issue: CreatedIssue = field(default_factory=CreatedIssue)
+
+    @property
+    def filed(self) -> bool:
+        return self.delivery is IssueDelivery.FILED
+
+    @property
+    def owed(self) -> bool:
+        return self.delivery is IssueDelivery.UNDELIVERED
+
+
 @dataclass(frozen=True)
 class IssueContext:
     link: str = ""
@@ -469,17 +505,30 @@ def create_issue(
     parent_id: str | None = None,
     repo: str = "",
     opts: dict | None = None,
-) -> CreatedIssue | None:
-    """Create an issue in the configured tracker. Returns None on failure."""
+) -> IssueResult:
+    """Create an issue in the configured tracker.
+
+    Reports what happened rather than only what it produced: a draft run is
+    ``SKIPPED``, because the publishing gate declining a write is the gate
+    working and leaves nothing owed, while a tracker that refused the write —
+    or a provider that cannot create issues at all — is ``UNDELIVERED``.
+    """
     if not publishing.enabled():
         publishing.draft(f"create {provider} issue: {title}", description)
-        return None
+        return IssueResult(IssueDelivery.SKIPPED)
     if provider == "linear":
-        return _create_linear(team, title, description, parent_id)
+        return _creation_result(_create_linear(team, title, description, parent_id))
     if provider == "github":
-        return _create_github(repo, title, description)
+        return _creation_result(_create_github(repo, title, description))
     log.dim(f"Issue creation not supported for provider: {provider}")
-    return None
+    return IssueResult(IssueDelivery.UNDELIVERED)
+
+
+def _creation_result(issue: CreatedIssue | None) -> IssueResult:
+    """Read a per-provider creator's answer as a delivery."""
+    if issue is None:
+        return IssueResult(IssueDelivery.UNDELIVERED)
+    return IssueResult(IssueDelivery.FILED, issue)
 
 
 def update_issue(

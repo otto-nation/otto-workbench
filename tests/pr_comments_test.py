@@ -850,7 +850,16 @@ class TestIssueTrackerGate:
         created = review_issue.create_issue(
             "linear", "ENG", "title", "description",
         )
-        assert created is None
+        assert created.filed is False
+        assert created.issue == review_issue.CreatedIssue()
+
+    def test_a_declined_write_is_not_a_failed_one(self, no_subprocess):
+        """The gate declining a write owes nothing — a refused tracker does."""
+        created = review_issue.create_issue(
+            "linear", "ENG", "title", "description",
+        )
+        assert created.delivery is review_issue.IssueDelivery.SKIPPED
+        assert created.owed is False
 
     def test_issue_is_not_updated(self, no_subprocess):
         assert review_issue.update_issue("linear", "ENG-1", "description") is False

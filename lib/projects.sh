@@ -46,9 +46,12 @@ _PROJECTS_SEED_MARKER="# backfilled from"
 #
 # Assignable, so a test can register a repo it built in a temp directory — which
 # is the only kind of repo a test is allowed to build.
+# The /private twins are not redundant: /tmp and /var/folders are symlinks into
+# /private on macOS, and every caller resolves its path through `git rev-parse
+# --show-toplevel`, which hands back the realpath.
 if [[ -z "${PROJECTS_EXCLUDED_PREFIXES+x}" ]]; then
   PROJECTS_EXCLUDED_PREFIXES=(
-    "${TMPDIR:-}" /tmp /var/folders /private/var/folders
+    "${TMPDIR:-}" /tmp /private/tmp /var/folders /private/var/folders
     "${WORKBENCH_STATE_DIR:-}" "${WORKBENCH_CACHE_DIR:-}"
   )
 fi
@@ -127,15 +130,22 @@ project_register() {
 # entries at read time is what saves the registry from needing a pruning job,
 # and a read is the wrong place to take a write lock. `otto-workbench projects
 # prune` is what makes the drop permanent.
+#
+# Repeats are dropped here too. Registration is an append guarded by a
+# membership check rather than a lock, so two workbench commands starting in the
+# same repo at the same moment can each read "absent" and each append. Absorbing
+# that on read is what a lock would buy, without making every hook pay for one.
 project_registered() {
   [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 0
   local line
+  local -A seen=()
   # `|| [[ -n "$line" ]]`: read reports EOF for a final line with no newline
   # after it, and the loop body would never see it.
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ -z "$line" || "$line" == \#* ]]; then
+    if [[ -z "$line" || "$line" == \#* || -n "${seen[$line]:-}" ]]; then
       continue
     fi
+    seen[$line]=1
     if [[ -d "$line" ]]; then
       printf '%s\n' "$line"
     fi
@@ -167,7 +177,7 @@ project_forget() {
   _project_rewrite "${kept[@]}"
 }
 
-# project_prune — drop entries whose directory is gone. Prints how many went.
+# project_prune — drop entries whose directory is gone, and repeats. Prints how many went.
 project_prune() {
   if [[ ! -f "$PROJECTS_REGISTRY_FILE" ]]; then
     echo 0
@@ -175,11 +185,19 @@ project_prune() {
   fi
   local line dropped=0
   local -a kept=()
+  local -A seen=()
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ -z "$line" ]]; then
       continue
     fi
-    if [[ "$line" == \#* || -d "$line" ]]; then
+    if [[ "$line" == \#* ]]; then
+      kept+=("$line")
+      continue
+    fi
+    # A repeat is what project_registered was already absorbing on read; this is
+    # where the absorbing stops being needed.
+    if [[ -d "$line" && -z "${seen[$line]:-}" ]]; then
+      seen[$line]=1
       kept+=("$line")
       continue
     fi
@@ -202,7 +220,7 @@ project_prune() {
 # repo's container rather than a worktree — seed_project_registry resolves each
 # one through git for that reason.
 _project_seed_candidates() {
-  if [[ ! -f "$CLAUDE_CONFIG_FILE" ]] || ! command -v jq >/dev/null 2>&1; then
+  if [[ ! -f "$CLAUDE_CONFIG_FILE" ]]; then
     return 0
   fi
   jq -r '(.projects // {}) | keys[]' "$CLAUDE_CONFIG_FILE" 2>/dev/null || true
@@ -221,6 +239,12 @@ _project_seed_candidates() {
 seed_project_registry() {
   _project_ensure_file
   if grep -qF "$_PROJECTS_SEED_MARKER" "$PROJECTS_REGISTRY_FILE"; then
+    return 0
+  fi
+  # Without jq there are no candidates to read, which is indistinguishable from
+  # a machine that has none — and recording the marker on that reading would
+  # retire the backfill before it ever ran. Sync provisions jq; try again then.
+  if ! command -v jq >/dev/null 2>&1; then
     return 0
   fi
 

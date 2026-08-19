@@ -22,7 +22,6 @@ setup() {
 
   # shellcheck source=../lib/ui.sh
   . "$REPO_ROOT/lib/ui.sh"
-  PROJECTS_EXCLUDED_PREFIXES=("$WORKBENCH_STATE_DIR" "$WORKBENCH_CACHE_DIR")
 }
 
 teardown() {
@@ -118,6 +117,24 @@ make_bare_container() {
   [ "$status" -eq 1 ]
 }
 
+@test "the default list covers the /private twin of every temp root" {
+  # /tmp and /var/folders are symlinks into /private on macOS, and every caller
+  # hands over a path `git rev-parse --show-toplevel` already resolved — so the
+  # unprefixed spelling alone never matches what actually arrives. Asserted
+  # against the predicate because a repo cannot be built outside a temp
+  # directory to drive it end to end.
+  unset PROJECTS_EXCLUDED_PREFIXES
+  # shellcheck source=../lib/projects.sh
+  . "$REPO_ROOT/lib/projects.sh"
+
+  run _project_excluded /private/tmp/some-repo
+  [ "$status" -eq 0 ]
+  run _project_excluded /private/var/folders/xx/some-repo
+  [ "$status" -eq 0 ]
+  run _project_excluded /Users/someone/git/some-repo
+  [ "$status" -eq 1 ]
+}
+
 # ─── Reads ───────────────────────────────────────────────────────────────────
 
 @test "project_registered on a machine with no registry is empty and succeeds" {
@@ -143,6 +160,20 @@ make_bare_container() {
   printf '# backfilled from somewhere\n' >> "$PROJECTS_REGISTRY_FILE"
 
   run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
+@test "a repo appended twice is read once" {
+  # Two workbench commands starting in one repo at the same moment can each see
+  # "absent" and each append — registration is guarded by a membership check,
+  # not a lock. The duplicate is absorbed on read rather than paid for on every
+  # write, so nothing downstream renders the repo twice.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha" > "$PROJECTS_REGISTRY_FILE"
+
+  run project_registered
+  [ "${#lines[@]}" -eq 1 ]
   [ "$output" = "$TMPDIR/alpha" ]
 }
 
@@ -198,6 +229,17 @@ make_bare_container() {
   [ "$output" = "1" ]
 }
 
+@test "project_prune collapses a repo appended twice" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha" > "$PROJECTS_REGISTRY_FILE"
+
+  run project_prune
+  [ "$output" = "1" ]
+  run grep -c . "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "1" ]
+}
+
 @test "project_prune on a machine with no registry reports nothing dropped" {
   run project_prune
   [ "$status" -eq 0 ]
@@ -240,6 +282,38 @@ make_bare_container() {
   [ "$status" -eq 0 ]
   run grep -c 'backfilled from' "$PROJECTS_REGISTRY_FILE"
   [ "$output" = "1" ]
+}
+
+@test "the backfill does not retire itself when jq is missing" {
+  # No jq means no candidates, which reads exactly like a machine that has none
+  # — and recording the marker on that reading would retire the backfill before
+  # it ever ran, the silent once-and-never-again failure #780 is about.
+  make_repo "$TMPDIR/alpha"
+  CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"
+  printf '{"projects":{"%s":{}}}\n' "$TMPDIR/alpha" > "$CLAUDE_CONFIG_FILE"
+
+  # Every directory that has one, not just the first: macOS ships a jq in
+  # /usr/bin alongside whatever Homebrew put in front of it.
+  local saved_path="$PATH" dir
+  local -a keep=()
+  while IFS= read -r dir; do
+    if [[ -n "$dir" && ! -x "$dir/jq" ]]; then
+      keep+=("$dir")
+    fi
+  done < <(printf '%s\n' "$PATH" | tr ':' '\n')
+  PATH="$(IFS=:; printf '%s' "${keep[*]}")"
+
+  run seed_project_registry
+  PATH="$saved_path"
+
+  [ "$status" -eq 0 ]
+  run grep -c 'backfilled from' "$PROJECTS_REGISTRY_FILE"
+  [ "$status" -ne 0 ]
+
+  # jq arrives with the next sync, and the backfill is still there to run.
+  seed_project_registry
+  run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
 }
 
 @test "a session cwd that is no longer a repo is skipped, not fatal" {
@@ -297,6 +371,36 @@ print(*workbench_projects.registered())
   [ "$output" = "$TMPDIR/alpha" ]
 }
 
+@test "bash and Python exclude the same temporary roots" {
+  # Two languages spelling one membership rule — the cross-validation the SSOT
+  # convention asks for when a default has to exist in both.
+  unset PROJECTS_EXCLUDED_PREFIXES
+  # shellcheck source=../lib/projects.sh
+  . "$REPO_ROOT/lib/projects.sh"
+
+  local prefix
+  local -a fixed=()
+  for prefix in "${PROJECTS_EXCLUDED_PREFIXES[@]}"; do
+    # The rest of the list is derived from the environment, not fixed.
+    if [[ "$prefix" == "${TMPDIR%/}" || "$prefix" == "$WORKBENCH_STATE_DIR" ]]; then
+      continue
+    fi
+    if [[ "$prefix" == "$WORKBENCH_CACHE_DIR" ]]; then
+      continue
+    fi
+    fixed+=("$prefix")
+  done
+
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import workbench_projects
+print('\n'.join(sorted(workbench_projects.TEMP_ROOTS)))
+"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '%s\n' "${fixed[@]}" | sort)" ]
+}
+
 @test "both halves refuse a bare repo's container" {
   make_bare_container "$TMPDIR/container"
   run project_register "$TMPDIR/container"
@@ -311,6 +415,100 @@ os.environ.pop('TMPDIR', None)
 print(workbench_projects.register('$TMPDIR/container'))
 "
   [ "$output" = "False" ]
+}
+
+# ─── CLI ─────────────────────────────────────────────────────────────────────
+
+# `otto-workbench projects` is the surface an operator corrects the registry
+# from — the answer to a repo that joined late or one that should never have.
+
+@test "projects list says so when nothing is registered" {
+  run "$REPO_ROOT/bin/otto-workbench" projects list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No repos registered yet"* ]]
+}
+
+@test "projects with no subcommand lists" {
+  run "$REPO_ROOT/bin/otto-workbench" projects
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No repos registered yet"* ]]
+}
+
+@test "projects list names each registered repo and counts them" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  make_repo "$TMPDIR/beta"
+  printf '%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/beta" > "$PROJECTS_REGISTRY_FILE"
+
+  run "$REPO_ROOT/bin/otto-workbench" projects list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$TMPDIR/alpha"* ]]
+  [[ "$output" == *"$TMPDIR/beta"* ]]
+  [[ "$output" == *"2 repo(s)"* ]]
+}
+
+@test "projects add refuses a directory that is not a work tree" {
+  mkdir -p "$TMPDIR/plain"
+  run "$REPO_ROOT/bin/otto-workbench" projects add "$TMPDIR/plain"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Not a git work tree"* ]]
+}
+
+@test "projects add refuses a repo under a temporary path" {
+  # An array cannot be exported, so the subprocess uses the real default
+  # exclusion list — this is the one test that drives it end to end.
+  make_repo "$TMPDIR/alpha"
+  run "$REPO_ROOT/bin/otto-workbench" projects add "$TMPDIR/alpha"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"temporary path"* ]]
+
+  run project_registered
+  [ -z "$output" ]
+}
+
+@test "projects forget resolves a path holding .. to the stored entry" {
+  # Entries are stored as `git rev-parse --show-toplevel` returned them and
+  # forget matches by exact string, so anything an operator can reasonably type
+  # has to be canonicalised first or a valid request reads as "not registered".
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/canon/repo"
+  mkdir -p "$TMPDIR/canon/repo/sub"
+  printf '%s\n' "$TMPDIR/canon/repo" > "$PROJECTS_REGISTRY_FILE"
+
+  run "$REPO_ROOT/bin/otto-workbench" projects forget "$TMPDIR/canon/repo/sub/.."
+  [ "$status" -eq 0 ]
+  run grep -c . "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "0" ]
+}
+
+@test "projects forget without an argument is a usage error" {
+  run "$REPO_ROOT/bin/otto-workbench" projects forget
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"projects forget DIR"* ]]
+}
+
+@test "projects forget reports a path that was never registered" {
+  run "$REPO_ROOT/bin/otto-workbench" projects forget "$TMPDIR/nowhere"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Not in the registry"* ]]
+}
+
+@test "projects prune deletes the entries list was skipping" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/gone" > "$PROJECTS_REGISTRY_FILE"
+
+  run "$REPO_ROOT/bin/otto-workbench" projects prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Pruned 1 entry(s)"* ]]
+  run grep -c . "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "1" ]
+}
+
+@test "an unknown projects subcommand prints usage and fails" {
+  run "$REPO_ROOT/bin/otto-workbench" projects nonsense
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Usage: otto-workbench projects"* ]]
 }
 
 # ─── Consumers ───────────────────────────────────────────────────────────────

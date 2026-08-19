@@ -17,11 +17,20 @@ sys.path.insert(0, str(LIB_DIR))
 import workbench_paths  # noqa: E402
 import workbench_projects  # noqa: E402
 
+# Captured before the autouse fixture empties it, so the one test that needs the
+# real rule can put it back.
+DEFAULT_TEMP_ROOTS = workbench_projects.TEMP_ROOTS
+
 
 @pytest.fixture(autouse=True)
 def _allow_temp_paths(monkeypatch):
-    """Let a test register the repos it builds, which are all under tmp_path."""
+    """Let a test register the repos it builds, which are all under tmp_path.
+
+    $TMPDIR goes with TEMP_ROOTS: pytest's tmp_path lives under it, so leaving
+    it in place would refuse every repo a test can legally create.
+    """
     monkeypatch.setattr(workbench_projects, "TEMP_ROOTS", ())
+    monkeypatch.delenv("TMPDIR", raising=False)
 
 
 def make_repo(path: Path) -> Path:
@@ -84,8 +93,27 @@ class TestExclusion:
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         assert workbench_projects.excluded(tmp_path / "alpha")
 
+    def test_the_private_twin_of_a_temp_root_is_excluded(self, monkeypatch):
+        # /tmp and /var/folders are symlinks into /private on macOS, and callers
+        # hand over a path git already resolved — so the resolved spelling is
+        # the one that actually turns up.
+        monkeypatch.setattr(workbench_projects, "TEMP_ROOTS", DEFAULT_TEMP_ROOTS)
+        assert workbench_projects.excluded(Path("/private/tmp/some-repo"))
+        assert workbench_projects.excluded(Path("/private/var/folders/xx/some-repo"))
+
     def test_the_state_root_is_excluded(self):
         assert workbench_projects.excluded(workbench_paths.state_dir() / "reviews" / "wt")
+
+    def test_a_state_root_reached_through_a_symlink_is_excluded(self, tmp_path, monkeypatch):
+        # The roots come from env vars, which a caller may well have written
+        # with a symlink in them. The guard keeps throwaway review worktrees out
+        # of a file the machine profile renders, so it must not fail open.
+        real = tmp_path / "real-state"
+        real.mkdir()
+        link = tmp_path / "link-state"
+        link.symlink_to(real)
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(link))
+        assert workbench_projects.excluded(real / "reviews" / "wt")
 
     def test_the_cache_root_is_excluded(self):
         assert workbench_projects.excluded(workbench_paths.cache_dir() / "wt")
@@ -102,6 +130,16 @@ class TestReads:
         workbench_projects.register(beta)
         subprocess.run(["rm", "-rf", str(alpha)], check=True)
         assert workbench_projects.registered() == [beta]
+
+    def test_a_repo_appended_twice_is_read_once(self, tmp_path):
+        # Registration is an append guarded by a membership check rather than a
+        # lock, so a session hook and a `pr` invocation starting together in one
+        # repo can each append. Absorbed on read, not paid for on every write.
+        repo = make_repo(tmp_path / "alpha")
+        registry = workbench_projects.registry_path()
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(f"{repo}\n{repo}\n")
+        assert workbench_projects.registered() == [repo]
 
     def test_the_backfill_marker_is_not_a_path(self, tmp_path):
         repo = make_repo(tmp_path / "alpha")

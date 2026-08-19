@@ -32,11 +32,22 @@ COMMENT_PREFIX = "#"
 # under $TMPDIR and runs validators and pre-commit hooks inside it — workbench
 # commands by every other test, and gone by the time anything reads the
 # registry. lib/projects.sh's _project_excluded spells the same set.
-TEMP_ROOTS = ("/tmp", "/var/folders", "/private/var/folders")
+#
+# The /private twins are not redundant: /tmp and /var/folders are symlinks into
+# /private on macOS, and callers hand over a path git already resolved.
+TEMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
 
 
 def registry_path() -> Path:
     return workbench_paths.projects_registry()
+
+
+def _resolved(path: Path) -> Path:
+    """path with symlinks followed, or path itself when that cannot be done."""
+    try:
+        return path.resolve()
+    except OSError:
+        return path
 
 
 def excluded(repo_root: Path) -> bool:
@@ -44,6 +55,11 @@ def excluded(repo_root: Path) -> bool:
 
     The workbench's own state and cache roots join the temp roots here: the
     review system builds worktrees under them, and those are not projects.
+
+    Both sides of every comparison are checked resolved as well as literal. The
+    roots come from env vars a caller may well have written with a symlink in
+    them, and this guard failing open puts a throwaway worktree in a file the
+    machine profile renders.
     """
     if not repo_root.is_absolute():
         return True
@@ -52,7 +68,10 @@ def excluded(repo_root: Path) -> bool:
     tmpdir = os.environ.get("TMPDIR")
     if tmpdir:
         roots.append(Path(tmpdir))
-    return any(repo_root == root or root in repo_root.parents for root in roots)
+    bases = {base for root in roots for base in (root, _resolved(root))}
+    candidates = (repo_root, _resolved(repo_root))
+    return any(candidate == base or base in candidate.parents
+               for base in bases for candidate in candidates)
 
 
 def _is_worktree(repo_root: Path) -> bool:
@@ -110,11 +129,16 @@ def _read_lines() -> list[str]:
 
 
 def registered() -> list[Path]:
-    """Every registered repo that still exists.
+    """Every registered repo that still exists, each named once.
 
     Directories that are gone are dropped here rather than rewritten away —
     read-time filtering is what saves the registry from needing a pruning job.
     ``otto-workbench projects prune`` makes the drop permanent.
+
+    Repeats are dropped for the same reason: registration is an append guarded
+    by a membership check rather than a lock, so two commands starting in one
+    repo at the same moment can each append. Mirrors ``project_registered``.
     """
-    return [Path(line) for line in _read_lines()
-            if not line.startswith(COMMENT_PREFIX) and Path(line).is_dir()]
+    paths = [line for line in _read_lines()
+             if not line.startswith(COMMENT_PREFIX) and Path(line).is_dir()]
+    return [Path(line) for line in dict.fromkeys(paths)]

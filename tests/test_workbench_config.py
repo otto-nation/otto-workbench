@@ -474,6 +474,18 @@ def test_adopt_converts_a_project_review_yml(roots):
     assert cfg.review.issue_tracker.team == "ENG"
 
 
+def test_adopt_seeds_the_modeline_like_every_other_creator(roots):
+    """docs/libraries.md promises every workbench-created file carries it."""
+    import review_issue
+
+    _, project = roots
+    (project / ".claude").mkdir()
+    _write(project / ".claude" / "review.yml", "issue_tracker:\n  provider: github\n")
+
+    review_issue.adopt_project_review_yml(str(project))
+    assert (project / ".workbench.yml").read_text().startswith(wc.CONFIG_HEADER + "\n")
+
+
 def test_adopt_leaves_the_old_file_in_place(roots):
     import review_issue
 

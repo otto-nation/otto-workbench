@@ -146,6 +146,39 @@ def test_ensure_issue_provider_warns_and_stays_unresolved_without_a_tty(tmp_path
     assert str(tmp_path) in err
 
 
+def test_ensure_issue_provider_names_both_scopes_without_a_tty(tmp_path, capsys):
+    """A CI user cannot answer the question, so tell them both files it can live in."""
+    with patch("review_issue.prompt.interactive", return_value=False):
+        ensure_issue_provider(str(tmp_path))
+    err = capsys.readouterr().err
+    assert workbench_config.PROJECT_CONFIG_NAME in err
+    assert str(workbench_config.global_config_path()) in err
+
+
+def test_ensure_issue_provider_reports_a_broken_project_config(tmp_path, capsys):
+    """A typo is not an unset provider — recording over it would be shadowed."""
+    (tmp_path / ".workbench.yml").write_text(
+        "review:\n  issue_tracker:\n    provider: gihtub\n",
+    )
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask") as asked:
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.resolved is False
+    asked.assert_not_called()
+    err = capsys.readouterr().err
+    assert str(tmp_path / ".workbench.yml") in err
+    assert "gihtub" in err
+
+
+def test_ensure_issue_provider_still_prompts_when_the_config_is_merely_absent(tmp_path):
+    """The strict check must not turn every unconfigured repo into a report."""
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", side_effect=["github", "repo"]) as asked:
+        result = ensure_issue_provider(str(tmp_path))
+    assert result.name == "github"
+    assert asked.call_count == 2
+
+
 def test_ensure_issue_provider_records_the_answer_for_the_repo(tmp_path):
     with patch("review_issue.prompt.interactive", return_value=True), \
          patch("review_issue.prompt.ask", side_effect=["github", "repo"]):

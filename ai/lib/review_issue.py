@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 import log
@@ -86,8 +87,11 @@ def adopt_project_review_yml(wt_path: str) -> bool:
     if not isinstance(tracker, dict):
         return False
 
+    body = yaml_dump({"review": {"issue_tracker": tracker}})
     try:
-        target.write_text(yaml_dump({"review": {"issue_tracker": tracker}}))
+        # The modeline every other creator seeds, so a converted file gets the
+        # same schema completion a file `set_value` created would.
+        target.write_text(f"{workbench_config.CONFIG_HEADER}\n{body}")
     except OSError as exc:
         # A read-only checkout still has the legacy file to fall back on, so a
         # failed conversion costs nothing but the conversion.
@@ -124,12 +128,31 @@ _TEAM_KEY_PROVIDERS = frozenset({
     str(workbench_config.IssueProvider.JIRA),
 })
 
-_SCOPE_ALL = "all"
+class _Scope(StrEnum):
+    """How widely a recorded answer applies."""
+
+    REPO = "repo"
+    ALL = "all"
 
 
 def needs_team_key(provider: str) -> bool:
     """Whether creating an issue with this provider requires a team key."""
     return provider in _TEAM_KEY_PROVIDERS
+
+
+def _config_problem(wt_path: str | None) -> str:
+    """Why this scope's config cannot be read, or ``""`` when it reads.
+
+    ``load_issue_provider`` goes through ``load_config_or_default``, which
+    reports a file it cannot parse as an unset provider. That is right for a
+    hook and wrong for a caller about to offer to record the very key the
+    broken file may already hold.
+    """
+    try:
+        workbench_config.load_config(wt_path)
+    except workbench_config.ConfigError as exc:
+        return str(exc)
+    return ""
 
 
 def ensure_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
@@ -149,12 +172,21 @@ def ensure_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
         return info
 
     where = wt_path or "this repo"
+    problem = _config_problem(wt_path)
+    if problem:
+        log.error(
+            f"Cannot read the issue tracker for {where}: {problem} — fix the "
+            f"file; an answer given now would be shadowed by it",
+        )
+        return info
+
     accepted = [str(p) for p in workbench_config.IssueProvider]
     if not prompt.interactive():
         log.warn(
             f"No issue tracker configured for {where} — set "
             f"{workbench_config.ISSUE_PROVIDER_KEY} to one of "
-            f"{', '.join(accepted)} in {workbench_config.PROJECT_CONFIG_NAME}",
+            f"{', '.join(accepted)} in {workbench_config.PROJECT_CONFIG_NAME} "
+            f"or {workbench_config.global_config_path()}",
         )
         return info
 
@@ -184,18 +216,19 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
     trade on a failed write.
     """
     if wt_path is None:
-        scope = _SCOPE_ALL
+        scope = str(_Scope.ALL)
     else:
         scope = prompt.ask(
-            f"Record for this repo or all repos? (repo/{_SCOPE_ALL}, Enter for repo): ",
+            f"Record for this repo or all repos? "
+            f"({_Scope.REPO}/{_Scope.ALL}, Enter for {_Scope.REPO}): ",
         ).lower()
 
-    if scope in ("", "repo"):
+    if scope in ("", _Scope.REPO):
         scope_all = False
-    elif scope == _SCOPE_ALL:
+    elif scope == _Scope.ALL:
         scope_all = True
     else:
-        log.warn(f"'{scope}' is not repo or {_SCOPE_ALL} — nothing was recorded")
+        log.warn(f"'{scope}' is not {_Scope.REPO} or {_Scope.ALL} — nothing was recorded")
         return
 
     try:

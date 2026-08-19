@@ -620,24 +620,20 @@ cmd_projects_list() {
 }
 
 cmd_projects_add() {
-  local dir="$1" root rc=0 already=0
+  local dir="$1" root rc=0
   root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || root=""
   if [[ -z "$root" ]]; then
     err "Not a git work tree: $dir"
     return 1
   fi
 
-  if project_registered | grep -qxF "$root"; then
-    already=1
-  fi
-
   project_register "$root" || rc=$?
   if (( rc == 0 )); then
-    if (( already )); then
-      info "Already registered: $root"
-    else
-      success "Registered $root"
-    fi
+    success "Registered $root"
+    return 0
+  fi
+  if (( rc == 3 )); then
+    info "Already registered: $root"
     return 0
   fi
   if (( rc == 2 )); then

@@ -119,18 +119,21 @@ _project_contains() {
 # for `pr`), so this deliberately does no discovery of its own and forks
 # nothing.
 #
-# Returns 0 when DIR is in the registry afterwards, 1 when the membership rules
-# refused it, and 2 when it qualified but the registry could not be written. The
-# callers that register as a side effect treat every non-zero the same; `otto-
-# workbench projects add` is the one that has to say which happened, and "not a
-# project" is the wrong thing to tell someone whose state root is read-only.
+# Returns 0 when DIR is newly added to the registry, 3 when it was already
+# there, 1 when the membership rules refused it, and 2 when it qualified but
+# the registry could not be written. The callers that register as a side
+# effect treat every non-zero the same; `otto-workbench projects add` is the
+# one that has to say which happened, and "not a project" is the wrong thing
+# to tell someone whose state root is read-only. Reporting the already-
+# registered case as its own code lets that caller ask this function once
+# instead of scanning the registry itself first to find out.
 project_register() {
   local dir="${1%/}"
   if _project_excluded "$dir" || ! _project_is_worktree "$dir"; then
     return 1
   fi
   if _project_contains "$dir"; then
-    return 0
+    return 3
   fi
   _project_ensure_file || return 2
   printf '%s\n' "$dir" >> "$PROJECTS_REGISTRY_FILE" || return 2
@@ -165,12 +168,19 @@ project_registered() {
 }
 
 # _project_rewrite LINES... — replace the registry with exactly these lines.
+#
+# Built in a temp file and swapped in with `mv` so a process killed mid-write
+# never leaves the registry truncated — `project_forget` and `project_prune`
+# are explicit, user-invoked commands, and losing entries to a partial write
+# there is a lot more surprising than during passive registration.
 _project_rewrite() {
-  if (( $# == 0 )); then
-    : > "$PROJECTS_REGISTRY_FILE"
-    return 0
+  local tmp mode
+  tmp="$(mktemp "${PROJECTS_REGISTRY_FILE}.XXXXXX")" || return 1
+  mode=$(file_mode "$PROJECTS_REGISTRY_FILE" 2>/dev/null) && chmod "$mode" "$tmp"
+  if (( $# > 0 )); then
+    printf '%s\n' "$@" > "$tmp" || { rm -f "$tmp"; return 1; }
   fi
-  printf '%s\n' "$@" > "$PROJECTS_REGISTRY_FILE"
+  mv "$tmp" "$PROJECTS_REGISTRY_FILE"
 }
 
 # project_forget DIR — drop DIR's entry. Returns 1 when it had none.

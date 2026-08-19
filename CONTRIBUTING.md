@@ -117,6 +117,16 @@ base with `origin/main` and fails an undeclared removal. It runs in pre-push and
 the `Surface Compatibility` CI job; run it by hand with
 `bin/local/check-surface-compat [--base REF]`.
 
+### `task commit` catches it early
+
+`task --global commit` runs the same gate against your working tree before asking
+the AI to write the message. If it finds an undeclared removal, the AI is told
+which entries disappeared and is instructed to add the `BREAKING CHANGE:` footer
+itself — so you see the correction while writing the commit, not as a pre-push
+rejection afterward. The gate is advisory here: if it can't run (no `origin/main`,
+not a repo, a malformed snapshot), `task commit` degrades to its old behavior
+silently rather than blocking the commit. The hard check still happens at push time.
+
 ### One caveat
 
 A single commit touching both packages majors **both**: release-please has no

@@ -63,6 +63,27 @@ build_commit_rules() {
   fi
 }
 
+# _surface_removals REPO_DIR
+# Prints one removed public-surface entry per line, empty when the surface is
+# intact. Silent whenever the gate did not deliver a real verdict — missing,
+# non-executable, or exiting with anything other than 0 (compatible) or 1
+# (undeclared removals): a jq/data error (5), a bad snapshot blob (2), or an
+# unresolvable merge base (128) all mean the check never ran to completion, and
+# a partial REMOVED list from before the abort is worse than none. An
+# unavailable gate must not block message generation, it only forfeits the
+# extra prompt context.
+_surface_removals() {
+  local repo_dir="$1"
+  local gate="${SURFACE_GATE:-$repo_dir/bin/local/check-surface-compat}"
+  [[ -x "$gate" ]] || return 0
+
+  local gate_output gate_status=0
+  gate_output=$("$gate" --repo-dir "$repo_dir" 2>/dev/null) || gate_status=$?
+
+  [[ "$gate_status" -eq 0 || "$gate_status" -eq 1 ]] || return 0
+  sed -n 's/^REMOVED //p' <<<"$gate_output"
+}
+
 # _build_commit_prompt DIFF FILES_SECTION [RETRY_PREAMBLE]
 # Internal helper. Builds and runs the AI prompt; sets AI_MSG.
 _build_commit_prompt() {
@@ -76,7 +97,19 @@ _build_commit_prompt() {
     diff_content=$(_compact_diff "$diff_content")
   fi
 
-  run_ai "$(prompt_commit "$diff_content" "$files_section" "$retry_preamble")" "" "commit-message"
+  local removals surface_note=""
+  removals=$(_surface_removals "$(git rev-parse --show-toplevel 2>/dev/null)")
+  if [[ -n "$removals" ]]; then
+    surface_note="
+
+This change removes the following entries from the package's public surface:
+$(sed 's/^/  - /' <<<"$removals")
+
+Unless these removals are backwards compatible, the body MUST end with a
+'$BREAKING_CHANGE_FOOTER: <what broke>' footer naming what a user has to change."
+  fi
+
+  run_ai "$(prompt_commit "$diff_content" "$files_section" "$retry_preamble" "$surface_note")" "" "commit-message"
   AI_MSG="$AI_RESPONSE"
 }
 

@@ -135,7 +135,15 @@ STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
 # same reason it is on `_DECLINED`: a skip written without one is still a skip,
 # and reading it as an ordinary open finding is what lets a sibling finding's
 # edit report it as fixed.
-SKIP_REASON_RE = re.compile(r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*")
+_SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
+
+# Matched at the head or tail of the finding body for the same reason
+# `DECLINED_HEAD_RE`/`DECLINED_TAIL_RE` are anchored below: matched anywhere, a
+# finding whose prose quotes the annotation — this file's own docs do,
+# verbatim — would be misread as carrying it and barred from
+# `_reconcile_checkboxes` forever.
+SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
+SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
 
 # The review file's record of `PriorDisposition.DECLINED`. The ledger is
 # stripped before the file is finished, so the verdict has to survive on the
@@ -340,7 +348,7 @@ def match_skip(finding: Finding) -> re.Match[str] | None:
     """
     if finding.checked:
         return None
-    return SKIP_REASON_RE.search(finding.body)
+    return SKIP_HEAD_RE.match(finding.body) or SKIP_TAIL_RE.search(finding.body)
 
 
 def extract_skip_reasons(findings: list[Finding]) -> None:

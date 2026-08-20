@@ -908,6 +908,28 @@ without the branch being superseded, and a branch can be superseded without its
 commits having landed anywhere, because someone solved the problem differently.
 They share the exit code and the override flag, and nothing else.
 
+### Which files the rebase fix pass is allowed to touch
+
+When a rebase's force-push is rejected by a pre-push check, `pr rebase` runs a
+fix pass over the conflicted files, using the project's own check output as the
+oracle. The candidate list is every file the rebase resolved a conflict in —
+which on a long branch is dozens of files, listed once per conflict rather than
+once per file, while the check that failed names two of them.
+
+The pass runs only on the candidates the check output names, matching either the
+path or the bare filename so a check that reports a basename still scopes. Each
+fix is a whole-file prompt, so the unscoped version spent a call per resolved
+file; worse, the backend runs with `acceptEdits` and `Bash(*)`, so handing it a
+file the check had no complaint about is an invitation to rewrite a file the
+branch never touched. When the output names no candidate at all — a check can
+fail without printing a path — every resolved file is still a suspect and the
+pass falls back to all of them, recording that it did so, because that is the
+expensive path and it should not be invisible in the trail.
+
+A fix that fails records its exit code as a trail error, not only as a console
+line. A run where every fix fails is otherwise indistinguishable in the trail
+from a run where the fix pass had nothing to do.
+
 ### The summary comment is the record, not the state file
 
 The `Review Comments Addressed` comment is what a reviewer reads to confirm
@@ -1121,6 +1143,12 @@ rendered message and the classifier can never disagree about which stream the
 evidence was on. It accepts a raw `subprocess.CompletedProcess` too, so the call
 sites still running `subprocess.run` directly can report a failure without
 converting first.
+
+The AI backend owes the same thing. `claude -p` reports some failures on stdout
+with an empty stderr — a usage limit is the common one — so a stderr-only error
+message prints nothing at all and the caller is left reporting a bare exit code
+with no reason attached. `ai_backend_claude` logs whichever stream carried the
+detail, and the exit code alone when neither did.
 
 `proc` is stdlib-only on purpose — it is the module the rest of `ai/lib` should be
 free to depend on. The name is not `cmd` because `ai/lib` goes on `sys.path` ahead

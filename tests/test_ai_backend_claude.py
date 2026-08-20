@@ -111,6 +111,43 @@ class TestPromptStderr:
         captured = capsys.readouterr()
         assert "API rate limit exceeded" in captured.err
 
+    def test_stdout_logged_when_stderr_is_empty(self, monkeypatch, capsys, tmp_path):
+        """A failure reported on stdout is still reported.
+
+        The CLI puts some refusals there with an empty stderr, and a caller that
+        only prints a bare exit code leaves nothing to diagnose.
+        """
+        fake_result = types.SimpleNamespace(
+            stdout="Claude usage limit reached", returncode=1, stderr="",
+        )
+        monkeypatch.setattr(
+            ai_backend_claude.subprocess, "run",
+            lambda *a, **kw: fake_result,
+        )
+        _, rc, _ = ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        assert rc == 1
+        assert "Claude usage limit reached" in capsys.readouterr().err
+
+    def test_silent_failure_logs_the_exit_code(self, monkeypatch, capsys, tmp_path):
+        fake_result = types.SimpleNamespace(stdout="", returncode=143, stderr="")
+        monkeypatch.setattr(
+            ai_backend_claude.subprocess, "run",
+            lambda *a, **kw: fake_result,
+        )
+        _, rc, _ = ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        assert rc == 143
+        assert "143" in capsys.readouterr().err
+
+    def test_failure_detail_is_truncated(self, monkeypatch, capsys, tmp_path):
+        fake_result = types.SimpleNamespace(stdout="", returncode=1, stderr="x" * 10000)
+        monkeypatch.setattr(
+            ai_backend_claude.subprocess, "run",
+            lambda *a, **kw: fake_result,
+        )
+        ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        err = capsys.readouterr().err
+        assert err.count("x") == ai_backend_claude._FAILURE_DETAIL_MAX_CHARS
+
     def test_stderr_not_logged_on_success(self, monkeypatch, capsys, tmp_path):
         fake_result = type("R", (), {"stdout": "response", "returncode": 0, "stderr": ""})()
         monkeypatch.setattr(

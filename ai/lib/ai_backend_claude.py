@@ -170,6 +170,22 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     return vertex_quota.run_preflight(models, trail)
 
 
+_FAILURE_DETAIL_MAX_CHARS = 2000
+
+
+def _failure_detail(result: subprocess.CompletedProcess) -> str:
+    """Describe a nonzero `claude -p` exit for the log.
+
+    The CLI reports some failures — usage limits among them — on stdout with an
+    empty stderr, so a stderr-only message logs nothing at all and the caller is
+    left reporting a bare exit code with no reason attached.
+    """
+    detail = (result.stderr or result.stdout).strip()
+    if not detail:
+        return f"claude exited {result.returncode} with no output"
+    return detail[:_FAILURE_DETAIL_MAX_CHARS]
+
+
 def prompt(
     text: str, *, cwd: str, model: str | None = None,
 ) -> tuple[str, int, ai_usage.SessionUsage | None]:
@@ -179,8 +195,8 @@ def prompt(
     """
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd)
-    if result.returncode != 0 and result.stderr:
-        log.dim(result.stderr.strip())
+    if result.returncode != 0:
+        log.dim(_failure_detail(result))
     reply, usage = _unwrap_prompt_output(result.stdout)
     return reply, result.returncode, usage
 

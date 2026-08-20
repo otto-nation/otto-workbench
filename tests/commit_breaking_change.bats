@@ -22,13 +22,77 @@ setup() {
   [[ "$NOT_BREAKING_FOOTER" == "Not-Breaking" ]]
 }
 
-@test "validate_commit_msg accepts a bang marker in the header" {
-  run validate_commit_msg "feat!: drop the legacy flag"
+@test "conventions.sh derives the hyphenated footer synonym" {
+  [[ "$BREAKING_CHANGE_FOOTER_ALT" == "BREAKING-CHANGE" ]]
+}
+
+# lib/ai/core.sh sources conventions.sh from sh on the go-task path, and CI's
+# /bin/sh is dash — a bashism in the footer helpers would only surface there.
+@test "conventions.sh sources under a POSIX shell" {
+  run sh -c ". '$REPO_ROOT/lib/conventions.sh' && printf '%s' \"\$BREAKING_CHANGE_FOOTER_ALT\""
+  [ "$status" -eq 0 ]
+  [[ "$output" == "BREAKING-CHANGE" ]]
+}
+
+# ── has_breaking_footer ────────────────────────────────────────────────────
+
+@test "has_breaking_footer finds a BREAKING CHANGE footer in the body" {
+  run has_breaking_footer "feat!: drop the legacy flag
+
+BREAKING CHANGE: --legacy is gone; use --modern"
   [ "$status" -eq 0 ]
 }
 
-@test "validate_commit_msg accepts a bang marker with a scope" {
+@test "has_breaking_footer accepts the hyphenated spelling" {
+  run has_breaking_footer "feat!: drop the legacy flag
+
+BREAKING-CHANGE: --legacy is gone; use --modern"
+  [ "$status" -eq 0 ]
+}
+
+@test "has_breaking_footer rejects a footer with no reason after it" {
+  run has_breaking_footer "feat!: drop the legacy flag
+
+BREAKING CHANGE:"
+  [ "$status" -eq 1 ]
+}
+
+@test "has_breaking_footer ignores the header's bang marker" {
+  run has_breaking_footer "feat!: drop the legacy flag"
+  [ "$status" -eq 1 ]
+}
+
+# ── validate_commit_msg — the bang marker needs its footer ─────────────────
+
+@test "validate_commit_msg accepts a bang marker backed by a footer" {
+  run validate_commit_msg "feat!: drop the legacy flag
+
+BREAKING CHANGE: --legacy is gone; use --modern"
+  [ "$status" -eq 0 ]
+}
+
+@test "validate_commit_msg accepts a bang marker with a scope and a footer" {
+  run validate_commit_msg "feat(pr)!: rename --post to --publish
+
+BREAKING CHANGE: --post no longer exists; use --publish"
+  [ "$status" -eq 0 ]
+}
+
+# The pre-push gate (bin/local/check-surface-compat) fails this message minutes
+# later — accepting it here only means discovering the same mistake twice.
+@test "validate_commit_msg rejects a bang marker with no footer" {
+  run validate_commit_msg "feat!: drop the legacy flag"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$BREAKING_CHANGE_FOOTER"* ]]
+}
+
+@test "validate_commit_msg rejects a scoped bang marker with no footer" {
   run validate_commit_msg "feat(pr)!: rename --post to --publish"
+  [ "$status" -eq 1 ]
+}
+
+@test "validate_commit_msg does not demand a footer without a bang marker" {
+  run validate_commit_msg "feat: add the modern flag"
   [ "$status" -eq 0 ]
 }
 

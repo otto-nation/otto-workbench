@@ -210,5 +210,17 @@ validate_commit_msg() {
       echo "  Expected: type(scope): description"
       return 1
     fi
+    # A `!` header claims a breaking change, but the footer is what carries it:
+    # this repo squash-merges with COMMIT_OR_PR_TITLE, so on a multi-commit PR
+    # the PR title replaces the subject and the marker never reaches
+    # release-please. bin/local/check-surface-compat rejects the same message at
+    # push time; accepting it here only defers the rejection by a few minutes.
+    local bang_pattern="^(${types_regex})(\(.+\))?!: "
+    if echo "$header" | grep -qE "$bang_pattern" && ! has_breaking_footer "$msg"; then
+      echo "✗ Header claims a breaking change but the body has no ${BREAKING_CHANGE_FOOTER} footer: $header"
+      echo "  Squash merges discard the subject — add to the body:"
+      echo "    ${BREAKING_CHANGE_FOOTER}: <what broke>"
+      return 1
+    fi
   fi
 }

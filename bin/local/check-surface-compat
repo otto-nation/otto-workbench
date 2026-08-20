@@ -66,12 +66,6 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # shellcheck source=../../lib/conventions.sh
 . "$REPO_ROOT/lib/conventions.sh"
 
-# The hyphenated synonym, derived from the one constant rather than declared a
-# second time — a rename of BREAKING_CHANGE_FOOTER carries both forms with it.
-BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER/ /-}"
-# ERE alternation matching either spelling at the start of a footer line.
-BREAKING_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}): .+"
-
 # jq program shared by every snapshot read, always run with -s (slurp). A
 # snapshot whose .entries is missing or not an array must abort, not read as
 # "no entries" and therefore "nothing was removed" — that silent-truncation
@@ -308,9 +302,11 @@ fi
 
 COMMIT_BODIES=$(git -C "$REPO_DIR" log --format='%B' "$MERGE_BASE..HEAD")
 
-# A BREAKING CHANGE footer covers every removal in the range.
+# A BREAKING CHANGE footer covers every removal in the range. The predicate
+# lives in lib/conventions.sh so that lib/ai/commit.sh rejects locally exactly
+# what this gate rejects at push time, rather than the two drifting apart.
 HAS_BREAKING=false
-if grep -qE "$BREAKING_FOOTER_RE" <<<"$COMMIT_BODIES"; then
+if has_breaking_footer "$COMMIT_BODIES"; then
   HAS_BREAKING=true
 fi
 

@@ -393,9 +393,21 @@ Sourced directly by consumers (`generate-tool-context`, `summary.sh`). Not in th
 
 Git convention constants — single source of truth for commit and PR formatting.
 
-Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`.
+Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`, `BREAKING_CHANGE_FOOTER`, `NOT_BREAKING_FOOTER`.
 
-No functions. Sourced directly by `lib/ai/core.sh` and git generation scripts.
+<!-- LIB-FUNCTIONS:conventions.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `has_breaking_footer MSG` | true when MSG declares a breaking change in its body. |
+<!-- LIB-FUNCTIONS:conventions.sh-END -->
+
+The footer helper answers one question — "does this message declare a breaking
+change" — for both readers that ask it: the pre-push gate
+(`bin/local/check-surface-compat`) and the local commit validator
+(`validate_commit_msg`). POSIX only: the file is sourced by `/bin/sh` on the
+go-task path.
+
+Sourced directly by `lib/ai/core.sh` and git generation scripts.
 
 ### summary.sh
 

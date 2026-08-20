@@ -160,18 +160,6 @@ AI-assisted rebase onto the branch's base with conflict resolution and force pus
 ```
 /pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]
 ```
-
-AI-assisted rebase onto the branch's base with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead).
-
-```
-### `/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]`
-
-AI-assisted rebase onto the branch's base with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead).
-
-```
-/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]
-```
-```
 **Output schema:** `pr-rebase --tool-schema` (MCP tool: `pr-rebase`)
 **Trigger:** Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase.
 **Skip:** Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead).

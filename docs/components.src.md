@@ -2,7 +2,6 @@
 title: Component Framework
 description: The two-tier component model for organizing setup and sync operations.
 ---
-<!-- Generated from docs/components.src.md by bin/local/compose-docs — do not edit. -->
 
 # Component Framework
 
@@ -67,7 +66,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 ```
 
-**Existing core components:** `bin`, `git`, `task`, `zsh`
+<!-- include: bin/local/generate-tool-context --emit core-components -->
 
 ---
 
@@ -108,7 +107,7 @@ mytool/
   summary.sh    <- print_mytool_summary() for post-install output
 ```
 
-**Existing optional components:** `brew` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (has sync), `mise` (has sync)
+<!-- include: bin/local/generate-tool-context --emit optional-components -->
 
 ---
 

@@ -22,6 +22,11 @@ tools:
     when_to_use: "After pulling workbench updates or when config gets out of sync"
     usage: "otto-workbench sync  |  otto-workbench ai init  |  otto-workbench ai sync  |  otto-workbench projects  |  otto-workbench changelog"
     commands:
+      - name: "install [--all] [COMPONENT ...]"
+        description: "Bootstrap the workbench on a new machine (first-time setup)"
+        scope: "All components"
+        when: "Setting up a machine for the first time, or adding a component that was skipped"
+        detail: "Installs Homebrew if missing, syncs core config, then offers the optional component menu. `--all` skips the menu and installs everything; naming components installs just those."
       - name: sync
         description: "Re-apply all workbench config — migrations, symlinks, tool context, AI settings"
         scope: "All components"

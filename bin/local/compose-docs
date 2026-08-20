@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# Composes docs/<name>.md from docs/<name>.src.md by expanding include directives.
+#
+# A source file is prose plus lines of the form:
+#
+#   <!-- include: bin/local/generate-tool-context --emit scripts-table -->
+#
+# The directive names the command that produces the block, not a fragment file,
+# so a doc routes itself: adding a generated section is one line in a .src.md
+# and one renderer, with no dispatch table in between. The composed file is
+# committed and marked linguist-generated, which is what the part-hand,
+# part-machine files this replaced could never be.
+#
+# The command runs as argv, never through a shell, and only from bin/ or
+# git/bin/ inside this repo. A directive is executable content; those two rules
+# together mean a source file cannot reach anything but a checked-in generator,
+# however its arguments are spelled.
+#
+# Emitted output is scanned for directives as well, up to MAX_DEPTH, so a
+# module's own header comment can pull in a block another generator owns.
+#
+# Usage: bin/local/compose-docs [--check] [--quiet] [FILE...]
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$_SELF")/../.." && pwd)}"
+# shellcheck source=/dev/null
+. "$REPO_ROOT/lib/ui.sh"
+
+DOCS_DIR="${DOCS_DIR:-$REPO_ROOT/docs}"
+
+# A directive whose expansion holds another directive is expanded again. The cap
+# turns a cycle — two generators each including the other — into a named failure
+# rather than a hang.
+MAX_DEPTH=5
+
+INCLUDE_RE='^[[:space:]]*<!--[[:space:]]+include:[[:space:]]+(.+[^[:space:]])[[:space:]]+-->[[:space:]]*$'
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--check] [--quiet] [FILE...]
+
+Compose docs/<name>.md from docs/<name>.src.md, expanding include directives.
+With no FILE arguments, every docs/*.src.md is composed.
+
+Options:
+  --check     Exit 1 if a composed file on disk is stale, without rewriting it
+  --quiet     Suppress per-file messages
+  -h, --help  Show this help
+
+Environment:
+  DOCS_DIR    Directory holding the .src.md sources (default: docs/)
+EOF
+}
+
+# _resolve_command CMD — the absolute path of an includable command, or a failure.
+#
+# Repo-relative and under bin/ or git/bin/: a directive is the one place a doc
+# gets to run something, so the reachable set is spelled out rather than left to
+# whatever a path happens to resolve to.
+_resolve_command() {
+  local cmd="$1"
+  case "$cmd" in
+    /*|*..*)
+      err "include: '$cmd' must be a repo-relative path with no '..'"
+      return 1
+      ;;
+    bin/*|git/bin/*) ;;
+    *)
+      err "include: '$cmd' is outside bin/ and git/bin/ — only checked-in generators may be included"
+      return 1
+      ;;
+  esac
+  if [[ ! -x "$REPO_ROOT/$cmd" ]]; then
+    err "include: $cmd is not an executable file"
+    return 1
+  fi
+  printf '%s' "$REPO_ROOT/$cmd"
+}
+
+# _expand DEPTH — copies stdin to stdout, each include directive replaced by the
+# output of the command it names.
+_expand() {
+  local depth="$1" line directive path
+  local -a argv
+  while IFS= read -r line; do
+    if [[ ! "$line" =~ $INCLUDE_RE ]]; then
+      printf '%s\n' "$line"
+      continue
+    fi
+    directive="${BASH_REMATCH[1]}"
+    if (( depth >= MAX_DEPTH )); then
+      err "include: nesting exceeded $MAX_DEPTH levels at '$directive' — check for a cycle"
+      return 1
+    fi
+    # Unquoted on purpose: the directive is a command line, and word splitting is
+    # how it becomes argv. Globbing is off so a metacharacter in an argument
+    # reaches the command as itself.
+    set -f
+    # shellcheck disable=SC2206  # deliberate word splitting; globbing disabled
+    argv=($directive)
+    set +f
+    path="$(_resolve_command "${argv[0]}")" || return 1
+    # </dev/null: this loop's stdin is the document. A generator that read from
+    # it would swallow the rest of the file.
+    "$path" "${argv[@]:1}" < /dev/null | _expand $(( depth + 1 ))
+  done
+}
+
+# _default_sources ARRAY_REF — every docs/*.src.md, empty if the glob matched
+# nothing.
+_default_sources() {
+  local -n __out=$1
+  local src
+  __out=()
+  for src in "$DOCS_DIR"/*.src.md; do
+    if [[ -f "$src" ]]; then
+      __out+=("$src")
+    fi
+  done
+}
+
+# _banner SRC_REL — the line telling a reader of the artifact where to edit.
+_banner() {
+  printf '<!-- Generated from %s by bin/local/compose-docs — do not edit. -->\n' "$1"
+}
+
+# _compose SRC — the composed text of one source file, on stdout.
+#
+# The banner goes below the frontmatter, not above it: the docs site parses the
+# leading `---` block, and a comment before it would end that block before it
+# began.
+_compose() {
+  local src="$1" rel="${1#"$REPO_ROOT"/}"
+  local first fm_end=0
+  IFS= read -r first < "$src" || true
+  if [[ "$first" == "---" ]]; then
+    fm_end="$(awk 'NR > 1 && $0 == "---" { print NR; exit }' "$src")"
+    fm_end="${fm_end:-0}"
+  fi
+  if (( fm_end > 0 )); then
+    head -n "$fm_end" "$src"
+  fi
+  _banner "$rel"
+  tail -n +$(( fm_end + 1 )) "$src" | _expand 0
+}
+
+main() {
+  local check=false quiet=false
+  local -a sources=()
+  while (( $# > 0 )); do
+    case "$1" in
+      -h|--help) usage; return 0 ;;
+      --check)   check=true ;;
+      --quiet)   quiet=true ;;
+      -*)        err "Unknown option: $1"; usage >&2; return 2 ;;
+      *)         sources+=("$1") ;;
+    esac
+    shift
+  done
+
+  if (( ${#sources[@]} == 0 )); then
+    _default_sources sources
+  fi
+
+  if (( ${#sources[@]} == 0 )); then
+    err "No .src.md files found in $DOCS_DIR"
+    return 1
+  fi
+
+  local -a stale=()
+  local src out composed
+  for src in "${sources[@]}"; do
+    out="${src%.src.md}.md"
+    composed="$(_compose "$src")"
+    if ! $check; then
+      printf '%s\n' "$composed" > "$out"
+      $quiet || success "Composed ${out#"$REPO_ROOT"/} from ${src#"$REPO_ROOT"/}"
+      continue
+    fi
+    if [[ "$composed" != "$(cat "$out" 2>/dev/null)" ]]; then
+      stale+=("${out#"$REPO_ROOT"/}")
+    fi
+  done
+
+  if (( ${#stale[@]} > 0 )); then
+    err "Stale — run bin/local/compose-docs and commit the result:"
+    printf '  %s\n' "${stale[@]}" >&2
+    return 1
+  fi
+  if $check && ! $quiet; then
+    success "${#sources[@]} composed docs are current"
+  fi
+  return 0
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

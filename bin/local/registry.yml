@@ -74,6 +74,16 @@ tools:
     visibility: brief
     description: "Validates eval baseline files for schema correctness and corpus coverage"
 
+  - name: validate-docs-composed
+    permission: false
+    visibility: brief
+    description: "Validates that every composed doc matches what its docs/*.src.md composes to"
+
+  - name: compose-docs
+    permission: false
+    visibility: brief
+    description: "Composes docs/*.md from docs/*.src.md by expanding include directives into generator output"
+
   - name: generate-tool-context
     permission: false
     visibility: brief

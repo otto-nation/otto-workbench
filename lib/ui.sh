@@ -2,14 +2,9 @@
 # Shared UI helpers and path constants — sourced by all workbench scripts.
 #
 # This file is a facade that sources focused sub-modules for backward compatibility.
-# All functions previously defined here are now in their own modules:
-#   output.sh  — colors, info, warn, err, success, title, skip, sed_i
-#   prompts.sh — confirm, confirm_n, confirm_step, prompt_overwrite, select_menu, select_subdirs, conf_get
-#   files.sh   — install_symlink, install_file, copy_dir, symlink_dir, apply_config_patch
-#   setup.sh   — require_command, install_cask, register_step, run_steps, run_migrations
-#   projects.sh — project_register, project_registered, project_forget, project_prune
-#   portable.sh — file_mtime, file_birth, file_mode
-#   config.sh  — wb_config_get
+# All functions previously defined here are now in their own modules — the list
+# is the sourcing block below, and docs/libraries.md documents each module's
+# functions from the doc comments in the module itself.
 #
 # Sourcing patterns (all use WORKBENCH_DIR via git rev-parse):
 #   install.sh        . "$DOTFILES_DIR/lib/ui.sh"

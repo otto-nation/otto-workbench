@@ -21,14 +21,10 @@ setup() {
   export BREW_STACKS_DIR="$TMPDIR"
   export WORK_DIR="$TMPDIR/work"
   export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"
-  export README_PATH="$TMPDIR/README.md"
   export TASKFILE_PATH="$TMPDIR/Taskfile.yml"
   export AI_DIR="$TMPDIR/ai"
   export REGISTRY_SCAN_DIR="$TMPDIR"
   export DOCS_DIR="$TMPDIR/docs"
-  export TOOLS_DOC_PATH="$TMPDIR/docs/tools.md"
-  export AI_DOC_PATH="$TMPDIR/docs/ai-automation.md"
-  export COMPONENTS_DOC_PATH="$TMPDIR/docs/components.md"
 
   mkdir -p "$WORK_DIR"
 }
@@ -37,7 +33,7 @@ teardown() {
   cd "$ORIG_DIR" || return 1
   rm -rf "$TMPDIR"
   common_teardown
-  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT REGISTRY_SCAN_DIR AI_DIR README_PATH TASKFILE_PATH DOCS_DIR TOOLS_DOC_PATH AI_DOC_PATH COMPONENTS_DOC_PATH
+  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT REGISTRY_SCAN_DIR AI_DIR TASKFILE_PATH DOCS_DIR
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title
@@ -504,6 +500,76 @@ EOF
   local scoped_file
   scoped_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.core.md"
   [ ! -f "$scoped_file" ]
+}
+
+# ── --emit ────────────────────────────────────────────────────────────────────
+
+# _write_bindir_registry FILE — a registry the scripts-table block will pick up.
+_write_bindir_registry() {
+  cat > "$1" << 'EOF'
+meta:
+  section: "Scripts"
+  validation: bindir
+
+tools:
+  - name: myscript
+    permission: false
+    visibility: brief
+    description: "A test script"
+EOF
+}
+
+@test "--emit prints the named block on stdout" {
+  _write_bindir_registry "$BIN_REGISTRY"
+
+  run main --emit scripts-table
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"| Script | Description |"* ]]
+  [[ "$output" == *"myscript"* ]]
+}
+
+@test "--emit writes no files" {
+  _write_bindir_registry "$BIN_REGISTRY"
+
+  run main --emit scripts-table
+  [ "$status" -eq 0 ]
+  [ ! -f "$TOOL_CONTEXT_OUTPUT" ]
+}
+
+# The acceptance criterion behind the convention: a block is reachable because
+# a function of that name exists, not because it was added to a dispatch table.
+@test "--emit reaches a block with no registration anywhere" {
+  _emit_invented_block() { printf 'invented output\n'; }
+
+  run main --emit invented-block
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"invented output"* ]]
+}
+
+@test "--emit lists the available blocks when the name is unknown" {
+  run main --emit no-such-block
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no block named 'no-such-block'"* ]]
+  [[ "$output" == *"scripts-table"* ]]
+}
+
+@test "--emit without a block name fails" {
+  run main --emit
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires a block name"* ]]
+}
+
+@test "--help lists every block the script can emit" {
+  run main --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"scripts-table"* ]]
+  [[ "$output" == *"workbench-commands"* ]]
+}
+
+@test "an unknown option fails instead of being read as a block" {
+  run main --bogus
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unknown option"* ]]
 }
 
 # ── docs/libraries.md module tables ──────────────────────────────────────────

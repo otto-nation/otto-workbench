@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Regenerates generated files and README sections from source registries and config.
+# Regenerates the AI tool-context rule files, and emits doc blocks on demand.
 #
 # Writes:
 #   ai/guidelines/rules/tools.generated.md  — always-loaded tool context for AI sessions
-#   README.md sections                      — scripts table, tasks block, AI installs
+#   ai/guidelines/rules/tools.generated.<scope>.md — path-scoped variants
+#
+# With --emit <name> it writes nothing and prints one documentation block to
+# stdout instead. bin/local/compose-docs is the caller: a docs/<name>.src.md
+# names the block it wants and this script answers, so neither side holds a list
+# of the other's sections. A new block is a new _emit_<name> function here plus
+# the include line in the source file that wants it.
 #
 # Run automatically via pre-push hook and otto-workbench sync.
 # Never edit generated content directly — edit the source files instead.
@@ -37,7 +43,6 @@
 #   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
 #   BREW_STACKS_DIR      brew/ directory (scanned for *.registry.yml stacks)
 #   TOOL_CONTEXT_OUTPUT  tools.generated.md path
-#   README_PATH          README.md path
 #   TASKFILE_PATH        Taskfile.global.yml path
 #   AI_DIR               ai/ directory
 
@@ -62,23 +67,18 @@ _join() {
   printf '%s' "$result"
 }
 
-# _splice_readme README MARKER [--shell]
+# _splice_readme FILE MARKER
 # Reads new section content from stdin and replaces the region between
-# <!-- MARKER-START --> and <!-- MARKER-END --> in README. No-ops if absent.
-# With --shell, uses shell-comment markers: # --- MARKER-START ---
+# <!-- MARKER-START --> and <!-- MARKER-END --> in FILE. No-ops if absent.
+#
+# The last splicer. docs/libraries.md is the last part-hand, part-machine file;
+# every other doc is composed from a .src.md by bin/local/compose-docs, and this
+# goes with the marker regions when libraries.md follows.
 _splice_readme() {
-  local readme="$1" marker="$2" fmt="html"
-  shift 2
-  [[ "${1:-}" == "--shell" ]] && fmt="shell"
-  if [[ ! -f "$readme" ]]; then cat > /dev/null; return 0; fi
-  local start_marker end_marker
-  if [[ "$fmt" == "shell" ]]; then
-    start_marker="# --- ${marker}-START ---"
-    end_marker="# --- ${marker}-END ---"
-  else
-    start_marker="<!-- ${marker}-START -->"
-    end_marker="<!-- ${marker}-END -->"
-  fi
+  local file="$1" marker="$2"
+  if [[ ! -f "$file" ]]; then cat > /dev/null; return 0; fi
+  local start_marker="<!-- ${marker}-START -->"
+  local end_marker="<!-- ${marker}-END -->"
   local tmp_content tmp_out
   tmp_content=$(mktemp)
   tmp_out=$(mktemp)
@@ -91,40 +91,7 @@ _splice_readme() {
     $0 == s { print; while ((getline line < tf) > 0) print line; skip=1; next }
     $0 == e { skip=0 }
     !skip   { print }
-  ' "$readme" > "$tmp_out"; then
-    mv "$tmp_out" "$readme"
-  fi
-}
-
-# _splice_inline FILE MARKER
-# Replaces inline content between <!-- MARKER-START -->...<!-- MARKER-END --> on
-# the same line. Reads replacement text from stdin (must be a single line).
-_splice_inline() {
-  local file="$1" marker="$2"
-  if [[ ! -f "$file" ]]; then cat > /dev/null; return 0; fi
-  local start_marker="<!-- ${marker}-START -->"
-  local end_marker="<!-- ${marker}-END -->"
-  local replacement
-  replacement=$(cat)
-  local tmp_out
-  tmp_out=$(mktemp)
-  # shellcheck disable=SC2064
-  trap "rm -f '$tmp_out'" RETURN
-  local _awk_prog
-  read -r -d '' _awk_prog <<'AWK' || true
-    {
-      idx_s = index($0, s)
-      if (idx_s > 0) {
-        idx_e = index($0, e)
-        if (idx_e > 0) {
-          printf "%s%s%s%s%s\n", substr($0, 1, idx_s - 1 + length(s)), r, e, substr($0, idx_e + length(e)), ""
-          next
-        }
-      }
-      print
-    }
-AWK
-  if awk -v s="$start_marker" -v e="$end_marker" -v r="$replacement" "$_awk_prog" "$file" > "$tmp_out"; then
+  ' "$file" > "$tmp_out"; then
     mv "$tmp_out" "$file"
   fi
 }
@@ -284,12 +251,16 @@ SCOPE_PATHS[workbench]='  - "**/bin/local/**"
   - "**/lib/*.sh"
   - "**/install.components"'
 
-# ── README sections ───────────────────────────────────────────────────────────
+# ── Documentation blocks ─────────────────────────────────────────────────────
+#
+# Every _emit_<name> function below is a block --emit can print, and a block a
+# docs/*.src.md can include. The mapping is the name itself, so neither this
+# script nor the composer keeps a list of them.
 
 # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
 _tool_readme_row() { printf '| `%s` | %s |\n' "$1" "$2"; }
 
-_readme_scripts() {
+_emit_scripts_table() {
   printf '| Script | Description |\n'
   printf '|--------|-------------|\n'
   local -a _script_registries=()
@@ -303,7 +274,7 @@ _readme_scripts() {
   done
 }
 
-_readme_tasks() {
+_emit_tasks_block() {
   local count i key desc
   printf '```bash\n'
   count=$(yq '.tasks | to_entries | length' "$TASKFILE_PATH")
@@ -329,7 +300,7 @@ _extract_frontmatter_field() {
     || true
 }
 
-_readme_ai_installs() {
+_emit_ai_installs() {
   # Derive display paths from constants, replacing $HOME prefix with ~
   local claude_home="~${CLAUDE_DIR#"$HOME"}"
   local claude_rules="~${CLAUDE_RULES_DIR#"$HOME"}"
@@ -388,10 +359,10 @@ _readme_ai_installs() {
 
 }
 
-# _readme_lifecycle — renders the Session Lifecycle section for ai-automation.md.
+# _emit_lifecycle — renders the Session Lifecycle section for ai-automation.md.
 # Explains the auto-trigger pipeline. Skill cadences are shown in the skills table
-# rendered by _readme_ai_installs (single source for all skill metadata).
-_readme_lifecycle() {
+# rendered by _emit_ai_installs (single source for all skill metadata).
+_emit_lifecycle() {
   printf '## Session Lifecycle\n\n'
   # shellcheck disable=SC2016  # backticks are markdown literals
   printf 'Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:\n\n'
@@ -406,9 +377,9 @@ _readme_lifecycle() {
   printf 'All lifecycle skills can be run on demand: `/ceiling-debt`, `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.\n'
 }
 
-# _readme_skill_reference — renders the Skill Reference section for ai-automation.md.
+# _emit_skill_reference — renders the Skill Reference section for ai-automation.md.
 # Reads invocation, description, output, and lifecycle fields from each SKILL.md frontmatter.
-_readme_skill_reference() {
+_emit_skill_reference() {
   local claude_skills_src="$AI_DIR/claude/skills"
 
   printf '## Skill Reference\n'
@@ -498,7 +469,7 @@ _render_readme_registry() {
   printf '%s\n' "$content"
 }
 
-_readme_tools_table() {
+_emit_tools_table() {
   # Same registry order as tools.generated.md, but skip bin and zsh (they have their own sections)
   _render_readme_registry "$BREW_REGISTRY"
   _render_readme_registry "$MISE_REGISTRY"
@@ -507,22 +478,8 @@ _readme_tools_table() {
   done < <(find "$BREW_STACKS_DIR" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
 }
 
-# _readme_component_menu — comma-separated list of optional component labels from install.components.
-_readme_component_menu() {
-  [[ -f "$COMPONENTS_FILE" ]] || return 0
-  local labels=() component conf label
-  while IFS= read -r component; do
-    [[ -z "$component" || "$component" =~ ^# ]] && continue
-    conf="$REPO_ROOT/$component/setup.conf"
-    [[ -f "$conf" ]] || continue
-    label=$(conf_get "$conf" label)
-    [[ -n "$label" ]] && labels+=("$label")
-  done < "$COMPONENTS_FILE"
-  _join ', ' "${labels[@]}"
-}
-
-# _readme_after_install — numbered post-install steps from setup.conf post_install fields.
-_readme_after_install() {
+# _emit_after_install — numbered post-install steps from setup.conf post_install fields.
+_emit_after_install() {
   [[ -f "$COMPONENTS_FILE" ]] || return 0
   local step_num=1
   # shellcheck disable=SC2016  # backticks are markdown literals, not shell substitution
@@ -541,8 +498,8 @@ _readme_after_install() {
   done < "$COMPONENTS_FILE"
 }
 
-# _readme_core_components — discovers core components (steps.sh without setup.conf).
-_readme_core_components() {
+# _emit_core_components — discovers core components (steps.sh without setup.conf).
+_emit_core_components() {
   local names=()
   for steps in "$REPO_ROOT"/*/steps.sh; do
     [[ -f "$steps" ]] || continue
@@ -555,8 +512,8 @@ _readme_core_components() {
   printf '**Existing core components:** %s\n' "$(_join ', ' "${names[@]}")"
 }
 
-# _readme_optional_components — lists optional components from install.components with sync info.
-_readme_optional_components() {
+# _emit_optional_components — lists optional components from install.components with sync info.
+_emit_optional_components() {
   [[ -f "$COMPONENTS_FILE" ]] || return 0
   local entries=() component label sync_note
   while IFS= read -r component; do
@@ -575,9 +532,9 @@ _readme_optional_components() {
   printf '**Existing optional components:** %s\n' "$(_join ', ' "${entries[@]}")"
 }
 
-# _readme_workbench_commands — renders otto-workbench subcommands table + detail paragraphs
+# _emit_workbench_commands — renders otto-workbench subcommands table + detail paragraphs
 # from the `commands` array on the otto-workbench entry in bin/registry.yml.
-_readme_workbench_commands() {
+_emit_workbench_commands() {
   [[ -f "$BIN_REGISTRY" ]] || return 0
   local count
   count=$(yq '.tools[] | select(.name == "otto-workbench") | .commands | length' "$BIN_REGISTRY" 2>/dev/null)
@@ -795,46 +752,90 @@ _splice_libraries_doc() {
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+# _block_names — every block --emit accepts, one per line.
+#
+# Read off the defined functions rather than a list, so adding a block is
+# adding a function and nothing else.
+_block_names() {
+  declare -F | sed -n 's/^declare -f _emit_//p' | tr '_' '-' | sort
+}
+
+# _emit NAME — prints one documentation block on stdout.
+_emit() {
+  local fn="_emit_${1//-/_}"
+  if ! declare -F "$fn" > /dev/null; then
+    err "--emit: no block named '$1'. Available:"
+    _block_names | sed 's/^/  /' >&2
+    return 1
+  fi
+  "$fn"
+}
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+       $(basename "$0") --emit <block>
+
+Regenerate the tools.generated*.md rule files from the source registries.
+
+With --emit nothing is written: one documentation block is printed to stdout
+instead. bin/local/compose-docs is the caller, via an include directive in a
+docs/*.src.md.
+
+Options:
+  --emit <block>  Print the named block to stdout
+  --quiet         Suppress per-file success messages
+  -h, --help      Show this help
+
+Blocks:
+$(_block_names | sed 's/^/  /')
+EOF
+}
+
+# _init_paths — the source locations every block and the rule files read from.
+_init_paths() {
+  BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
+  BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
+  MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
+  BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
+  OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
+  TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
+  AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
+  COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
+  DOCS_DIR="${DOCS_DIR:-"$REPO_ROOT/docs"}"
+  LIBRARIES_DOC_PATH="${LIBRARIES_DOC_PATH:-"$DOCS_DIR/libraries.md"}"
+  LIB_DIR="${LIB_DIR:-"$REPO_ROOT/lib"}"
+}
+
 main() {
   set -euo pipefail
 
-  usage() {
-    cat <<EOF
-Usage: $(basename "$0") [--quiet]
-
-Regenerate tools.generated.md and README sections from source registries.
-
-Options:
-  --quiet     Suppress per-file success messages
-  -h, --help  Show this help
-EOF
-  }
-
-  [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; return 0; }
   QUIET=false
-  [[ "${1:-}" == "--quiet" ]] && QUIET=true
+  local emit=""
+  while (( $# > 0 )); do
+    case "$1" in
+      -h|--help) usage; return 0 ;;
+      --quiet)   QUIET=true ;;
+      --emit)
+        if [[ -z "${2:-}" ]]; then err "--emit requires a block name"; return 2; fi
+        emit="$2"; shift
+        ;;
+      *) err "Unknown option: $1"; usage >&2; return 2 ;;
+    esac
+    shift
+  done
 
   if ! command -v yq >/dev/null 2>&1; then
     err "yq not found — run: brew install yq"
     return 1
   fi
 
-  BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
-  BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
-  MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
-  BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
-  OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
-  README_PATH="${README_PATH:-"$REPO_ROOT/README.md"}"
-  TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
-  AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
-  COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
-  CONTRIBUTING_PATH="${CONTRIBUTING_PATH:-"$REPO_ROOT/CONTRIBUTING.md"}"
-  DOCS_DIR="${DOCS_DIR:-"$REPO_ROOT/docs"}"
-  TOOLS_DOC_PATH="${TOOLS_DOC_PATH:-"$DOCS_DIR/tools.md"}"
-  AI_DOC_PATH="${AI_DOC_PATH:-"$DOCS_DIR/ai-automation.md"}"
-  COMPONENTS_DOC_PATH="${COMPONENTS_DOC_PATH:-"$DOCS_DIR/components.md"}"
-  LIBRARIES_DOC_PATH="${LIBRARIES_DOC_PATH:-"$DOCS_DIR/libraries.md"}"
-  LIB_DIR="${LIB_DIR:-"$REPO_ROOT/lib"}"
+  _init_paths
+
+  if [[ -n "$emit" ]]; then
+    _emit "$emit"
+    return
+  fi
 
   _gen_success() { $QUIET || success "$*"; }
 
@@ -907,22 +908,11 @@ EOF
     fi
   done
 
-  # ── README sections ───────────────────────────────────────────────────────────
-
-  # README splices (landing page content stays in README)
-  if [[ -f "$BIN_REGISTRY" ]];    then _readme_workbench_commands | _splice_readme "$README_PATH" "WORKBENCH-COMMANDS"; _gen_success "Updated README workbench commands"; fi
-  if [[ -f "$COMPONENTS_FILE" ]]; then _readme_component_menu | _splice_inline "$README_PATH" "COMPONENT-MENU";   _gen_success "Updated README component menu";   fi
-  if [[ -f "$COMPONENTS_FILE" ]]; then _readme_after_install  | _splice_readme "$README_PATH" "AFTER-INSTALL";    _gen_success "Updated README after-install";    fi
-
-  # docs/ splices (reference content lives in docs/)
-  if [[ -f "$BIN_REGISTRY" ]];    then _readme_scripts        | _splice_readme "$TOOLS_DOC_PATH" "SCRIPTS-TABLE";    _gen_success "Updated docs/tools.md scripts table";    fi
-  if [[ -d "$BREW_STACKS_DIR" ]]; then _readme_tools_table    | _splice_readme "$TOOLS_DOC_PATH" "TOOLS-TABLE";      _gen_success "Updated docs/tools.md tools table";      fi
-  if [[ -d "$AI_DIR" ]];          then _readme_ai_installs    | _splice_readme "$AI_DOC_PATH" "AI-INSTALLS";         _gen_success "Updated docs/ai-automation.md installs"; fi
-  if [[ -d "$AI_DIR" ]];          then _readme_skill_reference | _splice_readme "$AI_DOC_PATH" "SKILL-REFERENCE";     _gen_success "Updated docs/ai-automation.md skills";    fi
-  if [[ -d "$AI_DIR" ]];          then _readme_lifecycle      | _splice_readme "$AI_DOC_PATH" "LIFECYCLE";           _gen_success "Updated docs/ai-automation.md lifecycle"; fi
-  if [[ -f "$TASKFILE_PATH" ]];   then _readme_tasks          | _splice_readme "$AI_DOC_PATH" "TASKS-BLOCK";         _gen_success "Updated docs/ai-automation.md tasks";    fi
-                                       _readme_core_components     | _splice_readme "$COMPONENTS_DOC_PATH" "CORE-COMPONENTS";     _gen_success "Updated docs/components.md core"
-                                       _readme_optional_components | _splice_readme "$COMPONENTS_DOC_PATH" "OPTIONAL-COMPONENTS"; _gen_success "Updated docs/components.md optional"
+  # ── docs/libraries.md ────────────────────────────────────────────────────────
+  #
+  # The last spliced file. Every other doc is composed from a .src.md, which
+  # asks for its blocks through --emit; this one still has its content pushed
+  # into marker regions.
 
   if [[ -f "$LIBRARIES_DOC_PATH" && -d "$LIB_DIR" ]]; then
     _lib_check_docs || return 1

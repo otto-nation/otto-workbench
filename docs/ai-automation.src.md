@@ -2,7 +2,6 @@
 title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
-<!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
 # AI Automation
 
@@ -31,213 +30,17 @@ This creates `~/.config/task/taskfile.env` with:
 
 ## What Gets Installed
 
-**Claude Code:**
-- `~/.claude/settings.json` — permissions and deny rules (merged, not overwritten)
-- `~/.claude/CLAUDE.md` — coding guidelines
-- `~/.claude/rules/` — language and tool-specific rules (symlinked)
+<!-- include: bin/local/generate-tool-context --emit ai-installs -->
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, dream, machine, pr-comments, pr-rebase, promote, reference, retro, self-review-fix — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+<!-- include: bin/local/generate-tool-context --emit skill-reference -->
 
-**Agents:**
-
-| Agent | Description |
-|-------|-------------|
-| changelog | Generate categorized release notes and changelogs from git history. Used by task automation. |
-| ci-cd | Generate commit messages and pull request descriptions from git context. Used by task automation. |
-| debugger | Systematic code-level bug diagnosis. Read-only — traces through source code to find root causes. Never modifies anything. |
-| explain | Fast text-in/text-out explainer. Answers questions from provided input without exploring files or suggesting edits. |
-| incident | Structured production incident investigation. Read-only triage — gathers symptoms, checks recent changes, forms ranked hypotheses. Never modifies anything. |
-| migrate | Analyze codebases for migration tasks and produce phased upgrade plans. Read-only — plans changes but does not apply them. |
-| reviewer-lite | Lightweight code reviewer for group and angles phases. Receives pre-collected data — no context gathering needed. Produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
-| reviewer | Structured code review for PRs and diffs. Read-only — produces categorized findings (must-fix, should-fix, nit). Never modifies anything. |
-
-**MCP Servers:** otto-workbench
-
-## Skill Reference
-
-### `/analyze-project`
-
-Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty .claude/CLAUDE.md or .claude/rules/ sections.
-
-```
-/analyze-project
-```
-
-**Output:** `.claude/CLAUDE.md, .claude/rules/`
-**Trigger:** Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when .claude/CLAUDE.md or .claude/rules/ files have empty sections.
-
-### `/anatomy`
-
-Generate or refresh a project file index (.claude/anatomy.md) with per-file descriptions and token estimates. Helps Claude decide what to read before exploring. TRIGGER when: user wants an overview of codebase structure, before exploring an unfamiliar project, or after significant file changes. SKIP: user asks about a specific known file — read it directly.
-
-```
-/anatomy
-```
-
-**Output:** `.claude/anatomy.md`
-**Auto-trigger:** on HEAD change (via Stop hook)
-**Trigger:** Run to refresh the project file index before exploring an unfamiliar codebase, or after significant file changes.
-**Skip:** Do not use when the user asks about a specific file they already know — just read it directly.
-
-### `/architecture`
-
-On-demand architecture.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/architecture.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or architecture.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine).
-
-```
-/architecture
-```
-
-**Output:** `.claude/architecture.md`
-**Trigger:** Run after discovering wrong-software assumptions, adding a new service or role to a project, when architecture.md last-reviewed date is more than 14 days old, or after discovering container tool constraints.
-**Skip:** Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead).
-
-### `/ceiling-debt`
-
-Scan for ceiling: markers and present the debt ledger. TRIGGER when: user asks about ceilings, deferred simplifications, or technical debt markers. SKIP: general tech debt discussion without ceiling markers.
-
-```
-/ceiling-debt
-```
-
-**Output:** `ceiling debt ledger to stdout (manual); .claude/ceiling-debt.md (auto)`
-**Auto-trigger:** on-stop (via Stop hook)
-**Trigger:** ceiling debt, show ceilings, what did we defer, list simplifications, ceiling markers
-**Skip:** General tech debt discussion, architecture review, non-code requests
-
-### `/ci-failures [<pr_number_or_run_id_or_branch>]`
-
-Diagnose and fix GitHub Actions CI failures with run-aware progression tracking: fetch, classify, diagnose, fix, push, and monitor across workflow runs. TRIGGER when: user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red. SKIP: reviewing code (use code-review or pr review instead); addressing PR review comments (use pr-comments instead).
-
-```
-/ci-failures [<pr_number_or_run_id_or_branch>]
-```
-**Output schema:** `ci-check --tool-schema` (MCP tool: `ci-check`)
-**Trigger:** Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red.
-**Skip:** Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead).
-
-### `/dream`
-
-Memory consolidation for Claude Code. Scans session transcripts for corrections, decisions, preferences, and patterns, then merges findings into persistent memory files. TRIGGER when: user asks to consolidate memory, clean up notes, or after sessions with corrections and decisions. SKIP: project architecture facts (use architecture); machine profile updates (use machine).
-
-```
-/dream
-```
-
-**Output:** `memory/ topic files`
-**Auto-trigger:** 24h (via Stop hook)
-**Trigger:** Run to consolidate scattered memory notes, after multiple sessions with corrections or decisions, or when MEMORY.md is cluttered. Auto-triggers every 24h.
-**Skip:** Do not use for project architecture facts (use architecture instead) or machine profile updates (use machine instead).
-
-### `/machine`
-
-Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. TRIGGER when: user upgrades tools, installs new runtimes, or machine.md is stale (>7 days). SKIP: project-specific architecture (use architecture); memory consolidation (use dream).
-
-```
-/machine
-```
-
-**Output:** `~/.claude/machine/machine.md`
-**Auto-trigger:** 24h (via Stop hook)
-**Trigger:** Run after upgrading runtimes, installing new tools, or when machine.md last-updated is more than 7 days old. Auto-triggers every 24h.
-**Skip:** Do not use for project-specific architecture (use architecture instead) or memory consolidation (use dream instead).
-
-### `/pr-comments [<pr_number_or_branch>]`
-
-Analyze and address PR review comments with lifecycle tracking: fetch, classify, verify, fix, then draft replies for approval before publishing with --post. TRIGGER when: user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments. SKIP: initial code review requests (use code-review or pr review instead); self-review before PR creation (use self-review-fix instead).
-
-```
-/pr-comments [<pr_number_or_branch>]
-```
-**Trigger:** Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments.
-**Skip:** Do not use for initial code review requests (use code-review or pr review instead); do not use for self-review before PR creation (use self-review-fix instead).
-
-### `/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]`
-
-AI-assisted rebase onto the branch's base with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead).
-
-```
-/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]
-```
-**Output schema:** `pr-rebase --tool-schema` (MCP tool: `pr-rebase`)
-**Trigger:** Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase.
-**Skip:** Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead).
-
-### `/promote`
-
-Reviews accumulated Claude Code memories for promotion into durable workbench artifacts — lint rules, scripts, coding rules, hooks. Prioritizes mechanical enforcement over prose. TRIGGER when: user wants to review memories for promotion, or after dream has consolidated corrections. SKIP: direct rule/script edits — just edit them; memory consolidation (use dream).
-
-```
-/promote
-```
-
-**Output:** `ai/memory/PROMOTE.md`
-**Auto-trigger:** 7 days (via Stop hook)
-**Trigger:** Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers every 7 days.
-**Skip:** Do not use when the user wants to directly edit a rule or script — just edit it. Do not use for memory consolidation (use dream instead).
-
-### `/reference`
-
-Show a reference card of all workbench skills, agents, and reuse modes. TRIGGER when: user asks what skills/commands/agents are available, wants a quick reference, or asks how to use the workbench. SKIP: detailed help on a specific skill (invoke that skill directly).
-
-```
-/reference
-```
-
-**Output:** `formatted reference card to stdout`
-**Trigger:** what skills are available, show commands, help, reference card, what can you do
-**Skip:** Detailed help on a specific skill — invoke that skill directly
-
-### `/retro`
-
-Analyze PR review comments to identify gaps in coding rules. Fetches comments from all registered repos, classifies them against existing rules, and proposes specific rule additions or refinements. TRIGGER when: user wants to analyze review patterns for rule gaps, after a batch of PR reviews. SKIP: addressing comments on a specific PR (use pr-comments); memory consolidation (use dream).
-
-```
-/retro
-```
-
-**Output:** `ai/memory/RETRO.md`
-**Auto-trigger:** 72h (via Stop hook)
-**Trigger:** Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers every 72h.
-**Skip:** Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead).
-
-### `/self-review-fix [branch_name]`
-
-Run self-review and auto-fix findings. Wraps pr review --self --fix. Can also fix from an existing review without re-running. TRIGGER when: user asks to self-review a branch, run pre-merge review, or auto-fix findings before PR creation. SKIP: reviewing someone else's PR (use code-review or review); addressing existing PR review comments (use pr-comments).
-
-```
-/self-review-fix [branch_name]
-```
-**Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
-**Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
-
-## Session Lifecycle
-
-Skills with a cadence (shown in the table above) auto-trigger via Stop hooks in `settings.json`:
-
-1. **Session exit** — Stop hooks run `should-<skill>.sh` cooldown checks. If due, creates `~/.claude/.<skill>-pending`
-2. **Next session start** — Claude reads CLAUDE.md, sees the pending flag, runs the skill as a background subagent, then deletes the flag
-3. **Skill completion** — completion script records a timestamp so the cooldown resets
-
-Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.
-
-### Manual triggers
-
-All lifecycle skills can be run on demand: `/ceiling-debt`, `/dream`, `/promote`, `/retro`, `/anatomy`, `/machine`.
+<!-- include: bin/local/generate-tool-context --emit lifecycle -->
 
 ## Task Automation
 
 Use `--global` to run tasks from `~/.config/task/` rather than a local project Taskfile.
 
-```bash
-task --global ai:setup             # Setup AI configuration
-task --global commit               # Generate AI-powered commit message based on staged changes
-task --global commit:reword        # Reword a commit message with AI (default: HEAD; or: task reword -- SHA)
-task --global pr:content           # Preview AI-generated PR title and description (-- --no-issue to skip issue prompts, -- --base <branch> to target a non-default base)
-task --global pr:create            # Create AI-powered pull request (-- --no-issue, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)
-task --global pr:update            # Update current PR description (-- --no-issue, --base <branch>, --title <title>, --body <body>)
-task --global review               # AI review of staged, unstaged, and committed branch changes
-task --global pr:review            # AI review of the current PR
-```
+<!-- include: bin/local/generate-tool-context --emit tasks-block -->
 
 ## Configuration
 
@@ -689,78 +492,11 @@ outside `ai/lib/pr_target.py` should parse or rebuild one.
 `<branch-slug>` is the branch with runs of characters outside `[A-Za-z0-9._-]`
 collapsed to `-`, then stripped of leading and trailing `-`.
 
-Both components are readable from a checkout with no network call, but that is a
-convenience for this repo's own code, not an invitation to rebuild the path
-elsewhere: `ai/lib/pr_target.py` is the owner, and another repo that wants to
-know what has been reviewed asks the CLI (§ Publishing review state) rather than
-deriving where a review would sit.
-
-### Publishing review state
-
-Another repo learns what this machine has reviewed by asking:
-
-```
-pr review --list --schema-version 1
-```
-
-The caller declares the row schema it speaks and the CLI enforces it, exiting
-non-zero and naming the versions it serves if the value is unsupported. A bare
-`pr review --list` writes a human table to stderr and nothing at all to stdout —
-a consumer that forgets the handshake gets a `jq` parse failure rather than a
-subtly-wrong document.
-
-`stdout` carries one JSON object:
-
-```json
-{
-  "schema_version": 1,
-  "reviews": [
-    {
-      "repo": "otto-nation/otto-workbench",
-      "pr_number": 761,
-      "review_file": "/Users/…/reviews/otto-workbench-761/review.md",
-      "head_sha": "4a33027c…",
-      "head_ref": "isaac/761/…",
-      "base_ref": "main",
-      "review_type": "full",
-      "mode": "pr",
-      "reviewed_at": "2026-08-18T14:02:11+00:00",
-      "started_at": "2026-08-18T13:47:03+00:00",
-      "findings": {"must_fix": 0, "should_fix": 2, "nit": 1, "idiom": 0, "total": 3},
-      "verdict": "approve",
-      "status": "complete",
-      "failure_detail": "",
-      "cost_usd": 4.12,
-      "input_tokens": 0, "output_tokens": 0,
-      "cache_read_tokens": 0, "cache_write_tokens": 0,
-      "duration_ms": 0
-    }
-  ]
-}
-```
-
-A row reports its review's *path*, never its content: a consumer polling on an
-interval would otherwise carry every review's full text on every tick. Finding
-keys are the `SeverityConfig.json_key` vocabulary the rest of the codebase
-already uses, so this document and `build_review_summary`'s cannot disagree
-about what a severity is called. A review written before `meta.json` existed is
-still listed, with an empty repo and a null PR number — unattributed is a fact
-about that review, and dropping it would hide one the consumer can still open.
-
-A missing reviews root is not an error; it is `{"reviews": []}` with exit 0. The
-*process* is the error channel: a `pr` that is absent, crashes, or exits
-non-zero is what a consumer must treat as "unknown". That is the whole reason a
-query beats deriving the path — a root nothing writes to reads exactly like a
-machine that has never run a review.
-
-**Version policy.** A new *optional* field does not bump `schema_version`. A
-removed field, a renamed field, or a changed type adds a new version.
-Enforcement comes from the supported set being allowed to *shrink* —
-`--schema-version 1` keeps working until this build stops serving 1, and
-`ai/lib/review_listing.py`'s `SCHEMA_VERSIONS` is the one place that says which
-those are. Nothing hand-stamps a version into the document: the field echoes
-back what the caller declared and this build agreed to serve, so it cannot go
-stale on its own.
+Both components are readable from a checkout with no network call, which is what
+lets external consumers derive the same path. `ai/lib/pr_target.py` is the owner
+and its module docstring states the rule in full; a reimplementation should
+assert against both published fixtures in `tests/pr_target_test.py` —
+`SLUG_VECTORS` for the branch slug and `REPO_KEY_VECTORS` for the repo key.
 
 ### What each `pr` command needs before it runs
 
@@ -770,7 +506,7 @@ routinely disagree:
 
 | Axis | What it decides |
 |---|---|
-| **depth** | `none` resolves nothing at all; `local` resolves from git alone; `remote` adds the `gh` calls that name the repo and the PR |
+| **depth** | `local` resolves from git alone; `remote` adds the `gh` calls that name the repo and the PR |
 | **fetch** | whether the worktree is fetched and fast-forwarded first |
 | **lock** | whether the target's `run.lock` is held for the whole run |
 
@@ -780,15 +516,11 @@ routinely disagree:
 | `status` | local | no | **no** |
 | `ci` | remote | yes | yes |
 | `review` | remote | yes | yes |
-| `review --list` | **none** | no | **no** |
 | `comments` | remote | yes | yes |
 | `fix` | remote | yes | yes |
 | `rebase` | remote | no | yes |
 | `describe` | remote | yes | yes |
 | `gc` | remote | no | yes |
-
-`review` is the one command whose need its arguments decide, which is why its
-`_COMMANDS` entry holds a resolver rather than a `Need`.
 
 `rebase` is the reason the axes are separate: it needs `gh` to name its PR and
 does its own fetch, so a single "is this command remote?" flag would either
@@ -804,13 +536,6 @@ state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
 behind the repo key (`acme/widget`) rather than from `gh`. An explicit
 `--pr <n>` escalates it to `remote` anyway — a PR number names a branch only
 `gh` can report, and the branch is half the target key.
-
-`review --list` is the only `none` one, and `none` is not "resolve less" — it is
-"there is nothing to resolve". The listing answers from the user's own state
-root, so it has no repo, no branch, and no target, and unlike `local` it works
-from a directory that is not a git repository at all. `--pr` does not escalate
-it: there is no target for a PR number to name at that depth, so honouring one
-would spend a `gh` call on a value the handler never reads.
 
 Every script's trail goes to one root — `~/.local/state/workbench/trail/YYYY-MM.jsonl`,
 one file per month. `otto-log recent --repo <org/repo>` narrows it to one repo;
@@ -1195,8 +920,8 @@ and any script built on `ToolParser` supports both for free.
 `--tool-schema` prints the tool's JSON contract — name, description, an input schema
 derived from the argparse actions, and an annotated output schema. It is how the MCP
 server discovers tools — it probes every executable in the workbench's component `bin/`
-directories (see [`tools.md`](tools.md#otto-mcp-server)) — and it is what the skill
-reference above cites for `ci-check` and `pr-rebase`.
+directories, plus any `tool_dirs` adds (see [`tools.md`](tools.md#otto-mcp-server)) — and
+it is what the skill reference above cites for `ci-check` and `pr-rebase`.
 
 Naming the flag in a script under one of those directories is therefore a claim, and
 `bin/local/validate-tool-schema` holds the build to it: it probes every candidate

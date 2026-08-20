@@ -51,6 +51,18 @@ git add ai/guidelines/rules/tools.generated.md ai/guidelines/rules/git.generated
 git commit -m "chore: regenerate tool context"
 ```
 
+## "Stale — run bin/local/compose-docs and commit the result"
+
+A `docs/*.md` no longer matches what its `docs/*.src.md` composes to — usually because a registry, skill, or component changed and the artifact was not recomposed. Recompose and commit:
+
+```bash
+bin/local/compose-docs
+git add docs/
+git commit -m "docs: recompose generated sections"
+```
+
+Never edit the composed `docs/*.md` directly; the edit is overwritten on the next compose. Edit the `.src.md` for prose, or the source data behind the include for a generated section.
+
 ## "yq not found"
 
 Several workbench scripts depend on `yq` for YAML processing:

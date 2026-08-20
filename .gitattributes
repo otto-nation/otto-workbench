@@ -9,6 +9,12 @@
 # bin/local/generate-config-schema, from ai/lib/workbench_config.py
 config.schema.json linguist-generated=true
 
+# bin/local/compose-docs, from the docs/*.src.md of the same name
+docs/ai-automation.md linguist-generated=true
+docs/components.md linguist-generated=true
+docs/getting-started.md linguist-generated=true
+docs/tools.md linguist-generated=true
+
 # release-please
 CHANGELOG.md linguist-generated=true
 .github/.release-please-manifest.json linguist-generated=true

@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -4675,6 +4676,150 @@ class TestAddressingCommitIsPerLine:
             f"Addressed in [`{branch.second[:7]}`]"
             f"(https://github.com/owner/repo/commit/{branch.second}).",
         ]
+
+
+# ── addressed in response, or genuinely already addressed ──────────────────
+
+
+_THE_REVIEW_COMMENT = "2025-01-01T00:00:00Z"
+_BEFORE_THE_REVIEW = "2020-01-01T00:00:00+0000"
+_AFTER_THE_REVIEW = "2030-01-01T00:00:00+0000"
+
+
+class TestAddressedInResponseFraming:
+    """A reviewer we acted for must not be told their comment needed no action.
+
+    Triage reads current HEAD, which holds the fixes an earlier round of the
+    same cycle landed, so a thread the pass fixed comes back `already_addressed`
+    on the next run. The verdict answers "does the code do this now?" correctly;
+    the flat "Already addressed" answers "was your comment moot?" wrongly.
+    """
+
+    @staticmethod
+    def _git(wt, *args, when=""):
+        env = dict(os.environ)
+        if when:
+            env["GIT_AUTHOR_DATE"] = when
+            env["GIT_COMMITTER_DATE"] = when
+        subprocess.run(["git", "-C", str(wt), *args],
+                       check=True, capture_output=True, env=env)
+
+    def _sha(self, wt, rev):
+        return subprocess.run(
+            ["git", "-C", str(wt), "rev-parse", rev],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    @pytest.fixture
+    def branch(self, worktree):
+        """A branch with one commit dated before the review and one after it."""
+        hooks = worktree / ".git" / "empty-hooks"
+        hooks.mkdir()
+        self._git(worktree, "config", "user.email", "test@example.com")
+        self._git(worktree, "config", "user.name", "Test")
+        self._git(worktree, "config", "commit.gpgsign", "false")
+        self._git(worktree, "config", "core.hooksPath", str(hooks))
+        (worktree / "a.py").write_text("one\ntwo\n")
+        self._git(worktree, "add", "-A")
+        self._git(worktree, "commit", "-qm", "base")
+        self._git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+        (worktree / "a.py").write_text("ONE\ntwo\n")
+        self._git(worktree, "commit", "-qam", "line one, long before the review",
+                  when=_BEFORE_THE_REVIEW)
+        before = self._sha(worktree, "HEAD")
+        (worktree / "a.py").write_text("ONE\nTWO\n")
+        self._git(worktree, "commit", "-qam", "line two, in response to the review",
+                  when=_AFTER_THE_REVIEW)
+        return SimpleNamespace(path=worktree, before=before,
+                               after=self._sha(worktree, "HEAD"))
+
+    @staticmethod
+    def _thread(tid, database_id):
+        return ReportThread(id=tid, comments=[
+            {"databaseId": database_id, "createdAt": _THE_REVIEW_COMMENT},
+        ])
+
+    def _reply_body(self, rt, entry, thread, wt_path, **kwargs):
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            rt._post_already_addressed_replies(
+                [entry], {entry.id: thread}, "owner/repo", 42, wt_path, **kwargs,
+            )
+        return post.call_args[0][3]
+
+    def test_a_commit_after_the_review_reads_as_addressed_in_response(self, rt, branch):
+        body = self._reply_body(
+            rt, CommentItem(id="t2", summary="rename it", file="a.py", line=2),
+            self._thread("t2", 222), branch.path,
+        )
+        assert body.startswith("Applied: rename it")
+        assert "Already addressed" not in body
+        assert f"Fixed in [`{branch.after[:7]}`]" in body
+
+    def test_code_predating_the_comment_stays_already_addressed(self, rt, branch):
+        """The genuine case: the reviewer's point was true before they made it."""
+        body = self._reply_body(
+            rt, CommentItem(id="t1", summary="use the helper", file="a.py", line=1),
+            self._thread("t1", 111), branch.path,
+        )
+        assert body.startswith("Already addressed: use the helper")
+        assert "Applied:" not in body
+        assert f"Addressed in [`{branch.before[:7]}`]" in body
+
+    def test_an_undated_thread_keeps_the_pre_existing_reading(self, rt, branch):
+        """Claiming credit is the assertion that needs evidence, not the absence."""
+        body = self._reply_body(
+            rt, CommentItem(id="t2", summary="rename it", file="a.py", line=2),
+            ReportThread(id="t2", comments=[{"databaseId": 222}]), branch.path,
+        )
+        assert body.startswith("Already addressed: rename it")
+
+    def test_a_fix_the_resolver_cannot_cite_still_reads_as_a_fix(self, rt, branch):
+        """#827's caller: a FIXED entry whose commit a hook rejected lands here.
+
+        The pass acted on the thread — that is what put the entry in `fixed` —
+        so the reply says so even though no commit can be named for it. The one
+        commit the branch offers for that line predates the comment and cannot
+        be what carried a fix made after it, so nothing is cited.
+        """
+        entry = CommentItem(id="t1", summary="use the helper", file="a.py", line=1)
+        cp = rt.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            rt._reply_to_fixed(
+                [entry], {"t1": self._thread("t1", 111)}, "owner/repo", 42,
+                cp, branch.path,
+            )
+        body = post.call_args[0][3]
+        assert body.startswith("Applied: use the helper")
+        assert "Already addressed" not in body
+        assert branch.before[:7] not in body
+
+    def _summary(self, rt, entry, thread, wt_path):
+        cp = rt.CommitPushResult(None, CommitStatus.NO_CHANGES, "")
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            return rt._build_summary_body(
+                [], [], [], cp, "owner/repo", 42, {entry.id: thread},
+                already_addressed=[entry], wt_path=wt_path,
+            )
+
+    def test_the_summary_row_reports_a_responsive_fix_as_fixed(self, rt, branch):
+        body = self._summary(
+            rt, CommentItem(id="t2", summary="rename it", file="a.py", line=2),
+            self._thread("t2", 222), branch.path,
+        )
+        assert f"Fixed in [`{branch.after}`]" in body
+        assert "Already addressed" not in body
+        assert "**1 fixed**" in body
+
+    def test_the_summary_row_keeps_already_addressed_for_older_code(self, rt, branch):
+        body = self._summary(
+            rt, CommentItem(id="t1", summary="use the helper", file="a.py", line=1),
+            self._thread("t1", 111), branch.path,
+        )
+        assert "Already addressed" in body
+        assert "1 already addressed" in body
+        assert "fixed" not in body
 
 
 # ── default-branch resolution in commit lookups ────────────────────────────

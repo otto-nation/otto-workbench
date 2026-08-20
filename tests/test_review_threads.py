@@ -4540,14 +4540,14 @@ class TestEveryItemReachesTheTable:
     def test_the_counts_match_the_rows(self, rt):
         published = _published_summary(rt, *_sibling_rows(rt, hand_written="ic-900-1"))
         body = self._render(rt, published)
-        assert len(rt._summary_table_rows(body)) == 3
-        assert "**2 fixed**" in body
+        assert len(rt._summary_table_rows(body)) == len(_SIBLING_ITEMS)
+        assert f"**{len(_SIBLING_ITEMS) - 1} fixed**" in body
         assert "1 hand-written" in body
 
     def test_nothing_published_counts_every_row_as_fixed(self, rt):
         body = self._render(rt)
-        assert len(rt._summary_table_rows(body)) == 3
-        assert "**3 fixed**" in body
+        assert len(rt._summary_table_rows(body)) == len(_SIBLING_ITEMS)
+        assert f"**{len(_SIBLING_ITEMS)} fixed**" in body
         assert "hand-written" not in body
 
     def test_holding_one_sibling_is_idempotent(self, rt):

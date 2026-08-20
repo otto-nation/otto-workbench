@@ -4,7 +4,8 @@
 # Migration files live in <component>/migrations/YYYYMMDD-slug.sh and define a single
 # idempotent function named migration_YYYYMMDD_slug (dashes replaced with underscores).
 #
-# State is tracked in $MIGRATIONS_STATE_FILE (one line per applied migration).
+# State is tracked in $MIGRATIONS_STATE_FILE (one line per applied migration, or
+# one line per repo for a project-scoped migration — see _PROJECT_SCOPED_MARKER).
 # Stale entries (pointing to removed migration files) are pruned automatically.
 #
 # Usage (from scripts that already source lib/ui.sh):
@@ -31,6 +32,46 @@ _array_contains() {
     fi
   done
   return 1
+}
+
+# The header line a migration writes to say it runs once per repo rather than
+# once per machine.
+#
+# "Applied" for such a migration is a fact about a repo, not about the machine:
+# it edits files under a repo's own .claude/, and a repo the machine learned
+# about afterwards has not been touched by it. A migration that ran its own loop
+# over the project registry could only ever record the one machine-wide line the
+# framework asked it for, so the next sync skipped it outright and the repo
+# cloned the day after kept the shape the migration exists to replace — no
+# error, no warning, and the state file reporting it long since done.
+#
+# With this marker the framework owns the loop: it calls the function once per
+# registered repo with that repo's path as the only argument, and records one
+# state line per repo. A repo that registers late is simply a key the state file
+# does not hold yet, so the next sync visits it.
+#
+# Declared by the migration rather than listed here for the reason
+# _ADOPTION_SENSITIVE_MARKER is: the marker travels with the file, so nothing
+# goes stale when one is renamed. bin/local/validate-migrations checks that a
+# file carrying it reads the argument, and that one without it does not.
+readonly _PROJECT_SCOPED_MARKER='^# project-scoped:'
+
+# What separates a state key from the repo it was applied to.
+#
+# A tab, because a repo path may hold anything but NUL and newline — `@`, `#`
+# and spaces included — and the state file is matched whole-line with
+# `grep -qxF`. Every split is on the *first* tab, so a path that somehow carries
+# one still leaves the key ahead of it intact.
+readonly _MIGRATION_KEY_SEP=$'\t'
+
+# _split_migration_state_line LINE BASE_VAR PROJECT_VAR
+# Split a state line into the migration key every entry starts with and the repo
+# it was applied to, which is empty for a machine-scoped entry.
+_split_migration_state_line() {
+  local -n __base="$2" __project="$3"
+  __base="${1%%"$_MIGRATION_KEY_SEP"*}"
+  __project=""
+  [[ "$1" == "$__base" ]] || __project="${1#*"$_MIGRATION_KEY_SEP"}"
 }
 
 # _source_migration FILE — load a migration's definitions without letting the
@@ -92,10 +133,68 @@ _source_migration() {
   return "$status"
 }
 
+# _migration_targets OUT_ARRAY FILE BASE_KEY STATE_FILE
+# What FILE still has to be run against: nothing when it is already recorded,
+# one empty string for a machine-scoped migration that has not run, and one repo
+# path for every registered repo a project-scoped migration has not visited.
+#
+# The machine-scoped case is an empty target rather than a flag of its own so
+# the caller keeps a single loop — "applied" there is a fact about the machine,
+# and the state line it records names no repo.
+_migration_targets() {
+  local -n __targets="$1"
+  local migration="$2" base_key="$3" state_file="$4"
+  __targets=()
+
+  if ! _migration_carries_marker "$migration" "$_PROJECT_SCOPED_MARKER"; then
+    grep -qxF "$base_key" "$state_file" || __targets+=("")
+    return 0
+  fi
+
+  local project_dir
+  while IFS= read -r project_dir; do
+    grep -qxF "$base_key$_MIGRATION_KEY_SEP$project_dir" "$state_file" \
+      || __targets+=("$project_dir")
+  done < <(project_registered)
+  return 0
+}
+
+# _run_migration_targets FN BASENAME BASE_KEY STATE_FILE TARGETS...
+# Run FN once per target, recording each success, and leave the number recorded
+# in _MIGRATION_RAN.
+#
+# A target is a repo path, or the empty string for a machine-scoped migration —
+# which is handed no argument at all and recorded under a key naming no repo.
+# A target that fails is simply not recorded, so the next sync retries that one
+# rather than the whole migration.
+_run_migration_targets() {
+  local fn_name="$1" basename_m="$2" base_key="$3" state_file="$4"
+  shift 4
+
+  local target
+  _MIGRATION_RAN=0
+  for target in "$@"; do
+    # `${target:+...}` drops the argument entirely for a machine-scoped
+    # migration rather than handing its function an empty string it never
+    # asked for, and keeps the repo out of the state key it records.
+    if ! "$fn_name" ${target:+"$target"}; then
+      warn "Migration failed: $basename_m${target:+ in $target} — will retry on next run"
+      continue
+    fi
+    printf '%s\n' "$base_key${target:+$_MIGRATION_KEY_SEP$target}" >> "$state_file"
+    _MIGRATION_RAN=$(( _MIGRATION_RAN + 1 ))
+  done
+}
+
 # run_component_migrations DIR
 # Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs
 # each function, and records success. Failed migrations are not recorded and retry
 # on the next run. Migrations must be idempotent.
+#
+# A migration carrying _PROJECT_SCOPED_MARKER runs once per registered repo, with
+# that repo's path as its only argument, and is recorded once per repo. A repo
+# that fails is the only one not recorded, so the next sync retries that repo
+# alone rather than the whole machine.
 run_component_migrations() {
   local dir="$1"
   local migrations_dir="$dir/migrations"
@@ -108,14 +207,17 @@ run_component_migrations() {
   # Derive component-relative path for state tracking (e.g. "git", "terminals/ghostty")
   local component_rel="${dir#"$WORKBENCH_DIR/"}"
 
-  local migration basename_m state_key fn_name applied=0 skipped=0
+  local migration basename_m base_key fn_name applied=0 skipped=0
+  local -a targets=()
   for migration in "$migrations_dir"/*.sh; do
     [[ -f "$migration" ]] || continue
     basename_m="$(basename "$migration")"
-    state_key="$component_rel/$basename_m"
+    base_key="$component_rel/$basename_m"
 
-    # Already applied — skip
-    if grep -qxF "$state_key" "$state_file"; then
+    # Already applied — skip. For a project-scoped migration that means every
+    # registered repo has its own entry, not that the machine has one.
+    _migration_targets targets "$migration" "$base_key" "$state_file"
+    if (( ${#targets[@]} == 0 )); then
       skipped=$(( skipped + 1 ))
       continue
     fi
@@ -134,12 +236,15 @@ run_component_migrations() {
       continue
     fi
 
-    if "$fn_name"; then
-      echo "$state_key" >> "$state_file"
-      applied=$(( applied + 1 ))
+    _run_migration_targets "$fn_name" "$basename_m" "$base_key" "$state_file" "${targets[@]}"
+    (( _MIGRATION_RAN > 0 )) || continue
+    applied=$(( applied + 1 ))
+    if [[ -z "${targets[0]}" ]]; then
       success "Migration applied: $basename_m"
+    elif (( _MIGRATION_RAN == 1 )); then
+      success "Migration applied: $basename_m (1 project)"
     else
-      warn "Migration failed: $basename_m — will retry on next run"
+      success "Migration applied: $basename_m ($_MIGRATION_RAN projects)"
     fi
   done
 
@@ -159,6 +264,10 @@ _migration_carries_marker() {
 # Collect the state keys of every discovered migration, in the same
 # "<component>/<basename>.sh" form run_component_migrations records. With
 # MARKER_RE given, only the migrations whose file matches it are collected.
+#
+# A project-scoped migration's state lines extend its key with a separator and a
+# repo path, so every comparison against these keys splits the line first —
+# _split_migration_state_line is what does that.
 _discover_migration_keys() {
   local -n __keys="$1"
   local marker_re="${2:-}"
@@ -195,7 +304,7 @@ _forget_adoption_sensitive_migrations() {
   _discover_migration_keys sensitive_keys "$_ADOPTION_SENSITIVE_MARKER"
   (( ${#sensitive_keys[@]} > 0 )) || return 0
 
-  local line forgotten=0
+  local line base project forgotten=0
   local -a kept=()
   # `|| [[ -n "$line" ]]`: read reports EOF for a final line with no newline
   # after it, and the loop body would never see it — an entry silently dropped
@@ -204,7 +313,12 @@ _forget_adoption_sensitive_migrations() {
   # not have to.
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
-    if _array_contains "$line" "${sensitive_keys[@]}"; then
+    # On the key rather than the whole line: a project-scoped migration's
+    # entries carry a repo path that matches no discovered key, and comparing
+    # whole lines would quietly stop forgetting a marked migration for exactly
+    # the repos it was applied to.
+    _split_migration_state_line "$line" base project
+    if _array_contains "$base" "${sensitive_keys[@]}"; then
       forgotten=$(( forgotten + 1 ))
       continue
     fi
@@ -223,29 +337,82 @@ _forget_adoption_sensitive_migrations() {
 # _prune_stale_migration_state
 # Removes entries from the state file that no longer match any discovered migration file.
 # This handles direction changes within a PR or cleaned-up old migrations.
+#
+# It is also where a project-scoped migration's per-repo entries are reconciled
+# with the registry, in both directions: a repo that left takes its entries with
+# it, and a migration that changed scope loses the entries written in the shape
+# the other scope records.
 _prune_stale_migration_state() {
   local state_file="$MIGRATIONS_STATE_FILE"
   [[ -f "$state_file" ]] || return 0
 
-  local -a discovered_keys=()
+  local -a discovered_keys=() project_keys=()
   _discover_migration_keys discovered_keys
+  _discover_migration_keys project_keys "$_PROJECT_SCOPED_MARKER"
+
+  # The repos a per-repo entry may still name. project_registered also skips a
+  # registered path that has gone from disk, so an entry for one of those is
+  # dropped too — if the directory comes back it registers again and the
+  # migration, which has to be idempotent anyway, simply runs there again.
+  local -A registered=()
+  local repo
+  while IFS= read -r repo; do
+    registered["$repo"]=1
+  done < <(project_registered)
 
   # Check each state entry against discovered keys
-  local stale_found=false line
+  local rewrite=false line base project project_scoped departed=0
   local -a clean_lines=()
   # Same unterminated-last-line guard as _forget_adoption_sensitive_migrations.
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
-    if _array_contains "$line" "${discovered_keys[@]}"; then
-      clean_lines+=("$line")
-    else
-      warn "Pruned stale migration state: $line"
-      stale_found=true
+    _split_migration_state_line "$line" base project
+    project_scoped=false
+    if _array_contains "$base" "${project_keys[@]}"; then
+      project_scoped=true
     fi
+
+    if ! _array_contains "$base" "${discovered_keys[@]}"; then
+      warn "Pruned stale migration state: $line"
+      rewrite=true
+      continue
+    fi
+    # A migration that changed scope leaves entries in the shape the other
+    # scope writes. A bare key claims the whole machine is done, which a
+    # project-scoped migration is in no position to say; a per-repo key means
+    # nothing to one that runs once, and no line the framework writes for it
+    # would ever match. Either is dropped without a warning — the migration is
+    # not stale, it is about to run in the shape it now asks for.
+    if [[ "$project_scoped" == true && -z "$project" ]]; then
+      rewrite=true
+      continue
+    fi
+    if [[ "$project_scoped" == false && -n "$project" ]]; then
+      rewrite=true
+      continue
+    fi
+    if [[ -n "$project" && -z "${registered["$project"]:-}" ]]; then
+      departed=$(( departed + 1 ))
+      rewrite=true
+      continue
+    fi
+    clean_lines+=("$line")
   done < "$state_file"
 
-  if [[ "$stale_found" == true ]]; then
-    printf '%s\n' "${clean_lines[@]}" > "$state_file"
+  if (( departed == 1 )); then
+    info "Forgot 1 migration state entry — the repo it names is no longer registered"
+  elif (( departed > 1 )); then
+    info "Forgot $departed migration state entries — the repos they name are no longer registered"
+  fi
+
+  if [[ "$rewrite" == true ]]; then
+    # printf over an empty array writes a blank line, which the next run would
+    # read back as an entry it cannot recognise.
+    if (( ${#clean_lines[@]} > 0 )); then
+      printf '%s\n' "${clean_lines[@]}" > "$state_file"
+    else
+      : > "$state_file"
+    fi
   fi
 }
 

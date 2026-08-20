@@ -128,6 +128,17 @@ class TestPromptStderr:
         assert rc == 1
         assert "Claude usage limit reached" in capsys.readouterr().err
 
+    def test_whitespace_stderr_does_not_hide_stdout(self, monkeypatch, capsys, tmp_path):
+        fake_result = types.SimpleNamespace(
+            stdout="Claude usage limit reached", returncode=1, stderr="\n",
+        )
+        monkeypatch.setattr(
+            ai_backend_claude.subprocess, "run",
+            lambda *a, **kw: fake_result,
+        )
+        ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        assert "Claude usage limit reached" in capsys.readouterr().err
+
     def test_silent_failure_logs_the_exit_code(self, monkeypatch, capsys, tmp_path):
         fake_result = types.SimpleNamespace(stdout="", returncode=143, stderr="")
         monkeypatch.setattr(

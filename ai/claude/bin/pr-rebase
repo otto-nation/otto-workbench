@@ -1092,6 +1092,9 @@ def _fix_push_failures(
     # A file that conflicted in several replayed commits is listed once per
     # conflict; fixing it once is enough.
     candidates = list(dict.fromkeys(resolved_files))
+    # Matched against the truncated output on purpose: it is what the fix prompt
+    # shows the AI, so a file named only past the cut has no visible complaint
+    # to act on.
     targets = _files_named_in(truncated, candidates)
     if not targets:
         # A check can fail without naming a path, and then every resolved file

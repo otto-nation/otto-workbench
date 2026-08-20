@@ -180,7 +180,7 @@ def _failure_detail(result: subprocess.CompletedProcess) -> str:
     empty stderr, so a stderr-only message logs nothing at all and the caller is
     left reporting a bare exit code with no reason attached.
     """
-    detail = (result.stderr or result.stdout).strip()
+    detail = result.stderr.strip() or result.stdout.strip()
     if not detail:
         return f"claude exited {result.returncode} with no output"
     return detail[:_FAILURE_DETAIL_MAX_CHARS]

@@ -654,6 +654,11 @@ class CloseoutDebt:
 
     summary: bool = False
     replies: bool = False
+    # A tracking issue the fix pass owed the deferred threads and never filed.
+    # Its absence is quieter still than the other two: the summary renders a
+    # bare "Deferred" with no link, which reads exactly like a deferral nobody
+    # asked to track.
+    deferred_issue: bool = False
     # Recounted from the recorded outcomes rather than read off a stored number,
     # which makes it advisory: a queue whose outcomes were pruned still owes its
     # replies via `replies` while this reads 0. `replies` alone decides whether
@@ -662,10 +667,10 @@ class CloseoutDebt:
 
     @property
     def owed(self) -> bool:
-        return self.summary or self.replies
+        return self.summary or self.replies or self.deferred_issue
 
     def describe(self) -> str:
-        """Name what is owed — 'summary', '15 replies', or both."""
+        """Name what is owed — 'summary', '15 replies', 'deferred tracking issue', or a mix."""
         parts = []
         if self.summary:
             parts.append("summary")
@@ -673,7 +678,23 @@ class CloseoutDebt:
             # An uncounted queue reads as replies owed, never as zero of them.
             noun = "reply" if self.reply_count == 1 else "replies"
             parts.append(f"{self.reply_count} {noun}" if self.reply_count else "replies")
+        if self.deferred_issue:
+            parts.append("deferred tracking issue")
         return " + ".join(parts)
+
+
+def closeout_command_for(debt: CloseoutDebt) -> str:
+    """The command that actually drains the given debt.
+
+    The bare CLOSEOUT_COMMAND drains a rendered-but-unsent summary or reply
+    queue, but a deferred tracking issue is only ever filed for threads named
+    by `--track`/`--track-all` — `--track` defaults to selecting nothing, so
+    the bare command would hit that early return and leave the issue unfiled
+    forever. Quote the flag that actually files it whenever that debt is owed.
+    """
+    if debt.deferred_issue:
+        return f"{CLOSEOUT_COMMAND} --track-all"
+    return CLOSEOUT_COMMAND
 
 
 def closeout_debt(f: FixSummary) -> CloseoutDebt:
@@ -684,6 +705,7 @@ def closeout_debt(f: FixSummary) -> CloseoutDebt:
     return CloseoutDebt(
         summary=f.summary_deferred,
         replies=f.replies_pending,
+        deferred_issue=f.deferred_issue_pending,
         reply_count=sum(1 for t in f.threads if t.action in _REPLY_ACTIONS),
     )
 
@@ -712,7 +734,7 @@ def render_fix_status(f: FixSummary) -> list[str]:
         lines[0] += f" (commit: {f.commit_sha}, {f.commit_status})"
     debt = closeout_debt(f)
     if debt.owed:
-        lines.append(f"  ⚠ closeout owed: {debt.describe()} — run: {CLOSEOUT_COMMAND}")
+        lines.append(f"  ⚠ closeout owed: {debt.describe()} — run: {closeout_command_for(debt)}")
     if f.deferred_issue_id:
         lines.append(f"  tracked in {f.deferred_issue_id}")
     return lines

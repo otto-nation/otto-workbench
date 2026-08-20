@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review_issue import (
-    IssueContext, IssueProviderInfo, CreatedIssue,
+    IssueContext, IssueDelivery, IssueProviderInfo, CreatedIssue,
     load_issue_provider, ensure_issue_provider, extract_issue_id,
     needs_team_key, fetch_issue_context, create_issue, update_issue,
 )
@@ -366,9 +366,10 @@ def test_create_issue_linear():
     with patch("subprocess.run", side_effect=fake_run):
         result = create_issue("linear", "ENG", "title", "description", parent_id="ENG-123")
 
-    assert result is not None
-    assert result.id == "ENG-456"
-    assert result.url == "https://linear.app/team/issue/ENG-456/slug"
+    assert result.filed is True
+    assert result.owed is False
+    assert result.issue.id == "ENG-456"
+    assert result.issue.url == "https://linear.app/team/issue/ENG-456/slug"
     create_cmd = calls[0]
     assert "--team" in create_cmd
     assert "--parent" in create_cmd
@@ -389,8 +390,8 @@ def test_create_issue_linear_no_parent():
     with patch("subprocess.run", side_effect=fake_run):
         result = create_issue("linear", "ENG", "title", "description")
 
-    assert result is not None
-    assert result.id == "ENG-456"
+    assert result.filed is True
+    assert result.issue.id == "ENG-456"
 
 
 def test_create_issue_linear_failure():
@@ -401,7 +402,9 @@ def test_create_issue_linear_failure():
     with patch("subprocess.run", return_value=r):
         result = create_issue("linear", "ENG", "title", "description")
 
-    assert result is None
+    assert result.delivery is IssueDelivery.UNDELIVERED
+    assert result.owed is True
+    assert result.issue == CreatedIssue()
 
 
 def test_create_issue_github():
@@ -412,14 +415,16 @@ def test_create_issue_github():
     with patch("subprocess.run", return_value=r):
         result = create_issue("github", "", "title", "description", repo="owner/repo")
 
-    assert result is not None
-    assert result.id == "#42"
-    assert result.url == "https://github.com/owner/repo/issues/42"
+    assert result.filed is True
+    assert result.issue.id == "#42"
+    assert result.issue.url == "https://github.com/owner/repo/issues/42"
 
 
 def test_create_issue_unsupported_provider():
+    """A provider that cannot create issues still owes the issue it did not file."""
     result = create_issue("jira", "PROJ", "title", "description")
-    assert result is None
+    assert result.delivery is IssueDelivery.UNDELIVERED
+    assert result.owed is True
 
 
 # ── update_issue ──────────────────────────────────────────────────────────

@@ -50,7 +50,7 @@ from pr_thread_models import (
     triage_result_from_dict,
 )
 from review_github import fetch_pr_data
-from review_issue import CreatedIssue
+from review_issue import CreatedIssue, IssueDelivery, IssueResult
 import supersession
 from tool_parser import handle_value_flags
 from trail import Trail, add_trail_args
@@ -1465,11 +1465,12 @@ def _finalize_deferred(
     if not pr_number:
         return _NO_ISSUE
 
-    issue = _create_or_update_deferred_issue(
+    result = _create_or_update_deferred_issue(
         deferred, ctx.repo, pr_number, threads_by_id,
         ctx, state.fix.deferred_issue_id, trail,
         state.fix.deferred_issue_url,
     )
+    issue = result.issue
 
     if issue.id:
         _post_deferred_replies(
@@ -1479,6 +1480,11 @@ def _finalize_deferred(
 
     state.fix.deferred_issue_id = issue.id
     state.fix.deferred_issue_url = issue.url
+    # An issue that was owed and did not get filed leaves these threads pointing
+    # at something that does not exist. The trail records that too, but nobody
+    # reads the trail to decide whether a PR is safe to merge — they read
+    # `pr status`, which reads this.
+    state.fix.deferred_issue_pending = result.owed
     return issue
 
 
@@ -1836,13 +1842,44 @@ def _build_deferred_issue_body(
 
 def _update_deferred_issue(
     provider: str, issue_id: str, body: str, repo: str, opts: dict | None,
-) -> CreatedIssue:
+) -> IssueResult:
+    """Refresh the tracking issue that already exists for this cycle.
+
+    Filed either way: an update that did not land leaves the issue stale rather
+    than missing, so the deferred threads still have the home the closeout debt
+    exists to insist on.
+    """
     ok = review_issue.update_issue(provider, issue_id, body, repo=repo, opts=opts)
     if not ok:
         log.error(f"Failed to update deferred issue {issue_id}")
-        return CreatedIssue(id=issue_id)
+        return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id))
     url = review_issue.get_issue_url(provider, issue_id)
-    return CreatedIssue(id=issue_id, url=url)
+    return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id, url=url))
+
+
+def _no_team_key(
+    provider: str, trail: Trail | None, *, publishing_open: bool,
+) -> IssueResult:
+    """Report a tracker this run cannot address, and say what it costs.
+
+    A provider that keys issues by team with no team to name is a fourth route
+    to the outcome the closeout debt exists to catch: nothing gets filed and the
+    deferred threads have no home. So it is owed while the gate is open, and a
+    non-event while it is shut — a draft run has failed at nothing it would
+    otherwise have attempted.
+    """
+    if not publishing_open:
+        log.dim(f"Cannot determine team key for {provider} issue creation — skipping")
+        if trail:
+            trail.info("deferred_issue", "skipped — no team key")
+        return IssueResult(IssueDelivery.SKIPPED)
+
+    log.error(
+        f"Cannot determine team key for {provider} — deferred tracking issue not filed",
+    )
+    if trail:
+        trail.error("deferred_issue", "no team key")
+    return IssueResult(IssueDelivery.UNDELIVERED)
 
 
 def _create_deferred_issue(
@@ -1853,7 +1890,9 @@ def _create_deferred_issue(
     pr_number: int,
     opts: dict | None,
     trail: Trail | None,
-) -> CreatedIssue:
+    *,
+    publishing_open: bool,
+) -> IssueResult:
     parent_id = review_issue.extract_issue_id(provider, ctx.branch)
     # The configured team wins over the one implied by the branch: it is
     # what the repo declared, while the branch prefix is an inference from
@@ -1862,24 +1901,33 @@ def _create_deferred_issue(
     if not team and parent_id and "-" in parent_id:
         team = parent_id.split("-", 1)[0]
     if not team and review_issue.needs_team_key(provider):
-        log.dim(f"Cannot determine team key for {provider} issue creation — skipping")
-        if trail:
-            trail.info("deferred_issue", "skipped — no team key")
-        return CreatedIssue()
+        return _no_team_key(provider, trail, publishing_open=publishing_open)
 
     title = f"fix(review): deferred review comments — PR #{pr_number}"
-    created = review_issue.create_issue(
+    result = review_issue.create_issue(
         provider, team, title, body, parent_id=parent_id, repo=repo, opts=opts,
     )
-    if not created:
+    if result.filed:
+        if trail:
+            trail.info(
+                "deferred_issue",
+                f"created {result.issue.id}",
+                data={"url": result.issue.url},
+            )
+        return result
+    if result.owed:
         log.error("Failed to create deferred tracking issue")
         if trail:
             trail.error("deferred_issue", "creation failed")
-        return CreatedIssue()
+        return result
 
+    # The publishing gate declined the write, which is the gate working. Saying
+    # it failed here would put a spurious error in the closeout `pr status`
+    # reads, on every draft run.
+    log.dim("Deferred tracking issue not filed — publishing is off")
     if trail:
-        trail.info("deferred_issue", f"created {created.id}", data={"url": created.url})
-    return created
+        trail.info("deferred_issue", "skipped — publishing off")
+    return result
 
 
 def _create_or_update_deferred_issue(
@@ -1891,10 +1939,15 @@ def _create_or_update_deferred_issue(
     existing_issue_id: str,
     trail: Trail | None,
     existing_issue_url: str = "",
-) -> CreatedIssue:
-    """Create or update the deferred threads tracking issue."""
+) -> IssueResult:
+    """Create or update the deferred threads tracking issue.
+
+    Reports whether the issue was delivered, not only what it produced: the
+    caller records an owed-and-unfiled issue in state, which is what puts it in
+    front of `pr status` instead of leaving it in the trail alone.
+    """
     if not deferred:
-        return CreatedIssue(id=existing_issue_id)
+        return IssueResult(IssueDelivery.SKIPPED, CreatedIssue(id=existing_issue_id))
 
     worktree = str(ctx.require_worktree())
     publishing_open = publishing.enabled()
@@ -1905,29 +1958,33 @@ def _create_or_update_deferred_issue(
     else:
         provider_info = review_issue.load_issue_provider(worktree)
     if not provider_info.resolved:
-        # ensure_issue_provider has already said why. The trail record is an
-        # audit signal only — `pr status` reads the deferred summary and the
-        # pending replies, so an unfiled tracking issue is not surfaced there
-        # yet; https://github.com/otto-nation/otto-workbench/issues/805 tracks
-        # making it so. Not an error while the gate is closed, though: with
-        # nothing configured to file to, a draft run has failed at nothing it
-        # would otherwise have attempted.
+        # ensure_issue_provider has already said why. The delivery is what the
+        # caller records, and what `pr status` reads: with the gate open the
+        # deferred threads are owed an issue nothing can file, while a draft run
+        # has failed at nothing it would otherwise have attempted.
         if trail and publishing_open:
             trail.error("deferred_issue", "no issue tracker configured")
         elif trail:
             trail.info("deferred_issue", "skipped — no issue tracker configured")
-        return CreatedIssue()
+        return IssueResult(
+            IssueDelivery.UNDELIVERED if publishing_open else IssueDelivery.SKIPPED,
+        )
     provider = provider_info.name
 
     body = _build_deferred_issue_body(deferred, repo, pr_number, threads_by_id)
 
     if existing_issue_id:
-        issue = _update_deferred_issue(
+        updated = _update_deferred_issue(
             provider, existing_issue_id, body, repo, provider_info.options,
         )
-        return CreatedIssue(id=issue.id, url=issue.url or existing_issue_url)
+        return IssueResult(updated.delivery, CreatedIssue(
+            id=updated.issue.id, url=updated.issue.url or existing_issue_url,
+        ))
 
-    return _create_deferred_issue(provider, body, ctx, repo, pr_number, provider_info.options, trail)
+    return _create_deferred_issue(
+        provider, body, ctx, repo, pr_number, provider_info.options, trail,
+        publishing_open=publishing_open,
+    )
 
 
 def _fixed_status_for(

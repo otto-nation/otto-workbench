@@ -1359,6 +1359,20 @@ def test_apply_fix_preserves_deferred_issue_across_rounds():
     assert state.fix.deferred_issue_url == "https://linear.app/team/issue/ENG-456"
 
 
+def test_apply_fix_preserves_an_unfiled_deferred_issue_across_rounds():
+    """Only the phase that files the issue settles the debt, not the next pass."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, FixSummary(
+        threads=[ThreadOutcome(id="t1", action=ThreadAction.DEFERRED)],
+        deferred_issue_pending=True, updated_at="t1",
+    ))
+    apply(state, FixSummary(
+        threads=[ThreadOutcome(id="t2", action=ThreadAction.FIXED)],
+        commit_sha="abc", commit_status="pushed", updated_at="t2",
+    ))
+    assert state.fix.deferred_issue_pending is True
+
+
 def test_apply_fix_replaces_deferred_issue_when_supplied():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, FixSummary(deferred_issue_id="ENG-1", deferred_issue_url="u1"))

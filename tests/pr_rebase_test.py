@@ -3528,6 +3528,116 @@ def test_fix_push_failures_truncates_error_output(tmp_path):
     assert True
 
 
+def _prompted_files(tmp_path, error_output, resolved_files):
+    """Run the fix pass over stub files and report which ones were prompted for."""
+    prompts = []
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:3] == ["claude", "-p", "--bare"]:
+            prompts.append(kwargs.get("input", ""))
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    for name in dict.fromkeys(resolved_files):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("stub\n")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
+        pr_rebase_cli._fix_push_failures(str(tmp_path), error_output, resolved_files)
+
+    return [
+        name for name in dict.fromkeys(resolved_files)
+        if any(f"File: {name}\n" in p for p in prompts)
+    ], len(prompts)
+
+
+def test_fix_push_failures_only_prompts_for_files_the_check_names(tmp_path):
+    """A rebase resolves dozens of files; the fix pass touches the named ones.
+
+    Prompting for every resolved file spends a whole-file call per entry and
+    lets an agent with edit access rewrite a file the check never complained
+    about.
+    """
+    resolved = ["bin/otto-workbench", "docs/libraries.md", "ai/lib/prompt.py"]
+    error = "✗ bin/otto-workbench: nesting exceeds 2 levels\n      line 1304: depth 3\n"
+
+    prompted, total = _prompted_files(tmp_path, error, resolved)
+
+    assert prompted == ["bin/otto-workbench"]
+    assert total == 1
+
+
+def test_fix_push_failures_deduplicates_resolved_files(tmp_path):
+    """A file that conflicted in several replayed commits is fixed once."""
+    resolved = ["ai/lib/review_issue.py"] * 4
+    error = "ai/lib/review_issue.py:12: undefined name"
+
+    prompted, total = _prompted_files(tmp_path, error, resolved)
+
+    assert prompted == ["ai/lib/review_issue.py"]
+    assert total == 1
+
+
+def test_fix_push_failures_matches_a_basename_only_report(tmp_path):
+    """Checks that report a bare filename still scope to that file."""
+    resolved = ["pkg/server.go", "pkg/client.go"]
+
+    prompted, total = _prompted_files(tmp_path, "gofmt: server.go needs formatting", resolved)
+
+    assert prompted == ["pkg/server.go"]
+    assert total == 1
+
+
+def test_fix_push_failures_falls_back_when_the_check_names_no_file(tmp_path):
+    """Check output with no path in it leaves every resolved file a suspect."""
+    resolved = ["pkg/server.go", "pkg/client.go"]
+
+    prompted, total = _prompted_files(tmp_path, "build failed: exit status 2", resolved)
+
+    assert prompted == resolved
+    assert total == 2
+
+
+def test_fix_push_failures_records_the_unscoped_fallback(tmp_path):
+    """The expensive unscoped pass is visible in the trail, not just in spend."""
+    (tmp_path / "server.go").write_text("stub\n")
+    fake_trail = mock.MagicMock()
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_trail", fake_trail), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
+        pr_rebase_cli._fix_push_failures(str(tmp_path), "build failed", ["server.go"])
+
+    actions = [c.args[0] for c in fake_trail.info.call_args_list]
+    assert "fix_push_failures" in actions
+
+
+def test_fix_one_file_records_the_backend_exit_code(tmp_path):
+    """A failed fix carries its exit code into the trail.
+
+    The console line is the only other record, so a run that fails every fix
+    leaves nothing behind to explain why without this.
+    """
+    (tmp_path / "server.go").write_text("package main\n")
+    fake_trail = mock.MagicMock()
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "_trail", fake_trail):
+        pr_rebase_cli._fix_one_file("server.go", str(tmp_path), "build failed")
+
+    assert fake_trail.error.called
+    data = fake_trail.error.call_args.kwargs["data"]
+    assert data == {"filepath": "server.go", "exit_code": 1}
+
+
 def test_force_push_tries_ai_fix_on_check_failure():
     """Push fails with no modified files but resolved_files provided — tries AI fix."""
     push_count = [0]

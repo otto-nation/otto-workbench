@@ -65,6 +65,11 @@ def _terr(action: str, detail: str, **kwargs) -> None:
         _trail.error(action, detail, **kwargs)
 
 
+def _tinfo(action: str, detail: str, **kwargs) -> None:
+    if _trail:
+        _trail.info(action, detail, **kwargs)
+
+
 # How many unpushed commits a divergence refusal names before it stops. The
 # operator needs enough to recognise the branch, not the whole log.
 _UNPUSHED_SUBJECT_LIMIT = 10
@@ -1006,6 +1011,10 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
     )
     if rc != 0:
         log.error(f"AI fix failed for {filepath} (exit {rc})")
+        _terr(
+            "fix_push_failures", f"AI fix failed for {filepath}",
+            data={"filepath": filepath, "exit_code": rc},
+        )
         return
 
     fixed_content, failure_reason = _parse_resolved_content(stdout)
@@ -1021,6 +1030,25 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
 
     full_path.write_text(fixed_content)
     log.ok(f"Fixed: {filepath}")
+
+
+def _files_named_in(check_output: str, candidates: list[str]) -> list[str]:
+    """Pick the candidates the failing check actually complained about.
+
+    A long rebase resolves conflicts in dozens of files while the check that
+    then fails names two of them. Prompting the AI for every resolved file
+    spends a whole-file call per entry and hands an agent with edit access a
+    file the check had no complaint about — which is how a file the branch
+    never touched ends up rewritten.
+
+    Matching on the bare name as well as the path catches checks that report a
+    basename only. That can pull in a same-named file from another directory;
+    one extra file is the acceptable side of this trade.
+    """
+    return [
+        path for path in candidates
+        if path in check_output or Path(path).name in check_output
+    ]
 
 
 def _stage_worktree(cwd: str) -> list[str]:
@@ -1046,8 +1074,8 @@ def _fix_push_failures(
     """Attempt to fix pre-push check errors and commit the result.
 
     Uses AI to interpret the check output and fix formatting, build, or lint
-    issues in the resolved files. Language-agnostic — the project's own checks
-    serve as the oracle.
+    issues in the resolved files the output names. Language-agnostic — the
+    project's own checks serve as the oracle.
 
     The backend runs with ``acceptEdits`` and ``Bash(*)``, so a fix can land
     anywhere in the worktree, not only in the file whose content came back
@@ -1061,7 +1089,22 @@ def _fix_push_failures(
         return False
 
     truncated = error_output[:_FIX_ERROR_MAX_CHARS]
-    for filepath in resolved_files:
+    # A file that conflicted in several replayed commits is listed once per
+    # conflict; fixing it once is enough.
+    candidates = list(dict.fromkeys(resolved_files))
+    # Matched against the truncated output on purpose: it is what the fix prompt
+    # shows the AI, so a file named only past the cut has no visible complaint
+    # to act on.
+    targets = _files_named_in(truncated, candidates)
+    if not targets:
+        # A check can fail without naming a path, and then every resolved file
+        # is still a suspect. Recorded because it is the expensive path.
+        targets = candidates
+        _tinfo(
+            "fix_push_failures", "check output named no resolved file",
+            data={"files": candidates},
+        )
+    for filepath in targets:
         _fix_one_file(filepath, cwd, truncated)
 
     staged = _stage_worktree(cwd)
@@ -1076,11 +1119,10 @@ def _fix_push_failures(
         log.error("Failed to commit fixes.")
         return False
 
-    if _trail:
-        _trail.info(
-            "fix_push_failures", "committed check-failure fixes",
-            data={"files": staged},
-        )
+    _tinfo(
+        "fix_push_failures", "committed check-failure fixes",
+        data={"files": staged},
+    )
     return True
 
 

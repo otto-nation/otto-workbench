@@ -79,6 +79,13 @@ discover_migration_dirs _migration_dirs
 # Its quote state is per line rather than carried across them; a string spanning
 # lines can then only cost a missed match inside itself, which is not a shape a
 # migration writes.
+#
+# `heredoc_body` answers whether the line being read is a heredoc body rather
+# than skipping it here, because the two scanners want opposite things from one:
+# a heredoc body holds no statement, but it does hold text a parameter can be
+# read from, so the parameter scanner reads the body the shell would expand
+# (`heredoc_quoted` records whether the delimiter was quoted, which makes the
+# body literal).
 _AWK_LINE_HELPERS='
     BEGIN { SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); depth = 0; quote = ""; heredoc = "" }
     function trim(line) {
@@ -115,11 +122,9 @@ _AWK_LINE_HELPERS='
       }
       return out
     }
-    function delta(line,   opened, closed, t) {
-      t = line; opened = gsub(/\{/, "&", t)
-      t = line; closed = gsub(/\}/, "&", t)
-      return opened - closed
-    }
+    function opens(line,   t) { t = line; return gsub(/\{/, "&", t) }
+    function closes(line,   t) { t = line; return gsub(/\}/, "&", t) }
+    function delta(line) { return opens(line) - closes(line) }
     function note_heredoc(line,   marker) {
       marker = line
       gsub(SQ, "", marker)
@@ -127,9 +132,14 @@ _AWK_LINE_HELPERS='
       if (match(marker, /<<-?[ \t]*[A-Za-z_][A-Za-z0-9_]*/)) {
         heredoc = substr(marker, RSTART, RLENGTH)
         sub(/^<<-?[ \t]*/, "", heredoc)
+        heredoc_quoted = (line ~ "<<-?[ \t]*[" SQ DQ "]")
       }
     }
-    heredoc != "" { if (trim($0) == heredoc) heredoc = ""; next }
+    function heredoc_body(line) {
+      if (heredoc == "") return 0
+      if (trim(line) == heredoc) heredoc = ""
+      return 1
+    }
 '
 
 # _file_scope_statements FILE — print "LINENO<TAB>TEXT" for every line of FILE
@@ -155,6 +165,7 @@ _file_scope_statements() {
       return 0
     }
     {
+      if (heredoc_body($0)) next
       if (depth == 0 && !inert($0)) printf "%d\t%s\n", NR, trim($0)
       stripped = code($0)
       note_heredoc($0)
@@ -172,11 +183,20 @@ _file_scope_statements() {
 # about the one function the framework calls — `ai/claude/20260624-workbench-
 # state-dir.sh` nests one that reads `$1` per worktree root. So a nested
 # definition is followed for its braces and skipped for its text, and the outer
-# body resumes where it closes. The body itself is bounded by the same
-# brace-counting the scanner above uses.
+# body resumes where it closes. The body itself is bounded by the braces the file
+# opens after the definition line — counting them, rather than waiting for the
+# depth to rise, is what ends the scan of a one-line body whose brace pair opens
+# and closes before the depth is ever looked at.
+#
+# A heredoc the body writes is read too, unless its delimiter was quoted: an
+# unquoted body is expanded by the shell, so a repo path interpolated into a
+# message is a read of the argument like any other.
 _migration_fn_reads_arg() {
   awk -v fn="$2" "$_AWK_LINE_HELPERS"'
     BEGIN { definition = "^[ \t]*" fn "[ \t]*\\(\\)"; nested = -1 }
+    { body = heredoc_body($0) }
+    body && inside && nested < 0 && !heredoc_quoted && $0 ~ /\$\{?[1@*]/ { found = 1 }
+    body { next }
     !inside && !closed && $0 ~ definition { inside = 1; depth = 0; nested = -1; own = 1 }
     inside {
       isdef = (!own && $0 ~ /^[ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)|function[ \t]+[A-Za-z_])/)
@@ -187,7 +207,7 @@ _migration_fn_reads_arg() {
       depth += delta(stripped)
       if (isdef && nested < 0 && depth > before) nested = before
       if (nested >= 0 && depth <= nested) nested = -1
-      if (depth > 0) opened = 1
+      if (opens(stripped) > 0) opened = 1
       if (opened && depth <= 0) { inside = 0; closed = 1 }
       own = 0
     }

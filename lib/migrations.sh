@@ -239,10 +239,12 @@ run_component_migrations() {
     _run_migration_targets "$fn_name" "$basename_m" "$base_key" "$state_file" "${targets[@]}"
     (( _MIGRATION_RAN > 0 )) || continue
     applied=$(( applied + 1 ))
-    if [[ -n "${targets[0]}" ]]; then
-      success "Migration applied: $basename_m ($_MIGRATION_RAN project(s))"
-    else
+    if [[ -z "${targets[0]}" ]]; then
       success "Migration applied: $basename_m"
+    elif (( _MIGRATION_RAN == 1 )); then
+      success "Migration applied: $basename_m (1 project)"
+    else
+      success "Migration applied: $basename_m ($_MIGRATION_RAN projects)"
     fi
   done
 
@@ -397,8 +399,10 @@ _prune_stale_migration_state() {
     clean_lines+=("$line")
   done < "$state_file"
 
-  if (( departed > 0 )); then
-    info "Forgot $departed migration state entr(y|ies) — the repos they name are no longer registered"
+  if (( departed == 1 )); then
+    info "Forgot 1 migration state entry — the repo it names is no longer registered"
+  elif (( departed > 1 )); then
+    info "Forgot $departed migration state entries — the repos they name are no longer registered"
   fi
 
   if [[ "$rewrite" == true ]]; then

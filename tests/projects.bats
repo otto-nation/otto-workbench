@@ -641,6 +641,9 @@ print(workbench_projects.register('$TMPDIR/container'))
 }
 
 @test "the context-to-architecture migration leaves an existing architecture.md alone" {
+  # No registration here, unlike the test above: what the framework hands the
+  # migration is a repo path, and this one is about what the migration does with
+  # the files it finds there rather than about how the path was arrived at.
   make_repo "$TMPDIR/alpha"
   mkdir -p "$TMPDIR/alpha/.claude"
   echo "old" > "$TMPDIR/alpha/.claude/context.md"

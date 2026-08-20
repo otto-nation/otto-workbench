@@ -353,6 +353,55 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "a one-line body ends the scan at its own closing brace" {
+  # The brace pair opens and closes on the definition line, so the scan has to
+  # end there rather than run on into whatever follows the function. The file
+  # scope statement below is a violation of its own — the point here is that it
+  # is not also reported as the migration reading an argument.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() { rm -f /some/file; }
+echo "$1"
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"runs when the framework sources the file"* ]]
+  [[ "$output" != *"reads a positional argument"* ]]
+}
+
+@test "the repo path read through an unquoted heredoc counts as a read" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+# project-scoped: edits files inside each repo.
+migration_20260417_test() {
+  cat <<MSG
+Migrating $1
+MSG
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "a quoted heredoc body is literal text, not an argument read" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  cat <<'MSG'
+Pass the repo as $1
+MSG
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
 @test "a single-quoted dollar-one is literal text, not an argument read" {
   local dir="$FAKE_WORKBENCH/comp/migrations"
   mkdir -p "$dir"

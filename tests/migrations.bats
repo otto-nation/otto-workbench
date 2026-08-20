@@ -533,6 +533,13 @@ register_fake_project() {
   printf '%s\n' "$1" >> "$FAKE_STATE/projects.registry"
 }
 
+# Helper: assert the state file holds KEY's entry for a repo. The separator the
+# framework writes lives here rather than in every assertion that reads one back.
+assert_project_entry() {
+  local key="$1" repo="$2"
+  grep -qxF "$key"$'\t'"$repo" "$FAKE_STATE/migrations.applied"
+}
+
 @test "a project-scoped migration runs once per registered repo" {
   create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
@@ -540,7 +547,7 @@ register_fake_project() {
 
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Migration applied: 20250101-proj.sh (2 project(s))"* ]]
+  [[ "$output" == *"Migration applied: 20250101-proj.sh (2 projects)"* ]]
 
   run cat "$TMPDIR/exec.log"
   [ "${lines[0]}" = "$TMPDIR/repo-a" ]
@@ -548,9 +555,29 @@ register_fake_project() {
 
   # One line per repo, and no bare key: a bare key is the machine claiming to be
   # done, which is the whole thing a project-scoped migration cannot say.
-  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" "$FAKE_STATE/migrations.applied"
-  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-b" "$FAKE_STATE/migrations.applied"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
   run ! grep -qxF "mycomp/20250101-proj.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a project-scoped migration on a machine with no repos records nothing" {
+  # No repo to visit is not the migration being done — it is a machine that has
+  # nothing to apply it to yet. Recording anything here is what would leave the
+  # first repo registered afterwards unvisited, so the run is silent and the
+  # state file stays empty until there is a repo to name.
+  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Migration applied"* ]]
+  [ ! -s "$FAKE_STATE/migrations.applied" ]
+  [ ! -e "$TMPDIR/exec.log" ]
+
+  register_fake_project "$TMPDIR/repo-a"
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-proj.sh (1 project)"* ]]
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
 }
 
 @test "a repo that registers after the first sync is visited on the next" {
@@ -563,7 +590,7 @@ register_fake_project() {
   register_fake_project "$TMPDIR/repo-b"
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Migration applied: 20250101-proj.sh (1 project(s))"* ]]
+  [[ "$output" == *"Migration applied: 20250101-proj.sh (1 project)"* ]]
 
   # repo-a exactly once — a late registration re-runs the migration for the repo
   # that is missing, not for the ones already recorded.
@@ -586,7 +613,7 @@ register_fake_project() {
   [[ "$output" != *"Pruned stale migration state"* ]]
 
   [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
-  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" "$FAKE_STATE/migrations.applied"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
 }
 
 @test "entries naming a repo that left the registry are dropped" {
@@ -601,7 +628,7 @@ register_fake_project() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"no longer registered"* ]]
 
-  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" "$FAKE_STATE/migrations.applied"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 }
 
@@ -617,7 +644,7 @@ register_fake_project() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"Pruned stale migration state"* ]]
   [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
-  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/re"$'\t'"po" "$FAKE_STATE/migrations.applied"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/re"$'\t'"po"
 }
 
 @test "a bare entry for a migration that became project-scoped is dropped" {
@@ -684,7 +711,7 @@ EOF
   [[ "$output" == *"Migration failed: 20250101-proj.sh in $TMPDIR/repo-b"* ]]
   [[ "$output" == *"SYNC CONTINUED"* ]]
 
-  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" "$FAKE_STATE/migrations.applied"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 
   rm "$TMPDIR/repo-b/fail"

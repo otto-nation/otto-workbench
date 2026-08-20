@@ -224,3 +224,38 @@ validate_commit_msg() {
     fi
   fi
 }
+
+# preserve_declared_footers ORIGINAL_MSG
+# Re-appends to AI_MSG every declaration footer ORIGINAL_MSG carries that the
+# generated message does not already have.
+#
+# A reword regenerates the message from the commit's diff alone, so a
+# BREAKING CHANGE or Not-Breaking footer the author already wrote is dropped
+# wholesale. The surface gate cannot catch that: it scans every commit on the
+# branch, and the footer about to be reworded away is still there while it runs.
+#
+# Carried mechanically rather than handed to the model as context to preserve —
+# the reason text has to reach git history byte for byte, which is the entire
+# argument for a footer over a checked-in allowlist, and a model paraphrases.
+preserve_declared_footers() {
+  local original="$1"
+  local footers line
+  local missing=()
+  footers=$(declared_footers "$original")
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if printf '%s\n' "$AI_MSG" | grep -qxF "$line"; then
+      continue
+    fi
+    missing+=("$line")
+  done <<<"$footers"
+
+  [[ "${#missing[@]}" -gt 0 ]] || return 0
+
+  local block
+  block=$(printf '%s\n' "${missing[@]}")
+  AI_MSG="$AI_MSG
+
+$block"
+}

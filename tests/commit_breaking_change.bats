@@ -62,6 +62,24 @@ BREAKING CHANGE:"
   [ "$status" -eq 1 ]
 }
 
+# ── declared_footers ───────────────────────────────────────────────────────
+
+@test "declared_footers prints both footer kinds in order" {
+  run declared_footers "refactor: rename the entry point
+
+Not-Breaking: command:beta — renamed, alias kept
+BREAKING CHANGE: config:old.key no longer read"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == "Not-Breaking: command:beta — renamed, alias kept" ]]
+  [[ "${lines[1]}" == "BREAKING CHANGE: config:old.key no longer read" ]]
+}
+
+@test "declared_footers prints nothing when the message declares nothing" {
+  run declared_footers "fix: tighten the retry window"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 # ── validate_commit_msg — the bang marker needs its footer ─────────────────
 
 @test "validate_commit_msg accepts a bang marker backed by a footer" {
@@ -234,4 +252,100 @@ BREAKING CHANGE: --post no longer exists; use --publish"
   # ("...anything on the public surface...") contains it independent of
   # surface_note. "removes the following entries" only ever comes from the note.
   [[ "$AI_MSG" != *"removes the following entries"* ]]
+}
+
+# ── preserve_declared_footers ──────────────────────────────────────────────
+# task commit:reword regenerates the message from the commit's diff alone, so
+# a footer the author already wrote is dropped unless it is carried across.
+
+@test "preserve_declared_footers carries a Not-Breaking footer onto the new message" {
+  AI_MSG="refactor(cli): rename the beta entry point"
+  preserve_declared_footers "refactor(cli): rename beta
+
+Not-Breaking: command:beta — renamed to command:release, alias kept for a cycle"
+
+  [[ "$AI_MSG" == *"Not-Breaking: command:beta — renamed to command:release, alias kept for a cycle"* ]]
+  [[ "$AI_MSG" == "refactor(cli): rename the beta entry point"* ]]
+}
+
+@test "preserve_declared_footers carries a BREAKING CHANGE footer onto the new message" {
+  AI_MSG="feat(cli): drop the legacy flag"
+  preserve_declared_footers "feat(cli)!: drop --legacy
+
+BREAKING CHANGE: --legacy no longer exists; pass --modern instead"
+
+  [[ "$AI_MSG" == *"BREAKING CHANGE: --legacy no longer exists; pass --modern instead"* ]]
+}
+
+# The reason text is the entire argument for a footer over a checked-in
+# allowlist, so it has to reach git history byte for byte — em dash, wording
+# and all. A model asked to preserve it would paraphrase.
+@test "preserve_declared_footers reproduces the footer byte for byte" {
+  local footer="Not-Breaking: config:review.phases.*.model — never read; the phase reads config:review.model"
+  AI_MSG="refactor(review): drop the per-phase model key"
+  preserve_declared_footers "refactor(review): drop per-phase model
+
+$footer"
+
+  run grep -qxF "$footer" <<<"$AI_MSG"
+  [ "$status" -eq 0 ]
+}
+
+@test "preserve_declared_footers separates the carried footer with a blank line" {
+  AI_MSG="feat(cli): drop the legacy flag"
+  preserve_declared_footers "feat(cli)!: drop --legacy
+
+BREAKING CHANGE: --legacy is gone"
+
+  [[ "$AI_MSG" == "feat(cli): drop the legacy flag
+
+BREAKING CHANGE: --legacy is gone" ]]
+}
+
+@test "preserve_declared_footers does not duplicate a footer the new message already has" {
+  AI_MSG="feat(cli): drop the legacy flag
+
+BREAKING CHANGE: --legacy is gone"
+  preserve_declared_footers "feat(cli)!: drop --legacy
+
+BREAKING CHANGE: --legacy is gone"
+
+  local occurrences
+  occurrences=$(grep -c '^BREAKING CHANGE: --legacy is gone$' <<<"$AI_MSG")
+  [ "$occurrences" -eq 1 ]
+}
+
+@test "preserve_declared_footers carries every footer the original declared" {
+  AI_MSG="refactor(cli): tidy the entry points"
+  preserve_declared_footers "refactor(cli): tidy entry points
+
+Not-Breaking: command:beta — alias kept
+Not-Breaking: command:gamma — alias kept"
+
+  [[ "$AI_MSG" == *"Not-Breaking: command:beta — alias kept"* ]]
+  [[ "$AI_MSG" == *"Not-Breaking: command:gamma — alias kept"* ]]
+}
+
+@test "preserve_declared_footers leaves a message with no footers to carry alone" {
+  AI_MSG="fix(cli): tighten the retry window"
+  preserve_declared_footers "fix(cli): retry sooner
+
+Nothing declared here."
+
+  [[ "$AI_MSG" == "fix(cli): tighten the retry window" ]]
+}
+
+# ── task commit:reword wiring ──────────────────────────────────────────────
+
+@test "commit:reword reads the original message and preserves its footers" {
+  local reword
+  reword=$(awk '/^  commit:reword:/{f=1} /^  pr:content:/{f=0} f' "$REPO_ROOT/Taskfile.global.yml")
+  [[ "$reword" == *'ORIGINAL_MSG=$(git log -1 --format=%B "$TARGET_SHA")'* ]]
+  [[ "$reword" == *'preserve_declared_footers "$ORIGINAL_MSG"'* ]]
+
+  # The carry-forward has to land before validation, or a regenerated `!`
+  # header would be rejected for missing the footer that is about to be
+  # re-appended to it.
+  local before_validate="${reword%%validate_commit_msg*}"
+  [[ "$before_validate" == *"preserve_declared_footers"* ]]
 }

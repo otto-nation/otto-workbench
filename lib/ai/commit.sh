@@ -110,6 +110,10 @@ _surface_note() {
   removals=$(_surface_removals "$1")
   [[ -n "$removals" ]] || return 0
 
+  # Heredoc delimiter is deliberately unquoted (<<EOF, not <<'EOF') so
+  # $BREAKING_CHANGE_FOOTER, $NOT_BREAKING_FOOTER, and the $(sed ...) command
+  # substitution below all expand — quoting the delimiter would silently
+  # print the literal variable names instead.
   cat <<EOF
 
 

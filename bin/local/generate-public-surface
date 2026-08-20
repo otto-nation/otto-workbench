@@ -16,8 +16,8 @@
 #
 # Usage: bin/local/generate-public-surface [--check] [--quiet] [--out-dir DIR]
 # Exit codes: 0 on success; 1 if --check finds a committed snapshot out of date,
-#             or on an internal failure (a broken jq/yq call, an empty
-#             category); 2 on a usage error.
+#             or on an internal failure (a broken jq/yq call, a category that
+#             fails to generate or comes back empty); 2 on a usage error.
 
 set -e
 # pipefail closes the gap set -e alone leaves open: every category function

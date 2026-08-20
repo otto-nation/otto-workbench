@@ -92,7 +92,7 @@ tools:
   - name: validate-public-surface
     permission: false
     visibility: brief
-    description: "Validates that the committed public surface snapshots match their source registries"
+    description: "Validates that the committed public surface snapshots match the registries, config schema, and shipped artifacts they are generated from"
 
   - name: check-surface-compat
     permission: false

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Validate that the committed public surface snapshots match the source registries.
+# Validate that the committed public surface snapshots match everything they are
+# generated from — the registries, config.schema.json, install.components, and
+# the shipped ai/claude artifacts.
 #
 # Freshness only — this does not decide whether a change is breaking. That is
 # bin/local/check-surface-compat, which needs a base ref that validators do not have.
 #
 # Usage: bin/local/validate-public-surface [--quiet]
-# Exit code: 0 if both snapshots are current, 1 otherwise.
+# Exit codes: 0 if both snapshots are current; 1 if a committed snapshot is
+#             stale; 2 on a usage error.
 
 set -e
 
@@ -24,7 +27,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--quiet]
 
-Check that the committed public surface snapshots match the source registries.
+Check that the committed public surface snapshots match their sources.
 
 Options:
   --quiet     Suppress output on success
@@ -38,13 +41,19 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --quiet) QUIET=true; shift ;;
     -h|--help) usage; exit 0 ;;
-    *) err "Unknown argument: $1"; usage; exit 1 ;;
+    *) err "Unknown argument: $1"; usage; exit 2 ;;
   esac
 done
 
 if ! "$REPO_ROOT/bin/local/generate-public-surface" --check --quiet; then
-  err "Public surface snapshots are stale"
-  echo "  Run: bin/local/generate-public-surface" >&2
+  # The generator has already printed the specific reason above — a stale
+  # snapshot names itself, and anything else (a broken yq, a category that
+  # collected nothing) prints its own error. This message must not name
+  # staleness: --check exits 1 for a stale snapshot and errexit also surfaces
+  # a failing yq as 1, so asserting a cause here would put a guess underneath
+  # a fact for whoever reads the last line first.
+  err "Public surface snapshot check failed"
+  echo "  If a snapshot is stale, run: bin/local/generate-public-surface" >&2
   exit 1
 fi
 

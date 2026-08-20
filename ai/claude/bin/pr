@@ -12,6 +12,7 @@ import json
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,7 @@ import rebase_status
 import review_gc
 import log
 import review_common
+import review_listing
 import supersession
 import workbench_paths
 import workbench_projects
@@ -81,8 +83,35 @@ class Need:
     lock: bool
 
 
+_NONE = pr_context.ContextDepth.NONE
 _LOCAL = pr_context.ContextDepth.LOCAL
 _REMOTE = pr_context.ContextDepth.REMOTE
+
+# What `pr review` needs when no mode flag says otherwise: a review run, which
+# reads the PR, resets the worktree it is about to review, and holds the lock
+# for the whole thing.
+_REVIEW_DEFAULT_NEED = Need(_REMOTE, update=True, lock=True)
+
+
+def _review_need(argv: list[str]) -> Need:
+    """`review`'s need, which its mode flag decides.
+
+    The one command that declares a callable rather than a constant. Every mode
+    but `--list` runs a review or reads one for a PR, so they need what a
+    review run needs; `--list` answers from the reviews root alone. Reading the
+    declaration off the mode table is what keeps the listing off the
+    fetch-and-lock path structurally, rather than by an exemption someone has
+    to remember.
+
+    `_REVIEW_MODES` is defined further down, beside the handlers it names —
+    this runs per invocation, long after import.
+    """
+    for token in argv:
+        mode = _REVIEW_MODES.get(token)
+        if mode and mode.need is not None:
+            return mode.need
+    return _REVIEW_DEFAULT_NEED
+
 
 _COMMANDS = {
     "create":   {"help": "Create a PR (wraps task pr:create)",
@@ -92,7 +121,7 @@ _COMMANDS = {
     "ci":       {"help": "Check CI failures",                     "script": "ci-check",
                  "need": Need(_REMOTE, update=True,  lock=True)},
     "review":   {"help": "Run code review",                       "script": "claude-review",
-                 "need": Need(_REMOTE, update=True,  lock=True)},
+                 "need": _review_need},
     "comments": {"help": "Fetch and manage PR review threads",    "script": "review-threads",
                  "need": Need(_REMOTE, update=True,  lock=True)},
     "fix":      {"help": "Fix CI + review + comments",
@@ -106,6 +135,17 @@ _COMMANDS = {
 }
 
 
+def _need_for(entry: dict, argv: list[str]) -> Need:
+    """The Need this invocation declares.
+
+    A command whose axes vary by flag declares a callable over its argv instead
+    of a constant; every other one declares the constant. One reader for both
+    shapes, so nothing downstream has to know which kind an entry carries.
+    """
+    need = entry.get("need")
+    return need(argv) if callable(need) else need
+
+
 def _validate_needs(commands: dict) -> None:
     """Raise unless every command declares a Need.
 
@@ -113,19 +153,20 @@ def _validate_needs(commands: dict) -> None:
     declares nothing fails at import, where the old sets silently handed it
     whatever not being listed happened to mean. A raise rather than an assert,
     so the invariant survives -O.
+
+    A callable declaration is resolved over an empty argv and its answer
+    checked, so a resolver that returns something other than a Need for the
+    plain invocation fails here too rather than at the first dispatch.
     """
     undeclared = sorted(
         name for name, entry in commands.items()
-        if not isinstance(entry.get("need"), Need)
+        if not isinstance(_need_for(entry, []), Need)
     )
     if undeclared:
         raise RuntimeError(
             "pr: commands declare no dispatch need: " + ", ".join(undeclared)
             + " — add a Need(depth, update=…, lock=…) to each _COMMANDS entry"
         )
-
-
-_validate_needs(_COMMANDS)
 
 
 def _run_delegate(entry: dict, argv: list[str],
@@ -388,24 +429,20 @@ def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> st
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_pr: str | None = None,
                original_branch: str | None = None,
+               schema_version: int | None = None,
                **_kw) -> int:
-    """Delegate to claude-review, or handle --post/--repair/--summary/--recover locally."""
-    flags = set(argv)
-    mode_flags = flags & {"--post", "--repair", "--summary", "--recover"}
-    if len(mode_flags) > 1:
-        log.error(f"{SCRIPT}: --post, --repair, --summary, and --recover are mutually exclusive")
+    """Run a review, or handle one of the mode flags in `_REVIEW_MODES`."""
+    given = [flag for flag in _REVIEW_MODES if flag in set(argv)]
+    if len(given) > 1:
+        log.error(f"{SCRIPT}: {_mode_flags_prose()} are mutually exclusive")
         return 1
 
-    if "--post" in flags:
-        return _review_post([a for a in argv if a != "--post"], ctx)
-    if "--repair" in flags:
-        return _review_repair(
-            [a for a in argv if a != "--repair"], ctx,
-        )
-    if "--summary" in flags:
-        return _review_summary(
-            [a for a in argv if a != "--summary"], ctx,
-        )
+    if given:
+        flag = given[0]
+        handler = _REVIEW_MODES[flag].handler
+        if handler:
+            return handler([a for a in argv if a != flag], ctx,
+                           schema_version=schema_version)
 
     has_self = "--self" in argv
     positionals, _ = _split_argv(argv)
@@ -428,7 +465,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     return rc
 
 
-def _review_post(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+def _review_post(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Post an existing review directly to GitHub via review-post."""
     pr_num = str(ctx.pr_number) if ctx.pr_number else None
     if not pr_num:
@@ -449,7 +486,7 @@ def _review_post(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     return subprocess.run(cmd).returncode
 
 
-def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Repair broken review artifacts via summary or rebuild."""
     pr_num = str(ctx.pr_number) if ctx.pr_number else None
     if not pr_num:
@@ -480,7 +517,7 @@ def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
     return result.returncode
 
 
-def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
+def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     """Output JSON summary of an existing review."""
     pr_num = str(ctx.pr_number) if ctx.pr_number else None
     if not pr_num:
@@ -494,6 +531,110 @@ def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext) -> int:
 
     print(json_summary(ctx.repo, pr_num, str(review)))
     return 0
+
+
+def _review_list(argv: list[str], _ctx: pr_context.ResolvedContext, *,
+                 schema_version: int | None = None, **_kw) -> int:
+    """List every review in the user's state root.
+
+    The contract other repos read review state through — see
+    `ai/lib/review_listing.py` for what a row carries and why it is a query
+    rather than a path they derive.
+
+    Two audiences, told apart by the handshake. With `--schema-version` this is
+    a consumer, and the versioned document goes to stdout. Without it this is a
+    person, and the table goes to stderr with stdout left empty — so a consumer
+    that forgets the handshake gets a parse failure from an empty stream rather
+    than a table it half-understands.
+
+    The context is unresolved and the parameter is named for it: `--list`
+    declares `ContextDepth.NONE`, so there is no repo, branch, or target here
+    and nothing in this function may look for one.
+    """
+    if schema_version is None:
+        print("\n".join(review_listing.render_table(review_listing.rows())),
+              file=sys.stderr)
+        return 0
+    json.dump(review_listing.document(schema_version), sys.stdout, indent=2)
+    print()
+    return 0
+
+
+@dataclass(frozen=True)
+class ReviewMode:
+    """One of `pr review`'s mutually-exclusive mode flags.
+
+    The single declaration of what a mode is: the exclusivity check, the
+    routing in `cmd_review`, the per-argv need resolver, and the
+    `--schema-version` gate all read this table rather than each restating the
+    set of flags.
+
+    * ``handler`` — what runs locally, or None for a mode `claude-review`
+      handles. A `None` handler still belongs here: `--recover` collides with
+      the others whoever ends up running it.
+    * ``need`` — this mode's dispatch need, or None to take `review`'s default.
+    * ``schema_versions`` — the row-schema versions this mode can serve, empty
+      for a mode with no versioned document to hand a caller.
+    """
+
+    handler: Callable[..., int] | None = None
+    need: Need | None = None
+    schema_versions: tuple[int, ...] = ()
+
+
+_REVIEW_MODES = {
+    "--post":    ReviewMode(_review_post),
+    "--repair":  ReviewMode(_review_repair),
+    "--summary": ReviewMode(_review_summary),
+    "--recover": ReviewMode(),
+    "--list":    ReviewMode(_review_list,
+                            need=Need(_NONE, update=False, lock=False),
+                            schema_versions=review_listing.SCHEMA_VERSIONS),
+}
+
+# Deferred to here rather than run beside _COMMANDS, because `review`'s
+# declaration is a callable that reads the table above.
+_validate_needs(_COMMANDS)
+
+
+def _mode_flags_prose() -> str:
+    """The mode flags as an English list, for the exclusivity error."""
+    flags = list(_REVIEW_MODES)
+    return f"{', '.join(flags[:-1])}, and {flags[-1]}"
+
+
+def _invocation(command: str, argv: list[str]) -> str:
+    """This invocation as the user typed it, for an error that quotes it back.
+
+    A mode flag is part of the invocation's identity — `review` and `review
+    --list` are different commands to everyone but argparse — so an error about
+    one has to name the flag or it reads as being about the other.
+    """
+    mode = next((t for t in argv if t in _REVIEW_MODES), "") \
+        if command == "review" else ""
+    return " ".join(filter(None, [SCRIPT, command, mode]))
+
+
+def _schema_contracts() -> list[str]:
+    """Every invocation that serves a versioned document, as a user types it.
+
+    Derived from the mode table so the error naming them cannot list an
+    invocation that no longer serves one. `review` is the only command with
+    modes today; a second one gets a branch here rather than a second table.
+    """
+    return [f"pr review {flag}" for flag, mode in _REVIEW_MODES.items()
+            if mode.schema_versions]
+
+
+def _served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
+    """The row-schema versions *command* can serve for this argv, if any."""
+    if command != "review":
+        return ()
+    for token in argv:
+        mode = _REVIEW_MODES.get(token)
+        if mode:
+            return mode.schema_versions
+    return ()
 
 
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -683,6 +824,8 @@ def _build_usage() -> str:
         f"  {name:<{max_name + 2}}{entry['help']}"
         for name, entry in _COMMANDS.items()
     )
+    contracts = ", ".join(_schema_contracts())
+    versions = ", ".join(str(v) for v in review_listing.SCHEMA_VERSIONS)
     return f"""\
 pr — PR lifecycle management
 
@@ -695,6 +838,10 @@ Global flags (auto-detected from CWD when omitted):
   --repo-dir PATH    Git worktree directory
   --branch NAME      Branch name
   --pr NUM|URL       PR number or URL
+
+Contract flags:
+  --schema-version N  Serve a versioned JSON document on stdout instead of a
+                      human table. Honored by {contracts}; serving {versions}.
 
 Run 'pr <command> -h' for details on a specific command."""
 
@@ -722,6 +869,52 @@ def _tool_schema() -> dict:
     }
 
 
+# argparse's own exit code for a usage error: the caller asked for something in
+# terms this build cannot answer in. Distinct from 1, so a consumer can tell
+# "we cannot answer that" from "the command ran and failed".
+EXIT_USAGE = 2
+
+
+def _checked_schema_version(value: str, command: str, argv: list[str]) -> int:
+    """The declared schema version, or exit naming what this build does serve.
+
+    Checked on every call, so a consumer whose vendored version this build has
+    dropped fails at the handshake rather than on the first field that moved
+    under it. Never ignored: silently serving a human table to a caller that
+    asked for a contract is the failure the whole change exists to remove.
+    """
+    served = _served_schema_versions(command, argv)
+    if not served:
+        log.error(f"{SCRIPT}: --schema-version is served by "
+                  f"{', '.join(_schema_contracts())}, not by this command")
+        sys.exit(EXIT_USAGE)
+    if value not in {str(v) for v in served}:
+        log.error(f"{SCRIPT}: unsupported --schema-version {value!r} — "
+                  f"this build serves {', '.join(str(v) for v in served)}")
+        sys.exit(EXIT_USAGE)
+    return int(value)
+
+
+def _reject_a_target_that_resolves_to_nothing(
+    command: str, argv: list[str], need: Need,
+    pr: str | None, branch: str | None,
+) -> None:
+    """Exit if a command that resolves nothing was handed a target anyway.
+
+    Depth NONE has nowhere to put a target, so honouring one is not an option —
+    the choice is between ignoring it and refusing it. Ignoring is the worse
+    answer by a distance: `pr review 123 --list` reads as "the reviews for
+    #123" and would come back with every review on the machine, which is a
+    wrong answer that looks exactly like a right one.
+    """
+    given = pr or branch
+    if need.depth is not pr_context.ContextDepth.NONE or not given:
+        return
+    log.error(f"{SCRIPT}: {_invocation(command, argv)} answers from your state "
+              f"root and takes no PR or branch — drop {given!r}")
+    sys.exit(EXIT_USAGE)
+
+
 def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_args, *,
               original_pr: str | None,
               original_branch: str | None) -> int:
@@ -744,7 +937,8 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
             return handler(extra, ctx,
                            trail=trail,
                            original_pr=original_pr,
-                           original_branch=original_branch)
+                           original_branch=original_branch,
+                           schema_version=global_args.schema_version)
         assert "script" in _COMMANDS[args.command], \
             f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or add a 'script' key"
         return _run_delegate(_COMMANDS[args.command], extra, ctx,
@@ -772,6 +966,14 @@ def main():
     _global.add_argument("--repo-dir", "--worktree", dest="repo_dir")
     _global.add_argument("--branch")
     _global.add_argument("--pr")
+    # Global rather than declared on the invocation that serves a contract,
+    # for three reasons. It describes the caller ("what do you speak"), not the
+    # subcommand ("what do you want"). It generalizes to `pr status`, which
+    # stamps a version nobody reads and is the obvious next document. And it is
+    # consumed by this first parse, so its value never reaches `extra`, where
+    # the positional scan below would read a bare `1` as PR #1 — `pr` has no
+    # arity source of truth for the flags it handles itself.
+    _global.add_argument("--schema-version", dest="schema_version")
     add_trail_args(_global)
     global_args, remaining = _global.parse_known_args()
 
@@ -813,10 +1015,18 @@ def main():
             original_pr, original_branch = pr_context.classify_target(extra[idx])
             extra.pop(idx)
 
+    if global_args.schema_version is not None:
+        global_args.schema_version = _checked_schema_version(
+            global_args.schema_version, args.command, extra,
+        )
+
     # The command's declaration drives all three axes from here. Read after the
     # positional scan above, because that scan is what turns a bare token into
     # the --pr that can escalate the declared depth.
-    need = entry["need"]
+    need = _need_for(entry, extra)
+    _reject_a_target_that_resolves_to_nothing(
+        args.command, extra, need, original_pr, original_branch,
+    )
 
     ctx = pr_context.resolve_at(
         need.depth,

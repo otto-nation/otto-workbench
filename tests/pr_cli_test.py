@@ -37,27 +37,15 @@ import run_lock  # noqa: E402
 import tool_parser  # noqa: E402
 import workbench_paths  # noqa: E402
 
-from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
+# `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
+# and importing one shadows the fixture with a plain function.
+from conftest import assert_no_worktree_exit, make_ctx, seed_review  # noqa: E402
 from pr_comments import CLOSEOUT_COMMAND  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
 _TEST_REPLY_ID = "3777767789"
 _TEST_REPLY_BODY_FILE = "/tmp/reply.md"
-
-
-@pytest.fixture
-def reviews_dir(tmp_path, monkeypatch):
-    """A throwaway reviews root, reached the way every workbench root is.
-
-    Through the environment rather than by patching a path onto a module: the
-    commands under test resolve the root per call, so nothing here has to know
-    which module reads it.
-    """
-    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-    d = workbench_paths.reviews_dir()
-    d.mkdir(parents=True)
-    return d
 
 
 # ── _parse_review_summary ──────────────────────────────────────────────────
@@ -277,10 +265,41 @@ def test_sub_command_prefix():
 
 
 def test_every_command_declares_a_need():
-    """No command may be silent about depth, fetch, and lock."""
+    """No command may be silent about depth, fetch, and lock.
+
+    Read through `_need_for` rather than off the entry, because a command whose
+    axes vary by flag declares a callable: the invariant is that a Need can be
+    obtained for any invocation, not that one is stored literally.
+    """
     for name, entry in pr_cli._COMMANDS.items():
-        assert isinstance(entry.get("need"), pr_cli.Need), \
+        assert isinstance(pr_cli._need_for(entry, []), pr_cli.Need), \
             f"{name} declares no dispatch need"
+
+
+def test_review_declares_a_need_per_invocation():
+    """`review` is the one entry whose declaration its argv resolves."""
+    entry = pr_cli._COMMANDS["review"]
+    assert callable(entry["need"])
+
+    plain = pr_cli._need_for(entry, [])
+    assert plain == pr_cli.Need(pr_cli._REMOTE, update=True, lock=True)
+
+    for argv in ([], ["--self"], ["--post"], ["--repair"], ["--summary"], ["--recover"]):
+        assert pr_cli._need_for(entry, argv) == plain, argv
+
+
+def test_review_list_resolves_nothing_and_takes_no_lock():
+    """The listing answers from the reviews root, so it owes no target."""
+    need = pr_cli._need_for(pr_cli._COMMANDS["review"], ["--list"])
+    assert need == pr_cli.Need(pr_cli._NONE, update=False, lock=False)
+
+
+def test_a_resolver_returning_a_non_need_is_rejected():
+    """A callable declaration is checked by resolving it, not by trusting it."""
+    with pytest.raises(RuntimeError, match="listing"):
+        pr_cli._validate_needs(
+            {"listing": {"help": "list reviews", "need": lambda argv: True}},
+        )
 
 
 def test_a_command_without_a_need_is_rejected():
@@ -1663,3 +1682,147 @@ def test_gc_legacy_sweep_is_idempotent(tmp_path):
     legacy = tmp_path / workbench_paths.LEGACY_WORKTREE_STATE_DIRNAME
     legacy.mkdir()
     assert pr_cli._sweep_legacy_state(tmp_path) == 0
+
+
+# ── review --list ───────────────────────────────────────────────────────────
+
+
+def _a_review(reviews_dir, **meta):
+    """An attributed review, which is what a listing test is usually about."""
+    return seed_review(reviews_dir, name="repo-42", repo="acme/widget", **meta)
+
+
+def test_review_list_resolves_no_context_at_all():
+    """The listing reads the state root, so resolving one would be a `gh` call
+    and a target directory spent on values the handler never reads."""
+    stage = _dispatch_stage("review", "--list", ctx=make_ctx())
+    assert not stage.remote.called
+    assert not stage.local.called
+    assert not stage.update.called
+
+
+def test_review_list_takes_no_lock(tmp_path):
+    """Nothing here writes, and the lock belongs to a target this has none of."""
+    target = tmp_path / "target"
+    _dispatch_stage("review", "--list", ctx=make_ctx(target_dir=target))
+    assert not _lock_file(target).exists()
+
+
+def test_review_delegating_still_resolves_updates_and_locks(tmp_path):
+    """A mode flag decides `review`'s need; without one nothing changes."""
+    target = tmp_path / "target"
+    stage = _dispatch_stage("review", ctx=make_ctx(target_dir=target))
+    assert stage.remote.called
+    assert stage.update.called
+    assert _lock_file(target).is_file()
+
+
+def test_review_list_refuses_a_positional_target(capsys):
+    """`pr review 123 --list` reads as "the reviews for #123". Answering with
+    every review on the machine is a wrong answer that looks like a right one,
+    so a target a NONE-depth command cannot honour is refused, not dropped."""
+    assert _run_main("review", "123", "--list") == pr_cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "123" in err
+    assert "pr review --list" in err, "the mode flag is part of the identity"
+
+
+def test_review_list_refuses_an_explicit_pr_flag(capsys):
+    """The flag spelling reaches the same depth by another road."""
+    assert _run_main("review", "--list", "--pr", "123") == pr_cli.EXIT_USAGE
+    assert "123" in capsys.readouterr().err
+
+
+def test_review_list_refuses_an_explicit_branch(capsys):
+    assert _run_main("review", "--list", "--branch", "isaac/feat/x") == \
+        pr_cli.EXIT_USAGE
+    assert "isaac/feat/x" in capsys.readouterr().err
+
+
+def test_review_list_without_a_target_is_untouched(reviews_dir, capsys):
+    """The refusal is about a target that cannot be honoured, not about the
+    mode — the ordinary invocation still serves its document."""
+    _a_review(reviews_dir, pr_number=42)
+    assert _run_main("review", "--list", "--schema-version", "1") in (None, 0)
+    assert json.loads(capsys.readouterr().out)["reviews"]
+
+
+def test_review_list_serves_the_declared_schema_version(reviews_dir, capsys):
+    _a_review(reviews_dir, pr_number=42)
+    assert _run_main("review", "--list", "--schema-version", "1") in (None, 0)
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["schema_version"] == 1
+    assert [r["repo"] for r in doc["reviews"]] == ["acme/widget"]
+    assert doc["reviews"][0]["findings"] == {
+        "must_fix": 1, "should_fix": 0, "nit": 0, "idiom": 0, "total": 1,
+    }
+
+
+def test_review_list_does_not_read_the_version_as_a_pr_target(reviews_dir, capsys):
+    """`--schema-version 1` is global, so its value never reaches the argv the
+    positional scan reads — the arity bug the global flag sidesteps."""
+    _a_review(reviews_dir, pr_number=42)
+    _run_main("review", "--list", "--schema-version", "1")
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["reviews"][0]["pr_number"] == 42
+
+
+def test_review_list_carries_no_review_content(reviews_dir, capsys):
+    """A consumer polling on an interval would otherwise carry every review's
+    full text on every tick."""
+    _a_review(reviews_dir)
+    _run_main("review", "--list", "--schema-version", "1")
+    doc = json.loads(capsys.readouterr().out)
+    assert "review_content" not in doc["reviews"][0]
+    assert doc["reviews"][0]["review_file"].endswith("/review.md")
+
+
+def test_review_list_reports_a_missing_root_as_no_reviews(tmp_path, monkeypatch,
+                                                          capsys):
+    """Absence is not an error — the process is the error channel, and a root
+    nothing has written to is a machine that has never run a review."""
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "never-written"))
+    assert _run_main("review", "--list", "--schema-version", "1") in (None, 0)
+    assert json.loads(capsys.readouterr().out) == {
+        "schema_version": 1, "reviews": [],
+    }
+
+
+def test_review_list_without_a_handshake_writes_nothing_to_stdout(reviews_dir,
+                                                                  capsys):
+    """A consumer that forgets `--schema-version` gets a parse failure from an
+    empty stream rather than a human table it half-understands."""
+    _a_review(reviews_dir)
+    assert _run_main("review", "--list") in (None, 0)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "acme/widget" in captured.err
+
+
+def test_an_unsupported_schema_version_is_refused(reviews_dir, capsys):
+    """The supported set is allowed to shrink — that is the whole enforcement
+    mechanism, so a version this build dropped has to fail loudly."""
+    unsupported = str(max(pr_cli.review_listing.SCHEMA_VERSIONS) + 1)
+    assert _run_main("review", "--list", "--schema-version", unsupported) == \
+        pr_cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert unsupported in err
+    assert "1" in err
+
+
+def test_a_command_serving_no_document_refuses_the_handshake(capsys):
+    """`--schema-version` is global so one parse can see it, not because every
+    command answers it."""
+    assert _run_main("status", "--schema-version", "1") == \
+        pr_cli.EXIT_USAGE
+    assert "pr review --list" in capsys.readouterr().err
+
+
+def test_the_schema_contracts_are_read_off_the_mode_table():
+    """An error naming an invocation that no longer serves a document is worse
+    than no error at all."""
+    assert pr_cli._schema_contracts() == ["pr review --list"]
+    assert pr_cli._served_schema_versions("review", ["--list"]) == \
+        pr_cli.review_listing.SCHEMA_VERSIONS
+    assert pr_cli._served_schema_versions("review", ["--summary"]) == ()
+    assert pr_cli._served_schema_versions("status", []) == ()

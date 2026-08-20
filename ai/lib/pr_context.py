@@ -66,6 +66,11 @@ class PRHead:
         return bool(self.branch and self.sha)
 
 
+# Where an unresolved context points its target. Nothing is ever created here:
+# every path component after /dev/null fails with ENOTDIR, which is the point.
+_UNRESOLVED_TARGET = Path("/dev/null/pr-context-unresolved")
+
+
 @dataclass(frozen=True)
 class ResolvedContext:
     """Immutable PR context resolved once at command entry."""
@@ -79,6 +84,24 @@ class ResolvedContext:
     # only and required: a caller that forgets it would silently get a context
     # whose state and lock point nowhere.
     target_dir: Path = field(kw_only=True)
+
+    @classmethod
+    def unresolved(cls) -> "ResolvedContext":
+        """A context for a command that asked for nothing to be resolved.
+
+        Every field is empty because nothing was consulted — no git, no ``gh``,
+        no worktree. Handed to ``ContextDepth.NONE`` commands, which answer from
+        the user's state root and have no target of their own.
+
+        ``target_dir`` is a path under ``/dev/null`` rather than the empty path,
+        which names the current directory: a handler that reads it despite
+        declaring it needed nothing fails at its first open instead of writing a
+        run's bookkeeping wherever the caller happened to be standing.
+        """
+        return cls(
+            repo="", branch="", pr_number=None, worktree_root=None, head_sha="",
+            target_dir=_UNRESOLVED_TARGET,
+        )
 
     def require_worktree(self) -> Path:
         """The worktree root, or exit 1 naming what to do about its absence.
@@ -105,12 +128,18 @@ class ResolvedContext:
 class ContextDepth(Enum):
     """How far a caller needs context resolved — which rung of the ladder runs.
 
-    The values name the deepest source consulted: LOCAL is git alone, REMOTE
-    adds ``gh``. Independent of whether the caller then fetches
-    (``update_to_remote``) or takes the run lock — a command declares all three
-    separately.
+    The values name the deepest source consulted: NONE consults nothing, LOCAL
+    is git alone, REMOTE adds ``gh``. Independent of whether the caller then
+    fetches (``update_to_remote``) or takes the run lock — a command declares
+    all three separately.
+
+    NONE is not "resolve less"; it is "there is nothing to resolve". A command
+    at this depth answers from the user's own state root, so it has no repo, no
+    branch, and no target — and, unlike LOCAL, it works from a directory that
+    is not a git repository at all.
     """
 
+    NONE = "none"
     LOCAL = "local"
     REMOTE = "remote"
 
@@ -128,7 +157,14 @@ def resolve_at(
     the run's target key — resolving locally anyway would take the lock and
     write state under whatever branch happens to be checked out. So an explicit
     PR reference wins over the declared depth rather than being ignored.
+
+    NONE does not escalate. There is no target for a ``--pr`` to name at that
+    depth, so honouring one would spend a ``gh`` call on a value the handler
+    never reads — and a command declared read-only would make a network call
+    because of a flag the caller passed by habit.
     """
+    if depth is ContextDepth.NONE:
+        return ResolvedContext.unresolved()
     if depth is ContextDepth.LOCAL and pr is None:
         return resolve_local(branch=branch, repo_dir=repo_dir)
     return resolve(pr=pr, branch=branch, repo_dir=repo_dir)

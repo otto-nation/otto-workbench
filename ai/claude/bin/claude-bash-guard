@@ -197,22 +197,35 @@ if [[ "$sq_stripped" =~ $re_expand ]]; then
   block 'A $VAR reference is flagged as "simple_expansion" and prompts every time. Use printenv VAR to read an env var, and name the values directly instead of looping over them — `tail -n +1 f1 f2 f3` prints each file under its own header, with no for/$f. See bash-tool.md § Avoid Shell Variable Expansion.'
 fi
 
+# The directories otto-workbench's tracked .claude/settings.json grants, longest
+# first so `ai/claude/bin/pr` is named as itself rather than as the `bin/` inside
+# it. A rule there is written repo-root-relative, which is the only form it can
+# match — a `./` prefix and an absolute worktree path both miss it and earn a
+# one-off settings.local.json entry that dies with the worktree.
+#
+# ceiling: matching on path text alone rather than on a resolved repo root costs
+# two things. A repo whose own directory is named `git`, or one holding a
+# directory named `ai/claude`, is read as carrying that component and gets a
+# suggestion that will not resolve; and an absolute path into a top-level `bin/`
+# is left alone entirely, because a virtualenv ships one too and so does any repo
+# that builds its binaries into it.
+# Upgrade to resolving the repo root once either shows up in a settings.local.json
+# again.
+REPO_SCRIPT_DIRS=(ai/claude/bin git/bin bin/local bin)
+
 # Ahead of the PATH-binary rule below: a repo path ending in bin/local/ is the
 # narrower match, and the two would otherwise both fire on a repo rooted at /bin.
-re_binlocal='(^|[;&|][[:space:]]*)/[^[:space:]]*/((git/)?bin/local/[^[:space:]]*)'
-if [[ "$stripped" =~ $re_binlocal ]]; then
-  # The leading .*/ is greedy, so it swallows a `git/` segment and leaves the
-  # capture naming a path that does not resolve. Put it back from the whole
-  # match — `git/bin/local/x` is real, `bin/local/x` alone would not run.
-  #
-  # ceiling: a repo whose own directory is named `git` is indistinguishable from
-  # the git/ component here, and gets the `git/` prefix it does not need. That
-  # costs one wrong suggestion. Upgrade to resolving the repo root if it bites.
-  rel="${BASH_REMATCH[2]}"
-  if [[ "${BASH_REMATCH[0]}" == */git/bin/local/* ]]; then
-    rel="git/$rel"
-  fi
-  block "Use relative path '$rel' instead of the absolute path — an absolute path prompts again in every worktree. See bash.md § Script Invocation."
+re_reposcript='(^|[;&|][[:space:]]*)(\.?/[^[:space:]]*)'
+if [[ "$stripped" =~ $re_reposcript ]]; then
+  path="${BASH_REMATCH[2]}"
+  for dir in "${REPO_SCRIPT_DIRS[@]}"; do
+    [[ "$path" == */"$dir"/* ]] || continue
+    # A `./` prefix names the repo the session is in and nothing else, so a bare
+    # `bin/` is safe to claim there. Absolutely spelled it is not: that is the
+    # ceiling above, and `/tmp/venv/bin/pip` is why.
+    [[ "$path" == ./* || "$dir" != bin ]] || continue
+    block "Use relative path '$dir/${path##*/$dir/}' instead of '$path' — the allow list keys on the repo-root-relative form, so a ./ prefix or an absolute path prompts again in every worktree. See bash.md § Script Invocation."
+  done
 fi
 
 # The directory list is every bin/ on the default PATH that ships tools Claude

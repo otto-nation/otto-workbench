@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ai/claude/bin/*)",
+      "Bash(bin/*)",
+      "Bash(git/bin/*)"
+    ],
+    "ask": [
+      "Bash(bin/gcloud-reauth:*)",
+      "Bash(bin/get-secret:*)"
+    ]
+  }
+}

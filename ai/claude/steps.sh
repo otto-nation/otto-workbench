@@ -615,6 +615,13 @@ EOF
   success "CLAUDE.md"
 }
 
+# Everything a project's .claude/ holds that belongs to one machine rather than
+# the repo: regenerated context and Claude Code's own per-machine grants. The
+# rest of the directory — CLAUDE.md, rules/, settings.json — is committed, so
+# these are excluded by name. This repo's own .claude/.gitignore is held to the
+# same list by tests/claude_settings.bats.
+CLAUDE_LOCAL_ARTIFACTS=(anatomy.md ceiling-debt.md settings.local.json)
+
 # _scaffold_gitignore — creates .claude/rules/.gitignore and .claude/.gitignore.
 _scaffold_gitignore() {
   local rules_gi=".claude/rules/.gitignore"
@@ -627,12 +634,14 @@ _scaffold_gitignore() {
     printf '*.local.md\n' > "$review_gi"
   fi
 
-  local claude_gi=".claude/.gitignore"
-  if [[ ! -f "$claude_gi" ]]; then
-    printf 'anatomy.md\n' > "$claude_gi"
-  elif ! grep -qF 'anatomy.md' "$claude_gi" 2>/dev/null; then
-    printf 'anatomy.md\n' >> "$claude_gi"
-  fi
+  # Appended one name at a time rather than rewritten: the file may already
+  # carry entries this repo knows nothing about, and a project that predates a
+  # new artifact still has to pick it up.
+  local claude_gi=".claude/.gitignore" artifact
+  touch "$claude_gi"
+  for artifact in "${CLAUDE_LOCAL_ARTIFACTS[@]}"; do
+    grep -qxF "$artifact" "$claude_gi" || printf '%s\n' "$artifact" >> "$claude_gi"
+  done
 }
 
 # scaffold_project_claude [--force] — scaffolds .claude/ in the current directory.

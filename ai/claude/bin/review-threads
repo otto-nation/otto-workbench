@@ -1328,16 +1328,19 @@ def _attribute_commit(
     return CommitAttribution(CommitClaim.PASS)
 
 
-def _stamp_pass_commit(fixed: list, sha: str) -> None:
+def _stamp_pass_commit(fixed: list[CommentItem], sha: str) -> None:
     """Record the pass's commit on the entries it just landed.
 
-    The single write of thread → commit attribution. Everything downstream
-    reads `entry.commit_sha` back through `_attribute_commit` instead of
-    re-deriving a SHA from whichever pass happens to be running, which is how
-    a row fixed three rounds ago came to be credited to today's commit.
+    The single writer of thread → commit attribution — no other code sets
+    `entry.commit_sha`. Everything downstream reads it back through
+    `_attribute_commit` instead of re-deriving a SHA from whichever pass
+    happens to be running, which is how a row fixed three rounds ago came to
+    be credited to today's commit.
 
-    An entry that already names a commit keeps it: the reply queue spans
-    rounds, so a drained entry carries the commit that actually fixed it.
+    Idempotent by design, not by accident: an entry that already names a
+    commit keeps it, so calling this again on the same entries (e.g. once
+    before replying to fixed threads, again when the outcomes are built) is
+    safe and a no-op on the second call.
     """
     if not sha:
         return
@@ -1719,6 +1722,13 @@ _HANDLED_REPLY_PREFIXES = (
 
 # Reason stamped on an outcome the fix pass never landed. Read back by
 # _fixed_status_for, which must not credit the pass's commit for it.
+#
+# Distinct from CommitClaim.RECONCILED, the commit-attribution resolver's
+# claim for "the pass recorded nothing and exactly one published commit
+# landed outside it" — this constant marks snapshot reconciliation against
+# GitHub instead (see _reconcile_fix_snapshot). _fixed_status_for checks this
+# reason before falling through to the claim-based one; the two "reconciled"
+# names are not the same mechanism.
 _RECONCILED_REASON = "reconciled: handled outside the fix pass"
 
 # The two status cells that decline to name a commit. Both exist because the
@@ -3393,9 +3403,11 @@ def _build_thread_outcomes(
 ) -> list[pr_state.ThreadOutcome]:
     """Build ThreadOutcome list from categorized entries.
 
-    `commit_sha` is stamped on the fixed entries only, through the one writer
-    of that field. The others were not landed by this commit, and a SHA on them
-    would read as if they had been.
+    `commit_sha` is stamped on the fixed entries only, through `_stamp_pass_commit`
+    — safe to call here even when a caller already stamped `fixed` upstream,
+    since the writer is a no-op on an entry that already names a commit. The
+    others were not landed by this commit, and a SHA on them would read as if
+    they had been.
     """
     FA = pr_state.ThreadAction
     _stamp_pass_commit(fixed, commit_sha)

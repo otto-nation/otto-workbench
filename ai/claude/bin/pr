@@ -97,7 +97,7 @@ _COMMANDS = {
                  "need": Need(_REMOTE, update=True,  lock=True)},
     "fix":      {"help": "Fix CI + review + comments",
                  "need": Need(_REMOTE, update=True,  lock=True)},
-    "rebase":   {"help": "Rebase onto origin/main",               "script": "pr-rebase",
+    "rebase":   {"help": "Rebase onto the branch's base",         "script": "pr-rebase",
                  "need": Need(_REMOTE, update=False, lock=True)},
     "describe": {"help": "Revise the PR description",             "script": "pr-describe",
                  "need": Need(_REMOTE, update=True,  lock=True)},

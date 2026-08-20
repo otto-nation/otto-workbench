@@ -37,7 +37,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
-| `pr-rebase` | Rebase current branch onto origin/main with conflict detection and force-push |
+| `pr-rebase` | Rebase current branch onto its base with conflict detection and force-push |
 | `pr-describe` | Revise the PR description against the repo's PR template once the branch stops moving |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
 | `ceiling-scan` | Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger |
@@ -326,7 +326,7 @@ pr [global flags] <command> [flags]
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
 | `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
-| `rebase [--fix] [--push] [--abort]` | Rebase onto `origin/main` |
+| `rebase [--fix] [--push] [--abort] [--onto <ref>]` | Rebase onto the branch's base — `--onto`, else the PR's base branch, else the repo's default branch |
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
 | `gc` | Clean up stale PR review artifacts and cached state |
 

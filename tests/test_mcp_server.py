@@ -121,19 +121,6 @@ class TestArgsToCLI:
 # ── Tool Discovery ────────────────────────────────────────────────────────
 
 
-def _write_tool_script(path: Path, name: str) -> None:
-    """Write an executable script that answers --tool-schema with *name*."""
-    path.write_text(textwrap.dedent(f"""\
-        #!/usr/bin/env python3
-        import json, sys
-        if "--tool-schema" in sys.argv:
-            json.dump({{"name": "{name}",
-                       "input_schema": {{"type": "object", "properties": {{}}}}}}, sys.stdout)
-            sys.exit(0)
-    """))
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-
-
 def _side_effect_of(script: Path) -> Path:
     """The file _write_destructive_script's subject touches when it runs."""
     return script.parent / "side-effect"
@@ -151,40 +138,14 @@ def _write_destructive_script(directory: Path) -> Path:
     return script
 
 
-def _write_counting_tool(directory: Path) -> Path:
-    """Write a tool into *directory* that records each probe; return the log.
-
-    Probing is execution, so a directory scanned twice appends twice — which is
-    what makes a double scan assertable at all.
-    """
-    log = directory.parent / "probes.log"
-    script = directory / "counting-tool"
-    script.write_text(textwrap.dedent(f"""\
-        #!/usr/bin/env python3
-        import json, sys
-        with open({str(log)!r}, "a") as f:
-            f.write("probed\\n")
-        if "--tool-schema" in sys.argv:
-            json.dump({{"name": "counting-tool",
-                       "input_schema": {{"type": "object", "properties": {{}}}}}}, sys.stdout)
-            sys.exit(0)
-    """))
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    return log
-
-
 class TestDiscovery:
     """What a scan of a given directory turns up.
 
-    Which directories get scanned is TestWorkbenchToolDirs' subject, so the
-    always-scanned workbench ones are stubbed out here — otherwise every
-    "nothing was discovered" assertion would also be asserting the workbench
-    ships no tools.
+    Every case names its directories explicitly. Which directories the server
+    picks when it is not told is TestWorkbenchToolDirs' subject — leaving the
+    derived set in would make each "nothing was discovered" assertion also
+    assert that the workbench ships no tools.
     """
-
-    @pytest.fixture(autouse=True)
-    def _only_configured_dirs(self, monkeypatch):
-        monkeypatch.setattr(server, "discover_tool_dirs", lambda: [])
 
     def test_discovers_tool_schema_scripts(self, tmp_path):
         script = tmp_path / "my-tool"
@@ -198,8 +159,7 @@ class TestDiscovery:
         """))
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
-        config = {"tool_dirs": [str(tmp_path)], "plugin_dirs": []}
-        tools = discover_tools(config)
+        tools = discover_tools([tmp_path])
 
         assert "my-tool" in tools
         assert tools["my-tool"]["description"] == "A test tool"
@@ -209,8 +169,7 @@ class TestDiscovery:
         script.write_text("#!/bin/bash\necho hello\n")
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
-        config = {"tool_dirs": [str(tmp_path)], "plugin_dirs": []}
-        tools = discover_tools(config)
+        tools = discover_tools([tmp_path])
 
         assert len(tools) == 0
 
@@ -218,8 +177,7 @@ class TestDiscovery:
         """A script that ignores unknown flags must not run during discovery."""
         script = _write_destructive_script(tmp_path)
 
-        config = {"tool_dirs": [str(tmp_path)], "plugin_dirs": []}
-        tools = discover_tools(config)
+        tools = discover_tools([tmp_path])
 
         assert tools == {}
         assert not _side_effect_of(script).exists()
@@ -295,38 +253,8 @@ class TestDiscovery:
         """))
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
-        config = {"tool_dirs": [str(tmp_path)], "plugin_dirs": []}
-        tools = discover_tools(config)
+        tools = discover_tools([tmp_path])
         assert len(tools) == 0
-
-    def test_plugin_directory(self, tmp_path):
-        plugin_dir = tmp_path / "plugins"
-        plugin_dir.mkdir()
-        tool_dir = tmp_path / "project-tools"
-        tool_dir.mkdir()
-
-        plugin_file = plugin_dir / "my-project.json"
-        plugin_file.write_text(json.dumps({
-            "name": "my-project",
-            "tool_dir": str(tool_dir),
-        }))
-
-        script = tool_dir / "project-tool"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env python3
-            import json, sys
-            if "--tool-schema" in sys.argv:
-                json.dump({"name": "project-tool", "description": "From plugin",
-                           "input_schema": {"type": "object", "properties": {}}}, sys.stdout)
-                sys.exit(0)
-        """))
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        config = {"tool_dirs": [], "plugin_dirs": [str(plugin_dir)]}
-        tools = discover_tools(config)
-
-        assert "project-tool" in tools
-        assert tools["project-tool"]["description"] == "From plugin"
 
     def test_a_tool_that_exits_nonzero_is_reported(self, tmp_path, caplog):
         """Carrying a marker means it meant to be a tool, so failing is news.
@@ -340,7 +268,7 @@ class TestDiscovery:
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
         with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
+            assert discover_tools([tmp_path]) == {}
 
         assert "broken-tool" in caplog.text
         assert "exited 3" in caplog.text
@@ -358,7 +286,7 @@ class TestDiscovery:
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
         with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
+            assert discover_tools([tmp_path]) == {}
 
         assert "partial-tool" in caplog.text
         assert "input_schema" in caplog.text
@@ -369,7 +297,7 @@ class TestDiscovery:
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
         with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
+            assert discover_tools([tmp_path]) == {}
 
         assert "garbled-tool" in caplog.text
         # One except branch covers three failure modes, so the log has to name
@@ -383,13 +311,12 @@ class TestDiscovery:
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
         with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools({"tool_dirs": [str(tmp_path)]}) == {}
+            assert discover_tools([tmp_path]) == {}
 
         assert caplog.text == ""
 
     def test_no_directories_yields_no_tools(self):
-        tools = discover_tools({"tool_dirs": [], "plugin_dirs": []})
-        assert tools == {}
+        assert discover_tools([]) == {}
 
     def test_discovers_real_tools(self):
         """Verify discovery works with actual ToolParser-enabled scripts."""
@@ -397,8 +324,7 @@ class TestDiscovery:
         if not (bin_dir / "pr-rebase").exists():
             pytest.skip("scripts not found")
 
-        config = {"tool_dirs": [str(bin_dir)], "plugin_dirs": []}
-        tools = discover_tools(config)
+        tools = discover_tools([bin_dir])
 
         for name in ("pr-rebase", "ci-check", "pr"):
             assert name in tools, f"{name} not discovered"
@@ -411,11 +337,12 @@ class TestDiscovery:
 
 
 class TestWorkbenchToolDirs:
-    """A machine with no mcp-tools.json still gets the workbench's tools.
+    """The component layout is the whole of where the server looks.
 
-    Nothing in the workbench ever writes that file, so a config-only server
-    resolved to no directories at all and every install ran a registered server
-    that exposed nothing. The directories now come from the component layout.
+    An earlier design read the directories from a config file no install ever
+    wrote, so discovery resolved to nothing and every machine ran a registered
+    server exposing zero tools. Deriving them from the layout is what fixed
+    that; these cases hold the derivation to the tiers it has to reach.
     """
 
     def test_derived_dirs_span_every_component_level(self):
@@ -458,53 +385,18 @@ class TestWorkbenchToolDirs:
 
         assert discover_tool_dirs(tmp_path) == [tmp_path / "bin", tmp_path / "git" / "bin"]
 
-    def test_absent_tool_dirs_still_discovers_tools(self):
-        """The regression guard: an empty config used to yield no tools at all."""
+    def test_an_untold_scan_discovers_the_workbench_tools(self):
+        """The regression guard: a config-only server yielded no tools at all."""
         if not (WORKBENCH_DIR / "ai" / "claude" / "bin" / "pr-rebase").exists():
             pytest.skip("scripts not found")
 
-        assert "pr-rebase" in discover_tools({})
+        assert "pr-rebase" in discover_tools()
 
-    def test_tool_dirs_adds_to_the_derived_dirs(self, tmp_path):
-        """The key names what else to scan, not what to scan instead."""
-        _write_tool_script(tmp_path / "project-tool", "project-tool")
+    def test_the_derived_set_is_the_only_source(self):
+        """Asked with no directories, the server scans the derived ones only.
 
-        tools = discover_tools({"tool_dirs": [str(tmp_path)]})
-
-        assert "project-tool" in tools
-        assert "pr-rebase" in tools
-
-    def test_an_empty_tool_dirs_list_adds_nothing(self):
-        """``tool_dirs: []`` is the absent case, not a way to scan nothing."""
-        assert discover_tools({"tool_dirs": []}) == discover_tools({})
-
-    def test_a_repeated_directory_is_scanned_once(self, tmp_path):
-        """An additive key makes overlap easy, and probing means executing.
-
-        A ``tool_dirs`` entry naming a component bin, or two plugins pointing at
-        one directory, would otherwise run every script in it twice for a result
-        the duplicate-name check then discards.
+        The equality is the assertion the deleted config keys used to break: a
+        second source of directories would put a tool in the left-hand side
+        that naming the layout cannot produce.
         """
-        tools_dir = tmp_path / "tools"
-        tools_dir.mkdir()
-        log = _write_counting_tool(tools_dir)
-
-        discover_tools({"tool_dirs": [str(tools_dir), str(tools_dir)]})
-
-        assert log.read_text() == "probed\n"
-
-    def test_a_directory_reached_by_two_paths_is_scanned_once(self, tmp_path):
-        """Dedup keys on the resolved path, so a symlink is not a second entry.
-
-        The derived directories come from a resolved root, so a config entry has
-        to be resolved too or it never matches one textually.
-        """
-        tools_dir = tmp_path / "tools"
-        tools_dir.mkdir()
-        log = _write_counting_tool(tools_dir)
-        link = tmp_path / "link-to-tools"
-        link.symlink_to(tools_dir)
-
-        discover_tools({"tool_dirs": [str(tools_dir), str(link)]})
-
-        assert log.read_text() == "probed\n"
+        assert discover_tools() == discover_tools(discover_tool_dirs())

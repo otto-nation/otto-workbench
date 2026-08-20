@@ -265,7 +265,7 @@ _prune_stale_migration_state() {
 # an inventory of the legacy root found four state files that no manifest
 # written in advance had thought to list.
 readonly _LEGACY_CONFIG_ENTRIES=(
-  overrides reuse-level reuse-default review.yml mcp-tools.json
+  overrides reuse-level reuse-default review.yml
   config.yml config.schema.json
 )
 
@@ -280,8 +280,12 @@ readonly _LEGACY_CONFIG_ENTRIES=(
 # worthless, and a legacy root left holding only these says plainly what was
 # passed over. It is the counterpart to the list above, and the two together
 # are the whole classification — see adopt_legacy_workbench_root.
+# mcp-tools.json is here rather than deleted for the same reason: MCP discovery
+# derives its directories from the component layout and reads no config, so no
+# root claims the file — but a machine that hand-authored one is the only place
+# that content exists, and adoption is not the code that gets to discard it.
 readonly _LEGACY_UNCLAIMED_ENTRIES=(
-  logs
+  logs mcp-tools.json
 )
 
 # The header line a migration writes to say adoption can put its work back.

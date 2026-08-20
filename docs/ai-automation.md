@@ -1124,8 +1124,8 @@ and any script built on `ToolParser` supports both for free.
 `--tool-schema` prints the tool's JSON contract — name, description, an input schema
 derived from the argparse actions, and an annotated output schema. It is how the MCP
 server discovers tools — it probes every executable in the workbench's component `bin/`
-directories, plus any `tool_dirs` adds (see [`tools.md`](tools.md#otto-mcp-server)) — and
-it is what the skill reference above cites for `ci-check` and `pr-rebase`.
+directories (see [`tools.md`](tools.md#otto-mcp-server)) — and it is what the skill
+reference above cites for `ci-check` and `pr-rebase`.
 
 Naming the flag in a script under one of those directories is therefore a claim, and
 `bin/local/validate-tool-schema` holds the build to it: it probes every candidate

@@ -33,7 +33,7 @@ _wb_root() {
 
 # shellcheck disable=SC2034  # All three roots are used by sourcing scripts
 
-# Hand-authored settings: config.yml, overrides/, mcp-tools.json.
+# Hand-authored settings: config.yml, overrides/.
 WORKBENCH_CONFIG_DIR="$(_wb_root "${WORKBENCH_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
 
 # Generated, machine-local data: reviews/, trail/, usage/, install.yml, migrations.applied.

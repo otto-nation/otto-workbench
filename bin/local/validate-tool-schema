@@ -15,8 +15,8 @@ directory is (`discover_tool_dirs`), which scripts get probed (`tool_candidates`
 and what counts as an answer (`probe_tool`).  This script only walks the result
 and prints it, so the two cannot drift.
 
-Scope is the checkout.  A user's `mcp-tools.json` may add directories on their
-machine, but those are not the repo's to validate.
+Scope is the checkout, which is also the whole of what the server scans — the
+directories are derived from the component layout and no config adds to them.
 
 `bin/local/validate-skills` keeps its own probe, which asserts the converse: the
 tool a skill's `output_schema` names must implement the protocol.  A script that

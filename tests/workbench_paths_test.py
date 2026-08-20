@@ -197,16 +197,22 @@ class TestConsumers:
         assert before == tmp_path / "old/reviews/repo-42/review.md"
         assert after == tmp_path / "new/reviews/repo-42/review.md"
 
-    def test_mcp_config_sits_under_the_config_root(self, monkeypatch, tmp_path):
-        """mcp-tools.json is hand-authored, so it belongs to config, not state.
+    def test_the_mcp_server_reads_no_root(self, monkeypatch, tmp_path):
+        """MCP discovery is derived from the component layout, not configured.
 
-        Loaded with the two roots pointed at different directories, because the
-        defaults make them the same path — under those, a regression back to the
-        state root would still pass.
+        It used to read ``mcp-tools.json`` from the config root for extra
+        directories to scan. No install ever wrote that file, the workbench's
+        own tools come from the layout, and the keys were deleted rather than
+        typed into ``config.yml`` — so the server is now the one ai/ module
+        that resolves no root at all. Loaded fresh with the roots pointed
+        somewhere real, because a reintroduced path would be resolved at import.
         """
         monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "config"))
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
         server = _load_module("mcp_server", MCP_SERVER)
-        assert server.CONFIG_PATH == tmp_path / "config/mcp-tools.json"
+
+        roots = [str(tmp_path / "config"), str(tmp_path / "state")]
+        paths = [str(v) for v in vars(server).values() if isinstance(v, Path)]
+        assert not [p for p in paths if any(p.startswith(root) for root in roots)]
 
 

@@ -71,8 +71,12 @@ build_commit_rules() {
 # or 1 (undeclared removals) — a jq/data error (5), a bad snapshot blob (2), or
 # an unresolvable merge base (128) — the check never ran to completion, so any
 # REMOVED lines printed before the abort are a partial result and are
-# discarded; that failure is still reported to stderr, since "never swallow
-# errors silently" applies here too, even though it does not block the commit.
+# discarded. That is announced on stderr rather than passed over in silence,
+# since "never swallow errors silently" applies here too even though it does
+# not block the commit. Only the status is reported: the gate's own stderr is
+# dropped because on exit 1, its normal case here, it is the full contributor-
+# facing rejection report, and printing that while the message is still being
+# drafted would announce a push failure that has not happened.
 # WORKBENCH_SURFACE_GATE overrides the gate path — a test-only seam, not a
 # taskfile.env setting a contributor is expected to set.
 _surface_removals() {
@@ -90,25 +94,16 @@ _surface_removals() {
   sed -n 's/^REMOVED //p' <<<"$gate_output"
 }
 
-# _build_commit_prompt DIFF FILES_SECTION REMOVALS [RETRY_PREAMBLE]
-# Internal helper. Builds and runs the AI prompt; sets AI_MSG. REMOVALS is the
-# output of _surface_removals, computed once by the caller and reused across
-# retries since the working tree does not change between them.
-_build_commit_prompt() {
-  local diff_content="$1"
-  local files_section="$2"
-  local removals="$3"
-  local retry_preamble="${4:-}"
+# _surface_note REPO_DIR
+# Prints the prompt paragraph naming the public-surface entries this change
+# removes, or nothing when the surface is intact.
+_surface_note() {
+  local removals
+  removals=$(_surface_removals "$1")
+  [[ -n "$removals" ]] || return 0
 
-  # When the diff exceeds the budget, include as many complete per-file diffs
-  # as fit (smallest files first) so the AI always sees whole-file context.
-  if [ "${#diff_content}" -gt "$DIFF_MAX_CHARS" ]; then
-    diff_content=$(_compact_diff "$diff_content")
-  fi
+  cat <<EOF
 
-  local surface_note=""
-  if [[ -n "$removals" ]]; then
-    surface_note="
 
 This change removes the following entries from the package's public surface:
 $(sed 's/^/  /' <<<"$removals")
@@ -118,7 +113,22 @@ If this is a breaking change, the body MUST end with a
 If it genuinely is not breaking (e.g. a rename that ships a back-compat alias),
 add one '$NOT_BREAKING_FOOTER: <entry> — <reason>' footer per removed entry
 instead — use the entry name exactly as it appears above, with no leading dash
-or bullet marker."
+or bullet marker.
+EOF
+}
+
+# _build_commit_prompt DIFF FILES_SECTION SURFACE_NOTE [RETRY_PREAMBLE]
+# Internal helper. Builds and runs the AI prompt; sets AI_MSG.
+_build_commit_prompt() {
+  local diff_content="$1"
+  local files_section="$2"
+  local surface_note="$3"
+  local retry_preamble="${4:-}"
+
+  # When the diff exceeds the budget, include as many complete per-file diffs
+  # as fit (smallest files first) so the AI always sees whole-file context.
+  if [ "${#diff_content}" -gt "$DIFF_MAX_CHARS" ]; then
+    diff_content=$(_compact_diff "$diff_content")
   fi
 
   run_ai "$(prompt_commit "$diff_content" "$files_section" "$retry_preamble" "$surface_note")" "" "commit-message"
@@ -142,9 +152,20 @@ generate_commit_msg() {
 "
   fi
 
-  local removals
-  removals=$(_surface_removals "$(git rev-parse --show-toplevel 2>/dev/null)")
-  _build_commit_prompt "$diff_content" "$files_section" "$removals"
+  # Resolved once and threaded into both attempts. The gate shells out to git
+  # and jq over two snapshots, and the header-retry path below would otherwise
+  # pay for all of it a second time to arrive at the same paragraph.
+  #
+  # The repo to check is the caller's, which for a library the workbench ships
+  # and any repo can source is not the repo this file lives in — so the root
+  # comes from git, not from this file's own BASH_SOURCE. A caller with GIT_DIR
+  # exported (a git hook) gets its cwd instead of the repo root; that finds no
+  # gate and drops the hint, which is the same outcome as any repo that does
+  # not ship one, and `task commit` is not invoked from a hook.
+  local surface_note
+  surface_note=$(_surface_note "$(git rev-parse --show-toplevel 2>/dev/null)")
+
+  _build_commit_prompt "$diff_content" "$files_section" "$surface_note"
 
   local header header_len
   header=$(echo "$AI_MSG" | head -1)
@@ -159,7 +180,7 @@ generate_commit_msg() {
     echo "→ Header too long ($header_len chars), retrying with exact budget..."
     local retry_preamble
     retry_preamble=$(prompt_commit_retry "$header" "$header_len" "$(( header_len - COMMIT_HEADER_MAX_LEN ))" "$prefix" "$subject_budget")
-    _build_commit_prompt "$diff_content" "$files_section" "$removals" "$retry_preamble"
+    _build_commit_prompt "$diff_content" "$files_section" "$surface_note" "$retry_preamble"
 
     header=$(echo "$AI_MSG" | head -1)
     header_len=${#header}

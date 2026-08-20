@@ -175,7 +175,7 @@ BREAKING CHANGE: --post no longer exists; use --publish"
   [ -z "$stderr" ]
 }
 
-# ── _build_commit_prompt wiring ────────────────────────────────────────────
+# ── _surface_note / _build_commit_prompt wiring ────────────────────────────
 
 @test "_build_commit_prompt sends the removed-surface note to the AI when the gate flags removals" {
   local fake_gate="$BATS_TEST_TMPDIR/check-surface-compat"
@@ -189,9 +189,9 @@ BREAKING CHANGE: --post no longer exists; use --publish"
   AI_COMMAND="fake-ai"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 
-  local removals
-  removals=$(_surface_removals "$REPO_ROOT")
-  _build_commit_prompt "some diff" "" "$removals"
+  local surface_note
+  surface_note="$(_surface_note "$REPO_ROOT")"
+  _build_commit_prompt "some diff" "" "$surface_note"
 
   [[ "$AI_MSG" == *"command:beta"* ]]
   # $BREAKING_CHANGE_FOOTER alone is a weak assertion here: it's already in
@@ -217,9 +217,9 @@ BREAKING CHANGE: --post no longer exists; use --publish"
   AI_COMMAND="fake-ai"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 
-  local removals
-  removals=$(_surface_removals "$REPO_ROOT")
-  _build_commit_prompt "some diff" "" "$removals"
+  local surface_note
+  surface_note="$(_surface_note "$REPO_ROOT")"
+  _build_commit_prompt "some diff" "" "$surface_note"
 
   # A "- command:beta" bullet in the note risks the model literally copying
   # the dash into 'Not-Breaking: - command:beta — reason', which the gate's
@@ -244,14 +244,45 @@ BREAKING CHANGE: --post no longer exists; use --publish"
   AI_COMMAND="fake-ai"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 
-  local removals
-  removals=$(_surface_removals "$REPO_ROOT")
-  _build_commit_prompt "some diff" "" "$removals"
+  local surface_note
+  surface_note="$(_surface_note "$REPO_ROOT")"
+  _build_commit_prompt "some diff" "" "$surface_note"
 
   # "public surface" alone is a weak sentinel: COMMIT_RULES's fallback bullet
   # ("...anything on the public surface...") contains it independent of
   # surface_note. "removes the following entries" only ever comes from the note.
   [[ "$AI_MSG" != *"removes the following entries"* ]]
+}
+
+# ── generate_commit_msg wiring ─────────────────────────────────────────────
+
+@test "generate_commit_msg runs the surface gate once even when the header retry fires" {
+  local calls="$BATS_TEST_TMPDIR/gate-calls"
+  local fake_gate="$BATS_TEST_TMPDIR/check-surface-compat"
+  printf '#!/bin/bash\necho x >> "%s"\necho "REMOVED command:beta"\nexit 1\n' "$calls" > "$fake_gate"
+  chmod +x "$fake_gate"
+  # shellcheck disable=SC2034  # read by _surface_removals in lib/ai/commit.sh
+  WORKBENCH_SURFACE_GATE="$fake_gate"
+
+  # An over-long header on every attempt, so the retry path is guaranteed to
+  # run and generate_commit_msg ends in its two-attempt failure.
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/bash\ncat >/dev/null\necho "feat(scope): %s"\n' \
+    "a subject far past the seventy-two character header budget this repo enforces" \
+    > "$BATS_TEST_TMPDIR/bin/fake-ai"
+  chmod +x "$BATS_TEST_TMPDIR/bin/fake-ai"
+  # shellcheck disable=SC2034  # read by run_ai in lib/ai/core.sh
+  AI_COMMAND="fake-ai"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+
+  run generate_commit_msg "some diff"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"retrying with exact budget"* ]]
+
+  # The gate reads two snapshots through git and jq and its answer cannot
+  # change between the two attempts — the retry only rewords the header.
+  run wc -l < "$calls"
+  [ "${output// /}" = "1" ]
 }
 
 # ── preserve_declared_footers ──────────────────────────────────────────────

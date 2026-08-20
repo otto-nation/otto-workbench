@@ -15,8 +15,9 @@
 # package that owns it with no routing logic here.
 #
 # Usage: bin/local/generate-public-surface [--check] [--quiet] [--out-dir DIR]
-# Exit codes: 0 on success; 1 if --check finds a committed snapshot out of date;
-#             2 on a usage error.
+# Exit codes: 0 on success; 1 if --check finds a committed snapshot out of date,
+#             or on an internal failure (a broken jq/yq call, an empty
+#             category); 2 on a usage error.
 
 set -e
 # pipefail closes the gap set -e alone leaves open: every category function
@@ -76,7 +77,7 @@ while [[ $# -gt 0 ]]; do
     # errexit and the script dies at exit 1 with nothing printed — the same
     # status --check uses for a stale snapshot, from a typo.
     --out-dir)
-      [[ -n "${2:-}" ]] || { err "--out-dir requires a directory"; usage; exit 2; }
+      [[ -n "${2:-}" && "$2" != --* ]] || { err "--out-dir requires a directory"; usage; exit 2; }
       OUT_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) err "Unknown argument: $1"; usage; exit 2 ;;

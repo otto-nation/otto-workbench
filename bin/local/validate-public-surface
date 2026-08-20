@@ -7,7 +7,8 @@
 # bin/local/check-surface-compat, which needs a base ref that validators do not have.
 #
 # Usage: bin/local/validate-public-surface [--quiet]
-# Exit code: 0 if both snapshots are current, 1 otherwise.
+# Exit codes: 0 if both snapshots are current; 1 if a committed snapshot is
+#             stale; 2 on a usage error.
 
 set -e
 
@@ -40,7 +41,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --quiet) QUIET=true; shift ;;
     -h|--help) usage; exit 0 ;;
-    *) err "Unknown argument: $1"; usage; exit 1 ;;
+    *) err "Unknown argument: $1"; usage; exit 2 ;;
   esac
 done
 

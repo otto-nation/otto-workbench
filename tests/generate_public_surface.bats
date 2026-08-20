@@ -300,3 +300,15 @@ EOF
   [ "$status" -eq 2 ]
   [[ "$output" == *"Unknown argument"* ]]
 }
+
+@test "--out-dir followed by a flag is a usage error, not a directory name" {
+  run "$GENERATOR" --out-dir --quiet
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--out-dir requires a directory"* ]]
+}
+
+@test "validator's own unknown argument is a usage error, not a stale snapshot" {
+  run "$REPO_ROOT/bin/local/validate-public-surface" --nope
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Unknown argument"* ]]
+}

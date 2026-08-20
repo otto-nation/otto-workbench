@@ -243,6 +243,129 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# ── Scope marker ────────────────────────────────────────────────────────────
+#
+# The framework calls a project-scoped migration once per registered repo with
+# that repo's path, and every other migration with no arguments at all. The two
+# ways the header and the signature can disagree are both silent at runtime:
+# a marked function that ignores the path does the same global thing once per
+# repo, and an unmarked one that reads $1 works on an empty string.
+
+@test "a project-scoped migration that reads the repo path passes" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+# project-scoped: edits files inside each repo.
+migration_20260417_test() {
+  local project_dir="$1"
+  rm -f "$project_dir/.claude/stale"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "a marked migration that ignores the repo path fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+# project-scoped: edits files inside each repo.
+migration_20260417_test() {
+  echo "hi"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"never reads the repo path"* ]]
+}
+
+@test "an unmarked migration that reads an argument fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  echo "$1"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no '# project-scoped:' header"* ]]
+}
+
+@test "a positional read inside a nested helper is not the migration's own" {
+  # ai/claude/20260624-workbench-state-dir.sh has this shape: the migration
+  # defines a helper inside its own body and calls it per root. The $1 belongs
+  # to the helper, and the framework still calls the migration with nothing.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  _per_root() {
+    local root="$1"
+    echo "$root"
+  }
+  _per_root /one
+  _per_root /two
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "a positional read in a helper beside the function is not the migration's own" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+_per_root() {
+  echo "$1"
+}
+migration_20260417_test() {
+  _per_root /one
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "the body resumes after a nested helper closes" {
+  # The nested body is skipped for its text, not to the end of the migration —
+  # a marked migration reading the path after its helper still passes.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+# project-scoped: edits files inside each repo.
+migration_20260417_test() {
+  _per_root() {
+    local root="$1"
+    echo "$root"
+  }
+  _per_root /one
+  rm -f "$1/.claude/stale"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "a single-quoted dollar-one is literal text, not an argument read" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  sed -i.bak 's/$1/literal/' /some/file
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
 # ── Duplicate detection ─────────────────────────────────────────────────────
 
 @test "duplicate filename across components fails" {

@@ -11,6 +11,9 @@
 #   - No redundant WORKBENCH_DIR assignment or lib/ui.sh sourcing (provided by framework)
 #   - Nothing that runs at file scope — only the shebang, comments, blanks, `set`
 #     lines, and function definitions (the framework sources the file, then calls it)
+#   - The scope marker and the function signature agree — a project-scoped
+#     migration reads the repo path the framework hands it, and one without the
+#     marker reads no argument, because the framework calls it with none
 #
 # Exit code: 0 if all checks pass (or no migrations found), 1 if any fail.
 
@@ -21,6 +24,18 @@ _SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
 . "$_SCRIPT_ROOT/lib/ui.sh"
 # shellcheck source=/dev/null
 . "$_SCRIPT_ROOT/lib/components.sh"
+# For _PROJECT_SCOPED_MARKER: the marker is a contract between a migration file
+# and the framework, so the validator reads the framework's own spelling of it
+# rather than keeping a second copy that can drift.
+#
+# LIB_SRC_DIR is pinned to this checkout first. The framework loads its siblings
+# through it, and constants.sh derives it from WORKBENCH_DIR — which names the
+# tree being validated, not the one this script lives in, and the test suite
+# points at a fake root holding no lib/ at all.
+# shellcheck disable=SC2034  # read by lib/migrations.sh, sourced below
+LIB_SRC_DIR="$_SCRIPT_ROOT/lib"
+# shellcheck source=/dev/null
+. "$_SCRIPT_ROOT/lib/migrations.sh"
 
 usage() {
   cat <<EOF
@@ -51,34 +66,25 @@ ALL_BASENAMES=()
 _migration_dirs=()
 discover_migration_dirs _migration_dirs
 
-# _file_scope_statements FILE — print "LINENO<TAB>TEXT" for every line of FILE
-# that would run when the file is sourced.
+# Line-reading helpers shared by the two scanners below. Both have to see a file
+# the way bash does — quoted spans, comments, and heredoc bodies accounted for
+# before a brace is counted — so that reading lives in one place instead of once
+# per scanner, where the copies would drift.
 #
-# docs/execution-flow.md gives a migration file one job: define
-# migration_YYYYMMDD_slug(). Everything else in the file is either inert or a
-# statement the framework never asked for, executed on the sourcing pass ahead
-# of the call the framework makes itself — which is how a self-invoking file
-# used to take a whole sync down.
-#
-# Function bodies come out by brace-counting, not by indentation, so a call
-# written flush against the left margin inside a helper is still recognised as
-# being inside that helper. Quoted spans, comments, and heredoc bodies are
-# removed before the braces are counted, so a brace inside a string or a
-# heredoc cannot shift the depth and expose a body as file scope.
-_file_scope_statements() {
-  awk '
+# `code` is what braces are counted from: it drops comments and the contents of
+# both quote styles, so a brace inside a string or a heredoc cannot shift the
+# depth. `expandable` is what a parameter is looked for in, and differs on
+# purpose — it keeps double-quoted content, since `"$1"` is how an argument is
+# normally read, and drops single-quoted content, where a `$1` is literal text.
+# Its quote state is per line rather than carried across them; a string spanning
+# lines can then only cost a missed match inside itself, which is not a shape a
+# migration writes.
+_AWK_LINE_HELPERS='
+    BEGIN { SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); depth = 0; quote = ""; heredoc = "" }
     function trim(line) {
       sub(/^[ \t]+/, "", line)
       sub(/[ \t]+$/, "", line)
       return line
-    }
-    function inert(line) {
-      if (line ~ /^[ \t]*$/) return 1
-      if (line ~ /^[ \t]*#/) return 1
-      if (line ~ /^[ \t]*set[ \t]+[-+]/) return 1
-      if (line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)/) return 1
-      if (line ~ /^[ \t]*function[ \t]+[A-Za-z_]/) return 1
-      return 0
     }
     function code(line,   out, i, c, n) {
       out = ""
@@ -93,26 +99,99 @@ _file_scope_statements() {
       }
       return out
     }
+    function expandable(line,   out, i, c, n, q) {
+      out = ""
+      n = length(line)
+      q = ""
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (q == SQ) { if (c == SQ) q = ""; continue }
+        if (q == DQ) { out = out c; if (c == "\\") { i++; out = out substr(line, i, 1) } else if (c == DQ) q = ""; continue }
+        if (c == "\\") { i++; continue }
+        if (c == SQ) { q = SQ; continue }
+        if (c == DQ) { q = DQ; out = out c; continue }
+        if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t;&|(]/)) break
+        out = out c
+      }
+      return out
+    }
     function delta(line,   opened, closed, t) {
       t = line; opened = gsub(/\{/, "&", t)
       t = line; closed = gsub(/\}/, "&", t)
       return opened - closed
     }
-    BEGIN { SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); depth = 0; quote = ""; heredoc = "" }
-    heredoc != "" { if (trim($0) == heredoc) heredoc = ""; next }
-    {
-      if (depth == 0 && !inert($0)) printf "%d\t%s\n", NR, trim($0)
-      stripped = code($0)
-      marker = $0
+    function note_heredoc(line,   marker) {
+      marker = line
       gsub(SQ, "", marker)
       gsub(DQ, "", marker)
       if (match(marker, /<<-?[ \t]*[A-Za-z_][A-Za-z0-9_]*/)) {
         heredoc = substr(marker, RSTART, RLENGTH)
         sub(/^<<-?[ \t]*/, "", heredoc)
       }
+    }
+    heredoc != "" { if (trim($0) == heredoc) heredoc = ""; next }
+'
+
+# _file_scope_statements FILE — print "LINENO<TAB>TEXT" for every line of FILE
+# that would run when the file is sourced.
+#
+# docs/execution-flow.md gives a migration file one job: define
+# migration_YYYYMMDD_slug(). Everything else in the file is either inert or a
+# statement the framework never asked for, executed on the sourcing pass ahead
+# of the call the framework makes itself — which is how a self-invoking file
+# used to take a whole sync down.
+#
+# Function bodies come out by brace-counting, not by indentation, so a call
+# written flush against the left margin inside a helper is still recognised as
+# being inside that helper.
+_file_scope_statements() {
+  awk "$_AWK_LINE_HELPERS"'
+    function inert(line) {
+      if (line ~ /^[ \t]*$/) return 1
+      if (line ~ /^[ \t]*#/) return 1
+      if (line ~ /^[ \t]*set[ \t]+[-+]/) return 1
+      if (line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)/) return 1
+      if (line ~ /^[ \t]*function[ \t]+[A-Za-z_]/) return 1
+      return 0
+    }
+    {
+      if (depth == 0 && !inert($0)) printf "%d\t%s\n", NR, trim($0)
+      stripped = code($0)
+      note_heredoc($0)
       depth += delta(stripped)
       if (depth < 0) depth = 0
     }
+  ' "$1"
+}
+
+# _migration_fn_reads_arg FILE FN — true when FN's own body reads a positional
+# parameter.
+#
+# FN's own body, and only it. A migration may carry helpers, whether beside the
+# function or nested inside it, and a helper that takes arguments says nothing
+# about the one function the framework calls — `ai/claude/20260624-workbench-
+# state-dir.sh` nests one that reads `$1` per worktree root. So a nested
+# definition is followed for its braces and skipped for its text, and the outer
+# body resumes where it closes. The body itself is bounded by the same
+# brace-counting the scanner above uses.
+_migration_fn_reads_arg() {
+  awk -v fn="$2" "$_AWK_LINE_HELPERS"'
+    BEGIN { definition = "^[ \t]*" fn "[ \t]*\\(\\)"; nested = -1 }
+    !inside && !closed && $0 ~ definition { inside = 1; depth = 0; nested = -1; own = 1 }
+    inside {
+      isdef = (!own && $0 ~ /^[ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)|function[ \t]+[A-Za-z_])/)
+      if (nested < 0 && !isdef && expandable($0) ~ /\$\{?[1@*]/) found = 1
+      stripped = code($0)
+      note_heredoc($0)
+      before = depth
+      depth += delta(stripped)
+      if (isdef && nested < 0 && depth > before) nested = before
+      if (nested >= 0 && depth <= nested) nested = -1
+      if (depth > 0) opened = 1
+      if (opened && depth <= 0) { inside = 0; closed = 1 }
+      own = 0
+    }
+    END { exit found ? 0 : 1 }
   ' "$1"
 }
 
@@ -153,6 +232,27 @@ _validate_migration() {
     _fail "$display: must not source lib/ui.sh (provided by migration framework)"
   else
     _pass "$display: no redundant lib/ui.sh sourcing"
+  fi
+
+  # The scope marker and the signature have to agree. A project-scoped
+  # migration is called once per registered repo with that repo's path as its
+  # argument, and recorded against it; one that ignored the argument would do
+  # the same global thing once per repo and record a per-repo result for it.
+  # The reverse is as silent: a function that reads $1 without the marker is
+  # called with nothing, and works on an empty path.
+  local marked=false reads_arg=false
+  if grep -qE "$_PROJECT_SCOPED_MARKER" "$migration"; then
+    marked=true
+  fi
+  if _migration_fn_reads_arg "$migration" "$expected_fn"; then
+    reads_arg=true
+  fi
+  if [[ "$marked" == true && "$reads_arg" == false ]]; then
+    _fail "$display: marked project-scoped but ${expected_fn}() never reads the repo path the framework passes it"
+  elif [[ "$marked" == false && "$reads_arg" == true ]]; then
+    _fail "$display: ${expected_fn}() reads a positional argument but the file carries no '# project-scoped:' header — the framework calls it with none"
+  else
+    _pass "$display: scope marker matches the function's arguments"
   fi
 
   # Nothing may run at file scope — the framework sources the file for its

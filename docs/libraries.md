@@ -304,7 +304,7 @@ Migration framework with state tracking.
 | `run_all_migrations` | Adopts the legacy root, backfills the project registry, prunes stale state, then runs every component's migrations. |
 <!-- LIB-FUNCTIONS:migrations.sh-END -->
 
-State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state root](#rootssh). Loaded via `ui.sh`. See [Execution Flow — Migrations](execution-flow.md#migrations).
+State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state root](#rootssh). One line per applied migration, or one line per repo — the key, a tab, and the repo path — for a migration marked `# project-scoped:`, which the framework runs once per entry in the [project registry](#projectssh). Loaded via `ui.sh`. See [Execution Flow — Migrations](execution-flow.md#migrations).
 
 ### components.sh
 

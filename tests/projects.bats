@@ -619,16 +619,21 @@ print(workbench_projects.register('$TMPDIR/container'))
 @test "the context-to-architecture migration reaches a repo past the old depth limit" {
   # Six levels below the root the old `find -maxdepth 5` walked. A bare-repo
   # container sits at exactly five, so any organisation one directory deeper was
-  # invisible — and the migration recorded itself applied all the same.
+  # invisible — and the migration recorded itself applied all the same. The
+  # registry answers by membership rather than by depth, and the migration is
+  # handed each repo it lists.
   local deep="$TMPDIR/git/personal/otto-nation/some-repo/main/nested"
   make_repo "$deep"
   mkdir -p "$deep/.claude"
   echo "architecture" > "$deep/.claude/context.md"
   project_register "$deep"
 
+  run project_registered
+  [[ "$output" == *"$deep"* ]]
+
   # shellcheck source=../ai/claude/migrations/20260819-context-to-architecture.sh
   . "$REPO_ROOT/ai/claude/migrations/20260819-context-to-architecture.sh"
-  run migration_20260819_context_to_architecture
+  run migration_20260819_context_to_architecture "$deep"
   [ "$status" -eq 0 ]
 
   [ ! -f "$deep/.claude/context.md" ]
@@ -640,11 +645,10 @@ print(workbench_projects.register('$TMPDIR/container'))
   mkdir -p "$TMPDIR/alpha/.claude"
   echo "old" > "$TMPDIR/alpha/.claude/context.md"
   echo "current" > "$TMPDIR/alpha/.claude/architecture.md"
-  project_register "$TMPDIR/alpha"
 
   # shellcheck source=../ai/claude/migrations/20260819-context-to-architecture.sh
   . "$REPO_ROOT/ai/claude/migrations/20260819-context-to-architecture.sh"
-  run migration_20260819_context_to_architecture
+  run migration_20260819_context_to_architecture "$TMPDIR/alpha"
   [ "$status" -eq 0 ]
   [ "$(cat "$TMPDIR/alpha/.claude/architecture.md")" = "current" ]
 }

@@ -501,6 +501,239 @@ EOF
   [[ "$output" == *"bin/20260814-unify-workbench-config.sh"* ]]
 }
 
+# ─── Project-scoped migrations ───────────────────────────────────────────────
+#
+# A migration that edits files inside a repo is done per repo, not per machine.
+# The marker in its header hands the loop over the registry to the framework,
+# which records one state line per repo it visited — so a repo the machine
+# learns about later is a key the state file simply does not hold yet.
+
+# Helper: create a migration that declares itself project-scoped and appends the
+# repo path it was handed to $TMPDIR/exec.log.
+create_project_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+# project-scoped: edits files inside each repo.
+${fn_name}() {
+  echo "\$1" >> "$TMPDIR/exec.log"
+}
+EOF
+}
+
+# Helper: put a repo in the registry.
+#
+# Written straight into the file rather than through project_register, which
+# refuses anything under \$TMPDIR — and a temp directory is the only place a
+# test may build a repo. project_registered, which is what the framework reads,
+# applies no such rule.
+register_fake_project() {
+  mkdir -p "$1"
+  printf '%s\n' "$1" >> "$FAKE_STATE/projects.registry"
+}
+
+@test "a project-scoped migration runs once per registered repo" {
+  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/repo-a"
+  register_fake_project "$TMPDIR/repo-b"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-proj.sh (2 project(s))"* ]]
+
+  run cat "$TMPDIR/exec.log"
+  [ "${lines[0]}" = "$TMPDIR/repo-a" ]
+  [ "${lines[1]}" = "$TMPDIR/repo-b" ]
+
+  # One line per repo, and no bare key: a bare key is the machine claiming to be
+  # done, which is the whole thing a project-scoped migration cannot say.
+  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" "$FAKE_STATE/migrations.applied"
+  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-b" "$FAKE_STATE/migrations.applied"
+  run ! grep -qxF "mycomp/20250101-proj.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a repo that registers after the first sync is visited on the next" {
+  # The bug this whole shape exists for: under a single machine-wide key the
+  # first sync recorded the migration as done and repo-b never received it.
+  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/repo-a"
+  run_migrations_in_fake
+
+  register_fake_project "$TMPDIR/repo-b"
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-proj.sh (1 project(s))"* ]]
+
+  # repo-a exactly once — a late registration re-runs the migration for the repo
+  # that is missing, not for the ones already recorded.
+  run cat "$TMPDIR/exec.log"
+  [ "${#lines[@]}" -eq 2 ]
+  [ "${lines[0]}" = "$TMPDIR/repo-a" ]
+  [ "${lines[1]}" = "$TMPDIR/repo-b" ]
+}
+
+@test "a per-repo entry survives the pruning every sync runs" {
+  # Prune reads the same lines back on the next sync. An entry it did not
+  # recognise would be dropped with a warning, and the migration would run
+  # everywhere again — silently, since it has to be idempotent anyway.
+  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/repo-a"
+  run_migrations_in_fake
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Pruned stale migration state"* ]]
+
+  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
+  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" "$FAKE_STATE/migrations.applied"
+}
+
+@test "entries naming a repo that left the registry are dropped" {
+  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/repo-a"
+  register_fake_project "$TMPDIR/repo-b"
+  run_migrations_in_fake
+
+  rm -rf "$TMPDIR/repo-b"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no longer registered"* ]]
+
+  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" "$FAKE_STATE/migrations.applied"
+  run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a repo path holding a tab keeps the key ahead of it intact" {
+  # Every split is on the first separator, so a path carrying one costs the repo
+  # nothing: the key still matches a discovered migration and the entry is not
+  # pruned as unrecognised.
+  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/re"$'\t'"po"
+  run_migrations_in_fake
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Pruned stale migration state"* ]]
+  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
+  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/re"$'\t'"po" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a bare entry for a migration that became project-scoped is dropped" {
+  # How a migration converts scope: the machine-wide line the old shape recorded
+  # says nothing about any repo, so prune drops it and every registered repo is
+  # visited. Re-dating the file to force that is not needed.
+  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/repo-a"
+  echo "mycomp/20250101-proj.sh" > "$FAKE_STATE/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  # Not stale — the file is still there, it just records itself differently now.
+  [[ "$output" != *"Pruned stale migration state"* ]]
+
+  [ "$(cat "$TMPDIR/exec.log")" = "$TMPDIR/repo-a" ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" ]
+}
+
+@test "a per-repo entry for a migration that lost the marker is dropped" {
+  # The other direction, and why prune checks both: a per-repo line means
+  # nothing to a migration that runs once, and no line the framework writes
+  # would ever match it — so the machine-wide run it is owed would never happen.
+  create_migration mycomp 20250101-plain.sh migration_20250101_plain
+  register_fake_project "$TMPDIR/repo-a"
+  printf 'mycomp/20250101-plain.sh\t%s\n' "$TMPDIR/repo-a" > "$FAKE_STATE/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-plain.sh" ]
+}
+
+# Helper: a project-scoped migration that fails for any repo holding a `fail`
+# file, and records the rest.
+create_failing_project_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+set -e
+# project-scoped: edits files inside each repo.
+${fn_name}() {
+  if [[ -e "\$1/fail" ]]; then
+    return 1
+  fi
+  echo "\$1" >> "$TMPDIR/exec.log"
+}
+EOF
+}
+
+@test "a repo whose run fails is the only one retried" {
+  # Per-repo state is per-repo retry too: the repos that succeeded are recorded
+  # and the next sync leaves them alone.
+  create_failing_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/repo-a"
+  register_fake_project "$TMPDIR/repo-b"
+  touch "$TMPDIR/repo-b/fail"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration failed: 20250101-proj.sh in $TMPDIR/repo-b"* ]]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+
+  grep -qxF "mycomp/20250101-proj.sh"$'\t'"$TMPDIR/repo-a" "$FAKE_STATE/migrations.applied"
+  run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
+
+  rm "$TMPDIR/repo-b/fail"
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+
+  run cat "$TMPDIR/exec.log"
+  [ "${#lines[@]}" -eq 2 ]
+  [ "${lines[0]}" = "$TMPDIR/repo-a" ]
+  [ "${lines[1]}" = "$TMPDIR/repo-b" ]
+}
+
+@test "forgetting an adoption-sensitive migration drops its per-repo entries" {
+  # Both state rewriters compare against a discovered key, which no per-repo
+  # line equals — comparing whole lines would leave a marked migration recorded
+  # for exactly the repos it had been applied to.
+  mkdir -p "$FAKE_ROOT/mycomp/migrations" "$FAKE_LEGACY"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-both.sh" <<EOF
+#!/usr/bin/env bash
+# adoption-sensitive: drains a path adoption writes into.
+# project-scoped: drains it inside each repo.
+migration_20250101_both() {
+  echo "\$1" >> "$TMPDIR/exec.log"
+}
+EOF
+  printf 'mycomp/20250101-both.sh\t%s\n' "$TMPDIR/repo-a" "$TMPDIR/repo-b" \
+    > "$FAKE_LEGACY/migrations.applied"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"will run again"* ]]
+  [ ! -s "$FAKE_STATE/migrations.applied" ]
+}
+
+@test "this repo's project-scoped migrations are discovered by their real keys" {
+  # Against the real tree, for the reason the adoption-sensitive twin above is:
+  # a typo in the marker line is invisible everywhere else, and the migration
+  # would quietly go back to claiming the whole machine after one run.
+  run bash -c "
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/migrations.sh'
+    keys=()
+    _discover_migration_keys keys \"\$_PROJECT_SCOPED_MARKER\"
+    printf '%s\n' \"\${keys[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ai/claude/20260819-context-to-architecture.sh"* ]]
+}
+
 # ─── Component discovery under set -e ────────────────────────────────────────
 
 @test "discover_migration_dirs returns 0 under set -e with no migrations" {

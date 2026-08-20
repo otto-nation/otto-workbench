@@ -500,6 +500,35 @@ _init_test_repo() {
   [[ "$output" == *"'ai/claude/bin/otto-log'"* ]]
 }
 
+# The repo ships bin/ directories that no rule grants. A `./` prefix names the
+# repo root, so the granted directory has to sit at the start of what follows —
+# claiming the `bin/` anywhere in the path would send Claude at a top-level
+# script of that name, and there is none.
+@test "reposcript hook: leaves a ./ prefixed nested bin directory alone" {
+  local script
+  for script in ai/bin/workbench-export ai/serena/bin/serena-mcp docker/bin/cleanup-testcontainers; do
+    [ -f "$REPO_ROOT/$script" ] || { echo "no such script: $script"; return 1; }
+    run _run_guard "{\"tool_input\":{\"command\":\"./$script\"}}"
+    [ "$status" -eq 0 ] || { echo "blocked ./$script: $output"; return 1; }
+  done
+}
+
+@test "reposcript hook: leaves the relative form of a nested bin directory alone" {
+  run _run_guard '{"tool_input":{"command":"ai/bin/workbench-export"}}'
+  [ "$status" -eq 0 ]
+}
+
+# The root anchor holds for every granted directory, not only the bare `bin` the
+# repo's own nested bin/ directories collide with — a vendored checkout carrying
+# its own ai/claude/bin or git/bin is not the granted one either.
+@test "reposcript hook: leaves a ./ prefixed nested multi-component directory alone" {
+  local dir
+  for dir in ai/claude/bin git/bin bin/local; do
+    run _run_guard "{\"tool_input\":{\"command\":\"./vendor/$dir/otto-log\"}}"
+    [ "$status" -eq 0 ] || { echo "blocked ./vendor/$dir/otto-log: $output"; return 1; }
+  done
+}
+
 @test "reposcript hook: allows the relative form" {
   run _run_guard '{"tool_input":{"command":"bin/local/validate-all"}}'
   [ "$status" -eq 0 ]

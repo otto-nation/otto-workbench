@@ -101,3 +101,38 @@ def test_render_status_already_landed():
     assert len(result) == 1
     assert "already landed" in result[0]
     assert "pr rebase --force" in result[0]
+
+
+def test_render_status_unrelated_history():
+    r = pr_state.RebaseSummary(
+        status=pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+        updated_at="2026-06-20T00:00:00Z",
+    )
+    assert "shares no history" in rebase_status.render_status(r)[0]
+
+
+def test_render_status_conflicts_over_budget():
+    r = pr_state.RebaseSummary(
+        status=pr_state.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
+        updated_at="2026-06-20T00:00:00Z",
+    )
+    assert "too many conflicts" in rebase_status.render_status(r)[0]
+
+
+def test_every_refusal_status_renders_as_a_refusal():
+    """A refusal status the table forgets renders as a completed rebase.
+
+    `render_status` falls through to the success branch for any status it does
+    not name, so a new refusal added to `pr rebase` without a row here would
+    report a clean rebase that never ran.
+    """
+    refusals = {
+        pr_state.RebaseStatus.ALREADY_LANDED,
+        pr_state.RebaseStatus.UNRELATED_HISTORY,
+        pr_state.RebaseStatus.CONFLICTS_OVER_BUDGET,
+    }
+    for status in refusals:
+        r = pr_state.RebaseSummary(
+            status=status.value, updated_at="2026-06-20T00:00:00Z",
+        )
+        assert "refused" in rebase_status.render_status(r)[0], status

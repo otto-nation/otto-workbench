@@ -105,11 +105,17 @@ class GeneratedSignal(StrEnum):
     HEADER = "header"
 
 
-class LandedSignal(StrEnum):
-    """Which check found the branch's work already present in the target ref."""
+class RefusalSignal(StrEnum):
+    """Which check refused the rebase.
+
+    The first three found the branch's work already present in the target ref;
+    the last two found the rebase itself unsafe to run against that ref.
+    """
     PR_MERGED = "pr_merged"
     EMPTY_DIFF = "empty_diff"
     COMMITS_UPSTREAM = "commits_upstream"
+    NO_MERGE_BASE = "no_merge_base"
+    CONFLICTS_OVER_BUDGET = "conflicts_over_budget"
 
 
 class ParseFailure(StrEnum):
@@ -1414,7 +1420,8 @@ _MAX_REBASE_STEPS = 500
 
 
 def _drive_to_completion(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *, target_ref: str,
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
+    target_ref: str, force: bool = False,
 ) -> int:
     """Drive an in-progress rebase to completion, handling all intermediate states.
 
@@ -1422,11 +1429,12 @@ def _drive_to_completion(
     empty commits (via --skip), and stuck states (abort on unexpected failure).
     """
     with _trail.span("drive_to_completion") if _trail else nullcontext():
-        return _drive_loop(cwd, ctx, mode, target_ref=target_ref)
+        return _drive_loop(cwd, ctx, mode, target_ref=target_ref, force=force)
 
 
 def _drive_loop(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *, target_ref: str,
+    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
+    target_ref: str, force: bool = False,
 ) -> int:
     tally = ResolutionTally()
 
@@ -1434,7 +1442,9 @@ def _drive_loop(
         if not _detect_rebase_in_progress(cwd):
             return _rebase_success(cwd, ctx, mode, tally, target_ref=target_ref)
 
-        rc, conflict_found = _drive_one_step(cwd, ctx, mode, tally, target_ref=target_ref)
+        rc, conflict_found = _drive_one_step(
+            cwd, ctx, mode, tally, target_ref=target_ref, force=force,
+        )
         if rc is not None:
             return rc
         if conflict_found:
@@ -1448,16 +1458,28 @@ def _drive_loop(
 
 def _drive_one_step(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    tally: ResolutionTally, *, target_ref: str,
+    tally: ResolutionTally, *, target_ref: str, force: bool = False,
 ) -> tuple[int | None, bool]:
     conflicts = _detect_conflicts(cwd)
     if not conflicts:
         return _step_advance(cwd), False
 
-    rc = _step_conflicts(cwd, ctx, mode, conflicts, tally, target_ref=target_ref)
+    rc = _step_conflicts(
+        cwd, ctx, mode, conflicts, tally, target_ref=target_ref, force=force,
+    )
     if rc is not None:
         return rc, False
     return None, True
+
+
+# How many distinct files a rebase may conflict in before automatic resolution
+# stops being the right answer. Counted in files rather than conflicts: a file
+# that conflicts in several replayed commits is still one file the resolutions
+# have to keep coherent with each other, and a branch conflicting this widely
+# with its base is usually one whose work already landed in another shape.
+# ceiling: a flat repo-wide number, upgraded to a per-repo config key if a repo
+# turns out to have legitimate rebases above it
+_CONFLICT_FILE_BUDGET = 20
 
 
 def _report_conflicts_and_stop(
@@ -1471,7 +1493,8 @@ def _report_conflicts_and_stop(
 
 def _step_conflicts(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    conflicts: list[str], tally: ResolutionTally, *, target_ref: str,
+    conflicts: list[str], tally: ResolutionTally, *,
+    target_ref: str, force: bool = False,
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     if not mode.resolves_conflicts:
@@ -1481,6 +1504,10 @@ def _step_conflicts(
         _terr("resolve_conflicts", "AI backend unavailable")
         log.error("Cannot resolve conflicts — AI backend unavailable.")
         return _report_conflicts_and_stop(cwd, ctx, target_ref=target_ref)
+
+    spread = len(set(tally.files) | set(conflicts))
+    if not force and spread > _CONFLICT_FILE_BUDGET:
+        return _refuse_over_budget(cwd, ctx, spread, target_ref=target_ref)
 
     sha, subject = _rebase_head_info(cwd)
     remaining = _remaining_rebase_commits(cwd)
@@ -1763,10 +1790,10 @@ class RebaseOutcome:
         _emit_json(report)
 
 
-# ── Already-landed preflight ────────────────────────────────────────────────
+# ── Refusals ────────────────────────────────────────────────────────────────
 
-_LANDED_EXIT = 4
-_LANDED_OVERRIDE_FLAG = "--force"
+_REFUSAL_EXIT = 4
+_REFUSAL_OVERRIDE_FLAG = "--force"
 
 # The gh probes — this one and the PR's base branch — are the only network
 # calls on the rebase path. Bounded so a hung or throttled gh cannot stall every
@@ -1776,8 +1803,13 @@ _GH_TIMEOUT = 10
 
 
 @dataclass(frozen=True)
-class LandedReport:
-    """Already-landed refusal — the exit-code-4 payload on stdout."""
+class RefusalReport:
+    """A refusal to rebase — the exit-code-4 payload on stdout.
+
+    One shape for every refusal, whatever refused: a caller reads ``signal`` to
+    learn which check fired and ``status`` to learn what it concluded, rather
+    than telling payloads apart by which keys they happen to carry.
+    """
     branch: str
     signal: str
     detail: str
@@ -1787,7 +1819,7 @@ class LandedReport:
     commits_ahead: int | None = None
     pr_number: int | None = None
     status: str = RebaseStatus.ALREADY_LANDED.value
-    override: str = _LANDED_OVERRIDE_FLAG
+    override: str = _REFUSAL_OVERRIDE_FLAG
 
     def emit(self) -> None:
         _emit_json(asdict(self))
@@ -1864,7 +1896,7 @@ def _all_commits_upstream(cwd: str, *, target_ref: str) -> bool:
 
 def _tracker_landed_check(
     cwd: str, ctx: pr_context.ResolvedContext,
-) -> LandedReport | None:
+) -> RefusalReport | None:
     """Evidence from GitHub that the branch's PR merged, or None.
 
     Split from the git signals because it asks about ``ctx``, not HEAD, which
@@ -1880,8 +1912,8 @@ def _tracker_landed_check(
     if merged is None:
         return None
     where = f" ({merged.url})" if merged.url else ""
-    return LandedReport(
-        branch=ctx.branch, signal=LandedSignal.PR_MERGED.value,
+    return RefusalReport(
+        branch=ctx.branch, signal=RefusalSignal.PR_MERGED.value,
         detail=f"PR #{merged.number} is merged{where}",
         pr_number=merged.number,
     )
@@ -1889,7 +1921,7 @@ def _tracker_landed_check(
 
 def _git_landed_check(
     cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
-) -> LandedReport | None:
+) -> RefusalReport | None:
     """Evidence from git that the branch's work is in the target ref, or None.
 
     Every signal here compares HEAD, so this only means anything once the
@@ -1907,15 +1939,15 @@ def _git_landed_check(
         return None
 
     if _diff_is_empty(cwd, target_ref=target_ref):
-        return LandedReport(
-            branch=ctx.branch, signal=LandedSignal.EMPTY_DIFF.value,
+        return RefusalReport(
+            branch=ctx.branch, signal=RefusalSignal.EMPTY_DIFF.value,
             detail=f"{ahead} commit(s) ahead of {target_ref} but no diff against it",
             commits_ahead=ahead,
         )
 
     if _all_commits_upstream(cwd, target_ref=target_ref):
-        return LandedReport(
-            branch=ctx.branch, signal=LandedSignal.COMMITS_UPSTREAM.value,
+        return RefusalReport(
+            branch=ctx.branch, signal=RefusalSignal.COMMITS_UPSTREAM.value,
             detail=f"all {ahead} commit(s) already have an equivalent in {target_ref}",
             commits_ahead=ahead,
         )
@@ -1923,18 +1955,102 @@ def _git_landed_check(
     return None
 
 
-def _refuse_landed(
-    ctx: pr_context.ResolvedContext, report: LandedReport, *, target_ref: str,
+def _ref_exists(cwd: str, ref: str) -> bool:
+    """Whether the ref names a commit in this repo."""
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        capture_output=True, cwd=cwd,
+    ).returncode == 0
+
+
+def _shares_history(cwd: str, *, target_ref: str) -> bool:
+    """Whether HEAD and the target ref have any commit in common.
+
+    A ref that does not resolve counts as shared history rather than unrelated:
+    `git merge-base` fails the same way for a typo'd `--onto` and for a base
+    branch the fetch never brought down, and refusing those as unrelated history
+    sends the operator after a root they do not have. Left to git, the rebase
+    fails with the ref's own error text instead.
+    """
+    if not _ref_exists(cwd, target_ref):
+        return True
+    return subprocess.run(
+        ["git", "merge-base", target_ref, "HEAD"],
+        capture_output=True, cwd=cwd,
+    ).returncode == 0
+
+
+def _unrelated_history_check(
+    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+) -> RefusalReport | None:
+    """Refuse a branch that shares no history with the ref it would rebase onto.
+
+    Exact rather than heuristic: git either finds a merge base or it does not.
+    A branch with none was cut from a different root — a repo re-initialised
+    over an existing checkout leaves a whole population of them — and rebasing
+    it replays its entire history onto that unrelated root, conflicting on every
+    commit because there is no common ancestor to merge against.
+
+    Asked before the landed signals, which compare against a ref this branch has
+    no relationship to and so answer nothing.
+    """
+    if _shares_history(cwd, target_ref=target_ref):
+        return None
+    return RefusalReport(
+        branch=ctx.branch, signal=RefusalSignal.NO_MERGE_BASE.value,
+        detail=f"no commit in common with {target_ref}",
+        status=RebaseStatus.UNRELATED_HISTORY.value,
+    )
+
+
+# What each refusal tells the operator would happen if it did not refuse. Keyed
+# by status so a caller cannot pair a refusal with another one's explanation,
+# and `{ref}` is the resolved base, not necessarily origin/main.
+_REFUSAL_HINTS = {
+    RebaseStatus.ALREADY_LANDED.value:
+        "Rebasing would replay work already in {ref} and force-push it back, "
+        "recreating a remote branch the merge deleted.",
+    RebaseStatus.UNRELATED_HISTORY.value:
+        "Rebasing would replay the branch's entire history onto an unrelated "
+        "root, conflicting on every commit. Retarget the branch, or recreate "
+        "it from {ref}.",
+    RebaseStatus.CONFLICTS_OVER_BUDGET.value:
+        "A branch conflicting this widely with {ref} has usually had its work "
+        "land in another shape. Resolving that many conflicts unattended "
+        "rewrites files the branch never touched.",
+}
+
+
+def _refuse(
+    ctx: pr_context.ResolvedContext, report: RefusalReport, *, target_ref: str,
 ) -> int:
-    """Report an already-landed branch and stop before the rebase."""
-    _terr("preflight", f"branch already landed ({report.signal})", data=asdict(report))
+    """Report a refused rebase and stop, on the shared exit code."""
+    _terr("preflight", f"refusing to rebase ({report.signal})", data=asdict(report))
     log.error(f"Refusing to rebase {report.branch} — {report.detail}.")
-    log.dim(f"Rebasing would replay work already in {target_ref} and force-push "
-            "it back, recreating a remote branch the merge deleted.")
-    log.dim(f"Pass {_LANDED_OVERRIDE_FLAG} to rebase it anyway.")
-    RebaseOutcome(status=RebaseStatus.ALREADY_LANDED, target_base=target_ref).save(ctx)
+    log.dim(_REFUSAL_HINTS[report.status].format(ref=target_ref))
+    log.dim(f"Pass {_REFUSAL_OVERRIDE_FLAG} to rebase it anyway.")
+    RebaseOutcome(status=RebaseStatus(report.status), target_base=target_ref).save(ctx)
     report.emit()
-    return _LANDED_EXIT
+    return _REFUSAL_EXIT
+
+
+def _refuse_over_budget(
+    cwd: str, ctx: pr_context.ResolvedContext, spread: int, *, target_ref: str,
+) -> int:
+    """Abort a rebase conflicting too widely to be resolved unattended.
+
+    The only refusal raised mid-rebase rather than in the preflight: how far a
+    branch and its base have diverged is not knowable until git says so. The
+    abort restores the branch, so the refusal leaves the worktree where the
+    preflight refusals do — untouched, with nothing pushed.
+    """
+    subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+    return _refuse(ctx, RefusalReport(
+        branch=ctx.branch, signal=RefusalSignal.CONFLICTS_OVER_BUDGET.value,
+        detail=f"conflicts in {spread} files, over the "
+               f"{_CONFLICT_FILE_BUDGET}-file budget",
+        status=RebaseStatus.CONFLICTS_OVER_BUDGET.value,
+    ), target_ref=target_ref)
 
 
 # ── Target ref ──────────────────────────────────────────────────────────────
@@ -2204,6 +2320,10 @@ def cmd_start(
 
     ``force`` waives the already-landed preflight, which only a fresh rebase
     runs: a resumed one is already past the point the refusal protects.
+
+    The conflict budget is waived on the resume path for the same reason, and
+    for a sharper one — it refuses by aborting, and a resumed rebase is one an
+    operator may have half-resolved by hand.
     """
     if _detect_rebase_in_progress(cwd):
         target_ref = _resume_target_ref(ctx, target_ref)
@@ -2214,7 +2334,7 @@ def cmd_start(
                 reason="rebase-merge or rebase-apply directory exists",
             )
         log.info("Detected in-progress rebase — resuming...")
-        return _drive_to_completion(cwd, ctx, mode, target_ref=target_ref)
+        return _drive_to_completion(cwd, ctx, mode, target_ref=target_ref, force=True)
 
     stashed = _auto_stash(cwd)
     if stashed is None:
@@ -2393,7 +2513,7 @@ def _fresh(
     # this preflight exists to give.
     landed = None if force else _tracker_landed_check(cwd, ctx)
     if landed is not None:
-        return _refuse_landed(ctx, landed, target_ref=target_ref)
+        return _refuse(ctx, landed, target_ref=target_ref)
 
     if ctx.current_branch != ctx.branch:
         display = ctx.current_branch or "detached HEAD"
@@ -2420,9 +2540,15 @@ def _fresh(
 
     # After the checkout, so HEAD is the branch these signals are asked about,
     # and after the fetch, so the target ref they compare against is current.
+    # Unrelated history first: the landed signals compare HEAD against a ref an
+    # unrelated branch has no relationship to, so they answer nothing there.
+    unrelated = None if force else _unrelated_history_check(cwd, ctx, target_ref=target_ref)
+    if unrelated is not None:
+        return _refuse(ctx, unrelated, target_ref=target_ref)
+
     landed = None if force else _git_landed_check(cwd, ctx, target_ref=target_ref)
     if landed is not None:
-        return _refuse_landed(ctx, landed, target_ref=target_ref)
+        return _refuse(ctx, landed, target_ref=target_ref)
 
     log.info(f"Rebasing onto {target_ref}...")
     r = subprocess.run(
@@ -2440,7 +2566,7 @@ def _fresh(
             log.dim(r.stderr.strip())
         return 1
 
-    return _drive_to_completion(cwd, ctx, mode, target_ref=target_ref)
+    return _drive_to_completion(cwd, ctx, mode, target_ref=target_ref, force=force)
 
 
 def _rebase_success(
@@ -2523,7 +2649,7 @@ def main():
         prog=SCRIPT,
         description="Rebase onto the branch's base with conflict detection and force-push",
         output_schema=RebaseSummary,
-        ok_exit_codes=[3, _LANDED_EXIT],
+        ok_exit_codes=[3, _REFUSAL_EXIT],
     )
     parser.add_argument("--repo-dir", "--worktree",
                         dest="repo_dir",
@@ -2561,6 +2687,8 @@ def main():
         debug=args.debug,
     )
     try:
+        target_ref = _resolve_target_ref(cwd, ctx, args.onto)
+
         if args.abort:
             _trail.decision("mode", "selected abort", reason="--abort flag set")
             # Abort is the escape hatch for a broken or hung rebase — it should
@@ -2577,7 +2705,7 @@ def main():
         _trail.decision("mode", f"selected {mode}", reason=reason)
         if args.force:
             _trail.decision("preflight", "waiving the already-landed check",
-                            reason=f"{_LANDED_OVERRIDE_FLAG} flag set")
+                            reason=f"{_REFUSAL_OVERRIDE_FLAG} flag set")
         rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref)
 
         if rc == 0 and mode is RunMode.PUSH:

@@ -34,9 +34,10 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 - `--no-push` (optional): Do everything except push. Composes with `--no-fix`
   independently — under the default auto-fix mode the AI still resolves conflicts,
   and the force-push command is printed for the user to run.
-- `--force` (optional): Rebase a branch whose work already landed on its base.
-  Only pass it when the user has seen the exit-4 refusal and asked for the
-  rebase anyway — never add it speculatively.
+- `--force` (optional): Rebase a branch the preflight refuses — one whose work
+  already landed on its base, one sharing no history with it, or one conflicting
+  past the file budget. Only pass it when the user has seen the exit-4 refusal
+  and asked for the rebase anyway — never add it speculatively.
 - `--onto <ref>` (also spelled `--base`, optional): Rebase onto this ref
   verbatim, overriding the PR base and the default branch. Only pass it when
   the user names a base; the resolved default is right otherwise.
@@ -111,7 +112,7 @@ pr rebase --fix --branch <branch>
 
 This resumes the in-progress rebase with AI conflict resolution and force-pushes.
 
-**Exit 4 — branch already landed, nothing was rebased or pushed.** Parse the JSON:
+**Exit 4 — the rebase was refused, nothing was rebased or pushed.** Parse the JSON:
 
 ```json
 {
@@ -125,23 +126,43 @@ This resumes the in-progress rebase with AI conflict resolution and force-pushes
 }
 ```
 
-`signal` names the evidence: `pr_merged` (GitHub reports the PR merged),
-`empty_diff` (the branch has commits but no diff against its base — what a
-squash merge leaves behind), or `commits_upstream` (every commit already has an
-equivalent upstream by patch id).
+`signal` names the evidence, and `status` groups the signals by what they found:
+
+| `signal` | `status` | What it found |
+|---|---|---|
+| `pr_merged` | `already_landed` | GitHub reports the PR merged |
+| `empty_diff` | `already_landed` | The branch has commits but no diff against its base — what a squash merge leaves behind |
+| `commits_upstream` | `already_landed` | Every commit already has an equivalent upstream by patch id |
+| `no_merge_base` | `unrelated_history` | The branch and its base share no commit at all |
+| `conflicts_over_budget` | `conflicts_over_budget` | The rebase conflicted across more files than automatic resolution should attempt; it was aborted |
 
 `commits_ahead` is a count on the two git signals and `null` on `pr_merged`: the
 tracker is asked before the branch is checked out, so there is no honest count
 to report there. `pr_number` is set on `pr_merged` only.
 
-Report `detail` and stop. Rebasing here would replay landed work and force-push
-a branch the merge deleted. Suggest deleting the worktree and branch instead. If
-the user confirms the branch was deliberately reopened for follow-up work, re-run
-with the flag in `override`:
+Report `detail` and stop. What to suggest depends on `status`:
+
+- `already_landed` — rebasing would replay landed work and force-push a branch
+  the merge deleted. Suggest deleting the worktree and branch instead.
+- `unrelated_history` — the branch descends from a different root, usually one
+  left by a re-initialised repo. Rebasing would replay its entire history onto a
+  base it has nothing in common with. Suggest cherry-picking the wanted commits
+  onto a fresh branch instead.
+- `conflicts_over_budget` — a branch conflicting this widely has usually had its
+  work land in another shape. The rebase was already aborted, so the worktree is
+  clean; suggest checking whether the work is still wanted before forcing it.
+
+If the user confirms they want the rebase anyway, re-run with the flag in
+`override`:
 
 ```bash
 pr rebase --fix --force --branch <branch>
 ```
+
+`--force` waives every one of these checks, not just the one that fired. A
+resumed rebase (one already paused in the worktree) waives the conflict budget
+on its own: the conflicts are already there to resolve, and refusing would
+strand the worktree mid-rebase.
 
 **Exit 1 — error.** Report the error from stderr.
 

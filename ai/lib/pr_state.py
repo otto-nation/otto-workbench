@@ -203,6 +203,8 @@ class RebaseStatus(Enum):
     CONFLICTS = "conflicts"
     ABORTED = "aborted"
     ALREADY_LANDED = "already_landed"
+    UNRELATED_HISTORY = "unrelated_history"
+    CONFLICTS_OVER_BUDGET = "conflicts_over_budget"
 
 
 @dataclass

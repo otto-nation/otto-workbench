@@ -21,6 +21,34 @@ _generator_under_test() {
   echo "${GENERATOR_UNDER_TEST:-$GENERATOR}"
 }
 
+# _shim_failure BINARY MATCH MESSAGE — installs a fake BINARY that fails with
+# MESSAGE when any argument contains MATCH and execs the real one otherwise,
+# then prints the directory to put in front of PATH.
+#
+# Failing one call site and not the whole binary is the point of the MATCH
+# argument. A total tool outage is already caught by _collect's empty-category
+# check, so a shim that failed unconditionally would abort against any
+# implementation and discriminate nothing; each caller passes a fragment unique
+# to the single call it is targeting.
+_shim_failure() {
+  local binary="$1" match="$2" message="$3"
+  local fakebin="$TMPDIR/fakebin" real
+  mkdir -p "$fakebin"
+  real="$(command -v "$binary")"
+  cat > "$fakebin/$binary" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == *"$match"* ]]; then
+    echo "$message" >&2
+    exit 1
+  fi
+done
+exec "$real" "\$@"
+EOF
+  chmod +x "$fakebin/$binary"
+  echo "$fakebin"
+}
+
 @test "generator writes both package snapshots" {
   run "$GENERATOR" --out-dir "$TMPDIR" --quiet
   [ "$status" -eq 0 ]
@@ -129,27 +157,11 @@ _generator_under_test() {
 }
 
 @test "a broken jq call aborts instead of writing a truncated snapshot" {
-  local gen
+  local gen fakebin
   gen="$(_generator_under_test)"
-  local fakebin="$TMPDIR/fakebin" real_jq
-  mkdir -p "$fakebin"
-  real_jq="$(command -v jq)"
-  # Fails only the _config_entries "props" jq call (matched by a fragment of
-  # its jq program) and passes every other jq invocation through to the real
-  # binary — this reproduces one broken pipeline stage among several, not a
-  # total tool outage, since a total outage is already caught by _collect's
-  # empty-category check and would not discriminate this bug.
-  cat > "$fakebin/jq" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [[ "\$a" == *"def props("* ]]; then
-    echo "jq: 1 compile error" >&2
-    exit 1
-  fi
-done
-exec "$real_jq" "\$@"
-EOF
-  chmod +x "$fakebin/jq"
+  # "def props(" is the _config_entries jq program and nothing else, so this
+  # breaks one pipeline stage among several rather than the whole tool.
+  fakebin="$(_shim_failure jq 'def props(' 'jq: 1 compile error')"
 
   run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
   [ "$status" -ne 0 ]
@@ -161,30 +173,16 @@ EOF
 }
 
 @test "a broken yq call inside _registries_for aborts instead of truncating" {
-  local gen
+  local gen fakebin
   gen="$(_generator_under_test)"
-  local fakebin="$TMPDIR/fakebin" real_yq
-  mkdir -p "$fakebin"
-  real_yq="$(command -v yq)"
   # _registries_for's own yq calls are reached through a process substitution
   # (`done < <(_registries_for ...)` in _commands), which has no exit-status
   # channel back to the reader at all — pipefail and inherit_errexit both
   # only reach pipes and command substitutions, neither of which this is.
-  # Failing yq only for one specific registry (not every call) reproduces a
-  # single bad file, not a total tool outage, since a total outage would
-  # make _registries_for itself fail every iteration in a way _collect's
-  # empty-category check already catches.
-  cat > "$fakebin/yq" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [[ "\$a" == *"git/bin/registry.yml"* ]]; then
-    echo "yq: fake failure on git/bin/registry.yml" >&2
-    exit 1
-  fi
-done
-exec "$real_yq" "\$@"
-EOF
-  chmod +x "$fakebin/yq"
+  # One registry and not every one: a total outage would make _registries_for
+  # fail on its first iteration, which _collect's empty-category check already
+  # catches, so it would not discriminate this bug.
+  fakebin="$(_shim_failure yq 'git/bin/registry.yml' 'yq: fake failure on git/bin/registry.yml')"
 
   run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
   [ "$status" -ne 0 ]
@@ -195,27 +193,14 @@ EOF
 }
 
 @test "a broken jq call inside _write_snapshot's render pipeline aborts instead of writing an empty snapshot" {
-  local gen
+  local gen fakebin
   gen="$(_generator_under_test)"
-  local fakebin="$TMPDIR/fakebin" real_jq
-  mkdir -p "$fakebin"
-  real_jq="$(command -v jq)"
   # _write_snapshot's own render pipeline (printf | sort | jq -R | jq -s) is
   # only reachable if _write_snapshot itself runs under errexit, which
   # requires it not be called on the left of || at its call sites. Failing
   # only the `select(length > 0)` stage (unique to _write_snapshot, not used
   # by any category function) isolates this specific pipeline.
-  cat > "$fakebin/jq" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-  if [[ "\$a" == *"select(length > 0)"* ]]; then
-    echo "jq: fake failure on select(length > 0)" >&2
-    exit 1
-  fi
-done
-exec "$real_jq" "\$@"
-EOF
-  chmod +x "$fakebin/jq"
+  fakebin="$(_shim_failure jq 'select(length > 0)' 'jq: fake failure on select(length > 0)')"
 
   run env PATH="$fakebin:$PATH" "$gen" --out-dir "$TMPDIR/out" --quiet
   [ "$status" -ne 0 ]
@@ -258,9 +243,13 @@ EOF
   # config.schema.json uses no allOf today, so the walk can only be exercised
   # against a fixture. This shim swaps the schema path for exactly the two
   # _config_entries jq calls (identified by a fragment of their programs) and
-  # passes every other invocation through untouched — the same substitution
-  # idiom as the fault-injection tests above, rather than an override flag on
-  # the generator that nothing in production would ever set.
+  # passes every other invocation through untouched — rather than an override
+  # flag on the generator that nothing in production would ever set.
+  #
+  # Hand-rolled rather than built on _shim_failure: that helper makes the
+  # matched call fail, and this one has to succeed against different input.
+  # Rewriting an argument and refusing to run are different shims that happen
+  # to share their scaffolding.
   cat > "$TMPDIR/schema.json" <<'JSON'
 {
   "properties": {"plain": {"type": "string"}},

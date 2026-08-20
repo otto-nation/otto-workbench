@@ -283,6 +283,34 @@ class TestExtractSkipReasons:
         review_findings.extract_skip_reasons(findings)
         assert findings[0].skip_reason == ""
 
+    def test_a_skip_without_a_reason_still_registers(self):
+        """Mirrors the decline case — a bare annotation is still a skip.
+
+        Read as an ordinary open finding it would be auto-checked as fixed by
+        any sibling fix in the same file.
+        """
+        finding = Finding(
+            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
+            body="*(skipped)* — Some finding body",
+        )
+        assert review_findings.match_skip(finding) is not None
+        review_findings.extract_skip_reasons([finding])
+        assert finding.skip_reason == ""
+
+    def test_a_plain_finding_carries_no_skip(self):
+        finding = Finding(
+            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
+            body="Plain finding body",
+        )
+        assert review_findings.match_skip(finding) is None
+
+    def test_a_checked_finding_carries_no_skip(self):
+        finding = Finding(
+            id="M1", severity="M", seq=1, path="a.go", line=1, end_line=None,
+            body="*(skipped — stale)* — body", checked=True,
+        )
+        assert review_findings.match_skip(finding) is None
+
 
 class TestParseDeclinedFindings:
     """`*(declined — reason)*` is where an adjudicated verdict survives.
@@ -723,6 +751,46 @@ class TestReconcileCheckboxes:
         review.write_text(
             "## Must fix\n"
             "- [ ] **[M1]** `src/auth.go:10` — *(declined — documented tradeoff)* — Lock\n"
+        )
+        review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
+        assert "- [ ] **[M1]**" in review.read_text()
+
+    def test_a_skipped_finding_is_never_checked_off(self, tmp_path):
+        """A sibling's fix in the same file is not a fix for a skip.
+
+        Auto-checking matches on file path alone, so the second finding here is
+        checked off by the edit the first one earned — and `_diff_findings`
+        then reports it as fixed.
+        """
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** `src/auth.go:10` — Missing nil check\n"
+            "- [ ] **[M2]** `src/auth.go:40` — *(skipped — needs design)* — Lock\n"
+        )
+        review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
+        text = review.read_text()
+        assert "- [x] **[M1]**" in text
+        assert "- [ ] **[M2]**" in text
+
+    def test_a_skip_without_a_reason_is_never_checked_off(self, tmp_path):
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** `src/auth.go:10` — Missing nil check\n"
+            "- [ ] **[M2]** `src/auth.go:40` — *(skipped)* — Lock\n"
+        )
+        review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
+        text = review.read_text()
+        assert "- [x] **[M1]**" in text
+        assert "- [ ] **[M2]**" in text
+
+    def test_a_trailing_skip_annotation_is_honoured(self, tmp_path):
+        """The template's example puts the annotation mid-line; agents also trail it."""
+        review = tmp_path / "review.md"
+        review.write_text(
+            "## Must fix\n"
+            "- [ ] **[M1]** `src/auth.go:40` — Lock *(skipped — needs design)*\n"
         )
         review_fix._reconcile_checkboxes(str(review), {"src/auth.go"})
         assert "- [ ] **[M1]**" in review.read_text()
@@ -1190,3 +1258,59 @@ class TestRunFixPassLeavesDeclinedFindingsAlone:
         assert "- [ ] **[M1]**" in review
         assert "*(declined — documented tradeoff)*" in review
         assert "- [x] **[M2]**" in review
+
+
+class TestRunFixPassLeavesSkippedFindingsOpen:
+    """Two findings in one file, one fixed — the skip must survive intact.
+
+    Auto-checking attributes by file path, so the edit M1 earned reaches every
+    finding in `src.py`. Checked off, M2 reads as unchecked→checked to
+    `_diff_findings`, which reports it fixed in `review.md`, in the counts, and
+    in the commit message, and drops the reason the agent wrote.
+    """
+
+    REVIEW_CONTENT = (
+        "## Must fix\n"
+        "- [ ] **[M1]** `src.py:1` — Missing nil check\n"
+        "- [ ] **[M2]** `src.py:9` — Retry budget is unbounded\n"
+    )
+
+    def _make_job(self, git_wt, tmp_path):
+        review_file = tmp_path / "review.md"
+        review_file.write_text(self.REVIEW_CONTENT)
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(git_wt)
+        job.model = None
+        job.effort = Effort.MEDIUM
+        return job
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_a_skip_survives_a_fix_to_its_own_file(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
+    ):
+        job = self._make_job(git_wt, tmp_path)
+
+        def agent_run(*args, **kwargs):
+            (git_wt / "src.py").write_text("original\nif x is None: return\n")
+            text = Path(job.review_file).read_text()
+            text = text.replace("- [ ] **[M1]**", "- [x] **[M1]**")
+            text = text.replace(
+                "— Retry budget is unbounded\n",
+                "— *(skipped — needs a product decision on the ceiling)* "
+                "— Retry budget is unbounded\n",
+            )
+            Path(job.review_file).write_text(text)
+
+        mock_invoke.side_effect = agent_run
+        review_fix.run_fix_pass(job)
+
+        review = Path(job.review_file).read_text()
+        assert "- [x] **[M1]**" in review
+        assert "- [ ] **[M2]**" in review
+
+        msg = _git(git_wt, "log", "-1", "--format=%B")
+        assert "1 fixed, 1 skipped" in msg
+        assert "[M2] needs a product decision on the ceiling" in msg

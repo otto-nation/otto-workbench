@@ -131,7 +131,19 @@ FIRST_FILE_RE = re.compile(
 
 STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
 
-SKIP_REASON_RE = re.compile(r"\*\(skipped\s*[—–-]+\s*(.+?)\)\*")
+# The fix pass's record of work it did not do. The reason is optional for the
+# same reason it is on `_DECLINED`: a skip written without one is still a skip,
+# and reading it as an ordinary open finding is what lets a sibling finding's
+# edit report it as fixed.
+_SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
+
+# Matched at the head or tail of the finding body for the same reason
+# `DECLINED_HEAD_RE`/`DECLINED_TAIL_RE` are anchored below: matched anywhere, a
+# finding whose prose quotes the annotation — this file's own docs do,
+# verbatim — would be misread as carrying it and barred from
+# `_reconcile_checkboxes` forever.
+SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
+SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
 
 # The review file's record of `PriorDisposition.DECLINED`. The ledger is
 # stripped before the file is finished, so the verdict has to survive on the
@@ -323,14 +335,28 @@ def parse_findings(text: str) -> list[Finding]:
     return findings
 
 
+def match_skip(finding: Finding) -> re.Match[str] | None:
+    """The skip annotation a finding carries, if it carries one.
+
+    The single owner of "did the fix pass skip this?". Everything that acts on
+    a skip asks here, so the auto-check guard and the fix summary cannot come
+    to different answers about the same finding — the way they did while the
+    guard read only `Finding.declined`.
+
+    A checked finding carries no skip: whatever its body says, the box says the
+    work was done.
+    """
+    if finding.checked:
+        return None
+    return SKIP_HEAD_RE.match(finding.body) or SKIP_TAIL_RE.search(finding.body)
+
+
 def extract_skip_reasons(findings: list[Finding]) -> None:
     """Extract skip reasons from finding body text (mutates in place)."""
     for f in findings:
-        if f.checked:
-            continue
-        m = SKIP_REASON_RE.search(f.body)
+        m = match_skip(f)
         if m:
-            f.skip_reason = m.group(1).strip()
+            f.skip_reason = (m.group(1) or "").strip()
 
 
 # ── Diff hunk parsing ────────────────────────────────────────────────────────

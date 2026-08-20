@@ -211,8 +211,8 @@ class TestConsumers:
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
         server = _load_module("mcp_server", MCP_SERVER)
 
-        roots = [str(tmp_path / "config"), str(tmp_path / "state")]
-        paths = [str(v) for v in vars(server).values() if isinstance(v, Path)]
-        assert not [p for p in paths if any(p.startswith(root) for root in roots)]
+        roots = [tmp_path / "config", tmp_path / "state"]
+        paths = [v for v in vars(server).values() if isinstance(v, Path)]
+        assert not [p for p in paths if any(p.is_relative_to(root) for root in roots)]
 
 

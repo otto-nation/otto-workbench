@@ -168,3 +168,7 @@ jobs:
       - name: Build
         working-directory: site
         run: npm run build
+
+      - name: Verify the brand package reached the export
+        working-directory: site
+        run: npm run verify

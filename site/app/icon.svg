@@ -1,4 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!--
+    The three hexes below are the package's one documented exception to
+    "tokens.css owns every hex". They are, in order:
+
+      #F7F2E9  --ow-canvas
+      #C4552F  --ow-barro
+      #D81E5B  --ow-rosa
+
+    They cannot be var(--ow-*). This file is consumed as a favicon through
+    Next's metadata convention and as an <img> src, and an SVG loaded that way
+    is an isolated document: it never sees the host page's stylesheet, so a
+    custom property declared in tokens.css does not resolve and each shape
+    would fall back to no paint at all. Greca renders the same mark inline,
+    where var() does resolve, and so uses the tokens directly.
+
+    Edit a value here and the matching token in tokens.css in the same change.
+  -->
   <rect width="32" height="32" fill="#F7F2E9"/>
   <path d="M4 28V18h8v-6h8V6h8" stroke="#C4552F" stroke-width="3"/>
   <path d="M12 28v-4h8v-6h8" stroke="#D81E5B" stroke-width="3"/>

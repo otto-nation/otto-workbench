@@ -29,21 +29,18 @@ module boundary resolve against the repo root, which contains both `site/` and `
 
 ## Fonts
 
-- **League Spartan** — via `next/font/google`, downloaded and self-hosted at build time.
-- **League Mono** — vendored at `app/fonts/LeagueMonoVariable.woff2`, from
-  https://github.com/theleagueof/league-mono (variable, weight + width axes). Not on
-  Google Fonts yet; when it lands there, move it to `next/font/google` and delete the
-  vendored file.
-
-Both are SIL OFL. The published site makes no third-party font request.
+`@otto-nation/brand` owns both faces and vendors them as variable woff2 loaded by
+plain `@font-face`. This site declares no fonts and calls no `next/font` loader.
+Provenance for each face is in that package's README.
 
 ## Local development
 
     npm install
     npm run dev
 
-`npm run build` needs network access — `next/font/google` fetches League Spartan at
-build time. Offline builds fail on fonts alone.
+`npm run build` works offline. Both fonts are vendored inside `@otto-nation/brand`,
+so nothing is fetched at build time and the published site makes no third-party
+font request.
 
 ## Tests
 
@@ -56,7 +53,18 @@ cause of a suite that silently ran nothing — do not reintroduce a path list.
 
 ## Colors
 
-`app/tokens.css` is the only place a hex literal belongs. Components reference
-`var(--ow-*)`; `tests/site_palette_ssot.bats` fails the push if one grows its own.
-The `--ow-block-*` group is the fixed dark band used by the install block and the
-footer, which stay dark in both themes and so cannot follow the light/dark ramp.
+`@otto-nation/brand/tokens.css` is the only place a hex literal belongs, and it lives
+in that package, not here. Components reference `var(--ow-*)`;
+`tests/site_palette_ssot.bats` fails the push if anything under `site/` grows a hex or
+re-declares the palette, and `npm run check` (`otto-brand-check`, shipped with the
+package) fails the build if a referenced token is not declared or if `@source` /
+`transpilePackages` go missing.
+
+`app/icon.svg` is the one exemption — Next's metadata convention reads it off disk as a
+static file, so it cannot resolve a custom property. `icon-parity.test.mjs` keeps it
+byte-identical to the mark the package ships.
+
+The `--ow-block-*` group is the dark band used by the install block and the footer,
+which stay dark in both themes and so cannot follow the light/dark ramp. The package
+restates all four in `.dark`, lifting the band off the dark canvas rather than letting
+it sink invisibly below it.

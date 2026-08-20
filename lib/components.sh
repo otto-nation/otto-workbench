@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Component discovery helpers — single source of truth for finding steps.sh
-# and migration directories across the workbench.
+# Component discovery via convention-based glob patterns.
 #
-# All discovery uses the same two-level glob: top-level dirs + one level of nesting.
-# Adding a new component tier (e.g. editors/zed/) is automatically discovered.
+# The single source of truth for finding `steps.sh` files and migration
+# directories across the workbench. All discovery uses the same two-level glob —
+# top-level dirs plus one level of nesting — so a new component tier such as
+# `editors/zed/` is found without an edit here.
 #
-# Usage (from scripts that already source lib/ui.sh):
-#   . "$WORKBENCH_DIR/lib/components.sh"
-#   discover_step_files  _steps_arr    # populates array with steps.sh paths
-#   discover_migration_dirs _dirs_arr  # populates array with migration dir paths
+# Sourced by `migrations.sh` and `install.sh`:
+#
+# ```bash
+# . "$WORKBENCH_DIR/lib/components.sh"
+# discover_step_files  _steps_arr    # populates array with steps.sh paths
+# discover_migration_dirs _dirs_arr  # populates array with migration dir paths
+# ```
 
 # Guard: constants must be loaded (provides WORKBENCH_DIR)
 if [[ -z "${WORKBENCH_DIR:-}" ]]; then

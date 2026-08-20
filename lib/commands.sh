@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Command registration helpers — SSOT for subcommand documentation.
-# Bash-only (uses arrays and namerefs).
+# Subcommand documentation, declared once per script.
 #
-# Scripts declare a COMMANDS array of alternating "usage_form" "description" pairs.
-# Nested dispatchers use COMMANDS_PARENT (uppercased) arrays.
-# Handler functions follow cmd_NAME (top-level) or cmd_PARENT_CHILD (nested) naming.
+# A script lists its commands in a `COMMANDS` array of alternating usage form
+# and description; the usage text and the dispatcher both read that array, so a
+# new subcommand cannot ship undocumented. Nested dispatchers use
+# `COMMANDS_PARENT` (uppercased) arrays, and handler functions follow `cmd_NAME`
+# at the top level or `cmd_PARENT_CHILD` when nested.
 #
-# Functions: commands_usage
+# Bash-only — it uses arrays and namerefs.
 
 [[ -n "${_LIB_COMMANDS_SH:-}" ]] && return
 _LIB_COMMANDS_SH=1

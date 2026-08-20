@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Shared install helpers — component discovery, selection, and execution.
+# Component discovery, selection, and execution — the shared half of the install
+# flow, so bootstrapping a machine and `otto-workbench install` walk the same
+# steps.
 #
-# Sourced by both install.sh (bootstrap) and bin/otto-workbench (install command).
-# Requires lib/ui.sh to be sourced first (provides constants, prompts, files).
+# Sourced by the top-level `install.sh` and by `bin/otto-workbench`. Requires
+# `ui.sh` first, which provides the constants, prompts, and file helpers. See
+# [Execution Flow — Install Flow](execution-flow.md#install-flow).
 
 # Guard: constants must be loaded
 if [[ -z "${WORKBENCH_DIR:-}" ]]; then

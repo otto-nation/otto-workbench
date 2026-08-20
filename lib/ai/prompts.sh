@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
-# AI prompt templates for git automation.
-# Requires lib/ai/core.sh to be sourced first (for COMMIT_* and PR_* constants).
+# Prompt templates for all AI automation — pure text generation, no side
+# effects.
 #
-# Each function prints a filled prompt to stdout — no logic, pure text.
-# Callers pass dynamic values as arguments; configuration globals (COMMIT_RULES,
-# PR_TEMPLATE, COMMIT_HEADER_MAX_LEN, etc.) are read directly from core.sh.
-#
-# Functions:
-#   prompt_commit DIFF FILES_SECTION        — commit message generation
-#               [RETRY_PREAMBLE] [SURFACE_NOTE]
-#   prompt_commit_retry HEADER LEN OVER     — retry preamble when header is too long
-#                       PREFIX BUDGET
-#   prompt_pr_single_commit SUBJECT BODY    — PR description for single-commit branches
-#                           CHANGED_FILES
-#   prompt_pr_multi_commit BRANCH ISSUE     — PR title + description for multi-commit branches
-#                          COMMITS COUNT
-#                          CHANGED_FILES
-#   prompt_diff_review CONTEXT              — review staged/unstaged/committed changes
-#   prompt_pr_review PR_NUMBER TITLE        — review an existing PR
-#                    BODY DIFF
+# Each function prints a filled prompt to stdout. Callers pass the dynamic values
+# as arguments; the configuration globals (`COMMIT_RULES`, `PR_TEMPLATE`,
+# `COMMIT_HEADER_MAX_LEN`, and the rest) are read straight from
+# [`ai/core.sh`](#aicoresh), which must be sourced first.
 
 # prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE] [SURFACE_NOTE]
 # Generates the commit message prompt. When RETRY_PREAMBLE is provided it is

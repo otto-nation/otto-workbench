@@ -177,18 +177,27 @@ def test_committed_schema_matches_the_generator():
     assert committed == json.loads(wc.schema_json())
 
 
-def test_committed_docs_reference_matches_the_generator():
+def test_composed_docs_carry_the_generated_reference():
     """The key table in the docs is generated from the same dataclass.
 
-    The prose around it is hand-written; this covers the spliced block, which
-    is where a new key or a changed default would otherwise go unmentioned.
+    `bin/local/validate-docs-composed` is what fails on a stale artifact; this
+    fails on a directive that stopped asking for the block at all, which the
+    freshness check cannot see — a doc with no directive is consistent with its
+    source and simply has no key reference in it.
     """
     text = (_repo_root() / wc.DOCS_PATH).read_text()
-    start = f"<!-- {wc.DOCS_MARKER}-START -->\n"
-    end = f"\n<!-- {wc.DOCS_MARKER}-END -->"
-    assert start in text and end in text, f"{wc.DOCS_PATH} lost its splice markers"
-    block = text.split(start, 1)[1].split(end, 1)[0]
-    assert block == wc.docs_reference()
+    assert wc.docs_reference() in text
+
+
+def test_the_module_header_asks_for_the_reference_block():
+    """`lib/config.sh` is where the directive that pulls the block in lives.
+
+    The block name is a string in two files — the directive and `BLOCKS` in the
+    generator — so a rename that misses one leaves the composer failing on an
+    unknown block. Naming it here means the pair is checked without composing.
+    """
+    header = (_repo_root() / "lib" / "config.sh").read_text()
+    assert f"<!-- include: {wc.GENERATOR_PATH} --emit config-reference -->" in header
 
 
 def test_every_written_key_resolves_to_a_field():
@@ -206,15 +215,15 @@ def test_every_written_key_resolves_to_a_field():
 
 
 def test_the_generator_banner_names_a_script_that_exists():
-    """Both generated files tell the reader to run `GENERATOR_PATH`.
+    """The schema tells the reader to run `GENERATOR_PATH`, and so does the doc.
 
     The generator itself compares the constant against its own location, so a
     move it did not follow fails there — but only for someone who runs it. This
     fails for everyone, which is what a banner pointing at nothing deserves.
+    The docs half is the `--emit` directive, checked above.
     """
     generator = _repo_root() / wc.GENERATOR_PATH
     assert generator.is_file() and os.access(generator, os.X_OK)
-    assert wc.GENERATOR_PATH in wc.docs_reference()
     assert wc.GENERATOR_PATH in json.loads(wc.schema_json())["description"]
 
 

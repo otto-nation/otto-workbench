@@ -1,16 +1,56 @@
 #!/usr/bin/env bash
-# Hand-authored workbench settings, read from YAML.
+# Hand-authored settings, read from YAML — one file per scope, project first.
 #
-# Two scopes, project first: <repo>/$WORKBENCH_PROJECT_CONFIG_NAME then
-# $WORKBENCH_CONFIG_FILE. Both names, the schema URL and the modeline are
-# declared in lib/constants.sh, which is the one place bash spells them.
-# ai/lib/workbench_config.py is the typed owner of the same files and the source
-# the committed schema is generated from; this is the reader for bash callers,
-# which want single keys rather than the whole document.
+# ```bash
+# wb_config_get "reuse.level"           # value, or nothing
+# wb_config_get "reuse.level" "full"    # value, or the given default
+# ```
 #
-# Usage (from scripts that already source lib/ui.sh):
-#   wb_config_get "reuse.level"           # value, or nothing
-#   wb_config_get "reuse.level" "full"    # value, or the given default
+# A malformed file reads as absent — a bash caller wants its default, not a `yq`
+# parse error on stdout. Reporting a bad file is the typed loader's job. Both
+# filenames, the schema URL and the modeline are declared once in
+# [`constants.sh`](#constantssh) — as `WORKBENCH_CONFIG_FILE`,
+# `WORKBENCH_PROJECT_CONFIG_NAME`, `WORKBENCH_CONFIG_SCHEMA_URL` and
+# `WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only.
+#
+# [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed
+# owner of the same two files: it deep-merges them into a `WorkbenchConfig` and
+# rejects an unknown enum value or phase key rather than silently dropping it. It
+# spells those same names a second time for Python, and `tests/config.bats` fails
+# when a pair drifts. The scope and key tables below are generated from the
+# dataclass by `bin/local/generate-config-schema`, alongside
+# [`config.schema.json`](../config.schema.json); `tests/test_workbench_config.py`
+# fails if the committed schema goes stale.
+#
+# <!-- include: bin/local/generate-config-schema --emit config-reference -->
+#
+# Both writers seed the modeline — `wb_config_ensure_file` in bash, `set_value`
+# in Python — and `yq -i` carries it through every later write, so completion and
+# enum validation work while the file is hand-edited. A `.workbench.yml` that the
+# workbench creates for you — recording an answer such as
+# `issue_tracker.provider` — is seeded the same way; paste it in yourself at the
+# top of one you hand-author. A file that already exists is never seeded: the
+# modeline is a courtesy on creation, not something sync re-imposes.
+#
+# Five layers decide a review value, highest first:
+#
+# | # | Layer | Example |
+# |---|-------|---------|
+# | 1 | Explicit flag | `--model opus`, `--effort high` |
+# | 2 | Phase env var | `CLAUDE_REVIEW_SCOUT_MODEL` |
+# | 3 | Global env var | `CLAUDE_REVIEW_MODEL` |
+# | 4 | Project config | `.workbench.yml` |
+# | 5 | Global config | `config.yml` |
+#
+# Within one file a `review.phases.<phase>` entry outranks the `review.*` section
+# it sits under. Layers 4 and 5 deep-merge, so a project file that sets one phase
+# keeps every global sibling.
+#
+# A repo still holding the legacy `.claude/review.yml` is converted to
+# `.workbench.yml` the first time a review reads its issue tracker; the old file
+# is left in place, since it is usually tracked in the consumer repo. The
+# machine-wide files — `reuse-level`, `reuse-default`, `review.yml` — are folded
+# into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 
 # Guard: the config constants must be loaded. WORKBENCH_CONFIG_HEADER is the
 # last of the block lib/constants.sh declares, so its presence proves the whole

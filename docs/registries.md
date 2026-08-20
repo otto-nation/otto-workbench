@@ -49,8 +49,10 @@ meta:
 tools:
   - name: ripgrep                    # required
     description: "Fast regex search" # required
-    when_to_use: "Searching files"   # required
-    usage: "rg pattern | rg -t py"   # optional — pipe-separated examples
+    permission: true                 # required — see below
+    visibility: full                 # required — see below
+    when_to_use: "Searching files"   # required when visibility: full
+    usage: "rg pattern | rg -t py"   # required when visibility: full
     docs: https://github.com/...     # optional
     brew_name: ripgrep               # optional — override for brewfile validation
     commands:                         # optional — subcommands
@@ -59,6 +61,25 @@ tools:
         when: "After pulling updates"
         detail: "Re-applies config"
 ```
+
+`permission` is the Bash permission the tool earns in Claude Code's `settings.json`:
+
+| Value | Grant |
+|-------|-------|
+| `false` | none — internal or indirectly invoked tools |
+| `true` | `Bash(<name>:*)` |
+| `"cmd"` | `Bash(cmd:*)`, when the CLI name differs from the registry name |
+| `["Bash(cmd sub:*)"]` | the patterns verbatim, for granular subcommand control |
+
+`visibility` is both the AI-context gate and the rendering style:
+
+| Value | Rendering |
+|-------|-----------|
+| `full` | full entry in `tools.generated.md` — heading, description, when-to-use, usage |
+| `brief` | one-liner — name and description |
+| `hidden` | omitted from AI context |
+
+`when_to_use` and `usage` are required when `visibility: full` and forbidden otherwise.
 
 ### Environment variables (`*.env.yml`)
 

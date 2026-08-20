@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
-# Portable file-metadata readers — GNU coreutils and BSD stat spell the same
-# fields with different flags, and hand-rolling the fallback has already broken
-# CI once (see the header on _stat_field).
+# File-metadata readers that work on both userlands.
 #
-# Usage (from scripts that already source lib/ui.sh, or by sourcing this file
-# directly — it has no dependencies):
-#   file_mtime PATH   # modification time, epoch seconds
-#   file_birth PATH   # birth time, epoch seconds (0 where the FS has none)
-#   file_mode  PATH   # permission bits, octal — e.g. 644
+# GNU coreutils and BSD `stat` spell the same fields with different flags, and a
+# hand-rolled fallback prints a filesystem report before failing on GNU — so
+# nothing outside this module calls `stat` with a format flag, and
+# `bin/local/validate-stat-portability` enforces that. Hand-rolling it has
+# already broken CI once; the header on `_stat_field` has the details.
+#
+# It has no dependencies, so a caller that has not loaded the facade can source
+# it on its own:
+#
+# ```bash
+# file_mtime PATH   # modification time, epoch seconds
+# file_birth PATH   # birth time, epoch seconds (0 where the FS has none)
+# file_mode  PATH   # permission bits, octal — e.g. 644
+# ```
 #
 # Each prints nothing and returns 1 when neither form resolves the field, so
 # callers that want a default supply it themselves:
-#   ts=$(file_mtime "$f") || ts=0
+#
+# ```bash
+# ts=$(file_mtime "$f") || ts=0
+# ```
 
 # _stat_field GNU_FORMAT BSD_FORMAT PATH — prints one stat field.
 #

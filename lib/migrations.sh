@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# Migration framework — discovers and runs per-component migrations with state tracking.
+# Migration framework with state tracking.
 #
-# Migration files live in <component>/migrations/YYYYMMDD-slug.sh and define a single
-# idempotent function named migration_YYYYMMDD_slug (dashes replaced with underscores).
+# Migration files live in `<component>/migrations/YYYYMMDD-slug.sh` and define a
+# single idempotent function named `migration_YYYYMMDD_slug` — dashes replaced
+# with underscores.
 #
-# State is tracked in $MIGRATIONS_STATE_FILE (one line per applied migration, or
-# one line per repo for a project-scoped migration — see _PROJECT_SCOPED_MARKER).
-# Stale entries (pointing to removed migration files) are pruned automatically.
+# State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state
+# root](#rootssh). One line per applied migration, or one line per repo — the
+# key, a tab, and the repo path — for a migration marked `# project-scoped:`,
+# which the framework runs once per entry in the [project registry](#projectssh).
+# Stale entries, pointing at migration files that have since been removed, are
+# pruned automatically. See [Execution Flow — Migrations](execution-flow.md#migrations).
 #
-# Usage (from scripts that already source lib/ui.sh):
-#   . "$WORKBENCH_DIR/lib/migrations.sh"
-#   run_all_migrations              # discover and run across all components
-#   run_component_migrations DIR    # run for a single component directory
+# ```bash
+# . "$WORKBENCH_DIR/lib/migrations.sh"
+# run_all_migrations              # discover and run across all components
+# run_component_migrations DIR    # run for a single component directory
+# ```
 
 # Guard: constants must be loaded (provides WORKBENCH_DIR, MIGRATIONS_STATE_FILE,
 # LEGACY_WORKBENCH_ROOT, and the roots the adoption below moves data between)

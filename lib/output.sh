@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Output helpers — colors, logging, and portable sed.
-# Works in both bash and zsh (no bash-only features).
 #
-# Functions: info, success, warn, err, title, skip, sed_i, print_version
-# Variables: BOLD, GREEN, BLUE, YELLOW, RED, CYAN, DIM, NC
+# Works in both bash and zsh, so it uses no bash-only features: the zsh
+# component's own scripts source it, and the facade sources it outside the
+# bash-only guard for that reason.
+#
+# The color variables — `BOLD`, `GREEN`, `BLUE`, `YELLOW`, `RED`, `CYAN`, `DIM`,
+# `NC` — are exported alongside the functions for callers that format their own
+# output.
 
 [[ -n "${_LIB_OUTPUT_SH:-}" ]] && return
 _LIB_OUTPUT_SH=1

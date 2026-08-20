@@ -144,12 +144,13 @@ These files are derived from source data and must never be edited directly. Edit
 | `docs/ai-automation.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/ai-automation.src.md` + skills, agents, Taskfile |
 | `docs/components.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/components.src.md` + component discovery |
 | `docs/getting-started.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/getting-started.src.md` + `setup.conf` post-install notes |
+| `docs/libraries.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/libraries.src.md` + the `lib/*.sh` module headers |
 | `.claude/anatomy.md` | [`generate-anatomy.sh`](../ai/claude/skills/anatomy/generate-anatomy.sh) | `git ls-files` |
 | [`config.schema.json`](../config.schema.json) | [`generate-config-schema`](../bin/local/generate-config-schema) | [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) |
-| `docs/libraries.md` (config key reference) | [`generate-config-schema`](../bin/local/generate-config-schema) | [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) |
-| `docs/libraries.md` (module tables) | [`generate-tool-context`](../bin/local/generate-tool-context) | `lib/*.sh` doc comments |
 
-**Enforcement:** the composed docs are covered by [`validate-docs-composed`](../bin/local/validate-docs-composed), which `validate-all` discovers, so a stale artifact fails before anything is regenerated and names one command to fix it. The pre-push hook then runs the tool-context generators and blocks if their own output changed. The two rendered from `WorkbenchConfig` are enforced instead by `tests/test_workbench_config.py`, which fails when a committed copy differs from what the generator would write — pre-push runs pytest, so both paths block a stale file. CI runs the same freshness checks on every PR.
+A composed doc names the generators it wants; nothing maps a doc to a generator centrally. `docs/libraries.md` reaches three that way: [`generate-lib-reference`](../bin/local/generate-lib-reference) for the module sections, and — from inside a module header, since compose-docs expands what a generator prints — [`generate-lib-reference --roots-table`](../lib/roots.sh) and [`generate-config-schema --emit config-reference`](../lib/config.sh).
+
+**Enforcement:** the composed docs are covered by [`validate-docs-composed`](../bin/local/validate-docs-composed), which `validate-all` discovers, so a stale artifact fails before anything is regenerated and names one command to fix it. [`validate-lib-reference`](../bin/local/validate-lib-reference) adds the one thing freshness cannot see — a module in a group `docs/libraries.src.md` never asks for is documented nowhere, and the composed file is current either way. The pre-push hook then runs the tool-context generators and blocks if their own output changed. `config.schema.json` is enforced instead by `tests/test_workbench_config.py`, which fails when the committed copy differs from what the generator would write — pre-push runs pytest, so both paths block a stale file. CI runs the same freshness checks on every PR.
 
 ## Environment Variable Generation
 

@@ -55,9 +55,10 @@ SCHEMA_URL = f"{REPO_RAW_URL}/{SCHEMA_PATH}"
 # tests/config.bats cross-validates every pair.
 CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
 
-# Where the generated key reference is spliced into the prose that surrounds it.
+# The doc the key reference is composed into. `lib/config.sh` asks for the block
+# by name — `generate-config-schema --emit config-reference` — and
+# bin/local/compose-docs expands that directive on the way to this file.
 DOCS_PATH = "docs/libraries.md"
-DOCS_MARKER = "CONFIG-REFERENCE"
 
 # Repo root as a link from inside DOCS_PATH, so a link the block renders to a
 # repo-root file survives moving the doc to another depth.
@@ -259,17 +260,17 @@ def _key_placeholders(cls) -> list[tuple[str, str]]:
 def docs_reference() -> str:
     """The generated half of the ``config.sh`` section in ``DOCS_PATH``.
 
-    Beside ``schema_json`` for the same reason: the write and the ``--check``
-    comparison in ``bin/local/generate-config-schema`` render through one code
-    path, and both derive from the dataclass rather than from a second listing
-    of the keys that someone has to remember to update. The prose around the
-    spliced block — what the reader is for, how the layers rank, the config
-    unification migration — is hand-written and stays that way.
+    Beside ``schema_json`` for the same reason: the block a composer asks for
+    and the one ``--check`` compares against render through one code path, and
+    both derive from the dataclass rather than from a second listing of the keys
+    that someone has to remember to update. The prose around it — what the
+    reader is for, how the layers rank, the config unification migration — is
+    hand-written and lives in ``lib/config.sh``'s header.
+
+    It carries no "do not edit" banner of its own: the whole of ``DOCS_PATH`` is
+    composed, and ``bin/local/compose-docs`` puts one at the top of the file.
     """
     lines = [
-        "<!-- AUTO-GENERATED — do not edit directly -->",
-        f"<!-- Regenerate: {GENERATOR_PATH} -->",
-        "",
         "| Scope | File |",
         "|-------|------|",
         f"| Global | `{CONFIG_NAME}` under the [config root](#rootssh) |",

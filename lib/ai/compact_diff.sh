@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Diff compaction helper for AI automation.
-# Splits a diff into per-file chunks and greedily includes as many as fit
-# within DIFF_MAX_CHARS. Requires core.sh to be sourced first (for DIFF_MAX_CHARS).
+# Diff compaction: splits diffs into per-file chunks and greedily includes as
+# many as fit within a character budget.
 #
-# This file is kept separate from core.sh because it uses bash arrays —
-# core.sh must remain POSIX-compatible since go-task sources it via sh -c.
+# Its only entry point is `_compact_diff`. Smallest files go in first, which
+# maximises how many are covered; the ones that do not fit are listed by name in
+# a trailing note. Requires [`ai/core.sh`](#aicoresh) to be sourced first, for
+# `DIFF_MAX_CHARS`.
+#
+# Kept out of `core.sh` because it uses bash arrays, and `core.sh` has to stay
+# POSIX-compatible for the go-task path.
 
 # _compact_diff FULL_DIFF
 # Splits a diff into per-file chunks and greedily includes complete file diffs

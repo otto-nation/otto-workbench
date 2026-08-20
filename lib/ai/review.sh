@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# AI code review helpers.
-# Requires lib/ai/core.sh to be sourced first.
+# Code review generation for branch changes and existing PRs.
+#
+# Requires [`ai/core.sh`](#aicoresh) to be sourced first. Each diff section is
+# compacted independently through `_compact_diff`, so a large file in one section
+# cannot crowd the others out.
+#
+# State set by its functions: `AI_RESPONSE`.
+
 # shellcheck source=compact_diff.sh
 if [ -n "${BASH_SOURCE:-}" ]; then
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compact_diff.sh"
 else
   . "${TASKFILE_DIR:?review.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai/compact_diff.sh"
 fi
-#
-# Functions:
-#   generate_diff_review  — review staged, unstaged, and committed branch changes
-#   generate_pr_review    — review an existing PR by number
-#
-# State set by functions: AI_RESPONSE
 
 # generate_diff_review STAGED UNSTAGED COMMITS COMMITTED_DIFF BRANCH DEFAULT_BRANCH
 # Requires AI_COMMAND.

@@ -2,16 +2,20 @@
 """Generate the config schema and its docs reference from WorkbenchConfig.
 
 Usage: bin/local/generate-config-schema [--check]
+       bin/local/generate-config-schema --emit config-reference
 
 The dataclass in ai/lib/workbench_config.py is the single definition of what
 the workbench config holds; this renders it to the JSON Schema editors and
-validators read, and to the key reference spliced into the prose in
-docs/libraries.md. tests/test_workbench_config.py fails when a committed file
-and the generator disagree.
+validators read, and to the key reference lib/config.sh's header asks for with
+an `<!-- include: ... --emit config-reference -->` directive.
+tests/test_workbench_config.py fails when the committed schema and the
+generator disagree; bin/local/validate-docs-composed covers the docs block.
 
 Options:
-  --check     Exit 1 if a committed file is stale, without rewriting it
-  -h, --help  Show this help
+  --check              Exit 1 if a committed file is stale, without rewriting it
+  --emit BLOCK         Print one generated block to stdout. Blocks:
+                       config-reference
+  -h, --help           Show this help
 """
 
 from __future__ import annotations
@@ -37,10 +41,9 @@ sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 import workbench_config  # noqa: E402
 
 SCHEMA_FILE = REPO_ROOT / workbench_config.SCHEMA_PATH
-DOCS_FILE = REPO_ROOT / workbench_config.DOCS_PATH
 
-# Both generated files carry a "regenerate with ..." banner naming this script,
-# and workbench_config.py renders those banners, so it holds the name. Check it
+# The committed schema carries a "regenerate with ..." banner naming this
+# script, and workbench_config.py renders it, so it holds the name. Check it
 # here rather than trusting it: this is the one place that knows where the
 # script actually lives, and a banner pointing at a moved script sends the next
 # reader after a command that no longer exists.
@@ -52,40 +55,37 @@ if Path(__file__).resolve() != (REPO_ROOT / workbench_config.GENERATOR_PATH).res
     )
 
 
-def splice(text: str, marker: str, body: str) -> str:
-    """``body`` between MARKER-START and MARKER-END, the rest of ``text`` intact.
-
-    The same marker convention generate-tool-context uses on README and
-    docs/tools.md, so a doc that is part prose and part generated reads the same
-    way whichever generator owns its block. A file missing the markers is a
-    mistake worth failing on rather than a no-op: the caller asked for the block
-    to be current and it would silently not be.
-    """
-    start, end = f"<!-- {marker}-START -->", f"<!-- {marker}-END -->"
-    head, sep, rest = text.partition(start)
-    if not sep:
-        raise SystemExit(f"{DOCS_FILE}: missing {start}")
-    _, sep, tail = rest.partition(end)
-    if not sep:
-        raise SystemExit(f"{DOCS_FILE}: missing {end}")
-    return f"{head}{start}\n{body}\n{end}{tail}"
+# The blocks --emit can print, by the name a directive spells. Keyed on the
+# name rather than dispatched through a chain of ifs, so adding a block is one
+# entry here and the renderer it names.
+BLOCKS = {"config-reference": workbench_config.docs_reference}
 
 
 def render() -> list[tuple[Path, str]]:
     """Every file this generator owns, paired with the text it should hold."""
-    docs = DOCS_FILE.read_text()
-    return [
-        (SCHEMA_FILE, workbench_config.schema_json() + "\n"),
-        (DOCS_FILE, splice(
-            docs, workbench_config.DOCS_MARKER, workbench_config.docs_reference(),
-        )),
-    ]
+    return [(SCHEMA_FILE, workbench_config.schema_json() + "\n")]
+
+
+def emit(name: str) -> int:
+    """Print one generated block to stdout, for a compose-docs directive."""
+    if name not in BLOCKS:
+        names = ", ".join(sorted(BLOCKS))
+        print(f"--emit: no block named {name!r}. Available: {names}", file=sys.stderr)
+        return 1
+    print(BLOCKS[name]())
+    return 0
 
 
 def main(argv: list[str]) -> int:
     if argv and argv[0] in ("-h", "--help"):
         print(__doc__.strip())
         return 0
+
+    if argv and argv[0] == "--emit":
+        if len(argv) != 2:
+            print("--emit takes exactly one block name", file=sys.stderr)
+            return 2
+        return emit(argv[1])
 
     if argv and argv[0] not in ("--check",):
         print(f"Unknown argument: {argv[0]}\n\n{__doc__.strip()}", file=sys.stderr)

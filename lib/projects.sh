@@ -25,6 +25,14 @@ if [[ -z "${PROJECTS_REGISTRY_FILE:-}" ]]; then
   return 1 2>/dev/null || exit 1
 fi
 
+# The line the backfill leaves behind so it runs exactly once per machine.
+#
+# A marker inside the file rather than the file's own existence: the Python half
+# creates the file the first time a `pr` invocation registers a repo, and a
+# backfill keyed on existence would then be skipped forever on a machine that
+# used a tool before it next synced.
+_PROJECTS_SEED_MARKER="# backfilled from"
+
 # ─── Membership rules ────────────────────────────────────────────────────────
 
 # The path prefixes nothing under is ever registered.
@@ -230,4 +238,110 @@ project_prune() {
     _project_rewrite "${kept[@]}"
   fi
   echo "$dropped"
+}
+
+# ─── One-time backfill ───────────────────────────────────────────────────────
+
+# _project_seed_candidates — the directories Claude Code recorded sessions in.
+#
+# `.projects` in ~/.claude.json is keyed by absolute path and written by Claude
+# itself, so it is an observation rather than another guess about where repos
+# live. Each key is the cwd a session started in, which is not necessarily a
+# work-tree root — _project_seed_roots is what turns one into roots.
+_project_seed_candidates() {
+  if [[ ! -f "$CLAUDE_CONFIG_FILE" ]]; then
+    return 0
+  fi
+  jq -r '(.projects // {}) | keys[]' "$CLAUDE_CONFIG_FILE" 2>/dev/null
+}
+
+# _project_seed_roots CANDIDATE — the work-tree root a recorded cwd stands for.
+#
+# Usually whatever `git rev-parse --show-toplevel` reports. The case that needs
+# more is a bare-repo container — the layout `wt-init` and `worktrunk` produce,
+# and a directory Claude records whenever a session starts at the container
+# rather than inside one of its worktrees. `--show-toplevel` refuses to run
+# there, so resolving by that alone yielded nothing and left the entire repo out
+# of the backfill.
+#
+# The container's HEAD names its default branch, and the worktree checked out on
+# that branch is the one that stands for the repo — the same choice
+# WORKBENCH_STABLE_DIR makes. Its feature worktrees are deliberately not seeded:
+# they come and go, each one would be a row of its own everywhere the registry
+# is read, and any that is still around registers itself the next time a
+# workbench command runs in it.
+_project_seed_roots() {
+  local candidate="$1" root branch
+  root="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null)" || root=""
+  if [[ -n "$root" ]]; then
+    printf '%s\n' "$root"
+    return 0
+  fi
+
+  branch="$(git --git-dir="$candidate/.git" symbolic-ref --short HEAD 2>/dev/null)" || return 0
+  if [[ -z "$branch" ]]; then
+    return 0
+  fi
+  git --git-dir="$candidate/.git" worktree list --porcelain 2>/dev/null | awk -v \
+    want="branch refs/heads/$branch" '
+      /^worktree /   { path = substr($0, 10) }
+      $0 == want     { print path; exit }
+    '
+}
+
+# seed_project_registry — backfill the repos that predate the registry, once.
+#
+# Observation cannot see the past, so without this every repo already in use
+# when the registry landed would stay invisible until it was next opened.
+#
+# Called from run_all_migrations ahead of the framework rather than written as a
+# migration of its own, for the reason adoption is: migrations run in filename
+# order, and a project-scoped migration that sorted ahead of the backfill would
+# read an empty registry, find nothing, and record itself as applied — the exact
+# silent no-op the registry exists to end.
+seed_project_registry() {
+  _project_ensure_file
+  if grep -qF "$_PROJECTS_SEED_MARKER" "$PROJECTS_REGISTRY_FILE"; then
+    return 0
+  fi
+  # Without jq there are no candidates to read, which is indistinguishable from
+  # a machine that has none — and recording the marker on that reading would
+  # retire the backfill before it ever ran. Sync provisions jq; try again then.
+  if ! command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local candidate root seeded=0
+  local -a roots=() candidates=()
+  local seed_output
+  if ! seed_output="$(_project_seed_candidates)"; then
+    # A present-but-unparseable ~/.claude.json (mid-write, hand-edited syntax
+    # error) is not "no candidates" — treat it like the missing-jq case above
+    # and skip without recording the marker so the backfill retries later.
+    return 0
+  fi
+  if [[ -n "$seed_output" ]]; then
+    mapfile -t candidates <<< "$seed_output"
+  fi
+  for candidate in "${candidates[@]:-}"; do
+    [[ -z "$candidate" ]] && continue
+    while IFS= read -r root; do
+      roots+=("$root")
+    done < <(_project_seed_roots "$candidate")
+  done
+
+  for root in "${roots[@]:-}"; do
+    if [[ -z "$root" ]] || _project_contains "$root"; then
+      continue
+    fi
+    if project_register "$root"; then
+      seeded=$(( seeded + 1 ))
+    fi
+  done
+
+  printf '%s %s\n' "$_PROJECTS_SEED_MARKER" "$CLAUDE_CONFIG_FILE" >> "$PROJECTS_REGISTRY_FILE"
+  if (( seeded > 0 )); then
+    info "Project registry backfilled — $seeded repo(s) from $CLAUDE_CONFIG_FILE"
+  fi
+  return 0
 }

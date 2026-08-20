@@ -41,6 +41,20 @@ make_bare_container() {
   git init --bare --quiet "$1/.git"
 }
 
+# make_bare_worktree_layout DIR — a bare container with the branch its HEAD
+# names checked out at DIR/main, and a feature worktree beside it.
+make_bare_worktree_layout() {
+  local container="$1" seed="$1.seed"
+  make_repo "$seed"
+  git -C "$seed" -c user.email=t@example.com -c user.name=t commit --allow-empty -qm init
+  git -C "$seed" branch -qM main
+  mkdir -p "$container"
+  git clone --bare --quiet "$seed" "$container/.git"
+  git --git-dir="$container/.git" worktree add "$container/main" main >/dev/null 2>&1
+  git --git-dir="$container/.git" worktree add -b feature "$container/feature" >/dev/null 2>&1
+  rm -rf "$seed"
+}
+
 # ─── Registration ────────────────────────────────────────────────────────────
 
 @test "a registered repo comes back from project_registered" {
@@ -264,6 +278,128 @@ make_bare_container() {
   run project_prune
   [ "$status" -eq 0 ]
   [ "$output" = "0" ]
+}
+
+# ─── Backfill ────────────────────────────────────────────────────────────────
+
+@test "the backfill seeds the repos Claude Code recorded sessions in" {
+  make_repo "$TMPDIR/alpha"
+  mkdir -p "$TMPDIR/alpha/nested"
+  CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"
+  printf '{"projects":{"%s":{},"%s":{}}}\n' "$TMPDIR/alpha" "$TMPDIR/alpha/nested" \
+    > "$CLAUDE_CONFIG_FILE"
+
+  run seed_project_registry
+  [ "$status" -eq 0 ]
+
+  # Both entries resolve to the same work-tree root, so one line, not two.
+  run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
+@test "the backfill reaches a bare-repo container's default worktree" {
+  # `wt-init` and `worktrunk` put a bare repo at <container>/.git, and the
+  # container is what Claude records when a session starts there. `rev-parse
+  # --show-toplevel` refuses to run in it, so resolving by that alone dropped the
+  # repo entirely — on a machine laid out this way, most of them.
+  #
+  # One row, not one per worktree: the branch the container's HEAD names stands
+  # for the repo, and the feature worktrees come and go.
+  make_bare_worktree_layout "$TMPDIR/container"
+  CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"
+  printf '{"projects":{"%s":{}}}\n' "$TMPDIR/container" > "$CLAUDE_CONFIG_FILE"
+
+  run seed_project_registry
+  [ "$status" -eq 0 ]
+
+  run project_registered
+  [ "$output" = "$TMPDIR/container/main" ]
+}
+
+@test "the backfill runs once, even after the file already exists" {
+  make_repo "$TMPDIR/alpha"
+  CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"
+  printf '{"projects":{"%s":{}}}\n' "$TMPDIR/alpha" > "$CLAUDE_CONFIG_FILE"
+
+  seed_project_registry
+  project_forget "$TMPDIR/alpha"
+  seed_project_registry
+
+  run project_registered
+  [ -z "$output" ]
+}
+
+@test "the backfill records itself even with nothing to seed" {
+  CLAUDE_CONFIG_FILE="$TMPDIR/absent.json"
+  run seed_project_registry
+  [ "$status" -eq 0 ]
+  run grep -c 'backfilled from' "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "1" ]
+}
+
+@test "the backfill does not retire itself when jq is missing" {
+  # No jq means no candidates, which reads exactly like a machine that has none
+  # — and recording the marker on that reading would retire the backfill before
+  # it ever ran, which is the silent once-and-never-again failure it exists to
+  # end.
+  make_repo "$TMPDIR/alpha"
+  CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"
+  printf '{"projects":{"%s":{}}}\n' "$TMPDIR/alpha" > "$CLAUDE_CONFIG_FILE"
+
+  # Every directory that has one, not just the first: macOS ships a jq in
+  # /usr/bin alongside whatever Homebrew put in front of it.
+  local saved_path="$PATH" dir
+  local -a keep=()
+  while IFS= read -r dir; do
+    if [[ -n "$dir" && ! -x "$dir/jq" ]]; then
+      keep+=("$dir")
+    fi
+  done < <(printf '%s\n' "$PATH" | tr ':' '\n')
+  PATH="$(IFS=:; printf '%s' "${keep[*]}")"
+
+  run seed_project_registry
+  PATH="$saved_path"
+
+  [ "$status" -eq 0 ]
+  run grep -c 'backfilled from' "$PROJECTS_REGISTRY_FILE"
+  [ "$status" -ne 0 ]
+
+  # jq arrives with the next sync, and the backfill is still there to run.
+  seed_project_registry
+  run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
+@test "the backfill does not retire itself when ~/.claude.json fails to parse" {
+  # A file that exists but fails to parse (mid-write, hand-edited syntax
+  # error) must not read like "no candidates" — that would record the marker
+  # and retire the backfill on a machine that never had a successful read.
+  make_repo "$TMPDIR/alpha"
+  CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"
+  printf '{"projects":' > "$CLAUDE_CONFIG_FILE"
+
+  run seed_project_registry
+  [ "$status" -eq 0 ]
+  run grep -c 'backfilled from' "$PROJECTS_REGISTRY_FILE"
+  [ "$status" -ne 0 ]
+
+  # Once the file is fixed, the backfill still runs.
+  printf '{"projects":{"%s":{}}}\n' "$TMPDIR/alpha" > "$CLAUDE_CONFIG_FILE"
+  seed_project_registry
+  run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
+@test "a session cwd that is no longer a repo is skipped, not fatal" {
+  make_repo "$TMPDIR/alpha"
+  CLAUDE_CONFIG_FILE="$TMPDIR/claude.json"
+  printf '{"projects":{"%s":{},"%s":{}}}\n' "$TMPDIR/gone" "$TMPDIR/alpha" \
+    > "$CLAUDE_CONFIG_FILE"
+
+  run seed_project_registry
+  [ "$status" -eq 0 ]
+  run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
 }
 
 # ─── Cross-language agreement ────────────────────────────────────────────────

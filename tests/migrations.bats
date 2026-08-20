@@ -37,11 +37,18 @@ WORKBENCH_STATE_DIR="$FAKE_STATE"
 WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
 LEGACY_WORKBENCH_ROOT="$FAKE_LEGACY"
 MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
+PROJECTS_REGISTRY_FILE="$FAKE_STATE/projects.registry"
+# No such file, so the backfill run_all_migrations does has no candidates.
+CLAUDE_CONFIG_FILE="$TMPDIR/absent-claude.json"
+# The real projects.sh, not a stub: run_all_migrations calls into it, and it
+# needs the constants above, so it loads from here rather than from ui.sh.
+. "$FAKE_ROOT/lib/projects.sh"
 CONST
 
   # Source the real component discovery and migrations libraries with our fake paths
   cp "$REPO_ROOT/lib/components.sh" "$FAKE_ROOT/lib/components.sh"
   cp "$REPO_ROOT/lib/migrations.sh" "$FAKE_ROOT/lib/migrations.sh"
+  cp "$REPO_ROOT/lib/projects.sh" "$FAKE_ROOT/lib/projects.sh"
 }
 
 teardown() {

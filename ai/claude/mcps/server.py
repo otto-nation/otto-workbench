@@ -1,11 +1,14 @@
 """Dynamic MCP server for otto-workbench tools.
 
-Discovers tools by scanning the workbench's own component script directories,
-plus any the config adds, for scripts that support ``--tool-schema``. A
-candidate is only executed if its source
-carries one of ``DECLARATION_MARKERS`` — probing runs the script, and
+Discovers tools by scanning the workbench's own component script directories
+for scripts that support ``--tool-schema``. A candidate is only executed if its
+source carries one of ``DECLARATION_MARKERS`` — probing runs the script, and
 scripts that ignore unknown flags would do their real work instead of
 answering. Any MCP client can connect via stdio transport.
+
+The directories come from the component layout and nothing else. There is no
+configuration file: the server exposes the workbench's own tools, so what to
+scan is a fact about the checkout rather than a question to ask the user.
 """
 
 from __future__ import annotations
@@ -20,17 +23,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
-
-import workbench_paths  # noqa: E402
-
 # MCP SDK imports are deferred to create_server() / main() so that the
 # discovery and extraction utilities can be tested without the SDK installed.
 
 logger = logging.getLogger("otto-mcp")
-
-# Hand-authored, so it belongs to the config root rather than the state root.
-CONFIG_PATH = workbench_paths.config_dir() / "mcp-tools.json"
 
 # ai/claude/mcps/server.py — three levels down from the checkout root.
 WORKBENCH_DIR = Path(__file__).resolve().parents[3]
@@ -63,37 +59,6 @@ DECLARATION_SCAN_BYTES = 256 * 1024
 # ── Tool Discovery ────────────────────────────────────────────────────────
 
 
-def _load_config() -> dict:
-    if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text())
-    return {}
-
-
-def _load_plugin_dir(plugin_file: Path) -> Path | None:
-    """Read a plugin JSON file and return its tool directory, or None."""
-    try:
-        plugin = json.loads(plugin_file.read_text())
-        td = Path(plugin["tool_dir"]).expanduser().resolve()
-        return td if td.is_dir() else None
-    except (json.JSONDecodeError, KeyError, OSError):
-        logger.warning("Skipping invalid plugin: %s", plugin_file)
-        return None
-
-
-def _scan_plugin_dir(plugin_dir: Path) -> list[Path]:
-    """Return tool directories referenced by JSON files in *plugin_dir*."""
-    if not plugin_dir.is_dir():
-        return []
-    results = []
-    for entry in sorted(plugin_dir.iterdir()):
-        if entry.suffix != ".json" or not entry.is_file():
-            continue
-        td = _load_plugin_dir(entry)
-        if td is not None:
-            results.append(td)
-    return results
-
-
 def discover_tool_dirs(root: Path | None = None) -> list[Path]:
     """Return the workbench's own script directories.
 
@@ -104,10 +69,12 @@ def discover_tool_dirs(root: Path | None = None) -> list[Path]:
     component tier such as ``editors/zed/bin`` is picked up without editing
     this file or hand-authoring config.
 
-    These are always scanned: nothing in the workbench writes
-    ``mcp-tools.json``, so a server that only looked at that file exposed no
-    tools on any install. ``tool_dirs`` names directories to scan *in
-    addition*.
+    This derivation is the whole of where the server looks. An earlier design
+    read the directories from ``~/.config/workbench/mcp-tools.json``, which no
+    setup step, migration or shipped default ever wrote — so discovery resolved
+    to nothing and every install ran a registered server exposing zero tools.
+    The layout is the answer because the server hosts the workbench's own
+    tools; a directory outside the checkout has no tools of this kind in it.
 
     *root* defaults to the running checkout. ``bin/local/validate-tool-schema``
     passes one so its tests can point the same derivation at a fixture tree.
@@ -115,27 +82,6 @@ def discover_tool_dirs(root: Path | None = None) -> list[Path]:
     base = WORKBENCH_DIR if root is None else Path(root)
     dirs = {d for pattern in COMPONENT_BIN_GLOBS for d in base.glob(pattern) if d.is_dir()}
     return sorted(dirs)
-
-
-def _resolve_dirs(config: dict) -> list[Path]:
-    dirs = discover_tool_dirs()
-    # Additive rather than an override: the workbench's own directories come
-    # from its layout, so the config only says what *else* to scan.
-    for d in config.get("tool_dirs", []):
-        p = Path(d).expanduser().resolve()
-        if p.is_dir():
-            dirs.append(p)
-
-    for d in config.get("plugin_dirs", []):
-        dirs.extend(_scan_plugin_dir(Path(d).expanduser()))
-
-    # Now that the config adds to the derived set rather than replacing it, a
-    # path can arrive twice — a tool_dirs entry naming a component bin, or two
-    # plugins pointing at one directory. Scanning it twice means probing every
-    # script in it twice for a result the name check then discards. Config
-    # paths are resolved above so a symlink or a `..` segment dedups too; the
-    # derived ones already are.
-    return list(dict.fromkeys(dirs))
 
 
 def _is_executable(path: Path) -> bool:
@@ -253,11 +199,14 @@ def _scan_tool_dir(d: Path) -> list[dict]:
     return results
 
 
-def discover_tools(config: dict | None = None) -> dict[str, dict]:
-    """Scan directories and return {tool_name: schema_dict}."""
-    if config is None:
-        config = _load_config()
-    dirs = _resolve_dirs(config)
+def discover_tools(dirs: list[Path] | None = None) -> dict[str, dict]:
+    """Scan directories and return {tool_name: schema_dict}.
+
+    *dirs* defaults to the derived set. Passing one is how a test points the
+    scan at a fixture directory without writing scripts into the checkout.
+    """
+    if dirs is None:
+        dirs = discover_tool_dirs()
     tools: dict[str, dict] = {}
 
     all_schemas = [s for d in dirs for s in _scan_tool_dir(d)]

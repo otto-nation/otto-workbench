@@ -12,8 +12,8 @@ otto-mcp-server — dynamic MCP server for otto-workbench tools
 
 Discovers scripts that declare a tool schema and exposes them via MCP stdio transport.
 
-Always scans the workbench's own component bin/ directories. tool_dirs and
-plugin_dirs in ~/.config/workbench/mcp-tools.json add more.
+Scans the workbench's own component bin/ directories, derived from the
+component layout. There is no configuration file.
 
 Usage: otto-mcp-server
 

@@ -107,7 +107,9 @@ setup() {
   AI_COMMAND="fake-ai"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 
-  _build_commit_prompt "some diff" ""
+  local removals
+  removals=$(_surface_removals "$REPO_ROOT")
+  _build_commit_prompt "some diff" "" "$removals"
 
   [[ "$AI_MSG" == *"command:beta"* ]]
   # $BREAKING_CHANGE_FOOTER alone is a weak assertion here: it's already in
@@ -133,7 +135,9 @@ setup() {
   AI_COMMAND="fake-ai"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 
-  _build_commit_prompt "some diff" ""
+  local removals
+  removals=$(_surface_removals "$REPO_ROOT")
+  _build_commit_prompt "some diff" "" "$removals"
 
   # A "- command:beta" bullet in the note risks the model literally copying
   # the dash into 'Not-Breaking: - command:beta — reason', which the gate's
@@ -158,7 +162,9 @@ setup() {
   AI_COMMAND="fake-ai"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 
-  _build_commit_prompt "some diff" ""
+  local removals
+  removals=$(_surface_removals "$REPO_ROOT")
+  _build_commit_prompt "some diff" "" "$removals"
 
   # "public surface" alone is a weak sentinel: COMMIT_RULES's fallback bullet
   # ("...anything on the public surface...") contains it independent of

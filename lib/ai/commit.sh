@@ -90,12 +90,15 @@ _surface_removals() {
   sed -n 's/^REMOVED //p' <<<"$gate_output"
 }
 
-# _build_commit_prompt DIFF FILES_SECTION [RETRY_PREAMBLE]
-# Internal helper. Builds and runs the AI prompt; sets AI_MSG.
+# _build_commit_prompt DIFF FILES_SECTION REMOVALS [RETRY_PREAMBLE]
+# Internal helper. Builds and runs the AI prompt; sets AI_MSG. REMOVALS is the
+# output of _surface_removals, computed once by the caller and reused across
+# retries since the working tree does not change between them.
 _build_commit_prompt() {
   local diff_content="$1"
   local files_section="$2"
-  local retry_preamble="${3:-}"
+  local removals="$3"
+  local retry_preamble="${4:-}"
 
   # When the diff exceeds the budget, include as many complete per-file diffs
   # as fit (smallest files first) so the AI always sees whole-file context.
@@ -103,8 +106,7 @@ _build_commit_prompt() {
     diff_content=$(_compact_diff "$diff_content")
   fi
 
-  local removals surface_note=""
-  removals=$(_surface_removals "$(git rev-parse --show-toplevel 2>/dev/null)")
+  local surface_note=""
   if [[ -n "$removals" ]]; then
     surface_note="
 
@@ -140,7 +142,9 @@ generate_commit_msg() {
 "
   fi
 
-  _build_commit_prompt "$diff_content" "$files_section"
+  local removals
+  removals=$(_surface_removals "$(git rev-parse --show-toplevel 2>/dev/null)")
+  _build_commit_prompt "$diff_content" "$files_section" "$removals"
 
   local header header_len
   header=$(echo "$AI_MSG" | head -1)
@@ -155,7 +159,7 @@ generate_commit_msg() {
     echo "→ Header too long ($header_len chars), retrying with exact budget..."
     local retry_preamble
     retry_preamble=$(prompt_commit_retry "$header" "$header_len" "$(( header_len - COMMIT_HEADER_MAX_LEN ))" "$prefix" "$subject_budget")
-    _build_commit_prompt "$diff_content" "$files_section" "$retry_preamble"
+    _build_commit_prompt "$diff_content" "$files_section" "$removals" "$retry_preamble"
 
     header=$(echo "$AI_MSG" | head -1)
     header_len=${#header}

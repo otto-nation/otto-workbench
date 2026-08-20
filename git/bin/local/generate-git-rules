@@ -51,7 +51,7 @@ NOT_BREAKING_FOOTER=$(_extract_const "NOT_BREAKING_FOOTER")
 # Conventional Commits v1.0.0 lists the hyphenated spelling as a synonym and
 # release-please honours it, so bin/local/check-surface-compat accepts both.
 # Derived from the constant rather than declared a second time.
-BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER/ /-}"
+BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER// /-}"
 
 if [[ -z "$COMMIT_TYPES" || -z "$COMMIT_HEADER_MAX_LEN" || -z "$COMMIT_BODY_MAX_LEN" || -z "$BREAKING_CHANGE_FOOTER" || -z "$NOT_BREAKING_FOOTER" ]]; then
   err "Could not extract constants from $CONVENTIONS_SH"

@@ -3,6 +3,7 @@
 import contextlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -1674,9 +1675,88 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         """N fixes and no commit is caught, not rendered quietly."""
         cp = rt.CommitPushResult(None, "commit_failed", "hook")
         rt._warn_unattributed_fixes(
-            [CommentItem(id="t1", summary="fix it", file="a.py", line=1)], cp,
+            [CommentItem(id="t1", summary="fix it", file="a.py", line=1)],
+            cp, "owner/repo",
         )
         assert "no commit to attribute" in capsys.readouterr().err
+
+
+class TestTheWarningCountsTheRowsThatReachTheReader:
+    """The warned number and the table it describes are one answer.
+
+    The warning ran against the list before the renderer folded it and before
+    the renderer settled which cell each row gets, so it counted rows nobody
+    would see and rows that render a perfectly good claim. On the report this
+    came from it said 10 over a table carrying 6.
+    """
+
+    @staticmethod
+    def _outcome(tid, file, line, reason=""):
+        return ThreadOutcome(
+            id=tid, file=file, line=line, reviewer="kgn",
+            summary=f"{tid} summary", action=ThreadAction.FIXED, reason=reason,
+        )
+
+    def _publish(self, rt, threads):
+        """Render a summary whose pass committed nothing and whose HEAD stood still."""
+        by_id = {
+            t.id: ReportThread(id=t.id, file=t.file, line=t.line,
+                               comments=[{"databaseId": 100 + n}])
+            for n, t in enumerate(threads) if not t.id.startswith("ic-")
+        }
+        fix = FixSummary(
+            threads=threads, commit_status="no_changes", head_sha="aaa1111",
+            summary_deferred=True, has_comment_items=True,
+        )
+        with patch.object(rt, "_get_head_sha", return_value="aaa1111"), \
+             patch("pr_comments.post_issue_comment", return_value="u") as post:
+            rt._render_deferred_summary(
+                _make_state(fix), PRReport(), "owner/repo", 1, by_id,
+            )
+        return post.call_args[0][2]
+
+    def _threads(self, rt):
+        return [
+            # Two rows nothing on the branch accounts for — what the warning is for.
+            self._outcome("t1", "f.go", 10),
+            self._outcome("t2", "g.go", 20),
+            # The comment item restating t1: same reviewer, same file:line, and
+            # no thread of its own, so the renderer folds it into t1's row.
+            self._outcome("ic-500-1", "f.go", 10),
+            # Settled outside the pass. Uncitable, but the cell says where the
+            # fix went, so it is no contradiction to report.
+            self._outcome("t3", "h.go", 30, reason=rt._RECONCILED_REASON),
+        ]
+
+    def test_the_count_equals_the_rows_rendered_without_a_claim(self, rt, capsys):
+        body = self._publish(rt, self._threads(rt))
+        warned = int(re.search(
+            r"(\d+) fixed row\(s\) have no commit", capsys.readouterr().err,
+        ).group(1))
+        assert warned == body.count(rt._UNATTRIBUTED_STATUS_TEXT)
+
+    def test_the_folded_row_is_neither_counted_nor_rendered(self, rt, capsys):
+        body = self._publish(rt, self._threads(rt))
+        assert "ic-500-1 summary" not in body
+        assert "2 fixed row(s) have no commit" in capsys.readouterr().err
+
+    def test_a_row_settled_outside_the_pass_is_not_a_contradiction(self, rt, capsys):
+        body = self._publish(rt, self._threads(rt))
+        err = capsys.readouterr().err
+        # Three rows carry no commit link; only two of them claim nothing. The
+        # third says where its fix went, which is why "uncited" is the wrong
+        # test and the rendered cell is the right one.
+        assert body.count(rt._RECONCILED_STATUS_TEXT) == 1
+        assert body.count(rt._UNATTRIBUTED_STATUS_TEXT) == 2
+        assert "2 fixed row(s) have no commit" in err
+
+    def test_a_table_with_nothing_to_report_stays_quiet(self, rt, capsys):
+        """Every row folded or settled leaves no contradiction to warn about."""
+        body = self._publish(rt, [
+            self._outcome("t3", "h.go", 30, reason=rt._RECONCILED_REASON),
+        ])
+        assert rt._RECONCILED_STATUS_TEXT in body
+        assert "no commit to attribute" not in capsys.readouterr().err
 
 
 class TestSummaryStillOwed:

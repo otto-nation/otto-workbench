@@ -2423,21 +2423,45 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     return "Fix pending"
 
 
-def _warn_unattributed_fixes(fixed: list, cp: CommitPushResult) -> None:
+def _warn_unattributed_fixes(
+    fixed: list, cp: CommitPushResult, repo: str, folded: set[str] | None = None,
+) -> None:
     """Say so when rows claim fixes that no commit accounts for.
 
     The contradiction is caught rather than rendered silently: the summary goes
     out under the operator's name, and a row that asserts both halves is a claim
     about their branch that nothing in the run supports.
 
-    An unpushed commit is not this: the work is committed and the row says so,
-    it is only the link that has to wait. Everything else the resolver declines
-    to cite counts, including rows whose fix landed in a round this state file
-    no longer describes.
+    This describes the table about to be published, so it counts that table's
+    rows and no others. Two things follow, and both were once wrong here:
+
+    - `folded` drops the entries the renderer will fold into a thread's row.
+      They reach no reader, so counting them describes a list nobody sees and
+      reads as a larger attribution problem than the branch has.
+    - A row the renderer settles as `_RECONCILED_STATUS_TEXT` is not counted.
+      The resolver declines to cite it, which is why it used to be, but the
+      cell it renders is a specific claim about where the fix went — the work
+      is on the branch, in a commit this run cannot name. Nothing about it
+      contradicts itself, and the warning's own wording ("without a claim")
+      never fitted it. What is left is the case the warning exists for: a row
+      asserting a fix with nothing on the branch to show for it.
+
+    The second half is asked of `_fixed_status_for`, the renderer, rather than
+    re-derived — the count and the rows under it are two readings of one answer
+    and must not be able to disagree.
+
+    An unpushed commit is not this either: the work is committed and the row
+    says so, it is only the link that has to wait.
     """
     if _commit_unpushed(cp.status):
         return
-    orphans = [e for e in fixed if not _attribute_commit(e, cp).cited]
+    folded = folded or set()
+    orphans = [
+        e for e in fixed
+        if e.id not in folded
+        and not _attribute_commit(e, cp).cited
+        and _fixed_status_for(e, cp, repo) != _RECONCILED_STATUS_TEXT
+    ]
     if not orphans:
         return
     log.warn(
@@ -2614,6 +2638,41 @@ def _duplicate_item_ids(
     }
 
 
+def _folded_item_ids(
+    *,
+    fixed: list[_SummaryEntry],
+    needs_human: list[_SummaryEntry],
+    deferred: list[_SummaryEntry],
+    dismissed: list[_SummaryEntry],
+    already_addressed: list[_SummaryEntry],
+    threads_by_id: dict[str, ReportThread],
+) -> set[str]:
+    """The ids no bucket will render, folded across every bucket at once.
+
+    Which buckets a fold looks at is one decision, and this is where it is
+    made. Folding is cross-bucket by nature — the thread that keeps a point may
+    sit in a different bucket from the comment item restating it — so a caller
+    holding only one bucket cannot answer for it, and a caller that rebuilt the
+    list would be a second place to keep in step with the first.
+
+    `_build_summary_body` reads this to drop the rows and the counts over them;
+    `_warn_unattributed_fixes` reads it so what it counts is what the table
+    goes on to publish. Both recompute rather than pass a set between them:
+    it is a pure read of the buckets, so recomputing makes the two agree by
+    construction, where a threaded value could arrive stale and put the count
+    back out of step with the table — the very fault this answers.
+
+    The buckets are keyword-only for the same reason. Five arguments of one
+    type, ordered differently at one call site, would silently fold the wrong
+    set, and every reading downstream would agree with itself while being
+    wrong.
+    """
+    return _duplicate_item_ids(
+        [*fixed, *already_addressed, *dismissed, *needs_human, *deferred],
+        threads_by_id,
+    )
+
+
 _SUMMARY_TABLE_COLUMNS = ("Thread", "Reviewer", "File", "Action")
 _SUMMARY_TABLE_HEADER = f"| {' | '.join(_SUMMARY_TABLE_COLUMNS)} |"
 _SUMMARY_TABLE_DIVIDER = "|" + "|".join("-" * 8 for _ in _SUMMARY_TABLE_COLUMNS) + "|"
@@ -2767,9 +2826,13 @@ def _build_summary_body(
     held_by_key = {row.key: row.published for row in hand_held or []}
     # Ahead of the counts, not just the rows: a count with no row under it is a
     # claim the table cannot show the reader.
-    folded = _duplicate_item_ids(
-        [*fixed, *already_addressed, *dismissed, *needs_human, *deferred],
-        threads_by_id,
+    folded = _folded_item_ids(
+        fixed=fixed,
+        needs_human=needs_human,
+        deferred=deferred,
+        dismissed=dismissed,
+        already_addressed=already_addressed,
+        threads_by_id=threads_by_id,
     )
     fixed = [e for e in fixed if e.id not in folded]
     already_addressed = [e for e in already_addressed if e.id not in folded]
@@ -3456,7 +3519,14 @@ def _render_deferred_summary(
     already_addressed = [t for t in fix.threads if t.action == FA.ALREADY_ADDRESSED]
 
     cp = _reconciled_commit(fix, status, wt_path)
-    _warn_unattributed_fixes(fixed, cp)
+    _warn_unattributed_fixes(fixed, cp, repo, _folded_item_ids(
+        fixed=fixed,
+        needs_human=needs_human,
+        deferred=deferred,
+        dismissed=dismissed,
+        already_addressed=already_addressed,
+        threads_by_id=threads_by_id,
+    ))
     url = _publish_summary(repo, pr_number, functools.partial(
         _build_summary_body,
         fixed, needs_human, deferred, cp, repo, pr_number, threads_by_id,
@@ -3528,7 +3598,14 @@ def _post_or_defer_summary(
     Returns the comment URL if posted, None if deferred or nothing to post.
     When deferred, the summary is re-rendered from FixSummary during --finish.
     """
-    _warn_unattributed_fixes(fixed, cp)
+    _warn_unattributed_fixes(fixed, cp, repo, _folded_item_ids(
+        fixed=fixed,
+        needs_human=needs_human,
+        deferred=deferred,
+        dismissed=dismissed or [],
+        already_addressed=already_addressed or [],
+        threads_by_id=threads_by_id,
+    ))
     if _commit_unpushed(cp.status):
         log.info("Deferred fix summary — commit not on the remote, will post after push lands")
         return None

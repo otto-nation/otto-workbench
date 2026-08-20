@@ -113,7 +113,9 @@ If an entry disappears but the change genuinely is not breaking — an internal 
 that was wrongly marked public, or a rename that ships a back-compat alias — declare
 that instead, one footer per removed entry:
 
-    Not-Breaking: command:old-name — renamed, old name still symlinked
+```
+Not-Breaking: command:old-name — renamed, old name still symlinked
+```
 
 The reason is required — a `Not-Breaking:` footer with nothing after the separator
 declares nothing, because the reason reaching git history is the whole point of a

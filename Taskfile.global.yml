@@ -165,10 +165,14 @@ tasks:
 
         echo "→ Analyzing commit with AI..."
         FULL_DIFF=$(git show "$TARGET_SHA" --no-color)
+        ORIGINAL_MSG=$(git log -1 --format=%B "$TARGET_SHA")
 
         find_commitlint_config
         build_commit_rules
         generate_commit_msg "$FULL_DIFF" || exit 1
+        # The regenerated message comes from the diff alone — carry the
+        # original's breaking-change declarations onto it before validating.
+        preserve_declared_footers "$ORIGINAL_MSG"
 
         echo "✓ AI analysis complete"
         echo ""

@@ -393,9 +393,23 @@ Sourced directly by consumers (`generate-tool-context`, `summary.sh`). Not in th
 
 Git convention constants — single source of truth for commit and PR formatting.
 
-Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`.
+Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`, `BREAKING_CHANGE_FOOTER`, `BREAKING_CHANGE_FOOTER_ALT`, `NOT_BREAKING_FOOTER`, `BREAKING_FOOTER_RE`, `DECLARED_FOOTER_RE`.
 
-No functions. Sourced directly by `lib/ai/core.sh` and git generation scripts.
+<!-- LIB-FUNCTIONS:conventions.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `has_breaking_footer MSG` | true when MSG declares a breaking change in its body. |
+| `declared_footers MSG` | every declaration footer line in MSG, in order. |
+<!-- LIB-FUNCTIONS:conventions.sh-END -->
+
+The footer helpers answer one question — "does this message declare a breaking
+change" — for all three readers that ask it: the pre-push gate
+(`bin/local/check-surface-compat`), the local commit validator
+(`validate_commit_msg`), and the reword path that carries an existing footer
+onto a regenerated message. POSIX only: the file is sourced by `/bin/sh` on the
+go-task path.
+
+Sourced directly by `lib/ai/core.sh` and git generation scripts.
 
 ### summary.sh
 
@@ -440,6 +454,7 @@ Commit message generation with validation and automatic retry on length violatio
 | `build_commit_rules` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). |
 | `generate_commit_msg DIFF [FILE_LIST]` | Requires AI_COMMAND and COMMIT_RULES. |
 | `validate_commit_msg MSG` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). |
+| `preserve_declared_footers ORIGINAL_MSG` | Re-appends to AI_MSG every declaration footer ORIGINAL_MSG carries that the generated message does not already have. |
 <!-- LIB-FUNCTIONS:ai/commit.sh-END -->
 
 ### ai/pr.sh

@@ -5,6 +5,13 @@
 # that only need convention constants (git/bin/generate-changelog, git/bin/generate-git-rules).
 #
 # To add a commit type, append it to COMMIT_TYPES — no other changes needed.
+#
+# The footer helpers at the bottom are here for the same reason the tokens are:
+# "this message declares a breaking change" is asked by the pre-push gate
+# (bin/local/check-surface-compat), by the local commit validator, and by the
+# reword path that has to carry an existing footer forward. Three readers, one
+# answer. The file is sourced by /bin/sh on the go-task path, so everything
+# below stays POSIX — no [[, no <<<, no pattern-replacement expansion.
 
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 
@@ -29,7 +36,45 @@ COMMIT_TYPES="feat fix perf deps revert docs style refactor test build ci chore"
 # Commit bodies are always concatenated into the squashed message and survive.
 BREAKING_CHANGE_FOOTER="BREAKING CHANGE"
 
+# The hyphenated synonym, derived from the one constant rather than declared a
+# second time — a rename of BREAKING_CHANGE_FOOTER carries both forms with it.
+# Conventional Commits v1.0.0 lists it as a synonym and release-please honours
+# it, so every reader below accepts either spelling.
+#
+# tr rather than "${BREAKING_CHANGE_FOOTER/ /-}": pattern replacement is a
+# bashism, and this file is sourced by dash on the go-task path.
+BREAKING_CHANGE_FOOTER_ALT=$(printf '%s' "$BREAKING_CHANGE_FOOTER" | tr ' ' '-')
+
 # Footer recording a public-surface removal that is deliberately not breaking.
 # Format: Not-Breaking: <surface entry> — <reason>
 # One footer per removed entry. Read by bin/local/check-surface-compat.
 NOT_BREAKING_FOOTER="Not-Breaking"
+
+# ERE matching a footer line that declares a breaking change, either spelling.
+# The reason is not optional: ": .+" is what separates a declaration from a
+# bare token, because the reason landing in git history is the whole point.
+BREAKING_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}): .+"
+
+# ERE matching any footer that declares how a public-surface change was handled
+# — breaking, or deliberately not. Both are authored once and must survive
+# every rewrite of the message that carries them.
+DECLARED_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}|${NOT_BREAKING_FOOTER}): .+"
+
+# has_breaking_footer MSG — true when MSG declares a breaking change in its body.
+#
+# The subject-level `!` marker is deliberately not consulted, here or anywhere
+# else: see BREAKING_CHANGE_FOOTER for why a squash loses it. A caller that
+# wants to know whether a `!` header is backed by a footer asks this about the
+# whole message, not about the header.
+has_breaking_footer() {
+  printf '%s\n' "$1" | grep -qE "$BREAKING_FOOTER_RE"
+}
+
+# declared_footers MSG — every declaration footer line in MSG, in order.
+#
+# Prints nothing when MSG declares nothing. Whole lines, not just the reason:
+# a caller re-appending one to a regenerated message has to reproduce the
+# footer byte for byte.
+declared_footers() {
+  printf '%s\n' "$1" | grep -E "$DECLARED_FOOTER_RE" || true
+}

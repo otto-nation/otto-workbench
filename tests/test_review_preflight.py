@@ -157,11 +157,16 @@ def _stub_run(monkeypatch, calls: list):
         calls.append((cmd, cwd))
         if cmd[0] == "gh":
             return json.dumps(PR_PAYLOAD)
-        if cmd == ["git", "diff", "--numstat", "origin/main...HEAD"]:
-            return PINNED_NUMSTAT
         raise AssertionError(f"unexpected command: {cmd}")
 
+    def fake_git_out(*args, cwd=None, default="", config=None):
+        calls.append((["git", *args], cwd))
+        if args == ("diff", "--numstat", "origin/main...HEAD"):
+            return PINNED_NUMSTAT
+        raise AssertionError(f"unexpected git command: {args}")
+
     monkeypatch.setattr(rp, "_run", fake_run)
+    monkeypatch.setattr(rp.git_client, "out", fake_git_out)
 
 
 class TestFetchPRMetadataPinned:

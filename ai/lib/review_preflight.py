@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import git_client
 import log
 import serde
 import workbench_config
@@ -341,7 +342,7 @@ def _fetch_base(wt_path: str, base: str) -> None:
     refreshes it before reading. A stale ref would otherwise put the file list
     and the diff on two different fork points.
     """
-    _run(["git", "fetch", "origin", base], cwd=wt_path, check=False)
+    git_client.run("fetch", "origin", base, cwd=wt_path)
 
 
 def _fork_point(wt_path: str, base: str) -> str:
@@ -351,13 +352,12 @@ def _fork_point(wt_path: str, base: str) -> str:
     of the review surface. Falling back to ``HEAD`` narrows that to the
     uncommitted edits alone rather than reviewing nothing.
     """
-    return _run(["git", "merge-base", f"origin/{base}", "HEAD"], cwd=wt_path) or "HEAD"
+    return git_client.out("merge-base", f"origin/{base}", "HEAD", cwd=wt_path) or "HEAD"
 
 
 def _untracked_files(wt_path: str) -> list[str]:
     """Paths git does not track and .gitignore does not exclude."""
-    out = _run(["git", "ls-files", "--others", "--exclude-standard"], cwd=wt_path)
-    return out.split("\n") if out else []
+    return git_client.lines("ls-files", "--others", "--exclude-standard", cwd=wt_path)
 
 
 def _diff_untracked(wt_path: str, paths: list[str], numstat: bool = False) -> str:
@@ -365,11 +365,11 @@ def _diff_untracked(wt_path: str, paths: list[str], numstat: bool = False) -> st
     flags = ["--numstat"] if numstat else []
     parts = []
     for path in paths:
-        # --no-index exits 1 whenever the two sides differ, which is always here.
-        out = _run(
-            ["git", "diff", "--no-index", *flags, "--", os.devnull, path],
-            cwd=wt_path, check=False,
-        )
+        # --no-index exits 1 whenever the two sides differ, which is always here,
+        # so the exit code is read past rather than through `out`.
+        out = git_client.run(
+            "diff", "--no-index", *flags, "--", os.devnull, path, cwd=wt_path,
+        ).stdout.strip()
         if not out:
             continue
         # numstat names the pair "/dev/null => <path>"; the diff body is already clean.
@@ -391,7 +391,7 @@ def _worktree_diff(wt_path: str, since: str) -> str:
     # ceiling: untracked files ignore `since`; upgrade to diffing against the
     # prior review's copy if repeated deltas start drowning in re-shown files.
     return _join_nonempty(
-        _run(["git", "diff", since], cwd=wt_path),
+        git_client.out("diff", since, cwd=wt_path),
         _diff_untracked(wt_path, _untracked_files(wt_path)),
     )
 
@@ -409,8 +409,8 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
     if prior_sha == job.pr.head_sha:
         log.info("Prior review is on current HEAD — running full review")
         return empty
-    verify = _run(["git", "cat-file", "-t", prior_sha], cwd=job.wt_path, check=False)
-    if verify.strip() != "commit":
+    verify = git_client.out("cat-file", "-t", prior_sha, cwd=job.wt_path)
+    if verify != "commit":
         log.warn(f"Prior review SHA {prior_sha[:7]} not reachable — running full review")
         return empty
 
@@ -419,11 +419,10 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
         # edits that have not been committed since the prior review.
         raw_diff = _worktree_diff(job.wt_path, prior_sha)
     else:
-        raw_diff = _run(["git", "diff", f"{prior_sha}..HEAD"], cwd=job.wt_path)
+        raw_diff = git_client.out("diff", f"{prior_sha}..HEAD", cwd=job.wt_path)
     delta_diff, _ = _truncate_diff(raw_diff, MAX_DELTA_DIFF_BYTES)
-    raw_log = _run(
-        ["git", "log", "--stat", "--reverse", f"{prior_sha}..HEAD"],
-        cwd=job.wt_path,
+    raw_log = git_client.out(
+        "log", "--stat", "--reverse", f"{prior_sha}..HEAD", cwd=job.wt_path,
     )
     delta_log = _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log")
     delta_files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(raw_diff)]
@@ -438,17 +437,17 @@ def _collect_git_data(
     wt_path: str, base: str, pr_files: list[dict], include_worktree: bool = False,
 ) -> tuple[str, str]:
     _fetch_base(wt_path, base)
-    commit_log = _run(
-        ["git", "log", "--stat", "--reverse", f"origin/{base}..HEAD"], cwd=wt_path,
+    commit_log = git_client.out(
+        "log", "--stat", "--reverse", f"origin/{base}..HEAD", cwd=wt_path,
     )
     commit_log = _truncate_log(commit_log, MAX_COMMIT_LOG_BYTES)
 
     if include_worktree:
         return _worktree_diff(wt_path, _fork_point(wt_path, base)), commit_log
 
-    diff = _run(["git", "diff", f"origin/{base}...HEAD"], cwd=wt_path)
+    diff = git_client.out("diff", f"origin/{base}...HEAD", cwd=wt_path)
     if not diff and pr_files:
-        diff = _run(["git", "diff", "HEAD"], cwd=wt_path)
+        diff = git_client.out("diff", "HEAD", cwd=wt_path)
     return diff, commit_log
 
 
@@ -877,11 +876,11 @@ def _parse_numstat(numstat: str) -> tuple[list[dict], int, int]:
 
 def fetch_branch_metadata(wt_path: str, base: str = DEFAULT_BASE_BRANCH) -> PRMetadata:
     _fetch_base(wt_path, base)
-    head_sha = _run(["git", "rev-parse", "HEAD"], cwd=wt_path)
-    branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path)
+    head_sha = git_client.head_sha(cwd=wt_path)
+    branch = git_client.current_branch(cwd=wt_path)
     log_range = f"origin/{base}..HEAD"
 
-    log_output = _run(["git", "log", log_range, "--oneline"], cwd=wt_path)
+    log_output = git_client.out("log", log_range, "--oneline", cwd=wt_path)
     first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
     title = first_subject
 
@@ -889,7 +888,7 @@ def fetch_branch_metadata(wt_path: str, base: str = DEFAULT_BASE_BRANCH) -> PRMe
     # matches the diff _collect_git_data builds for self-review: committed,
     # uncommitted and untracked changes alike.
     numstat = _join_nonempty(
-        _run(["git", "diff", "--numstat", _fork_point(wt_path, base)], cwd=wt_path),
+        git_client.out("diff", "--numstat", _fork_point(wt_path, base), cwd=wt_path),
         _diff_untracked(wt_path, _untracked_files(wt_path), numstat=True),
     )
     files, total_add, total_del = _parse_numstat(numstat)
@@ -937,9 +936,8 @@ def fetch_pr_metadata(
     # --recover completes a run against the commit it started from, so the
     # changeset must come from the pinned checkout rather than the moved PR head.
     if pin_sha and pin_sha != head_sha and wt_path:
-        numstat = _run(
-            ["git", "diff", "--numstat", f"origin/{data['baseRefName']}...HEAD"],
-            cwd=wt_path,
+        numstat = git_client.out(
+            "diff", "--numstat", f"origin/{data['baseRefName']}...HEAD", cwd=wt_path,
         )
         files, additions, deletions = _parse_numstat(numstat)
         changed_files = len(files)

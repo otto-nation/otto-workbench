@@ -31,8 +31,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import agent_retry
 import ai_backend
 import ci_failures as ci
+import git_client
 import pr_context
 import pr_state
+import proc
 import run_lock
 import review_common
 import log
@@ -673,31 +675,23 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
 
     # -A, not -u: a fix that adds files (tests, fixtures) would otherwise be
     # dropped from the commit while still counted as fixed.
-    subprocess.run(
-        ["git", "-C", str(wt_path), "add", "-A"],
-        check=True,
-    )
+    staged = git_client.run("add", "-A", cwd=wt_path)
+    if not staged.ok:
+        raise RuntimeError(proc.failure_message("Failed to stage fixes", staged))
     msg = "fix: address CI failures"
     if fixed:
         msg += f"\n\n{fixed} fixed, {skipped} skipped"
-    subprocess.run(
-        ["git", "-C", str(wt_path), "commit", "-m", msg],
-        check=True,
-    )
-    sha = subprocess.run(
-        ["git", "-C", str(wt_path), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    committed = git_client.run("commit", "-m", msg, cwd=wt_path)
+    if not committed.ok:
+        raise RuntimeError(proc.failure_message("Failed to commit fixes", committed))
+    sha = git_client.head_sha(cwd=wt_path)
     log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
 
-    r = subprocess.run(
-        ["git", "-C", str(wt_path), "push"],
-        capture_output=True, text=True,
-    )
-    if r.returncode == 0:
+    r = git_client.run("push", cwd=wt_path)
+    if r.ok:
         log.info("Pushed fixes")
     else:
-        log.warn(f"Push failed: {r.stderr.strip()}")
+        log.warn(f"Push failed: {r.detail}")
 
     return sha
 

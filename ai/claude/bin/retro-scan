@@ -22,6 +22,7 @@ from pathlib import Path
 _BIN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_BIN_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(_BIN_DIR))
+import git_client  # noqa: E402
 import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402
@@ -111,11 +112,9 @@ def resolve_github_remote(remote_url: str) -> str | None:
 
 def get_repo_remote(repo_path: str) -> str | None:
     try:
-        result = subprocess.run(
-            ["git", "-C", repo_path, "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
+        result = git_client.run("remote", "get-url", "origin",
+                                cwd=repo_path, timeout=5)
+        if result.ok:
             return result.stdout.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass

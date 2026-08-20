@@ -16,12 +16,13 @@ during a review, and a fix pass needs only a finished review file to work from.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import git_client
 import log
+import proc
 from review_agent import diagnose_missing_output
 from review_common import (
     Phase,
@@ -59,10 +60,9 @@ def _commit_fixes(
     # and stage whichever unrelated paths it happened to glob — the opposite of
     # what staging by name is here to guarantee.
     pathspecs = [f":(literal){path}" for path in ordered]
-    subprocess.run(
-        ["git", "-C", job.wt_path, "add", "--", *pathspecs],
-        capture_output=True, check=True,
-    )
+    staged = git_client.run("add", "--", *pathspecs, cwd=job.wt_path)
+    if not staged.ok:
+        raise RuntimeError(proc.failure_message("Failed to stage fixes", staged))
 
     msg = "fix: self-review findings"
     if fixed:
@@ -72,12 +72,9 @@ def _commit_fixes(
 
     # Pathspec commit, so content the operator staged before the pass started
     # stays staged instead of riding along in the index.
-    result = subprocess.run(
-        ["git", "-C", job.wt_path, "commit", "-m", msg, "--", *pathspecs],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        log.warn(f"Failed to commit fixes: {result.stderr.strip()}")
+    result = git_client.run("commit", "-m", msg, "--", *pathspecs, cwd=job.wt_path)
+    if not result.ok:
+        log.warn(f"Failed to commit fixes: {result.detail}")
         return
 
     log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
@@ -127,7 +124,7 @@ def _is_local_hook_rejection(stderr: str) -> bool:
 _HOOK_OUTPUT_LINES = 20
 
 
-def _hook_output(result: subprocess.CompletedProcess) -> str:
+def _hook_output(result: proc.CmdResult) -> str:
     """The tail of what the hook printed, indented under the error.
 
     The hook splits itself across both streams — check names on stdout, the
@@ -140,20 +137,13 @@ def _hook_output(result: subprocess.CompletedProcess) -> str:
 
 def _head_sha(wt_path: str) -> str:
     """Short SHA of the commit left stranded locally, for the repair message."""
-    result = subprocess.run(
-        ["git", "-C", wt_path, "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True,
-    )
-    return result.stdout.strip() if result.returncode == 0 else "HEAD"
+    return git_client.head_sha(cwd=wt_path, short=True) or "HEAD"
 
 
 def _push_fixes(job: ReviewJob):
     """Push committed fixes to the remote."""
-    result = subprocess.run(
-        ["git", "-C", job.wt_path, "push"],
-        capture_output=True, text=True,
-    )
-    if result.returncode == 0:
+    result = git_client.run("push", cwd=job.wt_path)
+    if result.ok:
         log.info("Pushed fixes")
         return
 
@@ -191,17 +181,9 @@ def _changed_source_files(wt_path: str) -> set[str]:
     changed: set[str] = set()
     # Untracked files count: a fix that only adds a test file still fixed the
     # finding, and diff-only detection would report it as skipped.
-    for args in (["diff", "HEAD", "--name-only"],
-                 ["ls-files", "--others", "--exclude-standard"]):
-        # quotePath=false: git escapes non-ASCII names by default, and an
-        # escaped name is not a pathspec `git add` can resolve.
-        result = subprocess.run(
-            ["git", "-C", wt_path, "-c", "core.quotePath=false", *args],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            continue
-        changed.update(f for f in result.stdout.strip().splitlines() if f)
+    for args in (("diff", "HEAD", "--name-only"),
+                 ("ls-files", "--others", "--exclude-standard")):
+        changed.update(git_client.lines(*args, cwd=wt_path))
     return changed
 
 

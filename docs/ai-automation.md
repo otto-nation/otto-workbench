@@ -1329,6 +1329,37 @@ detail, and the exit code alone when neither did.
 free to depend on. The name is not `cmd` because `ai/lib` goes on `sys.path` ahead
 of the standard library, where a `cmd` module would shadow the one `pdb` imports.
 
+### One way to run git
+
+`ai/` invoked `git` as a literal argv head in 131 places, and each one re-decided the
+same four things: `-C` or `cwd=`, whether to capture, whether a non-zero exit is a
+failure or an answer, and what to do with stderr. That spread is why a fix applied to
+one call site was never a fix for the other hundred and thirty.
+
+[`ai/lib/git_client.py`](../ai/lib/git_client.py) sits directly on `proc` and depends
+on nothing else. The runner is `run`; the other three are the shapes callers actually
+wanted from it.
+
+| Call | What it gives you |
+|---|---|
+| `run(*args, cwd=, timeout=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
+| `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
+| `ok(*args)` | Just the exit code, for the subcommands that answer that way. |
+| `lines(*args)` | Stdout split into non-empty lines. |
+
+`config={"key": "value"}` becomes `-c key=value` ahead of the subcommand. `diff`,
+`ls-files` and `status` get `core.quotePath=false` by default: git escapes a
+non-ASCII path in that output unless told otherwise, and an escaped name is not a
+pathspec a later `git add` can resolve — so a fix touching such a file was staged as
+nothing and reported as applied. Applying the flag to the subcommand rather than to
+each caller is what stops the next call site from forgetting it.
+
+Above the runner sit the reads that appeared at two or more call sites — `head_sha`,
+`current_branch`, `is_dirty`, `commit_exists`. A read used once belongs at its call
+site, spelled out with `run`. Writes are not modelled beyond `run`: committing and
+pushing gets an owner of its own, with the publishing gate over it, rather than a
+convenience wrapper here that would turn four gate-less push sites into five.
+
 ## Guidelines & Rules
 
 The workbench installs a layered rule system into Claude Code:

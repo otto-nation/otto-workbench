@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
+import git_client
 import log
 import pr_context
 import pr_state
@@ -625,14 +626,7 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
             return explicit_dir
         return ""
 
-    try:
-        r = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
-        )
-        git_toplevel = r.stdout.strip()
-    except Exception:
-        git_toplevel = ""
+    git_toplevel = git_client.out("rev-parse", "--show-toplevel")
 
     if git_toplevel:
         if os.path.basename(git_toplevel) == repo_name:
@@ -1052,16 +1046,7 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
 
 
 def _cleanup_self_review_worktree(wt_cleanup, repo_dir: str) -> None:
-    original_repo_dir = repo_dir or ""
-    if not original_repo_dir:
-        try:
-            r = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True,
-            )
-            original_repo_dir = r.stdout.strip()
-        except Exception:
-            pass
+    original_repo_dir = repo_dir or git_client.out("rev-parse", "--show-toplevel")
     if original_repo_dir:
         review_worktree.cleanup_worktree(wt_cleanup, original_repo_dir)
 

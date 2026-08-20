@@ -31,6 +31,14 @@ def _completed(returncode, stdout=""):
     return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")
 
 
+def _subcommand(cmd) -> str:
+    """The git subcommand, past any `-c key=value` the client prefixes it with."""
+    rest = cmd[1:]
+    while rest[:1] == ["-c"]:
+        rest = rest[2:]
+    return rest[0] if rest else ""
+
+
 def _git_stub(*, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
               gh_out="", gh_rc=0, calls=None):
     """A `subprocess.run` stand-in answering every call the preflight makes.
@@ -44,14 +52,16 @@ def _git_stub(*, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
             calls.append(cmd)
         if cmd[0] == "gh":
             return _completed(gh_rc, stdout=gh_out)
-        if cmd[3] == "rev-parse":
-            return _completed(0, stdout=(_HEAD_SHA if cmd[4] == "HEAD"
+        sub = _subcommand(cmd)
+        if sub == "rev-parse":
+            ref = cmd[cmd.index("rev-parse") + 1]
+            return _completed(0, stdout=(_HEAD_SHA if ref == "HEAD"
                                          else _BASE_SHA) + "\n")
         if "--reverse" in cmd:
             return _completed(0, stdout=log_out)
-        if cmd[3] == "diff":
+        if sub == "diff":
             return _completed(0, stdout=diff)
-        if cmd[3] == "grep":
+        if sub == "grep":
             return _completed(grep_rc)
         return _completed(0, stdout=pickaxe)
     return run

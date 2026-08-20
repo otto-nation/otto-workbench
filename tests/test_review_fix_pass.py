@@ -12,6 +12,7 @@ if LIB_DIR not in sys.path:
 import review_common
 import review_findings
 import review_fix
+from proc import CmdResult
 from review_common import Diagnosis, DiagnosisKind, Effort, Phase
 from review_findings import Finding
 
@@ -82,50 +83,41 @@ class TestCommitFixes:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_no_agent_changes_returns_early(self, mock_run, tmp_path):
         review_fix._commit_fixes(self._make_job(tmp_path), set(), fixed=3, skipped=1)
         mock_run.assert_not_called()
 
     @patch("review_fix._push_fixes")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_commits_with_counts(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
-        mock_run.side_effect = [
-            MagicMock(returncode=0),
-            MagicMock(returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.side_effect = [CmdResult(), CmdResult()]
         review_fix._commit_fixes(job, {"a.go"}, fixed=3, skipped=1)
-        commit_call = mock_run.call_args_list[1]
-        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        commit_args = mock_run.call_args_list[1].args
+        msg = commit_args[commit_args.index("-m") + 1]
         assert "3 fixed, 1 skipped" in msg
 
     @patch("review_fix._push_fixes")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_zero_fixed_omits_count_from_message(
         self, mock_run, mock_push, tmp_path,
     ):
         job = self._make_job(tmp_path)
-        mock_run.side_effect = [
-            MagicMock(returncode=0),
-            MagicMock(returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.side_effect = [CmdResult(), CmdResult()]
         review_fix._commit_fixes(job, {"a.go"}, fixed=0, skipped=2)
-        commit_call = mock_run.call_args_list[1]
-        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        commit_args = mock_run.call_args_list[1].args
+        msg = commit_args[commit_args.index("-m") + 1]
         assert msg == "fix: self-review findings"
 
     @patch("review_fix._push_fixes")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_stages_only_the_named_paths(self, mock_run, mock_push, tmp_path):
         """`git add -A` swept up whatever else was sitting in the worktree."""
         job = self._make_job(tmp_path)
-        mock_run.side_effect = [
-            MagicMock(returncode=0),
-            MagicMock(returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.side_effect = [CmdResult(), CmdResult()]
         review_fix._commit_fixes(job, {"b.go", "a.go"}, fixed=1, skipped=0)
-        add_call = mock_run.call_args_list[0][0][0]
+        add_call = list(mock_run.call_args_list[0].args)
         assert add_call[-3:] == ["--", ":(literal)a.go", ":(literal)b.go"]
         assert "-A" not in add_call
         assert mock_run.call_count == 2
@@ -511,65 +503,57 @@ class TestCommitFixesWithSummary:
         return job
 
     @patch("review_fix._push_fixes")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_commit_includes_summary(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
-        mock_run.side_effect = [
-            MagicMock(returncode=0),
-            MagicMock(returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.side_effect = [CmdResult(), CmdResult()]
         summary = "Fixed:\n  - [M1] corrected condition\nSkipped:\n  - [S1] needs design"
         review_fix._commit_fixes(job, {"a.go"}, fixed=1, skipped=1, summary=summary)
-        commit_call = mock_run.call_args_list[1]
-        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        commit_args = mock_run.call_args_list[1].args
+        msg = commit_args[commit_args.index("-m") + 1]
         assert "1 fixed, 1 skipped" in msg
         assert "corrected condition" in msg
         assert "needs design" in msg
 
     @patch("review_fix._push_fixes")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_commit_without_summary(self, mock_run, mock_push, tmp_path):
         job = self._make_job(tmp_path)
-        mock_run.side_effect = [
-            MagicMock(returncode=0),
-            MagicMock(returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.side_effect = [CmdResult(), CmdResult()]
         review_fix._commit_fixes(job, {"a.go"}, fixed=2, skipped=0, summary="")
-        commit_call = mock_run.call_args_list[1]
-        msg = commit_call[0][0][commit_call[0][0].index("-m") + 1]
+        commit_args = mock_run.call_args_list[1].args
+        msg = commit_args[commit_args.index("-m") + 1]
         assert "2 fixed, 0 skipped" in msg
         assert msg.count("\n\n") == 1
 
 
 class TestHasUncommittedChanges:
-    """The commit gate for every fix pass — pipeline, ci-check, review-threads."""
+    """The commit gate for every fix pass — pipeline, ci-check, review-threads.
 
-    @patch("review_common.subprocess.run")
-    def test_unstaged_changes(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout=" M handler.go\n")
-        assert review_common.has_uncommitted_changes("/tmp/wt") is True
-        assert mock_run.call_count == 1
+    Against a real repo: what counts as dirty is git's answer, and a stubbed
+    porcelain line would agree with whatever this test expected.
+    """
 
-    @patch("review_common.subprocess.run")
-    def test_staged_only_changes(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="M  handler.go\n")
-        assert review_common.has_uncommitted_changes("/tmp/wt") is True
+    def test_a_clean_worktree_is_not_dirty(self, git_wt):
+        assert review_common.has_uncommitted_changes(git_wt) is False
 
-    @patch("review_common.subprocess.run")
-    def test_untracked_only_changes(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="?? tests/run_ai.bats\n")
-        assert review_common.has_uncommitted_changes("/tmp/wt") is True
+    def test_unstaged_changes(self, git_wt):
+        (git_wt / "src.py").write_text("edited\n")
+        assert review_common.has_uncommitted_changes(git_wt) is True
 
-    @patch("review_common.subprocess.run")
-    def test_no_changes(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="")
-        assert review_common.has_uncommitted_changes("/tmp/wt") is False
+    def test_staged_only_changes(self, git_wt):
+        (git_wt / "src.py").write_text("edited\n")
+        _git(git_wt, "add", "src.py")
+        assert review_common.has_uncommitted_changes(git_wt) is True
 
-    @patch("review_common.subprocess.run")
-    def test_accepts_a_path_object(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="")
-        review_common.has_uncommitted_changes(Path("/tmp/wt"))
-        assert mock_run.call_args[0][0][2] == "/tmp/wt"
+    def test_untracked_only_changes(self, git_wt):
+        """A fix that only adds a test file still has to reach the commit."""
+        (git_wt / "run_ai.bats").write_text("@test 'x' { true; }\n")
+        assert review_common.has_uncommitted_changes(git_wt) is True
+
+    def test_accepts_a_path_object(self, git_wt):
+        (git_wt / "src.py").write_text("edited\n")
+        assert review_common.has_uncommitted_changes(Path(git_wt)) is True
 
 
 class TestPushFixes:
@@ -579,13 +563,13 @@ class TestPushFixes:
         return job
 
     def _push_result(self, stderr, stdout=""):
-        return MagicMock(returncode=1, stdout=stdout, stderr=stderr)
+        return CmdResult(1, stdout, stderr)
 
     def _rev_parse_result(self, sha):
-        return MagicMock(returncode=0, stdout=f"{sha}\n", stderr="")
+        return CmdResult(0, f"{sha}\n")
 
     @patch("review_fix.log")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_diverged_push_suggests_force_with_lease(self, mock_run, mock_log, tmp_path):
         mock_run.return_value = self._push_result(
             "! [rejected] main -> main (non-fast-forward)"
@@ -596,7 +580,7 @@ class TestPushFixes:
         assert "--force-with-lease" in msg
 
     @patch("review_fix.log")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_hook_failure_does_not_suggest_force_push(self, mock_run, mock_log, tmp_path):
         """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
         mock_run.side_effect = [
@@ -610,7 +594,7 @@ class TestPushFixes:
         assert "--force-with-lease" not in msg
 
     @patch("review_fix.log")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_hook_rejection_names_the_gate_the_commit_and_the_repair(
         self, mock_run, mock_log, tmp_path,
     ):
@@ -631,7 +615,7 @@ class TestPushFixes:
         assert "Repair, then: git -C" in msg
 
     @patch("review_fix.log")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_transport_failure_is_not_reported_as_a_failed_gate(
         self, mock_run, mock_log, tmp_path,
     ):
@@ -647,7 +631,7 @@ class TestPushFixes:
         assert "committed locally but not pushed" in msg
 
     @patch("review_fix.log")
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_successful_push_logs_no_error(self, mock_run, mock_log, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         review_fix._push_fixes(self._make_job(tmp_path))
@@ -703,15 +687,15 @@ class TestHookOutput:
 
 class TestHeadSha:
 
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_returns_the_short_sha(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="9bc3f64\n", stderr="")
+        mock_run.return_value = CmdResult(0, "9bc3f64\n")
         assert review_fix._head_sha("/wt") == "9bc3f64"
 
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_falls_back_to_head_when_rev_parse_fails(self, mock_run):
         """The repair instruction still reads correctly without a SHA."""
-        mock_run.return_value = MagicMock(returncode=128, stdout="", stderr="fatal")
+        mock_run.return_value = CmdResult(128, "", "fatal")
         assert review_fix._head_sha("/wt") == "HEAD"
 
 
@@ -807,31 +791,28 @@ class TestReconcileCheckboxes:
 
 
 class TestChangedSourceFiles:
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_includes_untracked_files(self, mock_run):
         """A fix that only adds a new test file still fixed the finding."""
         mock_run.side_effect = [
-            MagicMock(returncode=0, stdout="src/auth.go\n"),
-            MagicMock(returncode=0, stdout="tests/run_ai.bats\n"),
+            CmdResult(0, "src/auth.go\n"),
+            CmdResult(0, "tests/run_ai.bats\n"),
         ]
         assert review_fix._changed_source_files("/wt") == {
             "src/auth.go", "tests/run_ai.bats",
         }
 
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_untracked_query_excludes_ignored_files(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout=""),
-            MagicMock(returncode=0, stdout=""),
-        ]
+        mock_run.side_effect = [CmdResult(), CmdResult()]
         review_fix._changed_source_files("/wt")
-        assert "--exclude-standard" in mock_run.call_args_list[1][0][0]
+        assert "--exclude-standard" in mock_run.call_args_list[1].args
 
-    @patch("review_fix.subprocess.run")
+    @patch("review_fix.git_client.run")
     def test_diff_failure_still_reports_untracked(self, mock_run):
         mock_run.side_effect = [
-            MagicMock(returncode=128, stdout=""),
-            MagicMock(returncode=0, stdout="tests/new.bats\n"),
+            CmdResult(128),
+            CmdResult(0, "tests/new.bats\n"),
         ]
         assert review_fix._changed_source_files("/wt") == {"tests/new.bats"}
 

@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import agent_retry
 import ai_backend
+import git_client
 import log
 import pr_context
 import pr_state
@@ -58,15 +59,14 @@ _DESCRIBE_END = "<<<END_DESCRIPTION>>>"
 
 
 def _git(cwd: Path, *args: str) -> str:
-    r = subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, text=True,
-    )
-    if r.returncode != 0:
+    r = git_client.run(*args, cwd=cwd)
+    if not r.ok:
         # Silent fallback is intentional — the prompt degrades gracefully to
         # "(none)" for commits/changed files rather than aborting the pass.
         # Log so a bad revision (e.g. unfetched origin/<base>) is diagnosable.
-        log.warn(f"git {' '.join(args)} failed: {r.stderr.strip()}")
-    return r.stdout.strip() if r.returncode == 0 else ""
+        log.warn(f"git {' '.join(args)} failed: {r.detail}")
+        return ""
+    return r.stdout.strip()
 
 
 def _load_template(wt_path: Path) -> tuple[str, str]:

@@ -49,6 +49,22 @@ _write_conventions() {
   [ "$output" -ge 1 ]
 }
 
+# The hyphenated spelling is a Conventional Commits synonym that release-please
+# reads and the gate accepts, so the shipped rules have to name it too.
+@test "the rules name the hyphenated synonym of the breaking change footer" {
+  env GIT_RULES_OUTPUT="$OUT" "$GENERATOR" --quiet
+  run grep -cF "BREAKING-CHANGE:" "$OUT"
+  [ "$output" -ge 1 ]
+}
+
+# The `!` marker is lost to a squash merge on a multi-commit PR, so the shipped
+# rules must not present it as an alternative to the footer.
+@test "the rules say the bang marker never replaces the footer" {
+  env GIT_RULES_OUTPUT="$OUT" "$GENERATOR" --quiet
+  run grep -F "never replaces the footer" "$OUT"
+  [ "$status" -eq 0 ]
+}
+
 # This file lands in ai/guidelines/rules/ in every repo, so a wrong claim here
 # propagates the wrong mental model wider than anything else in the feature.
 # The gate reads the working tree and HEAD, never the committed snapshots

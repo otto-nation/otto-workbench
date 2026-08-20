@@ -96,21 +96,26 @@ The migration framework is this repo's compatibility mechanism for on-disk chang
 
 Put the footer in the **commit body**:
 
-    BREAKING CHANGE: `pr review --post` renamed to `--publish`
+```
+BREAKING CHANGE: `pr review --post` renamed to `--publish`
+```
 
 `BREAKING-CHANGE:` (hyphenated) means exactly the same thing — Conventional Commits
 v1.0.0 lists it as a synonym, release-please honours it, and so does the gate.
 
 A `!` in the header (`feat!: …`) is encouraged for readability but never enough on
 its own. This repo squash-merges with `COMMIT_OR_PR_TITLE`, so on a multi-commit PR
-the PR title replaces your subject and a header-only marker is silently lost.
+the PR title replaces your subject and a header-only marker is silently lost. Commit
+bodies are always concatenated into the squashed message, so the footer survives.
 `bin/local/check-surface-compat` fails a `!` header with no matching footer.
 
 If an entry disappears but the change genuinely is not breaking — an internal tool
 that was wrongly marked public, or a rename that ships a back-compat alias — declare
 that instead, one footer per removed entry:
 
-    Not-Breaking: command:old-name — renamed, old name still symlinked
+```
+Not-Breaking: command:old-name — renamed, old name still symlinked
+```
 
 The reason is required — a `Not-Breaking:` footer with nothing after the separator
 declares nothing, because the reason reaching git history is the whole point of a
@@ -152,7 +157,7 @@ fails, telling you to run the generator by hand. So on the *first* commit after
 a removal, the working-tree snapshot still lists the old entry and the gate has
 nothing to report; the hint only appears once the snapshot is caught up.
 
-### One caveat
+### Commits that touch both packages
 
 A single commit touching both packages majors **both**: release-please has no
 per-package footer syntax. Split the commit if you only mean to break one.

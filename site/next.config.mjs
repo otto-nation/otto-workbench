@@ -12,6 +12,10 @@ const config = {
   trailingSlash: true,
   images: { unoptimized: true },
   reactStrictMode: true,
+  // The package ships raw .tsx with no build step — Tailwind's scanner has to
+  // read the source anyway, so a compiled artifact would mean shipping source
+  // and build output both. Next has to compile it here instead.
+  transpilePackages: ['@otto-nation/brand'],
   // `content/docs` is a symlink to `../../docs` (outside `site/`). Without an explicit
   // root, Turbopack treats `site/` as the filesystem boundary and refuses to follow a
   // symlink that resolves outside it ("Symlink ... points out of the filesystem root").

@@ -161,6 +161,10 @@ jobs:
         working-directory: site
         run: npm test
 
+      - name: Check brand configuration
+        working-directory: site
+        run: npm run check
+
       - name: Build
         working-directory: site
         run: npm run build

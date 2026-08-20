@@ -20,6 +20,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum, StrEnum
 from pathlib import Path
 from string import Template
@@ -1421,44 +1422,187 @@ def _find_addressing_commit(
     return sha if sha else None
 
 
+def _commit_timestamp(wt_path: Path, sha: str) -> float:
+    """When `sha` was committed, in POSIX seconds, or 0.0 when unknown.
+
+    The committer date, not the author date: a rebased or cherry-picked fix
+    keeps the author date it was first written at, which would place work
+    landed in response to a review before the review that asked for it.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(wt_path), "show", "-s", "--format=%ct", sha],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return 0.0
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def _thread_opened_at(thread: ReportThread | None) -> float:
+    """When the reviewer opened `thread`, in POSIX seconds, or 0.0 when unknown.
+
+    The first comment on the thread, not the newest. What a reply must not deny
+    is that the branch moved after the reviewer asked; the later comments are
+    routinely our own replies from the round that moved it, and reading one of
+    those would place every fix before the question it answered.
+    """
+    if not thread or not thread.comments:
+        return 0.0
+    stamp = str(thread.comments[0].get("createdAt", "") or "")
+    try:
+        return datetime.fromisoformat(stamp).timestamp()
+    except ValueError:
+        return 0.0
+
+
+@dataclass(frozen=True)
+class AddressedFraming:
+    """Whether a satisfied thread was satisfied in response to the reviewer.
+
+    `in_response` is the whole reviewer-facing question. "The code does what
+    you asked" is true either way; what separates the two is whether the code
+    did it before the reviewer spoke, and only one of those readings tells them
+    their comment needed no action.
+
+    `sha` is the commit that made it true, when the branch can name one. It is
+    populated only alongside a reading it actually supports — a commit older
+    than the comment cannot be the one a fix pass just landed — so `cited` is
+    the one question a renderer asks before writing a commit link.
+    """
+
+    in_response: bool
+    sha: str = ""
+
+    @property
+    def cited(self) -> bool:
+        """Whether a commit may be named for this entry."""
+        return bool(self.sha)
+
+
+class AddressingHistory:
+    """When each satisfied thread's code became true, relative to the review.
+
+    The triage verdict `already_addressed` reads current HEAD, which includes
+    commits made earlier in the same review cycle — so a thread the pass fixed
+    on round one comes back satisfied on round two, and a flat "already
+    addressed" tells that reviewer their comment was moot. That is rejection,
+    which is the opposite of what the verdict means.
+
+    The reply and the summary row both ask this object the same question so the
+    two cannot disagree, and it caches both git lookups because `git log -L` is
+    a process per location and every surface asks about the same threads.
+    """
+
+    def __init__(self, wt_path: Path | None) -> None:
+        self._wt_path = wt_path
+        # Keyed by location rather than by file: two threads on one file are the
+        # case this reply got wrong, so a per-file cache would re-impose the
+        # answer `_find_addressing_commit` was narrowed to stop giving.
+        self._commits: dict[tuple[str, int], str] = {}
+        self._committed_at: dict[str, float] = {}
+
+    def framing(
+        self,
+        entry: CommentItem | pr_state.ThreadOutcome,
+        thread: ReportThread | None,
+        acted: bool = False,
+    ) -> AddressedFraming:
+        """How this entry's reply and summary row should read.
+
+        `acted` is for the caller that already knows the pass fixed the entry
+        and only came here because the resolver could not cite a commit for it.
+        That knowledge outranks anything the branch can show, but it does not
+        supply a citation: a commit predating the comment is not the one that
+        carried a fix made after it, so the entry keeps the in-response reading
+        and names nothing.
+        """
+        sha = self._commit_for(entry)
+        landed_after = bool(sha) and self._postdates(sha, thread)
+        if acted and not landed_after:
+            return AddressedFraming(True)
+        # A line no branch commit touched is code that predates the branch, and
+        # so predates the review: that is the genuine already-addressed case and
+        # the one the flat prefix is reserved for.
+        return AddressedFraming(landed_after, sha)
+
+    def _commit_for(self, entry: CommentItem | pr_state.ThreadOutcome) -> str:
+        """The branch commit behind this entry's code, or "" when there is none."""
+        if not self._wt_path:
+            return ""
+        # Triage's citation where there is one: it names the code that makes
+        # the reviewer's point already true, which is the line whose history
+        # answers "when did it become true?". A stored outcome carries no
+        # citation, so it falls back to the location GitHub anchored the thread
+        # at.
+        evidence_file = getattr(entry, "evidence_file", "")
+        evidence_line = int(getattr(entry, "evidence_line", 0) or 0)
+        if evidence_file and evidence_line:
+            where = (evidence_file, evidence_line)
+        else:
+            where = (entry.file, int(entry.line or 0))
+        if where not in self._commits:
+            self._commits[where] = _find_addressing_commit(self._wt_path, *where) or ""
+        return self._commits[where]
+
+    def _postdates(self, sha: str, thread: ReportThread | None) -> bool:
+        """Whether `sha` landed after the reviewer opened `thread`.
+
+        Either timestamp missing reads as "no", which keeps the pre-existing
+        prefix: claiming credit for a fix is the assertion that needs evidence,
+        and there is none when the run cannot date one side of the comparison.
+        """
+        if sha not in self._committed_at:
+            self._committed_at[sha] = _commit_timestamp(self._wt_path, sha)
+        landed_at = self._committed_at[sha]
+        asked_at = _thread_opened_at(thread)
+        return bool(landed_at and asked_at) and landed_at > asked_at
+
+
 def _post_already_addressed_replies(
     fixed: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
     wt_path: Path,
+    acted: bool = False,
 ) -> int:
-    """Post replies to threads already addressed in the current code. Returns count posted."""
-    # Keyed by location rather than by file: two threads on one file are the
-    # case this reply got wrong, so a per-file cache would re-impose the answer
-    # `_find_addressing_commit` was narrowed to stop giving.
-    commit_cache: dict[tuple[str, int], str | None] = {}
+    """Post replies to threads the current code satisfies. Returns count posted.
+
+    Two readings, one body. A thread whose code was made to satisfy the
+    reviewer after they asked gets the `Applied:` / `Fixed in <sha>` framing the
+    `fixed` verdict uses, because that is what happened to it; `Already
+    addressed` is left for code that predates the comment.
+
+    `acted` says the caller landed the change itself — the unattributed half of
+    `_reply_to_fixed`, which is here for the linkless body and not because the
+    reviewer's point was moot.
+    """
+    history = AddressingHistory(wt_path)
     head_sha = _get_head_sha(wt_path)
 
     def body_fn(entry: CommentItem) -> str:
-        # Triage's citation where there is one: it names the code that makes
-        # the reviewer's point already true, which is the line whose history
-        # answers "when did it become true?".
-        if entry.has_evidence():
-            where = (entry.evidence_file, entry.evidence_line)
-        else:
-            where = (entry.file, entry.line)
-        if where not in commit_cache:
-            commit_cache[where] = _find_addressing_commit(wt_path, *where)
-        sha = commit_cache[where]
+        framing = history.framing(entry, threads_by_id.get(entry.id), acted=acted)
         # The line was read at HEAD, so that is the tree the link has to pin to;
         # the addressing commit answers "when", not "where".
-        parts = [f"{_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
+        if framing.in_response:
+            parts = [f"{_APPLIED_REPLY_PREFIX} {entry.summary}"]
+        else:
+            parts = [f"{_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
         # No repo_dir: _downgrade_unsupported_verdicts already refused to let an
         # already_addressed verdict through without a citation that resolves.
         # Checking again here would only overrule it with a weaker link.
         link = _code_link(entry, repo, head_sha)
         if link:
             parts.append(f"Current behaviour is at {link}.")
-        if sha:
+        if framing.cited:
+            sha = framing.sha
             commit_url = f"https://github.com/{repo}/commit/{sha}"
-            parts.append(f"Addressed in [`{sha[:7]}`]({commit_url}).")
-        if len(parts) == 1:
+            lead = "Fixed in" if framing.in_response else "Addressed in"
+            parts.append(f"{lead} [`{sha[:7]}`]({commit_url}).")
+        if len(parts) == 1 and not framing.in_response:
             return (
                 f"{_ADDRESSED_REPLY_PREFIX} in the current implementation: "
                 f"{entry.summary}"
@@ -1467,7 +1611,7 @@ def _post_already_addressed_replies(
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
-        log.info(f"Replied on {posted} already-addressed thread(s)")
+        log.info(f"Replied on {posted} satisfied thread(s)")
     return posted
 
 
@@ -1485,8 +1629,10 @@ def _reply_to_fixed(
     `--finish` drain reply to fixed threads, and each used to decide for itself
     which SHA a reply could name — the two disagreed, and the reply path was
     the one that got it wrong. An entry the resolver cannot attribute gets the
-    linkless already-addressed shape rather than a reply whose commit link and
-    blob permalink both 404.
+    linkless shape rather than a reply whose commit link and blob permalink
+    both 404 — but still under the framing its own bucket earned, since a
+    missing citation says nothing about whether the pass acted. It did: that is
+    what put the entry in `fixed`.
     """
     attributed, unattributed = [], []
     for entry in fixed:
@@ -1497,7 +1643,7 @@ def _reply_to_fixed(
         posted += _post_fix_replies(attributed, threads_by_id, repo, pr_number, cp)
     if unattributed:
         posted += _post_already_addressed_replies(
-            unattributed, threads_by_id, repo, pr_number, wt_path,
+            unattributed, threads_by_id, repo, pr_number, wt_path, acted=True,
         )
     return posted
 
@@ -2217,8 +2363,7 @@ def _fixed_status_for(
     """
     attribution = _attribute_commit(entry, cp)
     if attribution.cited:
-        sha = attribution.sha
-        return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
+        return _fixed_in_cell(attribution.sha, repo)
     # A row reconciled at drain time was settled by hand or by the reviewer, and
     # the commit that did it is not recorded anywhere. That is true of the row
     # whatever the running pass did, so it is answered before the pass-level
@@ -2230,11 +2375,32 @@ def _fixed_status_for(
     return _UNATTRIBUTED_STATUS_TEXT
 
 
+def _fixed_in_cell(sha: str, repo: str) -> str:
+    """The status cell that names the commit carrying a row.
+
+    One spelling for every surface that claims a fix landed: the fixed rows,
+    and the satisfied rows a commit made true after the reviewer asked.
+    """
+    return f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha})"
+
+
+def _addressed_status_for(framing: AddressedFraming, repo: str) -> str:
+    """Status cell for one satisfied row, in the framing its history earned.
+
+    A row whose commit postdates the review comment reports as a fix, because
+    that is what it was — the same question the thread reply asks, read through
+    the same resolver so the table and the reply cannot say different things
+    about one thread.
+    """
+    if framing.in_response and framing.cited:
+        return _fixed_in_cell(framing.sha, repo)
+    return "Already addressed"
+
+
 def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
     """Human-readable status for fixed threads in the summary table."""
     if cp.sha and cp.status == CommitStatus.PUSHED:
-        url = f"https://github.com/{repo}/commit/{cp.sha}"
-        return f"Fixed in [`{cp.sha}`]({url})"
+        return _fixed_in_cell(cp.sha, repo)
     if cp.status == CommitStatus.NO_CHANGES:
         # "A fix was applied" and "nothing was committed" contradict each other,
         # and which half is wrong is not knowable from here — a hook may have
@@ -2567,6 +2733,7 @@ def _build_summary_body(
     head_sha: str = "",
     carried_over: list[str] | None = None,
     hand_held: list[HeldRow] | None = None,
+    wt_path: Path | None = None,
 ) -> str:
     """Build the markdown body for the fix summary comment.
 
@@ -2581,6 +2748,11 @@ def _build_summary_body(
     entry behind it is dropped from the header counts, because a row reading
     ``Superseded`` under a header reading ``1 need discussion`` reopens the
     question the hand edit closed.
+
+    ``wt_path`` is what lets a satisfied row say who satisfied it: the branch
+    is the only place the answer lives. Without it every such row falls back to
+    the pre-existing reading, which is what a render with no tree to read can
+    honestly claim.
     """
     dismissed = dismissed or []
     already_addressed = already_addressed or []
@@ -2628,6 +2800,14 @@ def _build_summary_body(
         held.append(published)
         return False
 
+    # Resolved once for the whole table: the count and the row it belongs to
+    # are two renderings of one answer, and a count that disagreed with its own
+    # rows would be the same contradiction in a smaller font.
+    history = AddressingHistory(wt_path)
+    addressed_framings = [
+        history.framing(e, threads_by_id.get(e.id)) for e in already_addressed
+    ]
+
     # Built as lists, not generators, so the row-emitting side effect always
     # runs to completion before the count is taken — a later swap to a
     # short-circuiting aggregate over these lists cannot skip an entry.
@@ -2635,9 +2815,18 @@ def _build_summary_body(
         emit(e, _fixed_status_for(e, cp, repo), getattr(e, "commit_sha", "") or link_sha)
         for e in fixed
     ])
-    addressed_count = sum([
-        emit(e, "Already addressed", link_sha) for e in already_addressed
-    ])
+    # link_sha, not the addressing commit: the file cell's line number was read
+    # at HEAD, and the commit answers "when", not "where".
+    addressed_shown = [
+        (framing, emit(e, _addressed_status_for(framing, repo), link_sha))
+        for e, framing in zip(already_addressed, addressed_framings, strict=True)
+    ]
+    # A satisfied row a commit made true after the review is a fix, and counts
+    # as one. Only the rows whose code predates the comment are "already".
+    fixed_count += sum(1 for f, shown in addressed_shown if shown and f.in_response)
+    addressed_count = sum(
+        1 for f, shown in addressed_shown if shown and not f.in_response
+    )
     dismissed_count = sum([emit(e, "Dismissed (invalid)", link_sha) for e in dismissed])
     human_count = sum([
         emit(e, HumanReason.prose_for(e.reason), link_sha) for e in needs_human
@@ -2665,6 +2854,7 @@ def _build_summary_body(
         counts.append(f"{carried_count} carried over")
     parts.append(" · ".join(counts))
     parts.append("")
+
 
     if rows:
         parts.append(_SUMMARY_TABLE_HEADER)
@@ -3004,6 +3194,7 @@ def _post_fix_summary(
     has_comment_items: bool = False,
     head_sha: str = "",
     activity_at: str = "",
+    wt_path: Path | None = None,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     dismissed = dismissed or []
@@ -3026,6 +3217,7 @@ def _post_fix_summary(
         review_body_comments=review_body_comments,
         has_comment_items=has_comment_items,
         head_sha=head_sha,
+        wt_path=wt_path,
     ), activity_at=activity_at)
     if url:
         log.info(f"Posted fix summary: {url}")
@@ -3241,6 +3433,7 @@ def _render_deferred_summary(
         deferred_issue_url=fix.deferred_issue_url,
         has_comment_items=fix.has_comment_items,
         head_sha=cp.sha or state.identity.head_sha,
+        wt_path=wt_path,
     ), activity_at=_newest_reviewer_activity(report))
     if url:
         log.info(f"Posted deferred fix summary: {url}")
@@ -3293,6 +3486,7 @@ def _post_or_defer_summary(
     has_comment_items: bool = False,
     head_sha: str = "",
     activity_at: str = "",
+    wt_path: Path | None = None,
 ) -> str | None:
     """Post summary immediately or defer to state when discussion is pending.
 
@@ -3314,6 +3508,7 @@ def _post_or_defer_summary(
             has_comment_items=has_comment_items,
             head_sha=head_sha,
             activity_at=activity_at,
+            wt_path=wt_path,
         )
 
     log.info("Deferred fix summary — will render from state on --finish")
@@ -3738,6 +3933,7 @@ def _run_comment_fix(
                 has_comment_items=has_items,
                 head_sha=ctx.head_sha,
                 activity_at=_newest_reviewer_activity(report),
+                wt_path=wt_path,
             )
         else:
             summary_url = None
@@ -3847,6 +4043,7 @@ def _run_comment_fix(
         has_comment_items=has_items,
         head_sha=cp.sha or ctx.head_sha,
         activity_at=_newest_reviewer_activity(report),
+        wt_path=wt_path,
     )
 
     _persist_fix_state(pr_state.FixSummary(

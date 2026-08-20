@@ -976,6 +976,41 @@ except the manual resolution the command exists to avoid. The waiver is the
 resume path passing `force=True` into the same parameter `--force` sets, so
 there is one waiver mechanism rather than two.
 
+### Already addressed, or addressed in response
+
+The `already_addressed` verdict means the code does what the reviewer asked. It
+does not mean their comment was moot, and the two are not the same claim.
+Triage reads code context from current HEAD, which already holds whatever the
+pass fixed earlier in the same cycle, so a re-run re-triages a thread it fixed
+on round one and gets `already_addressed` for it on round two — correctly. What
+was wrong was the reply: a flat `Already addressed` told a reviewer their point
+needed no action while the paragraph below it cited a commit made after they
+made it ([#815](https://github.com/otto-nation/otto-workbench/issues/815)).
+
+So the reply and the summary row ask when the code became true, relative to
+when the thread was opened:
+
+| The branch shows | Reply | Summary cell |
+|---|---|---|
+| a commit on the thread's line, dated after the review comment | `Applied:` … `Fixed in <sha>` | `Fixed in <sha>`, counted with the fixes |
+| a commit on that line, dated before the comment | `Already addressed:` … `Addressed in <sha>` | `Already addressed` |
+| no commit on that line — the code predates the branch | `Already addressed:` | `Already addressed` |
+
+The commit is the one `git log -L` names for the thread's line, so two threads
+on one file get two answers; its committer date is what is compared, because a
+rebased fix keeps the author date it was first written at. Either timestamp
+missing reads as pre-existing: claiming credit for a fix is the assertion that
+needs evidence, and there is none when one side of the comparison cannot be
+dated.
+
+`pr comments --finish` reaches this reply from a second direction. A fixed
+thread whose commit the resolver cannot cite — a hook rejected the pass's
+commit, so nothing was recorded — is routed here for the linkless body
+([#827](https://github.com/otto-nation/otto-workbench/issues/827)). The pass
+demonstrably acted on that thread, which is what put it in `fixed`, so it keeps
+the in-response reading and names no commit: the one the branch offers for that
+line predates the comment and cannot be what carried a fix made after it.
+
 ### The summary comment is the record, not the state file
 
 The `Review Comments Addressed` comment is what a reviewer reads to confirm

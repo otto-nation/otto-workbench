@@ -168,6 +168,14 @@ entry from the reason just as well as the em dash above; a colon does not. The
 entry is everything up to the *first* separator, so it may contain spaces and the
 reason may contain further dashes.
 
+The separator is required too. A footer carrying no separator at all — the whole
+line read as one entry, or as one reason — is not a declaration the gate can act
+on, so it is skipped in silence and the removal it meant to cover still fails the
+push. If the gate reports an entry you thought you had declared, check the
+separator before anything else.
+
+### The gate
+
 `bin/local/check-surface-compat` diffs the snapshots against the ones committed at
 the merge base with `origin/main`, and fails an undeclared removal. It reads the
 head side twice — your working tree *and* `HEAD` — and treats an entry as removed
@@ -178,6 +186,11 @@ without committing it (a stash, an uncommitted `git revert --no-commit`) cannot
 turn pre-push green. Deleting a snapshot outright counts as removing every entry
 it held. The gate runs in pre-push and in the `Surface Compatibility` CI job; run
 it by hand with `bin/local/check-surface-compat [--base REF]`.
+
+Exit 0 and 1 are its verdict — anything else (2 for a usage error or a non-blob
+snapshot at the merge base, 5 for a jq failure, 128 for a git one) means the check
+never completed rather than that it passed. Both callers treat every non-zero
+status as a hard fail.
 
 ### `task commit` catches it early
 

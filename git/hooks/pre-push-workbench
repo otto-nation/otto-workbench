@@ -92,6 +92,20 @@ _run_step "Validating conventions"     "$REPO_ROOT/bin/local/validate-all" --qui
 
 # Not part of validate-all: this one needs a base ref to diff the public
 # surface snapshots against, which the working-tree validators do not have.
+#
+# The gate defaults to origin/main, and a local origin/main only moves when
+# something fetches it. On a branch cut days ago that ref still points at the
+# main the branch forked from, so the merge base is the fork point either way
+# and the gate compares against snapshots that no longer describe main — an
+# entry main itself removed reads as removed by this push. Refresh the ref
+# first so the comparison is against what CI will use.
+#
+# Best-effort: pushing offline or against an unreachable remote is going to
+# fail at the push itself a moment later, and it is not this step's job to be
+# the one that says so. A failed fetch leaves the previous origin/main in
+# place, which is what the gate would have used anyway.
+git -C "$REPO_ROOT" fetch --quiet origin main 2>/dev/null || true
+
 _run_step "Checking surface compatibility" "$REPO_ROOT/bin/local/check-surface-compat" --quiet
 
 # ── Generation ───────────────────────────────────────────────────────────────

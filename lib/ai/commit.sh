@@ -40,6 +40,14 @@ find_commitlint_config() {
 # build_commit_rules
 # Requires COMMITLINT_CONFIG (set by find_commitlint_config).
 # Sets COMMIT_RULES. Uses COMMIT_TYPES for the allowed-types list.
+#
+# These rules are static and go to every commit in every repo that sources this
+# library, so they name the breaking-change footer but not $NOT_BREAKING_FOOTER.
+# That footer is only ever correct against a concrete list of removed entries —
+# without one the model has nothing to put after 'Not-Breaking:' and would be
+# invited to invent an entry name the gate then reads as undeclared. It is
+# taught by _surface_note instead, which fires only when the gate has named the
+# entries the footer would have to cover.
 build_commit_rules() {
   if [ -n "$COMMITLINT_CONFIG" ]; then
     # shellcheck disable=SC2034  # COMMIT_RULES is read by prompt_commit in prompts.sh

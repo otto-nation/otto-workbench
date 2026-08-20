@@ -82,7 +82,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "lib" / "review-t
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 _SUMMARY_MARKER = "<!-- pr-comments:summary -->"
-_APPLIED_REPLY_PREFIX = "Applied:"
+_APPLIED_REPLY_PREFIX = "Applied"
 _ADDRESSED_REPLY_PREFIX = "Already addressed"
 _DISMISSED_REPLY_PREFIX = "Suggestion reviewed and determined to be inapplicable"
 _DEFERRED_REPLY_PREFIX = "Deferred:"
@@ -1242,7 +1242,7 @@ def _post_fix_replies(
     def body_fn(entry: CommentItem) -> str:
         sha = _attribute_commit(entry, cp).sha
         parts = [
-            f"{_APPLIED_REPLY_PREFIX} {entry.summary}",
+            f"{_APPLIED_REPLY_PREFIX}: {entry.summary}",
             f"Fixed in [`{sha}`](https://github.com/{repo}/commit/{sha}).",
         ]
         # The file, not the line: the fix has just moved the lines around it,
@@ -1453,7 +1453,7 @@ def _thread_opened_at(thread: ReportThread | None) -> float:
         return 0.0
     stamp = str(thread.comments[0].get("createdAt", "") or "")
     try:
-        return datetime.fromisoformat(stamp).timestamp()
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return 0.0
 
@@ -1588,7 +1588,7 @@ def _post_already_addressed_replies(
         # The line was read at HEAD, so that is the tree the link has to pin to;
         # the addressing commit answers "when", not "where".
         if framing.in_response:
-            parts = [f"{_APPLIED_REPLY_PREFIX} {entry.summary}"]
+            parts = [f"{_APPLIED_REPLY_PREFIX}: {entry.summary}"]
         else:
             parts = [f"{_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
         # No repo_dir: _downgrade_unsupported_verdicts already refused to let an
@@ -2854,7 +2854,6 @@ def _build_summary_body(
         counts.append(f"{carried_count} carried over")
     parts.append(" · ".join(counts))
     parts.append("")
-
 
     if rows:
         parts.append(_SUMMARY_TABLE_HEADER)

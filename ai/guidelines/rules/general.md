@@ -18,6 +18,9 @@ Before code changes, walk this ladder — stop at the first unmet gate:
 
 Plans describe *what* and *why* — not implementation details.
 Save plans to `ignore/plans/`, specs to `ignore/specs/`.
+A plan's out-of-scope section names the issue tracking each entry — see
+`issue-tracker.md` § Writing an issue (any tracker). An entry with no issue behind
+it is not deferred, it is dropped.
 
 ## Code Quality
 

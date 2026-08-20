@@ -4334,6 +4334,11 @@ class TestGeneratedActionCell:
     def test_the_literal_cells_are_recognised(self, rt, cell):
         assert rt._is_generated_action(cell) is True
 
+    def test_a_retired_wording_is_still_recognised(self, rt):
+        """A published summary outlives the builder that wrote its cells, so an
+        opening no builder produces any more still opens rows on live PRs."""
+        assert rt._is_generated_action("Added to the PR description (no commit)") is True
+
     @pytest.mark.parametrize("cell", [
         "",
         _HAND_WRITTEN_ACTION_CELL,
@@ -4445,6 +4450,121 @@ class TestHandEditedCellsSurviveTheRender:
         assert _HAND_WRITTEN_ACTION_CELL in body
         assert "1 hand-written" in body
         assert "1 fixed" not in body
+
+
+# ── items triage cut out of one top-level comment ──────────────────────────
+
+
+# Three points raised in one issue comment, so every row triage renders for
+# them links back to the one permalink that comment has.
+_SIBLING_ITEMS = [
+    CommentItem(id="ic-900-0", summary="drop the guard", reviewer="kgn",
+                file="old.go", line=4),
+    CommentItem(id="ic-900-1", summary="name the timeout", reviewer="kgn",
+                file="net.go", line=12),
+    CommentItem(id="ic-900-2", summary="log the retry", reviewer="kgn",
+                file="net.go", line=31),
+]
+_ROUND_ONE_ITEM_CELL = "Fixed in [`aaaaaaa`](https://github.com/owner/repo/commit/aaaaaaa)"
+
+
+def _sibling_rows(rt, hand_written: str = "") -> list[str]:
+    """The three item rows as an earlier round published them.
+
+    ``hand_written`` names the item whose Action cell a person rewrote after
+    that round posted.
+    """
+    return [
+        rt._build_row(
+            item,
+            _HAND_WRITTEN_ACTION_CELL if item.id == hand_written
+            else _ROUND_ONE_ITEM_CELL,
+            {}, "owner/repo", 1, "aaaaaaa",
+        )
+        for item in _SIBLING_ITEMS
+    ]
+
+
+class TestSiblingItemsKeyApart:
+    """One anchor, N rows: the anchor names the source, not the row."""
+
+    def _row(self, rt, item, status="Fixed", sha="aaaaaaa"):
+        return rt._build_row(item, status, {}, "owner/repo", 1, sha)
+
+    def test_each_sibling_gets_its_own_key(self, rt):
+        keys = {rt._summary_row_key(self._row(rt, i)) for i in _SIBLING_ITEMS}
+        assert len(keys) == len(_SIBLING_ITEMS)
+
+    def test_the_anchor_is_still_half_the_key(self, rt):
+        """Two comments raising the same point are two rows, not one."""
+        elsewhere = CommentItem(id="ic-901-0", summary="drop the guard",
+                                reviewer="kgn", file="old.go", line=4)
+        assert (rt._summary_row_key(self._row(rt, _SIBLING_ITEMS[0]))
+                != rt._summary_row_key(self._row(rt, elsewhere)))
+
+    def test_a_sibling_keys_the_same_across_rounds(self, rt):
+        first = self._row(rt, _SIBLING_ITEMS[0], status="Deferred", sha="aaaaaaa")
+        later = self._row(rt, _SIBLING_ITEMS[0], status="Fixed in `bbbbbbb`",
+                          sha="ccccccc")
+        assert rt._summary_row_key(first) == rt._summary_row_key(later)
+
+    def test_a_thread_row_keys_on_its_anchor_alone(self, rt):
+        """A thread renders one row, so its summary must stay out of the key —
+        a reworded summary is the same finding, not a new one."""
+        reworded = ROUND_ONE_ROW.replace("drop the guard", "remove the guard")
+        assert rt._summary_row_key(reworded) == rt._summary_row_key(ROUND_ONE_ROW)
+
+
+class TestEveryItemReachesTheTable:
+    """A held row used to stand in for its siblings, which then vanished."""
+
+    def _render(self, rt, published=""):
+        cp = rt.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
+        with _published(published), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._post_fix_summary(
+                list(_SIBLING_ITEMS), [], [], cp, "owner/repo", 1, {})
+        return post.call_args[0][2]
+
+    def test_three_items_render_three_rows(self, rt):
+        body = self._render(rt, _published_summary(rt, *_sibling_rows(rt)))
+        assert len(rt._summary_table_rows(body)) == len(_SIBLING_ITEMS)
+
+    def test_a_held_row_stands_in_for_its_own_row_only(self, rt):
+        published = _published_summary(rt, *_sibling_rows(rt, hand_written="ic-900-1"))
+        body = self._render(rt, published)
+        assert body.count(_HAND_WRITTEN_ACTION_CELL) == 1
+        for item in _SIBLING_ITEMS:
+            assert body.count(f"[{item.summary}]") == 1
+
+    def test_the_counts_match_the_rows(self, rt):
+        published = _published_summary(rt, *_sibling_rows(rt, hand_written="ic-900-1"))
+        body = self._render(rt, published)
+        assert len(rt._summary_table_rows(body)) == 3
+        assert "**2 fixed**" in body
+        assert "1 hand-written" in body
+
+    def test_nothing_published_counts_every_row_as_fixed(self, rt):
+        body = self._render(rt)
+        assert len(rt._summary_table_rows(body)) == 3
+        assert "**3 fixed**" in body
+        assert "hand-written" not in body
+
+    def test_holding_one_sibling_is_idempotent(self, rt):
+        published = _published_summary(rt, *_sibling_rows(rt, hand_written="ic-900-1"))
+        once = self._render(rt, published)
+        assert self._render(rt, once) == once
+
+    def test_a_sibling_state_lost_is_carried_rather_than_dropped(self, rt):
+        """One sibling in the fresh render used to account for all of them."""
+        published = _published_summary(rt, *_sibling_rows(rt))
+        cp = rt.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
+        with _published(published), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._post_fix_summary([_SIBLING_ITEMS[0]], [], [], cp, "owner/repo", 1, {})
+        body = post.call_args[0][2]
+        assert len(rt._summary_table_rows(body)) == 3
+        assert "2 carried over" in body
 
 
 # ── reposting a summary the PR has moved past ──────────────────────────────

@@ -2140,6 +2140,17 @@ class TestHandWrittenRepliesSurvive:
         ])
         assert rt._has_hand_written_reply(thread) is False
 
+    def test_our_root_is_still_skipped_once_someone_replies(self, rt):
+        """The other half of the docstring's root-skip: a self-review root
+        authored by us, with a reply since posted. Scanning the root instead
+        of skipping it would misread our own review point as a hand-written
+        reply and return True here."""
+        thread = ReportThread(id="t1", my_login="me", comments=[
+            {"databaseId": 111, "body": "this needs a guard", "author": {"login": "me"}},
+            {"databaseId": 222, "body": "Agreed, fixed.", "author": {"login": "kgn"}},
+        ])
+        assert rt._has_hand_written_reply(thread) is False
+
     @pytest.mark.parametrize("body", [
         "Applied: fix it",
         "Applied: fix it\n\nResult is in [`a.py`](https://github.com/o/r/blob/s/a.py).",

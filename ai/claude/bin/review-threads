@@ -2349,18 +2349,21 @@ def _build_summary_body(
         held.append(published)
         return False
 
-    fixed_count = sum(
+    # Built as lists, not generators, so the row-emitting side effect always
+    # runs to completion before the count is taken — a later swap to a
+    # short-circuiting aggregate over these lists cannot skip an entry.
+    fixed_count = sum([
         emit(e, _fixed_status_for(e, cp, repo), getattr(e, "commit_sha", "") or link_sha)
         for e in fixed
-    )
-    addressed_count = sum(
+    ])
+    addressed_count = sum([
         emit(e, "Already addressed", link_sha) for e in already_addressed
-    )
-    dismissed_count = sum(emit(e, "Dismissed (invalid)", link_sha) for e in dismissed)
-    human_count = sum(
+    ])
+    dismissed_count = sum([emit(e, "Dismissed (invalid)", link_sha) for e in dismissed])
+    human_count = sum([
         emit(e, HumanReason.prose_for(e.reason), link_sha) for e in needs_human
-    )
-    deferred_count = sum(emit(e, deferred_status, link_sha) for e in deferred)
+    ])
+    deferred_count = sum([emit(e, deferred_status, link_sha) for e in deferred])
     rows.extend(carried_over)
     held_count = len(held)
     carried_count = len(carried_over)

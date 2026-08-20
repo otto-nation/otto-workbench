@@ -17,24 +17,29 @@ fi
 FAKEWT
   chmod +x "$MOCK_BIN/wt"
 
+  # `gh pr list` for the whole repo, matching what lib/branch_state.sh calls.
+  # The per-state fixture files stay one branch name per line; only the shape
+  # of the answer changed.
   cat > "$MOCK_BIN/gh" <<'FAKEGH'
 #!/usr/bin/env bash
+_emit() {
+  local file="$1" state="$2"
+  [[ -f "$file" ]] || return 0
+  while read -r branch; do
+    [[ -n "$branch" ]] || continue
+    printf '{"headRefName":"%s","state":"%s"}\n' "$branch" "$state"
+  done < "$file"
+}
+
 if [[ "$1" == "auth" && "$2" == "status" ]]; then
   [[ -f "$GH_PR_MERGED_FILE" || -f "$GH_PR_OPEN_FILE" || -f "$GH_PR_CLOSED_FILE" ]] && exit 0
   exit 1
-elif [[ "$1" == "pr" && "$2" == "view" ]]; then
-  branch="$3"
-  if [[ -f "$GH_PR_MERGED_FILE" ]] && grep -qx "$branch" "$GH_PR_MERGED_FILE"; then
-    echo "MERGED"
-    exit 0
-  elif [[ -f "$GH_PR_OPEN_FILE" ]] && grep -qx "$branch" "$GH_PR_OPEN_FILE"; then
-    echo "OPEN"
-    exit 0
-  elif [[ -f "$GH_PR_CLOSED_FILE" ]] && grep -qx "$branch" "$GH_PR_CLOSED_FILE"; then
-    echo "CLOSED"
-    exit 0
-  fi
-  exit 1
+elif [[ "$1" == "pr" && "$2" == "list" ]]; then
+  { _emit "$GH_PR_MERGED_FILE" MERGED
+    _emit "$GH_PR_OPEN_FILE" OPEN
+    _emit "$GH_PR_CLOSED_FILE" CLOSED
+  } | jq -s '.'
+  exit 0
 fi
 exit 1
 FAKEGH

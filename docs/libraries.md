@@ -350,6 +350,21 @@ Subcommand documentation, declared once per script. A script lists its commands 
 
 Bash-only — it uses arrays and namerefs. Sourced directly by the scripts that dispatch subcommands.
 
+### branch_state.sh
+
+"Has this branch's work finished?", shared by the cleanup tools. The answer comes from the issue tracker rather than from git whenever a PR exists, because git cannot always give one: a branch descending from a different root has no merge base with the default branch, so `git cherry` and `git branch --merged` have nothing to compare and report it unmerged forever.
+
+The lookup is batched — one `gh pr list` for the whole repo, not one `gh pr view` per branch, which cost a sequential round trip each.
+
+<!-- LIB-FUNCTIONS:branch_state.sh-START -->
+| Function | Purpose |
+|----------|---------|
+| `branch_gh_available` | whether gh can answer for the current repo. |
+| `branch_pr_states ASSOC_ARRAY_NAME` | fill an associative array branch → state. |
+<!-- LIB-FUNCTIONS:branch_state.sh-END -->
+
+Bash-only — the state map is an associative array returned through a nameref. Sourced directly; depends on `git`, `gh`, and `jq`.
+
 ## Registry & Config Modules
 
 ### registries.sh

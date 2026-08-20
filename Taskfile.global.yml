@@ -252,7 +252,12 @@ tasks:
 
         TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
         NESTING_OUTPUT=$(validate-nesting --diff "origin/$TARGET_BASE" --quiet 2>&1) || {
-          echo "✗ New code introduces nesting violations — fix before creating PR"
+          NESTING_STATUS=$?
+          if [[ "$NESTING_STATUS" -eq 2 ]]; then
+            echo "✗ Nesting check could not run — fix before creating PR"
+          else
+            echo "✗ New code introduces nesting violations — fix before creating PR"
+          fi
           echo ""
           echo "$NESTING_OUTPUT"
           exit 1
@@ -318,12 +323,15 @@ tasks:
         UNSTAGED=$(git diff --no-color)
 
         BRANCH=$(git branch --show-current)
-        DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
-        DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+        # See resolve_default_branch (sourced above) for why this isn't rev-parse --abbrev-ref.
+        DEFAULT_BRANCH=$(resolve_default_branch)
 
         COMMITS=""
         COMMITTED_DIFF=""
         if [ "$BRANCH" != "$DEFAULT_BRANCH" ]; then
+          if ! remote_branch_ref_exists "$DEFAULT_BRANCH"; then
+            echo "⚠ origin/$DEFAULT_BRANCH does not resolve — committed changes omitted from this review"
+          fi
           COMMITS=$(git log --oneline "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null || true)
           COMMITTED_DIFF=$(git diff --no-color "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null || true)
         fi

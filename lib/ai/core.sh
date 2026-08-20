@@ -47,6 +47,46 @@ PR_TITLE_MARKER="TITLE:"
 PR_DESCRIPTION_MARKER="DESCRIPTION:"
 # ──────────────────────────────────────────────────────────────────────────────
 
+# resolve_default_branch
+# Resolves the remote's default branch (unfetched clone, a `wt-init`-converted
+# repo, or any remote whose HEAD was never pointed with
+# `git remote set-head origin -a` all lack the symref this depends on).
+# symbolic-ref, not rev-parse --abbrev-ref: when refs/remotes/$GIT_REMOTE/HEAD is
+# missing, rev-parse still echoes "$GIT_REMOTE/HEAD" to stdout (then exits 128), so
+# the string survives a sed strip as a non-empty "HEAD" and defeats a "${VAR:-main}"
+# fallback. symbolic-ref prints nothing on failure, so the fallback here actually fires.
+# When the symref is missing, prefers a remote-tracking ref that actually exists
+# over a literal guess: tries "main" then "master" via a local `show-ref` (no
+# network call), and only returns the literal "main" when neither is present.
+# Prints the resolved branch name to stdout.
+resolve_default_branch() {
+  local branch
+  branch=$(git symbolic-ref "refs/remotes/$GIT_REMOTE/HEAD" 2>/dev/null | sed "s@^refs/remotes/$GIT_REMOTE/@@")
+  if [[ -n "$branch" ]]; then
+    printf '%s\n' "$branch"
+    return
+  fi
+
+  local candidate
+  for candidate in main master; do
+    git show-ref --verify --quiet "refs/remotes/$GIT_REMOTE/$candidate" || continue
+    printf '%s\n' "$candidate"
+    return
+  done
+  printf 'main\n'
+}
+
+# remote_branch_ref_exists BRANCH
+# True when BRANCH has a remote-tracking ref under $GIT_REMOTE (refs/remotes/$GIT_REMOTE/BRANCH).
+# Companion to resolve_default_branch: that function derives a branch name — guessing when
+# the origin/HEAD symref is missing — and this answers whether the result actually exists as
+# a ref. Takes the branch as an argument (not just the resolved default) so callers can also
+# validate an explicit override, such as a user-supplied --base.
+remote_branch_ref_exists() {
+  local branch="$1"
+  git show-ref --verify --quiet "refs/remotes/$GIT_REMOTE/$branch"
+}
+
 # _resolve_env_file — finds the active env file (local override or global).
 # Prints the path to stdout. Returns 1 if neither exists.
 _resolve_env_file() {

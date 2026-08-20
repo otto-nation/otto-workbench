@@ -197,22 +197,28 @@ status as a hard fail.
 `task --global commit` runs the same gate before asking the AI to write the
 message — this is the call the working-tree read exists for, since at that point
 the commit that would carry the footer does not exist yet. If it finds an
-undeclared removal, the AI is told
-which entries disappeared and is instructed to add either a `BREAKING CHANGE:`
-footer or a `Not-Breaking:` footer per entry, depending on whether the removal is
-actually breaking — so you see the correction while writing the commit, not as a
-pre-push rejection afterward. The gate is advisory here: it never blocks the
-commit. A missing or non-executable gate binary stays silent; if the gate runs
-but can't complete (no `origin/main`, not a repo, a malformed snapshot), `task
-commit` prints a one-line note to stderr and still proceeds without the hint.
-The hard check still happens at push time.
+undeclared removal, the AI is told which entries disappeared and is instructed to
+add either a `BREAKING CHANGE:` footer or a `Not-Breaking:` footer per entry,
+depending on whether the removal is actually breaking — so you see the correction
+while writing the commit, not as a pre-push rejection afterward.
 
-Run `bin/local/generate-public-surface` before `task commit` if you just removed
-something: nothing regenerates the snapshot for you automatically —
-`validate-public-surface` (part of pre-push) only checks that it isn't stale and
-fails, telling you to run the generator by hand. So on the *first* commit after
-a removal, the working-tree snapshot still lists the old entry and the gate has
-nothing to report; the hint only appears once the snapshot is caught up.
+The gate is advisory here: it never blocks the commit, and the hard check still
+happens at push time. Four ways the hint does not appear, none of which stop you
+committing:
+
+- **No gate binary**, or one that is not executable — silent, since a repo that
+  sources this library without shipping the gate is not misconfigured.
+- **The gate ran but could not finish** — no `origin/main` to diff against, not a
+  git repo, a malformed snapshot at the merge base. `task commit` prints a
+  one-line note to stderr and writes the message without the hint.
+- **The snapshot is stale.** Nothing regenerates it for you: run
+  `bin/local/generate-public-surface` before `task commit` if you just removed
+  something. Until you do, the working-tree snapshot still lists the old entry, so
+  the gate sees no removal and has nothing to report — the hint appears on the
+  *next* commit, once the snapshot is caught up. `validate-public-surface` (part
+  of pre-push) is what catches the staleness itself.
+- **The removal is already declared** — a footer covering every removed entry is
+  the passing case, and the gate stays quiet.
 
 ### Commits that touch both packages
 

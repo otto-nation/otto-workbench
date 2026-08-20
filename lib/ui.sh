@@ -16,6 +16,13 @@
 #   */setup.sh        WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"; . "$WORKBENCH_DIR/lib/ui.sh"
 #   */steps.sh        WORKBENCH_DIR="$(git rev-parse --show-toplevel)"; . "$WORKBENCH_DIR/lib/ui.sh"
 #   bin/*             WORKBENCH_DIR="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"; . "$WORKBENCH_DIR/lib/ui.sh"
+#
+# None of the git forms above survive an exported GIT_DIR: with one set, git
+# skips discovery, so `git -C <subdir> rev-parse --show-toplevel` answers
+# <subdir> and the bare form answers the caller's cwd. A script a git hook runs
+# — pre-push reaches bin/local/validate-all and bin/local/check-surface-compat —
+# must derive its root from its own path instead:
+#   bin/local/*       WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 
 # Source path and filename constants — resolved relative to this file in bash
 if [[ -n "${BASH_VERSION:-}" ]]; then

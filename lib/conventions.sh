@@ -19,3 +19,17 @@ COMMIT_BODY_MAX_LEN=100
 # Space-separated list of allowed commit types.
 # Used to build the AI prompt rules and the fallback format validator.
 COMMIT_TYPES="feat fix perf deps revert docs style refactor test build ci chore"
+
+# Footer token that marks a breaking change. Release-please reads it from the
+# squashed commit body to cut a major.
+#
+# The subject-level `!` marker is deliberately not sufficient on its own: the
+# repo squash-merges with squash_merge_commit_title=COMMIT_OR_PR_TITLE, so on a
+# multi-commit PR the PR title replaces the subject and the marker is lost.
+# Commit bodies are always concatenated into the squashed message and survive.
+BREAKING_CHANGE_FOOTER="BREAKING CHANGE"
+
+# Footer recording a public-surface removal that is deliberately not breaking.
+# Format: Not-Breaking: <surface entry> — <reason>
+# One footer per removed entry. Read by bin/local/check-surface-compat.
+NOT_BREAKING_FOOTER="Not-Breaking"

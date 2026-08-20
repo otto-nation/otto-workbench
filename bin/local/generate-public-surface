@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+# Generate the public surface snapshot for each released package.
+#
+# The snapshot is the machine-readable form of the semver contract: removing an
+# entry from it is a breaking change unless the commit says otherwise. See
+# docs/superpowers/specs/2026-08-18-breaking-change-declaration-design.md.
+#
+# Writes:
+#   public-surface.json               — otto-workbench (root package)
+#   ai/claude/public-surface.json     — otto-ai-tools
+#
+# Placement is load-bearing: the root release-please config sets
+# exclude-paths: ["ai/claude"], so each snapshot's diff is attributed to the
+# package that owns it with no routing logic here.
+#
+# Usage: bin/local/generate-public-surface [--check] [--quiet] [--out-dir DIR]
+# Exit code: 0 on success; 1 if --check finds a committed snapshot out of date.
+
+set -e
+# pipefail closes the gap set -e alone leaves open: every category function
+# below ends its jq/yq stage in a trailing sed/grep filter, and a failing
+# upstream command's non-zero status is invisible once a downstream command
+# in the same pipe exits 0. Without pipefail, a jq syntax error prints to
+# stderr and the pipeline still reports success, so the category "succeeds"
+# with silently truncated output instead of aborting — and because config
+# entries are split across two independent jq calls, only one of the two
+# needs to break for the combined category to still look non-empty to a
+# whole-category emptiness check. See the two `grep -v` guards below for the
+# one place pipefail's stricter accounting needs an explicit escape hatch.
+set -o pipefail
+# Bash does not apply errexit inside a `$(...)` command substitution unless
+# inherit_errexit is on — by default a failing pipeline deep inside a
+# category function (invoked as `out="$(_config_entries)"` in _collect) is
+# swallowed by that subshell instead of aborting it, and the function runs
+# to completion on whatever later commands still succeed. inherit_errexit
+# makes the substitution's subshell honor -e/pipefail the same way top-level
+# code does. (_collect still checks the substitution's exit status in a
+# separate statement rather than `... || { ...; }` on the same line — putting
+# the substitution on the left of `||` re-suspends errexit for everything
+# inside it, undoing this.)
+shopt -s inherit_errexit
+
+_SELF="${BASH_SOURCE[0]}"
+# See bin/local/validate-public-surface for why this is path arithmetic and not
+# `git rev-parse --show-toplevel`: under a pre-push hook's exported GIT_DIR the
+# git form answers bin/local instead of the repo root.
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=../../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--check] [--quiet] [--out-dir DIR]
+
+Generate public-surface.json for each released package.
+
+Options:
+  --check        Do not write; exit 1 if a committed snapshot is stale
+  --quiet        Suppress output on success
+  --out-dir DIR  Write beneath DIR instead of the repo root (used by tests)
+  -h, --help     Show this help
+EOF
+}
+
+CHECK=false
+QUIET=false
+OUT_DIR="$REPO_ROOT"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --check) CHECK=true; shift ;;
+    --quiet) QUIET=true; shift ;;
+    --out-dir) OUT_DIR="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) err "Unknown argument: $1"; usage; exit 1 ;;
+  esac
+done
+
+# _registries_for PACKAGE — prints registry paths whose tools install to
+# ~/.local/bin for the given package. validation:bindir marks registries whose
+# tools are scripts this repo ships; validation:none marks third-party tools
+# (brew, mise, rtk), which are a dependency concern, not our contract.
+# meta.scope:workbench marks repo-internal scripts that are never installed.
+_registries_for() {
+  local package="$1" f rel validation scope owner
+  for f in "$REPO_ROOT"/*/registry.yml "$REPO_ROOT"/*/*/registry.yml; do
+    [[ -f "$f" ]] || continue
+    rel="${f#"$REPO_ROOT"/}"
+    validation=$(yq '.meta.validation // ""' "$f")
+    scope=$(yq '.meta.scope // ""' "$f")
+    [[ "$validation" == "bindir" ]] || continue
+    [[ "$scope" != "workbench" ]] || continue
+    owner="otto-workbench"
+    [[ "$rel" == ai/claude/* ]] && owner="otto-ai-tools"
+    [[ "$owner" == "$package" ]] || continue
+    echo "$f"
+  done
+}
+
+# _commands PACKAGE — prints "command:<name>" for each tool in that package.
+# _registries_for's own yq calls run inside a for loop, not a pipe, so
+# neither pipefail nor inherit_errexit can surface a failure there through a
+# process substitution: `done < <(_registries_for ...)` lets errexit abort
+# the substitution's own subshell, but the parent read loop never inspects a
+# process substitution's exit status — it just sees a short stream and
+# returns 0. Capturing into a variable first, with an explicit status check,
+# closes that gap the same way _collect does for the category functions.
+#
+# The capture runs in a `set +e` window so the status check is reachable: on a
+# bare assignment errexit aborts the script at the assignment itself, and the
+# diagnostic below never prints — leaving a broken yq indistinguishable from
+# the documented exit 1 of `--check` finding a stale snapshot. See _collect for
+# why the window carries its own `set -e` rather than an `if` or a `||`.
+_commands() {
+  local package="$1" registries rc f
+  set +e
+  registries="$(set -e; _registries_for "$package")"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    err "_registries_for failed for $package (exit $rc)"
+    exit 1
+  fi
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    yq -r '.tools[]?.name' "$f" | sed 's/^/command:/'
+  done <<< "$registries"
+}
+
+# _config_entries — prints "config:<dotted.key>" and "config:<key>=<enum>".
+# Reads the generated schema rather than re-deriving from WorkbenchConfig:
+# config.schema.json already owns that derivation.
+#
+# Recurses through additionalProperties (dynamic keys, rendered as a literal
+# "*" segment — e.g. review.phases.*.model) and items (array element schemas),
+# alongside properties and the three composition keywords oneOf/anyOf/allOf,
+# so a dynamic-key, array-valued, or composed section is not silently dropped.
+# propertyNames.enum (the allowed dynamic-key names, e.g. review.phases'
+# single/holistic/scout/...) is emitted with the same "key=value" shape as a
+# value enum.
+#
+# `not` is the one schema keyword deliberately left unwalked: its subschema
+# describes shapes the config must NOT match, so the keys under it are the
+# rejected ones. Emitting them would put keys nobody can set into the semver
+# contract and make removing a prohibition read as a breaking change.
+_config_entries() {
+  jq -r '
+    def props($prefix):
+      ((.properties // {}) | to_entries[] |
+         ($prefix + .key) as $p |
+         $p, (.value | props($p + "."))),
+      (((.oneOf // []) + (.anyOf // []) + (.allOf // []))[] | props($prefix)),
+      ((.items // empty) | objects | props($prefix)),
+      ((.additionalProperties // empty) | objects | props($prefix + "*."));
+    props("")
+  ' "$REPO_ROOT/config.schema.json" | sed 's/^/config:/'
+
+  jq -r '
+    def enums($prefix):
+      ((.properties // {}) | to_entries[] |
+         ($prefix + .key) as $p |
+         (.value | enums($p + "."))),
+      (((.oneOf // []) + (.anyOf // []) + (.allOf // []))[] | enums($prefix)),
+      ((.items // empty) | objects | enums($prefix)),
+      ((.additionalProperties // empty) | objects | enums($prefix + "*.")),
+      ((.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)"),
+      ((.propertyNames.enum // [])[] | "\($prefix|rtrimstr("."))=\(.)");
+    enums("")
+  ' "$REPO_ROOT/config.schema.json" | { grep -v '^=' || true; } | sed 's/^/config:/'
+}
+
+# _component_entries — prints "component:<name>" from install.components.
+# The `|| true` on grep is a pipefail escape hatch, not an error swallow: with
+# pipefail set, `grep -v` legitimately exits 1 when every line is filtered
+# out (e.g. a file that is all comments), and that is a valid empty result,
+# not a broken pipeline — a real read failure still surfaces because
+# _collect's non-empty check catches the resulting empty category.
+_component_entries() {
+  { grep -vE '^\s*(#|$)' "$REPO_ROOT/install.components" || true; } | tr -d ' ' | sed 's/^/component:/'
+}
+
+# _claude_artifacts — prints agent, skill, and settings entries for otto-ai-tools.
+_claude_artifacts() {
+  local f d
+  for f in "$REPO_ROOT"/ai/claude/agents/*.md; do
+    [[ -f "$f" ]] || continue
+    printf 'agent:%s\n' "$(basename "$f" .md)"
+  done
+  for d in "$REPO_ROOT"/ai/claude/skills/*/; do
+    [[ -d "$d" ]] || continue
+    printf 'skill:%s\n' "$(basename "$d")"
+  done
+  jq -r 'keys[]' "$REPO_ROOT/ai/claude/settings.json" | sed 's/^/setting:/'
+}
+
+# _collect LABEL FUNC [ARGS...] — captures FUNC's stdout, failing loudly instead
+# of silently truncating the snapshot. The previous implementation fed
+# multiple category functions into one `while read < <(...)` process
+# substitution, which swallows the substitution's exit status even under
+# set -e: one broken jq call in an earlier category turned the whole snapshot
+# into zero entries with a clean exit, and later categories never ran either.
+#
+# The `set +e` window is what makes the status check reachable. A bare
+# assignment aborts the script at the assignment, so `err` never runs and the
+# script exits 1 — the same status --check uses for "the snapshot is stale",
+# which sends the contributor to bin/local/generate-public-surface to fix a
+# broken jq by re-running it. The two alternatives that also keep the status
+# are worse: `out=$(...) || rc=$?` and `if out=$(...)` both put the capture in
+# a context where errexit is ignored, and bash propagates that suspension into
+# the substitution's subshell, so a category function's failing pipeline would
+# no longer abort it. The window's own `set -e` restores errexit inside the
+# subshell, which is the property that has to survive; the parent's is off only
+# for the length of the assignment.
+_collect() {
+  local label="$1"; shift
+  local out rc
+  set +e
+  out="$(set -e; "$@")"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    err "$label failed (exit $rc)"
+    exit 1
+  fi
+  [[ -n "$out" ]] || { err "$label produced no entries"; exit 1; }
+  printf '%s\n' "$out"
+}
+
+# _write_snapshot PACKAGE RELATIVE_PATH ENTRIES — ENTRIES is a single
+# newline-delimited string, not an argument list, so an empty category never
+# collapses to a stray "" element (printf '%s\n' "$@" with zero args prints
+# one blank line, which jq -R then turns into entries: [""]).
+_write_snapshot() {
+  local package="$1" relpath="$2" entries="$3"
+  local target="$OUT_DIR/$relpath"
+
+  [[ -n "$entries" ]] || { err "$relpath: no entries collected — refusing to write an empty snapshot"; return 1; }
+
+  local rendered
+  # LC_ALL=C pins byte-order sorting regardless of the caller's locale — under
+  # a glibc en_US.UTF-8 locale, sort collates "-" differently than under C or
+  # macOS's (always-C) BSD sort, reordering entries like pr-describe vs.
+  # pr-rebase vs. promote-scan and making the committed snapshot irreproducible.
+  rendered=$(printf '%s\n' "$entries" | LC_ALL=C sort -u | jq -R 'select(length > 0)' | jq -s \
+    --arg pkg "$package" '{package: $pkg, entries: .}')
+
+  if $CHECK; then
+    if [[ ! -f "$target" ]] || ! diff -q <(echo "$rendered") "$target" >/dev/null; then
+      err "$relpath is out of date — run bin/local/generate-public-surface"
+      return 1
+    fi
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$target")"
+  echo "$rendered" > "$target"
+}
+
+_wb_entries="$(_collect "otto-workbench commands" _commands "otto-workbench")"
+_wb_entries="$_wb_entries"$'\n'"$(_collect "config entries" _config_entries)"
+_wb_entries="$_wb_entries"$'\n'"$(_collect "component entries" _component_entries)"
+
+_ai_entries="$(_collect "otto-ai-tools commands" _commands "otto-ai-tools")"
+_ai_entries="$_ai_entries"$'\n'"$(_collect "claude artifacts" _claude_artifacts)"
+
+# Both calls are bare — not `_write_snapshot ... || _failed=true` — for the
+# same reason _collect's category calls are bare: testing a function's exit
+# status with || suspends errexit for that function's entire execution,
+# including everything it calls. _write_snapshot's own render pipeline
+# (printf | sort | jq -R | jq -s) would then be free to fail mid-pipe and
+# still let the function finish and write a validly-formed but wrongly
+# empty snapshot. A bare call lets a real failure abort the script
+# immediately, at the cost of only ever reporting the first package that
+# fails --check in a given run rather than checking both before exiting.
+_write_snapshot "otto-workbench" "$WORKBENCH_SURFACE_RELPATH" "$_wb_entries"
+_write_snapshot "otto-ai-tools" "$AI_TOOLS_SURFACE_RELPATH" "$_ai_entries"
+
+# The count comes from the array in lib/constants.sh rather than a literal, so
+# adding a package cannot leave this message reporting a stale number.
+$QUIET || success "Generated ${#PUBLIC_SURFACE_RELPATHS[@]} public surface snapshots"

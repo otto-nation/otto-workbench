@@ -1,0 +1,417 @@
+#!/usr/bin/env bash
+# Fail when a package's public surface shrinks without the commit saying so.
+#
+# Deliberately not a validate-* script: validators scan the working tree, and
+# this needs a base ref that bin/local/validate-all does not provide. Freshness
+# of the snapshots themselves is bin/local/validate-public-surface's job.
+#
+# Two footers satisfy the gate:
+#   BREAKING CHANGE: <what broke>       covers every removal, cuts a major
+#   Not-Breaking: <entry> — <reason>    covers one named entry, cuts no major
+#
+# The Not-Breaking separator is documented as an em dash, but an en dash and a
+# run of ASCII hyphens surrounded by spaces are accepted too — a human or a
+# model reaching for "-" or "--" has still declared the entry, and rejecting
+# that spelling only pushes the author toward BREAKING CHANGE, which majors
+# both packages. The reason is not optional: a footer with nothing after the
+# separator declares nothing, because the reason landing in git history is the
+# entire argument for a footer over a checked-in allowlist.
+#
+# BREAKING-CHANGE (hyphenated) is accepted wherever BREAKING CHANGE is:
+# Conventional Commits v1.0.0 lists it as a synonym and release-please honours
+# it, so rejecting it would fail a contributor who declared correctly.
+#
+# The escape hatch is a footer rather than a checked-in allowlist on purpose:
+# an allowlist accumulates entries nobody unwinds, a footer puts the reason in
+# git history beside the change that needed it.
+#
+# Usage: bin/local/check-surface-compat [--base REF] [--repo-dir DIR] [--quiet]
+# Exit codes:
+#   0    every removal is declared, or there was nothing to compare
+#   1    a removal is undeclared, or a `!` header carries no footer
+#   2    a usage error, or the snapshot path is a tree at the base. A symlink
+#        is mode 120000 and cat-file -t calls it a blob, so it is not caught
+#        here — jq fails on the link target and the run ends at 5 instead.
+#   5    jq aborted on a malformed snapshot (.entries not an array, or
+#        .package missing or not a string) — jq's own status, passed through
+#   128  git's status from an unresolvable merge base (bad ref, not a repo)
+# 0 and 1 are the gate's verdict; everything above is "the check never
+# happened", and callers must not read those as a pass. Both current callers
+# (git/hooks/pre-push-workbench and the surface-compat CI job) treat any
+# non-zero status as a hard fail, so the distinction is for a reader and for
+# task automation reading the REMOVED lines, not for the gating itself.
+
+set -euo pipefail
+# Bash does not apply errexit inside `$(...)` unless inherit_errexit is on, so
+# a failing jq or git deep inside a helper called as `out="$(_helper)"` would
+# otherwise be swallowed by the substitution's subshell and leave the caller
+# reading a truncated result as if it were an empty one. Every helper below is
+# called from a bare assignment for the same reason: putting a function on the
+# left of `||`, or in an `if`/`while` condition, re-suspends errexit for its
+# entire body. The two commands allowed to fail are `git merge-base` (exit 1
+# means no common ancestor) and `git cat-file -e` (non-zero means the snapshot
+# does not exist at the base); both are handled explicitly at their call sites.
+shopt -s inherit_errexit
+
+_SELF="${BASH_SOURCE[0]}"
+# See bin/local/validate-public-surface for why this is path arithmetic and not
+# `git rev-parse --show-toplevel`. This script needs both properties that form
+# gives: the pre-push hook runs it with GIT_DIR exported, and task commit runs it
+# by absolute path from whatever directory the contributor is standing in. Note
+# this locates the script's own repo, for sourcing lib/; the repo under
+# inspection is REPO_DIR, which --repo-dir sets.
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=../../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+# shellcheck source=../../lib/conventions.sh
+. "$REPO_ROOT/lib/conventions.sh"
+
+# The hyphenated synonym, derived from the one constant rather than declared a
+# second time — a rename of BREAKING_CHANGE_FOOTER carries both forms with it.
+BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER/ /-}"
+# ERE alternation matching either spelling at the start of a footer line.
+BREAKING_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}): .+"
+
+# jq program shared by every snapshot read, always run with -s (slurp). A
+# snapshot whose .entries is missing or not an array must abort, not read as
+# "no entries" and therefore "nothing was removed" — that silent-truncation
+# shape is the defect class this feature's generator was patched for three
+# times. Slurping closes the same hole one level up: on empty input jq's
+# program never runs at all, so a zero-byte snapshot would print nothing and
+# exit 0, and the caller would read that empty capture as an empty surface.
+# With -s the input becomes an array of documents and the length check fires.
+_ENTRIES_JQ='if length != 1 then error("\($src): not a single JSON document") else .[0] end
+  | .entries | if type == "array" then . else error("\($src): .entries is not an array") end'
+
+# jq program reading a snapshot's package name, run with -s for the same reason.
+_PACKAGE_JQ='if length != 1 then error("\($src): not a single JSON document") else .[0] end
+  | if (.package | type) == "string" then .package else error("\($src): .package is missing or not a string") end'
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--base REF] [--repo-dir DIR] [--quiet]
+
+Fail when a public surface entry is removed without a declaration.
+
+Options:
+  --base REF      Base ref to compare against (default: origin/main)
+  --repo-dir DIR  Repository to inspect (default: the current repo)
+  --quiet         Suppress output on success
+  -h, --help      Show this help
+EOF
+}
+
+BASE="origin/main"
+REPO_DIR=""
+QUIET=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --base)
+      [[ -n "${2:-}" ]] || { err "--base requires a REF"; exit 2; }
+      BASE="$2"; shift 2 ;;
+    --repo-dir)
+      [[ -n "${2:-}" ]] || { err "--repo-dir requires a DIR"; exit 2; }
+      REPO_DIR="$2"; shift 2 ;;
+    --quiet) QUIET=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) err "Unknown argument: $1"; usage; exit 2 ;;
+  esac
+done
+
+# --repo-dir names the repository to inspect, so it has to outrank an inherited
+# GIT_DIR. The pre-push hook exports one; there it happens to name the same repo,
+# but git consults GIT_DIR ahead of the directory `-C` moved to, so a caller
+# passing --repo-dir for any other tree would have every git call below silently
+# answered by the exported one. Unsetting also restores discovery for the default
+# below, which would otherwise report the caller's cwd as the toplevel.
+unset GIT_DIR GIT_WORK_TREE
+
+if [[ -z "$REPO_DIR" ]]; then
+  REPO_DIR="$(git rev-parse --show-toplevel)"
+fi
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+# _declared_keys — prints the surface entry named by each Not-Breaking footer
+# on the branch, one per line. The footer's shape is
+# "Not-Breaking: <entry> — <reason>", so the key is everything between the
+# prefix and the first separator, not a whitespace field: entries may contain
+# spaces (setting names, skill names), and reading only the first field would
+# truncate such a key so that no footer could ever declare it, leaving
+# BREAKING CHANGE — which majors both packages — as the author's only escape.
+#
+# Splitting on the *first* separator keeps a reason that itself contains a dash
+# safe. A footer with an empty reason names nothing and is skipped: the reason
+# reaching git history is the whole point of the footer.
+#
+# A CRLF commit body leaves a carriage return at the end of every line, and a
+# lone "\r" is not whitespace to the empty-reason guard — so "Not-Breaking:
+# <entry> — \r" would declare an entry while carrying no reason at all, which
+# is the one thing this footer exists to prevent. The CR comes off the record
+# before anything reads it.
+#
+# One awk, no pipeline: awk exits 0 on no matches, so there is no grep-exit-1
+# case to make an escape hatch for, and nothing downstream to hide a failure.
+_declared_keys() {
+  awk -v prefix="${NOT_BREAKING_FOOTER}: " '
+    { sub(/\r$/, "") }
+    index($0, prefix) != 1 { next }
+    {
+      rest = substr($0, length(prefix) + 1)
+      if (match(rest, / (—|–|-+) /) == 0) next
+      key = substr(rest, 1, RSTART - 1)
+      reason = substr(rest, RSTART + RLENGTH)
+      sub(/[ \t]+$/, "", key)
+      if (key == "" || reason ~ /^[ \t]*$/) next
+      print key
+    }
+  ' <<<"$COMMIT_BODIES"
+}
+
+# _bang_subjects — prints each commit subject on the branch that uses the `!`
+# breaking marker in its header (e.g. "feat(scope)!: ...").
+_bang_subjects() {
+  local subjects
+  subjects=$(git -C "$REPO_DIR" log --format='%s' "$MERGE_BASE..HEAD")
+  # shellcheck disable=SC2181  # $? is grep's status, read in its || branch
+  { grep -E '^[a-z]+(\(.+\))?!: ' <<<"$subjects" || [[ $? -eq 1 ]]; }
+}
+
+# _undeclared REMOVED DECLARED — prints the removed entries that no
+# Not-Breaking footer names. Both arguments are newline-delimited lists.
+# The match is whole-line fixed-string, not a substring search: a footer
+# declaring `command:beta-two` must not cover a removal of `command:beta`,
+# and entries contain regex metacharacters (config:review.phases.*.model) so
+# anchoring a pattern match is not an option.
+_undeclared() {
+  local removed="$1" declared="$2" entry
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    if grep -qxF "$entry" <<<"$declared"; then
+      continue
+    fi
+    printf '%s\n' "$entry"
+  done <<<"$removed"
+}
+
+# _package_name SNAPSHOT HEAD_FILE BASE_JSON — the package a snapshot belongs
+# to, for the report. Read from the working tree when it still has the file,
+# and from the base snapshot when it does not — a deleted snapshot still has
+# every one of its entries removed, and that report needs a package name.
+_package_name() {
+  local snapshot="$1" head_file="$2" base_json="$3"
+  if [[ -f "$head_file" ]]; then
+    jq -rs --arg src "$snapshot" "$_PACKAGE_JQ" "$head_file"
+    return
+  fi
+  jq -rs --arg src "$MERGE_BASE:$snapshot" "$_PACKAGE_JQ" <<<"$base_json"
+}
+
+# _tree_entries HEAD_FILE — the entries array as the working tree has it.
+# A snapshot the working tree no longer has is not "nothing to compare": every
+# entry the base held is gone from it, so it reads as the empty array and the
+# whole surface reports as removed. Deleting the file must not be a way past
+# the gate. The other direction — absent at the base, present now — is the
+# bootstrap case and never reaches here; the caller skips it.
+_tree_entries() {
+  local head_file="$1"
+  if [[ ! -f "$head_file" ]]; then
+    printf '[]\n'
+    return
+  fi
+  jq -cs --arg src "$head_file" "$_ENTRIES_JQ" "$head_file"
+}
+
+# _head_entries SNAPSHOT — the entries array as HEAD has it. A snapshot absent
+# at HEAD reads as the empty array, the same shape _tree_entries uses, because
+# by the time this runs the merge base provably holds the blob — the caller
+# skipped the snapshot otherwise — and HEAD descends from that merge base. The
+# only way the blob can be gone is that the branch deleted it, and `git push`
+# publishes that deletion, so it has to report the whole surface as removed.
+# The bootstrap case (a snapshot this branch introduces) never reaches here.
+#
+# Empty output, meaning "no HEAD constraint", is left for the one state this
+# cannot read: a path at HEAD that is not a blob at all. Every git call is bare
+# or handled at its own call site, so a git failure aborts instead of arriving
+# here as an empty capture.
+_head_entries() {
+  local snapshot="$1" head_type head_json
+  # cat-file -e is allowed to fail: non-zero means the path is absent at HEAD.
+  if ! git -C "$REPO_DIR" cat-file -e "HEAD:$snapshot" 2>/dev/null; then
+    printf '[]\n'
+    return
+  fi
+  head_type=$(git -C "$REPO_DIR" cat-file -t "HEAD:$snapshot")
+  [[ "$head_type" == "blob" ]] || return 0
+  head_json=$(git -C "$REPO_DIR" show "HEAD:$snapshot")
+  jq -cs --arg src "HEAD:$snapshot" "$_ENTRIES_JQ" <<<"$head_json"
+}
+
+# _removed_entries BASE TREE [HEAD] — prints the entries the base snapshot held
+# that the head side no longer keeps, as JSON arrays of entries. jq's array
+# difference keeps the base snapshot's ordering, so the report is stable
+# without a locale-sensitive sort.
+#
+# The head side is the *union* of two removals: one against the working tree,
+# one against HEAD. Neither alone is sound. The working tree read is what lets
+# lib/ai/commit.sh consult this gate before a commit exists, but `git push`
+# publishes HEAD, so a removal committed in HEAD and then reverted in the tree
+# (git stash, an uncommitted revert, a partially staged one) would sail through
+# pre-push on a tree-only read. An entry present in only one of the two is
+# still removed by the push, so an entry is kept only when both sides have it —
+# hence base minus the intersection. HEAD empty means the HEAD side is skipped.
+_removed_entries() {
+  local base="$1" tree="$2" head="${3:-}"
+  if [[ -z "$head" ]]; then
+    jq -rn --argjson base "$base" --argjson tree "$tree" '($base - $tree)[]'
+    return
+  fi
+  jq -rn --argjson base "$base" --argjson tree "$tree" --argjson head "$head" \
+    '($base - ($tree - ($tree - $head)))[]'
+}
+
+# ── Base resolution ─────────────────────────────────────────────────────────
+
+# merge-base separates two outcomes that must not be conflated. Exit 1 is "no
+# common ancestor" — an unrelated branch, or a BASE that resolves but shares no
+# history — and the gate has no opinion there. Anything else (128 for a bad
+# ref, a missing remote-tracking branch, or a directory that is not a repo) is
+# a failure to run the check at all, and reporting that as a clean pass is how
+# a green tick comes to mean nothing.
+#
+# stderr goes to a file rather than into the capture. git writes advisories to
+# stderr while still exiting 0 — an ambiguous ref (a tag and a branch sharing a
+# name, or a tag literally called origin/main) draws a "warning: refname is
+# ambiguous" on a merge-base that succeeds — so folding 2>&1 into the value
+# would prepend the warning to the SHA and blow up the next `git log` on a
+# comparison that should have run clean.
+MERGE_BASE_ERR="$(mktemp "${TMPDIR:-/tmp}/surface-compat.XXXXXX")"
+trap 'rm -f "$MERGE_BASE_ERR"' EXIT
+
+MERGE_BASE_STATUS=0
+MERGE_BASE=$(git -C "$REPO_DIR" merge-base HEAD "$BASE" 2>"$MERGE_BASE_ERR") || MERGE_BASE_STATUS=$?
+
+if [[ "$MERGE_BASE_STATUS" -eq 1 ]]; then
+  $QUIET || info "No merge base with $BASE — skipping surface comparison"
+  exit 0
+fi
+
+if [[ "$MERGE_BASE_STATUS" -ne 0 ]]; then
+  err "Could not resolve a merge base between HEAD and $BASE (git exit $MERGE_BASE_STATUS):"
+  sed 's/^/    /' "$MERGE_BASE_ERR" >&2
+  echo "" >&2
+  echo "  The surface was NOT checked. Fetch the base ref (git fetch origin)" >&2
+  echo "  or pass an existing one with --base REF." >&2
+  exit "$MERGE_BASE_STATUS"
+fi
+
+COMMIT_BODIES=$(git -C "$REPO_DIR" log --format='%B' "$MERGE_BASE..HEAD")
+
+# A BREAKING CHANGE footer covers every removal in the range.
+HAS_BREAKING=false
+if grep -qE "$BREAKING_FOOTER_RE" <<<"$COMMIT_BODIES"; then
+  HAS_BREAKING=true
+fi
+
+FAILED=false
+FAILED_PACKAGES=()
+
+# ── Bang-without-footer check ───────────────────────────────────────────────
+# Independent of the snapshots: the author has claimed a breaking change, and
+# on a multi-commit PR the squash replaces the subject with the PR title, so
+# the claim would be lost whether or not the surface moved.
+if ! $HAS_BREAKING; then
+  BANG_SUBJECTS=$(_bang_subjects)
+  if [[ -n "$BANG_SUBJECTS" ]]; then
+    err "A '!' header claims a breaking change but no ${BREAKING_CHANGE_FOOTER} footer was found:"
+    sed 's/^/    /' <<<"$BANG_SUBJECTS" >&2
+    echo "" >&2
+    echo "  This repo squash-merges. On a multi-commit PR the PR title replaces" >&2
+    echo "  your subject, so a header-only marker never reaches release-please." >&2
+    echo "  Add to the commit body:" >&2
+    echo "" >&2
+    echo "    ${BREAKING_CHANGE_FOOTER}: <what broke>" >&2
+    echo "" >&2
+    echo "  (${BREAKING_CHANGE_FOOTER_ALT}: is accepted too — same meaning.)" >&2
+    echo "" >&2
+    FAILED=true
+  fi
+fi
+
+# One list for the whole range, not one per package. A Not-Breaking footer
+# therefore covers an entry of that name in either package. Latent only: no key
+# is currently present in both snapshots, and tests/generate_public_surface.bats
+# pins the two entry sets apart. Should they ever overlap, this needs a
+# per-package key (e.g. "Not-Breaking: otto-ai-tools/command:pr").
+DECLARED_KEYS=$(_declared_keys)
+
+# ── Removal check, per package ──────────────────────────────────────────────
+for snapshot in "${PUBLIC_SURFACE_RELPATHS[@]}"; do
+  head_file="$REPO_DIR/$snapshot"
+
+  # cat-file -e is allowed to fail: a non-zero status means the path is absent
+  # at the base, i.e. this branch introduces the snapshot. Probing separately is
+  # what keeps that case distinguishable from a git failure — the `git show`
+  # below is bare, so a real error aborts instead of yielding an empty string
+  # that reads as "the base had no entries, so nothing was removed".
+  if ! git -C "$REPO_DIR" cat-file -e "$MERGE_BASE:$snapshot" 2>/dev/null; then
+    continue
+  fi
+  base_type=$(git -C "$REPO_DIR" cat-file -t "$MERGE_BASE:$snapshot")
+  if [[ "$base_type" != "blob" ]]; then
+    err "$snapshot is a $base_type at merge base $MERGE_BASE, not a file — cannot compare surfaces"
+    exit 2
+  fi
+  base_json=$(git -C "$REPO_DIR" show "$MERGE_BASE:$snapshot")
+
+  # Fail loudly on a snapshot with no .package rather than reporting "null:".
+  package=$(_package_name "$snapshot" "$head_file" "$base_json")
+  base_entries=$(jq -cs --arg src "$MERGE_BASE:$snapshot" "$_ENTRIES_JQ" <<<"$base_json")
+  tree_entries=$(_tree_entries "$head_file")
+  head_entries=$(_head_entries "$snapshot")
+  removed=$(_removed_entries "$base_entries" "$tree_entries" "$head_entries")
+  [[ -n "$removed" ]] || continue
+
+  if $HAS_BREAKING; then
+    removed_count=$(grep -c '' <<<"$removed")
+    $QUIET || info "$package: ${BREAKING_CHANGE_FOOTER} declared for $removed_count removals"
+    continue
+  fi
+
+  undeclared=$(_undeclared "$removed" "$DECLARED_KEYS")
+  [[ -n "$undeclared" ]] || continue
+
+  # Machine-readable, on stdout: task automation reads these to draft the
+  # footer the author is missing. Everything else the gate prints is stderr.
+  sed 's/^/REMOVED /' <<<"$undeclared"
+
+  undeclared_count=$(grep -c '' <<<"$undeclared")
+  err "$package: $undeclared_count public surface entries removed without a declaration:"
+  sed 's/^/    /' <<<"$undeclared" >&2
+  echo "" >&2
+  echo "  Add one of these to a commit body on this branch:" >&2
+  echo "" >&2
+  echo "    ${BREAKING_CHANGE_FOOTER}: <what broke>        (cuts a major for $package)" >&2
+  echo "    ${NOT_BREAKING_FOOTER}: <entry> — <reason>   (one per entry, cuts no major)" >&2
+  echo "" >&2
+  FAILED=true
+  FAILED_PACKAGES+=("$package")
+done
+
+# Both packages moved in one range. release-please has no per-package footer
+# syntax, so the single BREAKING CHANGE footer that would satisfy the gate here
+# cuts a major for both — see CONTRIBUTING.md § Versioning & breaking changes.
+if [[ "${#FAILED_PACKAGES[@]}" -gt 1 ]]; then
+  err "Both packages are affected: ${FAILED_PACKAGES[*]}"
+  echo "" >&2
+  echo "  A single ${BREAKING_CHANGE_FOOTER} footer majors both — release-please has no" >&2
+  echo "  per-package footer syntax. Split the commit if you only mean to break one." >&2
+  echo "" >&2
+fi
+
+if $FAILED; then
+  exit 1
+fi
+
+$QUIET || success "public surface compatible with $BASE"

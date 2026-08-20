@@ -31,17 +31,30 @@ QUIET=false
 CONVENTIONS_SH="${CONVENTIONS_SH:-"$REPO_ROOT/lib/conventions.sh"}"
 OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
 
-# Extract constants directly from the source file
+# Extract a constant from the source file, printing nothing when it is absent
+# so the emptiness guard below is what reports it. The guard is only reachable
+# because `|| [[ $? -eq 1 ]]` is scoped to grep's exit 1 ("no match", a valid
+# empty result); exit 2 — an unreadable conventions file — still aborts, which
+# is right, because that is a missing source of truth rather than a missing
+# constant.
 _extract_const() {
-  grep -E "^${1}=" "$CONVENTIONS_SH" | head -1 | cut -d'=' -f2- | tr -d '"'
+  # shellcheck disable=SC2181  # $? is grep's status, read in its || branch
+  { grep -E "^${1}=" "$CONVENTIONS_SH" || [[ $? -eq 1 ]]; } | head -1 | cut -d'=' -f2- | tr -d '"'
 }
 
 COMMIT_TYPES=$(_extract_const "COMMIT_TYPES")
 COMMIT_HEADER_MAX_LEN=$(_extract_const "COMMIT_HEADER_MAX_LEN")
 COMMIT_BODY_MAX_LEN=$(_extract_const "COMMIT_BODY_MAX_LEN")
+BREAKING_CHANGE_FOOTER=$(_extract_const "BREAKING_CHANGE_FOOTER")
+NOT_BREAKING_FOOTER=$(_extract_const "NOT_BREAKING_FOOTER")
 
-if [[ -z "$COMMIT_TYPES" || -z "$COMMIT_HEADER_MAX_LEN" || -z "$COMMIT_BODY_MAX_LEN" ]]; then
-  err "Could not extract constants from $AI_CORE_SH"
+# Conventional Commits v1.0.0 lists the hyphenated spelling as a synonym and
+# release-please honours it, so bin/local/check-surface-compat accepts both.
+# Derived from the constant rather than declared a second time.
+BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER// /-}"
+
+if [[ -z "$COMMIT_TYPES" || -z "$COMMIT_HEADER_MAX_LEN" || -z "$COMMIT_BODY_MAX_LEN" || -z "$BREAKING_CHANGE_FOOTER" || -z "$NOT_BREAKING_FOOTER" ]]; then
+  err "Could not extract constants from $CONVENTIONS_SH"
   exit 1
 fi
 
@@ -77,7 +90,18 @@ _budget_line() {
   printf '%s\n' \
     "- Use bullet points for multiple changes in the body" \
     "- Subject should be concise and focus on *what* changed, not *how*" \
-    "- Never add a co-author trailer (e.g. \`Co-Authored-By:\`)" \
+    "- Never add a co-author trailer (e.g. \`Co-Authored-By:\`)"
+  printf '%s\n' \
+    "" \
+    "### Breaking Changes" \
+    "" \
+    "- A change that removes or renames anything on a package's public surface must carry a \`${BREAKING_CHANGE_FOOTER}: <what broke>\` footer in the commit body" \
+    "- \`${BREAKING_CHANGE_FOOTER_ALT}:\` is accepted as an equivalent spelling — Conventional Commits lists it as a synonym and release-please honours it" \
+    "- The \`!\` marker (e.g. \`feat!:\`) is encouraged for readability but never replaces the footer — this repo squash-merges, and on a multi-commit PR the PR title replaces your subject, so a header-only marker is silently lost" \
+    "- A removal that is deliberately not breaking takes a \`${NOT_BREAKING_FOOTER}: <entry> — <reason>\` footer instead, one per removed entry" \
+    "- The reason after \`${NOT_BREAKING_FOOTER}:\` is required, and an em dash, an en dash, or a plain \`-\` all separate the entry from it — a footer with no reason declares nothing" \
+    "- \`bin/local/check-surface-compat\` enforces both footers by comparing the public surface snapshots in your working tree *and* at \`HEAD\` against the ones committed at the merge base — it runs in pre-push and CI"
+  printf '%s\n' \
     "" \
     "## Pull Requests" \
     "" \

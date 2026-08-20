@@ -90,6 +90,10 @@ fi
 
 _run_step "Validating conventions"     "$REPO_ROOT/bin/local/validate-all" --quiet
 
+# Not part of validate-all: this one needs a base ref to diff the public
+# surface snapshots against, which the working-tree validators do not have.
+_run_step "Checking surface compatibility" "$REPO_ROOT/bin/local/check-surface-compat" --quiet
+
 # ── Generation ───────────────────────────────────────────────────────────────
 
 _step "Regenerating tool context"

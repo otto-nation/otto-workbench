@@ -58,3 +58,17 @@ teardown() {
   build_commit_rules
   [[ "$COMMIT_RULES" == *"type-enum"* ]]
 }
+
+@test "fallback rules explain the breaking change footer" {
+  # shellcheck disable=SC2034  # read by build_commit_rules in lib/ai/commit.sh
+  COMMITLINT_CONFIG=""
+  build_commit_rules
+  [[ "$COMMIT_RULES" == *"BREAKING CHANGE"* ]]
+}
+
+@test "fallback rules say the bang marker does not replace the footer" {
+  # shellcheck disable=SC2034  # read by build_commit_rules in lib/ai/commit.sh
+  COMMITLINT_CONFIG=""
+  build_commit_rules
+  [[ "$COMMIT_RULES" == *"never replaces"* ]]
+}

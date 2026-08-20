@@ -466,7 +466,7 @@ Prompt templates for all AI automation — pure text generation, no side effects
 <!-- LIB-FUNCTIONS:ai/prompts.sh-START -->
 | Function | Purpose |
 |----------|---------|
-| `prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE]` | Generates the commit message prompt. When RETRY_PREAMBLE is provided it is prepended with a blank line separator so the AI sees the failure context first. |
+| `prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE] [SURFACE_NOTE]` | Generates the commit message prompt. When RETRY_PREAMBLE is provided it is prepended with a blank line separator so the AI sees the failure context first. |
 | `prompt_commit_retry HEADER HEADER_LEN OVER PREFIX SUBJECT_BUDGET` | Outputs a retry preamble that gives the AI the exact character budget it needs. |
 | `prompt_pr_single_commit COMMIT_SUBJECT COMMIT_BODY CHANGED_FILES` | For single-commit branches where a PR template exists: asks the AI to fill the template using the commit message. |
 | `prompt_pr_multi_commit BRANCH ISSUE COMMITS COMMIT_COUNT CHANGED_FILES` | For multi-commit branches: asks the AI to generate a PR title and fill the template. |

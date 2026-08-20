@@ -8,6 +8,7 @@
 #
 # Functions:
 #   prompt_commit DIFF FILES_SECTION        — commit message generation
+#               [RETRY_PREAMBLE] [SURFACE_NOTE]
 #   prompt_commit_retry HEADER LEN OVER     — retry preamble when header is too long
 #                       PREFIX BUDGET
 #   prompt_pr_single_commit SUBJECT BODY    — PR description for single-commit branches
@@ -19,11 +20,14 @@
 #   prompt_pr_review PR_NUMBER TITLE        — review an existing PR
 #                    BODY DIFF
 
-# prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE]
+# prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE] [SURFACE_NOTE]
 # Generates the commit message prompt. When RETRY_PREAMBLE is provided it is
 # prepended with a blank line separator so the AI sees the failure context first.
+# SURFACE_NOTE, when non-empty, is rendered directly after COMMIT_RULES —
+# alongside the existing breaking-change footer rule — so the model sees the
+# footer instruction and the reason for it in the same place.
 prompt_commit() {
-  local diff_content="$1" files_section="$2" retry_preamble="${3:-}"
+  local diff_content="$1" files_section="$2" retry_preamble="${3:-}" surface_note="${4:-}"
 
   if [ -n "$retry_preamble" ]; then
     printf '%s\n\n' "$retry_preamble"
@@ -44,7 +48,7 @@ CRITICAL REQUIREMENTS:
 - Subject must be concise — focus on WHAT changed, not HOW
 - If multiple changes, use semicolon in subject or list in body
 
-${COMMIT_RULES}
+${COMMIT_RULES}${surface_note}
 
 ${files_section}Diff:
 ${diff_content}

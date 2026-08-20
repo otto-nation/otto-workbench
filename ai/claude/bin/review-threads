@@ -1930,7 +1930,7 @@ def _finding_location(
 
 
 # The id in a permalink back to a top-level comment. Capturing, unlike
-# _ROW_ANCHOR_RE below, because the id is the whole point here.
+# _ITEM_ANCHOR_RE below, because the id is the whole point here.
 _SOURCE_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-(\d+)")
 
 
@@ -2673,6 +2673,10 @@ class HumanReason(Enum):
 # `_build_summary_body`, and `HumanReason.prose`. A new wording that is not
 # covered here reads as hand-written, and its row is then frozen at whatever the
 # published comment already said.
+#
+# Retired wordings stay in the list. A summary comment outlives the code that
+# wrote it, so an opening no builder produces any more still opens rows on live
+# PRs, and dropping it here freezes every one of them.
 _GENERATED_ACTION_PREFIXES = (
     "Fixed in ",
     "Fix applied",
@@ -2681,6 +2685,7 @@ _GENERATED_ACTION_PREFIXES = (
     "Deferred",
     "Already addressed",
     "Dismissed (invalid)",
+    "Added to the PR description (no commit)",
     _RECONCILED_STATUS_TEXT,
     *(reason.prose for reason in HumanReason),
 )
@@ -2922,12 +2927,9 @@ def _format_issue_comment_items(comments: list[dict]) -> list[str]:
     return lines
 
 
-# What identifies a rendered row across rounds. The permalink anchor is the
-# only stable part: the summary text is regenerated per round and the file cell
-# is pinned to whichever SHA that round rendered against.
-_ROW_ANCHOR_RE = re.compile(r"#(?:discussion_r|issuecomment-|pullrequestreview-)\d+")
-# The two halves of the anchor set, for telling which surface a rendered row
-# came from once the entry behind it is out of reach.
+# The two anchors a rendered row can carry, for telling which surface it came
+# from once the entry behind it is out of reach — and, in `_summary_row_key`,
+# whether that anchor identifies the row or only the comment it was cut from.
 _ITEM_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-\d+")
 _THREAD_ANCHOR_RE = re.compile(r"#discussion_r\d+")
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
@@ -2937,6 +2939,16 @@ _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
 def _row_cells(row: str) -> list[str]:
     """Split a rendered row into cells, honouring the escape `_escape_cell` writes."""
     return [cell.strip() for cell in _CELL_SPLIT_RE.split(row.strip().strip("|"))]
+
+
+def _plain_cell(cell: str) -> str:
+    """A rendered cell's text, with link targets and backticks taken away.
+
+    What is left is the part of the cell a later round renders the same way: a
+    link target carries the SHA its round was pinned to, and the backticks are
+    decoration the text underneath does not depend on.
+    """
+    return _MD_LINK_RE.sub(r"\1", cell).replace("`", "").strip()
 
 
 def _row_location_key(row: str) -> str:
@@ -2955,7 +2967,7 @@ def _row_location_key(row: str) -> str:
     cells = _row_cells(row)
     if len(cells) < len(_SUMMARY_TABLE_COLUMNS):
         return ""
-    location = _MD_LINK_RE.sub(r"\1", cells[2]).replace("`", "").strip()
+    location = _plain_cell(cells[2])
     if ":" not in location:
         return ""
     return f"{cells[1]}|{location}"
@@ -2964,18 +2976,35 @@ def _row_location_key(row: str) -> str:
 def _summary_row_key(row: str) -> str:
     """Identity of one rendered summary row.
 
+    A thread anchor is identity on its own: one `#discussion_r` id names one
+    review thread, which this renderer writes one row for. A comment anchor is
+    not. Triage decomposes a top-level comment into N items, and every one of
+    them links back to the one `#issuecomment` / `#pullrequestreview` permalink
+    the comment has — so the anchor names the source the row was cut from,
+    while the summary cell is what tells the siblings apart. Keying the
+    siblings alike collapses them: each map built on this key keeps one row per
+    key, so N findings reach the table as one.
+
     Falls back to the row's own text for a row with no permalink — a comment
     item whose source could not be resolved. Link targets and backticks are
     stripped so the same entry keys the same way however it was decorated, and
-    the Action cell is left out because a later round changing it (deferred to
-    fixed) is exactly the case that must count as the same row.
+    the Action cell is left out of every form because a later round changing it
+    (deferred to fixed) is exactly the case that must count as the same row.
     """
-    anchor = _ROW_ANCHOR_RE.search(row)
-    if anchor:
-        return anchor.group(0)
+    thread = _THREAD_ANCHOR_RE.search(row)
+    if thread:
+        return thread.group(0)
+    cells = _row_cells(row)
+    item = _ITEM_ANCHOR_RE.search(row)
+    if item:
+        # ceiling: the summary cell is the whole of what separates one item
+        # from its siblings, so a round that rewords an item's summary keys it
+        # as a new row and the published one carries forward beside it.
+        # Upgrade trigger: once a reworded item is seen rendering twice, write
+        # the item's synthetic id into the row and key on that instead.
+        return f"{item.group(0)} | {_plain_cell(cells[0])}"
     return " | ".join(
-        _MD_LINK_RE.sub(r"\1", cell).replace("`", "").strip()
-        for cell in _row_cells(row)[:len(_SUMMARY_TABLE_COLUMNS) - 1]
+        _plain_cell(cell) for cell in cells[:len(_SUMMARY_TABLE_COLUMNS) - 1]
     )
 
 
@@ -3064,6 +3093,13 @@ def _hand_written_rows(published: str, fresh: str) -> list[HeldRow]:
 
     A row with no Action cell to read is not a hand edit but a row whose shape
     this renderer no longer produces, and re-rendering it is the repair.
+
+    The Action cell is excluded from every form of the key, but that is not all
+    the key is: a row cut out of a top-level comment carries its summary cell
+    too, because the anchor it shares with its siblings cannot tell them apart.
+    A round that rewords such a row's summary therefore presents it as a new
+    row, and the held one carries forward beside it — see the ceiling note on
+    `_summary_row_key`.
     """
     if not published:
         return []

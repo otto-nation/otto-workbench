@@ -228,7 +228,7 @@ if [[ "$stripped" =~ $re_reposcript ]]; then
     # claim a path in whatever tree it belongs to (`/tmp/venv/bin/pip`), so only
     # the multi-component entries match loosely.
     [[ "$path" == ./"$dir"/* || ( "$path" != ./* && "$dir" != bin && "$path" == */"$dir"/* ) ]] || continue
-    block "Use relative path '$dir/${path##*/$dir/}' instead of '$path' — the allow list keys on the repo-root-relative form, so a ./ prefix or an absolute path prompts again in every worktree. See bash.md § Script Invocation."
+    block "Use relative path '$dir/${path##*/"$dir"/}' instead of '$path' — the allow list keys on the repo-root-relative form, so a ./ prefix or an absolute path prompts again in every worktree. See bash.md § Script Invocation."
   done
 fi
 

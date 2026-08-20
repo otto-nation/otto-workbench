@@ -518,6 +518,17 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
+# The root anchor holds for every granted directory, not only the bare `bin` the
+# repo's own nested bin/ directories collide with — a vendored checkout carrying
+# its own ai/claude/bin or git/bin is not the granted one either.
+@test "reposcript hook: leaves a ./ prefixed nested multi-component directory alone" {
+  local dir
+  for dir in ai/claude/bin git/bin bin/local; do
+    run _run_guard "{\"tool_input\":{\"command\":\"./vendor/$dir/otto-log\"}}"
+    [ "$status" -eq 0 ] || { echo "blocked ./vendor/$dir/otto-log: $output"; return 1; }
+  done
+}
+
 @test "reposcript hook: allows the relative form" {
   run _run_guard '{"tool_input":{"command":"bin/local/validate-all"}}'
   [ "$status" -eq 0 ]

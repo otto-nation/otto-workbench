@@ -670,7 +670,7 @@ class CloseoutDebt:
         return self.summary or self.replies or self.deferred_issue
 
     def describe(self) -> str:
-        """Name what is owed — 'summary', '15 replies', or both."""
+        """Name what is owed — 'summary', '15 replies', 'deferred tracking issue', or a mix."""
         parts = []
         if self.summary:
             parts.append("summary")
@@ -681,6 +681,20 @@ class CloseoutDebt:
         if self.deferred_issue:
             parts.append("deferred tracking issue")
         return " + ".join(parts)
+
+
+def closeout_command_for(debt: CloseoutDebt) -> str:
+    """The command that actually drains the given debt.
+
+    The bare CLOSEOUT_COMMAND drains a rendered-but-unsent summary or reply
+    queue, but a deferred tracking issue is only ever filed for threads named
+    by `--track`/`--track-all` — `--track` defaults to selecting nothing, so
+    the bare command would hit that early return and leave the issue unfiled
+    forever. Quote the flag that actually files it whenever that debt is owed.
+    """
+    if debt.deferred_issue:
+        return f"{CLOSEOUT_COMMAND} --track-all"
+    return CLOSEOUT_COMMAND
 
 
 def closeout_debt(f: FixSummary) -> CloseoutDebt:
@@ -720,7 +734,7 @@ def render_fix_status(f: FixSummary) -> list[str]:
         lines[0] += f" (commit: {f.commit_sha}, {f.commit_status})"
     debt = closeout_debt(f)
     if debt.owed:
-        lines.append(f"  ⚠ closeout owed: {debt.describe()} — run: {CLOSEOUT_COMMAND}")
+        lines.append(f"  ⚠ closeout owed: {debt.describe()} — run: {closeout_command_for(debt)}")
     if f.deferred_issue_id:
         lines.append(f"  tracked in {f.deferred_issue_id}")
     return lines

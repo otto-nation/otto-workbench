@@ -594,7 +594,7 @@ def test_render_fix_status_warns_for_a_pending_reply_queue_alone():
 def test_render_fix_status_warns_for_an_unfiled_tracking_issue():
     lines = render_fix_status(_fix_with_closeout(deferred_issue_pending=True))
     assert _closeout_line(lines) == (
-        f"  ⚠ closeout owed: deferred tracking issue — run: {CLOSEOUT_COMMAND}"
+        f"  ⚠ closeout owed: deferred tracking issue — run: {CLOSEOUT_COMMAND} --track-all"
     )
 
 

@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "test": "node --test",
-    "check": "otto-brand-check --css app/global.css --next-config next.config.mjs --src app components",
+    "check": "otto-brand-check --css app/global.css --next-config next.config.mjs --src app",
     "verify": "otto-brand-verify --out out --control py-7"
   },
   "dependencies": {

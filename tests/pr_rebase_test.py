@@ -2493,6 +2493,16 @@ def test_pr_base_branch_reads_the_base_github_reports():
     assert cmd[-2:] == ["--repo", "owner/repo"]
 
 
+def test_pr_base_branch_omits_repo_when_the_context_has_none():
+    """gh infers the repo from the remote — an empty --repo value would not."""
+    ctx = _landed_ctx(repo="")
+
+    with _gh_response('{"baseRefName": "release/1.2"}') as mock_try:
+        assert pr_rebase_cli._pr_base_branch("/fake", ctx) == "release/1.2"
+
+    assert "--repo" not in mock_try.call_args[0][0]
+
+
 def test_pr_base_branch_stays_quiet_without_a_pr_number():
     """Probing by branch name would spend a round trip to learn nothing."""
     with mock.patch.object(pr_rebase_cli, "_try_run") as mock_try:

@@ -363,7 +363,7 @@ The lookup is batched — one `gh pr list` for the whole repo, not one `gh pr vi
 | `branch_pr_states ASSOC_ARRAY_NAME` | fill an associative array branch → state. |
 <!-- LIB-FUNCTIONS:branch_state.sh-END -->
 
-Bash-only — the state map is an associative array returned through a nameref. Sourced directly; depends on `git`, `gh`, and `jq`.
+Bash-only — the state map is an associative array returned through a nameref. Sourced directly; depends on `gh` and `jq`.
 
 ## Registry & Config Modules
 

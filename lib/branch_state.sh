@@ -8,7 +8,7 @@
 # forever. The PR state is the only signal that survives a re-rooted repo.
 #
 # Usage (from scripts that already source lib/ui.sh, or by sourcing this file
-# directly — it depends only on git, gh, and jq):
+# directly — it depends only on gh and jq):
 #   declare -A states
 #   branch_pr_states states || echo "no tracker available"
 #   echo "${states[feat/x]:-}"   # OPEN | MERGED | CLOSED, or empty
@@ -24,22 +24,29 @@ branch_gh_available() {
   gh auth status >/dev/null 2>&1
 }
 
-# _branch_pr_rows — one `branch<TAB>state` row per branch with a PR.
+# _branch_pr_json — the raw PR page, or an empty array when the call fails.
+#
+# Kept separate from the grouping below so the caller can count what the page
+# actually held; once grouped, that count is gone.
+_branch_pr_json() {
+  gh pr list --state all --limit "$_BRANCH_PR_LIMIT" \
+    --json headRefName,state 2>/dev/null || echo '[]'
+}
+
+# _branch_pr_rows JSON — one `branch<TAB>state` row per branch with a PR.
 #
 # A branch can carry several PRs over its life, so the rows are grouped and
 # reduced to the state that decides what may be done to it: an open PR outranks
 # everything, and a merge outranks an unmerged close.
 _branch_pr_rows() {
-  gh pr list --state all --limit "$_BRANCH_PR_LIMIT" \
-    --json headRefName,state 2>/dev/null \
-    | jq -r '
-        group_by(.headRefName)[]
-        | [ .[0].headRefName,
-            (map(.state)
-             | if index("OPEN") then "OPEN"
-               elif index("MERGED") then "MERGED"
-               else "CLOSED" end) ]
-        | @tsv'
+  jq -r '
+    group_by(.headRefName)[]
+    | [ .[0].headRefName,
+        (map(.state)
+         | if index("OPEN") then "OPEN"
+           elif index("MERGED") then "MERGED"
+           else "CLOSED" end) ]
+    | @tsv' <<<"$1"
 }
 
 # branch_pr_states ASSOC_ARRAY_NAME — fill an associative array branch → state.
@@ -56,17 +63,22 @@ branch_pr_states() {
 
   branch_gh_available || return 1
 
-  local branch state rows=0
+  local json
+  json="$(_branch_pr_json)"
+
+  local branch state
   while IFS=$'\t' read -r branch state; do
     [[ -n "$branch" ]] || continue
     __states["$branch"]="$state"
-    rows=$((rows + 1))
-  done < <(_branch_pr_rows)
+  done < <(_branch_pr_rows "$json")
 
-  # Grouping collapses branches, so this can only undercount — a repo at the
-  # limit has PRs that were never read, and a branch whose only PR is missing
-  # looks like a branch with no PR at all.
-  if [[ $rows -ge $_BRANCH_PR_LIMIT ]]; then
+  # Counted before grouping, which collapses a branch's several PRs into one
+  # row and would hide a full page behind a short branch list. A full page means
+  # PRs went unread, and a branch whose only PR was dropped is indistinguishable
+  # from one that never had a PR at all.
+  local fetched
+  fetched="$(jq 'length' <<<"$json")"
+  if [[ $fetched -ge $_BRANCH_PR_LIMIT ]]; then
     echo "warning: PR list hit the ${_BRANCH_PR_LIMIT}-entry limit;" \
          "some branches may be misreported as having no PR" >&2
   fi

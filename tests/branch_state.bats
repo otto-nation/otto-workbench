@@ -200,6 +200,22 @@ JSON
   [[ "$output" == *"hit the 3-entry limit"* ]]
 }
 
+@test "a full page of PRs on one branch still warns" {
+  _BRANCH_PR_LIMIT=3
+  _write_prs <<'JSON'
+[{"headRefName":"feat/retried","state":"CLOSED"},
+ {"headRefName":"feat/retried","state":"CLOSED"},
+ {"headRefName":"feat/retried","state":"MERGED"}]
+JSON
+  declare -A states
+  run branch_pr_states states
+
+  # Grouping leaves one branch, so counting the map would read as 1 of 3 and
+  # stay quiet on a page that was in fact full.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hit the 3-entry limit"* ]]
+}
+
 @test "a list under the page limit warns about nothing" {
   _BRANCH_PR_LIMIT=3
   _write_prs <<'JSON'

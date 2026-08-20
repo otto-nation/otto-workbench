@@ -955,10 +955,18 @@ override:
 | `conflicts_over_budget` | distinct conflicted files across the whole rebase | The count passes `_CONFLICT_FILE_BUDGET` |
 
 `no_merge_base` is exact rather than heuristic, and it costs one local git
-command, so it is asked before the landed signals rather than after them. A repo
-that was re-initialised leaves branches descending from a second root; rebasing
-one replays its entire history onto a base it has nothing in common with, which
-conflicts in every file both roots happen to contain.
+command, so it is asked before the landed signals rather than after them — those
+compare HEAD against a ref an unrelated branch has no relationship to, so they
+answer nothing there. A repo that was re-initialised leaves branches descending
+from a second root; rebasing one replays its entire history onto a base it has
+nothing in common with, which conflicts in every file both roots happen to
+contain.
+
+A ref that does not resolve is not this. `git merge-base` fails identically for a
+typo'd `--onto` and for a base branch the fetch never brought down, so the check
+verifies the ref names a commit first and passes when it does not — refusing
+those as unrelated history would send the operator after a root they do not
+have, where git's own error for the missing ref says what actually went wrong.
 
 The budget is the circuit breaker for what that produces. Conflict resolution is
 an AI call per conflicted file, with edit access to the worktree, and the wider

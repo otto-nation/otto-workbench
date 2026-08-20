@@ -2772,13 +2772,17 @@ def test_git_check_ignores_a_branch_with_no_commits_of_its_own():
     assert _run_git_check(ahead=0, empty_diff=True, upstream=True) is None
 
 
-def _run_unrelated_check(*, merge_base_rc):
+def _run_unrelated_check(*, merge_base_rc, rev_parse_rc=0):
     """Run the unrelated-history check with git's merge-base answer stubbed."""
     def fake_run(cmd, **kwargs):
+        rc = 0
         if cmd[:2] == ["git", "merge-base"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=merge_base_rc,
-                                               stdout="", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+            rc = merge_base_rc
+        elif cmd[:2] == ["git", "rev-parse"]:
+            rc = rev_parse_rc
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=rc, stdout="", stderr="",
+        )
 
     with mock.patch("subprocess.run", side_effect=fake_run):
         return pr_rebase_cli._unrelated_history_check(
@@ -2799,6 +2803,15 @@ def test_unrelated_check_refuses_a_branch_with_no_merge_base():
 
 def test_unrelated_check_passes_a_connected_branch():
     assert _run_unrelated_check(merge_base_rc=0) is None
+
+
+def test_unrelated_check_passes_a_ref_that_does_not_resolve():
+    """A typo'd `--onto` fails merge-base too, and is not unrelated history.
+
+    Refusing it would send the operator after a root they do not have; git's own
+    error for the missing ref is the honest report.
+    """
+    assert _run_unrelated_check(merge_base_rc=1, rev_parse_rc=1) is None
 
 
 def test_refuse_over_budget_aborts_before_refusing(capsys):
@@ -2890,9 +2903,9 @@ def test_refuse_landed_records_the_status_for_the_dashboard():
     assert state.rebase.target_base == _OTHER_TARGET
 
 
-def _run_fresh(*, tracker=None, git=None, force=False, current_branch=_LANDED_BRANCH,
-               target_ref=_TARGET):
-    """Run _fresh with both halves of the preflight forced.
+def _run_fresh(*, tracker=None, git=None, unrelated=None, force=False,
+               current_branch=_LANDED_BRANCH, target_ref=_TARGET):
+    """Run _fresh with every half of the preflight forced.
 
     Returns (exit code, commands run, checkout-seen-by-each-half), the last of
     which is what pins the ordering: the tracker probe must run before the
@@ -2916,6 +2929,8 @@ def _run_fresh(*, tracker=None, git=None, force=False, current_branch=_LANDED_BR
                            side_effect=lambda *_, **kw: record("tracker", tracker)), \
          mock.patch.object(pr_rebase_cli, "_git_landed_check",
                            side_effect=lambda *_, **kw: record("git", git)), \
+         mock.patch.object(pr_rebase_cli, "_unrelated_history_check",
+                           side_effect=lambda *_, **kw: record("unrelated", unrelated)), \
          mock.patch.object(pr_rebase_cli, "_refuse", return_value=4), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
@@ -2972,7 +2987,37 @@ def test_fresh_runs_the_git_signals_after_the_checkout():
     assert saw_checkout["git"] is True
 
 
-def test_fresh_skips_both_halves_of_the_preflight_under_force():
+def test_fresh_refuses_an_unrelated_branch_before_rebasing():
+    """The rebase would replay the branch's whole history onto a foreign root."""
+    report = pr_rebase_cli.RefusalReport(
+        branch=_LANDED_BRANCH, signal=pr_rebase_cli.RefusalSignal.NO_MERGE_BASE.value,
+        detail=f"no commit in common with {_TARGET}",
+        status=pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+    )
+    rc, commands, saw_checkout = _run_fresh(unrelated=report, current_branch="other")
+
+    assert rc == 4
+    # It compares HEAD against the ref, so it means nothing before the checkout.
+    assert saw_checkout["unrelated"] is True
+    assert not any(cmd[:2] == ["git", "rebase"] for cmd in commands)
+
+
+def test_fresh_asks_about_unrelated_history_before_the_git_landed_signals():
+    """The landed signals compare against a ref an unrelated branch cannot answer for."""
+    rc, _, saw_checkout = _run_fresh(
+        unrelated=pr_rebase_cli.RefusalReport(
+            branch=_LANDED_BRANCH,
+            signal=pr_rebase_cli.RefusalSignal.NO_MERGE_BASE.value,
+            detail="no commit in common",
+            status=pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+        ),
+    )
+
+    assert rc == 4
+    assert "git" not in saw_checkout
+
+
+def test_fresh_skips_every_half_of_the_preflight_under_force():
     """--force must not spend a gh round trip only to ignore the answer."""
     ctx = mock.MagicMock()
     ctx.branch = _LANDED_BRANCH
@@ -2981,6 +3026,7 @@ def test_fresh_skips_both_halves_of_the_preflight_under_force():
     with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
          mock.patch.object(pr_rebase_cli, "_tracker_landed_check") as mock_tracker, \
          mock.patch.object(pr_rebase_cli, "_git_landed_check") as mock_git, \
+         mock.patch.object(pr_rebase_cli, "_unrelated_history_check") as mock_unrelated, \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
         pr_rebase_cli._fresh(
@@ -2989,6 +3035,7 @@ def test_fresh_skips_both_halves_of_the_preflight_under_force():
 
     mock_tracker.assert_not_called()
     mock_git.assert_not_called()
+    mock_unrelated.assert_not_called()
 
 
 def test_fresh_rebases_a_landed_branch_under_force():

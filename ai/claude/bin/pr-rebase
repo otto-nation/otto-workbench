@@ -1955,8 +1955,25 @@ def _git_landed_check(
     return None
 
 
+def _ref_exists(cwd: str, ref: str) -> bool:
+    """Whether the ref names a commit in this repo."""
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        capture_output=True, cwd=cwd,
+    ).returncode == 0
+
+
 def _shares_history(cwd: str, *, target_ref: str) -> bool:
-    """Whether HEAD and the target ref have any commit in common."""
+    """Whether HEAD and the target ref have any commit in common.
+
+    A ref that does not resolve counts as shared history rather than unrelated:
+    `git merge-base` fails the same way for a typo'd `--onto` and for a base
+    branch the fetch never brought down, and refusing those as unrelated history
+    sends the operator after a root they do not have. Left to git, the rebase
+    fails with the ref's own error text instead.
+    """
+    if not _ref_exists(cwd, target_ref):
+        return True
     return subprocess.run(
         ["git", "merge-base", target_ref, "HEAD"],
         capture_output=True, cwd=cwd,

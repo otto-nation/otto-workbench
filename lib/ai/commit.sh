@@ -225,6 +225,33 @@ validate_commit_msg() {
   fi
 }
 
+# _footer_key LINE
+# Reduces a declared footer line to a dedup key: the footer type, plus for
+# Not-Breaking the surface entry it names — the reason is dropped.
+#
+# Two footers that declare the same fact must collide even when their reason
+# text differs, which is exactly what happens when the reword's regenerated
+# message earns its own breaking-change footer from the same diff: the
+# model's wording will not match the original's byte for byte, so a whole-line
+# dedup would keep both. Mirrors the slice _declared_keys in
+# bin/local/check-surface-compat computes for Not-Breaking, for the same
+# reason: the entry is the identity, the reason is not.
+_footer_key() {
+  local line="$1" rest
+  if [[ "$line" =~ ^($BREAKING_CHANGE_FOOTER|$BREAKING_CHANGE_FOOTER_ALT):\ .+$ ]]; then
+    printf '%s' "$BREAKING_CHANGE_FOOTER"
+    return
+  fi
+  if [[ "$line" =~ ^$NOT_BREAKING_FOOTER:\ (.+)$ ]]; then
+    rest="${BASH_REMATCH[1]}"
+    if [[ "$rest" =~ ^(.+)[[:space:]](—|–|-+)[[:space:]] ]]; then
+      printf '%s: %s' "$NOT_BREAKING_FOOTER" "${BASH_REMATCH[1]}"
+      return
+    fi
+  fi
+  printf '%s' "$line"
+}
+
 # preserve_declared_footers ORIGINAL_MSG
 # Re-appends to AI_MSG every declaration footer ORIGINAL_MSG carries that the
 # generated message does not already have.
@@ -239,7 +266,7 @@ validate_commit_msg() {
 # argument for a footer over a checked-in allowlist, and a model paraphrases.
 preserve_declared_footers() {
   local original="$1"
-  local footers line
+  local footers line key ai_line ai_key
   local missing=()
   footers=$(declared_footers "$original")
 
@@ -248,6 +275,20 @@ preserve_declared_footers() {
     if printf '%s\n' "$AI_MSG" | grep -qxF "$line"; then
       continue
     fi
+
+    # The regenerated message may already declare the same fact under
+    # different wording (e.g. its own BREAKING CHANGE footer from the same
+    # diff) — drop that copy so the original's human-authored reason is the
+    # only one that survives, not both.
+    key=$(_footer_key "$line")
+    while IFS= read -r ai_line; do
+      [[ -n "$ai_line" ]] || continue
+      ai_key=$(_footer_key "$ai_line")
+      if [[ "$ai_key" == "$key" ]]; then
+        AI_MSG=$(printf '%s\n' "$AI_MSG" | grep -vxF "$ai_line")
+      fi
+    done <<<"$(declared_footers "$AI_MSG")"
+
     missing+=("$line")
   done <<<"$footers"
 

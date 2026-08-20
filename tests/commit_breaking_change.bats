@@ -315,6 +315,34 @@ BREAKING CHANGE: --legacy is gone"
   [ "$occurrences" -eq 1 ]
 }
 
+@test "preserve_declared_footers replaces a regenerated footer for the same declaration" {
+  AI_MSG="feat(cli)!: drop the legacy flag
+
+BREAKING CHANGE: the legacy flag is removed"
+  preserve_declared_footers "feat(cli)!: drop --legacy
+
+BREAKING CHANGE: --legacy no longer exists; pass --modern instead"
+
+  local occurrences
+  occurrences=$(grep -c '^BREAKING CHANGE:' <<<"$AI_MSG")
+  [ "$occurrences" -eq 1 ]
+  [[ "$AI_MSG" == *"BREAKING CHANGE: --legacy no longer exists; pass --modern instead"* ]]
+}
+
+@test "preserve_declared_footers replaces a regenerated Not-Breaking footer for the same entry" {
+  AI_MSG="refactor(cli): rename the beta entry point
+
+Not-Breaking: command:beta — renamed"
+  preserve_declared_footers "refactor(cli): rename beta
+
+Not-Breaking: command:beta — renamed to command:release, alias kept for a cycle"
+
+  local occurrences
+  occurrences=$(grep -c '^Not-Breaking: command:beta' <<<"$AI_MSG")
+  [ "$occurrences" -eq 1 ]
+  [[ "$AI_MSG" == *"Not-Breaking: command:beta — renamed to command:release, alias kept for a cycle"* ]]
+}
+
 @test "preserve_declared_footers carries every footer the original declared" {
   AI_MSG="refactor(cli): tidy the entry points"
   preserve_declared_footers "refactor(cli): tidy entry points

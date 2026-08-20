@@ -393,7 +393,7 @@ Sourced directly by consumers (`generate-tool-context`, `summary.sh`). Not in th
 
 Git convention constants — single source of truth for commit and PR formatting.
 
-Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`, `BREAKING_CHANGE_FOOTER`, `NOT_BREAKING_FOOTER`.
+Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`, `BREAKING_CHANGE_FOOTER`, `BREAKING_CHANGE_FOOTER_ALT`, `NOT_BREAKING_FOOTER`, `BREAKING_FOOTER_RE`, `DECLARED_FOOTER_RE`.
 
 <!-- LIB-FUNCTIONS:conventions.sh-START -->
 | Function | Purpose |

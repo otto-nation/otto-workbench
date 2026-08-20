@@ -1797,6 +1797,26 @@ def test_review_list_does_not_read_the_version_as_a_pr_target(reviews_dir, capsy
     assert doc["reviews"][0]["pr_number"] == 42
 
 
+def test_review_list_records_no_trail(reviews_dir, capsys):
+    """The two records a dispatch writes cost more than the listing itself, and
+    they land in the file every `otto-log` query then reads. A query that
+    resolves no subject and takes no lock is not an action a trail is for."""
+    _a_review(reviews_dir)
+    assert _run_main("review", "--list", "--schema-version", "1") in (None, 0)
+    assert json.loads(capsys.readouterr().out)["reviews"]
+    assert not workbench_paths.trail_dir().exists()
+
+
+def test_only_the_listing_is_exempt_from_the_trail():
+    """The trail is unconditional apart from one hole, and the hole is declared
+    by the same three axes as everything else — no command carries a trail
+    opt-out of its own for someone to add themselves to."""
+    for name, entry in pr_cli._COMMANDS.items():
+        assert pr_cli._need_for(entry, []).records_a_trail, name
+    listing = pr_cli._need_for(pr_cli._COMMANDS["review"], ["--list"])
+    assert not listing.records_a_trail
+
+
 def test_review_list_carries_no_review_content(reviews_dir, capsys):
     """A consumer polling on an interval would otherwise carry every review's
     full text on every tick."""

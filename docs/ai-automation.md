@@ -819,10 +819,26 @@ from a directory that is not a git repository at all. `--pr` does not escalate
 it: there is no target for a PR number to name at that depth, so honouring one
 would spend a `gh` call on a value the handler never reads.
 
+`review --list` is also the one invocation that writes no trail at all. Resolving
+nothing and holding no lock is the shape of a query rather than of an action, and
+the listing exists to be polled: the two records a dispatch writes cost more than
+the query itself, and they land in the file every `otto-log` query then reads. The
+exemption is read off the same three axes as everything else — `Need` carries no
+trail flag of its own for a command to add itself to.
+
 Every script's trail goes to one root — `~/.local/state/workbench/trail/YYYY-MM.jsonl`,
 one file per month. `otto-log recent --repo <org/repo>` narrows it to one repo;
 `otto-log query --pr <n>` finds every record for one PR, including the terminal
 `pr_outcome` event `pr gc` writes when the PR merges or closes.
+
+The root keeps six months, counting the month in progress (`TRAIL_KEEP_MONTHS` in
+[`ai/lib/trail.py`](../ai/lib/trail.py)). Every trail drops what falls outside the
+horizon as it opens, so growth is bounded whatever writes to the root, and
+`otto-log prune --keep <n>` sweeps at a horizon you name when a machine is short
+of space. A file whose stem is not a month — `legacy.jsonl`, where the cutover
+migration parked the pre-cutover history — is never dropped: its name cannot
+place it in time, and nothing appends to it, so it is a fixed size rather than a
+source of growth.
 
 ### Drafts, and what it takes to publish
 

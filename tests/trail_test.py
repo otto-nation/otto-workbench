@@ -16,11 +16,34 @@ from trail import (
     FINISH_ACTION,
     INVOCATION_HEX_WIDTH,
     SCHEMA_VERSION,
+    TRAIL_KEEP_MONTHS,
     EventType,
     Level,
     Trail,
     add_trail_args,
+    prune_trail,
 )
+
+
+def _months_ago(n: int) -> str:
+    """The stem of the month *n* months before this one.
+
+    Walked back a month at a time from the first of this one, so the test does
+    not restate the arithmetic it is checking.
+    """
+    day = datetime.now(timezone.utc).replace(day=1)
+    for _ in range(n):
+        day = (day - timedelta(days=1)).replace(day=1)
+    return day.strftime("%Y-%m")
+
+
+def _seed_month(stem: str) -> Path:
+    """A trail file for one month, holding one record."""
+    root = workbench_paths.trail_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{stem}.jsonl"
+    path.write_text('{"action":"old"}\n')
+    return path
 
 
 def _read_events() -> list[dict]:
@@ -97,6 +120,81 @@ class TestTrailRoot:
         subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         Trail.start(script="pr", context={}).finish()
         assert not (tmp_path / ".gitignore").exists()
+
+
+class TestTrailRetention:
+    def test_a_month_past_the_horizon_goes_as_a_trail_opens(self):
+        """The sweep is the trail's own, not a chore anyone has to run: a root
+        nobody prunes grows without bound under a writer that is polled."""
+        stale = _seed_month(_months_ago(TRAIL_KEEP_MONTHS))
+        kept = _seed_month(_months_ago(TRAIL_KEEP_MONTHS - 1))
+
+        Trail.start(script="test", context={}).finish()
+
+        assert not stale.exists()
+        assert kept.is_file()
+
+    def test_the_month_being_written_survives_any_horizon(self):
+        """A horizon that excluded the current month would delete the records
+        of the invocation doing the deleting."""
+        Trail.start(script="test", context={}).finish()
+        current = workbench_paths.trail_dir() / f"{_months_ago(0)}.jsonl"
+        assert current.is_file()
+
+        assert prune_trail(0) == []
+
+        assert current.is_file()
+
+    def test_a_stem_that_names_no_month_is_never_dropped(self):
+        """`legacy.jsonl` cannot be placed in time by its name, and nothing
+        appends to it — a fixed size, not a source of growth."""
+        root = workbench_paths.trail_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        legacy = root / "legacy.jsonl"
+        legacy.write_text('{"action":"pre-cutover"}\n')
+
+        assert prune_trail(1) == []
+
+        assert legacy.is_file()
+
+    def test_prune_reports_every_month_it_dropped(self):
+        older = _seed_month(_months_ago(TRAIL_KEEP_MONTHS + 1))
+        newer = _seed_month(_months_ago(TRAIL_KEEP_MONTHS))
+
+        assert [p.name for p in prune_trail()] == [older.name, newer.name]
+
+    def test_prune_without_a_root_yet_is_not_an_error(self):
+        assert prune_trail() == []
+        assert not workbench_paths.trail_dir().exists()
+
+
+class TestUnrecordedTrail:
+    def test_it_writes_nothing(self):
+        trail = Trail.start(script="test", context={}, record=False)
+        trail.info("read", "answered from the state root")
+        trail.finish()
+        assert _read_events() == []
+
+    def test_it_creates_no_root(self):
+        Trail.start(script="test", context={}, record=False).finish()
+        assert not workbench_paths.trail_dir().exists()
+
+    def test_it_sweeps_nothing(self):
+        """A run that writes no history has no business deleting any."""
+        stale = _seed_month(_months_ago(TRAIL_KEEP_MONTHS))
+
+        Trail.start(script="test", context={}, record=False).finish()
+
+        assert stale.is_file()
+
+    def test_debug_still_echoes(self, capsys):
+        """The flag is about watching what a run decided, which does not depend
+        on whether the decision was worth keeping."""
+        trail = Trail.start(script="test", context={}, debug=True, record=False)
+        trail.info("fetch", "fetched items")
+        trail.finish()
+        assert "[trail]" in capsys.readouterr().err
+        assert _read_events() == []
 
 
 class TestTrailEvents:

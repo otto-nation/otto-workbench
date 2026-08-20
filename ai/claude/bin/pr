@@ -82,6 +82,24 @@ class Need:
     update: bool
     lock: bool
 
+    @property
+    def records_a_trail(self) -> bool:
+        """Whether this invocation is one the audit trail is for.
+
+        Resolving nothing and holding no lock is the shape of a query: it names
+        no repo, PR, or branch to record the run against, and nothing it does
+        is unsafe alongside another run, because it reads the state root and
+        prints. There is no action to trace afterwards.
+
+        The trail is otherwise unconditional, and this is the one hole in it
+        because the listing is built to be polled. Two records a tick is more
+        expensive than the query itself, and it lands in the file every
+        `otto-log` query then has to read — see `trail.TRAIL_KEEP_MONTHS`,
+        which bounds that file for the writers this does not cover.
+        """
+        resolves_nothing = self.depth is pr_context.ContextDepth.NONE
+        return self.lock or not resolves_nothing
+
 
 _NONE = pr_context.ContextDepth.NONE
 _LOCAL = pr_context.ContextDepth.LOCAL
@@ -926,6 +944,7 @@ def _reject_a_target_that_resolves_to_nothing(
 
 
 def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_args, *,
+              need: Need,
               original_pr: str | None,
               original_branch: str | None) -> int:
     """Start the trail and route to the command's handler or backing script."""
@@ -933,6 +952,7 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
         script=SCRIPT,
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=getattr(global_args, "debug", False),
+        record=need.records_a_trail,
     )
     try:
         trail.decision(
@@ -1067,6 +1087,7 @@ def main():
         )
         with lock:
             sys.exit(_dispatch(args, ctx, extra, global_args,
+                               need=need,
                                original_pr=original_pr,
                                original_branch=original_branch))
     except run_lock.LockBusy as exc:

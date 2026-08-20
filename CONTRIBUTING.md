@@ -96,7 +96,9 @@ The migration framework is this repo's compatibility mechanism for on-disk chang
 
 Put the footer in the **commit body**:
 
-    BREAKING CHANGE: `pr review --post` renamed to `--publish`
+```
+BREAKING CHANGE: `pr review --post` renamed to `--publish`
+```
 
 `BREAKING-CHANGE:` (hyphenated) means exactly the same thing — Conventional Commits
 v1.0.0 lists it as a synonym, release-please honours it, and so does the gate.
@@ -153,7 +155,7 @@ fails, telling you to run the generator by hand. So on the *first* commit after
 a removal, the working-tree snapshot still lists the old entry and the gate has
 nothing to report; the hint only appears once the snapshot is caught up.
 
-### One caveat
+### Commits that touch both packages
 
 A single commit touching both packages majors **both**: release-please has no
 per-package footer syntax. Split the commit if you only mean to break one.

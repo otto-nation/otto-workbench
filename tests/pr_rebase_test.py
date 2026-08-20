@@ -1841,6 +1841,71 @@ def test_step_conflicts_records_stale_files():
     assert tally.stale == ["pnpm-lock.yaml"]
 
 
+def _run_step_over_budget(*, force=False, already=None, conflicts=None):
+    """Run one conflicted step with a tally already near the file budget."""
+    over = pr_rebase_cli._CONFLICT_FILE_BUDGET + 1
+    tally = pr_rebase_cli.ResolutionTally(
+        files=already if already is not None else [f"f{i}.py" for i in range(over)],
+    )
+    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         mock.patch.object(pr_rebase_cli, "_refuse_over_budget", return_value=4) as refuse, \
+         mock.patch.object(
+             pr_rebase_cli, "_resolve_file_conflicts",
+             return_value=pr_rebase_cli.Resolution(files=["late.py"]),
+         ) as resolve, \
+         mock.patch.object(pr_rebase_cli, "_rebase_head_info", return_value=("abc", "s")), \
+         mock.patch.object(pr_rebase_cli, "_remaining_rebase_commits", return_value=1), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+             args=[], returncode=0, stdout="", stderr="")):
+        mock_ai.is_available.return_value = True
+        rc = pr_rebase_cli._step_conflicts(
+            "/fake", mock.MagicMock(), pr_rebase_cli.RunMode.FIX,
+            conflicts if conflicts is not None else ["late.py"], tally,
+            target_ref=_TARGET, force=force,
+        )
+    return rc, refuse, resolve
+
+
+def test_step_conflicts_refuses_past_the_file_budget():
+    """A rebase conflicting across too many files stops instead of resolving.
+
+    Resolving dozens of files unattended is how a rebase rewrites a file the
+    branch never touched — the spread is the signal that the branch and its
+    base have diverged past what automatic resolution should attempt.
+    """
+    rc, refuse, resolve = _run_step_over_budget()
+
+    assert rc == 4
+    resolve.assert_not_called()
+    assert refuse.call_args[0][2] == pr_rebase_cli._CONFLICT_FILE_BUDGET + 2
+
+
+def test_step_conflicts_counts_distinct_files_not_conflicts():
+    """A file conflicting in several replayed commits counts once."""
+    repeated = ["same.py"] * (pr_rebase_cli._CONFLICT_FILE_BUDGET + 5)
+    rc, refuse, resolve = _run_step_over_budget(already=repeated, conflicts=["same.py"])
+
+    assert rc is None
+    refuse.assert_not_called()
+    assert resolve.called
+
+
+def test_step_conflicts_budget_is_waived_by_force():
+    rc, refuse, resolve = _run_step_over_budget(force=True)
+
+    assert rc is None
+    refuse.assert_not_called()
+    assert resolve.called
+
+
+def test_step_conflicts_under_the_budget_resolves():
+    rc, refuse, resolve = _run_step_over_budget(already=["a.py"], conflicts=["b.py"])
+
+    assert rc is None
+    refuse.assert_not_called()
+    assert resolve.called
+
+
 def test_rebase_success_emits_stale_files():
     """Stale files reach both the emitted JSON and the persisted state."""
     ctx = mock.MagicMock()
@@ -2102,7 +2167,7 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
 
     assert result == 0
     mock_drive.assert_called_once_with(
-        "/fake", ctx, pr_rebase_cli.RunMode.FIX, target_ref=_TARGET,
+        "/fake", ctx, pr_rebase_cli.RunMode.FIX, target_ref=_TARGET, force=False,
     )
 
 
@@ -2636,7 +2701,7 @@ def test_tracker_check_reports_a_merged_pr():
         pr_rebase_cli.MergedPR(number=_LANDED_PR, url=_LANDED_URL),
     )
 
-    assert report.signal == pr_rebase_cli.LandedSignal.PR_MERGED.value
+    assert report.signal == pr_rebase_cli.RefusalSignal.PR_MERGED.value
     assert report.pr_number == _LANDED_PR
     assert report.detail == f"PR #{_LANDED_PR} is merged ({_LANDED_URL})"
 
@@ -2681,7 +2746,7 @@ def test_git_check_catches_a_squash_merge_by_empty_diff():
     """The squash-merge case: the commits are unreachable, the tree matches."""
     report = _run_git_check(empty_diff=True)
 
-    assert report.signal == pr_rebase_cli.LandedSignal.EMPTY_DIFF.value
+    assert report.signal == pr_rebase_cli.RefusalSignal.EMPTY_DIFF.value
     assert report.pr_number is None
     assert report.commits_ahead == 3
 
@@ -2689,7 +2754,7 @@ def test_git_check_catches_a_squash_merge_by_empty_diff():
 def test_git_check_catches_a_rebase_merge_by_patch_id():
     report = _run_git_check(upstream=True)
 
-    assert report.signal == pr_rebase_cli.LandedSignal.COMMITS_UPSTREAM.value
+    assert report.signal == pr_rebase_cli.RefusalSignal.COMMITS_UPSTREAM.value
     assert report.commits_ahead == 3
 
 
@@ -2707,15 +2772,93 @@ def test_git_check_ignores_a_branch_with_no_commits_of_its_own():
     assert _run_git_check(ahead=0, empty_diff=True, upstream=True) is None
 
 
+def _run_unrelated_check(*, merge_base_rc, rev_parse_rc=0):
+    """Run the unrelated-history check with git's merge-base answer stubbed."""
+    def fake_run(cmd, **kwargs):
+        rc = 0
+        if cmd[:2] == ["git", "merge-base"]:
+            rc = merge_base_rc
+        elif cmd[:2] == ["git", "rev-parse"]:
+            rc = rev_parse_rc
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=rc, stdout="", stderr="",
+        )
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        return pr_rebase_cli._unrelated_history_check(
+            "/fake", _landed_ctx(), target_ref=_TARGET,
+        )
+
+
+def test_unrelated_check_refuses_a_branch_with_no_merge_base():
+    """A branch cut from a different root would replay its whole history."""
+    report = _run_unrelated_check(merge_base_rc=1)
+
+    assert report.signal == pr_rebase_cli.RefusalSignal.NO_MERGE_BASE.value
+    assert report.status == pr_state.RebaseStatus.UNRELATED_HISTORY.value
+    assert _TARGET in report.detail
+    # No merge base means no meaningful "ahead of" count to report.
+    assert report.commits_ahead is None
+
+
+def test_unrelated_check_passes_a_connected_branch():
+    assert _run_unrelated_check(merge_base_rc=0) is None
+
+
+def test_unrelated_check_passes_a_ref_that_does_not_resolve():
+    """A typo'd `--onto` fails merge-base too, and is not unrelated history.
+
+    Refusing it would send the operator after a root they do not have; git's own
+    error for the missing ref is the honest report.
+    """
+    assert _run_unrelated_check(merge_base_rc=1, rev_parse_rc=1) is None
+
+
+def test_refuse_over_budget_aborts_before_refusing(capsys):
+    """The refusal restores the branch — it does not leave a rebase in progress."""
+    ctx = _landed_ctx()
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None):
+        rc = pr_rebase_cli._refuse_over_budget("/fake", ctx, 35, target_ref=_TARGET)
+
+    assert rc == 4
+    assert ["git", "rebase", "--abort"] in commands
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["signal"] == pr_rebase_cli.RefusalSignal.CONFLICTS_OVER_BUDGET.value
+    assert payload["status"] == pr_state.RebaseStatus.CONFLICTS_OVER_BUDGET.value
+    assert payload["override"] == "--force"
+    assert "35" in payload["detail"]
+
+
+def test_refuse_renders_the_hint_for_every_refusal_status():
+    """Every status a refusal can carry has an explanation to print.
+
+    `_refuse` indexes the hint table by status, so a status added without a row
+    raises rather than printing nothing — this pins that they stay in step.
+    """
+    statuses = {
+        pr_state.RebaseStatus.ALREADY_LANDED.value,
+        pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+        pr_state.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
+    }
+    assert set(pr_rebase_cli._REFUSAL_HINTS) == statuses
+
+
 def test_refuse_landed_emits_the_exit_4_payload(capsys):
     ctx = _landed_ctx()
-    report = pr_rebase_cli.LandedReport(
+    report = pr_rebase_cli.RefusalReport(
         branch=_LANDED_BRANCH, signal="pr_merged",
         detail=f"PR #{_LANDED_PR} is merged", commits_ahead=18, pr_number=_LANDED_PR,
     )
 
     with mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None):
-        rc = pr_rebase_cli._refuse_landed(ctx, report, target_ref=_TARGET)
+        rc = pr_rebase_cli._refuse(ctx, report, target_ref=_TARGET)
 
     captured = capsys.readouterr()
     assert rc == 4
@@ -2730,13 +2873,13 @@ def test_refuse_landed_emits_the_exit_4_payload(capsys):
 
 def test_refuse_landed_keeps_every_documented_key_when_unmeasured(capsys):
     """SKILL.md documents the key set — the tracker path nulls, never drops."""
-    report = pr_rebase_cli.LandedReport(
+    report = pr_rebase_cli.RefusalReport(
         branch=_LANDED_BRANCH, signal="pr_merged",
         detail=f"PR #{_LANDED_PR} is merged", pr_number=_LANDED_PR,
     )
 
     with mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None):
-        pr_rebase_cli._refuse_landed(_landed_ctx(), report, target_ref=_TARGET)
+        pr_rebase_cli._refuse(_landed_ctx(), report, target_ref=_TARGET)
 
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {
@@ -2748,21 +2891,21 @@ def test_refuse_landed_keeps_every_documented_key_when_unmeasured(capsys):
 
 def test_refuse_landed_records_the_status_for_the_dashboard():
     ctx = _landed_ctx()
-    report = pr_rebase_cli.LandedReport(
+    report = pr_rebase_cli.RefusalReport(
         branch=_LANDED_BRANCH, signal="empty_diff", detail="no diff", commits_ahead=2,
     )
 
     with mock.patch.object(pr_rebase_cli, "_emit_json"):
-        pr_rebase_cli._refuse_landed(ctx, report, target_ref=_OTHER_TARGET)
+        pr_rebase_cli._refuse(ctx, report, target_ref=_OTHER_TARGET)
 
     state = pr_state.load_state(ctx.target_dir)
     assert state.rebase.status == pr_state.RebaseStatus.ALREADY_LANDED.value
     assert state.rebase.target_base == _OTHER_TARGET
 
 
-def _run_fresh(*, tracker=None, git=None, force=False, current_branch=_LANDED_BRANCH,
-               target_ref=_TARGET):
-    """Run _fresh with both halves of the preflight forced.
+def _run_fresh(*, tracker=None, git=None, unrelated=None, force=False,
+               current_branch=_LANDED_BRANCH, target_ref=_TARGET):
+    """Run _fresh with every half of the preflight forced.
 
     Returns (exit code, commands run, checkout-seen-by-each-half), the last of
     which is what pins the ordering: the tracker probe must run before the
@@ -2786,7 +2929,9 @@ def _run_fresh(*, tracker=None, git=None, force=False, current_branch=_LANDED_BR
                            side_effect=lambda *_, **kw: record("tracker", tracker)), \
          mock.patch.object(pr_rebase_cli, "_git_landed_check",
                            side_effect=lambda *_, **kw: record("git", git)), \
-         mock.patch.object(pr_rebase_cli, "_refuse_landed", return_value=4), \
+         mock.patch.object(pr_rebase_cli, "_unrelated_history_check",
+                           side_effect=lambda *_, **kw: record("unrelated", unrelated)), \
+         mock.patch.object(pr_rebase_cli, "_refuse", return_value=4), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
         rc = pr_rebase_cli._fresh(
@@ -2797,7 +2942,7 @@ def _run_fresh(*, tracker=None, git=None, force=False, current_branch=_LANDED_BR
 
 
 def _landed_report(signal="pr_merged"):
-    return pr_rebase_cli.LandedReport(
+    return pr_rebase_cli.RefusalReport(
         branch=_LANDED_BRANCH, signal=signal,
         detail=f"PR #{_LANDED_PR} is merged", pr_number=_LANDED_PR,
     )
@@ -2842,7 +2987,37 @@ def test_fresh_runs_the_git_signals_after_the_checkout():
     assert saw_checkout["git"] is True
 
 
-def test_fresh_skips_both_halves_of_the_preflight_under_force():
+def test_fresh_refuses_an_unrelated_branch_before_rebasing():
+    """The rebase would replay the branch's whole history onto a foreign root."""
+    report = pr_rebase_cli.RefusalReport(
+        branch=_LANDED_BRANCH, signal=pr_rebase_cli.RefusalSignal.NO_MERGE_BASE.value,
+        detail=f"no commit in common with {_TARGET}",
+        status=pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+    )
+    rc, commands, saw_checkout = _run_fresh(unrelated=report, current_branch="other")
+
+    assert rc == 4
+    # It compares HEAD against the ref, so it means nothing before the checkout.
+    assert saw_checkout["unrelated"] is True
+    assert not any(cmd[:2] == ["git", "rebase"] for cmd in commands)
+
+
+def test_fresh_asks_about_unrelated_history_before_the_git_landed_signals():
+    """The landed signals compare against a ref an unrelated branch cannot answer for."""
+    rc, _, saw_checkout = _run_fresh(
+        unrelated=pr_rebase_cli.RefusalReport(
+            branch=_LANDED_BRANCH,
+            signal=pr_rebase_cli.RefusalSignal.NO_MERGE_BASE.value,
+            detail="no commit in common",
+            status=pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+        ),
+    )
+
+    assert rc == 4
+    assert "git" not in saw_checkout
+
+
+def test_fresh_skips_every_half_of_the_preflight_under_force():
     """--force must not spend a gh round trip only to ignore the answer."""
     ctx = mock.MagicMock()
     ctx.branch = _LANDED_BRANCH
@@ -2851,6 +3026,7 @@ def test_fresh_skips_both_halves_of_the_preflight_under_force():
     with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
          mock.patch.object(pr_rebase_cli, "_tracker_landed_check") as mock_tracker, \
          mock.patch.object(pr_rebase_cli, "_git_landed_check") as mock_git, \
+         mock.patch.object(pr_rebase_cli, "_unrelated_history_check") as mock_unrelated, \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
         pr_rebase_cli._fresh(
@@ -2859,6 +3035,7 @@ def test_fresh_skips_both_halves_of_the_preflight_under_force():
 
     mock_tracker.assert_not_called()
     mock_git.assert_not_called()
+    mock_unrelated.assert_not_called()
 
 
 def test_fresh_rebases_a_landed_branch_under_force():
@@ -2900,7 +3077,7 @@ def test_fresh_falls_back_to_the_git_signals_when_the_tracker_is_unreachable():
          mock.patch.object(pr_rebase_cli, "_try_run", return_value=None), \
          mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=2), \
          mock.patch.object(pr_rebase_cli, "_diff_is_empty", return_value=True), \
-         mock.patch.object(pr_rebase_cli, "_refuse_landed",
+         mock.patch.object(pr_rebase_cli, "_refuse",
                            side_effect=lambda c, r, **kw: (seen.append(r), 4)[1]), \
          mock.patch.object(pr_rebase_cli, "_detect_rebase_in_progress", return_value=False), \
          mock.patch.object(pr_rebase_cli, "_rebase_success", return_value=0):
@@ -2909,7 +3086,7 @@ def test_fresh_falls_back_to_the_git_signals_when_the_tracker_is_unreachable():
         )
 
     assert rc == 4
-    assert seen[0].signal == pr_rebase_cli.LandedSignal.EMPTY_DIFF.value
+    assert seen[0].signal == pr_rebase_cli.RefusalSignal.EMPTY_DIFF.value
 
 
 def _merged_and_deleted_remote(tmp_path) -> Path:
@@ -2972,7 +3149,7 @@ def test_fresh_refuses_a_merged_branch_whose_remote_was_pruned(tmp_path, capsys)
 
     captured = capsys.readouterr()
     assert rc == 4
-    assert json.loads(captured.out)["signal"] == pr_rebase_cli.LandedSignal.PR_MERGED.value
+    assert json.loads(captured.out)["signal"] == pr_rebase_cli.RefusalSignal.PR_MERGED.value
     assert "Cannot checkout" not in captured.err
     # The prune really happened, so the old order really would have failed here.
     refs = subprocess.run(["git", "-C", str(work), "branch", "-r"],
@@ -2989,7 +3166,7 @@ def _tool_schema(capsys) -> dict:
 
 def test_landed_exit_code_is_published_as_a_reportable_outcome(capsys):
     """The MCP layer renders any code outside ok_exit_codes as a tool error."""
-    assert pr_rebase_cli._LANDED_EXIT in _tool_schema(capsys)["ok_exit_codes"]
+    assert pr_rebase_cli._REFUSAL_EXIT in _tool_schema(capsys)["ok_exit_codes"]
 
 
 def test_force_is_published_in_the_input_schema(capsys):

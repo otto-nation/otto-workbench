@@ -828,6 +828,58 @@ def test_resolve_at_remote_always_takes_the_deep_rung(monkeypatch):
     assert pr_context.resolve_at(pr_context.ContextDepth.REMOTE).pr_number == 42
 
 
+def test_resolve_at_none_resolves_nothing(monkeypatch):
+    """NONE is not "resolve less" — there is nothing to resolve. A command at
+    this depth answers from the state root, so neither rung may be reached."""
+    monkeypatch.setattr(pr_context, "resolve_local",
+                        lambda **kw: pytest.fail("NONE must resolve nothing"))
+    monkeypatch.setattr(pr_context, "resolve",
+                        lambda **kw: pytest.fail("NONE must resolve nothing"))
+
+    ctx = pr_context.resolve_at(pr_context.ContextDepth.NONE)
+
+    assert ctx.repo == ""
+    assert ctx.branch == ""
+    assert ctx.pr_number is None
+    assert ctx.worktree_root is None
+    assert ctx.head_sha == ""
+
+
+def test_resolve_at_none_is_not_escalated_by_an_explicit_pr(monkeypatch):
+    """There is no target for a PR number to name at this depth, so honouring
+    one would spend a `gh` call on a value the handler never reads — and a
+    command declared read-only would hit the network for a flag passed by
+    habit."""
+    monkeypatch.setattr(pr_context, "resolve",
+                        lambda **kw: pytest.fail("NONE must not escalate"))
+
+    assert pr_context.resolve_at(
+        pr_context.ContextDepth.NONE, pr="42",
+    ).pr_number is None
+
+
+def test_an_unresolved_context_has_no_usable_target(tmp_path):
+    """A handler that reads the target despite declaring it needed nothing
+    fails at its first open, rather than writing a run's bookkeeping wherever
+    the caller happened to be standing."""
+    target = pr_context.ResolvedContext.unresolved().target_dir
+
+    assert target != Path("")
+    with pytest.raises(OSError):
+        (target / "state.json").write_text("{}")
+
+
+def test_resolve_at_none_works_outside_a_git_repository(monkeypatch, tmp_path):
+    """The rung LOCAL cannot serve: `pr review --list` answers from the user's
+    own state root, wherever it is run."""
+    monkeypatch.chdir(tmp_path)
+    calls = _recorded_runs(monkeypatch)
+
+    pr_context.resolve_at(pr_context.ContextDepth.NONE)
+
+    assert calls == []
+
+
 # ── Repo detection ─────────────────────────────────────────────────────────
 
 

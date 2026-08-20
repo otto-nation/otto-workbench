@@ -1,10 +1,10 @@
 """Where a run's bookkeeping lives, keyed by what the run targets.
 
 A run's target is ``(origin repo key, target branch)``. Both components are
-readable from a checkout with no network call, which is what lets three
-different readers agree on one directory: the ``pr`` CLI resolving a PR it is
-about to review, ``workbench-statusline`` rendering a prompt, and ui-code's
-server watching a repo it has never checked out.
+readable from a checkout with no network call, which is what lets the readers in
+this repo agree on one directory without one of them having to ask the network:
+the ``pr`` CLI resolving a PR it is about to review, and ``workbench-statusline``
+rendering a prompt.
 
 Two repos that share a repo key share one ``state.json`` and one ``run.lock``:
 one run overwrites the other's state and serializes behind its lock, which is
@@ -21,8 +21,8 @@ The digest makes two different repos impossible to confuse. The readable part is
 there only so a human reading ``pr/`` can tell which directory is which, which
 frees it to be as lossy as flattening a path into one component requires.
 
-The rule, in one paragraph because ui-code has to mirror it and a rule that is
-hard to restate is itself a defect:
+The rule, in one paragraph because every reader here has to agree on it and a
+rule that is hard to restate is itself a defect:
 
     Take the remote's **path**: for a remote that names a host (an explicit
     ``scheme://authority``, or scp-style ``host:path``), the path below the
@@ -82,7 +82,7 @@ There is deliberately no second key format. An alternate PR-number key would be
 a second source of truth for one target, and a transient ``gh`` failure could
 move a live target between the two mid-flight.
 
-The layout is a published interface — ui-code reimplements it in TypeScript::
+The layout, which is this repo's own and is not reimplemented anywhere else::
 
     <state_dir()>/pr/<repo-key>-<branch-slug>/
         state.json
@@ -107,8 +107,8 @@ import workbench_paths
 
 TARGETS_DIR = "pr"
 
-# Runs of anything outside this set collapse to one dash. ui-code mirrors this
-# exactly; tests/pr_target_test.py::SLUG_VECTORS is the shared fixture.
+# Runs of anything outside this set collapse to one dash.
+# tests/pr_target_test.py::SLUG_VECTORS is the fixture.
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 # "acme//widget" is "acme/widget": git accepts the doubled separator and clones

@@ -1,8 +1,9 @@
 """Tests for the run-target path contract.
 
-SLUG_VECTORS and REPO_KEY_VECTORS are cross-repo fixtures: ui-code's TypeScript
-mirror asserts against the same tables. Changing a row changes where live runs
-look for their own state, in a repo whose tests cannot see this one.
+SLUG_VECTORS and REPO_KEY_VECTORS are this repo's own expectations of
+`pr_target`, not a table another repo asserts against. Changing a row still
+changes where live runs look for their own state, so a row is edited to fix a
+bug in the rule, never to make a failing test pass.
 """
 
 import os
@@ -20,10 +21,10 @@ import pytest
 import pr_target
 
 
-# Cross-repo fixture. ui-code reimplements slug() in TypeScript and asserts
-# against this same table; nothing in this repo's CI can see that side, so a row
-# edited here drifts silently until a live run looks for state in a directory the
-# other implementation never writes. Change a row only together with ui-code.
+# The slug rule's expectations, spelled out rather than recomputed, so a change
+# to slug() has to be argued for against a table a human can read: an existing
+# run's state lives at the directory the old rule produced, and a row edited to
+# match new behaviour strands it there.
 SLUG_VECTORS = [
     ("main", "main"),
     ("isaac/fix/target_scoped_run_lock", "isaac-fix-target_scoped_run_lock"),

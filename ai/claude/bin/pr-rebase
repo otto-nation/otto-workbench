@@ -2134,6 +2134,26 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str) -> i
     return 0
 
 
+def _resume_target_ref(ctx: pr_context.ResolvedContext, target_ref: str) -> str:
+    """The ref an in-progress rebase is actually replaying onto.
+
+    A resume continues the rebase a prior run started, so it names the ref that
+    run recorded rather than whatever this run resolved — the PR's base branch
+    can change on GitHub between the two, and the commits are already being
+    replayed onto the original.
+    """
+    recorded = _recorded_target_base(ctx)
+    if not recorded or recorded == target_ref:
+        return target_ref
+    if _trail:
+        _trail.decision(
+            "target_ref", f"resuming onto recorded {recorded}",
+            reason=f"in-progress rebase was started against {recorded}, "
+                   f"not this run's resolved {target_ref}",
+        )
+    return recorded
+
+
 def cmd_start(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str,
@@ -2144,15 +2164,7 @@ def cmd_start(
     runs: a resumed one is already past the point the refusal protects.
     """
     if _detect_rebase_in_progress(cwd):
-        recorded = _recorded_target_base(ctx)
-        if recorded and recorded != target_ref:
-            if _trail:
-                _trail.decision(
-                    "target_ref", f"resuming onto recorded {recorded}",
-                    reason=f"in-progress rebase was started against {recorded}, "
-                           f"not this run's resolved {target_ref}",
-                )
-            target_ref = recorded
+        target_ref = _resume_target_ref(ctx, target_ref)
         if _trail:
             _trail.decision(
                 "rebase_state",

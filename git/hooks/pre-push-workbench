@@ -104,7 +104,11 @@ _run_step "Validating conventions"     "$REPO_ROOT/bin/local/validate-all" --qui
 # fail at the push itself a moment later, and it is not this step's job to be
 # the one that says so. A failed fetch leaves the previous origin/main in
 # place, which is what the gate would have used anyway.
-git -C "$REPO_ROOT" fetch --quiet origin main 2>/dev/null || true
+#
+# GIT_TERMINAL_PROMPT=0: an expired HTTPS credential turns "fails a moment
+# later" into "hangs on a prompt" — the flag makes git fail the same way a
+# clean network error would instead of blocking on input nothing will answer.
+GIT_TERMINAL_PROMPT=0 git -C "$REPO_ROOT" fetch --quiet origin main 2>/dev/null || true
 
 _run_step "Checking surface compatibility" "$REPO_ROOT/bin/local/check-surface-compat" --quiet
 

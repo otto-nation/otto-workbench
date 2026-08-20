@@ -103,6 +103,15 @@ after'
   [[ "$output" == *"last with no newline"* ]]
 }
 
+@test "aborts and writes nothing when a generator exits non-zero" {
+  _stub bin/gen 'printf "before\n"; exit 3'
+  _src page '<!-- include: bin/gen -->'
+
+  run _compose --quiet
+  [ "$status" -eq 3 ]
+  [ ! -f "$ROOT/docs/page.md" ]
+}
+
 @test "a generator cannot read the document it is included from" {
   _stub bin/greedy 'cat; printf "swallowed\n"'
   _src page 'first

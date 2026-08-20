@@ -30,6 +30,7 @@ from server import (
     discover_tool_dirs,
     discover_tools,
 )
+from tool_registry import RegistryEntry, Visibility
 
 
 # ── JSON Extraction ───────────────────────────────────────────────────────
@@ -126,6 +127,25 @@ class TestArgsToCLI:
 # ── Tool Discovery ────────────────────────────────────────────────────────
 
 
+def _registered(*scripts: Path, visibility: Visibility = Visibility.BRIEF,
+                description: str = "", when_to_use: str = "",
+                usage: str = "") -> dict[Path, RegistryEntry]:
+    """A registry offering each of *scripts* under an entry of its own.
+
+    Discovery takes the registry as an argument for the same reason it takes
+    the directories: a case can then describe a tree the checkout does not
+    have. The real mapping — script path to entry, read out of the
+    ``registry.yml`` files — is tests/test_tool_registry.py's subject.
+    """
+    return {script.resolve(): RegistryEntry(
+        name=script.name,
+        description=description or f"the {script.name} tool",
+        visibility=visibility,
+        when_to_use=when_to_use,
+        usage=usage,
+    ) for script in scripts}
+
+
 def _side_effect_of(script: Path) -> Path:
     """The file _write_destructive_script's subject touches when it runs."""
     return script.parent / "side-effect"
@@ -143,38 +163,46 @@ def _write_destructive_script(directory: Path) -> Path:
     return script
 
 
+def _write_marked_script(directory: Path, name: str, **schema) -> Path:
+    """An executable answering the probe with *schema*, defaults filled in."""
+    document = {"name": name, "description": f"{name}, as the script tells it",
+                "input_schema": {"type": "object", "properties": {}}, **schema}
+    script = directory / name
+    script.write_text(textwrap.dedent(f"""\
+        #!/usr/bin/env python3
+        import json, sys
+        if "--tool-schema" in sys.argv:
+            json.dump({document!r}, sys.stdout)
+            sys.exit(0)
+        open({str(_side_effect_of(script))!r}, "w").close()
+    """))
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return script
+
+
 class TestDiscovery:
     """What a scan of a given directory turns up.
 
-    Every case names its directories explicitly. Which directories the server
-    picks when it is not told is TestWorkbenchToolDirs' subject — leaving the
-    derived set in would make each "nothing was discovered" assertion also
-    assert that the workbench ships no tools.
+    Every case names its directories and its registry explicitly. Which
+    directories the server picks when it is not told is TestWorkbenchToolDirs'
+    subject — leaving the derived set in would make each "nothing was
+    discovered" assertion also assert that the workbench ships no tools.
     """
 
     def test_discovers_tool_schema_scripts(self, tmp_path):
-        script = tmp_path / "my-tool"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env python3
-            import json, sys
-            if "--tool-schema" in sys.argv:
-                json.dump({"name": "my-tool", "description": "A test tool",
-                           "input_schema": {"type": "object", "properties": {}}}, sys.stdout)
-                sys.exit(0)
-        """))
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        script = _write_marked_script(tmp_path, "my-tool")
 
-        tools = discover_tools([tmp_path])
+        tools = discover_tools([tmp_path], _registered(script))
 
         assert "my-tool" in tools
-        assert tools["my-tool"]["description"] == "A test tool"
+        assert tools["my-tool"]["input_schema"] == {"type": "object", "properties": {}}
 
     def test_skips_non_tool_scripts(self, tmp_path):
         script = tmp_path / "plain-script"
         script.write_text("#!/bin/bash\necho hello\n")
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
-        tools = discover_tools([tmp_path])
+        tools = discover_tools([tmp_path], _registered(script))
 
         assert len(tools) == 0
 
@@ -182,7 +210,7 @@ class TestDiscovery:
         """A script that ignores unknown flags must not run during discovery."""
         script = _write_destructive_script(tmp_path)
 
-        tools = discover_tools([tmp_path])
+        tools = discover_tools([tmp_path], _registered(script))
 
         assert tools == {}
         assert not _side_effect_of(script).exists()
@@ -258,7 +286,7 @@ class TestDiscovery:
         """))
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
-        tools = discover_tools([tmp_path])
+        tools = discover_tools([tmp_path], _registered(script))
         assert len(tools) == 0
 
     def test_a_tool_that_exits_nonzero_is_reported(self, tmp_path, caplog):
@@ -273,7 +301,7 @@ class TestDiscovery:
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
         with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path]) == {}
+            assert discover_tools([tmp_path], _registered(script)) == {}
 
         assert "broken-tool" in caplog.text
         assert "exited 3" in caplog.text
@@ -291,7 +319,7 @@ class TestDiscovery:
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
         with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path]) == {}
+            assert discover_tools([tmp_path], _registered(script)) == {}
 
         assert "partial-tool" in caplog.text
         assert "input_schema" in caplog.text
@@ -302,7 +330,7 @@ class TestDiscovery:
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
         with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path]) == {}
+            assert discover_tools([tmp_path], _registered(script)) == {}
 
         assert "garbled-tool" in caplog.text
         # One except branch covers three failure modes, so the log has to name
@@ -316,29 +344,87 @@ class TestDiscovery:
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
         with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path]) == {}
+            assert discover_tools([tmp_path], _registered(script)) == {}
 
         assert caplog.text == ""
 
     def test_no_directories_yields_no_tools(self):
-        assert discover_tools([]) == {}
+        assert discover_tools([], {}) == {}
 
     def test_discovers_real_tools(self):
         """Verify discovery works with actual ToolParser-enabled scripts."""
-        bin_dir = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
+        bin_dir = WORKBENCH_DIR / "ai" / "claude" / "bin"
+        if not (bin_dir / "pr").exists():
+            pytest.skip("scripts not found")
+
+        tools = discover_tools([bin_dir])
+
+        assert "pr" in tools
+        assert "input_schema" in tools["pr"]
+        assert tools["pr"]["output_schema"]["type"] == "object"
+
+
+class TestRegistryVisibility:
+    """Which of the marked scripts a client is offered.
+
+    Carrying the marker makes a script probeable, not public. Every one of them
+    used to be listed, which put ``ci-check`` and ``pr-rebase`` beside ``pr`` —
+    the CLI whose ``pr ci`` and ``pr rebase`` subcommands run them.
+    """
+
+    def test_a_hidden_tool_is_neither_offered_nor_run(self, tmp_path):
+        """The filter runs before the probe, so a hidden script is never executed."""
+        script = _write_marked_script(tmp_path, "inner-tool")
+
+        tools = discover_tools([tmp_path], _registered(script, visibility=Visibility.HIDDEN))
+
+        assert tools == {}
+        assert not _side_effect_of(script).exists()
+
+    def test_an_unregistered_tool_is_neither_offered_nor_run(self, tmp_path, caplog):
+        """A marked script nothing documents is as absent as a broken one.
+
+        It is a warning rather than a silent skip: the marker says it meant to
+        be a tool, and bin/local/validate-tool-schema fails the build on it.
+        """
+        script = _write_marked_script(tmp_path, "stray-tool")
+
+        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
+            assert discover_tools([tmp_path], {}) == {}
+
+        assert "stray-tool" in caplog.text
+        assert "no registry entry" in caplog.text
+        assert not _side_effect_of(script).exists()
+
+    def test_the_registry_owns_the_description_a_client_reads(self, tmp_path):
+        """The two have already drifted: the script's line is written for --help."""
+        script = _write_marked_script(tmp_path, "my-tool")
+
+        tools = discover_tools([tmp_path], _registered(script, description="what it is for"))
+
+        assert tools["my-tool"]["description"] == "what it is for"
+
+    def test_a_full_entry_answers_when_to_use_it_and_how(self, tmp_path):
+        """A client has no access to the rule files those two fields render into."""
+        script = _write_marked_script(tmp_path, "my-tool")
+
+        tools = discover_tools([tmp_path], _registered(
+            script, visibility=Visibility.FULL, description="what it is for",
+            when_to_use="the moment arises", usage="my-tool --now"))
+
+        assert tools["my-tool"]["description"] == (
+            "what it is for\n\nWhen to use: the moment arises\n\nUsage: my-tool --now")
+
+    def test_the_pr_subcommands_are_not_offered_beside_pr(self):
+        """The case that motivated this: hidden in the registry, hidden here."""
+        bin_dir = WORKBENCH_DIR / "ai" / "claude" / "bin"
         if not (bin_dir / "pr-rebase").exists():
             pytest.skip("scripts not found")
 
         tools = discover_tools([bin_dir])
 
-        for name in ("pr-rebase", "ci-check", "pr"):
-            assert name in tools, f"{name} not discovered"
-            assert "input_schema" in tools[name]
-
-        assert "output_schema" in tools["pr-rebase"]
-        assert tools["pr-rebase"]["output_schema"]["type"] == "object"
-        assert "output_schema" in tools["ci-check"]
-        assert "output_schema" in tools["pr"]
+        assert "pr" in tools
+        assert {"pr-rebase", "ci-check", "pr-describe"}.isdisjoint(tools)
 
 
 class TestWorkbenchToolDirs:
@@ -392,10 +478,10 @@ class TestWorkbenchToolDirs:
 
     def test_an_untold_scan_discovers_the_workbench_tools(self):
         """The regression guard: a config-only server yielded no tools at all."""
-        if not (WORKBENCH_DIR / "ai" / "claude" / "bin" / "pr-rebase").exists():
+        if not (WORKBENCH_DIR / "ai" / "claude" / "bin" / "pr").exists():
             pytest.skip("scripts not found")
 
-        assert "pr-rebase" in discover_tools()
+        assert "pr" in discover_tools()
 
     def test_the_derived_set_is_the_only_source(self):
         """Asked with no directories, the server scans the derived ones only.
@@ -487,27 +573,85 @@ print("no json here")
 '''
 
 
+_INNER_TOOL = '''\
+#!/usr/bin/env python3
+"""Registered hidden, the way the subcommands `pr` runs are."""
+import json, sys
+
+if "--tool-schema" in sys.argv:
+    json.dump({
+        "name": "inner-tool",
+        "description": "An implementation detail of another tool",
+        "input_schema": {"type": "object", "properties": {}},
+    }, sys.stdout)
+    sys.exit(0)
+
+print("inner output")
+'''
+
+
+@dataclass(frozen=True)
+class _FixtureTool:
+    """A script in the fake checkout, and the registry entry that names it."""
+
+    name: str
+    source: str
+    visibility: str = "brief"
+
+
+_FIXTURE_TOOLS = (
+    _FixtureTool("echo-tool", _ECHO_TOOL),
+    _FixtureTool("plain-tool", _PLAIN_TOOL),
+    _FixtureTool("silent-tool", _SILENT_TOOL),
+    _FixtureTool("inner-tool", _INNER_TOOL, visibility="hidden"),
+)
+
+# The registry the running server reads is the one on disk, so the fixture
+# writes YAML rather than handing the server a dict — the file is the half of
+# the path a unit test cannot reach.
+_FIXTURE_REGISTRY_META = """\
+meta:
+  section: "Fixture Tools"
+  validation: bindir
+  source: bin
+
+tools:
+"""
+
+
+def _fixture_registry() -> str:
+    return _FIXTURE_REGISTRY_META + "".join(
+        f"  - name: {tool.name}\n"
+        f"    permission: false\n"
+        f"    visibility: {tool.visibility}\n"
+        f'    description: "The {tool.name} fixture"\n'
+        for tool in _FIXTURE_TOOLS)
+
+
 def _build_fake_checkout(root: Path) -> Path:
     """Lay out a throwaway checkout around the server and return its script.
 
     ``server.py`` derives ``WORKBENCH_DIR`` from its own resolved path, so the
     copy has to be a real file: a symlink resolves back to this repo and the
     server would discover the workbench's own tools instead of these three.
+
+    The workbench's own Python is reached through that same derived path, so
+    ``ai/lib`` is left pointing at this repo — the server imports the registry
+    reader from the checkout it was copied out of.
     """
     mcps = root / "ai" / "claude" / "mcps"
     mcps.mkdir(parents=True)
     shutil.copy(WORKBENCH_DIR / "ai" / "claude" / "mcps" / "server.py", mcps / "server.py")
+    (root / "ai" / "lib").symlink_to(WORKBENCH_DIR / "ai" / "lib")
 
     bin_dir = root / "bin"
     bin_dir.mkdir()
-    for name, source in (
-        ("echo-tool", _ECHO_TOOL),
-        ("plain-tool", _PLAIN_TOOL),
-        ("silent-tool", _SILENT_TOOL),
-    ):
-        script = bin_dir / name
-        script.write_text(source)
+    for tool in _FIXTURE_TOOLS:
+        script = bin_dir / tool.name
+        script.write_text(tool.source)
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+    (bin_dir / "registry.yml").write_text(_fixture_registry())
 
     return mcps / "server.py"
 
@@ -698,6 +842,22 @@ class TestClientTransport:
         listed = transport.result(LIST_ID)["tools"]
 
         assert {tool["name"] for tool in listed} == {"echo-tool", "plain-tool", "silent-tool"}
+
+    def test_a_tool_the_registry_hides_never_reaches_the_client(self, transport):
+        """The fourth script in the fixture bin/ is registered hidden.
+
+        The unit cases assert the filter over a registry handed to discovery in
+        memory; here the server read the same decision out of a registry.yml on
+        its own.
+        """
+        listed = transport.result(LIST_ID)["tools"]
+
+        assert "inner-tool" not in {tool["name"] for tool in listed}
+
+    def test_a_listed_tool_describes_itself_the_way_its_registry_does(self, transport):
+        listed = {tool["name"]: tool for tool in transport.result(LIST_ID)["tools"]}
+
+        assert listed["echo-tool"]["description"] == "The echo-tool fixture"
 
     def test_a_listed_tool_carries_the_schemas_it_declared(self, transport):
         listed = {tool["name"]: tool for tool in transport.result(LIST_ID)["tools"]}

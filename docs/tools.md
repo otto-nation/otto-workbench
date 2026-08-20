@@ -2,7 +2,6 @@
 title: Tools & Scripts
 description: Complete catalog of workbench scripts, installed tools, and shell aliases, generated from the tool registries.
 ---
-<!-- Generated from docs/tools.src.md by bin/local/compose-docs — do not edit. -->
 
 # Tools & Scripts Reference
 
@@ -10,6 +9,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 
 ## Scripts
 
+<!-- SCRIPTS-TABLE-START -->
 | Script | Description |
 |--------|-------------|
 | `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
@@ -65,10 +65,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |
 | `validate-tool-schema` | Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
-| `validate-docs-composed` | Validates that every composed doc matches what its docs/*.src.md composes to |
-| `validate-lib-reference` | Validates that docs/libraries.src.md renders every module group lib/ declares |
-| `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
-| `generate-lib-reference` | Renders the docs/libraries.md module reference from the lib/ module headers |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
@@ -78,6 +74,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |
 | `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |
 | `aliases` | Lists all custom shell aliases and functions with optional keyword filtering |
+<!-- SCRIPTS-TABLE-END -->
 
 ## Script Reference
 
@@ -97,21 +94,20 @@ otto-workbench [--workbench-dir <path>] <command>
 
 **Commands:**
 
-| Command | Scope | Description |
-|---------|-------|-------------|
-| `otto-workbench install [--all] [COMPONENT ...]` | All components | Bootstrap the workbench on a new machine (first-time setup) |
-| `otto-workbench sync` | All components | Re-apply all workbench config — migrations, symlinks, tool context, AI settings |
-| `otto-workbench discover` | Environment overview | Show installed components, available scripts, and agent status |
-| `otto-workbench discover regenerate` | Component state | Re-detect installed components after manual changes |
-| `otto-workbench ai init` | Project | Scaffold .claude/ in the current repo with stack-detected rules |
-| `otto-workbench ai init --force` | Project | Re-scaffold an existing project's .claude/ directory |
-| `otto-workbench ai sync` | Machine | Sync machine-level AI config (settings, rules, skills, agents, MCPs) |
-| `otto-workbench ai override` | Machine | Manage user overrides for AI agents, skills, and rules |
-| `otto-workbench changelog` | Git history | Show recent changes from conventional commits |
-| `otto-workbench projects` | Machine | List the repos on this machine that use the workbench |
-| `otto-workbench projects add [DIR]` | Machine | Register a repo that hasn't run a workbench command yet |
-| `otto-workbench projects forget DIR` | Machine | Drop a repo's entry from the registry |
-| `otto-workbench projects prune` | Machine | Drop registry entries whose directory is gone |
+| Command | Description |
+|---------|-------------|
+| `install [--all] [COMPONENT ...]` | Bootstrap the workbench (first-time, interactive). `--all` skips menus |
+| `sync` | Re-apply all workbench config to `~/` — migrations, symlinks, tool context, AI settings |
+| `ai init [--force] [--analyze]` | Scaffold `.claude/` in the current git repo. `--force` re-scaffolds existing, `--analyze` runs `/analyze-project` after |
+| `ai sync` | Sync machine-level AI config (settings, rules, MCPs, skills, agents) |
+| `ai override <type> [name] [flags]` | Manage user overrides for agents, skills, or rules. Flags: `--add`, `--disable`, `--enable`, `--status` |
+| `discover [regenerate]` | Show installed components, scripts, and launchd agents. `regenerate` re-detects components |
+| `autoupdate start [SECONDS]` | Start scheduled pull + sync via launchd (default: every 12h) |
+| `autoupdate stop` | Stop autoupdate |
+| `autoupdate status` | Show autoupdate status |
+| `autoupdate run` | Run update now |
+| `autoupdate logs` | Show recent log entries |
+| `changelog` | Show recent changes from conventional commits |
 
 ### `task`
 
@@ -472,39 +468,22 @@ and it answers `--tool-schema` with JSON carrying at least `name` and `input_sch
 Scripts built on `ToolParser`
 ([`ai/lib/tool_parser.py`](../ai/lib/tool_parser.py)) inherit the flag for free.
 
-**Where it looks.** The workbench's own script directories, always. They are derived from
-the component layout rather than listed — the root `bin/`, plus every `<component>/bin`
-and `<component>/<sub>/bin` in the checkout. That is the same two-level glob
-[`lib/components.sh`](../lib/components.sh) uses for `steps.sh` and `migrations`, so a new
-component tier such as `editors/zed/bin/` is scanned the moment it exists, with no config
-to write. Note it scans the checkout, not the `~/.local/bin` those scripts are symlinked
-into: discovery probes a candidate by running it, and `~/.local/bin` also holds everything
-else you have installed.
+**Where it looks.** The workbench's own script directories, and nothing else. They are
+derived from the component layout rather than listed — the root `bin/`, plus every
+`<component>/bin` and `<component>/<sub>/bin` in the checkout. That is the same two-level
+glob [`lib/components.sh`](../lib/components.sh) uses for `steps.sh` and `migrations`, so
+a new component tier such as `editors/zed/bin/` is scanned the moment it exists. Note it
+scans the checkout, not the `~/.local/bin` those scripts are symlinked into: discovery
+probes a candidate by running it, and `~/.local/bin` also holds everything else you have
+installed.
 
-To reach anything outside the workbench, add `~/.config/workbench/mcp-tools.json`, which
-is optional:
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `tool_dirs` | list of paths | `[]` | Directories scanned **in addition** to the workbench's own |
-| `plugin_dirs` | list of paths | `[]` | Directories of `*.json` files, each naming one `tool_dir` |
-
-Both keys add to the derived set rather than replacing it, so an empty list and an absent
-key mean the same thing. The workbench's own directories are always scanned.
-
-```json
-{
-  "tool_dirs": ["~/work/project/bin"],
-  "plugin_dirs": ["~/.config/workbench/mcp-plugins"]
-}
-```
-
-A plugin file points at a directory to scan, letting a project register its tools
-without editing the config:
-
-```json
-{ "name": "my-project", "tool_dir": "~/work/project/tools" }
-```
+**There is no configuration file.** The server hosts the workbench's own tools, so what
+to scan is a fact about the checkout — there is nothing to hand-author and nothing to keep
+in sync. An earlier design read `tool_dirs` and `plugin_dirs` from
+`~/.config/workbench/mcp-tools.json` to let outside directories register tools; no setup
+step ever wrote that file, no machine was found holding one, and the keys were removed
+rather than carried into `config.yml`. Adding a tool means putting a `--tool-schema`
+script in a component's `bin/` and registering it, as below.
 
 Discovery reads each candidate's source before running it, and only executes the ones
 carrying a protocol marker — a script that ignores unknown flags would otherwise do its
@@ -517,10 +496,27 @@ outruns the timeout — is logged at warning level on stderr with the reason. A 
 added that never appears in an MCP client is explained there. Executables with no marker
 are not tools and are skipped without comment.
 
-That stderr belongs to whichever MCP client spawned the server, so the same claim is
+**What a client is offered.** Carrying the marker makes a script probeable, not public.
+The registries decide who sees it: an entry with `visibility: full` or `brief` is offered,
+one with `visibility: hidden` is not, and a script no registry entry names is not either.
+The filter runs before the probe, so a script a client will never see is also never run at
+startup. Today that leaves `pr` — `ci-check`, `pr-describe` and `pr-rebase` are registered
+hidden because they are what `pr ci`, `pr describe` and `pr rebase` run, and offering them
+beside `pr` asks a client to choose between a tool and its own internals.
+
+The description a client reads is the registry's, not the script's: the registries own tool
+documentation, and a `full` entry's `when_to_use` and `usage` lines are appended to it —
+they answer a caller's real questions, and a client has no access to the rule files they
+otherwise render into. A script's own `--tool-schema` description is written for its
+`--help` and has already drifted shorter.
+
+That stderr belongs to whichever MCP client spawned the server, so the same claims are
 checked at build time by `bin/local/validate-tool-schema`. It imports this discovery —
-the directories, the candidate filter, and the probe itself — and fails when a candidate
-in the checkout cannot answer, rather than leaving the tool to vanish at runtime.
+the directories, the candidate filter, the probe itself, and the registry lookup — and
+fails when a candidate in the checkout cannot answer or no registry entry names it, rather
+than leaving the tool to vanish at runtime. Visibility is not checked: a `hidden` entry is
+a decision somebody made, and the probe has to cover the script anyway because `pr` runs
+it.
 
 **What a call returns.** Stdout that parses as JSON comes back as the text content of the
 result, so a client sees the tool's own output rather than a rendering of it. A tool whose
@@ -552,6 +548,8 @@ serena-mcp <command>
 | `-h`, `--help` | Show help |
 
 ## Installed Tools
+
+<!-- TOOLS-TABLE-START -->
 
 **Brew Tools**
 
@@ -652,6 +650,7 @@ serena-mcp <command>
 |------|-------------|
 | [linear](https://github.com/schpet/linear-cli) | Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal |
 | [mas](https://github.com/mas-cli/mas) | Mac App Store CLI — search, install, and update App Store apps from the terminal |
+<!-- TOOLS-TABLE-END -->
 
 ## Adding a Tool
 

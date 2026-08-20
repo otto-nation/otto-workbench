@@ -120,6 +120,16 @@ jobs:
       - name: Install pytest
         run: pipx install pytest==8.3.5
 
+      # tests/test_tool_registry.py reads the registries through
+      # ai/lib/workbench_config.py, which uses PyYAML when it is importable and
+      # yq otherwise. pipx runs pytest in its own venv, so it is yq here.
+      - name: Install yq
+        run: |
+          YQ_VERSION="v4.44.3"
+          sudo wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+
       # tests/test_mcp_server.py spawns the MCP server the way its launcher
       # does — `uv run --with mcp`. Without uv on PATH those cases skip
       # themselves and the transport goes untested.

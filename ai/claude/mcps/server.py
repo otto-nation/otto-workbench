@@ -9,6 +9,10 @@ answering. Any MCP client can connect via stdio transport.
 The directories come from the component layout and nothing else. There is no
 configuration file: the server exposes the workbench's own tools, so what to
 scan is a fact about the checkout rather than a question to ask the user.
+
+Which of them a client is offered comes from the registries — see
+``ai/lib/tool_registry.py``. Carrying the marker makes a script probeable, not
+public: a hidden or unregistered one is skipped before it is ever run.
 """
 
 from __future__ import annotations
@@ -30,6 +34,13 @@ logger = logging.getLogger("otto-mcp")
 
 # ai/claude/mcps/server.py — three levels down from the checkout root.
 WORKBENCH_DIR = Path(__file__).resolve().parents[3]
+
+# A client spawns this file by path, with no package around it and its own
+# project as the working directory, so the workbench's Python has to be named
+# before it can be imported.
+sys.path.insert(0, str(WORKBENCH_DIR / "ai" / "lib"))
+from tool_registry import RegistryEntry, load_registry_entries  # noqa: E402
+
 COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
 
 # ceiling: candidates are probed one at a time, so the worst case is this
@@ -184,8 +195,47 @@ def tool_candidates(d: Path) -> list[Path]:
             and declares_tool_schema(e)]
 
 
-def _scan_tool_dir(d: Path) -> list[dict]:
-    """Return tool schemas from executable scripts in *d*.
+def offered_candidates(d: Path, registry: dict[Path, RegistryEntry]) -> dict[Path, RegistryEntry]:
+    """The scripts in *d* a client may be offered, each with its registry entry.
+
+    The filter runs before ``probe_tool``, so a hidden or unregistered script is
+    never executed. Reversing the two would run every marker-bearing script on
+    every startup to build a list most of them are then dropped from.
+
+    A candidate no registry names is a warning: carrying the marker says it
+    meant to be a tool, and the entry that would offer it is one stanza in the
+    ``registry.yml`` whose ``meta.source`` is this directory. Being hidden is a
+    decision somebody already made, so it is only worth a debug line.
+    """
+    offers: dict[Path, RegistryEntry] = {}
+    for script in tool_candidates(d):
+        entry = registry.get(script.resolve())
+        if entry is None:
+            logger.warning("Skipping %s: it declares %s but no registry entry names it",
+                           script, TOOL_SCHEMA_FLAG)
+        elif entry.offered:
+            offers[script] = entry
+        else:
+            logger.debug("Not offering %s: registry visibility is %s",
+                         script, entry.visibility.value)
+    return offers
+
+
+def _described(schema: dict, entry: RegistryEntry) -> dict:
+    """*schema* with the registry's description in place of the script's.
+
+    The registries own tool documentation, so the description a client reads is
+    the one a reader of the rules gets — plus the ``when_to_use`` and ``usage``
+    lines a ``full`` entry carries. A script's own line is written for its
+    ``--help`` and has already drifted shorter: ``pr`` answers the probe with
+    "Unified PR lifecycle CLI — CI, review, comments, rebase" and says nothing
+    about when to reach for it.
+    """
+    return {**schema, "description": entry.tool_description}
+
+
+def _scan_tool_dir(d: Path, registry: dict[Path, RegistryEntry]) -> list[dict]:
+    """Return tool schemas from the offered scripts in *d*.
 
     A script that carries a marker meant to be a tool, so every way it can then
     fail to answer is logged at warning level. Silence here reads as "no tool
@@ -194,26 +244,31 @@ def _scan_tool_dir(d: Path) -> list[dict]:
     logs. Executables with no marker are not tools and stay quiet.
     """
     results = []
-    for entry in tool_candidates(d):
-        probed = probe_tool(entry)
+    for script, entry in offered_candidates(d, registry).items():
+        probed = probe_tool(script)
         if probed.ok:
-            results.append(probed.schema)
+            results.append(_described(probed.schema, entry))
         else:
-            logger.warning("Skipping %s: %s", entry, probed.reason)
+            logger.warning("Skipping %s: %s", script, probed.reason)
     return results
 
 
-def discover_tools(dirs: list[Path] | None = None) -> dict[str, dict]:
+def discover_tools(dirs: list[Path] | None = None,
+                   registry: dict[Path, RegistryEntry] | None = None) -> dict[str, dict]:
     """Scan directories and return {tool_name: schema_dict}.
 
-    *dirs* defaults to the derived set. Passing one is how a test points the
-    scan at a fixture directory without writing scripts into the checkout.
+    *dirs* defaults to the derived set and *registry* to the running checkout's
+    entries. Passing them is how a test points the scan at a fixture directory
+    without writing scripts into the checkout; an empty *registry* offers
+    nothing, which is what an unregistered tree amounts to.
     """
     if dirs is None:
         dirs = discover_tool_dirs()
+    if registry is None:
+        registry = load_registry_entries(WORKBENCH_DIR)
     tools: dict[str, dict] = {}
 
-    all_schemas = [s for d in dirs for s in _scan_tool_dir(d)]
+    all_schemas = [s for d in dirs for s in _scan_tool_dir(d, registry)]
     for schema in all_schemas:
         if schema["name"] not in tools:
             tools[schema["name"]] = schema

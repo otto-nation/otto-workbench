@@ -537,13 +537,98 @@ def _call(request_id: int, name: str, arguments: dict) -> dict:
     }
 
 
-def _unanswered(expected: int, frames: list[dict], why: str, stderr: list[str]) -> str:
-    """Why the conversation stopped short, with the server's own account of it."""
-    answered = sum(1 for frame in frames if "id" in frame)
-    return (
-        f"{expected - answered} of {expected} replies never arrived — {why}; "
-        f"server stderr:\n{''.join(stderr)}"
-    )
+class _ServerProcess:
+    """The server running under stdio, with a reader thread on each pipe.
+
+    Both pipes need a reader: stderr carries the server's logging and would
+    otherwise fill and block the process mid-answer.
+    """
+
+    def __init__(self, script: Path):
+        self._proc = subprocess.Popen(
+            ["uv", "run", "--no-project", "--with", "mcp", "python3", str(script)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self._replies: queue.Queue[str] = queue.Queue()
+        self._stderr: list[str] = []
+        self._stdout_reader = threading.Thread(target=self._pump_stdout, daemon=True)
+        self._stderr_reader = threading.Thread(target=self._pump_stderr, daemon=True)
+        self._stdout_reader.start()
+        self._stderr_reader.start()
+
+    def _pump_stdout(self) -> None:
+        for line in self._proc.stdout:
+            self._replies.put(line)
+
+    def _pump_stderr(self) -> None:
+        self._stderr.append(self._proc.stderr.read())
+
+    @property
+    def stderr(self) -> str:
+        self._stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
+        return "".join(self._stderr)
+
+    @property
+    def status(self) -> str:
+        """Why the server can no longer be expected to answer."""
+        if self._stdout_reader.is_alive():
+            return f"it went quiet for {TRANSPORT_TIMEOUT}s"
+        return f"it exited {self._proc.wait(timeout=READER_JOIN_TIMEOUT)}"
+
+    def send(self, messages: list[dict]) -> None:
+        """Write every frame in one go, leaving stdin open for the replies."""
+        try:
+            self._proc.stdin.write("".join(json.dumps(message) + "\n" for message in messages))
+            self._proc.stdin.flush()
+        except BrokenPipeError:
+            # A server that died before reading needs no report here: stdout is
+            # already at EOF, so collect() returns at once and the caller raises
+            # with the exit code and stderr attached.
+            pass
+
+    def collect(self, expected: int) -> list[dict]:
+        """Frames written back, returning early once no more can arrive."""
+        frames: list[dict] = []
+        deadline = time.monotonic() + TRANSPORT_TIMEOUT
+        while sum(1 for frame in frames if "id" in frame) < expected:
+            line = self._next_line(deadline)
+            if line is None:
+                return frames
+            if line.strip():
+                frames.append(json.loads(line))
+        return frames
+
+    def _next_line(self, deadline: float) -> str | None:
+        """The next line of stdout, or None once none can arrive.
+
+        Stdout at EOF means the server is gone and the rest of the replies are
+        never coming. The regressions this test guards against kill it before
+        it writes anything, so blocking until the deadline would turn a clear
+        failure into a suite that looks hung.
+        """
+        while self._stdout_reader.is_alive() and time.monotonic() < deadline:
+            try:
+                return self._replies.get(timeout=REPLY_POLL_INTERVAL)
+            except queue.Empty:
+                continue
+        return None
+
+    def finish(self) -> None:
+        """Close stdin, which is how the server learns the session is over."""
+        self._proc.stdin.close()
+        self._proc.wait(timeout=TRANSPORT_TIMEOUT)
+
+    def close(self) -> None:
+        self._proc.kill()
+        self._stdout_reader.join(timeout=READER_JOIN_TIMEOUT)
+        self._stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
+        for pipe in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
+            if not pipe.closed:
+                pipe.close()
 
 
 def _talk(script: Path, messages: list[dict]) -> _Exchange:
@@ -559,72 +644,20 @@ def _talk(script: Path, messages: list[dict]) -> _Exchange:
     and the server answers each still-running call with "Connection closed" —
     a tool call runs a subprocess, so it is always the one still running.
     """
-    proc = subprocess.Popen(
-        ["uv", "run", "--no-project", "--with", "mcp", "python3", str(script)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-    # Both pipes get a reader of their own: stderr carries the server's logging
-    # and would otherwise fill and block the process mid-answer.
-    replies: queue.Queue[str] = queue.Queue()
-    stderr_text: list[str] = []
-    stdout_reader = threading.Thread(
-        target=lambda: [replies.put(line) for line in proc.stdout], daemon=True)
-    stderr_reader = threading.Thread(
-        target=lambda: stderr_text.append(proc.stderr.read()), daemon=True)
-    stdout_reader.start()
-    stderr_reader.start()
-
     expected = sum(1 for message in messages if "id" in message)
+    server = _ServerProcess(script)
     try:
-        try:
-            proc.stdin.write("".join(json.dumps(message) + "\n" for message in messages))
-            proc.stdin.flush()
-        except BrokenPipeError:
-            # A server that dies before reading is the same failure as one that
-            # dies before answering; report it the same way rather than as a
-            # pipe error with no stderr attached.
-            stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
-            raise AssertionError(
-                _unanswered(expected, [], f"the server exited {proc.wait()}", stderr_text))
-
-        frames: list[dict] = []
-        deadline = time.monotonic() + TRANSPORT_TIMEOUT
-        while sum(1 for frame in frames if "id" in frame) < expected:
-            try:
-                line = replies.get(timeout=REPLY_POLL_INTERVAL)
-            except queue.Empty:
-                # Stdout at EOF means the server is gone and the rest of the
-                # replies are never coming. The regressions this test guards
-                # against kill it before it writes anything, so waiting out the
-                # whole timeout would turn a clear failure into a hung suite.
-                if not stdout_reader.is_alive():
-                    stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
-                    raise AssertionError(_unanswered(
-                        expected, frames, f"the server exited {proc.wait()}", stderr_text))
-                if time.monotonic() >= deadline:
-                    proc.kill()
-                    stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
-                    raise AssertionError(_unanswered(
-                        expected, frames, f"nothing more within {TRANSPORT_TIMEOUT}s", stderr_text))
-                continue
-            if line.strip():
-                frames.append(json.loads(line))
-
-        proc.stdin.close()
-        proc.wait(timeout=TRANSPORT_TIMEOUT)
-        stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
-        return _Exchange(frames=frames, stderr="".join(stderr_text))
+        server.send(messages)
+        frames = server.collect(expected)
+        answered = sum(1 for frame in frames if "id" in frame)
+        assert answered == expected, (
+            f"{expected - answered} of {expected} replies never arrived — "
+            f"{server.status}; server stderr:\n{server.stderr}"
+        )
+        server.finish()
+        return _Exchange(frames=frames, stderr=server.stderr)
     finally:
-        proc.kill()
-        stdout_reader.join(timeout=READER_JOIN_TIMEOUT)
-        stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
-        for pipe in (proc.stdin, proc.stdout, proc.stderr):
-            if not pipe.closed:
-                pipe.close()
+        server.close()
 
 
 @pytest.fixture(scope="module")

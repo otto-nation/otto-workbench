@@ -166,7 +166,7 @@ def test_setup_pr_worktree_raises_on_total_failure(mock_run):
         # Both streams are strings, as a real CompletedProcess carries them:
         # the failure path quotes what git said, and a MagicMock there is not
         # something `str.join` can render.
-        m = MagicMock(stdout="", stderr="worktree add failed")
+        m = MagicMock(stdout="", stderr="")
         if cmd[0] == "git" and "--is-shallow-repository" in cmd:
             m.returncode = 0
             m.stdout = "false\n"
@@ -181,6 +181,7 @@ def test_setup_pr_worktree_raises_on_total_failure(mock_run):
             return m
         if cmd[0] == "git" and "worktree" in cmd and "add" in cmd:
             m.returncode = 1
+            m.stderr = "worktree add failed"
             return m
         m.returncode = 0
         m.stdout = ""
@@ -515,9 +516,10 @@ def test_cleanup_worktree_none_is_noop(mock_run):
     mock_run.assert_not_called()
 
 
-@patch("review_worktree.subprocess.run")
+@patch("review_worktree.git_client.run")
 def test_cleanup_worktree_fallback_swallows_errors(mock_run):
-    mock_run.side_effect = Exception("boom")
+    """A git that cannot even be launched must not replace the review's error."""
+    mock_run.side_effect = OSError("git not found")
     result = WorktreeResult(
         path="/repos/repo/.worktrees/pr-42-review",
         cleanup_ref="/repos/repo/.worktrees/pr-42-review",

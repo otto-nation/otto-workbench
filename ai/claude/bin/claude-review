@@ -626,7 +626,13 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
             return explicit_dir
         return ""
 
-    git_toplevel = git_client.out("rev-parse", "--show-toplevel")
+    # An unusable git has to fall through to the gh and find lookups below,
+    # which are guarded the same way — a non-zero exit already does, but an
+    # absent binary raises out of subprocess.
+    try:
+        git_toplevel = git_client.out("rev-parse", "--show-toplevel")
+    except OSError:
+        git_toplevel = ""
 
     if git_toplevel:
         if os.path.basename(git_toplevel) == repo_name:
@@ -1046,7 +1052,13 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
 
 
 def _cleanup_self_review_worktree(wt_cleanup, repo_dir: str) -> None:
-    original_repo_dir = repo_dir or git_client.out("rev-parse", "--show-toplevel")
+    # Runs from a `finally` that may already be unwinding the failure the
+    # operator needs to see, so raising here would replace it with something
+    # about git. Leaving the worktree behind is the lesser loss.
+    try:
+        original_repo_dir = repo_dir or git_client.out("rev-parse", "--show-toplevel")
+    except OSError:
+        return
     if original_repo_dir:
         review_worktree.cleanup_worktree(wt_cleanup, original_repo_dir)
 

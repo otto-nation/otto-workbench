@@ -685,6 +685,10 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
     if not committed.ok:
         raise RuntimeError(proc.failure_message("Failed to commit fixes", committed))
     sha = git_client.head_sha(cwd=wt_path)
+    if not sha:
+        # The commit above succeeded, so HEAD not reading back is the repo
+        # saying something is wrong with it — louder than reporting no sha.
+        raise RuntimeError("Committed the fixes but could not read the new HEAD")
     log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
 
     r = git_client.run("push", cwd=wt_path)

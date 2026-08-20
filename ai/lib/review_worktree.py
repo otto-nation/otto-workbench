@@ -131,9 +131,11 @@ def cleanup_worktree(result: WorktreeResult | None, repo_dir: str) -> None:
 
     try:
         git_client.run("worktree", "remove", "--force", result.path, cwd=repo_dir)
-    except Exception:
+    except OSError:
         # Cleanup runs on the way out of a failing review, and a second failure
-        # here would replace the error the caller is already reporting.
+        # here would replace the error the caller is already reporting. A
+        # non-zero exit already comes back as a result; only an unusable git
+        # raises this far.
         pass
 
 

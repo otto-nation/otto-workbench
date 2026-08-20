@@ -1344,7 +1344,7 @@ wanted from it.
 |---|---|
 | `run(*args, cwd=, timeout=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
 | `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
-| `ok(*args)` | Just the exit code, for the subcommands that answer that way. |
+| `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
 | `lines(*args)` | Stdout split into non-empty lines. |
 
 `config={"key": "value"}` becomes `-c key=value` ahead of the subcommand. `diff`,
@@ -1354,11 +1354,17 @@ pathspec a later `git add` can resolve — so a fix touching such a file was sta
 nothing and reported as applied. Applying the flag to the subcommand rather than to
 each caller is what stops the next call site from forgetting it.
 
-Above the runner sit the reads that appeared at two or more call sites — `head_sha`,
+Under those four sit the reads that appeared at two or more call sites — `head_sha`,
 `current_branch`, `is_dirty`, `commit_exists`. A read used once belongs at its call
 site, spelled out with `run`. Writes are not modelled beyond `run`: committing and
 pushing gets an owner of its own, with the publishing gate over it, rather than a
 convenience wrapper here that would turn four gate-less push sites into five.
+
+Not everything has moved across yet. `pr_context`, `review-threads`, `pr-rebase`,
+`mcps/server` and `eval_task` still invoke git as literal argv — the first four
+because a behaviour fix is open on them and a refactor underneath it would collide,
+`eval_task` because its calls need `env=`, which `proc.run` does not take. A new call
+site should still go through the client.
 
 ## Guidelines & Rules
 

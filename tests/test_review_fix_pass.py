@@ -633,7 +633,7 @@ class TestPushFixes:
     @patch("review_fix.log")
     @patch("review_fix.git_client.run")
     def test_successful_push_logs_no_error(self, mock_run, mock_log, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.return_value = CmdResult(0)
         review_fix._push_fixes(self._make_job(tmp_path))
         mock_log.error.assert_not_called()
 
@@ -665,23 +665,23 @@ class TestIsLocalHookRejection:
 class TestHookOutput:
 
     def test_merges_both_streams_so_the_failing_gate_survives(self):
-        result = MagicMock(stdout="running pytest", stderr="✗ Pytest failed")
+        result = CmdResult(1, "running pytest", "✗ Pytest failed")
         out = review_fix._hook_output(result)
         assert "running pytest" in out
         assert "✗ Pytest failed" in out
 
     def test_indents_every_line_under_the_error(self):
-        result = MagicMock(stdout="a\nb", stderr="")
+        result = CmdResult(1, "a\nb")
         assert review_fix._hook_output(result) == "  a\n  b"
 
     def test_keeps_only_the_tail_of_a_long_gate_dump(self):
-        result = MagicMock(stdout="\n".join(str(n) for n in range(50)), stderr="")
+        result = CmdResult(1, "\n".join(str(n) for n in range(50)))
         lines = review_fix._hook_output(result).splitlines()
         assert len(lines) == review_fix._HOOK_OUTPUT_LINES
         assert lines[-1] == "  49"
 
     def test_survives_a_stream_git_left_empty(self):
-        result = MagicMock(stdout=None, stderr="✗ Pytest failed")
+        result = CmdResult(1, stderr="✗ Pytest failed")
         assert review_fix._hook_output(result) == "  ✗ Pytest failed"
 
 

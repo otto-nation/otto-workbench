@@ -32,7 +32,11 @@ def _completed(returncode, stdout=""):
 
 
 def _subcommand(cmd) -> str:
-    """The git subcommand, past any `-c key=value` the client prefixes it with."""
+    """The git subcommand, past any `-c key=value` the client prefixes it with.
+
+    Mirrors how `git_client._argv` builds argv — a second way of prefixing the
+    subcommand there needs this to learn about it.
+    """
     rest = cmd[1:]
     while rest[:1] == ["-c"]:
         rest = rest[2:]

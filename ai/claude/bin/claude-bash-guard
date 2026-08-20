@@ -204,10 +204,10 @@ fi
 # one-off settings.local.json entry that dies with the worktree.
 #
 # ceiling: matching on path text alone rather than on a resolved repo root costs
-# two things. A repo whose own directory is named `git`, or one holding a
-# directory named `ai/claude`, is read as carrying that component and gets a
-# suggestion that will not resolve; and an absolute path into a top-level `bin/`
-# is left alone entirely, because a virtualenv ships one too and so does any repo
+# two things. An absolute path whose tail happens to read `git/bin/` or
+# `ai/claude/bin/` is claimed whatever tree it belongs to, and gets a suggestion
+# that will not resolve there; and an absolute path into a top-level `bin/` is
+# left alone entirely, because a virtualenv ships one too and so does any repo
 # that builds its binaries into it.
 # Upgrade to resolving the repo root once either shows up in a settings.local.json
 # again.
@@ -219,11 +219,15 @@ re_reposcript='(^|[;&|][[:space:]]*)(\.?/[^[:space:]]*)'
 if [[ "$stripped" =~ $re_reposcript ]]; then
   path="${BASH_REMATCH[2]}"
   for dir in "${REPO_SCRIPT_DIRS[@]}"; do
-    [[ "$path" == */"$dir"/* ]] || continue
-    # A `./` prefix names the repo the session is in and nothing else, so a bare
-    # `bin/` is safe to claim there. Absolutely spelled it is not: that is the
-    # ceiling above, and `/tmp/venv/bin/pip` is why.
-    [[ "$path" == ./* || "$dir" != bin ]] || continue
+    # A `./` prefix names the repo root, so there a granted directory counts
+    # only at the start of what follows: matching it anywhere reads the `bin/`
+    # in `./ai/bin/workbench-export` as the top-level one and names a script
+    # that does not exist — the repo also ships ai/bin, ai/serena/bin, and
+    # docker/bin, none of them granted. Absolutely spelled there is no root to
+    # anchor to, which is the ceiling above, and a bare `bin` says too little to
+    # claim a path in whatever tree it belongs to (`/tmp/venv/bin/pip`), so only
+    # the multi-component entries match loosely.
+    [[ "$path" == ./"$dir"/* || ( "$path" != ./* && "$dir" != bin && "$path" == */"$dir"/* ) ]] || continue
     block "Use relative path '$dir/${path##*/$dir/}' instead of '$path' — the allow list keys on the repo-root-relative form, so a ./ prefix or an absolute path prompts again in every worktree. See bash.md § Script Invocation."
   done
 fi

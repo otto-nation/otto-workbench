@@ -119,6 +119,7 @@ The `fix_pass` object contains:
 | `replies_posted` | Count of per-thread replies posted to GitHub |
 | `summary_url` | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |
 | `summary_deferred` | `true` when summary was deferred because `needs_human` threads exist. Together with `replies_pending` this is what `pr status` reads to report `⚠ closeout owed` and block merge readiness until `--finish --post` drains it |
+| `pr_body_pending` | `true` when a comment was answered by rewriting the PR description but the gate was shut. The replacement waits in `ignore/pr-comments/pr-description.md`; it is owed in `⚠ closeout owed` and sent by `--finish --post` |
 | `comment_items` | Breakdown of comment item outcomes: `{fixed, needs_human, dismissed, deferred}` |
 
 **Comment items** (`comment_items` array at the top level): when top-level PR

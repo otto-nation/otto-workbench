@@ -115,6 +115,12 @@ def _build_agent_cmd(inv: AgentInvocation, extension: str | None = None) -> list
 
 
 def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[str]:
+    # ceiling: no `gh` deny here, unlike the Claude backend's FIX_DENIED_TOOLS —
+    # `--tools` allowlists tool *names*, so barring one bash command is not
+    # expressible. A fix agent has no GitHub business and the fix templates say
+    # so, but here that is trusted rather than enforced; the outward writes that
+    # matter are gated at the write instead (see `publishing`). Upgrade when pi
+    # grows per-command bash permissions.
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_TOOLS,

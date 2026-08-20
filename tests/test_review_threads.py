@@ -1668,6 +1668,87 @@ class TestPushHeldCommit:
         assert state.fix.commit_status == "no_changes"
 
 
+class TestDeliverPrBody:
+    """A comment answered by rewriting the PR description is gated like a reply.
+
+    The fix agent may not run `gh` at all, so the rewrite arrives as a file in
+    the worktree and this is what sends it. Every test here asserts on what
+    reached (or did not reach) the process boundary rather than on a flag the
+    caller consulted first.
+    """
+
+    def _draft(self, rt, wt_path, body="A rewritten description.\n"):
+        path = rt._pr_body_draft(wt_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+        return path
+
+    def test_a_draft_run_issues_no_gh_call(self, rt, worktree):
+        """The regression: --fix without --post must not edit the PR."""
+        def boom(*a, **kw):
+            raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
+
+        draft = self._draft(rt, worktree)
+        with patch.object(rt.pc.subprocess, "run", boom):
+            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is True
+        assert draft.exists(), "the undelivered rewrite must survive for --finish"
+
+    def test_the_gate_is_checked_at_the_write_not_by_the_caller(self, rt, worktree):
+        """No `publishing.enabled()` guard here — the client refuses on its own.
+
+        `_deliver_pr_body` is called unconditionally by the fix pass. If the gate
+        lived at the call site instead, this call would publish.
+        """
+        self._draft(rt, worktree)
+        with patch.object(rt.pc, "_gh_post", return_value=(1, "")) as post:
+            rt._deliver_pr_body(worktree, "owner/repo", 42)
+        post.assert_called_once()
+
+    def test_post_sends_it_through_the_pulls_endpoint(self, rt, worktree, publishing_on):
+        calls = []
+        self._draft(rt, worktree)
+        with patch.object(
+            rt.pc.subprocess, "run",
+            lambda *a, **kw: calls.append(a[0]) or _make_completed(0),
+        ):
+            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+        assert calls == [[
+            "gh", "api", "repos/owner/repo/pulls/42",
+            "--method", "PATCH", "--input", "-",
+        ]]
+
+    def test_a_delivered_rewrite_is_not_sent_twice(self, rt, worktree, publishing_on):
+        draft = self._draft(rt, worktree)
+        with patch.object(rt.pc, "update_pr_body", return_value=True):
+            rt._deliver_pr_body(worktree, "owner/repo", 42)
+        assert not draft.exists()
+
+    def test_the_fix_prompt_names_the_file_the_delivery_reads(self, rt, worktree):
+        """One path, two ends: the agent writes where `_deliver_pr_body` looks."""
+        prompt = rt._render_fix_template(
+            branch="b", repo="owner/repo", threads_content="",
+            tracking_file="t.md", wt_path=str(worktree), max_turns=10,
+        )
+        assert str(rt._pr_body_draft(worktree)) in prompt
+        assert "${pr_body_file}" not in prompt
+
+    def test_no_draft_owes_nothing(self, rt, worktree):
+        def boom(*a, **kw):
+            raise AssertionError(f"a subprocess ran with nothing to send: {a}")
+
+        with patch.object(rt.pc.subprocess, "run", boom):
+            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+
+    def test_an_empty_draft_is_discarded_rather_than_sent(self, rt, worktree,
+                                                          publishing_on):
+        """Sending it would blank the description the reviewer is reading."""
+        draft = self._draft(rt, worktree, body="   \n")
+        with patch.object(rt.pc, "update_pr_body") as update:
+            assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
+        update.assert_not_called()
+        assert not draft.exists()
+
+
 class TestPendingFixReplies:
     """--finish is the second chance for fix replies the fix pass didn't send."""
 
@@ -2547,6 +2628,32 @@ class TestFinishDeferredWork:
         with patch.object(rt, "_post_pending_fix_replies") as replies:
             rt._finish_deferred_work(self._ctx(worktree), PRReport())
         replies.assert_not_called()
+
+    def test_a_held_pr_description_is_delivered_and_the_debt_cleared(
+        self, rt, worktree, publishing_on,
+    ):
+        self._save(worktree, pr_body_pending=True)
+        draft = rt._pr_body_draft(worktree)
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_text("A rewritten description.\n")
+        with patch.object(rt.pc, "update_pr_body", return_value=True) as update, \
+                patch.object(rt, "_post_pending_fix_replies"), \
+                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+        update.assert_called_once_with(
+            "owner/repo", 42, "A rewritten description.",
+        )
+        assert pr_state.load_state(worktree / "target").fix.pr_body_pending is False
+
+    def test_a_description_nobody_drafted_is_not_looked_for(self, rt, worktree):
+        self._save(worktree)
+        with patch.object(rt, "_deliver_pr_body") as deliver, \
+                patch.object(rt, "_post_pending_fix_replies"), \
+                patch.object(rt, "_finalize_deferred"), \
+                patch.object(rt, "_render_deferred_summary"):
+            rt._finish_deferred_work(self._ctx(worktree), PRReport())
+        deliver.assert_not_called()
 
     def test_a_failing_step_propagates(self, rt, worktree):
         """A caller closing the loop needs a failure to be an error, not a log line."""

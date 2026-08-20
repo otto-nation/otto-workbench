@@ -61,6 +61,50 @@ See the [Component Framework](docs/components.md) reference for the full Tier 1/
 
 See [Registries](docs/registries.md#adding-an-entry) for the full schema, validation modes, and step-by-step instructions.
 
+## Permission grants
+
+Claude Code reads permission rules from three files, and which one a grant belongs
+in is decided by how far it should reach.
+
+| File | Reach | Holds |
+|---|---|---|
+| `.claude/settings.json` | this repo, every worktree | grants for the scripts this repo ships |
+| `ai/claude/settings.json` | every repo on the machine, via `~/.claude/settings.json` | shell builtins, filesystem ops, and registry-derived tool grants |
+| `.claude/settings.local.json` | one checkout, untracked | nothing worth keeping |
+
+The tracked project file grants three directories — `bin/`, `git/bin/`, and
+`ai/claude/bin/`. That is arbitrary execution of anything the repo ships in a bin
+directory, and it is deliberate: it is the trust level a checkout of this repo
+already implies, and a directory wildcard means adding a script needs no
+allowlist edit. It is not the machine template's to grant, because a rule there
+would also cover a repo cloned five minutes ago.
+
+The grant stops at this repo on purpose. `otto-workbench ai init` scaffolds a
+`.claude/` into other projects but deliberately writes no `settings.json` there:
+a project that follows the same `bin/local/` convention prompts on every call
+until someone decides, for that repo, that running what it ships unattended is
+acceptable. Scaffolding the grant would put the decision back where this section
+just took it from — a rule applied to repos nobody has looked at.
+
+Two scripts are carved back out with an `ask` rule, which outranks `allow`:
+`bin/get-secret` reads values out of AWS Secrets Manager and `bin/gcloud-reauth`
+rewrites GCP application-default credentials. Neither should run without a human
+seeing the call, and `ask` restores that prompt without taking the script away —
+which is what a `deny` rule would do. Add to the list when a new script in a
+granted directory reaches credentials.
+
+Rules match the command as written, so a script must be invoked by its
+repo-root-relative path — `bin/local/validate-all`, never `./bin/local/…` and
+never an absolute path. `claude-bash-guard` blocks both of the other forms and
+names the one that matches.
+
+A grant that lands in `.claude/settings.local.json` is a bug report: some rule
+that should have matched did not. Move it into one of the tracked files rather
+than leaving it there, where nothing reviews it and the next worktree starts
+without it. `bin/local/validate-permissions` checks every tracked settings file
+for rules that can never match; `tests/claude_settings.bats` holds the project
+file to directories the repo actually ships.
+
 ## Environment Variables
 
 | Variable | Where set | Effect |

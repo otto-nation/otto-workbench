@@ -4,6 +4,10 @@
 # ops). Tool permissions (gh, go, etc.) are derived from registry permission
 # fields by step_claude_settings and only ever land in ~/.claude/settings.json,
 # so the synced sandbox below — not the template — is where they are asserted.
+#
+# Grants for this repo's own scripts are neither: they live in the tracked
+# .claude/settings.json, which applies to this repo alone and travels with every
+# worktree. Those are asserted against that file.
 
 # _sync_settings_into FAKE_HOME REPO_ROOT — runs step_claude_settings against a
 # sandbox HOME. constants.sh derives every path from HOME at source time, so
@@ -42,6 +46,7 @@ setup() {
   load 'test_helper'
   common_setup
   SETTINGS="$REPO_ROOT/ai/claude/settings.json"
+  PROJECT_SETTINGS="$REPO_ROOT/.claude/settings.json"
   SYNCED="$BATS_FILE_TMPDIR/home/.claude/settings.json"
   BREW_REGISTRY="$REPO_ROOT/brew/registry.yml"
 }
@@ -65,6 +70,130 @@ teardown() {
 @test "settings.json has a permissions.deny array" {
   run jq -e '.permissions.deny | type == "array"' "$SETTINGS"
   [ "$status" -eq 0 ]
+}
+
+# ── Tracked project allowlist ────────────────────────────────────────────────
+# Grants for this repo's own scripts live in a tracked .claude/settings.json so
+# every worktree inherits them and a reviewer sees them. The machine-level
+# template must not carry them: a rule there applies to every repo on the
+# machine, including ones that were only just cloned.
+
+# project_granted_dirs — the directory each tracked project grant covers, one per
+# line. The tracked file is the single owner of that list; every check below that
+# needs it reads it from here rather than restating it.
+project_granted_dirs() {
+  jq -r '.permissions.allow[]' "$PROJECT_SETTINGS" | sed 's/^Bash(//; s|/\*)$||'
+}
+
+@test "the tracked project settings file is committed, not ignored" {
+  run git -C "$REPO_ROOT" ls-files --error-unmatch .claude/settings.json
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "the tracked project settings file is valid JSON" {
+  run jq empty "$PROJECT_SETTINGS"
+  [ "$status" -eq 0 ]
+}
+
+# Every rule is a wildcard over one directory the repo ships, which is the whole
+# grant this file is allowed to make. It is what keeps a `Bash(gh *)` — the shape
+# that accumulated in the untracked file this replaces — from landing here.
+@test "every tracked project grant is a directory this repo ships" {
+  local rule dir
+  while read -r rule; do
+    [[ "$rule" == Bash\(*/\*\) ]] || { echo "not a Bash directory rule: $rule"; return 1; }
+    dir=${rule#Bash(}
+    dir=${dir%/*)}
+    [ -d "$REPO_ROOT/$dir" ] || { echo "grants a directory that does not exist: $dir"; return 1; }
+  done < <(jq -r '.permissions.allow[]' "$PROJECT_SETTINGS")
+}
+
+@test "the tracked project settings file grants every repo bin directory" {
+  local dir
+  for dir in bin git/bin ai/claude/bin; do
+    run jq -e --arg r "Bash($dir/*)" '.permissions.allow | index($r) != null' "$PROJECT_SETTINGS"
+    [ "$status" -eq 0 ] || { echo "no grant for $dir/"; return 1; }
+  done
+}
+
+# The two `local` names are the grants this move removed from the template. They
+# are named outright because nothing tracks them any more, so only a test keeps
+# them from being restored by hand.
+@test "the machine-level template carries no repo-scoped script grant" {
+  local dir
+  for dir in $(project_granted_dirs) bin/local git/bin/local; do
+    run jq -e --arg r "Bash($dir/*)" '.permissions.allow | index($r) != null' "$SETTINGS"
+    [ "$status" -ne 0 ] || { echo "repo-scoped grant in the machine template: Bash($dir/*)"; return 1; }
+  done
+}
+
+# A blanket directory wildcard is the right default for scripts a checkout already
+# trusts, but two of them reach credentials — one reads secrets out of AWS Secrets
+# Manager, the other rewrites GCP application-default credentials — and neither
+# should run without the human seeing it. `ask` outranks `allow`, so the carve-out
+# restores the prompt without taking the script away.
+@test "the credential-facing scripts are held back to a prompt" {
+  local script
+  for script in bin/get-secret bin/gcloud-reauth; do
+    [ -f "$REPO_ROOT/$script" ] || { echo "no such script: $script"; return 1; }
+    run jq -e --arg r "Bash($script:*)" '.permissions.ask | index($r) != null' "$PROJECT_SETTINGS"
+    [ "$status" -eq 0 ] || { echo "$script is covered by the wildcard with no ask rule"; return 1; }
+  done
+}
+
+# claude-bash-guard steers a ./-prefixed or absolute invocation back to the form
+# the allow list keys on, so it has to know the same directories the tracked file
+# grants. It cannot read that file — it runs with no resolved repo root, which is
+# the ceiling on its own rule — so this test is what holds the two together.
+@test "the guard's repo-script directories track the project grants" {
+  local guarded dir granted covered
+  guarded=$(sed -n 's/^REPO_SCRIPT_DIRS=(\(.*\))$/\1/p' "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
+  [ -n "$guarded" ]
+
+  for granted in $(project_granted_dirs); do
+    [[ " $guarded " == *" $granted "* ]] || {
+      echo "granted but unknown to REPO_SCRIPT_DIRS: $granted"
+      return 1
+    }
+  done
+
+  # The reverse: a directory the guard steers toward with no grant behind it
+  # trades one prompt for another. A narrower entry counts as covered by the
+  # wildcard it sits under — `bin/local` by `Bash(bin/*)`.
+  for dir in $guarded; do
+    covered=
+    for granted in $(project_granted_dirs); do
+      if [[ "$dir" == "$granted" || "$dir" == "$granted"/* ]]; then covered=1; fi
+    done
+    [ -n "$covered" ] || { echo "REPO_SCRIPT_DIRS names an ungranted directory: $dir"; return 1; }
+  done
+}
+
+@test "validate-permissions checks the tracked project settings file" {
+  run "$REPO_ROOT/bin/local/validate-permissions"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *".claude/settings.json"* ]] || {
+    echo "discovery did not reach .claude/settings.json:"
+    echo "$output"
+    return 1
+  }
+}
+
+# The scaffold owns the list of files a project's .claude/ keeps out of git.
+# This repo's .claude/ is hand-written rather than scaffolded, so nothing else
+# holds the two in step.
+@test "the tracked .claude/.gitignore matches the scaffold's artifact list" {
+  local scaffolded
+  scaffolded=$(sed -n 's/^CLAUDE_LOCAL_ARTIFACTS=(\(.*\))$/\1/p' "$REPO_ROOT/ai/claude/steps.sh")
+  [ -n "$scaffolded" ]
+
+  local artifact
+  for artifact in $scaffolded; do
+    grep -qxF "$artifact" "$REPO_ROOT/.claude/.gitignore" || {
+      echo "scaffolded artifact missing from .claude/.gitignore: $artifact"
+      return 1
+    }
+  done
 }
 
 # ── Registry permissions are injected at sync ────────────────────────────────
@@ -332,32 +461,72 @@ _init_test_repo() {
 # stripped text as the guardrails below, so such a path inside a quoted
 # argument is not mistaken for an invocation.
 
-@test "binlocal hook: blocks an absolute path to a bin/local script" {
+@test "reposcript hook: blocks an absolute path to a bin/local script" {
   run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/bin/local/validate-all"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"bin/local/validate-all"* ]]
 }
 
-@test "binlocal hook: blocks an absolute path after a statement separator" {
+@test "reposcript hook: blocks an absolute path after a statement separator" {
   run _run_guard '{"tool_input":{"command":"ls -la; /Users/me/git/repo/bin/local/validate-all"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"bin/local/validate-all"* ]]
 }
 
-@test "binlocal hook: names the git/ prefixed path" {
+@test "reposcript hook: names the git/ prefixed path" {
   run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/git/bin/local/generate-git-rules"}}'
   [ "$status" -eq 2 ]
   [[ "$output" == *"'git/bin/local/generate-git-rules'"* ]]
 }
 
-@test "binlocal hook: allows the relative form" {
+# ai/claude/bin sits under a `bin/` of its own, so the longest granted directory
+# has to win — naming it `bin/review-post` would suggest a path that does not
+# exist.
+@test "reposcript hook: names the ai/claude/bin path in full" {
+  run _run_guard '{"tool_input":{"command":"/Users/me/git/repo/ai/claude/bin/review-post --pr 1"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'ai/claude/bin/review-post'"* ]]
+}
+
+@test "reposcript hook: blocks a ./ prefix on a top-level bin script" {
+  run _run_guard '{"tool_input":{"command":"./bin/otto-workbench sync"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'bin/otto-workbench'"* ]]
+}
+
+@test "reposcript hook: blocks a ./ prefix on an ai/claude/bin script" {
+  run _run_guard '{"tool_input":{"command":"./ai/claude/bin/otto-log stats"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"'ai/claude/bin/otto-log'"* ]]
+}
+
+@test "reposcript hook: allows the relative form" {
   run _run_guard '{"tool_input":{"command":"bin/local/validate-all"}}'
   [ "$status" -eq 0 ]
 }
 
-@test "binlocal hook: allows an absolute path inside a quoted argument" {
+@test "reposcript hook: allows the relative form of a top-level bin script" {
+  run _run_guard '{"tool_input":{"command":"bin/otto-workbench sync"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "reposcript hook: allows an absolute path inside a quoted argument" {
   run _run_guard '{"tool_input":{"command":"git commit -m \"drop; /Users/me/repo/bin/local/old\""}}'
   [ "$status" -eq 0 ]
+}
+
+# A bare `bin/` is claimed only behind a `./`. Absolutely spelled it belongs to
+# whatever tree the path names, and a virtualenv ships one — suggesting
+# `bin/pip` there would send Claude at a script that does not exist.
+@test "reposcript hook: leaves an absolute virtualenv bin path alone" {
+  run _run_guard '{"tool_input":{"command":"/tmp/fonttools-venv/bin/pip install fonttools"}}'
+  [ "$status" -eq 0 ]
+}
+
+@test "reposcript hook: defers a PATH bin dir to the bare-name rule" {
+  run _run_guard '{"tool_input":{"command":"/opt/homebrew/bin/gh pr view 42"}}'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Use 'gh'"* ]]
 }
 
 @test "pathbin hook: blocks /bin/cat and names the bare command" {
@@ -823,7 +992,7 @@ _init_test_repo() {
   [ "$status" -eq 0 ]
 }
 
-@test "binlocal hook: allows an absolute bin/local path inside a heredoc body" {
+@test "reposcript hook: allows an absolute bin/local path inside a heredoc body" {
   run _run_guard '{"tool_input":{"command":"cat > /tmp/x/run.sh <<EOF\ntrue; /Users/me/repo/bin/local/validate-all\nEOF"}}'
   [ "$status" -eq 0 ]
 }

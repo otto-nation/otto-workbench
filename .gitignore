@@ -12,8 +12,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Claude Code local overrides
-.claude/
+# Claude Code — .claude/ is tracked, the same way `otto-workbench ai init`
+# scaffolds it into every other repo. Its machine-local files are listed in
+# .claude/.gitignore.
 
 ai/memory/
 

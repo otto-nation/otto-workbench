@@ -427,6 +427,10 @@ TRANSPORT_TIMEOUT = 300
 # only bounds a join that should return at once.
 READER_JOIN_TIMEOUT = 5
 
+# How often the reply loop wakes to ask whether the server is still alive. Short
+# enough that a crash fails the test at once, long enough not to spin.
+REPLY_POLL_INTERVAL = 0.1
+
 uv_required = pytest.mark.skipif(
     shutil.which("uv") is None,
     reason="the server runs under `uv run --with mcp`, as ai/claude/bin/otto-mcp-server does",
@@ -533,6 +537,15 @@ def _call(request_id: int, name: str, arguments: dict) -> dict:
     }
 
 
+def _unanswered(expected: int, frames: list[dict], why: str, stderr: list[str]) -> str:
+    """Why the conversation stopped short, with the server's own account of it."""
+    answered = sum(1 for frame in frames if "id" in frame)
+    return (
+        f"{expected - answered} of {expected} replies never arrived — {why}; "
+        f"server stderr:\n{''.join(stderr)}"
+    )
+
+
 def _talk(script: Path, messages: list[dict]) -> _Exchange:
     """Write raw JSON-RPC frames at the server over stdio and collect the replies.
 
@@ -558,38 +571,60 @@ def _talk(script: Path, messages: list[dict]) -> _Exchange:
     # and would otherwise fill and block the process mid-answer.
     replies: queue.Queue[str] = queue.Queue()
     stderr_text: list[str] = []
-    readers = [
-        threading.Thread(target=lambda: [replies.put(line) for line in proc.stdout], daemon=True),
-        threading.Thread(target=lambda: stderr_text.append(proc.stderr.read()), daemon=True),
-    ]
-    for reader in readers:
-        reader.start()
-
-    proc.stdin.write("".join(json.dumps(message) + "\n" for message in messages))
-    proc.stdin.flush()
+    stdout_reader = threading.Thread(
+        target=lambda: [replies.put(line) for line in proc.stdout], daemon=True)
+    stderr_reader = threading.Thread(
+        target=lambda: stderr_text.append(proc.stderr.read()), daemon=True)
+    stdout_reader.start()
+    stderr_reader.start()
 
     expected = sum(1 for message in messages if "id" in message)
-    frames: list[dict] = []
-    deadline = time.monotonic() + TRANSPORT_TIMEOUT
-    while sum(1 for frame in frames if "id" in frame) < expected:
+    try:
         try:
-            line = replies.get(timeout=max(0.0, deadline - time.monotonic()))
-        except queue.Empty:
-            proc.kill()
-            readers[1].join(timeout=READER_JOIN_TIMEOUT)
+            proc.stdin.write("".join(json.dumps(message) + "\n" for message in messages))
+            proc.stdin.flush()
+        except BrokenPipeError:
+            # A server that dies before reading is the same failure as one that
+            # dies before answering; report it the same way rather than as a
+            # pipe error with no stderr attached.
+            stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
             raise AssertionError(
-                f"{expected - len(frames)} of {expected} replies never arrived within "
-                f"{TRANSPORT_TIMEOUT}s; server stderr:\n{''.join(stderr_text)}"
-            )
-        if line.strip():
-            frames.append(json.loads(line))
+                _unanswered(expected, [], f"the server exited {proc.wait()}", stderr_text))
 
-    proc.stdin.close()
-    proc.wait(timeout=TRANSPORT_TIMEOUT)
-    for reader in readers:
-        reader.join(timeout=READER_JOIN_TIMEOUT)
+        frames: list[dict] = []
+        deadline = time.monotonic() + TRANSPORT_TIMEOUT
+        while sum(1 for frame in frames if "id" in frame) < expected:
+            try:
+                line = replies.get(timeout=REPLY_POLL_INTERVAL)
+            except queue.Empty:
+                # Stdout at EOF means the server is gone and the rest of the
+                # replies are never coming. The regressions this test guards
+                # against kill it before it writes anything, so waiting out the
+                # whole timeout would turn a clear failure into a hung suite.
+                if not stdout_reader.is_alive():
+                    stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
+                    raise AssertionError(_unanswered(
+                        expected, frames, f"the server exited {proc.wait()}", stderr_text))
+                if time.monotonic() >= deadline:
+                    proc.kill()
+                    stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
+                    raise AssertionError(_unanswered(
+                        expected, frames, f"nothing more within {TRANSPORT_TIMEOUT}s", stderr_text))
+                continue
+            if line.strip():
+                frames.append(json.loads(line))
 
-    return _Exchange(frames=frames, stderr="".join(stderr_text))
+        proc.stdin.close()
+        proc.wait(timeout=TRANSPORT_TIMEOUT)
+        stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
+        return _Exchange(frames=frames, stderr="".join(stderr_text))
+    finally:
+        proc.kill()
+        stdout_reader.join(timeout=READER_JOIN_TIMEOUT)
+        stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            if not pipe.closed:
+                pipe.close()
 
 
 @pytest.fixture(scope="module")

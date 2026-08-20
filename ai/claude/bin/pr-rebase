@@ -1671,6 +1671,15 @@ def _load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     )
 
 
+def _recorded_target_base(ctx: pr_context.ResolvedContext) -> str | None:
+    """The ``target_base`` a prior run of this command recorded, if any.
+
+    Read-only — ``load_or_init`` never writes, so calling this to peek at state
+    has no side effect on a run that ends up resolving its own target ref.
+    """
+    return _load_or_init(ctx).rebase.target_base or None
+
+
 @dataclass
 class RebaseOutcome:
     """Result of a rebase — owns state persistence and JSON reporting."""
@@ -2135,6 +2144,15 @@ def cmd_start(
     runs: a resumed one is already past the point the refusal protects.
     """
     if _detect_rebase_in_progress(cwd):
+        recorded = _recorded_target_base(ctx)
+        if recorded and recorded != target_ref:
+            if _trail:
+                _trail.decision(
+                    "target_ref", f"resuming onto recorded {recorded}",
+                    reason=f"in-progress rebase was started against {recorded}, "
+                           f"not this run's resolved {target_ref}",
+                )
+            target_ref = recorded
         if _trail:
             _trail.decision(
                 "rebase_state",
@@ -2489,11 +2507,17 @@ def main():
         debug=args.debug,
     )
     try:
-        target_ref = _resolve_target_ref(cwd, ctx, args.onto)
-
         if args.abort:
             _trail.decision("mode", "selected abort", reason="--abort flag set")
+            # Abort is the escape hatch for a broken or hung rebase — it should
+            # not depend on a network call. The target ref only needs recording
+            # in the aborted outcome, so prefer what the run that started the
+            # rebase already resolved and fall back to a fresh resolution only
+            # when no prior state exists to read.
+            target_ref = _recorded_target_base(ctx) or _resolve_target_ref(cwd, ctx, args.onto)
             sys.exit(cmd_abort(cwd, ctx, target_ref=target_ref))
+
+        target_ref = _resolve_target_ref(cwd, ctx, args.onto)
 
         mode, reason = _select_mode(args)
         _trail.decision("mode", f"selected {mode}", reason=reason)

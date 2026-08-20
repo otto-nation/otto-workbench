@@ -3093,6 +3093,13 @@ def _hand_written_rows(published: str, fresh: str) -> list[HeldRow]:
 
     A row with no Action cell to read is not a hand edit but a row whose shape
     this renderer no longer produces, and re-rendering it is the repair.
+
+    The Action cell is excluded from every form of the key, but that is not all
+    the key is: a row cut out of a top-level comment carries its summary cell
+    too, because the anchor it shares with its siblings cannot tell them apart.
+    A round that rewords such a row's summary therefore presents it as a new
+    row, and the held one carries forward beside it — see the ceiling note on
+    `_summary_row_key`.
     """
     if not published:
         return []

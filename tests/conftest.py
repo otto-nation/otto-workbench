@@ -306,6 +306,43 @@ def synthetic_review(
     )
 
 
+@pytest.fixture
+def reviews_dir(tmp_path, monkeypatch) -> Path:
+    """A throwaway reviews root, reached the way every workbench root is.
+
+    Through the environment rather than by patching a path onto a module: the
+    code under test resolves the root per call, so nothing here has to know
+    which module reads it.
+    """
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import workbench_paths
+    d = workbench_paths.reviews_dir()
+    d.mkdir(parents=True)
+    return d
+
+
+def seed_review(reviews_dir: Path, name: str = "widget-42",
+                body: str | None = None, **meta) -> Path:
+    """A review directory the reviews walk will classify as a review.
+
+    One builder rather than one per suite, because the on-disk shape — a
+    directory holding `review.md` beside a `meta.json` sidecar — is what the
+    walk classifies on, and a second copy of it drifts the moment the layout
+    moves. `meta.json` is written only when a caller passes attribution, so the
+    default stands in for a review predating the sidecar.
+    """
+    d = reviews_dir / name
+    d.mkdir()
+    (d / "review.md").write_text(
+        "## Must fix\n- **[M1]** a.py:1 — bug\n" if body is None else body,
+    )
+    if meta:
+        (d / "meta.json").write_text(json.dumps(meta))
+    return d
+
+
 def supersession_verdict(*signals):
     """A canned verdict, for the callers that decide what to do about one.
 

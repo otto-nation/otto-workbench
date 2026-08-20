@@ -533,7 +533,7 @@ def _review_summary(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> 
     return 0
 
 
-def _review_list(argv: list[str], ctx: pr_context.ResolvedContext, *,
+def _review_list(argv: list[str], _ctx: pr_context.ResolvedContext, *,
                  schema_version: int | None = None, **_kw) -> int:
     """List every review in the user's state root.
 
@@ -547,8 +547,9 @@ def _review_list(argv: list[str], ctx: pr_context.ResolvedContext, *,
     that forgets the handshake gets a parse failure from an empty stream rather
     than a table it half-understands.
 
-    `ctx` is unresolved: `--list` declares `ContextDepth.NONE`, so there is no
-    repo, branch, or target here and nothing in this function looks for one.
+    The context is unresolved and the parameter is named for it: `--list`
+    declares `ContextDepth.NONE`, so there is no repo, branch, or target here
+    and nothing in this function may look for one.
     """
     if schema_version is None:
         print("\n".join(review_listing.render_table(review_listing.rows())),
@@ -600,6 +601,18 @@ def _mode_flags_prose() -> str:
     """The mode flags as an English list, for the exclusivity error."""
     flags = list(_REVIEW_MODES)
     return f"{', '.join(flags[:-1])}, and {flags[-1]}"
+
+
+def _invocation(command: str, argv: list[str]) -> str:
+    """This invocation as the user typed it, for an error that quotes it back.
+
+    A mode flag is part of the invocation's identity — `review` and `review
+    --list` are different commands to everyone but argparse — so an error about
+    one has to name the flag or it reads as being about the other.
+    """
+    mode = next((t for t in argv if t in _REVIEW_MODES), "") \
+        if command == "review" else ""
+    return " ".join(filter(None, [SCRIPT, command, mode]))
 
 
 def _schema_contracts() -> list[str]:
@@ -856,10 +869,10 @@ def _tool_schema() -> dict:
     }
 
 
-# argparse's own exit code for a usage error, which this is: the caller asked
-# for a document in terms this build does not serve. Distinct from 1, so a
-# consumer can tell "we do not speak your version" from "the command failed".
-EXIT_BAD_SCHEMA_VERSION = 2
+# argparse's own exit code for a usage error: the caller asked for something in
+# terms this build cannot answer in. Distinct from 1, so a consumer can tell
+# "we cannot answer that" from "the command ran and failed".
+EXIT_USAGE = 2
 
 
 def _checked_schema_version(value: str, command: str, argv: list[str]) -> int:
@@ -874,12 +887,32 @@ def _checked_schema_version(value: str, command: str, argv: list[str]) -> int:
     if not served:
         log.error(f"{SCRIPT}: --schema-version is served by "
                   f"{', '.join(_schema_contracts())}, not by this command")
-        sys.exit(EXIT_BAD_SCHEMA_VERSION)
+        sys.exit(EXIT_USAGE)
     if value not in {str(v) for v in served}:
         log.error(f"{SCRIPT}: unsupported --schema-version {value!r} — "
                   f"this build serves {', '.join(str(v) for v in served)}")
-        sys.exit(EXIT_BAD_SCHEMA_VERSION)
+        sys.exit(EXIT_USAGE)
     return int(value)
+
+
+def _reject_a_target_that_resolves_to_nothing(
+    command: str, argv: list[str], need: Need,
+    pr: str | None, branch: str | None,
+) -> None:
+    """Exit if a command that resolves nothing was handed a target anyway.
+
+    Depth NONE has nowhere to put a target, so honouring one is not an option —
+    the choice is between ignoring it and refusing it. Ignoring is the worse
+    answer by a distance: `pr review 123 --list` reads as "the reviews for
+    #123" and would come back with every review on the machine, which is a
+    wrong answer that looks exactly like a right one.
+    """
+    given = pr or branch
+    if need.depth is not pr_context.ContextDepth.NONE or not given:
+        return
+    log.error(f"{SCRIPT}: {_invocation(command, argv)} answers from your state "
+              f"root and takes no PR or branch — drop {given!r}")
+    sys.exit(EXIT_USAGE)
 
 
 def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_args, *,
@@ -991,6 +1024,9 @@ def main():
     # positional scan above, because that scan is what turns a bare token into
     # the --pr that can escalate the declared depth.
     need = _need_for(entry, extra)
+    _reject_a_target_that_resolves_to_nothing(
+        args.command, extra, need, original_pr, original_branch,
+    )
 
     ctx = pr_context.resolve_at(
         need.depth,

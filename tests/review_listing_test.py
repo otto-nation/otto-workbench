@@ -8,8 +8,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -17,21 +15,10 @@ if str(LIB_DIR) not in sys.path:
 
 import review_common  # noqa: E402
 import review_listing  # noqa: E402
-import workbench_paths  # noqa: E402
 
-
-@pytest.fixture
-def reviews_dir(tmp_path, monkeypatch):
-    """A throwaway reviews root, reached through the environment.
-
-    Same shape as `pr_cli_test`'s: the code under test resolves the root per
-    call, so nothing here has to know which module reads it.
-    """
-    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-    d = workbench_paths.reviews_dir()
-    d.mkdir(parents=True)
-    return d
-
+# `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
+# and importing one shadows the fixture with a plain function.
+from conftest import seed_review  # noqa: E402
 
 _REVIEW_MD = """## Must fix
 - **[M1]** a.py:1 — bug
@@ -45,12 +32,8 @@ _REVIEW_MD = """## Must fix
 
 
 def _review(reviews_dir, name="widget-42", body=_REVIEW_MD, **meta):
-    d = reviews_dir / name
-    d.mkdir()
-    (d / "review.md").write_text(body)
-    if meta:
-        (d / "meta.json").write_text(json.dumps(meta))
-    return d
+    """One finding per severity, which is what the vocabulary tests read."""
+    return seed_review(reviews_dir, name=name, body=body, **meta)
 
 
 # ── rows ────────────────────────────────────────────────────────────────────

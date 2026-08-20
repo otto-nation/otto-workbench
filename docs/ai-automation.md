@@ -153,12 +153,12 @@ Analyze and address PR review comments with lifecycle tracking: fetch, classify,
 **Trigger:** Use when user asks about PR comments, review comments, reviewer feedback, or addressing suggestions on a PR; user references a PR with review threads; user asks to analyze, fix, respond to, or resolve review comments.
 **Skip:** Do not use for initial code review requests (use code-review or pr review instead); do not use for self-review before PR creation (use self-review-fix instead).
 
-### `/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto <ref>]`
+### `/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]`
 
 AI-assisted rebase onto the branch's base with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead).
 
 ```
-/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto <ref>]
+/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]
 ```
 **Output schema:** `pr-rebase --tool-schema` (MCP tool: `pr-rebase`)
 **Trigger:** Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase.

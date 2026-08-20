@@ -36,6 +36,12 @@ from conftest import assert_no_worktree_exit, init_worktree, make_ctx  # noqa: E
 # which ref reached git can pass its own instead.
 _TARGET = "origin/main"
 
+# The non-default base a release-branch PR reports, and the ref resolution
+# prefixes it into. Paired here because the tests that assert one against the
+# other are asserting exactly that relationship.
+_OTHER_BASE = "release/1.2"
+_OTHER_TARGET = f"origin/{_OTHER_BASE}"
+
 
 # ── _detect_rebase_in_progress ──────────────────────────────────────────────
 
@@ -163,9 +169,9 @@ def test_commits_ahead_non_numeric():
 def test_commits_ahead_counts_against_the_resolved_ref():
     fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="2\n")
     with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
-        pr_rebase_cli._commits_ahead("/fake", target_ref="origin/release/1.2")
+        pr_rebase_cli._commits_ahead("/fake", target_ref=_OTHER_TARGET)
 
-    assert "origin/release/1.2..HEAD" in mock_run.call_args[0][0]
+    assert f"{_OTHER_TARGET}..HEAD" in mock_run.call_args[0][0]
 
 
 # ── _find_regenerator ──────────────────────────────────────────────────────
@@ -690,9 +696,9 @@ def test_build_resolve_prompt_names_the_resolved_ref():
     """The prompt tells the model which branch the commit is being replayed onto."""
     prompt = pr_rebase_cli._build_resolve_prompt(
         "src/auth.py", "conflict content",
-        "abc123", "fix: auth refresh", target_ref="origin/release/1.2",
+        "abc123", "fix: auth refresh", target_ref=_OTHER_TARGET,
     )
-    assert "origin/release/1.2" in prompt
+    assert _OTHER_TARGET in prompt
     assert "origin/main" not in prompt
 
 
@@ -1176,9 +1182,9 @@ def test_build_chunked_prompt_instructs_base_side_names():
 def test_build_chunked_prompt_names_the_resolved_ref():
     prompt = pr_rebase_cli._build_chunked_prompt(
         "main.go", [_block(index=1, start=0, end=4)], "abc123", "feat: change",
-        target_ref="origin/release/1.2",
+        target_ref=_OTHER_TARGET,
     )
-    assert "origin/release/1.2" in prompt
+    assert _OTHER_TARGET in prompt
     assert "origin/main" not in prompt
 
 
@@ -2485,8 +2491,8 @@ def test_merged_pr_survives_gh_being_absent():
 def test_pr_base_branch_reads_the_base_github_reports():
     ctx = _landed_ctx(repo="owner/repo")
 
-    with _gh_response('{"baseRefName": "release/1.2"}') as mock_try:
-        assert pr_rebase_cli._pr_base_branch("/fake", ctx) == "release/1.2"
+    with _gh_response(f'{{"baseRefName": "{_OTHER_BASE}"}}') as mock_try:
+        assert pr_rebase_cli._pr_base_branch("/fake", ctx) == _OTHER_BASE
 
     cmd = mock_try.call_args[0][0]
     assert cmd[:4] == ["gh", "pr", "view", str(_LANDED_PR)]
@@ -2497,8 +2503,8 @@ def test_pr_base_branch_omits_repo_when_the_context_has_none():
     """gh infers the repo from the remote — an empty --repo value would not."""
     ctx = _landed_ctx(repo="")
 
-    with _gh_response('{"baseRefName": "release/1.2"}') as mock_try:
-        assert pr_rebase_cli._pr_base_branch("/fake", ctx) == "release/1.2"
+    with _gh_response(f'{{"baseRefName": "{_OTHER_BASE}"}}') as mock_try:
+        assert pr_rebase_cli._pr_base_branch("/fake", ctx) == _OTHER_BASE
 
     assert "--repo" not in mock_try.call_args[0][0]
 
@@ -2538,13 +2544,12 @@ def _resolve_target(onto=None, *, pr_base=None, default_branch="main"):
 def test_resolve_target_ref_prefers_the_onto_flag():
     """The flag is taken verbatim — it may name a remote the probes never see."""
     assert _resolve_target(
-        "upstream/trunk", pr_base="release/1.2", default_branch="master",
+        "upstream/trunk", pr_base=_OTHER_BASE, default_branch="master",
     ) == "upstream/trunk"
 
 
 def test_resolve_target_ref_prefers_the_pr_base_over_the_default_branch():
-    assert _resolve_target(pr_base="release/1.2", default_branch="main") == \
-        "origin/release/1.2"
+    assert _resolve_target(pr_base=_OTHER_BASE, default_branch="main") == _OTHER_TARGET
 
 
 def test_resolve_target_ref_falls_back_to_the_default_branch():
@@ -2553,7 +2558,7 @@ def test_resolve_target_ref_falls_back_to_the_default_branch():
 
 
 def test_resolve_target_ref_never_asks_the_default_branch_when_a_pr_answers():
-    with mock.patch.object(pr_rebase_cli, "_pr_base_branch", return_value="release/1.2"), \
+    with mock.patch.object(pr_rebase_cli, "_pr_base_branch", return_value=_OTHER_BASE), \
          mock.patch.object(pr_rebase_cli.pr_context, "default_branch") as mock_default:
         pr_rebase_cli._resolve_target_ref("/fake", _landed_ctx(), None)
 
@@ -2571,10 +2576,10 @@ def test_diff_is_empty_follows_git_diff_quiet(returncode, expected):
 def test_diff_is_empty_compares_against_the_resolved_ref():
     """The landed check has to ask the branch the rebase targets, not the trunk."""
     with mock.patch("subprocess.run", return_value=_completed(["git"], 0)) as mock_run:
-        pr_rebase_cli._diff_is_empty("/fake", target_ref="origin/release/1.2")
+        pr_rebase_cli._diff_is_empty("/fake", target_ref=_OTHER_TARGET)
 
     assert mock_run.call_args[0][0] == [
-        "git", "diff", "--quiet", "origin/release/1.2", "HEAD",
+        "git", "diff", "--quiet", _OTHER_TARGET, "HEAD",
     ]
 
 
@@ -2600,9 +2605,9 @@ def test_all_commits_upstream_reads_git_cherry_prefixes(stdout, expected):
 
 def test_all_commits_upstream_compares_against_the_resolved_ref():
     with mock.patch("subprocess.run", return_value=_completed(["git"], 0)) as mock_run:
-        pr_rebase_cli._all_commits_upstream("/fake", target_ref="origin/release/1.2")
+        pr_rebase_cli._all_commits_upstream("/fake", target_ref=_OTHER_TARGET)
 
-    assert mock_run.call_args[0][0] == ["git", "cherry", "origin/release/1.2", "HEAD"]
+    assert mock_run.call_args[0][0] == ["git", "cherry", _OTHER_TARGET, "HEAD"]
 
 
 def test_all_commits_upstream_is_false_when_git_cherry_fails():
@@ -2748,11 +2753,11 @@ def test_refuse_landed_records_the_status_for_the_dashboard():
     )
 
     with mock.patch.object(pr_rebase_cli, "_emit_json"):
-        pr_rebase_cli._refuse_landed(ctx, report, target_ref="origin/release/1.2")
+        pr_rebase_cli._refuse_landed(ctx, report, target_ref=_OTHER_TARGET)
 
     state = pr_state.load_state(ctx.target_dir)
     assert state.rebase.status == pr_state.RebaseStatus.ALREADY_LANDED.value
-    assert state.rebase.target_base == "origin/release/1.2"
+    assert state.rebase.target_base == _OTHER_TARGET
 
 
 def _run_fresh(*, tracker=None, git=None, force=False, current_branch=_LANDED_BRANCH,
@@ -3018,14 +3023,14 @@ def test_main_rebases_onto_the_pr_base_rather_than_the_default_branch():
     Rebasing it onto the trunk would replay the parent's commits too and then
     force-push the result — silently, with no error to notice.
     """
-    _, _, mock_start = _run_main(0, pr_base="release/1.2", default_branch="main")
+    _, _, mock_start = _run_main(0, pr_base=_OTHER_BASE, default_branch="main")
 
-    assert mock_start.call_args.kwargs["target_ref"] == "origin/release/1.2"
+    assert mock_start.call_args.kwargs["target_ref"] == _OTHER_TARGET
 
 
 def test_main_lets_onto_override_every_probe():
     _, _, mock_start = _run_main(
-        0, "--onto", "upstream/trunk", pr_base="release/1.2", default_branch="master",
+        0, "--onto", "upstream/trunk", pr_base=_OTHER_BASE, default_branch="master",
     )
 
     assert mock_start.call_args.kwargs["target_ref"] == "upstream/trunk"

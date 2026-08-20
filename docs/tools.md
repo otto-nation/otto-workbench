@@ -519,7 +519,6 @@ serena-mcp <command>
 
 ## Installed Tools
 
-
 **Brew Tools**
 
 | Tool | Description |

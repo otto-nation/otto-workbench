@@ -99,9 +99,7 @@ Registries feed into several generated files:
 |--------|-----------|-----------|
 | `tools.generated.md` | [`generate-tool-context`](../bin/local/generate-tool-context) | Claude (path-scoped) |
 | `tools.workflow.generated.md` | [`generate-tool-context`](../bin/local/generate-tool-context) | Claude (every session) |
-| `docs/tools.md` | [`compose-docs`](../bin/local/compose-docs) | Humans |
-| `docs/ai-automation.md` | [`compose-docs`](../bin/local/compose-docs) | Humans |
-| `docs/components.md` | [`compose-docs`](../bin/local/compose-docs) | Humans |
+| every `docs/<name>.md` with a `docs/<name>.src.md` beside it | [`compose-docs`](../bin/local/compose-docs) | Humans |
 
 The composed docs ask for their generated sections with an include directive:
 

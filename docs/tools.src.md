@@ -455,7 +455,6 @@ serena-mcp <command>
 | `-h`, `--help` | Show help |
 
 ## Installed Tools
-
 <!-- include: bin/local/generate-tool-context --emit tools-table -->
 
 ## Adding a Tool

@@ -92,6 +92,17 @@ after'
   [[ "$output" == *"[*.md]"* ]]
 }
 
+@test "keeps the last line of output that has no trailing newline" {
+  _stub bin/gen 'printf "first\nlast with no newline"'
+  _src page '<!-- include: bin/gen -->'
+
+  run _compose --quiet
+  [ "$status" -eq 0 ]
+
+  run cat "$ROOT/docs/page.md"
+  [[ "$output" == *"last with no newline"* ]]
+}
+
 @test "a generator cannot read the document it is included from" {
   _stub bin/greedy 'cat; printf "swallowed\n"'
   _src page 'first

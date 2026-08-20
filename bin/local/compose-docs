@@ -84,7 +84,10 @@ _resolve_command() {
 _expand() {
   local depth="$1" line directive path
   local -a argv
-  while IFS= read -r line; do
+  # `|| [[ -n "$line" ]]`: a generator whose last printf omits the newline still
+  # has that line read into $line, with read reporting failure. Without the
+  # guard the loop ends first and the line is dropped with no error.
+  while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ ! "$line" =~ $INCLUDE_RE ]]; then
       printf '%s\n' "$line"
       continue
@@ -94,13 +97,10 @@ _expand() {
       err "include: nesting exceeded $MAX_DEPTH levels at '$directive' — check for a cycle"
       return 1
     fi
-    # Unquoted on purpose: the directive is a command line, and word splitting is
-    # how it becomes argv. Globbing is off so a metacharacter in an argument
-    # reaches the command as itself.
-    set -f
-    # shellcheck disable=SC2206  # deliberate word splitting; globbing disabled
-    argv=($directive)
-    set +f
+    # The directive is a command line, and read -a splits it into argv on IFS
+    # without globbing — a metacharacter in an argument reaches the command as
+    # itself.
+    read -ra argv <<< "$directive"
     path="$(_resolve_command "${argv[0]}")" || return 1
     # </dev/null: this loop's stdin is the document. A generator that read from
     # it would swallow the rest of the file.

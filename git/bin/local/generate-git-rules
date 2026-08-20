@@ -48,15 +48,16 @@ COMMIT_BODY_MAX_LEN=$(_extract_const "COMMIT_BODY_MAX_LEN")
 BREAKING_CHANGE_FOOTER=$(_extract_const "BREAKING_CHANGE_FOOTER")
 NOT_BREAKING_FOOTER=$(_extract_const "NOT_BREAKING_FOOTER")
 
-# Conventional Commits v1.0.0 lists the hyphenated spelling as a synonym and
-# release-please honours it, so bin/local/check-surface-compat accepts both.
-# Derived from the constant rather than declared a second time.
-BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER// /-}"
-
 if [[ -z "$COMMIT_TYPES" || -z "$COMMIT_HEADER_MAX_LEN" || -z "$COMMIT_BODY_MAX_LEN" || -z "$BREAKING_CHANGE_FOOTER" || -z "$NOT_BREAKING_FOOTER" ]]; then
   err "Could not extract constants from $CONVENTIONS_SH"
   exit 1
 fi
+
+# Conventional Commits v1.0.0 lists the hyphenated spelling as a synonym and
+# release-please honours it, so bin/local/check-surface-compat accepts both.
+# Derived from the constant rather than declared a second time, and only once
+# the guard above has confirmed there is a value to derive from.
+BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER// /-}"
 
 # Build comma-separated and bullet-list type displays
 TYPES_DISPLAY=$(echo "$COMMIT_TYPES" | tr ' ' ', ')

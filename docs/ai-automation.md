@@ -943,6 +943,26 @@ the life of the PR, so a thread that legitimately stops appearing keeps its last
 rendered state rather than vanishing. That is the trade being made on purpose: a
 stale row a reviewer can still read beats a round nobody can recover.
 
+**An Action cell written by hand is never re-rendered.** Carrying rows forward
+protects a row state cannot account for; it cannot protect the Action cell,
+because the row key deliberately excludes it — a round changing that cell
+(deferred to fixed) has to count as the same row. The Action cell is also the
+only cell a person edits, so the two rules once composed into the inverse of the
+intent: a hand edit survived exactly as long as local state had lost the thread,
+and was overwritten the round state regained it. So each published row is asked
+a second question. If its Action cell opens with none of the wordings this
+renderer writes, a person wrote it: the published row is re-emitted in the
+position its entry would have taken, counted as `N hand-written`, and the run
+warns with the cell it kept and the cell it would have written instead.
+
+The header counts follow the cells. An entry whose row is held drops out of its
+own bucket, so a row reading `Superseded — …` no longer sits under a header
+reading `1 need discussion` — the contradiction that reopened a question the PR
+had closed. Nothing tries to read a classification back out of the prose a human
+wrote; the row simply stops being counted as anything but hand-written. Hand a
+row back to the renderer by restoring a generated cell on the published comment
+with `gh api -X PATCH`.
+
 **A summary that has been answered is reposted, not edited.** GitHub leaves an
 edited comment where it was and notifies nobody, so once a reviewer has
 commented, submitted a review, or replied on a thread below the summary, editing

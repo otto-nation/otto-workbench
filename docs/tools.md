@@ -371,6 +371,14 @@ with no way to tell which stands. Whether the thread is resolved makes no
 difference: `--finish --post` resolves the threads it answers, and the reply it
 left there is still the one to revise.
 
+A reply that no longer reads as one of ours was rewritten by hand, and the
+thread is then left alone for the life of the PR — the round logs it and moves
+on rather than posting a templated answer under a position a person already
+stated. A reviewer answering does not retire that: the thread having become a
+conversation is the strongest reason not to talk over it. Use
+`--reply <id> --body-file <path> --post` to replace a hand-written reply on
+purpose.
+
 `--reply <id> --body-file <path> --post` accepts a thread node ID, any comment
 `databaseId` in the thread, or a `...#discussion_r<id>` URL, and warns when the
 body carries no `blob/<sha>/` permalink to back its claims. Pass `-` as the path

@@ -4,6 +4,7 @@ setup() {
   load 'test_helper'
   common_setup
   TMPDIR="$(mktemp -d)"
+  GENERATOR="$REPO_ROOT/bin/local/generate-public-surface"
 }
 
 teardown() {
@@ -12,34 +13,35 @@ teardown() {
 }
 
 # _generator_under_test — prints the generator the fault-injection tests run.
-# GENERATOR_UNDER_TEST lets the same test run against an older copy of the
-# generator (see task-2-report.md) to prove it actually discriminates the bug it
-# targets, rather than passing against any implementation.
+# GENERATOR_UNDER_TEST points the same test at a copy of the generator with the
+# guard under test removed: if the test still passes against that copy it is
+# not discriminating the bug it claims to, only asserting something true of any
+# implementation. Each fault-injection test below was run both ways once.
 _generator_under_test() {
-  echo "${GENERATOR_UNDER_TEST:-$REPO_ROOT/bin/local/generate-public-surface}"
+  echo "${GENERATOR_UNDER_TEST:-$GENERATOR}"
 }
 
 @test "generator writes both package snapshots" {
-  run "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  run "$GENERATOR" --out-dir "$TMPDIR" --quiet
   [ "$status" -eq 0 ]
   [ -f "$TMPDIR/public-surface.json" ]
   [ -f "$TMPDIR/ai/claude/public-surface.json" ]
 }
 
 @test "root snapshot names the otto-workbench package" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   run jq -r '.package' "$TMPDIR/public-surface.json"
   [ "$output" = "otto-workbench" ]
 }
 
 @test "ai snapshot names the otto-ai-tools package" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   run jq -r '.package' "$TMPDIR/ai/claude/public-surface.json"
   [ "$output" = "otto-ai-tools" ]
 }
 
 @test "root snapshot carries commands, config keys, and components" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   run jq -r '.entries[]' "$TMPDIR/public-surface.json"
   [[ "$output" == *"command:get-secret"* ]]
   [[ "$output" == *"config:reuse.level"* ]]
@@ -48,13 +50,13 @@ _generator_under_test() {
 }
 
 @test "workbench-scoped tools are not public" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   run jq -r '.entries[]' "$TMPDIR/public-surface.json"
   [[ "$output" != *"command:validate-all"* ]]
 }
 
 @test "ai/claude tools land in the ai snapshot, not the root one" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   run jq -r '.entries[]' "$TMPDIR/ai/claude/public-surface.json"
   [[ "$output" == *"command:claude-review"* ]]
   [[ "$output" == *"agent:debugger"* ]]
@@ -65,13 +67,13 @@ _generator_under_test() {
 }
 
 @test "entries are sorted and unique" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   run jq -r '.entries == (.entries | sort | unique)' "$TMPDIR/public-surface.json"
   [ "$output" = "true" ]
 }
 
 @test "--check passes against the committed snapshots" {
-  run "$REPO_ROOT/bin/local/generate-public-surface" --check --quiet
+  run "$GENERATOR" --check --quiet
   [ "$status" -eq 0 ]
 }
 
@@ -83,7 +85,7 @@ _generator_under_test() {
   mv "$TMPDIR/mutated.json" "$TMPDIR/public-surface.json"
   cp "$TMPDIR/public-surface.json" "$TMPDIR/before.json"
 
-  run "$REPO_ROOT/bin/local/generate-public-surface" --check --quiet --out-dir "$TMPDIR"
+  run "$GENERATOR" --check --quiet --out-dir "$TMPDIR"
   [ "$status" -eq 1 ]
 
   run cmp "$TMPDIR/public-surface.json" "$TMPDIR/before.json"
@@ -92,8 +94,8 @@ _generator_under_test() {
 
 @test "generation is deterministic regardless of the caller's locale" {
   local dir_c="$TMPDIR/c" dir_en="$TMPDIR/en"
-  env LC_ALL=C "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$dir_c" --quiet
-  env LC_ALL=en_US.UTF-8 "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$dir_en" --quiet
+  env LC_ALL=C "$GENERATOR" --out-dir "$dir_c" --quiet
+  env LC_ALL=en_US.UTF-8 "$GENERATOR" --out-dir "$dir_en" --quiet
 
   run cmp "$dir_c/public-surface.json" "$dir_en/public-surface.json"
   [ "$status" -eq 0 ]
@@ -102,7 +104,7 @@ _generator_under_test() {
 }
 
 @test "ai/serena tools land in the root snapshot, not ai/claude" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   run jq -e '.entries | index("command:serena-mcp")' "$TMPDIR/public-surface.json"
   [ "$status" -eq 0 ]
   run jq -e '.entries | index("command:serena-mcp")' "$TMPDIR/ai/claude/public-surface.json"
@@ -110,7 +112,7 @@ _generator_under_test() {
 }
 
 @test "every ai/claude registry tool has a matching command entry" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   while IFS= read -r name; do
     run jq -e --arg e "command:$name" '.entries | index($e)' "$TMPDIR/ai/claude/public-surface.json"
     [ "$status" -eq 0 ]
@@ -118,7 +120,7 @@ _generator_under_test() {
 }
 
 @test "every ai/claude agent has a matching agent entry" {
-  "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR" --quiet
+  "$GENERATOR" --out-dir "$TMPDIR" --quiet
   for f in "$REPO_ROOT"/ai/claude/agents/*.md; do
     name="$(basename "$f" .md)"
     run jq -e --arg e "agent:$name" '.entries | index($e)' "$TMPDIR/ai/claude/public-surface.json"
@@ -229,7 +231,7 @@ EOF
 # directory is the strongest form of the check — any surviving git-based
 # resolution fails outright against it.
 @test "the generator resolves its own root with GIT_DIR exported" {
-  run env GIT_DIR="$TMPDIR/nowhere" "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR/out" --quiet
+  run env GIT_DIR="$TMPDIR/nowhere" "$GENERATOR" --out-dir "$TMPDIR/out" --quiet
   [ "$status" -eq 0 ]
   [ -f "$TMPDIR/out/public-surface.json" ]
   [ -f "$TMPDIR/out/ai/claude/public-surface.json" ]
@@ -242,7 +244,7 @@ EOF
 
 @test "the generator resolves its own root from an unrelated directory" {
   cd /
-  run "$REPO_ROOT/bin/local/generate-public-surface" --out-dir "$TMPDIR/out" --quiet
+  run "$GENERATOR" --out-dir "$TMPDIR/out" --quiet
   [ "$status" -eq 0 ]
   [ -f "$TMPDIR/out/public-surface.json" ]
 }
@@ -293,4 +295,19 @@ EOF
   [ "$status" -eq 0 ]
   run jq -e '.entries | index("config:composed=one")' "$TMPDIR/out/public-surface.json"
   [ "$status" -eq 0 ]
+}
+
+# Exit 2 for a usage error, not 1: --check reserves 1 for "the snapshot is
+# stale", so a mistyped flag exiting 1 sends the contributor off to regenerate
+# a snapshot that was never out of date.
+@test "--out-dir with no directory is a usage error, not a stale snapshot" {
+  run "$GENERATOR" --out-dir
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--out-dir requires a directory"* ]]
+}
+
+@test "an unknown argument is a usage error, not a stale snapshot" {
+  run "$GENERATOR" --nope
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Unknown argument"* ]]
 }

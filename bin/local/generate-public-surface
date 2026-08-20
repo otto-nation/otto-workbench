@@ -2,8 +2,9 @@
 # Generate the public surface snapshot for each released package.
 #
 # The snapshot is the machine-readable form of the semver contract: removing an
-# entry from it is a breaking change unless the commit says otherwise. See
-# docs/superpowers/specs/2026-08-18-breaking-change-declaration-design.md.
+# entry from it is a breaking change unless the commit says otherwise. What
+# counts as public, and how a removal is declared, is written down in
+# CONTRIBUTING.md under "Versioning & breaking changes".
 #
 # Writes:
 #   public-surface.json               — otto-workbench (root package)
@@ -14,7 +15,8 @@
 # package that owns it with no routing logic here.
 #
 # Usage: bin/local/generate-public-surface [--check] [--quiet] [--out-dir DIR]
-# Exit code: 0 on success; 1 if --check finds a committed snapshot out of date.
+# Exit codes: 0 on success; 1 if --check finds a committed snapshot out of date;
+#             2 on a usage error.
 
 set -e
 # pipefail closes the gap set -e alone leaves open: every category function
@@ -70,9 +72,14 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --check) CHECK=true; shift ;;
     --quiet) QUIET=true; shift ;;
-    --out-dir) OUT_DIR="$2"; shift 2 ;;
+    # Without the presence check, `shift 2` on a lone --out-dir fails under
+    # errexit and the script dies at exit 1 with nothing printed — the same
+    # status --check uses for a stale snapshot, from a typo.
+    --out-dir)
+      [[ -n "${2:-}" ]] || { err "--out-dir requires a directory"; usage; exit 2; }
+      OUT_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
-    *) err "Unknown argument: $1"; usage; exit 1 ;;
+    *) err "Unknown argument: $1"; usage; exit 2 ;;
   esac
 done
 

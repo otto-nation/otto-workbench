@@ -470,22 +470,39 @@ and it answers `--tool-schema` with JSON carrying at least `name` and `input_sch
 Scripts built on `ToolParser`
 ([`ai/lib/tool_parser.py`](../ai/lib/tool_parser.py)) inherit the flag for free.
 
-**Where it looks.** The workbench's own script directories, and nothing else. They are
-derived from the component layout rather than listed — the root `bin/`, plus every
-`<component>/bin` and `<component>/<sub>/bin` in the checkout. That is the same two-level
-glob [`lib/components.sh`](../lib/components.sh) uses for `steps.sh` and `migrations`, so
-a new component tier such as `editors/zed/bin/` is scanned the moment it exists. Note it
-scans the checkout, not the `~/.local/bin` those scripts are symlinked into: discovery
-probes a candidate by running it, and `~/.local/bin` also holds everything else you have
-installed.
+**Where it looks.** The workbench's own script directories, always. They are derived from
+the component layout rather than listed — the root `bin/`, plus every `<component>/bin`
+and `<component>/<sub>/bin` in the checkout. That is the same two-level glob
+[`lib/components.sh`](../lib/components.sh) uses for `steps.sh` and `migrations`, so a new
+component tier such as `editors/zed/bin/` is scanned the moment it exists, with no config
+to write. Note it scans the checkout, not the `~/.local/bin` those scripts are symlinked
+into: discovery probes a candidate by running it, and `~/.local/bin` also holds everything
+else you have installed.
 
-**There is no configuration file.** The server hosts the workbench's own tools, so what
-to scan is a fact about the checkout — there is nothing to hand-author and nothing to keep
-in sync. An earlier design read `tool_dirs` and `plugin_dirs` from
-`~/.config/workbench/mcp-tools.json` to let outside directories register tools; no setup
-step ever wrote that file, no machine was found holding one, and the keys were removed
-rather than carried into `config.yml`. Adding a tool means putting a `--tool-schema`
-script in a component's `bin/`.
+To reach anything outside the workbench, add `~/.config/workbench/mcp-tools.json`, which
+is optional:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tool_dirs` | list of paths | `[]` | Directories scanned **in addition** to the workbench's own |
+| `plugin_dirs` | list of paths | `[]` | Directories of `*.json` files, each naming one `tool_dir` |
+
+Both keys add to the derived set rather than replacing it, so an empty list and an absent
+key mean the same thing. The workbench's own directories are always scanned.
+
+```json
+{
+  "tool_dirs": ["~/work/project/bin"],
+  "plugin_dirs": ["~/.config/workbench/mcp-plugins"]
+}
+```
+
+A plugin file points at a directory to scan, letting a project register its tools
+without editing the config:
+
+```json
+{ "name": "my-project", "tool_dir": "~/work/project/tools" }
+```
 
 Discovery reads each candidate's source before running it, and only executes the ones
 carrying a protocol marker — a script that ignores unknown flags would otherwise do its

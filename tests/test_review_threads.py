@@ -2291,7 +2291,8 @@ class TestHandWrittenRepliesSurvive:
 
     def _reply_below_a_reviewer_answer(self, rt, body):
         """As `_reply`, but a reviewer has since answered our standing reply."""
-        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1)
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
+                            commit_sha="abc1234")
         thread = _standing_reply_thread(body=body, state=ThreadState.CONTESTED)
         thread.comments.append({
             "databaseId": 333,
@@ -2301,7 +2302,8 @@ class TestHandWrittenRepliesSurvive:
         with patch("pr_comments.patch_thread_reply", return_value=True) as edit, \
              patch("pr_comments.post_thread_reply", return_value=True) as post:
             count = rt._post_fix_replies(
-                [entry], {"t1": thread}, "owner/repo", 42, "abc1234",
+                [entry], {"t1": thread}, "owner/repo", 42,
+                rt.CommitPushResult("abc1234", "pushed", ""),
             )
         return count, edit, post
 

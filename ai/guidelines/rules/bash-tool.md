@@ -17,7 +17,18 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
   - `gh <subcommand> --repo <owner/repo> ...` for GitHub CLI — `--repo` must come *after* the subcommand. The allow list keys on per-subcommand prefixes (`Bash(gh pr:*)`, `Bash(gh issue:*)`, `Bash(gh run:*)`), so `gh --repo <owner/repo> pr view` matches none of them and prompts every time, while `gh pr view --repo <owner/repo>` matches `Bash(gh pr:*)`
   - `gh api repos/<owner>/<repo>/...` for API calls (no directory needed, and `Bash(gh api:*)` covers it whatever the path)
   - Run the command directly with absolute paths when possible — `pytest /abs/path/tests/foo_test.py`, `bats /abs/path/tests/foo.bats` (both derive their root from the file paths, so they need no cwd change)
-  - A bare `cd <dir>` on its own — no `&&`, no `;`, nothing after it — as its own call. The Bash tool keeps that working directory for later calls. This is the only reliable way to run a whole suite (`bats tests/`, `bin/local/validate-all`) that resolves paths from the repo root
+  - A bare `cd <dir>` on its own — no `&&`, no `;`, nothing after it — as its own call. In a main session the Bash tool keeps that working directory for later calls, which is the only way to run a whole suite (`bats tests/`, `bin/local/validate-all`) that resolves paths from the repo root. **It does not work in a subagent** — see § Subagents Reset the Working Directory
+
+## Subagents Reset the Working Directory
+
+- A bare `cd <dir>` does not persist between Bash calls in a subagent — every call starts again in the directory the subagent was spawned in, which is the *parent session's* cwd, not any directory the subagent chose. Unlike the sections above, this is not a permission prompt: nothing is blocked, nothing warns, and the command runs somewhere other than where it was meant to
+- The failure is silent and reads as success, which is what makes it worth a rule. A subagent working in `repo/feature-branch/` that runs `pytest tests/` after `cd`-ing there executes `repo/main/`'s copy and reports it green — the change under test was never exercised. `git rev-parse --abbrev-ref HEAD` in the same position answers `main`, so a subagent can also inspect, diff, or commit against the wrong worktree while believing it is on its own branch
+- Every path in a subagent's Bash call must therefore be absolute or `-C`-qualified, with no dependence on a prior `cd`:
+  - `pytest /abs/path/tests/foo_test.py`, `bats /abs/path/tests/foo.bats` — both derive their root from the file paths
+  - `git -C /abs/path <subcommand>` for every git command, including read-only ones like `status`, `log`, and `rev-parse`
+  - For a suite or script that must resolve paths from the repo root (`bats tests/`, `bin/local/validate-all`), write a wrapper to `/tmp` with the Write tool whose first line is `cd /abs/path`, and run `bash /tmp/<name>.sh`. A wrapper *file* is not the `sh -c "..."` anti-pattern — the script is readable, and its `cd` is inside a file rather than in the analyzed command string
+- When dispatching a subagent that will run tests or git commands, give it the absolute worktree path and say that its cwd will not persist. A subagent cannot discover this rule by observing that its commands succeed
+- Confirm the run landed where it was meant to before believing its result — a suite's test count against the wrong tree is usually close enough to the right one to pass unnoticed. Have the wrapper echo `pwd` and the branch, or compare the count against a known-good run
 
 ## Avoid `env -C`
 

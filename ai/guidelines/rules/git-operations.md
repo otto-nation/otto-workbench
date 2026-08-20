@@ -35,6 +35,7 @@
 
 - Never run tests, builds, or git-mutating commands in a worktree other than the current session's — test harnesses create temporary git repos that can corrupt the target worktree's branch and commit state
 - When applying changes to another worktree, only use `git apply` and file copies — then tell the user to run tests there themselves
+- In a subagent this is the default outcome rather than a mistake you have to make: cwd resets between Bash calls, so an unqualified command runs against the parent session's worktree however many times the subagent has `cd`-ed into its own. Absolute paths and `git -C` are what keep a subagent inside its worktree — see `bash-tool.md` § Subagents Reset the Working Directory
 
 ## PR Creation
 

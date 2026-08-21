@@ -84,10 +84,10 @@ tools:
     visibility: brief
     description: "Validates that every composed doc matches what its docs/*.src.md composes to"
 
-  - name: validate-lib-reference
+  - name: validate-doc-reference
     permission: false
     visibility: brief
-    description: "Validates that docs/libraries.src.md renders every module group lib/ declares"
+    description: "Validates that a source doc renders every module group its source set declares"
 
   - name: validate-tracked-ignored
     permission: false
@@ -99,10 +99,10 @@ tools:
     visibility: brief
     description: "Composes docs/*.md from docs/*.src.md by expanding include directives into generator output"
 
-  - name: generate-lib-reference
+  - name: generate-doc-reference
     permission: false
     visibility: brief
-    description: "Renders the docs/libraries.md module reference from the lib/ module headers"
+    description: "Renders a module reference from the doc blocks of a source set's own modules"
 
   - name: generate-tool-context
     permission: false

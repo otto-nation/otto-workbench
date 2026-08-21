@@ -32,6 +32,8 @@ Stdlib-only and importing nothing, so that `proc`, `git_client`, and everything
 built on them can depend on it without a cycle.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 # A subprocess that should answer instantly: a `--value-flags` probe, a session

@@ -5,6 +5,8 @@ reclassification after LineResolutionError, dry-run display,
 and post-tracking metadata.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 import argparse

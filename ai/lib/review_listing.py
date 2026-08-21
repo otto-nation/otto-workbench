@@ -21,6 +21,8 @@ A row reports its review's *path*, never its content: a consumer polling on an
 interval would otherwise carry every review's full text on every tick.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 from dataclasses import dataclass

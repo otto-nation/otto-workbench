@@ -24,6 +24,8 @@ delegates that take no lock of their own, so running either directly is
 unguarded and only ``pr rebase`` / ``pr describe`` serialize them.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import contextlib

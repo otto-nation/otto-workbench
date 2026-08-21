@@ -21,6 +21,8 @@ declaration that ``meta.source`` is a directory of executables with one
 the paths built below cannot drift from the files on disk.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import logging

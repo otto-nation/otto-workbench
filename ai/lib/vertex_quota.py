@@ -9,6 +9,8 @@ Reached through ``ai_backend.preflight()`` — nothing outside the Claude
 backend should import this module.
 """
 
+# doc-group: backend
+
 from __future__ import annotations
 
 import hashlib

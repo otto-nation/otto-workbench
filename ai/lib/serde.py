@@ -8,6 +8,8 @@ not the only thing that has to know what an annotation means — `schema_gen`
 describes the same hints to a model and dispatches on the same answer.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import dataclasses

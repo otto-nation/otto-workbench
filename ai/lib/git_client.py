@@ -25,6 +25,8 @@ Depends on `proc` and nothing else. Whether a failed read is worth logging is
 the caller's decision, and most of them have already decided it is not.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 from pathlib import Path

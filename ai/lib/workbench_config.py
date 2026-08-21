@@ -15,6 +15,8 @@ vars:
 so nothing here overrides a value a caller passed or exported.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import dataclasses

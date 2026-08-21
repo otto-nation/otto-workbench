@@ -67,10 +67,10 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-tool-schema` | Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
 | `validate-docs-composed` | Validates that every composed doc matches what its docs/*.src.md composes to |
-| `validate-lib-reference` | Validates that docs/libraries.src.md renders every module group lib/ declares |
+| `validate-doc-reference` | Validates that a source doc renders every module group its source set declares |
 | `validate-tracked-ignored` | Validates that no tracked file lives under a path .gitignore claims to ignore |
 | `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
-| `generate-lib-reference` | Renders the docs/libraries.md module reference from the lib/ module headers |
+| `generate-doc-reference` | Renders a module reference from the doc blocks of a source set's own modules |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
@@ -395,19 +395,28 @@ to read the body from stdin. Like every other write here it needs `--post`;
 without it the body is printed under `DRAFT (not published)` and nothing is
 sent. Use it instead of `gh api .../replies`, which bypasses the dedup entirely.
 
-**The summary is one comment, and it only grows:**
+**The summary is a chain of comments, one per round:**
 
-A review cycle runs several rounds against a single `Review Comments Addressed`
-comment, edited in place. It reports all five thread outcomes — fixed, already
-addressed, dismissed, deferred, and the ones still awaiting discussion — so a
-`needs_human` thread appears as open rather than not at all.
+A review cycle posts `Review Comments Addressed` comments as it goes. A round
+nobody has spoken over since the last one edits that comment in place; a round a
+reviewer has commented, reviewed, or replied below posts a new one, because an
+edit notifies nobody. Each comment reports all five thread outcomes — fixed,
+already addressed, dismissed, deferred, and the ones still awaiting discussion —
+so a `needs_human` thread appears as open rather than not at all.
 
-The replacement body is built from local state, which is per-target and
-per-worktree, and routinely absent for a round the comment already covers: `pr
-gc`, a recreated worktree, a later round run from another machine. So the
-published comment is read before the edit and any row this run cannot account
-for is carried forward verbatim, counted as `N carried over`, and logged. An
-edit never removes a row the comment already had.
+A new comment covers its own round: threads worked this round, threads a
+reviewer has spoken on since the last summary, and every open question. Threads
+settled in an earlier round and quiet since are left in the comment that
+published them and counted in a note; a footer links every earlier summary, so
+the newest comment is the entry point to the whole record.
+
+An edit is the case that can destroy a row, since it replaces a body. The
+replacement is built from local state, which is per-target and per-worktree, and
+routinely absent for a round the comment already covers: `pr gc`, a recreated
+worktree, a later round run from another machine. So the comment is read before
+the edit and any row this run cannot account for is carried forward verbatim,
+counted as `N carried over`, and logged. An edit never removes a row the comment
+already had.
 
 **`pr describe` is commit-aware:**
 

@@ -20,6 +20,8 @@ stay separate: two of the landed check's three signals are local-only, and this
 one makes a network call that a rebase should not have to pay for.
 """
 
+# doc-group: pr-state
+
 from __future__ import annotations
 
 import re

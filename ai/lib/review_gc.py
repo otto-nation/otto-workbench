@@ -10,6 +10,8 @@ the PR being gone — and all of them read what a review directory holds from
 `review_common.phase_artifacts` rather than naming files themselves.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import json

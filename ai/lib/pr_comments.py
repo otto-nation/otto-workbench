@@ -4,6 +4,8 @@ Handles thread lifecycle state computation, local state persistence,
 and GitHub data fetching for the pr-comments skill.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 import json
@@ -273,12 +275,50 @@ class MarkerComment:
     moving the comment. ``newest_other_at`` is the newest issue comment that is
     not itself a marker comment, so an earlier round's superseded summary does
     not read as someone answering.
+
+    ``url`` is how a later comment links back to this one. A caller that spreads
+    its record across several marker comments has to give the reader a way to
+    walk the chain, and the listing already carries the link.
     """
     found: bool = False
     comment_id: int | None = None
     body: str = ""
     created_at: str = ""
     newest_other_at: str = ""
+    url: str = ""
+
+
+@dataclass(frozen=True)
+class MarkerHistory:
+    """Every comment on a PR carrying one marker, oldest first.
+
+    ``find_marker_comment`` answers "which comment do I edit", which is the whole
+    question while a marker names a single comment. A caller that posts a new
+    marker comment per round has two more: what the earlier rounds already
+    published, and where a reader can find them. Both are answers this one
+    listing already holds, so they are returned from it rather than paid for
+    again.
+
+    ``found`` is the listing's own success, carried for the same reason
+    ``MarkerComment.found`` is: an errored listing must not read as a PR with no
+    marker comments on it.
+    """
+
+    found: bool = False
+    comments: tuple[MarkerComment, ...] = ()
+    newest_other_at: str = ""
+
+    @property
+    def newest(self) -> MarkerComment:
+        """The comment a marked upsert targets — the newest one, or an empty stand-in."""
+        if self.comments:
+            return self.comments[-1]
+        return MarkerComment(found=self.found, newest_other_at=self.newest_other_at)
+
+    @property
+    def bodies(self) -> list[str]:
+        """Every marker comment's body, oldest first."""
+        return [c.body for c in self.comments]
 
 
 def post_issue_comment(
@@ -320,28 +360,41 @@ def find_marker_comment(repo: str, pr_number: int, marker: str) -> MarkerComment
     Paginated: the marker comment is posted on the first round of a review
     cycle, so on a busy PR it is the one most likely to fall off page one.
     """
+    return find_marker_comments(repo, pr_number, marker).newest
+
+
+def find_marker_comments(repo: str, pr_number: int, marker: str) -> MarkerHistory:
+    """Find every issue comment containing marker, oldest first.
+
+    The listing behind `find_marker_comment`, kept whole. One round's marked
+    comment is the upsert target and the rest are the record it continues, and
+    a caller that needs both would otherwise list the PR twice and let the two
+    reads disagree about which comment is which.
+    """
     code, out = _paginated_json(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
     if code != 0:
-        return MarkerComment()
+        return MarkerHistory()
     try:
         pages = json.loads(out)
     except (json.JSONDecodeError, TypeError):
-        return MarkerComment()
+        return MarkerHistory()
     if not isinstance(pages, list):
-        return MarkerComment()
+        return MarkerHistory()
     comments = [c for page in pages for c in page] if pages and isinstance(pages[0], list) else pages
     newest_other = max(
         (c.get("created_at", "") or "" for c in comments if marker not in (c.get("body") or "")),
         default="",
     )
-    for c in reversed(comments):
-        if marker in (c.get("body") or ""):
-            return MarkerComment(
-                True, c.get("id"), c.get("body") or "",
-                created_at=c.get("created_at", "") or "",
-                newest_other_at=newest_other,
-            )
-    return MarkerComment(found=True, newest_other_at=newest_other)
+    marked = tuple(
+        MarkerComment(
+            True, c.get("id"), c.get("body") or "",
+            created_at=c.get("created_at", "") or "",
+            newest_other_at=newest_other,
+            url=c.get("html_url", "") or "",
+        )
+        for c in comments if marker in (c.get("body") or "")
+    )
+    return MarkerHistory(found=True, comments=marked, newest_other_at=newest_other)
 
 
 def _patch_issue_comment(repo: str, comment_id: int, body: str) -> str | None:

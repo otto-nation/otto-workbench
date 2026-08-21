@@ -17,6 +17,8 @@ would capture whichever value happened to be live when the first importer
 loaded this module.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import os

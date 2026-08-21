@@ -11,6 +11,7 @@ config.schema.json linguist-generated=true
 
 # bin/local/compose-docs, from the docs/*.src.md of the same name
 docs/ai-automation.md linguist-generated=true
+docs/ai-libraries.md linguist-generated=true
 docs/components.md linguist-generated=true
 docs/getting-started.md linguist-generated=true
 docs/libraries.md linguist-generated=true

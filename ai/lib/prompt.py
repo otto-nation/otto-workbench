@@ -10,6 +10,8 @@ in a hook, a CI job, or a subprocess gets a usable result instead of an
 exception. No answer is never consent.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import sys

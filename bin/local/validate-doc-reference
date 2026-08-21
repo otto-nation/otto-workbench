@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Validate that the docs ask for every group a source set declares.
+#
+# Module sections are rendered from the sources themselves, so a source doc
+# holds only prose plus one include directive per group. Two ways that
+# arrangement can fail quietly, and this is what catches them:
+#
+#   A module in a group nobody asks for is documented nowhere. Adding
+#   `doc-group: foo` to a module is meant to be the whole change, so this fails
+#   until some docs/*.src.md carries the directive that renders it.
+#
+#   A hand-written `### name` section in a source doc would sit beside the
+#   generated ones looking identical, and drift from the module it describes —
+#   which is the arrangement this whole thing replaced.
+#
+# Neither rule names a doc or a set. The generator lists its sets, the docs name
+# the sets they render, and the pairing falls out of the two — so a new source
+# doc for a new set is enforced the moment it lands, with nothing to register.
+#
+# The heading rule applies only to a doc that renders module sections. Docs that
+# never call the generator write `###` headings as ordinary prose.
+#
+# Freshness of the composed file is not checked here: bin/local/compose-docs
+# --check covers every artifact, through bin/local/validate-docs-composed.
+#
+# Usage: bin/local/validate-doc-reference [--quiet]
+# Exit codes: 0 if every declared group is rendered; 1 if one is not; 2 on a
+#             usage error.
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$_SELF")/../.." && pwd)}"
+# shellcheck source=../../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+GENERATOR="bin/local/generate-doc-reference"
+DOCS_DIR="${DOCS_DIR:-$REPO_ROOT/docs}"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Check that the docs request every group each source set declares, and that a doc
+rendering module sections holds none written by hand.
+
+Options:
+  --quiet     Suppress output on success
+  -h, --help  Show this help
+
+Environment:
+  DOCS_DIR    Directory holding the .src.md sources (default: docs/)
+EOF
+}
+
+QUIET=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) QUIET=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) err "Unknown argument: $1"; usage >&2; exit 2 ;;
+  esac
+done
+
+# _sources ARRAY_REF — every docs/*.src.md, empty if the glob matched nothing.
+# shellcheck disable=SC2178  # __out is a nameref to an array — shellcheck misreads it
+_sources() {
+  local -n __out=$1
+  local src
+  __out=()
+  for src in "$DOCS_DIR"/*.src.md; do
+    if [[ -f "$src" ]]; then __out+=("$src"); fi
+  done
+}
+
+# _directives SRC... — the include directives the named docs hold.
+#
+# They come from compose-docs rather than a grep of the doc, so this accepts
+# exactly what composition accepts. A doc that renders a group is never reported
+# as not rendering it because of how its directive is spaced.
+_directives() {
+  "$REPO_ROOT/bin/local/compose-docs" --list "$@"
+}
+
+declare -a SOURCES=()
+_sources SOURCES
+if (( ${#SOURCES[@]} == 0 )); then
+  err "No .src.md files found in $DOCS_DIR — the module reference has no source doc"
+  exit 1
+fi
+
+errors=0
+groups=0
+
+ALL_DIRECTIVES="$(_directives "${SOURCES[@]}")"
+
+# Every group a module declares must be requested by a directive. The reverse —
+# a directive naming a group no module declares — is the generator's own error,
+# raised when compose-docs runs it.
+while IFS= read -r set_key; do
+  while IFS= read -r group; do
+    groups=$((groups + 1))
+    if grep -qxF -- "$GENERATOR --set $set_key --group $group" <<< "$ALL_DIRECTIVES"; then continue; fi
+    err "no docs/*.src.md renders the '$group' group of the '$set_key' set"
+    echo "  Add: <!-- include: $GENERATOR --set $set_key --group $group -->" >&2
+    errors=$((errors + 1))
+  done < <("$REPO_ROOT/$GENERATOR" --set "$set_key" --groups)
+done < <("$REPO_ROOT/$GENERATOR" --sets)
+
+# A `###` heading in a doc that renders module sections is one written by hand.
+# The generator emits every real one, so this can only be a stale copy of one.
+docs=0
+for src in "${SOURCES[@]}"; do
+  rel="${src#"$REPO_ROOT"/}"
+  if ! grep -q -- "^$GENERATOR --set .* --group " <<< "$(_directives "$src")"; then continue; fi
+  docs=$((docs + 1))
+  while IFS= read -r heading; do
+    err "$rel: hand-written module section '$heading'"
+    echo "  Module sections come from the module's own doc block in the source." >&2
+    errors=$((errors + 1))
+  done < <(grep '^### ' "$src" || true)
+done
+
+if (( errors > 0 )); then
+  exit 1
+fi
+
+$QUIET || success "$docs source docs render all $groups module groups"

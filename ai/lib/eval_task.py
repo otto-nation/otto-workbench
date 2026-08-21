@@ -8,6 +8,8 @@ Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 """
 
+# doc-group: eval
+
 from __future__ import annotations
 
 import os

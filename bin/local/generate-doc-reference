@@ -1,0 +1,535 @@
+#!/usr/bin/env bash
+# Renders a module reference from the sources themselves.
+#
+# A module's section is its own doc block. The prose between the top of the file
+# and its first line of code is markdown, and this script prints it under an
+# `### <name>` heading followed by the module's public symbol table — so the
+# prose describing a module lives beside the code it describes, and moving a
+# module moves its documentation with it.
+#
+# Which files that means is a source set, and a source set is a row in the table
+# below and nothing else. Adding one is five values, not a dispatch branch.
+#
+#   Set       Members            Doc block            Symbol table
+#   lib       lib/*.sh,          `#` block under the  `name()`
+#             lib/ai/*.sh        shebang
+#   ai-lib    ai/lib/*.py        `"""…"""` module     none — the modules are
+#                                docstring            imported, not sourced
+#
+# Doc block conventions:
+#
+#   # doc-group: <key>   Which group the module belongs to. A glob may carry a
+#                        default (lib/*.sh is `core`, lib/ai/*.sh is `ai`); a
+#                        glob with none means every module under it declares.
+#                        The group headings and their intros are prose, and live
+#                        in the source doc, which asks for each group by key.
+#   # shellcheck ...     Skipped — a linter directive is not documentation.
+#
+# A Python module writes its marker as a comment after the docstring, because a
+# marker inside the docstring would be published as prose.
+#
+# A doc block may itself carry an include directive; bin/local/compose-docs
+# expands what this prints, so lib/roots.sh asks for its own roots table and
+# lib/config.sh for the config key reference, each next to the prose that
+# explains it.
+#
+# Modules are byte-ordered within a group. Any other order would need a list of
+# module names somewhere, and that list is the thing this script exists to avoid.
+#
+# Usage: bin/local/generate-doc-reference --set <set> --group <key>
+#        bin/local/generate-doc-reference --set <set> --groups
+#        bin/local/generate-doc-reference --sets
+#        bin/local/generate-doc-reference --roots-table
+
+set -euo pipefail
+
+# Module order is the order a glob expands in, and that follows the collation
+# locale: under en_US.UTF-8 the underscore in `ai_backend_pi.py` sorts before the
+# dot in `ai_backend.py`, under C it sorts after. Both are self-consistent, so a
+# contributor whose shell disagrees with CI's regenerates a doc that differs only
+# in module order and fails validate-docs-composed for no real change. Exported so
+# the `sort` calls below agree with the globs, and LC_ALL is unset because it
+# outranks LC_COLLATE and would put the caller's locale back. Collation only — the
+# doc blocks carry em dashes, and LC_ALL=C would take character classification too.
+unset LC_ALL
+export LC_COLLATE=C
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$_SELF")/../.." && pwd)}"
+# shellcheck source=/dev/null
+. "$REPO_ROOT/lib/ui.sh"
+
+SOURCE_ROOT="${SOURCE_ROOT:-$REPO_ROOT}"
+
+# The source sets. Every column is data the renderer reads; none of them is a
+# name the renderer branches on, which is what keeps a new set to one row.
+#
+#   SET_SOURCES  `glob:default-group` pairs, relative to SOURCE_ROOT. An empty
+#                default means a module matched by that glob must declare one.
+#   SET_BASE     The directory an `### <name>` heading is relative to.
+#   SET_COMMENT  How the doc block is written: `hash` or `docstring`.
+#   SET_SYMBOLS  How public symbols are found: `bash`, or empty for no table.
+#   SET_FACADE   A module that loads the others, excluded from the reference and
+#                named by the note its members carry. Empty when the set has none.
+declare -gA SET_SOURCES=(
+  [lib]="lib/*.sh:core lib/ai/*.sh:ai"
+  [ai-lib]="ai/lib/*.py:"
+)
+declare -gA SET_BASE=(
+  [lib]="lib"
+  [ai-lib]="ai/lib"
+)
+declare -gA SET_COMMENT=(
+  [lib]="hash"
+  [ai-lib]="docstring"
+)
+declare -gA SET_SYMBOLS=(
+  [lib]="bash"
+  [ai-lib]=""
+)
+declare -gA SET_FACADE=(
+  [lib]="ui.sh"
+  [ai-lib]=""
+)
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") --set <set> --group <key>
+       $(basename "$0") --set <set> --groups
+       $(basename "$0") --sets
+       $(basename "$0") --roots-table
+
+Render a module reference from the sources of one set.
+
+Options:
+  --set <set>    Which source set to read: $(_set_keys | tr '\n' ' ')
+  --group <key>  Print every module in that group, in byte order
+  --groups       List the group keys the set's modules declare
+  --sets         List the source sets
+  --roots-table  Print the workbench roots table read from lib/roots.sh
+  -h, --help     Show this help
+
+Environment:
+  SOURCE_ROOT    Root the set globs resolve against (default: the repo root)
+EOF
+}
+
+# _set_keys — every source set key, alphabetical.
+_set_keys() {
+  printf '%s\n' "${!SET_SOURCES[@]}" | sort
+}
+
+# _set_entries KEY ARRAY_REF — "file<TAB>default-group" per module in the set.
+#
+# The default travels with the file rather than being looked up later: bash
+# pattern matching lets `*` cross a `/`, so `lib/*.sh` would claim `lib/ai/pr.sh`
+# if a file were matched back against the globs after the fact.
+# shellcheck disable=SC2178  # __out is a nameref to an array — shellcheck misreads it
+_set_entries() {
+  local key="$1"
+  local -n __out=$2
+  local spec glob default file facade="${SET_FACADE[$key]}"
+  __out=()
+  # shellcheck disable=SC2086  # the row is a space-separated list of specs
+  for spec in ${SET_SOURCES[$key]}; do
+    glob="${spec%:*}"
+    default="${spec##*:}"
+    # shellcheck disable=SC2231  # the glob is the row's data, not a literal path
+    for file in "$SOURCE_ROOT"/$glob; do
+      if [[ ! -f "$file" ]]; then continue; fi
+      if [[ -n "$facade" && "${file##*/}" == "$facade" ]]; then continue; fi
+      __out+=("$file"$'\t'"$default")
+    done
+  done
+}
+
+# _hash_group FILE — the group a `#`-commented file declares, read from the
+# header block only, the same span _hash_doc_block renders.
+#
+# A line further down the file that happens to read `# doc-group: x` — inside a
+# code example, say — describes the convention rather than declaring a group.
+# shellcheck disable=SC2016  # awk program, not shell expansion
+_hash_group() {
+  awk '
+    NR == 1 { next }
+    !/^#/ { exit }
+    /^#[[:space:]]*doc-group:/ {
+      sub(/^#[[:space:]]*doc-group:[[:space:]]*/, "")
+      print
+      exit
+    }
+  ' "$1"
+}
+
+# _docstring_group FILE — the group a Python module declares.
+#
+# The marker sits after the docstring and before the first import, because a
+# marker inside the docstring would be published as prose. Scanning stops at the
+# first line of code for the same reason _hash_group stops at one.
+#
+# State 0 is the shebang and any coding comment above the docstring, 1 is inside
+# it, 2 is the region the marker may appear in.
+# shellcheck disable=SC2016  # awk program, not shell expansion
+_docstring_group() {
+  awk '
+    state == 0 {
+      if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^#/) next
+      if ($0 !~ /^"""/) { state = 2 }
+      else {
+        line = $0
+        sub(/^"""/, "", line)
+        state = (line ~ /"""/) ? 2 : 1
+        next
+      }
+    }
+    state == 1 { if ($0 ~ /"""/) state = 2; next }
+    /^[[:space:]]*$/ { next }
+    /^#/ {
+      if ($0 !~ /^#[[:space:]]*doc-group:/) next
+      sub(/^#[[:space:]]*doc-group:[[:space:]]*/, "")
+      print
+      exit
+    }
+    { exit }
+  ' "$1"
+}
+
+# _file_group KEY FILE DEFAULT — the group FILE belongs to: the one it declares,
+# or DEFAULT when it declares none. Fails when neither exists.
+#
+# A module in no group is rendered by no directive and so is documented nowhere,
+# which nothing downstream can notice — the source doc asks for the groups that
+# exist, and this module is not in one. Failing here is what makes declaring a
+# group the whole of adding a module.
+_file_group() {
+  local declared
+  declared="$("_${SET_COMMENT[$1]}_group" "$2")"
+  declared="${declared:-$3}"
+  if [[ -z "$declared" ]]; then
+    err "${SET_BASE[$1]}/${2##*/} declares no group — add '# doc-group: <key>' below its doc block"
+    return 1
+  fi
+  printf '%s' "$declared"
+}
+
+# _hash_doc_block FILE — the comment block under the shebang, uncommented, with
+# linter directives and the group marker dropped.
+# shellcheck disable=SC2016  # awk program, not shell expansion
+_hash_doc_block() {
+  awk '
+    NR == 1 { next }
+    !/^#/ { exit }
+    {
+      line = $0
+      sub(/^#[[:space:]]?/, "", line)
+      if (line ~ /^shellcheck/ || line ~ /^doc-group:/) next
+      print line
+    }
+  ' "$1"
+}
+
+# _docstring_doc_block FILE — the module docstring, quotes stripped.
+#
+# A shebang or coding comment above it is skipped, so ai/lib/ci_failures.py
+# renders the same as a module that opens on its docstring. Only the `"""` form
+# is read; a module whose first statement is anything else has no docstring, and
+# _render_module turns that into a failure rather than an empty section.
+# shellcheck disable=SC2016  # awk program, not shell expansion
+_docstring_doc_block() {
+  awk '
+    started == 0 {
+      if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^#/) next
+      if ($0 !~ /^"""/) exit
+      started = 1
+      line = $0
+      sub(/^"""/, "", line)
+      if (line ~ /"""/) { sub(/""".*/, "", line); if (line != "") print line; exit }
+      if (line != "") print line
+      next
+    }
+    {
+      line = $0
+      if (line !~ /"""/) { print line; next }
+      sub(/""".*/, "", line)
+      if (line != "") print line
+      exit
+    }
+  ' "$1"
+}
+
+# _doc_block KEY FILE — one module's doc prose, however its set writes it.
+_doc_block() {
+  "_${SET_COMMENT[$1]}_doc_block" "$2"
+}
+
+# _facade_members KEY ARRAY_REF — the modules the set's facade loads, so the note
+# saying so is read off the facade instead of repeated in every module in it.
+# shellcheck disable=SC2178  # __out is a nameref to an array — shellcheck misreads it
+_facade_members() {
+  local facade_file="${SET_FACADE[$1]}"
+  local -n __out=$2
+  local name path="$SOURCE_ROOT/${SET_BASE[$1]}/$facade_file"
+  __out=()
+  if [[ -z "$facade_file" || ! -f "$path" ]]; then return 0; fi
+  while IFS= read -r name; do
+    __out+=("$name")
+  done < <(sed -n 's|^[[:space:]]*\.[[:space:]].*/\([a-z_]*\.sh\)"$|\1|p' "$path")
+}
+
+# _bash_doc_rows FILE — "signature<TAB>purpose" per public function in FILE.
+#
+# The convention the sources already follow: a comment block above the
+# definition whose first line names the function. The purpose is the text after
+# the em dash on that line, or the first following comment line when the
+# signature stands alone, and it runs to the end of that paragraph. A function
+# whose purpose comes out empty is undocumented, which _check_purposes turns
+# into a failure.
+#
+# The block is matched by name rather than by adjacency, so declarations
+# between the comment and the definition (lib/install.sh has two) still pair up.
+# shellcheck disable=SC2016  # awk program, not shell expansion
+_bash_doc_rows() {
+  awk '
+    /^[[:space:]]*#/ {
+      line = $0
+      sub(/^[[:space:]]*#[[:space:]]?/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /^shellcheck/) next
+      if (!in_block) { in_block = 1; n = 0 }
+      block[++n] = line
+      next
+    }
+    { in_block = 0 }
+    /^[A-Za-z][A-Za-z0-9_]*\(\)/ {
+      name = $0
+      sub(/\(\).*/, "", name)
+      if (n == 0 || substr(block[1], 1, length(name)) != name) { print name "\t"; next }
+      sig = block[1]
+      start = 2
+      dash = index(sig, "—")
+      if (dash > 0) {
+        purpose = substr(sig, dash + length("—"))
+        sig = substr(sig, 1, dash - 1)
+      } else {
+        purpose = ""
+        while (start <= n && block[start] == "") start++
+        purpose = block[start++]
+      }
+      # The purpose is the paragraph, not its first sentence. Stopping at the
+      # first full stop discarded every sentence after it, so a function could
+      # document an argument the signature column lists and the purpose column
+      # then failed to mention. A blank comment line ends the paragraph; the
+      # rationale below it is for the reader who opens the file.
+      # Indentation that continues a line means nothing once the lines are one
+      # table cell, and leaving it in prints a run of spaces mid-sentence.
+      while (start <= n && block[start] != "") {
+        cont = block[start++]
+        sub(/^[[:space:]]+/, "", cont)
+        purpose = purpose " " cont
+      }
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", sig)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", purpose)
+      sub(/:$/, "", purpose)
+      print sig "\t" purpose
+    }
+  ' "$1"
+}
+
+# _functions_table KEY FILE — the Function/Purpose table for one module; nothing
+# when the module offers no public functions, or when its set declares no symbol
+# syntax and so publishes its doc block alone.
+_functions_table() {
+  local syntax="${SET_SYMBOLS[$1]}" file="$2" sig purpose rows=""
+  [[ -n "$syntax" ]] || return 0
+  while IFS=$'\t' read -r sig purpose; do
+    [[ -n "$sig" && -n "$purpose" ]] || continue
+    [[ "$sig" == _* ]] && continue
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    rows+="$(printf '| `%s` | %s |' "${sig//|/\\|}" "${purpose//|/\\|}")"$'\n'
+  done < <("_${syntax}_doc_rows" "$file")
+  [[ -n "$rows" ]] || return 0
+  printf '\n| Function | Purpose |\n'
+  printf '|----------|---------|\n'
+  printf '%s' "$rows"
+}
+
+# _roots_table — the three workbench roots, read from lib/roots.sh.
+# Constant, XDG variable and default all come off the assignment; what the root
+# holds is the comment above it, so the doc cannot claim a default the resolver
+# does not use.
+# shellcheck disable=SC2016  # awk program, not shell expansion
+_roots_table() {
+  local roots="$SOURCE_ROOT/lib/roots.sh"
+  if [[ ! -f "$roots" ]]; then
+    err "lib/roots.sh is missing — cannot render the roots table"
+    return 1
+  fi
+  printf '| Constant | Holds | XDG rung | Default |\n'
+  printf '|----------|-------|----------|---------|\n'
+  awk '
+    /^[[:space:]]*#/ {
+      line = $0
+      sub(/^[[:space:]]*#[[:space:]]?/, "", line)
+      if (line ~ /^shellcheck/) next
+      if (!in_block) { in_block = 1; n = 0 }
+      block[++n] = line
+      next
+    }
+    { in_block = 0 }
+    /^WORKBENCH_[A-Z]+_DIR=/ {
+      if (n == 0) next
+      name = $0
+      sub(/=.*/, "", name)
+      holds = block[1]
+      sub(/[.[:space:]]+$/, "", holds)
+      xdg = "—"
+      if (match($0, /XDG_[A-Z]+_HOME/)) xdg = substr($0, RSTART, RLENGTH)
+      def = "—"
+      if (match($0, /\$HOME\/[^"]+/)) {
+        def = substr($0, RSTART, RLENGTH)
+        sub(/^\$HOME/, "~", def)
+      }
+      printf "| `%s` | %s | `%s` | `%s` |\n", name, holds, xdg, def
+      n = 0
+    }
+  ' "$roots"
+}
+
+# _check_purposes KEY FILE REL — fails, naming each one, when a public function
+# in FILE has no documented purpose.
+#
+# An undocumented function would otherwise render as a blank table row, so the
+# reference is only trustworthy if being incomplete stops the build. A set with
+# no symbol syntax publishes no table and so has nothing to be incomplete.
+_check_purposes() {
+  local syntax="${SET_SYMBOLS[$1]}" file="$2" rel="$3" sig purpose ok=true
+  [[ -n "$syntax" ]] || return 0
+  while IFS=$'\t' read -r sig purpose; do
+    [[ -n "$sig" && "$sig" != _* && -z "$purpose" ]] || continue
+    err "${SET_BASE[$1]}/$rel: ${sig%% *} has no doc comment — add '# ${sig%% *} ARGS — purpose.' above it"
+    ok=false
+  done < <("_${syntax}_doc_rows" "$file")
+  [[ "$ok" == true ]]
+}
+
+# _in_list NEEDLE HAYSTACK... — whether NEEDLE is one of the remaining arguments.
+_in_list() {
+  local needle="$1" item
+  shift
+  for item in "$@"; do
+    if [[ "$item" == "$needle" ]]; then return 0; fi
+  done
+  return 1
+}
+
+# _render_module KEY FILE REL FACADE... — one module's section.
+#
+# No leading blank line: the section starts where the include directive was, and
+# the prose above it already ended with one. _emit_group supplies the separator
+# between modules instead.
+_render_module() {
+  local key="$1" file="$2" rel="$3" block
+  shift 3
+  _check_purposes "$key" "$file" "$rel" || return 1
+  block="$(_doc_block "$key" "$file")"
+  if [[ -z "$block" ]]; then
+    err "${SET_BASE[$key]}/$rel has no doc block — the reference is rendered from it"
+    return 1
+  fi
+  printf '### %s\n\n' "$rel"
+  printf '%s\n' "$block"
+  _functions_table "$key" "$file"
+  if [[ -n "${SET_FACADE[$key]}" ]] && _in_list "$rel" "$@"; then
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    printf '\nLoaded via `%s`.\n' "${SET_FACADE[$key]}"
+  fi
+}
+
+# _emit_group KEY GROUP — every module in the group, in byte order.
+_emit_group() {
+  local key="$1" group="$2" entry file default rel declared found=false
+  local -a entries=() facade=()
+  _set_entries "$key" entries
+  _facade_members "$key" facade
+  for entry in "${entries[@]}"; do
+    file="${entry%%$'\t'*}"
+    default="${entry#*$'\t'}"
+    rel="${file#"$SOURCE_ROOT/${SET_BASE[$key]}"/}"
+    declared="$(_file_group "$key" "$file" "$default")" || return 1
+    if [[ "$declared" != "$group" ]]; then continue; fi
+    if [[ "$found" == true ]]; then printf '\n'; fi
+    found=true
+    _render_module "$key" "$file" "$rel" "${facade[@]}" || return 1
+  done
+  if [[ "$found" != true ]]; then
+    err "--group: no module in the '$key' set declares the group '$group'"
+    return 1
+  fi
+}
+
+# _emit_groups KEY — every group key the set's modules declare, one per line.
+_emit_groups() {
+  local key="$1" entry file default group
+  local -a entries=() declared=()
+  _set_entries "$key" entries
+  for entry in "${entries[@]}"; do
+    file="${entry%%$'\t'*}"
+    default="${entry#*$'\t'}"
+    group="$(_file_group "$key" "$file" "$default")" || return 1
+    declared+=("$group")
+  done
+  if (( ${#declared[@]} == 0 )); then return 0; fi
+  printf '%s\n' "${declared[@]}" | sort -u
+}
+
+# _require_set KEY — fails when KEY names no row in the source-set table.
+_require_set() {
+  if [[ -n "${SET_SOURCES[$1]+set}" ]]; then return 0; fi
+  err "Unknown source set: $1 — known sets: $(_set_keys | tr '\n' ' ')"
+  return 2
+}
+
+main() {
+  local mode="" set_key="" group=""
+  while (( $# > 0 )); do
+    case "$1" in
+      -h|--help)     usage; return 0 ;;
+      --sets)        mode="sets" ;;
+      --groups)      mode="groups" ;;
+      --roots-table) mode="roots" ;;
+      --set)
+        if [[ -z "${2:-}" ]]; then err "--set requires a source set"; return 2; fi
+        set_key="$2"; shift
+        ;;
+      --group)
+        if [[ -z "${2:-}" ]]; then err "--group requires a group key"; return 2; fi
+        mode="group"; group="$2"; shift
+        ;;
+      *) err "Unknown option: $1"; usage >&2; return 2 ;;
+    esac
+    shift
+  done
+
+  case "$mode" in
+    group|groups)
+      if [[ -z "$set_key" ]]; then
+        err "--$mode requires --set <set> — known sets: $(_set_keys | tr '\n' ' ')"
+        return 2
+      fi
+      _require_set "$set_key" || return 2
+      ;;
+    sets|roots) ;;
+    *) err "Nothing to do — pass --set, --sets, or --roots-table"; usage >&2; return 2 ;;
+  esac
+
+  case "$mode" in
+    group)  _emit_group "$set_key" "$group" ;;
+    groups) _emit_groups "$set_key" ;;
+    sets)   _set_keys ;;
+    roots)  _roots_table ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

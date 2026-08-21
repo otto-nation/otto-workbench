@@ -4,6 +4,8 @@ Low-level wrappers around ``gh api`` with rate-limit handling and
 exponential backoff.  Used by review_posting and review_dedup.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 import json

@@ -17,6 +17,8 @@ some other reason, and a hook that failed because a state file was unwritable
 would cost the user their session for a bookkeeping entry.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import os

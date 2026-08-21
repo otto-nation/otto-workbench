@@ -131,8 +131,9 @@ _lib_facade() {
 # The convention the sources already follow: a comment block above the
 # definition whose first line names the function. The purpose is the text after
 # the em dash on that line, or the first following comment line when the
-# signature stands alone. A function whose purpose comes out empty is
-# undocumented, which _lib_check_purposes turns into a failure.
+# signature stands alone, and it runs to the end of that paragraph. A function
+# whose purpose comes out empty is undocumented, which _lib_check_purposes
+# turns into a failure.
 #
 # The block is matched by name rather than by adjacency, so declarations
 # between the comment and the definition (lib/install.sh has two) still pair up.
@@ -142,6 +143,7 @@ _lib_doc_rows() {
     /^[[:space:]]*#/ {
       line = $0
       sub(/^[[:space:]]*#[[:space:]]?/, "", line)
+      sub(/[[:space:]]+$/, "", line)
       if (line ~ /^shellcheck/) next
       if (!in_block) { in_block = 1; n = 0 }
       block[++n] = line
@@ -163,14 +165,16 @@ _lib_doc_rows() {
         while (start <= n && block[start] == "") start++
         purpose = block[start++]
       }
-      # A purpose wrapped across comment lines keeps going until the sentence
-      # closes, taking only as much of the line that closes it as the sentence
-      # needs. What follows is detail the table has no room for — the reader
-      # who wants it opens the file.
-      while (purpose !~ /[.:!?]"?$/ && start <= n && block[start] != "") {
+      # The purpose is the paragraph, not its first sentence. Stopping at the
+      # first full stop discarded every sentence after it, so a function could
+      # document an argument the signature column lists and the purpose column
+      # then failed to mention. A blank comment line ends the paragraph; the
+      # rationale below it is for the reader who opens the file.
+      # Indentation that continues a line means nothing once the lines are one
+      # table cell, and leaving it in prints a run of spaces mid-sentence.
+      while (start <= n && block[start] != "") {
         cont = block[start++]
-        stop = index(cont, ". ")
-        if (stop > 0) cont = substr(cont, 1, stop)
+        sub(/^[[:space:]]+/, "", cont)
         purpose = purpose " " cont
       }
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", sig)

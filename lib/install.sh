@@ -57,6 +57,7 @@ COMPONENT_PLATFORMS=()
 
 # validate_components REGISTRY — lightweight fast-fail guard before any side effects run.
 # Checks only that registered components exist on disk and that no setup.conf is orphaned.
+#
 # This is intentionally a subset of bin/validate-components, which runs the full contract
 # check (sync functions, dep ordering, registry schema) in CI and pre-push.
 validate_components() {

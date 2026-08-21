@@ -55,14 +55,47 @@ EOF
   [ "$output" = "$(printf 'select_menu RESULT_VAR COUNT\tDisplays a numbered selection prompt.')" ]
 }
 
-@test "doc rows join a wrapped purpose and stop at the end of the sentence" {
+@test "doc rows join a wrapped purpose to the end of the paragraph" {
   cat > "$LIB_DIR/portable.sh" << 'EOF'
 # file_birth PATH — birth time in epoch seconds. Prints 0 on
 # filesystems that do not record one. Callers must treat 0 as unknown.
 file_birth() { :; }
 EOF
   run _lib_doc_rows "$LIB_DIR/portable.sh"
-  [ "$output" = "$(printf 'file_birth PATH\tbirth time in epoch seconds. Prints 0 on filesystems that do not record one.')" ]
+  [ "$output" = "$(printf 'file_birth PATH\tbirth time in epoch seconds. Prints 0 on filesystems that do not record one. Callers must treat 0 as unknown.')" ]
+}
+
+@test "doc rows keep the sentence describing a later argument" {
+  cat > "$LIB_DIR/prompts.sh" << 'EOF'
+# prompt_commit DIFF [RETRY_PREAMBLE] [SURFACE_NOTE] — the commit prompt.
+# RETRY_PREAMBLE is prepended to it.
+# SURFACE_NOTE is rendered after the rules.
+prompt_commit() { :; }
+EOF
+  run _lib_doc_rows "$LIB_DIR/prompts.sh"
+  [ "$output" = "$(printf 'prompt_commit DIFF [RETRY_PREAMBLE] [SURFACE_NOTE]\tthe commit prompt. RETRY_PREAMBLE is prepended to it. SURFACE_NOTE is rendered after the rules.')" ]
+}
+
+@test "doc rows stop the purpose at the rationale below the paragraph" {
+  cat > "$LIB_DIR/git.sh" << 'EOF'
+# resolve_default_branch — the remote's default branch.
+#
+# symbolic-ref, not rev-parse: rev-parse still prints a name when the symref
+# is missing, which defeats the fallback.
+resolve_default_branch() { :; }
+EOF
+  run _lib_doc_rows "$LIB_DIR/git.sh"
+  [ "$output" = "$(printf "resolve_default_branch\tthe remote's default branch.")" ]
+}
+
+@test "doc rows drop the indentation of a continued line" {
+  cat > "$LIB_DIR/components.sh" << 'EOF'
+# discover_step_files ARRAY_REF — every steps.sh file:
+#   WORKBENCH_DIR/*/steps.sh and WORKBENCH_DIR/*/*/steps.sh
+discover_step_files() { :; }
+EOF
+  run _lib_doc_rows "$LIB_DIR/components.sh"
+  [ "$output" = "$(printf 'discover_step_files ARRAY_REF\tevery steps.sh file: WORKBENCH_DIR/*/steps.sh and WORKBENCH_DIR/*/*/steps.sh')" ]
 }
 
 @test "doc rows pair a comment with its function across intervening declarations" {

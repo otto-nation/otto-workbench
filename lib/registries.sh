@@ -34,6 +34,7 @@ is_installed() { command -v "$1" >/dev/null 2>&1; }
 
 # collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
 # Populates the caller's array (via nameref) with deduplicated registry paths.
+#
 # SCAN_DIR: root directory to glob for */registry.yml, /*/*/registry.yml, and *.env.yml
 # BREW_DIR: directory to search for *.registry.yml stacks (defaults to SCAN_DIR/brew)
 collect_registries() {
@@ -204,7 +205,8 @@ _collect_tool_permission() {
 
 # collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
 # Populates the caller's array (via nameref) with Claude Code Bash permission
-# patterns derived from tools' permission field. See Tool Entry Interface above.
+# patterns derived from tools' permission field, one of the tool entry fields
+# described in this module's header comment above.
 collect_registry_permissions() {
   local _perms_var=$1
   local -n __perms_out=$1

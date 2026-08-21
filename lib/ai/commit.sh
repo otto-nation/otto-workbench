@@ -152,11 +152,12 @@ _build_commit_prompt() {
 }
 
 # generate_commit_msg DIFF [FILE_LIST]
-# Requires AI_COMMAND and COMMIT_RULES.
-# Sets AI_MSG. Retries once with a precise character budget if the header exceeds
-# COMMIT_HEADER_MAX_LEN. Returns 1 if the retry also fails — LLMs cannot reliably
-# count characters, so the caller should surface the failure rather than proceeding
-# with an invalid message.
+# Requires AI_COMMAND and COMMIT_RULES. Sets AI_MSG. Retries once with a precise
+# character budget if the header exceeds COMMIT_HEADER_MAX_LEN, and returns 1 if
+# the retry also fails.
+#
+# LLMs cannot reliably count characters, so the caller should surface that
+# failure rather than proceeding with an invalid message.
 generate_commit_msg() {
   local diff_content="$1"
   local file_list="${2:-}"

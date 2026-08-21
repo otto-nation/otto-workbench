@@ -8,11 +8,13 @@
 # [`ai/core.sh`](#aicoresh), which must be sourced first.
 
 # prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE] [SURFACE_NOTE]
-# Generates the commit message prompt. When RETRY_PREAMBLE is provided it is
-# prepended with a blank line separator so the AI sees the failure context first.
-# SURFACE_NOTE, when non-empty, is rendered directly after COMMIT_RULES —
-# alongside the existing breaking-change footer rule — so the model sees the
-# footer instruction and the reason for it in the same place.
+# Generates the commit message prompt. RETRY_PREAMBLE is prepended to it and
+# SURFACE_NOTE is rendered directly after COMMIT_RULES, each when non-empty.
+#
+# The preamble is separated by a blank line so the AI sees the failure context
+# first. The surface note sits alongside the existing breaking-change footer
+# rule, so the model sees the footer instruction and the reason for it in the
+# same place.
 prompt_commit() {
   local diff_content="$1" files_section="$2" retry_preamble="${3:-}" surface_note="${4:-}"
 

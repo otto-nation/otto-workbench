@@ -16,11 +16,13 @@ _files_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 unset _files_lib_dir
 
 # install_symlink SOURCE TARGET [LABEL] [--no-prompt]
-# Creates or updates a symlink at TARGET pointing to SOURCE.
+# Creates or updates a symlink at TARGET pointing to SOURCE. LABEL defaults to
+# the basename of SOURCE.
+#
 # Existing symlinks are silently replaced. Real files at TARGET:
 #   default (or SYMLINK_MODE unset): prompt before overwriting
 #   --no-prompt or SYMLINK_MODE=no-prompt: warn and skip (for non-interactive sync)
-# LABEL defaults to basename of SOURCE.
+#
 # -h prevents BSD ln from dereferencing an existing directory symlink on re-runs.
 install_symlink() {
   local source=$1 target=$2
@@ -123,11 +125,14 @@ copy_dir() {
 }
 
 # symlink_dir SRC DST [GLOB] [--strip-ext] [--prune] [--replace-copies]
-# Symlinks all items matching GLOB in SRC into DST, preserving filenames.
-# GLOB defaults to '*'. --strip-ext removes the file extension from the display label.
+# Symlinks all items matching GLOB in SRC into DST, preserving filenames. GLOB
+# defaults to '*'.
+#
+# --strip-ext removes the file extension from the display label.
 # --prune removes stale symlinks in DST that point into SRC but whose source is gone.
 # --replace-copies removes regular files in DST that have a source counterpart,
 #   allowing install_symlink to replace them. Used when migrating from copy_dir.
+#
 # Inherits SYMLINK_MODE from the environment (pass-through to install_symlink).
 symlink_dir() {
   local src="${1%/}" dst="$2"  # strip trailing slash so item paths never contain //
@@ -191,9 +196,11 @@ sync_component_bin() {
 
 # list_shell_scripts ROOT — prints every file under ROOT whose *first* line is a
 # shell or bats shebang, one per line, sorted. Skips .git, ignore/, __pycache__,
-# node_modules/, and .py. The awk pass is what anchors to line 1: `grep -r` is
-# line-based, so a shebang inside a heredoc (as in a bats fixture) would
-# otherwise select the file.
+# node_modules/, and .py.
+#
+# The awk pass is what anchors to line 1: `grep -r` is line-based, so a shebang
+# inside a heredoc (as in a bats fixture) would otherwise select the file.
+#
 # bats suites are included deliberately — ShellCheck parses them natively, and
 # its bats-specific checks catch assertions that silently never fail.
 list_shell_scripts() {
@@ -276,7 +283,9 @@ install_hook_dispatcher() {
 # apply_config_patch FILE OLD NEW
 # Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched
 # or if FILE does not exist. Assumes OLD and NEW do not contain the | character.
-# Called by component migrations.sh files via run_migrations.
+#
+# Called by the migrations under <component>/migrations/, which
+# run_component_migrations discovers and runs.
 apply_config_patch() {
   local file="$1" old="$2" new="$3"
   [[ -f "$file" ]] || return 0

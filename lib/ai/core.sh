@@ -56,17 +56,18 @@ PR_DESCRIPTION_MARKER="DESCRIPTION:"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # resolve_default_branch
-# Resolves the remote's default branch (unfetched clone, a `wt-init`-converted
-# repo, or any remote whose HEAD was never pointed with
-# `git remote set-head origin -a` all lack the symref this depends on).
+# Resolves the remote's default branch and prints it to stdout.
+#
+# An unfetched clone, a `wt-init`-converted repo, or any remote whose HEAD was
+# never pointed with `git remote set-head origin -a` all lack the symref this
+# depends on. When it is missing, a remote-tracking ref that actually exists
+# beats a literal guess: "main" then "master" via a local `show-ref` (no
+# network call), and only when neither is present does the literal "main" win.
+#
 # symbolic-ref, not rev-parse --abbrev-ref: when refs/remotes/$GIT_REMOTE/HEAD is
 # missing, rev-parse still echoes "$GIT_REMOTE/HEAD" to stdout (then exits 128), so
 # the string survives a sed strip as a non-empty "HEAD" and defeats a "${VAR:-main}"
 # fallback. symbolic-ref prints nothing on failure, so the fallback here actually fires.
-# When the symref is missing, prefers a remote-tracking ref that actually exists
-# over a literal guess: tries "main" then "master" via a local `show-ref` (no
-# network call), and only returns the literal "main" when neither is present.
-# Prints the resolved branch name to stdout.
 resolve_default_branch() {
   local branch
   branch=$(git symbolic-ref "refs/remotes/$GIT_REMOTE/HEAD" 2>/dev/null | sed "s@^refs/remotes/$GIT_REMOTE/@@")
@@ -86,6 +87,7 @@ resolve_default_branch() {
 
 # remote_branch_ref_exists BRANCH
 # True when BRANCH has a remote-tracking ref under $GIT_REMOTE (refs/remotes/$GIT_REMOTE/BRANCH).
+#
 # Companion to resolve_default_branch: that function derives a branch name — guessing when
 # the origin/HEAD symref is missing — and this answers whether the result actually exists as
 # a ref. Takes the branch as an argument (not just the resolved default) so callers can also
@@ -171,14 +173,14 @@ _normalize_org_to_env() {
 }
 
 # load_gh_token
-# Resolves GH_TOKEN with per-org routing support.
+# Resolves GH_TOKEN with per-org routing support. Returns 1 on failure.
+#
 # Resolution order (first match wins):
 #   1. GH_TOKEN in local .taskfile/taskfile.env (project-level pin)
 #   2. GH_TOKEN__<ORG> in global taskfile.env (org-specific)
 #   3. GH_TOKEN in global taskfile.env (default)
 #   4. GH_TOKEN already in the environment (e.g. CI, .env.local)
 #   5. Fail with actionable error
-# Returns 1 on failure.
 load_gh_token() {
   local env_file
   env_file=$(_resolve_env_file) || true

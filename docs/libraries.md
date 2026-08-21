@@ -10,6 +10,8 @@ All shared code lives in `lib/`. Most modules are loaded through the `ui.sh` fac
 
 Each section below is the module's own header comment, rendered from `lib/` by [`generate-lib-reference`](../bin/local/generate-lib-reference) — so the prose describing a module lives beside the code it describes, and its function table is read out of the file rather than restated here.
 
+A function's Purpose cell is the first paragraph of its doc comment, in full. Rationale that belongs to the implementation rather than the contract goes below a blank comment line, where the reader who opens the file finds it and the table does not carry it.
+
 ## Loading
 
 Scripts source `lib/ui.sh` via `git rev-parse --show-toplevel` — depth-independent:
@@ -65,7 +67,7 @@ Bash-only — it uses arrays and namerefs.
 
 | Function | Purpose |
 |----------|---------|
-| `commands_usage [ARRAY_NAME]` | Print formatted command list from a COMMANDS-style array. |
+| `commands_usage [ARRAY_NAME]` | Print formatted command list from a COMMANDS-style array. Auto-aligns description column based on the longest usage form. |
 
 Loaded via `ui.sh`.
 
@@ -88,8 +90,8 @@ discover_migration_dirs _dirs_arr  # populates array with migration dir paths
 
 | Function | Purpose |
 |----------|---------|
-| `discover_step_files ARRAY_REF` | Populates the nameref array with paths to all steps.sh files |
-| `discover_migration_dirs ARRAY_REF` | Populates the nameref array with paths to all migration directories |
+| `discover_step_files ARRAY_REF` | Populates the nameref array with paths to all steps.sh files: $WORKBENCH_DIR/*/steps.sh and $WORKBENCH_DIR/*/*/steps.sh |
+| `discover_migration_dirs ARRAY_REF` | Populates the nameref array with paths to all migration directories: $WORKBENCH_DIR/*/migrations and $WORKBENCH_DIR/*/*/migrations |
 
 ### config.sh
 
@@ -177,7 +179,7 @@ into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 | Function | Purpose |
 |----------|---------|
 | `wb_config_ensure_file [FILE]` | create FILE holding just the modeline, when it does not already exist. |
-| `wb_config_get KEY [DEFAULT]` | a dotted config key, project scope first. |
+| `wb_config_get KEY [DEFAULT]` | a dotted config key, project scope first. KEY must be a literal string. |
 
 Loaded via `ui.sh`.
 
@@ -231,16 +233,16 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 
 | Function | Purpose |
 |----------|---------|
-| `install_symlink SOURCE TARGET [LABEL] [--no-prompt]` | Creates or updates a symlink at TARGET pointing to SOURCE. |
-| `install_file SOURCE TARGET [LABEL]` | Copies SOURCE to TARGET if content differs. Removes stale symlinks at TARGET. |
-| `copy_dir SRC DST [GLOB] [--strip-ext] [--prune]` | Copies all files matching GLOB in SRC into DST, preserving filenames. |
-| `symlink_dir SRC DST [GLOB] [--strip-ext] [--prune] [--replace-copies]` | Symlinks all items matching GLOB in SRC into DST, preserving filenames. |
-| `sync_component_bin COMPONENT_DIR` | symlinks extensionless scripts from COMPONENT_DIR/bin/ into LOCAL_BIN_DIR. |
-| `list_shell_scripts ROOT` | prints every file under ROOT whose *first* line is a shell or bats shebang, one per line, sorted. |
-| `resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF` | Merges two directory layers into an associative array: basename -> source_path. |
+| `install_symlink SOURCE TARGET [LABEL] [--no-prompt]` | Creates or updates a symlink at TARGET pointing to SOURCE. LABEL defaults to the basename of SOURCE. |
+| `install_file SOURCE TARGET [LABEL]` | Copies SOURCE to TARGET if content differs. Removes stale symlinks at TARGET. Idempotent — no-op if file is already up to date. |
+| `copy_dir SRC DST [GLOB] [--strip-ext] [--prune]` | Copies all files matching GLOB in SRC into DST, preserving filenames. GLOB defaults to '*'. --strip-ext removes the file extension from the display label. --prune removes stale files (or symlinks) in DST whose source counterpart is gone. |
+| `symlink_dir SRC DST [GLOB] [--strip-ext] [--prune] [--replace-copies]` | Symlinks all items matching GLOB in SRC into DST, preserving filenames. GLOB defaults to '*'. |
+| `sync_component_bin COMPONENT_DIR` | symlinks extensionless scripts from COMPONENT_DIR/bin/ into LOCAL_BIN_DIR. No-op if bin/ subdirectory is absent. |
+| `list_shell_scripts ROOT` | prints every file under ROOT whose *first* line is a shell or bats shebang, one per line, sorted. Skips .git, ignore/, __pycache__, node_modules/, and .py. |
+| `resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF` | Merges two directory layers into an associative array: basename -> source_path. User dir wins for same-named files. A .disabled sentinel in user dir suppresses both. RESULT_NAMEREF must be a declared associative array in the caller. |
 | `is_disabled USER_DIR NAME` | returns 0 if a .disabled sentinel exists. |
-| `install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]` | Writes a thin dispatcher script that execs the hook from the current worktree. |
-| `apply_config_patch FILE OLD NEW` | Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched or if FILE does not exist. |
+| `install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]` | Writes a thin dispatcher script that execs the hook from the current worktree. Unlike symlinks, dispatchers resolve at runtime — so worktrees always run their own branch's version of the hook, not main's. |
+| `apply_config_patch FILE OLD NEW` | Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched or if FILE does not exist. Assumes OLD and NEW do not contain the \| character. |
 
 Loaded via `ui.sh`.
 
@@ -256,18 +258,18 @@ Sourced by the top-level `install.sh` and by `bin/otto-workbench`. Requires
 
 | Function | Purpose |
 |----------|---------|
-| `update_path_in_shell_rc` | appends ~/.local/bin to PATH in the user's shell rc file (~/.zshrc or ~/.bashrc) if the entry is not already present. |
-| `platform_supported PLATFORMS` | returns 0 if the current OS matches PLATFORMS. |
-| `validate_components REGISTRY` | lightweight fast-fail guard before any side effects run. |
-| `discover_components REGISTRY` | reads component metadata in registry order. |
-| `select_components` | presents a numbered menu and populates SELECTED_COMPONENTS. |
-| `run_components` | executes setup.sh for each selected component. |
-| `resolve_known_components` | builds lookup sets of all known core and optional component names. |
+| `update_path_in_shell_rc` | appends ~/.local/bin to PATH in the user's shell rc file (~/.zshrc or ~/.bashrc) if the entry is not already present. No-op on unsupported shells. |
+| `platform_supported PLATFORMS` | returns 0 if the current OS matches PLATFORMS. PLATFORMS is a space-separated list of: macos, linux. Empty or "all" means always supported. |
+| `validate_components REGISTRY` | lightweight fast-fail guard before any side effects run. Checks only that registered components exist on disk and that no setup.conf is orphaned. |
+| `discover_components REGISTRY` | reads component metadata in registry order. Populates COMPONENT_DIRS, COMPONENT_LABELS, COMPONENT_DESCS, COMPONENT_PLATFORMS. |
+| `select_components` | presents a numbered menu and populates SELECTED_COMPONENTS. Platform-incompatible components are silently skipped. With --all flag or empty selection, all eligible components are selected. Components with `depends` in setup.conf have their deps auto-included and re-sorted into install.components order so deps always run before dependents. |
+| `run_components` | executes setup.sh for each selected component. If setup.conf defines a `check` command, runs it first; skips the component if it exits 0. DOTFILES_DIR is exported so check commands can reference it. |
+| `resolve_known_components` | builds lookup sets of all known core and optional component names. Populates KNOWN_CORE_COMPONENTS and KNOWN_OPTIONAL_COMPONENTS. |
 | `validate_install_targets TARGETS...` | checks that every target is a known component. |
-| `discover_core_components` | finds core component dirs and their descriptions. |
-| `select_core_components RESULT_ARRAY DIRS_ARRAY DESCS_ARRAY` | presents selection menu for core components. |
+| `discover_core_components` | finds core component dirs and their descriptions. Populates the nameref arrays with dirs and descriptions. |
+| `select_core_components RESULT_ARRAY DIRS_ARRAY DESCS_ARRAY` | presents selection menu for core components. Reads INSTALL_ALL, INSTALL_TARGETED, INSTALL_TARGETS from caller. |
 | `run_core_component COMPONENT` | runs the install or sync function for a core component. |
-| `parse_install_flags ARGS...` | parses --all and component targets. |
+| `parse_install_flags ARGS...` | parses --all and component targets. Sets INSTALL_ALL, INSTALL_TARGETS, INSTALL_TARGETED in caller's scope. |
 | `print_install_summary` | prints the final "All done" screen with a consolidated file listing, editable configs, and per-component summaries. |
 
 ### migrations.sh
@@ -293,8 +295,8 @@ run_component_migrations DIR    # run for a single component directory
 
 | Function | Purpose |
 |----------|---------|
-| `run_component_migrations DIR` | Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs each function, and records success. |
-| `adopt_legacy_workbench_root` | Move a pre-split ~/.config/workbench to whichever roots now own its contents. |
+| `run_component_migrations DIR` | Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs each function, and records success. Failed migrations are not recorded and retry on the next run. Migrations must be idempotent. |
+| `adopt_legacy_workbench_root` | Move a pre-split ~/.config/workbench to whichever roots now own its contents. No-op once the legacy root is gone, or when a root still resolves to it. |
 | `run_all_migrations` | Adopts the legacy root, backfills the project registry, prunes stale state, then runs every component's migrations. |
 
 ### output.sh
@@ -318,7 +320,7 @@ output.
 | `err MESSAGE` | red error to stderr; also logged to WORKBENCH_INSTALL_LOG. |
 | `title TEXT` | bold blue section header. |
 | `skip [label]` | print a skip line with optional label |
-| `print_version SCRIPT_NAME [COMPONENT_KEY]` | print tool and workbench version. |
+| `print_version SCRIPT_NAME [COMPONENT_KEY]` | print tool and workbench version. Reads from .github/.release-please-manifest.json in WORKBENCH_DIR. |
 | `sync_header LABEL` | section header for sync steps. Suppressed during sync. |
 | `summary_section LABEL` | cyan section header for summaries. Suppressed during sync. |
 | `summary_ok MESSAGE` | indented success line. Suppressed during sync. |
@@ -466,11 +468,11 @@ Bash-only — `read -n 1` behaves differently in zsh.
 |----------|---------|
 | `confirm "msg"` | [Y/n]; returns 0 for yes (default), 1 for no |
 | `confirm_n "msg"` | [y/N]; returns 0 for yes, 1 for no (default) |
-| `confirm_step RESULT_VAR MSG` | [Y/n/a]; writes "yes", "no", or "all" to RESULT_VAR. |
-| `prompt_overwrite FILE` | warns that FILE already exists and presents a single combined prompt. |
-| `select_menu RESULT_VAR COUNT [--default all\|skip\|require] [--single]` | Displays a numbered selection prompt and writes the result back to RESULT_VAR. |
-| `select_subdirs RESULT_VAR PARENT_DIR PROMPT [SELECT_MENU_OPTS...]` | Discovers subdirectories in PARENT_DIR that contain setup.sh, presents a numbered menu with PROMPT, and writes space-separated selected names to RESULT_VAR. |
-| `conf_get FILE KEY` | reads a key = value line from a KEY = VALUE config file. |
+| `confirm_step RESULT_VAR MSG` | [Y/n/a]; writes "yes", "no", or "all" to RESULT_VAR. "a" means accept this step and all remaining steps without prompting. |
+| `prompt_overwrite FILE` | warns that FILE already exists and presents a single combined prompt. [o]verwrite / [b]ackup and overwrite / [s]kip (default: skip) Creates a .backup copy before overwriting when b is chosen. Returns 1 if the user skips, 0 if they choose to overwrite (with or without backup). |
+| `select_menu RESULT_VAR COUNT [--default all\|skip\|require] [--single]` | Displays a numbered selection prompt and writes the result back to RESULT_VAR. Validates input against 1..COUNT; warns and ignores out-of-range numbers. 0 always means explicit skip regardless of --default. |
+| `select_subdirs RESULT_VAR PARENT_DIR PROMPT [SELECT_MENU_OPTS...]` | Discovers subdirectories in PARENT_DIR that contain setup.sh, presents a numbered menu with PROMPT, and writes space-separated selected names to RESULT_VAR. Any extra arguments are forwarded to select_menu (e.g. --default all, --single). Returns 1 if no subdirectories are found. |
+| `conf_get FILE KEY` | reads a key = value line from a KEY = VALUE config file. Returns the trimmed value, or empty string if the key is not found. |
 
 Loaded via `ui.sh`.
 
@@ -565,11 +567,11 @@ Bash-only. Used primarily by `install.sh` and component setup scripts.
 
 | Function | Purpose |
 |----------|---------|
-| `register_step NAME FN` | appends a step to the STEPS array. |
-| `run_steps` | prints all registered steps upfront, then runs each with [Y/n/a] confirmation. |
-| `require_command NAME [MESSAGE]` | returns 1 with a warning if NAME is not in PATH. |
-| `install_cask CMD CASK LABEL MANUAL_URL` | Installs a tool via Homebrew cask if CMD is not already in PATH. |
-| `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. |
+| `register_step NAME FN` | appends a step to the STEPS array. STEPS must be declared as an array in the calling script before register_step is used. |
+| `run_steps` | prints all registered steps upfront, then runs each with [Y/n/a] confirmation. Steps are read from the global STEPS array (populated via register_step). Prints a summary of ran/skipped counts when complete. |
+| `require_command NAME [MESSAGE]` | returns 1 with a warning if NAME is not in PATH. Caller decides whether to exit or return: require_command foo "msg" \|\| exit 0 |
+| `install_cask CMD CASK LABEL MANUAL_URL` | Installs a tool via Homebrew cask if CMD is not already in PATH. Falls back to a manual install message if brew is unavailable. |
+| `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. This function sources a single migrations.sh file with no state tracking. Kept for backward compatibility until all callers are migrated. |
 
 Loaded via `ui.sh`.
 
@@ -600,14 +602,14 @@ state_file_exists           # returns 0 if state file exists
 | `state_remove ENTRY` | removes a component or sub-tool from install.yml. |
 | `state_file_exists` | returns 0 if install.yml (or legacy state file) exists. |
 | `state_list` | prints all installed entries, one per line (flat format for compat). |
-| `state_prune_orphans` | removes YAML entries that have no matching steps.sh. |
-| `state_detect_installed` | detects currently installed components and records them. |
-| `state_set KEY VALUE` | sets an arbitrary YAML path under components. |
+| `state_prune_orphans` | removes YAML entries that have no matching steps.sh. Requires lib/components.sh to be sourced (provides discover_step_files). |
+| `state_detect_installed` | detects currently installed components and records them. Uses heuristics (config files, symlinks, directories) to determine what is present. Called by the initial-state migration and by `otto-workbench discover regenerate`. |
+| `state_set KEY VALUE` | sets an arbitrary YAML path under components. Example: state_set "docker.runtime" "orbstack" |
 | `state_clear_list KEY` | resets a YAML list to empty sequence. |
-| `state_append_list KEY VALUE` | appends VALUE to a YAML list (idempotent). |
+| `state_append_list KEY VALUE` | appends VALUE to a YAML list (idempotent). Example: state_append_list "brew.stacks" "infra/kubernetes" |
 | `state_get KEY` | reads a YAML value. Returns empty string for missing/null keys. |
 | `state_get_list KEY` | reads a YAML list, one item per line. |
-| `state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]` | Loads saved selections from YAML, validates each against SCRIPT_DIR. |
+| `state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]` | Loads saved selections from YAML, validates each against SCRIPT_DIR. When AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in the saved list — forces a fresh menu so the user can opt in (or deselect). |
 
 Loaded via `ui.sh`.
 
@@ -633,10 +635,10 @@ the caller has not already sourced `constants.sh`, since an
 |----------|---------|
 | `is_installed NAME` | returns 0 if NAME is found in PATH |
 | `collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
-| `registry_passes_install_check FILE` | returns 0 if the registry should be rendered. |
+| `registry_passes_install_check FILE` | returns 0 if the registry should be rendered. Checks meta.install_check and meta.install_check_command. |
 | `iter_registry_env FILE CALLBACK` | Calls CALLBACK var comment default_val setup_url prefix for each env[] entry. |
 | `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
-| `collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field. |
+| `collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
 
 ### summary.sh
 
@@ -652,8 +654,8 @@ Sourced directly by the top-level `install.sh` and `bin/otto-workbench`.
 | Function | Purpose |
 |----------|---------|
 | `print_workbench_summary` | prints the consolidated summary of what the workbench manages and what the user can edit. |
-| `print_warnings_summary` | replays collected warnings and errors from the install log. |
-| `run_component_summaries [COMPONENT...]` | auto-discovers and calls print_<name>_summary() from */summary.sh files. |
+| `print_warnings_summary` | replays collected warnings and errors from the install log. No-op if WORKBENCH_INSTALL_LOG is unset or the file is empty/missing. |
+| `run_component_summaries [COMPONENT...]` | auto-discovers and calls print_<name>_summary() from */summary.sh files. If COMPONENT args are given, only those are checked; otherwise all components with summary.sh are discovered via glob. |
 
 ## AI Modules (`lib/ai/`)
 
@@ -677,10 +679,10 @@ State set by its functions: `COMMITLINT_CONFIG`, `COMMIT_RULES`, `AI_MSG`.
 
 | Function | Purpose |
 |----------|---------|
-| `find_commitlint_config` | Sets COMMITLINT_CONFIG to the first config found, or empty string if none. |
-| `build_commit_rules` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). |
-| `generate_commit_msg DIFF [FILE_LIST]` | Requires AI_COMMAND and COMMIT_RULES. |
-| `validate_commit_msg MSG` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). |
+| `find_commitlint_config` | Sets COMMITLINT_CONFIG to the first config found, or empty string if none. configuration files picked from: https://github.com/conventional-changelog/commitlint?tab=readme-ov-file#config |
+| `build_commit_rules` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). Sets COMMIT_RULES. Uses COMMIT_TYPES for the allowed-types list. |
+| `generate_commit_msg DIFF [FILE_LIST]` | Requires AI_COMMAND and COMMIT_RULES. Sets AI_MSG. Retries once with a precise character budget if the header exceeds COMMIT_HEADER_MAX_LEN, and returns 1 if the retry also fails. |
+| `validate_commit_msg MSG` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). Uses commitlint when available; falls back to a basic header length check. Returns 1 on validation failure. |
 | `preserve_declared_footers ORIGINAL_MSG` | Re-appends to AI_MSG every declaration footer ORIGINAL_MSG carries that the generated message does not already have. |
 
 ### ai/compact_diff.sh
@@ -713,11 +715,11 @@ State set by its functions: `AI_COMMAND`, `AI_RESPONSE`.
 
 | Function | Purpose |
 |----------|---------|
-| `resolve_default_branch` | Resolves the remote's default branch (unfetched clone, a `wt-init`-converted repo, or any remote whose HEAD was never pointed with `git remote set-head origin -a` all lack the symref this depends on). |
+| `resolve_default_branch` | Resolves the remote's default branch and prints it to stdout. |
 | `remote_branch_ref_exists BRANCH` | True when BRANCH has a remote-tracking ref under $GIT_REMOTE (refs/remotes/$GIT_REMOTE/BRANCH). |
-| `load_ai_command` | Finds the AI config and validates the binary exists. |
-| `load_gh_token` | Resolves GH_TOKEN with per-org routing support. |
-| `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. |
+| `load_ai_command` | Finds the AI config and validates the binary exists. Sets AI_COMMAND. Returns 1 on failure. |
+| `load_gh_token` | Resolves GH_TOKEN with per-org routing support. Returns 1 on failure. |
+| `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. When AGENT_OVERRIDE is provided, replaces --agent <name> in AI_COMMAND so different tasks can route to the appropriate agent. TASK_LABEL names the call in the usage ledger. Sets AI_RESPONSE. |
 
 ### ai/pr.sh
 
@@ -738,12 +740,12 @@ State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
 
 | Function | Purpose |
 |----------|---------|
-| `push_branch BRANCH` | Pushes BRANCH to remote, handling first-push and divergence cases. |
-| `create_pr GH_ARGS...` | Runs `gh pr create` with the given arguments and reports the resulting PR URL. |
-| `load_pr_context` | Loads the AI command and resolves the current branch context, then verifies the *effective* base — PR_BASE when the caller passed an explicit --base, otherwise the resolved default branch — has a remote-tracking ref (resolve_default_branch can fall back to a guessed name that doesn't exist locally, and an explicit --base is exactly the escape hatch for that case, so it must not be refused on the guess's behalf). |
-| `parse_pr_flags ARGS` | Parses PR-specific flags from the CLI_ARGS string. |
-| `load_pr [ARGS]` | Parses PR flags from ARGS, then loads the PR context. |
-| `generate_pr_content BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set). |
+| `push_branch BRANCH` | Pushes BRANCH to remote, handling first-push and divergence cases. Returns 1 on any failure that should abort the caller. |
+| `create_pr GH_ARGS...` | Runs `gh pr create` with the given arguments and reports the resulting PR URL. gh's exit code is the authoritative success signal; a zero exit with no parsable pull request URL is still treated as a failure. Returns 1 on any failure. |
+| `load_pr_context` | Loads the AI command, resolves the current branch context and verifies the effective base has a remote-tracking ref. Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure. |
+| `parse_pr_flags ARGS` | Parses PR-specific flags from the CLI_ARGS string. Sets SKIP_ISSUE, PR_DRAFT, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE. Returns 1 on unknown flag or missing value. |
+| `load_pr [ARGS]` | Parses PR flags from ARGS, then loads the PR context. Sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH. Returns 1 on failure. |
+| `generate_pr_content BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set). Sets PR_TITLE and PR_DESCRIPTION. |
 
 ### ai/prompts.sh
 
@@ -757,11 +759,11 @@ as arguments; the configuration globals (`COMMIT_RULES`, `PR_TEMPLATE`,
 
 | Function | Purpose |
 |----------|---------|
-| `prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE] [SURFACE_NOTE]` | Generates the commit message prompt. When RETRY_PREAMBLE is provided it is prepended with a blank line separator so the AI sees the failure context first. |
-| `prompt_commit_retry HEADER HEADER_LEN OVER PREFIX SUBJECT_BUDGET` | Outputs a retry preamble that gives the AI the exact character budget it needs. |
-| `prompt_pr_single_commit COMMIT_SUBJECT COMMIT_BODY CHANGED_FILES` | For single-commit branches where a PR template exists: asks the AI to fill the template using the commit message. |
-| `prompt_pr_multi_commit BRANCH ISSUE COMMITS COMMIT_COUNT CHANGED_FILES` | For multi-commit branches: asks the AI to generate a PR title and fill the template. |
-| `prompt_diff_review CONTEXT` | CONTEXT is a pre-built string of labelled diff sections (committed, staged, unstaged). |
+| `prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE] [SURFACE_NOTE]` | Generates the commit message prompt. RETRY_PREAMBLE is prepended to it and SURFACE_NOTE is rendered directly after COMMIT_RULES, each when non-empty. |
+| `prompt_commit_retry HEADER HEADER_LEN OVER PREFIX SUBJECT_BUDGET` | Outputs a retry preamble that gives the AI the exact character budget it needs. Passed as RETRY_PREAMBLE to a second call of prompt_commit. |
+| `prompt_pr_single_commit COMMIT_SUBJECT COMMIT_BODY CHANGED_FILES` | For single-commit branches where a PR template exists: asks the AI to fill the template using the commit message. Reads PR_TEMPLATE global. |
+| `prompt_pr_multi_commit BRANCH ISSUE COMMITS COMMIT_COUNT CHANGED_FILES` | For multi-commit branches: asks the AI to generate a PR title and fill the template. Reads PR_TEMPLATE, PR_TITLE_MARKER, PR_DESCRIPTION_MARKER globals. |
+| `prompt_diff_review CONTEXT` | CONTEXT is a pre-built string of labelled diff sections (committed, staged, unstaged). Built by generate_diff_review before calling this function. Review instructions come from the reviewer agent — this prompt provides data only. |
 | `prompt_pr_review PR_NUMBER PR_TITLE PR_BODY COMPACT_DIFF` | Review instructions come from the reviewer agent — this prompt provides data only. |
 
 ### ai/review.sh
@@ -776,8 +778,8 @@ State set by its functions: `AI_RESPONSE`.
 
 | Function | Purpose |
 |----------|---------|
-| `generate_diff_review STAGED UNSTAGED COMMITS COMMITTED_DIFF BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND. |
-| `generate_pr_review PR_NUMBER PR_TITLE PR_BODY PR_DIFF` | Requires AI_COMMAND. |
+| `generate_diff_review STAGED UNSTAGED COMMITS COMMITTED_DIFF BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND. Builds a review prompt from three diff sources (committed, staged, unstaged). Each section is independently compacted via _compact_diff. Sets AI_RESPONSE. |
+| `generate_pr_review PR_NUMBER PR_TITLE PR_BODY PR_DIFF` | Requires AI_COMMAND. Builds a review prompt from PR metadata and its diff. Sets AI_RESPONSE. |
 
 ### ai/session-count.sh
 

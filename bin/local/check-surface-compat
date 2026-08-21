@@ -115,11 +115,10 @@ done
 
 # --repo-dir names the repository to inspect, so it has to outrank an inherited
 # GIT_DIR. The pre-push hook exports one; there it happens to name the same repo,
-# but git consults GIT_DIR ahead of the directory `-C` moved to, so a caller
-# passing --repo-dir for any other tree would have every git call below silently
-# answered by the exported one. Unsetting also restores discovery for the default
-# below, which would otherwise report the caller's cwd as the toplevel.
-unset GIT_DIR GIT_WORK_TREE
+# but a caller passing --repo-dir for any other tree would have every git call
+# below silently answered by the exported one instead. lib/gitenv.sh owns which
+# variables that means and why clearing them also fixes the default below.
+git_env_clear
 
 if [[ -z "$REPO_DIR" ]]; then
   REPO_DIR="$(git rev-parse --show-toplevel)"

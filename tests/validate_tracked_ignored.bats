@@ -70,7 +70,7 @@ _ignore() {
 
   run "$VALIDATOR" "$TMPDIR/repo"
   [ "$status" -eq 1 ]
-  echo "$output" | grep -q "1 tracked file(s) live under an ignored path"
+  echo "$output" | grep -q "1 tracked file lives under an ignored path"
   echo "$output" | grep -q "ai/memory/MEMORY.md"
   echo "$output" | grep -q "git rm --cached"
 }
@@ -99,7 +99,7 @@ _ignore() {
 
   run "$VALIDATOR" "$TMPDIR/repo"
   [ "$status" -eq 1 ]
-  echo "$output" | grep -q "2 tracked file(s) live under an ignored path"
+  echo "$output" | grep -q "2 tracked files live under an ignored path"
   echo "$output" | grep -q "ai/memory/nested/two.md"
 }
 

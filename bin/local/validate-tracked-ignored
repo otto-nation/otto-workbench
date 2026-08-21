@@ -63,10 +63,11 @@ fi
 
 TARGET="${TARGET:-$REPO_ROOT}"
 
-# The pre-push hook exports GIT_DIR, and a set GIT_DIR wins over `git -C`: the
-# index read would be the hook's repository whatever directory was asked for.
-# Clearing these is what makes DIR mean the tree named on the command line.
-unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+# DIR names the repository to read, so it has to outrank the environment: the
+# pre-push hook exports GIT_DIR, and a set GIT_DIR wins over `git -C`, which
+# would answer for the hook's repository whatever directory was asked for.
+# lib/gitenv.sh owns the list of variables that means.
+git_env_clear
 
 # One plumbing call reports exactly this set — the intersection of the index and
 # the ignore rules — so there is no directory walk to get wrong. Paths with
@@ -84,8 +85,12 @@ if ! offenders="$(git -C "$TARGET" ls-files --cached --ignored --exclude-standar
 fi
 
 if [[ -n "$offenders" ]]; then
-  count="$(printf '%s\n' "$offenders" | wc -l | tr -d ' ')"
-  err "$count tracked file(s) live under an ignored path"
+  count="$(wc -l <<< "$offenders" | tr -d ' ')"
+  subject="files live"
+  if (( count == 1 )); then
+    subject="file lives"
+  fi
+  err "$count tracked $subject under an ignored path"
   printf '%s\n' "$offenders" | sed 's/^/      /' >&2
   echo -e "    ${DIM}the ignore entry does not apply to a file already in the index —" >&2
   echo -e "    untrack it with: git rm --cached <path>${NC}" >&2

@@ -246,6 +246,30 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 
 Loaded via `ui.sh`.
 
+### gitenv.sh
+
+The inherited git environment, and how to stop it choosing the repository.
+
+git reads GIT_DIR ahead of the directory `-C` moved to, and GIT_INDEX_FILE
+ahead of the index inside it. A script that takes a repository path from its
+caller is therefore answered by whatever repository the environment names, not
+by the one it was given — and the answer looks entirely ordinary. The pre-push
+hook exports GIT_DIR, so every gate under `bin/local/` that accepts a path runs
+in exactly that situation.
+
+It has no dependencies, so a caller that has not loaded the facade can source
+it on its own:
+
+```bash
+git_env_clear          # then `git -C DIR ...` really means DIR
+```
+
+| Function | Purpose |
+|----------|---------|
+| `git_env_clear` | drop every git environment override inherited from a caller, so that `git -C DIR` and repository discovery both answer for DIR. |
+
+Loaded via `ui.sh`.
+
 ### install.sh
 
 Component discovery, selection, and execution — the shared half of the install

@@ -428,14 +428,14 @@ def _report_covered(relpath: str, grants: list[Grant], at_container: bool) -> No
     # The container holds no working tree, so there is no tracked file there to
     # move a grant into — the advice is to run the session where the tracked
     # file applies, not to edit a file that cannot exist.
-    fix = ('run the session from a worktree, where .claude/settings.json applies'
+    fix = (f'run the session from a worktree, where {TRACKED_SETTINGS} applies'
            if at_container else 'delete the local grant')
     print(f'{YELLOW}⚠{NC} {relpath}: {len(grants)} local grant(s) a tracked rule already makes',
           file=sys.stderr)
     for grant in grants:
         where = f'line {grant.line}: ' if grant.line else ''
         print(f'      {where}{grant.rule}', file=sys.stderr)
-        print(f'        .claude/settings.json already grants this via {grant.tracked}, '
+        print(f'        {TRACKED_SETTINGS} already grants this via {grant.tracked}, '
               f'and the local copy dies with the checkout', file=sys.stderr)
         print(f'        {DIM}{fix}{NC}', file=sys.stderr)
 
@@ -456,7 +456,8 @@ def _print_summary(files_checked: int, errors: int, grants: int, drifted: int) -
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Validate that every Bash permission rule can match a command.')
+        description='Validate that every Bash permission rule can match a command, and that '
+                    'no untracked settings file holds a grant a tracked rule speaks for.')
     # --quiet suppresses the covered-grant warning outright, summary line
     # included.  bin/local/validate-all is the only caller that passes the flag:
     # it runs every validator with --quiet, captures stdout and stderr, and
@@ -484,6 +485,7 @@ def main():
     for filepath in files:
         relpath = os.path.relpath(filepath, repo_root)
         violations = check_file(filepath)
+        at_container = _at_container(filepath, container)
         drift = drift_in(filepath, tracked) if _is_local(filepath, container) else Drift()
 
         errors += 1 if violations or drift.overrides else 0
@@ -495,7 +497,7 @@ def main():
         if drift.overrides:
             _report_overrides(relpath, drift.overrides)
         if drift.covered and not args.quiet:
-            _report_covered(relpath, drift.covered, _at_container(filepath, container))
+            _report_covered(relpath, drift.covered, at_container)
         if not violations and drift.empty and not args.quiet:
             print(f'  {GREEN}✓{NC} {relpath}')
 

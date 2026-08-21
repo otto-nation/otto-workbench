@@ -137,9 +137,10 @@ def test_a_settings_file_with_no_permissions_block_is_clean(tmp_path):
 TRACKED = vp.TrackedRules(allow=["bin/*", "ai/claude/bin/*"], ask=["bin/get-secret:*"])
 
 
-def _local(tmp_path, *allow, bucket="allow"):
+def _local(tmp_path, *rules, bucket="allow"):
     path = tmp_path / vp.LOCAL_SETTINGS
-    path.write_text(json.dumps({"permissions": {bucket: list(allow)}}, indent=2))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"permissions": {bucket: list(rules)}}, indent=2))
     return str(path)
 
 
@@ -400,6 +401,29 @@ def test_main_exits_1_on_a_grant_that_re_grants_a_gated_script(tmp_path, monkeyp
         vp.main()
     assert exc.value.code == 1
     assert "Bash(bin/get-secret:*)" in capsys.readouterr().err
+
+
+def test_main_reaches_the_container_file_above_the_worktree(container, monkeypatch, capsys):
+    """End to end from a worktree: discovery, the drift check, and the advice.
+
+    The grant is unreachable by any walk rooted in the worktree, and the fix it
+    is given cannot be to edit a tracked file the container has no room for.
+    """
+    worktree = container / "main"
+    (worktree / ".claude").mkdir(parents=True)
+    (worktree / vp.TRACKED_SETTINGS).write_text(
+        json.dumps({"permissions": {"allow": ["Bash(bin/*)"]}})
+    )
+    _local(container / ".claude", "Bash(bin/local/validate-all)")
+
+    monkeypatch.setattr(vp, "_WORKBENCH_DIR", str(worktree))
+    monkeypatch.setattr(sys, "argv", ["validate-permissions"])
+    vp.main()
+
+    err = capsys.readouterr().err
+    assert "Bash(bin/local/validate-all)" in err
+    assert "run the session from a worktree" in err
+    assert "delete the local grant" not in err
 
 
 def test_a_tracked_settings_file_is_never_checked_for_drift(tmp_path, monkeypatch, capsys):

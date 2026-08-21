@@ -71,9 +71,22 @@ _lib_files() {
 }
 
 # _lib_group FILE — the group key FILE declares, or its directory's default.
+#
+# Read from the header block only, the same span _lib_header renders. A line
+# further down the file that happens to read `# doc-group: x` — inside a code
+# example, say — describes the convention rather than declaring a group.
+# shellcheck disable=SC2016  # awk program, not shell expansion
 _lib_group() {
   local declared
-  declared="$(sed -n 's/^#[[:space:]]*doc-group:[[:space:]]*//p' "$1" | head -1)"
+  declared="$(awk '
+    NR == 1 { next }
+    !/^#/ { exit }
+    /^#[[:space:]]*doc-group:/ {
+      sub(/^#[[:space:]]*doc-group:[[:space:]]*/, "")
+      print
+      exit
+    }
+  ' "$1")"
   if [[ -n "$declared" ]]; then
     printf '%s' "$declared"
     return 0

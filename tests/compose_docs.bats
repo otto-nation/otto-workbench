@@ -274,6 +274,44 @@ body'
   [[ "$output" == *"docs/page.md"* ]]
 }
 
+# ── Listing ──────────────────────────────────────────────────────────────────
+
+@test "--list prints each directive as the argv it would run" {
+  _src page 'prose
+<!-- include: bin/gen --group core -->
+more prose
+<!-- include: git/bin/other --emit table -->'
+
+  run _compose --list "$ROOT/docs/page.src.md"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'bin/gen --group core\ngit/bin/other --emit table')" ]
+}
+
+@test "--list normalizes the spacing a directive is allowed to have" {
+  _src page '  <!--   include:   bin/gen    --group   core   -->'
+
+  run _compose --list "$ROOT/docs/page.src.md"
+  [ "$status" -eq 0 ]
+  [ "$output" = "bin/gen --group core" ]
+}
+
+@test "--list ignores a comment that is not a directive" {
+  _src page '<!-- include this in your notes -->'
+
+  run _compose --list "$ROOT/docs/page.src.md"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "--list composes nothing, so an unreachable command is not an error" {
+  _src page '<!-- include: /etc/passwd -->'
+
+  run _compose --list "$ROOT/docs/page.src.md"
+  [ "$status" -eq 0 ]
+  [ "$output" = "/etc/passwd" ]
+  [ ! -f "$ROOT/docs/page.md" ]
+}
+
 # ── Discovery ────────────────────────────────────────────────────────────────
 
 @test "composes every docs/*.src.md when given no file arguments" {

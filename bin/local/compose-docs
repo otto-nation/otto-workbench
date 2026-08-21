@@ -19,7 +19,7 @@
 # Emitted output is scanned for directives as well, up to MAX_DEPTH, so a
 # module's own header comment can pull in a block another generator owns.
 #
-# Usage: bin/local/compose-docs [--check] [--quiet] [FILE...]
+# Usage: bin/local/compose-docs [--check] [--quiet] [--list] [FILE...]
 
 set -euo pipefail
 
@@ -39,13 +39,14 @@ INCLUDE_RE='^[[:space:]]*<!--[[:space:]]+include:[[:space:]]+(.+[^[:space:]])[[:
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--check] [--quiet] [FILE...]
+Usage: $(basename "$0") [--check] [--quiet] [--list] [FILE...]
 
 Compose docs/<name>.md from docs/<name>.src.md, expanding include directives.
 With no FILE arguments, every docs/*.src.md is composed.
 
 Options:
   --check     Exit 1 if a composed file on disk is stale, without rewriting it
+  --list      Print the include directives the sources hold, without composing
   --quiet     Suppress per-file messages
   -h, --help  Show this help
 
@@ -108,6 +109,23 @@ _expand() {
   done
 }
 
+# _list_directives SRC — every include directive in SRC, one per line, as the
+# argv the command would be run with, joined by single spaces.
+#
+# A caller that wants to know whether a source doc asks for a particular block
+# reads this instead of matching the directive syntax itself: the spacing
+# INCLUDE_RE tolerates is defined once, and a doc whose directive composes
+# correctly cannot fail somebody else's stricter idea of how it is spelled.
+_list_directives() {
+  local line
+  local -a argv
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ ! "$line" =~ $INCLUDE_RE ]]; then continue; fi
+    read -ra argv <<< "${BASH_REMATCH[1]}"
+    printf '%s\n' "${argv[*]}"
+  done < "$1"
+}
+
 # _default_sources ARRAY_REF — every docs/*.src.md, empty if the glob matched
 # nothing.
 _default_sources() {
@@ -147,12 +165,13 @@ _compose() {
 }
 
 main() {
-  local check=false quiet=false
+  local check=false quiet=false list=false
   local -a sources=()
   while (( $# > 0 )); do
     case "$1" in
       -h|--help) usage; return 0 ;;
       --check)   check=true ;;
+      --list)    list=true ;;
       --quiet)   quiet=true ;;
       -*)        err "Unknown option: $1"; usage >&2; return 2 ;;
       *)         sources+=("$1") ;;
@@ -171,6 +190,14 @@ main() {
 
   local -a stale=()
   local src out composed
+
+  if $list; then
+    for src in "${sources[@]}"; do
+      _list_directives "$src"
+    done
+    return 0
+  fi
+
   for src in "${sources[@]}"; do
     out="${src%.src.md}.md"
     composed="$(_compose "$src")"

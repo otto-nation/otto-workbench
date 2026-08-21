@@ -152,6 +152,18 @@ EOF
   [ "$output" = "registry" ]
 }
 
+@test "a doc-group line below the header does not declare a group" {
+  cat > "$LIB_DIR/output.sh" << 'EOF'
+#!/usr/bin/env bash
+# Output helpers.
+info() { :; }
+
+# The convention is a header line reading: # doc-group: registry
+EOF
+  run _lib_group "$LIB_DIR/output.sh"
+  [ "$output" = "core" ]
+}
+
 @test "--groups lists every declared key once" {
   printf '#!/usr/bin/env bash\n# Output.\n' > "$LIB_DIR/output.sh"
   printf '#!/usr/bin/env bash\n# doc-group: registry\n# Registries.\n' > "$LIB_DIR/registries.sh"

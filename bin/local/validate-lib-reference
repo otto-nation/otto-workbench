@@ -74,10 +74,16 @@ done < <(grep '^### ' "$SRC_DOC" || true)
 # Every group a module declares must be requested by a directive. The reverse —
 # a directive naming a group no module declares — is the generator's own error,
 # raised when compose-docs runs it.
+#
+# The directives come from compose-docs rather than a grep of the doc, so this
+# accepts exactly what composition accepts. A doc that renders the group is
+# never reported as not rendering it because of how its directive is spaced.
+directives="$("$REPO_ROOT/bin/local/compose-docs" --list "$SRC_DOC")"
+
 groups=0
 while IFS= read -r group; do
   groups=$((groups + 1))
-  if grep -qF -- "<!-- include: $GENERATOR --group $group -->" "$SRC_DOC"; then continue; fi
+  if grep -qxF -- "$GENERATOR --group $group" <<< "$directives"; then continue; fi
   err "docs/libraries.src.md does not render the '$group' group"
   echo "  Add: <!-- include: $GENERATOR --group $group -->" >&2
   errors=$((errors + 1))

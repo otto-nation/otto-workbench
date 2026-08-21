@@ -2021,16 +2021,8 @@ def test_pr_review_reads_the_tracker_from_the_repo_config(cr, tmp_path, monkeypa
         "issue_tracker:\n  provider: github\n",
     )
     monkeypatch.setattr(cr, "_find_repo_root", lambda repo, repo_dir="": str(tmp_path))
-    real_run = cr.subprocess.run
-
-    def _fake_run(cmd, *args, **kwargs):
-        # Only the PR lookup is stubbed: cr.subprocess is the module every
-        # other caller shares, and the config reader shells out to yq.
-        if cmd[:2] == ["gh", "pr"]:
-            return SimpleNamespace(returncode=1, stdout="")
-        return real_run(cmd, *args, **kwargs)
-
-    monkeypatch.setattr(cr.subprocess, "run", _fake_run)
+    # Only the PR lookup is stubbed — the config reader still shells out to yq.
+    monkeypatch.setattr(cr.gh_client, "pr_view", lambda *a, **kw: {})
     seen = []
 
     def _record(provider, *args):
@@ -2171,7 +2163,7 @@ def test_check_stale_review_auto_recovers_on_failures(cr, tmp_path, monkeypatch)
     }))
 
     # Mock gh to return matching HEAD
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
+    monkeypatch.setattr(cr.gh_client, "pr_view", lambda *a, **kw: {"headRefOid": "abc123"})
     # Verify prompt.confirm is never called — auto-recovery must skip the prompt
     monkeypatch.setattr(cr.prompt, "confirm", MagicMock(side_effect=AssertionError("confirm called unexpectedly")))
 
@@ -2189,7 +2181,7 @@ def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch
         "groups_done": [1], "groups_failed": {},
     }))
 
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"stdout": "abc123\n", "returncode": 0})())
+    monkeypatch.setattr(cr.gh_client, "pr_view", lambda *a, **kw: {"headRefOid": "abc123"})
     monkeypatch.setattr(cr.prompt, "confirm", lambda msg: False)
 
     with pytest.raises(SystemExit):

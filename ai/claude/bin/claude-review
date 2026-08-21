@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
+import gh_client
 import git_client
 import log
 import pr_context
@@ -374,60 +375,31 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
     if force:
         return
 
-    gh_user = ""
-    try:
-        r = subprocess.run(
-            ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        gh_user = r.stdout.strip()
-    except Exception:
-        pass
-
-    try:
-        r = subprocess.run(
-            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
-             "--jq", f'[.[] | select(.user.login == "{gh_user}" and .state == "PENDING")] | first // empty'],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        pending_json = r.stdout.strip()
-    except Exception:
-        pending_json = ""
-
-    if not pending_json or pending_json == "null":
+    gh_user = gh_client.login()
+    pending = gh_client.api_json(
+        f"repos/{repo}/pulls/{pr_number}/reviews",
+        jq=f'[.[] | select(.user.login == "{gh_user}" and .state == "PENDING")] | first // empty',
+    )
+    pending_id = pending.get("id") if isinstance(pending, dict) else None
+    if pending_id is None:
         return
 
-    try:
-        pending = json.loads(pending_json)
-        pending_id = pending.get("id")
-    except (json.JSONDecodeError, TypeError):
-        return
-
-    comment_count = "0"
-    try:
-        r = subprocess.run(
-            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}/comments",
-             "--jq", "length"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        comment_count = r.stdout.strip() or "0"
-    except Exception:
-        pass
+    comment_count = gh_client.api(
+        f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}/comments", jq="length",
+    ).stdout.strip() or "0"
 
     log.warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
     if not prompt.confirm("Delete the pending review before re-reviewing?"):
         log.info("Keeping pending review — new review will replace it at post time")
         return
 
-    try:
-        subprocess.run(
-            ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}",
-             "--method", "DELETE"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
+    deleted = gh_client.api(
+        f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}", method="DELETE",
+    )
+    if deleted.ok:
         log.info("Deleted pending review")
-    except Exception:
-        pass
+    else:
+        log.warn("Could not delete the pending review — it will be replaced at post time")
 
 
 def _read_review_sha(review_file: Path) -> str:
@@ -440,15 +412,7 @@ def _read_review_sha(review_file: Path) -> str:
 
 
 def _get_pr_head_sha(repo: str, pr_number: str) -> str:
-    try:
-        r = subprocess.run(
-            ["gh", "pr", "view", pr_number, "--repo", repo,
-             "--json", "headRefOid", "--jq", ".headRefOid"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        return r.stdout.strip()
-    except Exception:
-        return ""
+    return gh_client.pr_view(pr_number, "headRefOid", repo=repo).get("headRefOid", "")
 
 
 def _resolve_recover_sha(review_dir: Path, head_sha: str) -> str:
@@ -573,12 +537,11 @@ def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
         return
 
     log.info(f"Submitting review #{tracking.review_id}...")
-    r = subprocess.run(
-        ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{tracking.review_id}/events",
-         "--method", "POST", "-f", "event=COMMENT"],
-        capture_output=True, text=True, timeout=timeouts.NETWORK,
+    r = gh_client.api(
+        f"repos/{repo}/pulls/{pr_number}/reviews/{tracking.review_id}/events",
+        method="POST", raw_fields={"event": "COMMENT"}, retry=False,
     )
-    if r.returncode == 0:
+    if r.ok:
         log.info(f"Review #{tracking.review_id} submitted")
     else:
         log.warn(f"Failed to submit review #{tracking.review_id}")
@@ -591,25 +554,9 @@ def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
 
 
 def _verify_pr_ownership(pr_number: str, repo: str) -> None:
-    pr_author = ""
-    gh_user = ""
-    try:
-        r = subprocess.run(
-            ["gh", "pr", "view", pr_number, "--repo", repo,
-             "--json", "author", "--jq", ".author.login"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        pr_author = r.stdout.strip()
-    except Exception:
-        pass
-    try:
-        r = subprocess.run(
-            ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        gh_user = r.stdout.strip()
-    except Exception:
-        pass
+    author = gh_client.pr_view(pr_number, "author", repo=repo).get("author") or {}
+    pr_author = author.get("login", "")
+    gh_user = gh_client.login()
 
     if not pr_author or not gh_user or pr_author == gh_user:
         return
@@ -645,14 +592,7 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
         if os.path.basename(parent_dir) == repo_name:
             return parent_dir
 
-    try:
-        r = subprocess.run(
-            ["gh", "repo", "view", repo, "--json", "name", "--jq", ".name"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        name = r.stdout.strip()
-    except Exception:
-        name = ""
+    name = gh_client.out("repo", "view", repo, "--json", "name", "--jq", ".name")
     if not name:
         return ""
 
@@ -894,18 +834,7 @@ def _run_review_pr(
         sys.exit(1)
 
     # Issue detection
-    pr_meta = {}
-    try:
-        r = subprocess.run(
-            ["gh", "pr", "view", pr_number, "--repo", repo,
-             "--json", "headRefName,body"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        if r.returncode == 0:
-            pr_meta = json.loads(r.stdout)
-    except Exception:
-        pass
-
+    pr_meta = gh_client.pr_view(pr_number, "headRefName", "body", repo=repo)
     pr_head = pr_meta.get("headRefName", "")
     pr_body = pr_meta.get("body", "")
 

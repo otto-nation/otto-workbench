@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import agent_retry
 import ai_backend
+import gh_client
 import log
 import pr_context
 import pr_state
@@ -1851,17 +1852,7 @@ def _merged_pr(cwd: str, ctx: pr_context.ResolvedContext) -> MergedPR | None:
     reads the same as no answer.
     """
     target = str(ctx.pr_number) if ctx.pr_number else ctx.branch
-    cmd = ["gh", "pr", "view", target, "--json", "state,number,url"]
-    if ctx.repo:
-        cmd += ["--repo", ctx.repo]
-
-    r = _try_run(cmd, cwd=cwd, timeout=timeouts.NETWORK)
-    if r is None or r.returncode != 0:
-        return None
-    try:
-        data = json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return None
+    data = gh_client.pr_view(target, "state", "number", "url", repo=ctx.repo, cwd=cwd)
     if data.get("state") != "MERGED":
         return None
     return MergedPR(number=data.get("number") or 0, url=data.get("url") or "")
@@ -2073,17 +2064,8 @@ def _pr_base_branch(cwd: str, ctx: pr_context.ResolvedContext) -> str | None:
     if not ctx.pr_number:
         return None
 
-    cmd = ["gh", "pr", "view", str(ctx.pr_number), "--json", "baseRefName"]
-    if ctx.repo:
-        cmd += ["--repo", ctx.repo]
-
-    r = _try_run(cmd, cwd=cwd, timeout=timeouts.NETWORK)
-    if r is None or r.returncode != 0:
-        return None
-    try:
-        return json.loads(r.stdout).get("baseRefName") or None
-    except json.JSONDecodeError:
-        return None
+    data = gh_client.pr_view(ctx.pr_number, "baseRefName", repo=ctx.repo, cwd=cwd)
+    return data.get("baseRefName") or None
 
 
 def _resolve_target_ref(

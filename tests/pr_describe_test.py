@@ -77,6 +77,32 @@ def test_repo_without_a_template_falls_back(worktree):
     assert rel == ""
 
 
+# ── talking to gh ───────────────────────────────────────────────────────────
+
+
+def test_fetching_the_body_reads_the_fields_it_asked_for():
+    answer = mock.MagicMock(ok=True, stdout='{"title": "t", "body": "b"}')
+    with mock.patch.object(pr_describe_cli.gh_client, "run",
+                           return_value=answer) as run:
+        assert pr_describe_cli._fetch_pr_body("owner/repo", 7) == ("t", "b")
+    assert run.call_args[0][:3] == ("pr", "view", "7")
+
+
+def test_fetching_the_body_gives_up_when_gh_cannot_answer():
+    answer = mock.MagicMock(ok=False, detail="no such pull request")
+    with mock.patch.object(pr_describe_cli.gh_client, "run", return_value=answer):
+        assert pr_describe_cli._fetch_pr_body("owner/repo", 7) is None
+
+
+def test_applying_the_body_sends_it_on_stdin():
+    """`--body-file -` reads the body from stdin, so gh must be given one."""
+    with mock.patch.object(pr_describe_cli.gh_client, "run",
+                           return_value=mock.MagicMock(ok=True)) as run:
+        assert pr_describe_cli._apply_body("owner/repo", 7, "NEW BODY") is True
+    assert run.call_args.kwargs["input_text"] == "NEW BODY"
+    assert run.call_args[0][-2:] == ("--body-file", "-")
+
+
 # ── commit awareness ────────────────────────────────────────────────────────
 
 

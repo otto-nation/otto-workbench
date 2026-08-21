@@ -49,6 +49,12 @@ class CommentItem:
     # drain a deferred reply queue; empty for an entry the current pass fixed,
     # which the pass's own SHA covers.
     commit_sha: str = ""
+    # The tree `line` and `evidence_line` were read in. A line number is a
+    # coordinate in one tree and means nothing in another, so a permalink into a
+    # different commit has to drop its anchor rather than send the reviewer to
+    # whatever code inherited the number. Empty means "not recorded", which
+    # reads as "cannot anchor".
+    read_sha: str = ""
 
     def __post_init__(self) -> None:
         self.line = int(self.line or 0)
@@ -71,6 +77,7 @@ class CommentItem:
             action=action,
             reason=reason or self.reason or self.reasoning,
             commit_sha=self.commit_sha,
+            read_sha=self.read_sha,
         )
 
 

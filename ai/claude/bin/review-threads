@@ -1384,6 +1384,21 @@ def _stamp_pass_commit(fixed: list[CommentItem], sha: str) -> None:
             entry.commit_sha = sha
 
 
+def _stamp_read_sha(entries: list[CommentItem], sha: str) -> None:
+    """Record the tree an entry's line numbers were read in.
+
+    The single writer of `entry.read_sha`, and idempotent for the same reason
+    `_stamp_pass_commit` is: the reply queue spans rounds, so an entry drained
+    later must keep the tree its lines were actually read in rather than be
+    relabelled with whichever head the draining round happens to be on.
+    """
+    if not sha:
+        return
+    for entry in entries:
+        if not getattr(entry, "read_sha", ""):
+            entry.read_sha = sha
+
+
 def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
     """A blob URL pinned to a SHA, so the link still points at the cited code.
 
@@ -1394,34 +1409,86 @@ def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
     return f"{url}#L{line}" if line else url
 
 
-def _evidence_link(entry: CommentItem, repo: str, sha: str) -> str:
+def _anchored_line(
+    entry: CommentItem | pr_state.ThreadOutcome,
+    filepath: str, line: int, sha: str, wt_path: Path | None,
+) -> int:
+    """`line` when it still points at the same code in `sha`, else 0.
+
+    A line number is a coordinate in one tree. Both kinds an entry carries were
+    read before the fix pass edited the branch — GitHub anchored the review
+    comment at the head it was written against, and triage cited what it read
+    at that same head — so pinning either to the tree the fix commit produced
+    sends the reviewer to whatever code inherited the number.
+
+    Unknown reads as no. An entry with no recorded tree, or one this call has no
+    worktree to compare against, loses its anchor and keeps a whole-file link:
+    the anchor is the part of the claim that has to be earned, and a file link
+    still resolves. `git diff --quiet` answers per file rather than per line,
+    which over-drops on a file changed elsewhere and never under-drops.
+    """
+    read_sha = getattr(entry, "read_sha", "")
+    if not line or not read_sha:
+        return 0
+    if read_sha == sha:
+        return line
+    if not wt_path:
+        return 0
+    unchanged = subprocess.run(
+        ["git", "-C", str(wt_path), "diff", "--quiet", read_sha, sha, "--", filepath],
+        capture_output=True, text=True,
+    )
+    return line if unchanged.returncode == 0 else 0
+
+
+def _anchored_link(
+    entry: CommentItem | pr_state.ThreadOutcome,
+    repo: str, sha: str, filepath: str, line: int, wt_path: Path | None,
+) -> str:
+    """A markdown blob link to `filepath`, anchored only where the line holds."""
+    anchor = _anchored_line(entry, filepath, line, sha, wt_path)
+    url = _blob_permalink(repo, sha, filepath, anchor)
+    label = f"{filepath}:{anchor}" if anchor else filepath
+    return f"[`{label}`]({url})"
+
+
+def _evidence_link(
+    entry: CommentItem, repo: str, sha: str, wt_path: Path | None = None,
+) -> str:
     """Render an entry's cited location as a markdown link, or "" if uncited."""
     if not entry.has_evidence() or not sha:
         return ""
-    url = _blob_permalink(repo, sha, entry.evidence_file, entry.evidence_line)
-    return f"[`{entry.evidence_file}:{entry.evidence_line}`]({url})"
+    return _anchored_link(
+        entry, repo, sha, entry.evidence_file, entry.evidence_line, wt_path,
+    )
 
 
 def _code_link(
-    entry: CommentItem, repo: str, sha: str, repo_dir: Path | None = None,
+    entry: CommentItem, repo: str, sha: str, wt_path: Path | None = None,
+    verify_evidence: bool = True,
 ) -> str:
     """Link the code an entry is about, or "" when there is nothing to point at.
 
     Triage's citation is the better anchor where there is one, but entries
     rebuilt from stored thread records carry no citation at all.  Those still
-    have the review comment's own file and line, which always resolve — GitHub
-    anchored the thread there — so a reply is never left asserting something
-    with no link behind it.
+    have the review comment's own file and line, which always resolve as a
+    file — GitHub anchored the thread there — so a reply is never left
+    asserting something with no link behind it.
+
+    `verify_evidence` is what a caller turns off when an earlier gate already
+    refused to let an uncitable verdict through; `wt_path` is still wanted in
+    that case, because the line anchor is a separate question from whether the
+    cited file exists.
     """
-    if entry.has_evidence() and (repo_dir is None or _evidence_is_real(repo_dir, entry)):
-        link = _evidence_link(entry, repo, sha)
+    if entry.has_evidence() and (
+        not verify_evidence or wt_path is None or _evidence_is_real(wt_path, entry)
+    ):
+        link = _evidence_link(entry, repo, sha, wt_path)
         if link:
             return link
     if not entry.file or not sha:
         return ""
-    url = _blob_permalink(repo, sha, entry.file, entry.line)
-    label = f"{entry.file}:{entry.line}" if entry.line else entry.file
-    return f"[`{label}`]({url})"
+    return _anchored_link(entry, repo, sha, entry.file, entry.line, wt_path)
 
 
 def _find_addressing_commit(
@@ -1624,10 +1691,11 @@ def _post_already_addressed_replies(
             parts = [f"{_APPLIED_REPLY_PREFIX}: {entry.summary}"]
         else:
             parts = [f"{_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
-        # No repo_dir: _downgrade_unsupported_verdicts already refused to let an
-        # already_addressed verdict through without a citation that resolves.
-        # Checking again here would only overrule it with a weaker link.
-        link = _code_link(entry, repo, head_sha)
+        # No evidence check: _downgrade_unsupported_verdicts already refused to
+        # let an already_addressed verdict through without a citation that
+        # resolves. Checking again here would only overrule it with a weaker
+        # link.
+        link = _code_link(entry, repo, head_sha, wt_path, verify_evidence=False)
         if link:
             parts.append(f"Current behaviour is at {link}.")
         if framing.cited:
@@ -1714,7 +1782,7 @@ def _post_dismissed_replies(
         reasoning = entry.reasoning
         body = _DISMISSED_REPLY_PREFIX
         body = f"{body}: {reasoning}" if reasoning else f"{body}."
-        link = _evidence_link(entry, repo, head_sha)
+        link = _evidence_link(entry, repo, head_sha, wt_path)
         return f"{body}\n\nSee {link}." if link else body
 
     posted = _post_thread_replies(dismissed, threads_by_id, repo, pr_number, body_fn)
@@ -2632,19 +2700,24 @@ def _build_row(
     entry: CommentItem | pr_state.ThreadOutcome, status: str,
     threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
     head_sha: str = "",
+    wt_path: Path | None = None,
 ) -> str:
     """Build a single summary table row for a thread entry.
 
     The file cell is a permalink whenever a SHA is known — every claim the table
-    makes should be one line away from the code that backs it.
+    makes should be one line away from the code that backs it. The line anchor
+    is kept only where it still holds in that SHA, on the same terms as a reply's
+    link: see `_anchored_line`.
     """
     summary = _summary_cell(entry, threads_by_id, repo, pr_number)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
-    if entry.file and entry.line:
+    if entry.file and head_sha:
+        anchor = _anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
+        label = f"{entry.file}:{anchor}" if anchor else entry.file
+        url = _blob_permalink(repo, head_sha, entry.file, anchor)
+        file_loc = f"[`{label}`]({url})"
+    elif entry.file and entry.line:
         file_loc = f"`{entry.file}:{entry.line}`"
-        if head_sha:
-            url = _blob_permalink(repo, head_sha, entry.file, entry.line)
-            file_loc = f"[{file_loc}]({url})"
     elif entry.file:
         file_loc = f"`{entry.file}`"
     else:
@@ -2931,7 +3004,7 @@ def _build_summary_body(
         is what the header counts count — the counts are derived from the rows
         rather than from the buckets so the two cannot disagree.
         """
-        row = _build_row(entry, status, threads_by_id, repo, pr_number, sha)
+        row = _build_row(entry, status, threads_by_id, repo, pr_number, sha, wt_path)
         published = held_by_key.get(_summary_row_key(row))
         if published is None:
             rows.append(row)
@@ -3448,7 +3521,8 @@ def _post_pending_fix_replies(
         return [
             CommentItem(id=t.id, file=t.file, line=t.line,
                         reviewer=t.reviewer, summary=t.summary,
-                        reasoning=t.reason, commit_sha=t.commit_sha)
+                        reasoning=t.reason, commit_sha=t.commit_sha,
+                        read_sha=t.read_sha)
             for t in fix.threads if t.action == action
         ]
 
@@ -4084,6 +4158,16 @@ def _run_comment_fix(
     all_needs_human = needs_human + items_needs_human
     all_dismissed = dismissed + items_dismissed
     all_addressed = thread_cls.already_addressed + items_already_addressed
+
+    # Before the fix pass touches the tree: every line these entries carry —
+    # the review comment's own and triage's citation alike — was read against
+    # this head, and a permalink built after the fix commit needs to know that
+    # to decide whether its anchor still points at the reviewer's code.
+    _stamp_read_sha(
+        fixable + list(fixable_items or [])
+        + all_needs_human + all_dismissed + all_addressed,
+        _get_head_sha(wt_path),
+    )
 
     _hold_if_superseded(
         supersession.detect_cached(

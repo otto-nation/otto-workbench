@@ -3592,7 +3592,8 @@ class TestReplyEvidence:
         assert "#L" not in body
 
     def test_deferred_reply_links_the_unchanged_code(self, rt, tmp_path):
-        deferred = [CommentItem(id="t1", summary="fix it", file="src/app.py", line=12)]
+        deferred = [CommentItem(id="t1", summary="fix it", file="src/app.py", line=12,
+                                read_sha="cafe123")]
         threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with patch("pr_comments.post_thread_reply", return_value=True) as post, \
              patch.object(rt, "_get_head_sha", return_value="cafe123"):
@@ -3608,15 +3609,23 @@ class TestReplyEvidence:
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "app.py").write_text("a\nb\nc\n")
         entry = CommentItem(id="t1", file="other.py", line=1,
-                            evidence_file="src/app.py", evidence_line=2)
+                            evidence_file="src/app.py", evidence_line=2,
+                            read_sha="cafe123")
         link = rt._code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert "blob/cafe123/src/app.py#L2" in link
 
     def test_code_link_falls_back_when_the_citation_is_not_in_the_tree(self, rt, tmp_path):
         entry = CommentItem(id="t1", file="other.py", line=7,
-                            evidence_file="src/gone.py", evidence_line=2)
+                            evidence_file="src/gone.py", evidence_line=2,
+                            read_sha="cafe123")
         link = rt._code_link(entry, "owner/repo", "cafe123", tmp_path)
         assert "blob/cafe123/other.py#L7" in link
+
+    def test_code_link_drops_an_anchor_it_cannot_vouch_for(self, rt, tmp_path):
+        """A line with no recorded tree is a number, not a location."""
+        entry = CommentItem(id="t1", file="other.py", line=7)
+        link = rt._code_link(entry, "owner/repo", "cafe123", tmp_path)
+        assert link == "[`other.py`](https://github.com/owner/repo/blob/cafe123/other.py)"
 
     def test_code_link_is_empty_with_nothing_to_point_at(self, rt, tmp_path):
         assert rt._code_link(CommentItem(id="t1"), "owner/repo", "cafe123", tmp_path) == ""
@@ -4841,6 +4850,7 @@ class TestAddressingCommitIsPerLine:
         with patch.object(rt, "_resolve_default_branch", return_value="main"):
             assert rt._find_addressing_commit(branch.path, "a.py", 0) is None
 
+
     def test_a_line_past_the_end_of_the_file_claims_no_commit(self, rt, branch):
         """git refuses the range rather than answering — nothing is invented."""
         with patch.object(rt, "_resolve_default_branch", return_value="main"):
@@ -4876,6 +4886,74 @@ class TestAddressingCommitIsPerLine:
             f"Addressed in [`{branch.second[:7]}`]"
             f"(https://github.com/owner/repo/commit/{branch.second}).",
         ]
+
+
+class TestLineAnchorsAreTreeScoped:
+    """A line read in one tree is not a location in another.
+
+    Every reply pinned its permalink to the tree the fix commit produced while
+    numbering it from a line read before that commit, so a reviewer following
+    the link landed on whatever code inherited the number rather than on the
+    code they had commented on.
+    """
+
+    @staticmethod
+    def _git(wt, *args):
+        subprocess.run(["git", "-C", str(wt), *args],
+                       check=True, capture_output=True)
+
+    def _sha(self, wt, rev):
+        return subprocess.run(
+            ["git", "-C", str(wt), "rev-parse", rev],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    @pytest.fixture
+    def trees(self, worktree):
+        """Two commits: the second rewrites `moved.py` and leaves `still.py`."""
+        hooks = worktree / ".git" / "empty-hooks"
+        hooks.mkdir()
+        self._git(worktree, "config", "user.email", "test@example.com")
+        self._git(worktree, "config", "user.name", "Test")
+        self._git(worktree, "config", "commit.gpgsign", "false")
+        self._git(worktree, "config", "core.hooksPath", str(hooks))
+        (worktree / "moved.py").write_text("guard\ncheck\n")
+        (worktree / "still.py").write_text("one\ntwo\n")
+        self._git(worktree, "add", "-A")
+        self._git(worktree, "commit", "-qm", "reviewed")
+        read = self._sha(worktree, "HEAD")
+        (worktree / "moved.py").write_text("import os\nguard\ncheck\n")
+        self._git(worktree, "commit", "-qam", "fix pass")
+        return SimpleNamespace(path=worktree, read=read,
+                               fixed=self._sha(worktree, "HEAD"))
+
+    def test_a_line_in_an_untouched_file_keeps_its_anchor(self, rt, trees):
+        entry = CommentItem(id="t1", file="still.py", line=2, read_sha=trees.read)
+        assert rt._anchored_line(
+            entry, "still.py", 2, trees.fixed, trees.path) == 2
+
+    def test_a_line_in_a_rewritten_file_loses_its_anchor(self, rt, trees):
+        entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
+        assert rt._anchored_line(
+            entry, "moved.py", 1, trees.fixed, trees.path) == 0
+
+    def test_the_same_tree_needs_no_comparison(self, rt, trees):
+        """The triage replies go out before the fix commit, so this is the common case."""
+        entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
+        assert rt._anchored_line(
+            entry, "moved.py", 1, trees.read, trees.path) == 1
+
+    def test_an_unrecorded_tree_loses_the_anchor(self, rt, trees):
+        entry = CommentItem(id="t1", file="still.py", line=2)
+        assert rt._anchored_line(
+            entry, "still.py", 2, trees.fixed, trees.path) == 0
+
+    def test_a_reply_drafted_after_the_fix_commit_links_the_file(self, rt, trees):
+        """End to end: the shape that sent reviewers to unrelated code."""
+        entry = CommentItem(id="t1", file="moved.py", line=1, read_sha=trees.read)
+        link = rt._code_link(entry, "owner/repo", trees.fixed, trees.path)
+        assert link.endswith(f"/blob/{trees.fixed}/moved.py)")
+        assert "#L" not in link
 
 
 # ── addressed in response, or genuinely already addressed ──────────────────
@@ -5422,7 +5500,7 @@ class TestEvidencePermalinks:
     def test_dismissal_carries_the_cited_line(self, rt, tmp_path):
         dismissed = [CommentItem(
             id="t1", summary="s", reasoning="the guard already returns early",
-            evidence_file="app.py", evidence_line=12,
+            evidence_file="app.py", evidence_line=12, read_sha="cafe123",
         )]
         threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
@@ -5437,7 +5515,7 @@ class TestEvidencePermalinks:
     def test_already_addressed_links_the_line_at_head(self, rt, tmp_path):
         addressed = [CommentItem(
             id="t1", summary="use the helper", file="app.py",
-            evidence_file="app.py", evidence_line=4,
+            evidence_file="app.py", evidence_line=4, read_sha="cafe123",
         )]
         threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
@@ -5454,10 +5532,22 @@ class TestEvidencePermalinks:
     def test_summary_file_cell_links_at_the_fix_commit(self, rt):
         cp = rt.CommitPushResult("abc1234", "pushed", "")
         body = rt._build_summary_body(
-            [CommentItem(id="t1", summary="fix", file="a.py", line=9)],
+            [CommentItem(id="t1", summary="fix", file="a.py", line=9,
+                         read_sha="abc1234")],
             [], [], cp, "owner/repo", 1, {},
         )
         assert "https://github.com/owner/repo/blob/abc1234/a.py#L9" in body
+
+    def test_summary_file_cell_drops_a_line_read_in_another_tree(self, rt):
+        """The fix commit moved the line, so the cell links the file alone."""
+        cp = rt.CommitPushResult("abc1234", "pushed", "")
+        body = rt._build_summary_body(
+            [CommentItem(id="t1", summary="fix", file="a.py", line=9,
+                         read_sha="0ldc0de")],
+            [], [], cp, "owner/repo", 1, {},
+        )
+        assert "https://github.com/owner/repo/blob/abc1234/a.py)" in body
+        assert "#L9" not in body
 
     def test_summary_file_cell_stays_plain_without_a_sha(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")

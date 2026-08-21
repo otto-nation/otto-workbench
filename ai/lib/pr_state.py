@@ -382,6 +382,11 @@ class ThreadOutcome:
     # SHA would relabel every earlier round's work with the latest round's
     # commit — or, when the latest round commits nothing, with none at all.
     commit_sha: str = ""
+    # The tree `line` was read in, carried so a later round's replies can tell
+    # whether the anchor still points at the code the reviewer meant. Empty on
+    # an outcome written before this was recorded, which reads as "cannot
+    # anchor" rather than as "anchor is current".
+    read_sha: str = ""
 
     @classmethod
     def from_entry(
@@ -397,6 +402,7 @@ class ThreadOutcome:
                 action=action,
                 reason=getattr(entry, reason_key, ""),
                 commit_sha=getattr(entry, "commit_sha", ""),
+                read_sha=getattr(entry, "read_sha", ""),
             )
         return cls(
             id=entry.get("id", entry.get("thread_id", "")),
@@ -407,6 +413,7 @@ class ThreadOutcome:
             action=action,
             reason=entry.get(reason_key, ""),
             commit_sha=entry.get("commit_sha", ""),
+            read_sha=entry.get("read_sha", ""),
         )
 
     @classmethod

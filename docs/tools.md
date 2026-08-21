@@ -62,7 +62,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-worktree-guards` | Validates that ctx.worktree_root is never dereferenced without a guard or require_worktree() |
 | `validate-timeouts` | Validates that every subprocess timeout comes from the ai/lib/timeouts.py tiers |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
-| `validate-permissions` | Validates that every Bash permission rule can match a command — no literal * inside a :* prefix, no unexpanded ~ |
+| `validate-permissions` | Validates that every Bash permission rule can match a command, and that no untracked settings file duplicates a tracked grant or re-grants a gated one |
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |
 | `validate-tool-schema` | Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |

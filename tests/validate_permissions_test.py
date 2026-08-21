@@ -3,6 +3,7 @@
 import importlib.machinery
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -128,6 +129,213 @@ def test_a_settings_file_with_no_permissions_block_is_clean(tmp_path):
     assert vp.check_file(str(path)) == []
 
 
+# ── local grant drift ────────────────────────────────────────────────────
+# The tracked project file grants three bin directories and gates two scripts
+# that reach credentials; these stand in for it so the tests do not move when
+# the real file gains a directory.
+
+TRACKED = vp.TrackedRules(allow=["bin/*", "ai/claude/bin/*"], ask=["bin/get-secret:*"])
+
+
+def _local(tmp_path, *allow, bucket="allow"):
+    path = tmp_path / vp.LOCAL_SETTINGS
+    path.write_text(json.dumps({"permissions": {bucket: list(allow)}}, indent=2))
+    return str(path)
+
+
+def _covered(tmp_path, *allow):
+    return [(g.rule, g.tracked) for g in vp.drift_in(_local(tmp_path, *allow), TRACKED).covered]
+
+
+def _overrides(tmp_path, *allow):
+    return [(g.rule, g.tracked) for g in vp.drift_in(_local(tmp_path, *allow), TRACKED).overrides]
+
+
+def test_a_grant_under_a_granted_directory_is_covered(tmp_path):
+    assert _covered(tmp_path, "Bash(bin/local/validate-all)") == [
+        ("Bash(bin/local/validate-all)", "Bash(bin/*)")
+    ]
+
+
+def test_a_grant_carrying_arguments_is_covered(tmp_path):
+    """The tracked wildcard ends in `*`, so the whole invocation is inside it."""
+    assert _covered(tmp_path, "Bash(ai/claude/bin/pr --tool-schema)") == [
+        ("Bash(ai/claude/bin/pr --tool-schema)", "Bash(ai/claude/bin/*)")
+    ]
+
+
+def test_a_local_wildcard_under_a_granted_directory_is_covered(tmp_path):
+    """Every command it can match starts with `bin/`, so the tracked rule has it."""
+    assert _covered(tmp_path, "Bash(bin/local/validate-ceiling *)") == [
+        ("Bash(bin/local/validate-ceiling *)", "Bash(bin/*)")
+    ]
+
+
+def test_a_one_off_grant_has_no_tracked_home(tmp_path):
+    """Nothing tracked speaks for these, and nagging trains the warning away."""
+    assert _covered(tmp_path, "Bash(sh /tmp/probe.sh)", "Bash(uv run *)",
+                    "Bash(ps ax *)", "Bash(printenv)") == []
+
+
+def test_a_non_bash_grant_is_left_alone(tmp_path):
+    """The tracked file grants Bash rules only, so a domain has nowhere to go."""
+    assert _covered(tmp_path, "WebFetch(domain:example.com)", "Read(//Users/x/.ssh/**)") == []
+
+
+def test_a_local_rule_broader_than_the_tracked_one_is_not_flagged(tmp_path):
+    """It grants commands the tracked rule does not, so it is not a duplicate."""
+    assert _covered(tmp_path, "Bash(bin*)", "Bash(*)", "Bash(b:*)") == []
+
+
+def test_a_local_prefix_rule_is_not_judged_against_an_exact_tracked_rule(tmp_path):
+    """`Bash(env:*)` reaches `env -i sh`, which `Bash(env)` never grants."""
+    tracked = vp.TrackedRules(allow=["env"])
+    assert vp.drift_in(_local(tmp_path, "Bash(env:*)"), tracked).covered == []
+
+
+def test_an_exactly_repeated_tracked_rule_is_covered(tmp_path):
+    tracked = vp.TrackedRules(allow=["env"])
+    assert [g.rule for g in vp.drift_in(_local(tmp_path, "Bash(env)"), tracked).covered] == [
+        "Bash(env)"
+    ]
+
+
+def test_a_local_allow_over_a_gated_script_is_an_override(tmp_path):
+    assert _overrides(tmp_path, "Bash(bin/get-secret --name prod/db)") == [
+        ("Bash(bin/get-secret --name prod/db)", "Bash(bin/get-secret:*)")
+    ]
+
+
+def test_an_override_outranks_the_covered_warning(tmp_path):
+    """`Bash(bin/*)` covers it too — the credential gate is the finding that counts."""
+    drift = vp.drift_in(_local(tmp_path, "Bash(bin/get-secret:*)"), TRACKED)
+    assert [g.rule for g in drift.overrides] == ["Bash(bin/get-secret:*)"]
+    assert drift.covered == []
+
+
+def test_a_local_wildcard_reaching_a_gated_script_is_an_override(tmp_path):
+    """The wildcard matches `bin/get-secret` itself, so the ask rule is bypassed."""
+    assert [r for r, _ in _overrides(tmp_path, "Bash(bin/get-*)")] == ["Bash(bin/get-*)"]
+
+
+def test_a_grant_beside_a_gated_script_is_not_an_override(tmp_path):
+    """A sibling script the ask rule's prefix does not spell is nobody's gate."""
+    assert _overrides(tmp_path, "Bash(bin/local/validate-all)", "Bash(sh /tmp/probe.sh)") == []
+
+
+def test_the_ask_prefix_reaches_every_command_it_spells(tmp_path):
+    """`Bash(bin/get-secret:*)` is startsWith, so it gates `bin/get-secrets-report`
+    as well — the local allow really would drop the prompt for it."""
+    assert [r for r, _ in _overrides(tmp_path, "Bash(bin/get-secrets-report)")] == [
+        "Bash(bin/get-secrets-report)"
+    ]
+
+
+def test_only_the_allow_bucket_drifts(tmp_path):
+    """A local `ask` or `deny` narrows the tracked grant rather than duplicating it."""
+    path = _local(tmp_path, "Bash(bin/local/validate-all)", bucket="ask")
+    assert vp.drift_in(path, TRACKED).empty
+
+
+def test_a_repeated_local_grant_is_reported_once(tmp_path):
+    path = _local(tmp_path, "Bash(bin/x)", "Bash(bin/x)")
+    assert len(vp.drift_in(path, TRACKED).covered) == 1
+
+
+def test_a_covered_grant_carries_the_line_it_is_written_on(tmp_path):
+    path = _local(tmp_path, "Bash(sh /tmp/probe.sh)", "Bash(bin/x)")
+    assert [g.line for g in vp.drift_in(path, TRACKED).covered] == [5]
+
+
+def test_a_repo_with_no_tracked_settings_file_makes_no_grants(tmp_path):
+    assert vp.tracked_rules(str(tmp_path)) == vp.TrackedRules()
+
+
+def test_the_tracked_rules_are_read_from_the_project_file():
+    """The file owns the list — the granted directories are not hardcoded here."""
+    tracked = vp.tracked_rules(str(REPO_ROOT))
+    assert "bin/*" in tracked.allow
+    assert "bin/get-secret:*" in tracked.ask
+
+
+# ── container discovery ──────────────────────────────────────────────────
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
+
+
+def _seed_repo(path):
+    """A one-commit repo, with an identity so the commit does not need the user's."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-b", "main", "-q", str(path)], check=True,
+                   capture_output=True)
+    _git(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty",
+         "--no-verify", "-m", "init")
+    return path
+
+
+@pytest.fixture
+def container(tmp_path):
+    """The bare-repo worktree layout: worktrees as peers of a bare `.git`."""
+    seed = _seed_repo(tmp_path / "seed")
+    root = tmp_path / "container"
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")], check=True,
+                   capture_output=True)
+    _git(root / ".git", "worktree", "add", "-q", str(root / "main"), "main")
+    return root
+
+
+def test_a_normal_clone_has_no_container(tmp_path):
+    """CI runs here: the shared git dir's parent is the checkout itself."""
+    assert vp.container_dir(str(_seed_repo(tmp_path / "clone"))) is None
+
+
+def test_a_directory_outside_git_has_no_container(tmp_path):
+    assert vp.container_dir(str(tmp_path)) is None
+
+
+def test_a_worktree_finds_its_bare_repo_container(container):
+    found = vp.container_dir(str(container / "main"))
+    assert found == str(Path(container).resolve())
+
+
+def test_a_linked_worktree_of_a_normal_clone_has_no_container(tmp_path):
+    """The parent there is somebody's checkout, and its .claude/ is tracked."""
+    seed = _seed_repo(tmp_path / "seed")
+    _git(seed, "worktree", "add", "-q", str(tmp_path / "feature"), "-b", "feature")
+    assert vp.container_dir(str(tmp_path / "feature")) is None
+
+
+def test_the_container_settings_file_is_discovered(container):
+    claude = container / ".claude"
+    claude.mkdir()
+    (claude / vp.LOCAL_SETTINGS).write_text(json.dumps({"permissions": {"allow": ["Bash(x)"]}}))
+    assert vp.discover_container_settings(str(container)) == [
+        str(claude / vp.LOCAL_SETTINGS)
+    ]
+
+
+def test_a_container_with_no_claude_directory_contributes_nothing(container):
+    assert vp.discover_container_settings(str(container)) == []
+
+
+def test_no_container_contributes_nothing():
+    assert vp.discover_container_settings(None) == []
+
+
+def test_the_container_file_is_local_but_a_worktree_file_is_not(container):
+    tracked = container / "main" / ".claude" / "settings.json"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("{}")
+    local = container / ".claude" / vp.LOCAL_SETTINGS
+    local.parent.mkdir()
+    local.write_text("{}")
+
+    assert vp._is_local(str(local), str(container))
+    assert not vp._is_local(str(tracked), str(container))
+
+
 # ── discovery and CLI ────────────────────────────────────────────────────
 
 
@@ -164,3 +372,39 @@ def test_main_exits_1_on_a_dead_rule(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "Bash(bin/local/*:*)" in err
     assert "use Bash(bin/local/*)" in err
+
+
+def test_main_warns_without_failing_on_a_covered_grant(tmp_path, monkeypatch, capsys):
+    """The file is gitignored and regrows daily, so it cannot gate a push."""
+    path = _local(tmp_path, "Bash(bin/local/validate-all)")
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", path])
+    vp.main()
+    captured = capsys.readouterr()
+    assert "Bash(bin/local/validate-all)" in captured.err
+    assert "delete the local grant" in captured.err
+    assert "every permission rule is live" in captured.out
+
+
+def test_main_stays_silent_about_a_covered_grant_under_quiet(tmp_path, monkeypatch, capsys):
+    """validate-all captures a passing run's output and throws it away."""
+    path = _local(tmp_path, "Bash(bin/local/validate-all)")
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--quiet", path])
+    vp.main()
+    assert "Bash(bin/local/validate-all)" not in capsys.readouterr().err
+
+
+def test_main_exits_1_on_a_grant_that_re_grants_a_gated_script(tmp_path, monkeypatch, capsys):
+    path = _local(tmp_path, "Bash(bin/get-secret --name prod/db)")
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--quiet", path])
+    with pytest.raises(SystemExit) as exc:
+        vp.main()
+    assert exc.value.code == 1
+    assert "Bash(bin/get-secret:*)" in capsys.readouterr().err
+
+
+def test_a_tracked_settings_file_is_never_checked_for_drift(tmp_path, monkeypatch, capsys):
+    """Only untracked files drift — the tracked file is where grants belong."""
+    path = _settings(tmp_path, {"permissions": {"allow": ["Bash(bin/local/validate-all)"]}})
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", str(path)])
+    vp.main()
+    assert "already grants this" not in capsys.readouterr().err

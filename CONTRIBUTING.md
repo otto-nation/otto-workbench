@@ -101,9 +101,25 @@ names the one that matches.
 A grant that lands in `.claude/settings.local.json` is a bug report: some rule
 that should have matched did not. Move it into one of the tracked files rather
 than leaving it there, where nothing reviews it and the next worktree starts
-without it. `bin/local/validate-permissions` checks every tracked settings file
-for rules that can never match; `tests/claude_settings.bats` holds the project
-file to directories the repo actually ships.
+without it. `bin/local/validate-permissions` checks every settings file for
+rules that can never match; `tests/claude_settings.bats` holds the project file
+to directories the repo actually ships.
+
+The same validator reports the drift itself. It reads the tracked project file
+for the grants it already makes, then looks at the untracked ones — every
+`settings.local.json` in the tree, plus the `.claude/` in the bare-repo
+container above the worktrees, which no walk rooted in a worktree can reach.
+A local grant the tracked file already makes is a warning that leaves the exit
+status alone: those files are gitignored, regrow on their own, and a hard
+failure would block pushes over a file nobody else can see. A local `allow`
+reaching one of the two `ask`-gated scripts is an error, because it silently
+hands back unattended access to credentials. A grant with no tracked home —
+a `WebFetch` domain, a `/tmp` scratch script — is left alone.
+
+At the container there is nothing to move a grant into: it holds no working
+tree, so nothing there can be committed. Run the session from a worktree, where
+the tracked `.claude/settings.json` applies and an approved grant has somewhere
+to live.
 
 ## Environment Variables
 

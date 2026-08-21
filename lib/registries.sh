@@ -32,6 +32,33 @@ KNOWN_COMMAND_FIELDS="name description scope when detail"
 # is_installed NAME — returns 0 if NAME is found in PATH
 is_installed() { command -v "$1" >/dev/null 2>&1; }
 
+# collect_component_registries ARRAY_REF SCAN_DIR — the component `registry.yml`
+# files under a root. ARRAY_REF names the caller's array, which is replaced with
+# the paths found one and two directories below SCAN_DIR, in glob order.
+# SCAN_DIR is the root those globs are anchored at; a root holding none of them
+# leaves the array empty rather than filling it with unexpanded patterns.
+#
+# Split out of `collect_registries` because `bin/local/generate-public-surface`
+# needs this set on its own: it filters by the package that owns each registry,
+# and must not see the `*.env.yml` and brew stack files `collect_registries` adds
+# on top, since brew tools are not part of the public surface. Filtering those
+# back out in the caller would only point the same coupling the other way. With
+# the glob written out in both places, a change to the depth a component registry
+# may live at reached the tool context and not the surface snapshot, and the
+# snapshot regenerated smaller with no error from either script.
+collect_component_registries() {
+  local -n __components_out=$1
+  local scan_dir="$2"
+  local f
+
+  __components_out=()
+  for f in "$scan_dir"/*/registry.yml "$scan_dir"/*/*/registry.yml; do
+    if [[ -f "$f" ]]; then
+      __components_out+=("$f")
+    fi
+  done
+}
+
 # collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
 # Populates the caller's array (via nameref) with deduplicated registry paths.
 #
@@ -43,14 +70,11 @@ collect_registries() {
   local brew_dir="${3:-$scan_dir/brew}"
 
   _out_arr=()
-  local -a raw=()
 
-  # Component registries (top-level + nested)
-  for f in "$scan_dir"/*/registry.yml "$scan_dir"/*/*/registry.yml; do
-    if [[ -f "$f" ]]; then
-      raw+=("$f")
-    fi
-  done
+  # Component registries (top-level + nested). First, because
+  # collect_component_registries assigns to the array rather than appending.
+  local -a raw=()
+  collect_component_registries raw "$scan_dir"
 
   # Consumer-owned env files (colocated with the code that reads the vars)
   while IFS= read -r -d '' f; do

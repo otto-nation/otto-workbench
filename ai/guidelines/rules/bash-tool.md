@@ -26,7 +26,8 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 - Every path in a subagent's Bash call must therefore be absolute or `-C`-qualified, with no dependence on a prior `cd`:
   - Same absolute-path form as § Avoid Compound `cd` Commands: `pytest /abs/path/tests/foo_test.py`, `bats /abs/path/tests/foo.bats`
   - `git -C /abs/path <subcommand>` for every git command, including read-only ones like `status`, `log`, and `rev-parse`
-  - For a suite or script that must resolve paths from the repo root (`bats tests/`, `bin/local/validate-all`), write a wrapper to `/tmp` with the Write tool whose first line is `cd /abs/path`, and run `sh /tmp/<name>.sh` — same technique as § Avoid Wrapping Commands in `sh -c`. A wrapper *file* is not the `sh -c "..."` anti-pattern — the script is readable, and its `cd` is inside a file rather than in the analyzed command string
+  - For a suite or script that must resolve paths from the repo root (`bats tests/`, `bin/local/validate-all`), write a wrapper to `/tmp` with the Write tool whose first line is `cd /abs/path`, and run `bash /tmp/<name>.sh` — same technique as § Avoid Wrapping Commands in `sh -c`. A wrapper *file* is not the `sh -c "..."` anti-pattern — the script is readable, and its `cd` is inside a file rather than in the analyzed command string
+  - Invoke the wrapper with `bash`, never `sh` — only `Bash(bash:*)` is allow-listed, so `sh /tmp/<name>.sh` prompts, and the "don't ask again" rule it offers is an exact match on that one filename. The next wrapper gets a new name and prompts again, which is how a checkout accumulates dozens of single-use `Bash(sh /tmp/...)` grants that can never match twice
 - When dispatching a subagent that will run tests or git commands, give it the absolute worktree path and say that its cwd will not persist. A subagent cannot discover this rule by observing that its commands succeed
 - Confirm the run landed where it was meant to before believing its result — a suite's test count against the wrong tree is usually close enough to the right one to pass unnoticed. Have the wrapper echo `pwd` and the branch, or compare the count against a known-good run
 
@@ -44,7 +45,7 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 
 - Never wrap a command in `sh -c "..."` (or `bash -c`, `zsh -c`) — the analyzer cannot see inside the quoted string, so it asks approval for the wrapper as a whole and no allow-list entry ever matches the real command. Worse, the offered "don't ask again" rule keys on that exact string, so the next `sh -c` prompts again
 - `sh -c "cd /dir; cmd"` is the usual reason to reach for it. Run a bare `cd /dir` as its own call, then `cmd` as the next one — per § Avoid Compound `cd` Commands
-- If you need a specific shell's behavior (`sh` word-splitting, glob handling), put the script in a file with the Write tool and run `sh /tmp/probe.sh` — the file is also readable, which a quoted one-liner is not
+- If you need a specific shell's behavior (`sh` word-splitting, glob handling), put the script in a file with the Write tool and run `bash /tmp/probe.sh` — the file is also readable, which a quoted one-liner is not. Reach for `sh /tmp/probe.sh` only when the POSIX behaviour is the thing under test — this is the one place `sh` survives the § Subagents Reset the Working Directory rule, because swapping in `bash` here would change the result the probe exists to observe. It prompts, and that is the right trade for the one case that cannot use the granted shell
 
 ## Avoid Absolute Paths to PATH Binaries
 

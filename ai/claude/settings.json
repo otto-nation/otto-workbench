@@ -164,6 +164,7 @@
       "Bash(npx:*)",
       "Bash(perl:*)",
       "Bash(pip3:*)",
+      "Bash(printenv:*)",
       "Bash(printf:*)",
       "Bash(pwd:*)",
       "Bash(pytest:*)",

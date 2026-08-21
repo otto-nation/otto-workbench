@@ -115,7 +115,7 @@ Two classes fail, and a grant with no tracked home — a `WebFetch` domain, a
 | Class | Fix |
 |---|---|
 | A local `allow` a tracked `allow` already makes | `bin/local/validate-permissions --fix` deletes it |
-| A local `allow` reaching an `ask`-gated script | delete it yourself, or keep it and decide the gate is wrong |
+| A local `allow` reaching an `ask`-gated script | a human deletes it, or decides the gate is wrong |
 
 Both fail rather than warn, because a warning could not reach anyone here:
 `validate-all` captures each validator's output and prints it only when that

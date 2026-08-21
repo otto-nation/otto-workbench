@@ -452,9 +452,9 @@ def _at_container(path: str, container: str | None) -> bool:
     return os.path.dirname(os.path.realpath(path)) == os.path.join(container, '.claude')
 
 
-def _is_local(path: str, container: str | None) -> bool:
+def _is_local(path: str, at_container: bool) -> bool:
     """Is this an untracked settings file — one whose grants nobody reviews?"""
-    return os.path.basename(path) == LOCAL_SETTINGS or _at_container(path, container)
+    return os.path.basename(path) == LOCAL_SETTINGS or at_container
 
 
 # ── Reporting ───────────────────────────────────────────────────────────────
@@ -538,7 +538,7 @@ def main():
         relpath = os.path.relpath(filepath, repo_root)
         violations = check_file(filepath)
         at_container = _at_container(filepath, container)
-        drift = drift_in(filepath, tracked) if _is_local(filepath, container) else Drift()
+        drift = drift_in(filepath, tracked) if _is_local(filepath, at_container) else Drift()
 
         pruned = drift.covered if args.fix else []
         if pruned:

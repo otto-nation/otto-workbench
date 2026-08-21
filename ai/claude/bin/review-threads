@@ -1443,7 +1443,7 @@ def _anchored_line(
 
 def _anchored_link(
     entry: CommentItem | pr_state.ThreadOutcome,
-    repo: str, sha: str, filepath: str, line: int, wt_path: Path | None,
+    repo: str, filepath: str, line: int, sha: str, wt_path: Path | None,
 ) -> str:
     """A markdown blob link to `filepath`, anchored only where the line holds."""
     anchor = _anchored_line(entry, filepath, line, sha, wt_path)
@@ -1459,7 +1459,7 @@ def _evidence_link(
     if not entry.has_evidence() or not sha:
         return ""
     return _anchored_link(
-        entry, repo, sha, entry.evidence_file, entry.evidence_line, wt_path,
+        entry, repo, entry.evidence_file, entry.evidence_line, sha, wt_path,
     )
 
 
@@ -1488,7 +1488,7 @@ def _code_link(
             return link
     if not entry.file or not sha:
         return ""
-    return _anchored_link(entry, repo, sha, entry.file, entry.line, wt_path)
+    return _anchored_link(entry, repo, entry.file, entry.line, sha, wt_path)
 
 
 def _find_addressing_commit(

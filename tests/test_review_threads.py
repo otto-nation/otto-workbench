@@ -4850,7 +4850,6 @@ class TestAddressingCommitIsPerLine:
         with patch.object(rt, "_resolve_default_branch", return_value="main"):
             assert rt._find_addressing_commit(branch.path, "a.py", 0) is None
 
-
     def test_a_line_past_the_end_of_the_file_claims_no_commit(self, rt, branch):
         """git refuses the range rather than answering — nothing is invented."""
         with patch.object(rt, "_resolve_default_branch", return_value="main"):

@@ -44,7 +44,7 @@ def _subcommand(cmd) -> str:
 
 
 def _git_stub(*, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
-              gh_out="", gh_rc=0, calls=None):
+              gh_out="", gh_rc=0, gh_exc=None, calls=None):
     """A `subprocess.run` stand-in answering every call the preflight makes.
 
     Dispatch is on the git subcommand rather than on call order, so a test that
@@ -55,6 +55,8 @@ def _git_stub(*, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
         if calls is not None:
             calls.append(cmd)
         if cmd[0] == "gh":
+            if gh_exc is not None:
+                raise gh_exc
             return _completed(gh_rc, stdout=gh_out)
         sub = _subcommand(cmd)
         if sub == "rev-parse":
@@ -139,6 +141,16 @@ class TestDetect:
         """No network is a reason to say less, not a reason to say nothing."""
         signals = _signals(
             diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n", gh_rc=1,
+        )
+        assert [s.kind for s in signals] == [
+            SupersessionKind.READDS_REMOVED_SYMBOL,
+        ]
+
+    def test_a_stalled_search_still_leaves_the_local_signal(self):
+        """Bounding the search is not a way for the preflight to start failing."""
+        signals = _signals(
+            diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n",
+            gh_exc=subprocess.TimeoutExpired(["gh"], 1),
         )
         assert [s.kind for s in signals] == [
             SupersessionKind.READDS_REMOVED_SYMBOL,

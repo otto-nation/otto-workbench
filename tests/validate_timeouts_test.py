@@ -248,6 +248,17 @@ def test_the_exemption_holds_when_the_file_is_named(monkeypatch, capsys):
     assert "0 files checked" in capsys.readouterr().out
 
 
+def test_a_named_non_python_file_is_not_reported_unparseable(monkeypatch, capsys, tmp_path):
+    """Naming a file the check never covered says nothing about it."""
+    other = tmp_path / "hook.sh"
+    other.write_text("#!/usr/bin/env bash\nexec gh pr view \"$@\"\n")
+    monkeypatch.setattr(sys, "argv", ["validate-timeouts", str(other)])
+    vt.main()
+    captured = capsys.readouterr()
+    assert "unparseable" not in captured.err
+    assert "0 files checked" in captured.out
+
+
 def test_repo_is_clean():
     """The rule this validator enforces holds across the tree it walks."""
     offenders = {

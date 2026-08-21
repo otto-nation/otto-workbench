@@ -375,23 +375,23 @@ def test_main_exits_1_on_a_dead_rule(tmp_path, monkeypatch, capsys):
     assert "use Bash(bin/local/*)" in err
 
 
-def test_main_warns_without_failing_on_a_covered_grant(tmp_path, monkeypatch, capsys):
-    """The file is gitignored and regrows daily, so it cannot gate a push."""
+def test_main_exits_1_on_a_covered_grant(tmp_path, monkeypatch, capsys):
+    """A warning could not reach anyone: validate-all discards a green run's output."""
     path = _local(tmp_path, "Bash(bin/local/validate-all)")
     monkeypatch.setattr(sys, "argv", ["validate-permissions", path])
-    vp.main()
-    captured = capsys.readouterr()
-    assert "Bash(bin/local/validate-all)" in captured.err
-    assert "delete the local grant" in captured.err
-    assert "every permission rule is live" in captured.out
+    with pytest.raises(SystemExit) as exc:
+        vp.main()
+    assert exc.value.code == 1
+    assert "Bash(bin/local/validate-all)" in capsys.readouterr().err
 
 
-def test_main_stays_silent_about_a_covered_grant_under_quiet(tmp_path, monkeypatch, capsys):
-    """validate-all captures a passing run's output and throws it away."""
+def test_the_failure_names_the_command_that_fixes_it(tmp_path, monkeypatch, capsys):
+    """validate-all does not pass --fix, so the message has to spell it out."""
     path = _local(tmp_path, "Bash(bin/local/validate-all)")
     monkeypatch.setattr(sys, "argv", ["validate-permissions", "--quiet", path])
-    vp.main()
-    assert "Bash(bin/local/validate-all)" not in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        vp.main()
+    assert vp.FIX_COMMAND in capsys.readouterr().err
 
 
 def test_main_exits_1_on_a_grant_that_re_grants_a_gated_script(tmp_path, monkeypatch, capsys):
@@ -418,12 +418,142 @@ def test_main_reaches_the_container_file_above_the_worktree(container, monkeypat
 
     monkeypatch.setattr(vp, "_WORKBENCH_DIR", str(worktree))
     monkeypatch.setattr(sys, "argv", ["validate-permissions"])
-    vp.main()
+    with pytest.raises(SystemExit):
+        vp.main()
 
     err = capsys.readouterr().err
     assert "Bash(bin/local/validate-all)" in err
     assert "run the session from a worktree" in err
-    assert "delete the local grant" not in err
+
+
+# ── --fix ────────────────────────────────────────────────────────────────
+
+
+def _fix(path, monkeypatch, *flags):
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", *flags, str(path)])
+    vp.main()
+    return json.loads(Path(path).read_text())
+
+
+def test_fix_deletes_a_covered_grant(tmp_path, monkeypatch, capsys):
+    path = _local(tmp_path, "Bash(bin/local/validate-all)", "Bash(sh /tmp/probe.sh)")
+    assert _fix(path, monkeypatch)["permissions"]["allow"] == ["Bash(sh /tmp/probe.sh)"]
+
+
+def test_fix_leaves_every_one_off_alone(tmp_path, monkeypatch, capsys):
+    """Same discriminator as the check: no tracked home, no business being pruned."""
+    one_offs = ["Bash(sh /tmp/probe.sh)", "Bash(uv run *)", "WebFetch(domain:example.com)"]
+    path = _local(tmp_path, *one_offs)
+    assert _fix(path, monkeypatch)["permissions"]["allow"] == one_offs
+
+
+def test_fix_never_prunes_an_override(tmp_path, monkeypatch, capsys):
+    """Deleting it would restore an ask gate on credentials — a human's call."""
+    gated = "Bash(bin/get-secret --name prod/db)"
+    path = _local(tmp_path, gated)
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", str(path)])
+    with pytest.raises(SystemExit) as exc:
+        vp.main()
+    assert exc.value.code == 1
+    assert json.loads(Path(path).read_text())["permissions"]["allow"] == [gated]
+
+
+def test_fix_removes_nothing_the_tracked_rules_do_not_already_grant(tmp_path, monkeypatch,
+                                                                   capsys):
+    """The no-op proof: every pruned rule's commands are matched by a tracked rule."""
+    drifting = ["Bash(bin/local/validate-all)", "Bash(bin/local/compose-docs --check)",
+                "Bash(ai/claude/bin/pr --tool-schema)", "Bash(bin/local/validate-ceiling *)"]
+    path = _local(tmp_path, *drifting, "Bash(sh /tmp/probe.sh)")
+    before = set(json.loads(Path(path).read_text())["permissions"]["allow"])
+
+    after = set(_fix(path, monkeypatch)["permissions"]["allow"])
+
+    assert before - after == set(drifting)
+    for rule in before - after:
+        body = vp.BASH_RULE.match(rule).group(1)
+        assert any(vp._covered_by(body, tracked) for tracked in TRACKED.allow)
+
+
+def test_fix_preserves_the_rest_of_the_file(tmp_path, monkeypatch, capsys):
+    path = tmp_path / vp.LOCAL_SETTINGS
+    path.write_text(json.dumps({
+        "statusLine": {"command": "x"},
+        "permissions": {
+            "allow": ["Bash(bin/local/validate-all)", "Bash(sh /tmp/probe.sh)"],
+            "deny": ["Bash(rm -rf /)"],
+            "ask": ["Bash(bin/x)"],
+        },
+    }, indent=2))
+
+    fixed = _fix(path, monkeypatch)
+
+    assert fixed["statusLine"] == {"command": "x"}
+    assert fixed["permissions"]["deny"] == ["Bash(rm -rf /)"]
+    assert fixed["permissions"]["ask"] == ["Bash(bin/x)"]
+    assert fixed["permissions"]["allow"] == ["Bash(sh /tmp/probe.sh)"]
+
+
+def test_fix_leaves_a_non_ascii_rule_written_the_way_it_was(tmp_path, monkeypatch, capsys):
+    """Escaping an em dash to \\uXXXX would rewrite entries the run is not
+    touching, turning a one-line deletion into a whole-file diff."""
+    kept = "Bash(perl -pe 's/a — b/c/' f)"
+    path = _local(tmp_path, "Bash(bin/local/validate-all)", kept)
+
+    _fix(path, monkeypatch)
+
+    assert "—" in Path(path).read_text()
+    assert "\\u2014" not in Path(path).read_text()
+
+
+def test_fix_keeps_an_emptied_allow_bucket(tmp_path, monkeypatch, capsys):
+    """Claude Code appends to that list on the next approval; dropping the key
+    would be a larger edit to a file this script does not own."""
+    path = _local(tmp_path, "Bash(bin/local/validate-all)")
+    assert _fix(path, monkeypatch)["permissions"]["allow"] == []
+
+
+def test_fix_is_idempotent(tmp_path, monkeypatch, capsys):
+    path = _local(tmp_path, "Bash(bin/local/validate-all)", "Bash(sh /tmp/probe.sh)")
+    once = _fix(path, monkeypatch)
+    first_text = Path(path).read_text()
+
+    assert _fix(path, monkeypatch) == once
+    assert Path(path).read_text() == first_text
+
+
+def test_a_fixed_file_passes_on_the_next_run(tmp_path, monkeypatch, capsys):
+    path = _local(tmp_path, "Bash(bin/local/validate-all)", "Bash(sh /tmp/probe.sh)")
+    _fix(path, monkeypatch)
+
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", str(path)])
+    vp.main()
+    assert "every permission rule is live" in capsys.readouterr().out
+
+
+def test_fix_never_writes_to_the_tracked_settings_file(tmp_path, monkeypatch, capsys):
+    """Drift is only ever computed for untracked files, so pruning cannot reach it."""
+    path = _settings(tmp_path, {"permissions": {"allow": ["Bash(bin/local/validate-all)"]}})
+    before = path.read_text()
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", str(path)])
+    vp.main()
+    assert path.read_text() == before
+
+
+def test_fix_prunes_the_container_file_above_the_worktree(container, monkeypatch, capsys):
+    """The file the drift grows in is the one no worktree-rooted walk can reach."""
+    worktree = container / "main"
+    (worktree / ".claude").mkdir(parents=True)
+    (worktree / vp.TRACKED_SETTINGS).write_text(
+        json.dumps({"permissions": {"allow": ["Bash(bin/*)"]}})
+    )
+    local = Path(_local(container / ".claude", "Bash(bin/x)", "Bash(sh /tmp/probe.sh)"))
+
+    monkeypatch.setattr(vp, "_WORKBENCH_DIR", str(worktree))
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix"])
+    vp.main()
+
+    assert json.loads(local.read_text())["permissions"]["allow"] == ["Bash(sh /tmp/probe.sh)"]
+    assert "every permission rule is live" in capsys.readouterr().out
 
 
 def test_a_tracked_settings_file_is_never_checked_for_drift(tmp_path, monkeypatch, capsys):

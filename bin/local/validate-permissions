@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate permission rules: every rule can match, and every grant belongs.
 
-Usage: bin/local/validate-permissions [--quiet] [file...]
+Usage: bin/local/validate-permissions [--quiet] [--fix] [file...]
 
 Claude Code classifies a permission rule before matching it, and the two forms
 are not interchangeable:
@@ -34,19 +34,24 @@ The second question is where a live rule is written down.  CONTRIBUTING.md
 § Permission grants puts the grants for this repo's own scripts in the tracked
 .claude/settings.json, so a copy of one of those grants sitting in an untracked
 settings.local.json is a bug report: the tracked rule should have matched, and
-the local copy dies with the worktree.  A grant that re-states a tracked `allow`
-is reported as a warning; a local `allow` handing back a command the tracked
-`ask` rules gate is an error, because `ask` outranks `allow` and those two
-scripts reach AWS and GCP credentials.  A grant with no tracked home — a
-one-afternoon WebFetch domain, a /tmp scratch script — is nobody's bug and is
-left alone.
+the local copy dies with the worktree.  Both drift classes fail:
+
+    a local `allow` a tracked `allow` already makes   → --fix deletes it
+    a local `allow` over a tracked `ask` rule         → a human deletes it
+
+The second is never touched by --fix.  Removing it restores a deliberate gate
+on credential access, and `ask` outranks `allow` precisely so that a person
+sees the call; deciding to drop that gate is not a script's to make.
+
+A grant with no tracked home — a one-afternoon WebFetch domain, a /tmp scratch
+script — is nobody's bug and is left alone by both the check and the fix.
 
 When no files are given, discovers every settings JSON in the repo that
 declares Bash rules, plus the untracked ones in the bare-repo container above
 a linked worktree, which no walk rooted in the worktree can reach.
 
-Exit code: 0 if every rule is live and no local grant re-grants a gated
-command, 1 otherwise.
+Exit code: 0 if every rule is live and every grant is in the right file,
+1 otherwise.
 """
 
 import argparse
@@ -59,7 +64,7 @@ import sys
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
-from ansi import RED, GREEN, YELLOW, DIM, NC  # noqa: E402
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
 
 BASH_RULE = re.compile(r'^Bash\((.*)\)$', re.DOTALL)
 
@@ -70,6 +75,10 @@ RULE_BUCKETS = ('allow', 'deny', 'ask')
 # Claude Code writes an approved one-off into.
 TRACKED_SETTINGS = os.path.join('.claude', 'settings.json')
 LOCAL_SETTINGS = 'settings.local.json'
+
+# Named in the failure message: validate-all does not pass --fix, so the human
+# reading a failed pre-push has to be told exactly what to type.
+FIX_COMMAND = 'bin/local/validate-permissions --fix'
 
 TILDE = 'the Bash matcher never expands ~, so only a literally tilde-spelled command matches'
 LITERAL_STAR = ':* is prefix matching, so the * inside the prefix never globs'
@@ -163,12 +172,19 @@ def check_file(filepath: str) -> list[Violation]:
 # Only a grant with a tracked home is reportable.  The tracked settings file is
 # the owner of that list — the directories it grants are read from it, never
 # repeated here — and a grant naming something outside it has nowhere to move
-# to, so it stays silent.  Flagging every local entry would train the warning
-# away, which costs more than the entries it would catch.
+# to, so it stays silent.  Flagging every local entry would make the check
+# noise, which costs more than the entries it would catch.
+#
+# Both classes fail rather than warn.  A warning could not reach anyone here:
+# validate-all captures each validator's output and prints it only when the
+# validator exits non-zero, so on a green run the text is discarded before the
+# pre-push hook or CI ever renders it.  Failing is what makes the finding
+# visible, and --fix is what keeps that defensible — the covered class is
+# pruned by a command, not by hand, and the file it prunes regrows.
 #
 # `deny` needs no class of its own: deny outranks allow unconditionally, so a
 # local allow cannot hand back a denied command.  `ask` can be handed back,
-# which is why it is the class that fails.
+# which is why it is the class a script must never prune.
 
 @dataclasses.dataclass(frozen=True)
 class Grant:
@@ -301,6 +317,36 @@ def drift_in(filepath: str, tracked: TrackedRules) -> Drift:
     return Drift(overrides, covered)
 
 
+def prune(filepath: str, grants: list[Grant]) -> None:
+    """Delete covered grants from an untracked settings file, in place.
+
+    Provably a no-op on effective permissions: every grant passed here is one
+    `_covered_by` proved a tracked rule already matches for every command the
+    local rule can match, so the set of commands the file permits is the same
+    before and after.  Only the covered class is ever passed in — an override
+    would change permissions, which is why it is reported and left alone.
+
+    Everything else in the file survives: other top-level keys, the other
+    buckets, and every grant with no tracked home are written back unchanged.
+    """
+    with open(filepath) as f:
+        settings = json.load(f)
+
+    doomed = {grant.rule for grant in grants}
+    permissions = settings['permissions']
+    # An emptied bucket keeps its key rather than being dropped.  `allow` is
+    # Claude Code's own and it appends to that list on the next approval, so
+    # leaving the key is the smaller edit to a file this script does not own.
+    permissions['allow'] = [rule for rule in permissions['allow'] if rule not in doomed]
+
+    # `ensure_ascii=False` keeps a rule containing an em dash or any other
+    # non-ASCII character written the way Claude Code writes it.  Escaping it to
+    # \uXXXX would rewrite entries this run is not touching, turning a one-line
+    # deletion into a diff across the whole file.
+    with open(filepath, 'w') as f:
+        f.write(json.dumps(settings, indent=2, ensure_ascii=False) + '\n')
+
+
 # ── Discovery ───────────────────────────────────────────────────────────────
 
 def _declares_bash_rules(path: str) -> bool:
@@ -425,31 +471,37 @@ def _report_overrides(relpath: str, grants: list[Grant]) -> None:
 
 
 def _report_covered(relpath: str, grants: list[Grant], at_container: bool) -> None:
-    # The container holds no working tree, so there is no tracked file there to
-    # move a grant into — the advice is to run the session where the tracked
-    # file applies, not to edit a file that cannot exist.
-    fix = (f'run the session from a worktree, where {TRACKED_SETTINGS} applies'
-           if at_container else 'delete the local grant')
-    print(f'{YELLOW}⚠{NC} {relpath}: {len(grants)} local grant(s) a tracked rule already makes',
+    print(f'{RED}✗{NC} {relpath}: {len(grants)} local grant(s) a tracked rule already makes',
           file=sys.stderr)
     for grant in grants:
         where = f'line {grant.line}: ' if grant.line else ''
         print(f'      {where}{grant.rule}', file=sys.stderr)
         print(f'        {TRACKED_SETTINGS} already grants this via {grant.tracked}, '
               f'and the local copy dies with the checkout', file=sys.stderr)
-        print(f'        {DIM}{fix}{NC}', file=sys.stderr)
+    print(f'        {DIM}run `{FIX_COMMAND}` to delete them{NC}', file=sys.stderr)
+    if at_container:
+        # The container holds no working tree, so there is no tracked file
+        # there to move a grant into — the cure is to run the session where the
+        # tracked file applies, not to edit a file that cannot exist.
+        print(f'        {DIM}the container keeps no tracked file, so run the session from a '
+              f'worktree, where {TRACKED_SETTINGS} applies{NC}', file=sys.stderr)
 
 
-def _print_summary(files_checked: int, errors: int, grants: int, drifted: int) -> None:
+def _report_pruned(relpath: str, grants: list[Grant], quiet: bool) -> None:
+    print(f'  {GREEN}✓{NC} {relpath}: pruned {len(grants)} local grant(s) a tracked rule '
+          f'already makes')
+    for grant in [] if quiet else grants:
+        print(f'      {DIM}{grant.rule} — covered by {grant.tracked}{NC}')
+
+
+def _print_summary(files_checked: int, errors: int) -> None:
     print()
     if errors == 0:
-        print(f'{GREEN}✓{NC} {files_checked} files checked, every permission rule is live')
+        print(f'{GREEN}✓{NC} {files_checked} files checked, every permission rule is live '
+              f'and in the right file')
     else:
-        print(f'{RED}✗{NC} {errors} of {files_checked} files declare a rule that can never match '
-              f'or re-grant a gated command', file=sys.stderr)
-    if grants:
-        print(f'{YELLOW}⚠{NC} {grants} local grant(s) in {drifted} file(s) duplicate a tracked '
-              f'rule', file=sys.stderr)
+        print(f'{RED}✗{NC} {errors} of {files_checked} files declare a rule that can never '
+              f'match, or a grant that belongs somewhere else', file=sys.stderr)
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -458,17 +510,9 @@ def main():
     parser = argparse.ArgumentParser(
         description='Validate that every Bash permission rule can match a command, and that '
                     'no untracked settings file holds a grant a tracked rule speaks for.')
-    # --quiet suppresses the covered-grant warning outright, summary line
-    # included.  bin/local/validate-all is the only caller that passes the flag:
-    # it runs every validator with --quiet, captures stdout and stderr, and
-    # prints the capture only when that validator fails.  A warning emitted
-    # there is therefore either discarded on a green run or stapled to an
-    # unrelated failure as noise, so the flag's contract — failures and summary
-    # only — is also the honest behaviour.  The warning's audience is a
-    # developer running this validator directly, and it reaches them there.
-    # The override class is not suppressed: it sets the exit status, which is
-    # what makes validate-all print the capture in the first place.
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
+    parser.add_argument('--fix', action='store_true',
+                        help='Delete local grants a tracked rule already makes')
     parser.add_argument('files', nargs='*', help='Settings files to check (auto-discovers if omitted)')
     args = parser.parse_args()
 
@@ -479,8 +523,6 @@ def main():
     files = args.files if args.files else discovered
 
     errors = 0
-    grants = 0
-    drifted = 0
 
     for filepath in files:
         relpath = os.path.relpath(filepath, repo_root)
@@ -488,20 +530,24 @@ def main():
         at_container = _at_container(filepath, container)
         drift = drift_in(filepath, tracked) if _is_local(filepath, container) else Drift()
 
-        errors += 1 if violations or drift.overrides else 0
-        drifted += 1 if drift.covered else 0
-        grants += len(drift.covered)
+        pruned = drift.covered if args.fix else []
+        if pruned:
+            prune(filepath, pruned)
+            _report_pruned(relpath, pruned, args.quiet)
+            drift = Drift(drift.overrides)
+
+        errors += 1 if violations or not drift.empty else 0
 
         if violations:
             _report_violations(relpath, violations)
         if drift.overrides:
             _report_overrides(relpath, drift.overrides)
-        if drift.covered and not args.quiet:
+        if drift.covered:
             _report_covered(relpath, drift.covered, at_container)
-        if not violations and drift.empty and not args.quiet:
+        if not violations and drift.empty and not pruned and not args.quiet:
             print(f'  {GREEN}✓{NC} {relpath}')
 
-    _print_summary(len(files), errors, 0 if args.quiet else grants, drifted)
+    _print_summary(len(files), errors)
     if errors:
         sys.exit(1)
 

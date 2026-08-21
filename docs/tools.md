@@ -532,6 +532,12 @@ whole of what turns a file into a candidate), and every `registry.yml`. Nothing 
 and no source is read, so a poll that finds nothing costs one `stat` per file; the interval
 is a bound on staleness rather than a cost to trade against.
 
+The baseline every poll compares against is stamped before the startup scan, not after it,
+and travels with the tool set that scan produced. A baseline taken later would already hold
+whatever landed in between, so no poll would ever see that file appear and the tool would
+stay missing for the whole session. Stamping first costs at most one redundant re-scan on
+the first poll.
+
 When the fingerprint moves, discovery runs again. Only a change to the offered set is
 announced — pulling a branch touches many files and usually changes no tools — and the
 announcement is `notifications/tools/list_changed`, which the server advertises as the

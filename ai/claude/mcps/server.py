@@ -333,6 +333,29 @@ def discovery_fingerprint(root: Path | None = None) -> tuple:
     return tuple(sorted((str(path), _stamp(path)) for path in watched))
 
 
+@dataclass(frozen=True)
+class Discovery:
+    """A tool set and the fingerprint of the tree it was read from."""
+
+    tools: dict[str, dict]
+    fingerprint: tuple
+
+
+def discover_with_baseline() -> Discovery:
+    """Scan for tools and stamp the tree they came from.
+
+    The stamp is taken before the scan, not after. A baseline has to describe a
+    tree no newer than the tool set it is the baseline for: taken afterwards, a
+    tool that landed while discovery was running is already in the fingerprint,
+    so no poll ever sees that file appear and the client goes without the tool
+    for the life of the session — the process is spawned by the client, so
+    nothing outside can restart it either. Taken first, the same tool costs one
+    re-scan on the first poll and is then offered.
+    """
+    fingerprint = discovery_fingerprint()
+    return Discovery(tools=discover_tools(), fingerprint=fingerprint)
+
+
 def _why_gone(script: Path) -> str:
     """Why a tool that used to answer no longer does."""
     if not script.exists():
@@ -354,6 +377,7 @@ def _log_lost_tools(before: dict[str, dict], after: dict[str, dict]) -> None:
 
 
 async def watch_for_tool_changes(tools: dict[str, dict], notify, ready: asyncio.Event,
+                                 fingerprint: tuple,
                                  interval: float = POLL_INTERVAL) -> None:
     """Keep *tools* current and call *notify* whenever the set changes.
 
@@ -361,6 +385,12 @@ async def watch_for_tool_changes(tools: dict[str, dict], notify, ready: asyncio.
     rebinding here would leave them reading the snapshot taken at startup,
     which is the whole of what this fixes. It is updated before *notify* runs,
     so a ``tools/list`` racing the notification still answers with the new set.
+
+    *fingerprint* is the baseline *tools* was read against, and is passed in
+    rather than stamped here: this coroutine starts whenever the loop first
+    schedules it, which is after the handshake on a busy runner, and a baseline
+    taken then already holds every change since startup. ``discover_with_baseline``
+    is what pairs the two.
 
     *ready* is set by the first request the server answers. A notification sent
     before then would reach a client that has not finished initialising, and
@@ -371,7 +401,6 @@ async def watch_for_tool_changes(tools: dict[str, dict], notify, ready: asyncio.
     was lost — naming a reason re-probes each vanished tool, one subprocess
     apiece.
     """
-    fingerprint = await asyncio.to_thread(discovery_fingerprint)
     while True:
         await asyncio.sleep(interval)
         try:
@@ -430,8 +459,13 @@ def _args_to_cli(arguments: dict, input_schema: dict) -> list[str]:
 # ── JSON Extraction ───────────────────────────────────────────────────────
 
 
-def _extract_json(text: str) -> str | None:
-    """Extract JSON from mixed output (dashboard on stderr bleeds into stdout)."""
+def _extract_json(text: str) -> tuple[str, object] | None:
+    """Extract JSON from mixed output (dashboard on stderr bleeds into stdout).
+
+    Returns the matching substring paired with its already-parsed value, so a
+    caller that needs both is not left re-parsing what this function just
+    validated.
+    """
     text = text.strip()
     if not text:
         return None
@@ -439,8 +473,7 @@ def _extract_json(text: str) -> str | None:
     # Try the whole thing first
     if text.startswith("{") or text.startswith("["):
         try:
-            json.loads(text)
-            return text
+            return text, json.loads(text)
         except json.JSONDecodeError:
             pass
 
@@ -450,8 +483,7 @@ def _extract_json(text: str) -> str | None:
     for i in candidates:
         remainder = "\n".join(lines[i:])
         try:
-            json.loads(remainder)
-            return remainder
+            return remainder, json.loads(remainder)
         except json.JSONDecodeError:
             continue
 
@@ -476,12 +508,14 @@ class RunningServer:
 
     ``tools`` is the live dict, not a copy — the handlers close over it and
     ``watch_for_tool_changes`` writes into it. ``ready`` is what tells the
-    watcher a client is listening.
+    watcher a client is listening, and ``fingerprint`` is the baseline it
+    compares against, stamped with the scan that filled ``tools``.
     """
 
     server: Any
     tools: dict[str, dict]
     ready: asyncio.Event
+    fingerprint: tuple
 
 
 def create_server() -> RunningServer:
@@ -496,7 +530,8 @@ def create_server() -> RunningServer:
         Tool,
     )
 
-    tools = discover_tools()
+    discovered = discover_with_baseline()
+    tools = discovered.tools
     server = Server("otto-workbench")
     ready = asyncio.Event()
 
@@ -554,8 +589,8 @@ def create_server() -> RunningServer:
                 isError=True,
             )
 
-        json_output = _extract_json(result.stdout)
-        parsed = json.loads(json_output) if json_output else None
+        extracted = _extract_json(result.stdout)
+        json_output, parsed = extracted if extracted else (None, None)
 
         if schema.get("output_schema") is not None:
             # A client validates the answer against the schema tools/list
@@ -588,7 +623,8 @@ def create_server() -> RunningServer:
     server.add_request_handler("tools/list", PaginatedRequestParams, handle_list_tools)
     server.add_request_handler("tools/call", CallToolRequestParams, handle_call_tool)
 
-    return RunningServer(server=server, tools=tools, ready=ready)
+    return RunningServer(server=server, tools=tools, ready=ready,
+                         fingerprint=discovered.fingerprint)
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────
@@ -642,7 +678,8 @@ async def main():
                 logger.debug("Could not announce the tool change: %s", exc)
 
         watcher = asyncio.create_task(
-            watch_for_tool_changes(running.tools, notify, running.ready))
+            watch_for_tool_changes(running.tools, notify, running.ready,
+                                   running.fingerprint))
         try:
             await running.server.run(read_stream, write_stream, init_options)
         finally:

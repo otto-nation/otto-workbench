@@ -31,6 +31,7 @@ from server import (
     declares_tool_schema,
     discover_tool_dirs,
     discover_tools,
+    discover_with_baseline,
     discovery_fingerprint,
     watch_for_tool_changes,
 )
@@ -43,7 +44,10 @@ from tool_registry import RegistryEntry, Visibility
 class TestExtractJson:
     def test_pure_json(self):
         text = '{"status": "ok", "count": 5}'
-        assert json.loads(_extract_json(text)) == {"status": "ok", "count": 5}
+        result = _extract_json(text)
+        assert result is not None
+        _, parsed = result
+        assert parsed == {"status": "ok", "count": 5}
 
     def test_json_after_dashboard(self):
         text = textwrap.dedent("""\
@@ -57,7 +61,7 @@ class TestExtractJson:
         """)
         result = _extract_json(text)
         assert result is not None
-        parsed = json.loads(result)
+        _, parsed = result
         assert parsed["status"] == "ok"
 
     def test_empty_input(self):
@@ -71,7 +75,8 @@ class TestExtractJson:
         text = '[{"name": "a"}, {"name": "b"}]'
         result = _extract_json(text)
         assert result is not None
-        assert len(json.loads(result)) == 2
+        _, parsed = result
+        assert len(parsed) == 2
 
     def test_partial_json_skipped(self):
         text = textwrap.dedent("""\
@@ -80,7 +85,8 @@ class TestExtractJson:
         """)
         result = _extract_json(text)
         assert result is not None
-        assert json.loads(result) == {"valid": True}
+        _, parsed = result
+        assert parsed == {"valid": True}
 
 
 # ── Argument Mapping ──────────────────────────────────────────────────────
@@ -167,10 +173,10 @@ def _write_destructive_script(directory: Path) -> Path:
     return script
 
 
-def _write_marked_script(directory: Path, name: str, **schema) -> Path:
-    """An executable answering the probe with *schema*, defaults filled in."""
+def _write_marked_script(directory: Path, name: str) -> Path:
+    """An executable answering the probe with a minimal schema for *name*."""
     document = {"name": name, "description": f"{name}, as the script tells it",
-                "input_schema": {"type": "object", "properties": {}}, **schema}
+                "input_schema": {"type": "object", "properties": {}}}
     script = directory / name
     script.write_text(textwrap.dedent(f"""\
         #!/usr/bin/env python3
@@ -581,6 +587,40 @@ class TestDiscoveryFingerprint:
         assert discovery_fingerprint(tmp_path) != before
 
 
+class TestDiscoverWithBaseline:
+    """The baseline has to describe a tree no newer than the scan it pairs with."""
+
+    def test_the_scan_it_returns_is_the_one_it_ran(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(server, "WORKBENCH_DIR", tmp_path)
+        _fingerprint_tree(tmp_path)
+
+        discovered = discover_with_baseline()
+
+        assert set(discovered.tools) == {"watched-tool"}
+        assert discovered.fingerprint == discovery_fingerprint(tmp_path)
+
+    def test_a_tool_landing_during_the_scan_still_looks_new_afterwards(
+            self, tmp_path, monkeypatch):
+        """Stamped after the scan, that tool is in the baseline and never arrives.
+
+        No poll sees the file appear, so the client is offered the startup list
+        for the rest of the session — and the client owns this process, so
+        nothing outside it can restart the server either.
+        """
+        monkeypatch.setattr(server, "WORKBENCH_DIR", tmp_path)
+        _fingerprint_tree(tmp_path)
+
+        def scan_while_a_tool_lands(dirs=None, registry=None):
+            _write_marked_script(tmp_path / "bin", "later-tool")
+            return {}
+
+        monkeypatch.setattr(server, "discover_tools", scan_while_a_tool_lands)
+
+        discovered = discover_with_baseline()
+
+        assert discovered.fingerprint != discovery_fingerprint(tmp_path)
+
+
 # The bound on a case whose *done* signal never arrives, not the wait a passing
 # case makes: every case below names a signal, so this is only how long a
 # regression takes to fail.
@@ -628,10 +668,10 @@ def _schema(name: str) -> dict:
     return {"name": name, "input_schema": {}, "_script": f"/bin/{name}"}
 
 
-async def _watch_until(recorder, tools, ready, done) -> None:
+async def _watch_until(recorder, tools, ready, baseline, done) -> None:
     """Run the watcher until *done*, then stop it the way a cancel would."""
     task = asyncio.create_task(
-        watch_for_tool_changes(tools, recorder.notify, ready, interval=0))
+        watch_for_tool_changes(tools, recorder.notify, ready, baseline, interval=0))
     deadline = time.monotonic() + WATCH_SETTLE
     while not done() and time.monotonic() < deadline:
         await asyncio.sleep(0.01)
@@ -647,14 +687,18 @@ class TestWatchForToolChanges:
 
     def _run(self, monkeypatch, fingerprints, tool_sets, tools,
              done=None, ready_now=True, failures=0):
-        recorder = _Recorder(fingerprints, tool_sets, failures=failures)
+        # The first entry is the baseline the startup scan was stamped with, the
+        # way create_server hands it over; the rest are what the polls read.
+        baseline, *polled = fingerprints
+        recorder = _Recorder(polled or [baseline], tool_sets, failures=failures)
         monkeypatch.setattr(server, "discovery_fingerprint", recorder.fingerprint)
         monkeypatch.setattr(server, "discover_tools", recorder.discover)
         ready = asyncio.Event()
         if ready_now:
             ready.set()
         settled = done or (lambda _: False)
-        asyncio.run(_watch_until(recorder, tools, ready, lambda: settled(recorder)))
+        asyncio.run(_watch_until(recorder, tools, ready, baseline,
+                                 lambda: settled(recorder)))
         return recorder
 
     def test_a_still_tree_is_never_re_scanned(self, monkeypatch):

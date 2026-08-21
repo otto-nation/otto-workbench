@@ -583,6 +583,7 @@ routinely disagree:
 | `status` | local | no | **no** |
 | `ci` | remote | yes | yes |
 | `review` | remote | yes | yes |
+| `review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | yes |
 | `review --list` | **none** | no | **no** |
 | `comments` | remote | yes | yes |
 | `fix` | remote | yes | yes |
@@ -591,7 +592,13 @@ routinely disagree:
 | `gc` | remote | no | yes |
 
 `review` is the one command whose need its arguments decide, which is why its
-`_COMMANDS` entry holds a resolver rather than a `Need`.
+`_COMMANDS` entry holds a resolver rather than a `Need`. The fetch is the line
+between its two halves: a bare `pr review` is about to review the branch, so it
+wants the branch current, while every mode flag acts on a review that already
+exists at the commit that review describes. Fast-forwarding under one of those
+would leave `--summary` and `--post` reporting a review of a commit the
+worktree no longer sits on, and would push `--recover` off the SHA it then has
+to pin a throwaway worktree back to.
 
 `rebase` is the reason the axes are separate: it needs `gh` to name its PR and
 does its own fetch, so a single "is this command remote?" flag would either

@@ -771,6 +771,46 @@ def test_find_marker_comment_reports_empty_listing():
             pr_comments.MarkerComment(found=True)
 
 
+def test_find_marker_comments_keeps_every_round_oldest_first():
+    """A caller spreading its record across comments has to link the earlier ones."""
+    listing = _pages([
+        {"id": 10, "body": f"{MARKER}\nround one"},
+        {"id": 11, "body": "unrelated"},
+        {"id": 12, "body": f"{MARKER}\nround two"},
+    ])
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+        history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
+    assert [c.comment_id for c in history.comments] == [10, 12]
+    assert history.bodies == [f"{MARKER}\nround one", f"{MARKER}\nround two"]
+    assert history.newest.comment_id == 12
+
+
+def test_find_marker_comments_carries_each_comments_url():
+    """The footer chain links comments, so the listing's link is the only source."""
+    listing = _pages([
+        {"id": 10, "body": MARKER, "html_url": "https://gh/pull/1#issuecomment-10"},
+    ])
+    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+        history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
+    assert history.comments[0].url == "https://gh/pull/1#issuecomment-10"
+
+
+def test_find_marker_comments_reports_an_unread_listing_as_no_history():
+    """`found` distinguishes it from a PR that genuinely has no summary yet."""
+    with patch.object(pr_comments, "_paginated_json", return_value=(1, "")):
+        history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
+    assert history == pr_comments.MarkerHistory(found=False)
+    assert history.newest == pr_comments.MarkerComment(found=False)
+
+
+def test_marker_history_newest_stands_in_for_an_unmarked_pr():
+    """The upsert target of a PR with no summary is an empty comment, not None."""
+    history = pr_comments.MarkerHistory(found=True, newest_other_at="2026-01-02T00:00:00Z")
+    assert history.newest == pr_comments.MarkerComment(
+        found=True, newest_other_at="2026-01-02T00:00:00Z")
+    assert history.bodies == []
+
+
 def test_post_issue_comment_reuses_a_supplied_lookup():
     """A caller that already read the comment must not pay for the listing twice."""
     with patch.object(pr_comments, "_paginated_json") as listing, \

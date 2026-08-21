@@ -181,15 +181,19 @@ class _Tree:
             return _Inference(basis="there was no worktree to check it against")
         if not path:
             return _Inference(basis="it names no file")
-        if not (Path(self.wt_path) / path).is_file():
-            return self._absent(path)
         if not self.prior_sha:
             return _Inference(basis="the prior review names no commit to compare against")
+        if not (Path(self.wt_path) / path).is_file():
+            return self._absent(path)
         return self._quotes(finding, path)
 
     def _absent(self, path: str) -> _Inference:
-        """The verdict on a finding whose file is not in the current tree."""
-        if self.prior_sha and not self._existed(path):
+        """The verdict on a finding whose file is not in the current tree.
+
+        A file the prior commit did not hold either was never this finding's
+        subject — the path was misread — so its absence now settles nothing.
+        """
+        if not self._existed(path):
             return _Inference(basis=f"`{path}` is in neither tree")
         return _Inference(PriorDisposition.FIXED, f"`{path}` is no longer in the tree")
 

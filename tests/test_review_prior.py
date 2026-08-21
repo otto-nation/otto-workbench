@@ -210,6 +210,17 @@ class TestInferredFromTheTree:
         assert record.disposition is None
         assert record.basis == "`imagined.go` is in neither tree"
 
+    def test_a_missing_file_settles_nothing_without_a_prior_commit(self, repo):
+        (repo / "gone.go").write_text(_BEFORE)
+        _commit(repo, "before")
+        (repo / "gone.go").unlink()
+        _commit(repo, "after")
+
+        prior = _prior("- **[M1]** **`gone.go:4`** — leaky handle\n")
+        record = _by_id(review_prior.reconcile(prior, "", str(repo)), "M1")
+        assert record.disposition is None
+        assert record.basis == "the prior review names no commit to compare against"
+
     def test_a_vanished_quotation_fixes_the_finding(self, repo):
         (repo / "handler.go").write_text(_BEFORE)
         prior_sha = _commit(repo, "before")
@@ -327,7 +338,7 @@ class TestInferredFromTheTree:
 
 
 class TestRecordPriorFindings:
-    """The re-review of #880: four prior findings fixed, none of them in the ledger.
+    """A re-review whose prior findings were all fixed, none of them in the ledger.
 
     Every one had in fact been fixed by the commit under review, and the run
     warned about all four and kept nothing. What the pipeline holds — the

@@ -1,14 +1,19 @@
-"""Tests for MCP server — tool discovery, arg mapping, and JSON extraction."""
+"""Tests for MCP server — discovery, arg mapping, JSON extraction, and transport."""
 
 from __future__ import annotations
 
 import json
 import logging
+import queue
 import re
+import shutil
 import stat
 import subprocess
 import sys
 import textwrap
+import threading
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -400,3 +405,331 @@ class TestWorkbenchToolDirs:
         that naming the layout cannot produce.
         """
         assert discover_tools() == discover_tools(discover_tool_dirs())
+
+
+# ── Client Transport ──────────────────────────────────────────────────────
+
+
+MCP_PROTOCOL_VERSION = "2025-06-18"
+
+# One id per turn of the conversation the module fixture drives, named so a
+# failing assertion says which request it was reading the answer to.
+LIST_ID = 2
+ECHO_ID = 3
+PLAIN_ID = 4
+SILENT_ID = 5
+
+# Generous because the first run resolves and downloads `mcp`; later runs hit
+# uv's cache and finish in about a second.
+TRANSPORT_TIMEOUT = 300
+
+# The readers are daemons draining pipes that have already reached EOF, so this
+# only bounds a join that should return at once.
+READER_JOIN_TIMEOUT = 5
+
+# How often the reply loop wakes to ask whether the server is still alive. Short
+# enough that a crash fails the test at once, long enough not to spin.
+REPLY_POLL_INTERVAL = 0.1
+
+uv_required = pytest.mark.skipif(
+    shutil.which("uv") is None,
+    reason="the server runs under `uv run --with mcp`, as ai/claude/bin/otto-mcp-server does",
+)
+
+_ECHO_TOOL = '''\
+#!/usr/bin/env python3
+"""Answers with the JSON object its output schema promises."""
+import json, sys
+
+if "--tool-schema" in sys.argv:
+    json.dump({
+        "name": "echo-tool",
+        "description": "Echo a word back",
+        "input_schema": {"type": "object", "properties": {"word": {"type": "string"}}},
+        "output_schema": {"type": "object", "properties": {"word": {"type": "string"}}},
+    }, sys.stdout)
+    sys.exit(0)
+
+json.dump({"word": sys.argv[sys.argv.index("--word") + 1]}, sys.stdout)
+'''
+
+_PLAIN_TOOL = '''\
+#!/usr/bin/env python3
+"""Declares no output schema, so its stdout is prose and that is fine."""
+import json, sys
+
+if "--tool-schema" in sys.argv:
+    json.dump({
+        "name": "plain-tool",
+        "description": "Print a line of text",
+        "input_schema": {"type": "object", "properties": {}},
+    }, sys.stdout)
+    sys.exit(0)
+
+print("plain output")
+'''
+
+_SILENT_TOOL = '''\
+#!/usr/bin/env python3
+"""Promises a JSON object and prints prose — the contract this tool breaks."""
+import json, sys
+
+if "--tool-schema" in sys.argv:
+    json.dump({
+        "name": "silent-tool",
+        "description": "Promise JSON and print prose",
+        "input_schema": {"type": "object", "properties": {}},
+        "output_schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+    }, sys.stdout)
+    sys.exit(0)
+
+print("no json here")
+'''
+
+
+def _build_fake_checkout(root: Path) -> Path:
+    """Lay out a throwaway checkout around the server and return its script.
+
+    ``server.py`` derives ``WORKBENCH_DIR`` from its own resolved path, so the
+    copy has to be a real file: a symlink resolves back to this repo and the
+    server would discover the workbench's own tools instead of these three.
+    """
+    mcps = root / "ai" / "claude" / "mcps"
+    mcps.mkdir(parents=True)
+    shutil.copy(WORKBENCH_DIR / "ai" / "claude" / "mcps" / "server.py", mcps / "server.py")
+
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    for name, source in (
+        ("echo-tool", _ECHO_TOOL),
+        ("plain-tool", _PLAIN_TOOL),
+        ("silent-tool", _SILENT_TOOL),
+    ):
+        script = bin_dir / name
+        script.write_text(source)
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+    return mcps / "server.py"
+
+
+@dataclass(frozen=True)
+class _Exchange:
+    """Every frame the server wrote, plus the stderr that explains a missing one."""
+
+    frames: list[dict]
+    stderr: str
+
+    def result(self, request_id: int) -> dict:
+        for frame in self.frames:
+            if frame.get("id") != request_id:
+                continue
+            assert "error" not in frame, f"request {request_id} failed: {frame['error']}"
+            return frame["result"]
+        raise AssertionError(f"no reply to request {request_id}; server stderr:\n{self.stderr}")
+
+
+def _call(request_id: int, name: str, arguments: dict) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/call",
+        "params": {"name": name, "arguments": arguments},
+    }
+
+
+class _ServerProcess:
+    """The server running under stdio, with a reader thread on each pipe.
+
+    Both pipes need a reader: stderr carries the server's logging and would
+    otherwise fill and block the process mid-answer.
+    """
+
+    def __init__(self, script: Path):
+        self._proc = subprocess.Popen(
+            ["uv", "run", "--no-project", "--with", "mcp", "python3", str(script)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self._replies: queue.Queue[str] = queue.Queue()
+        self._stderr: list[str] = []
+        self._stdout_reader = threading.Thread(target=self._pump_stdout, daemon=True)
+        self._stderr_reader = threading.Thread(target=self._pump_stderr, daemon=True)
+        self._stdout_reader.start()
+        self._stderr_reader.start()
+
+    def _pump_stdout(self) -> None:
+        for line in self._proc.stdout:
+            self._replies.put(line)
+
+    def _pump_stderr(self) -> None:
+        self._stderr.append(self._proc.stderr.read())
+
+    @property
+    def stderr(self) -> str:
+        self._stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
+        return "".join(self._stderr)
+
+    @property
+    def status(self) -> str:
+        """Why the server can no longer be expected to answer."""
+        if self._stdout_reader.is_alive():
+            return f"it went quiet for {TRANSPORT_TIMEOUT}s"
+        return f"it exited {self._proc.wait(timeout=READER_JOIN_TIMEOUT)}"
+
+    def send(self, messages: list[dict]) -> None:
+        """Write every frame in one go, leaving stdin open for the replies."""
+        try:
+            self._proc.stdin.write("".join(json.dumps(message) + "\n" for message in messages))
+            self._proc.stdin.flush()
+        except BrokenPipeError:
+            # A server that died before reading needs no report here: stdout is
+            # already at EOF, so collect() returns at once and the caller raises
+            # with the exit code and stderr attached.
+            pass
+
+    def collect(self, expected: int) -> list[dict]:
+        """Frames written back, returning early once no more can arrive."""
+        frames: list[dict] = []
+        deadline = time.monotonic() + TRANSPORT_TIMEOUT
+        while sum(1 for frame in frames if "id" in frame) < expected:
+            line = self._next_line(deadline)
+            if line is None:
+                return frames
+            if line.strip():
+                frames.append(json.loads(line))
+        return frames
+
+    def _next_line(self, deadline: float) -> str | None:
+        """The next line of stdout, or None once none can arrive.
+
+        Stdout at EOF means the server is gone and the rest of the replies are
+        never coming. The regressions this test guards against kill it before
+        it writes anything, so blocking until the deadline would turn a clear
+        failure into a suite that looks hung.
+        """
+        while self._stdout_reader.is_alive() and time.monotonic() < deadline:
+            try:
+                return self._replies.get(timeout=REPLY_POLL_INTERVAL)
+            except queue.Empty:
+                continue
+        return None
+
+    def finish(self) -> None:
+        """Close stdin, which is how the server learns the session is over."""
+        self._proc.stdin.close()
+        self._proc.wait(timeout=TRANSPORT_TIMEOUT)
+
+    def close(self) -> None:
+        self._proc.kill()
+        self._stdout_reader.join(timeout=READER_JOIN_TIMEOUT)
+        self._stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
+        for pipe in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
+            if not pipe.closed:
+                pipe.close()
+
+
+def _talk(script: Path, messages: list[dict]) -> _Exchange:
+    """Write raw JSON-RPC frames at the server over stdio and collect the replies.
+
+    Hand-written rather than driven by the SDK's client: nothing installs
+    ``mcp`` into the test interpreter, and these frames are what a client
+    actually puts on the wire. ``--no-project`` keeps uv from resolving
+    whatever project the cwd belongs to, the same reason the launcher passes
+    it.
+
+    Stdin stays open until every reply is in. Closing it early ends the session
+    and the server answers each still-running call with "Connection closed" —
+    a tool call runs a subprocess, so it is always the one still running.
+    """
+    expected = sum(1 for message in messages if "id" in message)
+    server = _ServerProcess(script)
+    try:
+        server.send(messages)
+        frames = server.collect(expected)
+        answered = sum(1 for frame in frames if "id" in frame)
+        assert answered == expected, (
+            f"{expected - answered} of {expected} replies never arrived — "
+            f"{server.status}; server stderr:\n{server.stderr}"
+        )
+        server.finish()
+        return _Exchange(frames=frames, stderr=server.stderr)
+    finally:
+        server.close()
+
+
+@pytest.fixture(scope="module")
+def transport(tmp_path_factory):
+    """One conversation, reused by every case — each spawn costs a uv resolve."""
+    script = _build_fake_checkout(tmp_path_factory.mktemp("checkout"))
+    return _talk(script, [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": LIST_ID, "method": "tools/list", "params": {}},
+        _call(ECHO_ID, "echo-tool", {"word": "hello"}),
+        _call(PLAIN_ID, "plain-tool", {}),
+        _call(SILENT_ID, "silent-tool", {}),
+    ])
+
+
+@uv_required
+class TestClientTransport:
+    """What a client gets when it speaks the protocol at a running server.
+
+    Every case above this one calls the discovery helpers directly, so a server
+    that scanned correctly and then answered nothing looked fully covered: both
+    handlers took the wrong number of arguments and every tools/list and
+    tools/call came back an internal error. Spawning the server the way the
+    launcher does and writing frames at it is the shape that catches that.
+    """
+
+    def test_a_client_can_list_the_tools(self, transport):
+        listed = transport.result(LIST_ID)["tools"]
+
+        assert {tool["name"] for tool in listed} == {"echo-tool", "plain-tool", "silent-tool"}
+
+    def test_a_listed_tool_carries_the_schemas_it_declared(self, transport):
+        listed = {tool["name"]: tool for tool in transport.result(LIST_ID)["tools"]}
+
+        assert listed["echo-tool"]["inputSchema"]["properties"]["word"]["type"] == "string"
+        assert listed["echo-tool"]["outputSchema"]["type"] == "object"
+        assert "outputSchema" not in listed["plain-tool"]
+
+    def test_a_client_can_call_a_tool(self, transport):
+        result = transport.result(ECHO_ID)
+
+        assert result.get("isError") is not True
+        assert json.loads(result["content"][0]["text"]) == {"word": "hello"}
+
+    def test_a_declared_output_schema_arrives_as_structured_content(self, transport):
+        """A client validates the answer against the schema the server advertised.
+
+        Advertising one and returning text alone raises inside the client
+        before the caller sees any of it, so every tool with an output_schema
+        is unusable — which is all of the workbench's real ones.
+        """
+        assert transport.result(ECHO_ID)["structuredContent"] == {"word": "hello"}
+
+    def test_a_tool_with_no_output_schema_returns_text_alone(self, transport):
+        result = transport.result(PLAIN_ID)
+
+        assert result["content"][0]["text"] == "plain output"
+        assert "structuredContent" not in result
+
+    def test_a_tool_that_promises_json_and_prints_prose_is_an_error(self, transport):
+        """Naming the tool here beats the client's opaque raise on a missing key."""
+        result = transport.result(SILENT_ID)
+
+        assert result["isError"] is True
+        assert "silent-tool" in result["content"][0]["text"]

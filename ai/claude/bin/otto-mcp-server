@@ -23,4 +23,10 @@ EOF
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd -P)"
-exec uv run --with mcp python3 "$SCRIPT_DIR/../mcps/server.py" "$@"
+
+# --no-project because a client spawns this with its own project as the CWD.
+# Without it uv resolves and installs that project before running the server —
+# writing a .venv/ and a lock file into somebody else's checkout, and failing
+# outright when the project does not build. The server needs mcp and nothing
+# from wherever it was launched.
+exec uv run --no-project --with mcp python3 "$SCRIPT_DIR/../mcps/server.py" "$@"

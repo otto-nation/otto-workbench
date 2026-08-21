@@ -55,6 +55,10 @@ DECLARATION_MARKERS = (TOOL_SCHEMA_FLAG.encode(), b"ToolParser")
 # raise the cap if a tool dir ever holds one.
 DECLARATION_SCAN_BYTES = 256 * 1024
 
+# How much of a tool's output an error message quotes back. Enough to recognise
+# a usage line or a stack trace, short enough not to bury the sentence above it.
+ERROR_EXCERPT_CHARS = 500
+
 
 # ── Tool Discovery ────────────────────────────────────────────────────────
 
@@ -271,6 +275,15 @@ def _extract_json(text: str) -> str | None:
     return None
 
 
+def _first_chars(text: str) -> str:
+    """The head of *text*, for quoting a tool's output back inside an error."""
+    if not text:
+        return "(no output)"
+    if len(text) <= ERROR_EXCERPT_CHARS:
+        return text
+    return text[:ERROR_EXCERPT_CHARS] + "…"
+
+
 # ── MCP Server ────────────────────────────────────────────────────────────
 
 
@@ -292,7 +305,11 @@ def create_server():
     tools = discover_tools()
     server = Server("otto-workbench")
 
-    async def handle_list_tools(params):
+    # Both handlers take (ctx, params): the SDK calls them with the request
+    # context first, and a handler that omits it raises TypeError inside the
+    # runner, which reaches the client as an internal error with no tools and
+    # no call ever succeeding.
+    async def handle_list_tools(ctx, params):
         tool_list = []
         for name, schema in tools.items():
             tool_list.append(Tool(
@@ -303,7 +320,7 @@ def create_server():
             ))
         return ListToolsResult(tools=tool_list)
 
-    async def handle_call_tool(params):
+    async def handle_call_tool(ctx, params):
         name = params.name
         arguments = params.arguments or {}
 
@@ -341,6 +358,26 @@ def create_server():
             )
 
         json_output = _extract_json(result.stdout)
+        parsed = json.loads(json_output) if json_output else None
+
+        if schema.get("output_schema") is not None:
+            # A client validates the answer against the schema tools/list
+            # advertised and raises before the caller sees any of it, so a tool
+            # that declares one has to answer with structured content or with
+            # an error that names itself.
+            if not isinstance(parsed, dict):
+                return CallToolResult(
+                    content=[TextContent(type="text", text=(
+                        f"{name} declares an output schema but printed no JSON object: "
+                        f"{_first_chars(result.stdout.strip() or result.stderr.strip())}"
+                    ))],
+                    isError=True,
+                )
+            return CallToolResult(
+                content=[TextContent(type="text", text=json_output)],
+                structuredContent=parsed,
+            )
+
         if json_output:
             return CallToolResult(
                 content=[TextContent(type="text", text=json_output)],

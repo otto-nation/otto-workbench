@@ -339,8 +339,14 @@ _refute_identity_rejection() {
 
 # ── GitHub SSH over port 443 ────────────────────────────────────────────────
 
-# _ssh_443_setup [KEY_VALUE] — point the step at a temp ~/.ssh and a temp
-# global config holding KEY_VALUE, from a directory that is not a git repo.
+# The stand-in host key the known_hosts tests copy and look for. Real in shape
+# and nothing else — the step never verifies a key, it moves the ones already
+# trusted under a second name.
+SSH_443_FAKE_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY"
+
+# _ssh_443_setup [KEY_VALUE] — point the step at a scratch ssh directory
+# standing in for ~/.ssh, and a temp global config holding KEY_VALUE, from a
+# directory that is not a git repo.
 #
 # The cd matters: wb_config_get reads project scope first, and inside this
 # repo that is .workbench.yml — a file the test does not control.
@@ -485,19 +491,18 @@ EOF
 
 @test "ssh_443 copies the github.com host keys under the 443 name" {
   _ssh_443_setup true
-  printf 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY\n' > "$SSH_KNOWN_HOSTS_FILE"
+  printf 'github.com %s\n' "$SSH_443_FAKE_KEY" > "$SSH_KNOWN_HOSTS_FILE"
 
   step_github_ssh_443
 
-  grep -q '^\[ssh.github.com\]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY$' \
-    "$SSH_KNOWN_HOSTS_FILE"
+  grep -qxF "[ssh.github.com]:443 $SSH_443_FAKE_KEY" "$SSH_KNOWN_HOSTS_FILE"
 }
 
 @test "ssh_443 does not duplicate an existing 443 known_hosts entry" {
   _ssh_443_setup true
   {
-    printf 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY\n'
-    printf '[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY\n'
+    printf 'github.com %s\n' "$SSH_443_FAKE_KEY"
+    printf '[ssh.github.com]:443 %s\n' "$SSH_443_FAKE_KEY"
   } > "$SSH_KNOWN_HOSTS_FILE"
 
   step_github_ssh_443
@@ -517,4 +522,79 @@ EOF
   [[ "$output" == *"no github.com entry"* ]]
   run grep 'ssh.github.com' "$SSH_KNOWN_HOSTS_FILE"
   [ "$status" -ne 0 ]
+}
+
+@test "ssh_443 block lands ahead of a lowercase host block" {
+  _ssh_443_setup true
+  printf 'host *\n  UseKeychain yes\n' > "$SSH_CONFIG_FILE"
+
+  step_github_ssh_443
+
+  local block_line wildcard_line
+  block_line=$(grep -n 'Hostname ssh.github.com' "$SSH_CONFIG_FILE" | cut -d: -f1)
+  wildcard_line=$(grep -n '^host \*' "$SSH_CONFIG_FILE" | cut -d: -f1)
+  [ "$block_line" -lt "$wildcard_line" ]
+}
+
+@test "ssh_443 block lands ahead of a leading Match block" {
+  _ssh_443_setup true
+  printf 'Match host gitlab.com\n  User git\n' > "$SSH_CONFIG_FILE"
+
+  step_github_ssh_443
+
+  local block_line match_line
+  block_line=$(grep -n 'Hostname ssh.github.com' "$SSH_CONFIG_FILE" | cut -d: -f1)
+  match_line=$(grep -n '^Match host gitlab.com' "$SSH_CONFIG_FILE" | cut -d: -f1)
+  [ "$block_line" -lt "$match_line" ]
+}
+
+@test "ssh_443 rewrites a block whose text has drifted from the template" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+  step_github_ssh_443
+
+  # Stand in for a machine that installed an older wording of the block.
+  perl -pi -e 's/^  Port 443$/  Port 443\n  # stale line from an older release/' \
+    "$SSH_CONFIG_FILE"
+  step_github_ssh_443
+
+  run grep 'stale line from an older release' "$SSH_CONFIG_FILE"
+  [ "$status" -ne 0 ]
+  [ "$(grep -c 'Hostname ssh.github.com' "$SSH_CONFIG_FILE")" -eq 1 ]
+  grep -q '^Host myserver' "$SSH_CONFIG_FILE"
+}
+
+@test "ssh_443 refuses to strip a block left open by a hand edit" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+  step_github_ssh_443
+
+  perl -ni -e 'print unless /^# <<< otto-workbench/' "$SSH_CONFIG_FILE"
+  printf 'github:\n  ssh_over_443: false\n' > "$WORKBENCH_CONFIG_FILE"
+  run step_github_ssh_443
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no end marker"* ]]
+  grep -q '^Host myserver' "$SSH_CONFIG_FILE"
+  grep -q '  UseKeychain yes' "$SSH_CONFIG_FILE"
+}
+
+@test "ssh_443 warns when the user declares github.com themselves" {
+  _ssh_443_setup true
+  printf 'Host github.com\n  User git\n\nHost *\n  UseKeychain yes\n' > "$SSH_CONFIG_FILE"
+
+  run step_github_ssh_443
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"outside the managed block"* ]]
+}
+
+@test "ssh_443 stays quiet about github.com when only its own block declares it" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+
+  run step_github_ssh_443
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"outside the managed block"* ]]
 }

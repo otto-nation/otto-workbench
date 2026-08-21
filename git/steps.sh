@@ -281,12 +281,38 @@ $SSH_443_END
 EOF
 }
 
+# _ssh_443_write FILE — replace FILE's contents with stdin.
+#
+# The scratch file is colocated with the destination so the mv is a rename
+# within one filesystem rather than a copy that can be seen half-written, and it
+# carries mode 600 before the move so the config is never briefly readable by
+# anyone else.
+_ssh_443_write() {
+  local file="$1" tmp
+  tmp="$(mktemp "$file.XXXXXX")"
+  cat > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$file"
+}
+
 # _ssh_443_strip FILE — FILE with the managed block removed, on stdout.
 _ssh_443_strip() {
   awk -v begin="$SSH_443_BEGIN" -v end="$SSH_443_END" '
     $0 == begin { dropping = 1 }
     dropping != 1 { print }
     $0 == end { dropping = 0 }
+  ' "$1"
+}
+
+# _ssh_443_current FILE — the managed block as FILE currently spells it, on
+# stdout. Empty when FILE has no block. Compared against _ssh_443_block so a
+# machine that installed an older wording picks up the current one on sync
+# rather than keeping the stale text until someone deletes it by hand.
+_ssh_443_current() {
+  awk -v begin="$SSH_443_BEGIN" -v end="$SSH_443_END" '
+    $0 == begin { inside = 1 }
+    inside { print }
+    $0 == end && inside { exit }
   ' "$1"
 }
 
@@ -298,17 +324,35 @@ _ssh_443_strip() {
 # and the routing silently does nothing. Inserting before the first block also
 # lands after the Include lines that Colima and OrbStack require at the top of
 # the file, which is where they have to stay.
+#
+# The search is case-insensitive and accepts `=` as the separator because
+# ssh_config is: `host *`, `HOST *`, and `Host=*` all open a block, and reading
+# only the capitalized spelling would append to the end of a file whose wildcard
+# block is lowercase — the exact placement this function exists to avoid.
 _ssh_443_insert() {
-  local file="$1" first_block tmp
-  first_block="$(grep -n -m1 -E '^[[:space:]]*(Host|Match)[[:space:]]' "$file" | cut -d: -f1 || true)"
-  tmp="$(mktemp)"
+  local file="$1" first_block
+  first_block="$(grep -n -m1 -iE '^[[:space:]]*(host|match)([[:space:]]|=)' "$file" | cut -d: -f1 || true)"
   if [[ -z "$first_block" ]]; then
-    { cat "$file"; echo; _ssh_443_block; } > "$tmp"
+    { cat "$file"; echo; _ssh_443_block; } | _ssh_443_write "$file"
   else
-    { head -n "$((first_block - 1))" "$file"; _ssh_443_block; echo; tail -n +"$first_block" "$file"; } > "$tmp"
+    # awk rather than head for the leading part: a config whose very first line
+    # opens a block asks for zero lines, and BSD head rejects `-n 0` outright.
+    { awk -v n="$((first_block - 1))" 'NR <= n' "$file"; _ssh_443_block; echo; tail -n +"$first_block" "$file"; } | _ssh_443_write "$file"
   fi
-  chmod 600 "$tmp"
-  mv "$tmp" "$file"
+}
+
+# _ssh_443_warn_unmanaged FILE — warn when FILE routes github.com outside the
+# managed block.
+#
+# First value wins, so an entry of the user's own decides the route whichever
+# way this step leaves its block: ahead of ours it overrides the port, and it
+# outlives the removal that is supposed to put the machine back on port 22. The
+# entry is theirs, so it is reported rather than rewritten.
+_ssh_443_warn_unmanaged() {
+  local file="$1"
+  if _ssh_443_strip "$file" | grep -qiE '^[[:space:]]*host([[:space:]]|=)+github\.com([[:space:]]|$)'; then
+    warn "$file declares Host github.com outside the managed block — ssh keeps the first value it reads, so that entry decides the route"
+  fi
 }
 
 # _ssh_443_known_hosts — teach known_hosts the [ssh.github.com]:443 spelling of
@@ -450,13 +494,18 @@ step_github_ssh_443() {
     present=true
   fi
 
+  # A begin marker with no end marker means someone edited the block by hand and
+  # left it open. Stripping from the begin marker to end-of-file would take the
+  # rest of their config with it, so the file is reported and left alone.
+  if [[ "$present" == true ]] && ! grep -qF "$SSH_443_END" "$SSH_CONFIG_FILE"; then
+    warn "$SSH_CONFIG_FILE has the github-ssh-443 begin marker but no end marker — leaving the file untouched"
+    return 0
+  fi
+
   if [[ "$want" != true ]]; then
     if [[ "$present" == true ]]; then
-      local stripped
-      stripped="$(mktemp)"
-      _ssh_443_strip "$SSH_CONFIG_FILE" > "$stripped"
-      chmod 600 "$stripped"
-      mv "$stripped" "$SSH_CONFIG_FILE"
+      _ssh_443_strip "$SSH_CONFIG_FILE" | _ssh_443_write "$SSH_CONFIG_FILE"
+      _ssh_443_warn_unmanaged "$SSH_CONFIG_FILE"
       success "github SSH: port 443 routing removed"
       return 0
     fi
@@ -465,7 +514,18 @@ step_github_ssh_443() {
   fi
 
   if [[ "$present" == true ]]; then
-    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "github SSH: already routed over port 443" || true
+    if [[ "$(_ssh_443_current "$SSH_CONFIG_FILE")" == "$(_ssh_443_block)" ]]; then
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && success "github SSH: already routed over port 443" || true
+      return 0
+    fi
+    # The block is ours but its text has drifted from the current template.
+    # Take it out and put it back rather than patching in place, so the rewrite
+    # goes through the one function that knows where the block belongs.
+    _ssh_443_strip "$SSH_CONFIG_FILE" | _ssh_443_write "$SSH_CONFIG_FILE"
+    _ssh_443_insert "$SSH_CONFIG_FILE"
+    _ssh_443_known_hosts
+    _ssh_443_warn_unmanaged "$SSH_CONFIG_FILE"
+    success "github SSH: port 443 block refreshed"
     return 0
   fi
 
@@ -474,6 +534,7 @@ step_github_ssh_443() {
   [[ -f "$SSH_CONFIG_FILE" ]] || : > "$SSH_CONFIG_FILE"
   _ssh_443_insert "$SSH_CONFIG_FILE"
   _ssh_443_known_hosts
+  _ssh_443_warn_unmanaged "$SSH_CONFIG_FILE"
   success "github SSH: routed over port 443 (ssh.github.com)"
 }
 

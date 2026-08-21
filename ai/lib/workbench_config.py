@@ -231,9 +231,15 @@ def _default_column(f: dataclasses.Field) -> str:
 
     ``None`` and the empty string are both "nothing is set" to a reader — the
     key is absent from a config file that leaves it alone either way.
+
+    A bool is written the way YAML spells it rather than the way Python does,
+    since the column is read as something to copy into a config file and
+    ``True`` is a string there, not a boolean.
     """
     if f.default is dataclasses.MISSING or f.default is None or f.default == "":
         return "—"
+    if isinstance(f.default, bool):
+        return f"`{str(f.default).lower()}`"
     return f"`{f.default}`"
 
 

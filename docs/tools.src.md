@@ -390,39 +390,22 @@ and it answers `--tool-schema` with JSON carrying at least `name` and `input_sch
 Scripts built on `ToolParser`
 ([`ai/lib/tool_parser.py`](../ai/lib/tool_parser.py)) inherit the flag for free.
 
-**Where it looks.** The workbench's own script directories, always. They are derived from
-the component layout rather than listed — the root `bin/`, plus every `<component>/bin`
-and `<component>/<sub>/bin` in the checkout. That is the same two-level glob
-[`lib/components.sh`](../lib/components.sh) uses for `steps.sh` and `migrations`, so a new
-component tier such as `editors/zed/bin/` is scanned the moment it exists, with no config
-to write. Note it scans the checkout, not the `~/.local/bin` those scripts are symlinked
-into: discovery probes a candidate by running it, and `~/.local/bin` also holds everything
-else you have installed.
+**Where it looks.** The workbench's own script directories, and nothing else. They are
+derived from the component layout rather than listed — the root `bin/`, plus every
+`<component>/bin` and `<component>/<sub>/bin` in the checkout. That is the same two-level
+glob [`lib/components.sh`](../lib/components.sh) uses for `steps.sh` and `migrations`, so
+a new component tier such as `editors/zed/bin/` is scanned the moment it exists. Note it
+scans the checkout, not the `~/.local/bin` those scripts are symlinked into: discovery
+probes a candidate by running it, and `~/.local/bin` also holds everything else you have
+installed.
 
-To reach anything outside the workbench, add `~/.config/workbench/mcp-tools.json`, which
-is optional:
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `tool_dirs` | list of paths | `[]` | Directories scanned **in addition** to the workbench's own |
-| `plugin_dirs` | list of paths | `[]` | Directories of `*.json` files, each naming one `tool_dir` |
-
-Both keys add to the derived set rather than replacing it, so an empty list and an absent
-key mean the same thing. The workbench's own directories are always scanned.
-
-```json
-{
-  "tool_dirs": ["~/work/project/bin"],
-  "plugin_dirs": ["~/.config/workbench/mcp-plugins"]
-}
-```
-
-A plugin file points at a directory to scan, letting a project register its tools
-without editing the config:
-
-```json
-{ "name": "my-project", "tool_dir": "~/work/project/tools" }
-```
+**There is no configuration file.** The server hosts the workbench's own tools, so what
+to scan is a fact about the checkout — there is nothing to hand-author and nothing to keep
+in sync. An earlier design read `tool_dirs` and `plugin_dirs` from
+`~/.config/workbench/mcp-tools.json` to let outside directories register tools; no setup
+step ever wrote that file, no machine was found holding one, and the keys were removed
+rather than carried into `config.yml`. Adding a tool means putting a `--tool-schema`
+script in a component's `bin/` and registering it, as below.
 
 Discovery reads each candidate's source before running it, and only executes the ones
 carrying a protocol marker — a script that ignores unknown flags would otherwise do its
@@ -435,10 +418,42 @@ outruns the timeout — is logged at warning level on stderr with the reason. A 
 added that never appears in an MCP client is explained there. Executables with no marker
 are not tools and are skipped without comment.
 
-That stderr belongs to whichever MCP client spawned the server, so the same claim is
+**What a client is offered.** Carrying the marker makes a script probeable, not public.
+The registries decide who sees it: an entry with `visibility: full` or `brief` is offered,
+one with `visibility: hidden` is not, and a script no registry entry names is not either.
+The filter runs before the probe, so a script a client will never see is also never run at
+startup. Today only `pr` is offered — `ci-check`, `pr-describe`, and `pr-rebase` are
+registered hidden because they are what `pr ci`, `pr describe`, and `pr rebase` run, and
+offering them beside `pr` asks a client to choose between a tool and its own internals.
+
+The description a client reads is the registry's, not the script's: the registries own tool
+documentation, and a `full` entry's `when_to_use` and `usage` lines are appended to it —
+they answer a caller's real questions, and a client has no access to the rule files they
+otherwise render into. A script's own `--tool-schema` description is written for its
+`--help` and has already drifted shorter.
+
+Those warnings belong to whichever MCP client spawned the server, so the same claims are
 checked at build time by `bin/local/validate-tool-schema`. It imports this discovery —
-the directories, the candidate filter, and the probe itself — and fails when a candidate
-in the checkout cannot answer, rather than leaving the tool to vanish at runtime.
+the directories, the candidate filter, the probe itself, and the registry lookup — and
+fails when a candidate in the checkout cannot answer or no registry entry names it, rather
+than leaving the tool to vanish at runtime. Visibility is not checked: a `hidden` entry is
+a decision somebody made, and the probe has to cover the script anyway because `pr` runs
+it.
+
+**What a call returns.** Stdout that parses as JSON comes back as the text content of the
+result, so a client sees the tool's own output rather than a rendering of it. A tool whose
+schema declares `output_schema` returns that JSON as structured content as well, because a
+client validates the reply against the schema `tools/list` advertised and rejects a text-only
+answer before the caller sees it. Such a tool that prints no JSON object is therefore a
+contract breach, not a plain result: the call comes back as an error naming the tool and
+quoting the head of what it did print. Tools with no `output_schema` return text and
+nothing more.
+
+The launcher runs `uv run --no-project --with mcp`. A client spawns the server with its own
+project as the working directory, and without `--no-project` uv would resolve and install
+that project first — writing a virtualenv and a lock file into somebody else's checkout,
+and failing outright where the project does not build. The server needs `mcp` and nothing
+from wherever it was launched.
 
 **What a call returns.** Stdout that parses as JSON comes back as the text content of the
 result, so a client sees the tool's own output rather than a rendering of it. A tool whose

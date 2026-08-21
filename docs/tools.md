@@ -2,6 +2,7 @@
 title: Tools & Scripts
 description: Complete catalog of workbench scripts, installed tools, and shell aliases, generated from the tool registries.
 ---
+<!-- Generated from docs/tools.src.md by bin/local/compose-docs — do not edit. -->
 
 # Tools & Scripts Reference
 
@@ -9,7 +10,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 
 ## Scripts
 
-<!-- SCRIPTS-TABLE-START -->
 | Script | Description |
 |--------|-------------|
 | `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
@@ -65,6 +65,10 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |
 | `validate-tool-schema` | Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
+| `validate-docs-composed` | Validates that every composed doc matches what its docs/*.src.md composes to |
+| `validate-lib-reference` | Validates that docs/libraries.src.md renders every module group lib/ declares |
+| `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
+| `generate-lib-reference` | Renders the docs/libraries.md module reference from the lib/ module headers |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
@@ -74,7 +78,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |
 | `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |
 | `aliases` | Lists all custom shell aliases and functions with optional keyword filtering |
-<!-- SCRIPTS-TABLE-END -->
 
 ## Script Reference
 
@@ -94,20 +97,21 @@ otto-workbench [--workbench-dir <path>] <command>
 
 **Commands:**
 
-| Command | Description |
-|---------|-------------|
-| `install [--all] [COMPONENT ...]` | Bootstrap the workbench (first-time, interactive). `--all` skips menus |
-| `sync` | Re-apply all workbench config to `~/` — migrations, symlinks, tool context, AI settings |
-| `ai init [--force] [--analyze]` | Scaffold `.claude/` in the current git repo. `--force` re-scaffolds existing, `--analyze` runs `/analyze-project` after |
-| `ai sync` | Sync machine-level AI config (settings, rules, MCPs, skills, agents) |
-| `ai override <type> [name] [flags]` | Manage user overrides for agents, skills, or rules. Flags: `--add`, `--disable`, `--enable`, `--status` |
-| `discover [regenerate]` | Show installed components, scripts, and launchd agents. `regenerate` re-detects components |
-| `autoupdate start [SECONDS]` | Start scheduled pull + sync via launchd (default: every 12h) |
-| `autoupdate stop` | Stop autoupdate |
-| `autoupdate status` | Show autoupdate status |
-| `autoupdate run` | Run update now |
-| `autoupdate logs` | Show recent log entries |
-| `changelog` | Show recent changes from conventional commits |
+| Command | Scope | Description |
+|---------|-------|-------------|
+| `otto-workbench install [--all] [COMPONENT ...]` | All components | Bootstrap the workbench on a new machine (first-time setup) |
+| `otto-workbench sync` | All components | Re-apply all workbench config — migrations, symlinks, tool context, AI settings |
+| `otto-workbench discover` | Environment overview | Show installed components, available scripts, and agent status |
+| `otto-workbench discover regenerate` | Component state | Re-detect installed components after manual changes |
+| `otto-workbench ai init` | Project | Scaffold .claude/ in the current repo with stack-detected rules |
+| `otto-workbench ai init --force` | Project | Re-scaffold an existing project's .claude/ directory |
+| `otto-workbench ai sync` | Machine | Sync machine-level AI config (settings, rules, skills, agents, MCPs) |
+| `otto-workbench ai override` | Machine | Manage user overrides for AI agents, skills, and rules |
+| `otto-workbench changelog` | Git history | Show recent changes from conventional commits |
+| `otto-workbench projects` | Machine | List the repos on this machine that use the workbench |
+| `otto-workbench projects add [DIR]` | Machine | Register a repo that hasn't run a workbench command yet |
+| `otto-workbench projects forget DIR` | Machine | Drop a repo's entry from the registry |
+| `otto-workbench projects prune` | Machine | Drop registry entries whose directory is gone |
 
 ### `task`
 
@@ -549,8 +553,6 @@ serena-mcp <command>
 
 ## Installed Tools
 
-<!-- TOOLS-TABLE-START -->
-
 **Brew Tools**
 
 | Tool | Description |
@@ -650,7 +652,6 @@ serena-mcp <command>
 |------|-------------|
 | [linear](https://github.com/schpet/linear-cli) | Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal |
 | [mas](https://github.com/mas-cli/mas) | Mac App Store CLI — search, install, and update App Store apps from the terminal |
-<!-- TOOLS-TABLE-END -->
 
 ## Adding a Tool
 

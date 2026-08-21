@@ -142,6 +142,7 @@ Every key both files accept:
 | `issue_tracker.provider` | `linear`, `github`, `jira` | — |
 | `issue_tracker.team` | string | — |
 | `issue_tracker.jira_url` | string | — |
+| `github.ssh_over_443` | boolean | `false` |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`
 

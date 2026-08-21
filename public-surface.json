@@ -22,6 +22,8 @@
     "component:editors",
     "component:mise",
     "component:terminals",
+    "config:github",
+    "config:github.ssh_over_443",
     "config:issue_tracker",
     "config:issue_tracker.jira_url",
     "config:issue_tracker.provider",

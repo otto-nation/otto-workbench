@@ -212,6 +212,7 @@ def test_every_written_key_resolves_to_a_field():
     assert wc.REUSE_LEVEL_KEY in keys
     assert wc.REUSE_DEFAULT_KEY in keys
     assert wc.ISSUE_PROVIDER_KEY in keys
+    assert wc.GITHUB_SSH_443_KEY in keys
 
 
 def test_the_generator_banner_names_a_script_that_exists():

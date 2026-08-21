@@ -114,6 +114,33 @@ task dev:setup
 
 This sets `core.hooksPath` to point to the workbench's [`git/hooks/`](../git/hooks/) directory.
 
+## `ssh: connect to host github.com port 22: Connection refused`
+
+Some networks — hotel and conference Wi-Fi, corporate egress filters, a few consumer ISPs — block or intermittently reset outbound TCP/22. Push and fetch fail; HTTPS traffic to GitHub keeps working, which is why `gh` commands succeed while git does not.
+
+Confirm it is the port rather than your keys:
+
+```bash
+nc -z -G 5 github.com 22       # the blocked one
+nc -z -G 5 ssh.github.com 443  # GitHub's alternate SSH endpoint
+```
+
+If the second succeeds and the first does not, opt in to the alternate endpoint:
+
+```yaml
+# ~/.config/workbench/config.yml
+github:
+  ssh_over_443: true
+```
+
+```bash
+otto-workbench sync git
+```
+
+`step_github_ssh_443` writes a marker-delimited block into `~/.ssh/config` ahead of the first `Host` block — `ssh` keeps the first value it reads for each keyword, so the block has to precede a catch-all `Host *` to take effect. It also teaches `known_hosts` the `[ssh.github.com]:443` spelling of the GitHub keys the machine already trusts, copied from the existing `github.com` entries rather than scanned off the network. Port 443 is the same service behind the same host keys.
+
+Nothing outside the markers is read or rewritten, and setting the key back to `false` (or removing it) takes the block out on the next sync. Edit the block by hand and the next sync will not notice — change the config key instead.
+
 ## "refusing to commit with a placeholder identity"
 
 The commit identity is a test value. Rejected names are `test`, `your name`, and `unknown` (case-insensitive); rejected emails are `test@…` and anything at `test.com`, `example.com`, `example.org`, or `localhost`. Only repos whose `origin` remote points at GitHub, GitLab, or Bitbucket are checked, so throwaway repos built by test suites are unaffected.

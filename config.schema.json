@@ -156,6 +156,14 @@
           "type": "string"
         }
       }
+    },
+    "github": {
+      "type": "object",
+      "properties": {
+        "ssh_over_443": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

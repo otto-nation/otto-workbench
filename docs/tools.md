@@ -560,21 +560,6 @@ that project first — writing a virtualenv and a lock file into somebody else's
 and failing outright where the project does not build. The server needs `mcp` and nothing
 from wherever it was launched.
 
-**What a call returns.** Stdout that parses as JSON comes back as the text content of the
-result, so a client sees the tool's own output rather than a rendering of it. A tool whose
-schema declares `output_schema` returns that JSON as structured content as well, because a
-client validates the reply against the schema `tools/list` advertised and rejects a text-only
-answer before the caller sees it. Such a tool that prints no JSON object is therefore a
-contract breach, not a plain result: the call comes back as an error naming the tool and
-quoting the head of what it did print. Tools with no `output_schema` return text and
-nothing more.
-
-The launcher runs `uv run --no-project --with mcp`. A client spawns the server with its own
-project as the working directory, and without `--no-project` uv would resolve and install
-that project first — writing a virtualenv and a lock file into somebody else's checkout,
-and failing outright where the project does not build. The server needs `mcp` and nothing
-from wherever it was launched.
-
 ### `serena-mcp`
 
 Scaffolds Serena MCP into a project's `.mcp.json` for project-scoped code intelligence.

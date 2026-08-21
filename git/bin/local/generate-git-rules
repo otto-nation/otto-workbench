@@ -31,33 +31,25 @@ QUIET=false
 CONVENTIONS_SH="${CONVENTIONS_SH:-"$REPO_ROOT/lib/conventions.sh"}"
 OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
 
-# Extract a constant from the source file, printing nothing when it is absent
-# so the emptiness guard below is what reports it. The guard is only reachable
-# because `|| [[ $? -eq 1 ]]` is scoped to grep's exit 1 ("no match", a valid
-# empty result); exit 2 — an unreadable conventions file — still aborts, which
-# is right, because that is a missing source of truth rather than a missing
-# constant.
-_extract_const() {
-  # shellcheck disable=SC2181  # $? is grep's status, read in its || branch
-  { grep -E "^${1}=" "$CONVENTIONS_SH" || [[ $? -eq 1 ]]; } | head -1 | cut -d'=' -f2- | tr -d '"'
-}
+# Sourced rather than grepped, the way every other reader of the file does it
+# (`lib/ai/core.sh`, `bin/local/check-surface-compat`, `git/bin/generate-changelog`).
+# A pattern match only ever sees a literal assignment, so a constant the file
+# derives — BREAKING_CHANGE_FOOTER_ALT — would come back as its own source text.
+# An unreadable conventions file aborts here under errexit, which is right:
+# that is a missing source of truth rather than a missing constant.
+# shellcheck source=../../../lib/conventions.sh
+. "$CONVENTIONS_SH"
 
-COMMIT_TYPES=$(_extract_const "COMMIT_TYPES")
-COMMIT_HEADER_MAX_LEN=$(_extract_const "COMMIT_HEADER_MAX_LEN")
-COMMIT_BODY_MAX_LEN=$(_extract_const "COMMIT_BODY_MAX_LEN")
-BREAKING_CHANGE_FOOTER=$(_extract_const "BREAKING_CHANGE_FOOTER")
-NOT_BREAKING_FOOTER=$(_extract_const "NOT_BREAKING_FOOTER")
-
-if [[ -z "$COMMIT_TYPES" || -z "$COMMIT_HEADER_MAX_LEN" || -z "$COMMIT_BODY_MAX_LEN" || -z "$BREAKING_CHANGE_FOOTER" || -z "$NOT_BREAKING_FOOTER" ]]; then
-  err "Could not extract constants from $CONVENTIONS_SH"
-  exit 1
-fi
-
-# Conventional Commits v1.0.0 lists the hyphenated spelling as a synonym and
-# release-please honours it, so bin/local/check-surface-compat accepts both.
-# Derived from the constant rather than declared a second time, and only once
-# the guard above has confirmed there is a value to derive from.
-BREAKING_CHANGE_FOOTER_ALT="${BREAKING_CHANGE_FOOTER// /-}"
+# One guard per constant the rules render, so a constant that never made it out
+# of the file is reported instead of rendering as a blank. `:-` because the
+# check runs under `set -u` and an absent constant is exactly what it looks for.
+for _const in COMMIT_TYPES COMMIT_HEADER_MAX_LEN COMMIT_BODY_MAX_LEN \
+  BREAKING_CHANGE_FOOTER BREAKING_CHANGE_FOOTER_ALT NOT_BREAKING_FOOTER; do
+  if [[ -z "${!_const:-}" ]]; then
+    err "Could not read constants from $CONVENTIONS_SH"
+    exit 1
+  fi
+done
 
 # Build comma-separated and bullet-list type displays
 TYPES_DISPLAY=$(echo "$COMMIT_TYPES" | tr ' ' ', ')

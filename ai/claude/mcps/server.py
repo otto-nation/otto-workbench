@@ -23,6 +23,7 @@ reads and re-runs it when that changes, and the client is told with
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -366,7 +367,9 @@ async def watch_for_tool_changes(tools: dict[str, dict], notify, ready: asyncio.
     the tool list it asks for afterwards is current anyway.
 
     Discovery runs in a thread: it executes every offered script, and the event
-    loop owns the client's connection while it does.
+    loop owns the client's connection while it does. So does the report of what
+    was lost — naming a reason re-probes each vanished tool, one subprocess
+    apiece.
     """
     fingerprint = await asyncio.to_thread(discovery_fingerprint)
     while True:
@@ -379,7 +382,7 @@ async def watch_for_tool_changes(tools: dict[str, dict], notify, ready: asyncio.
         if rediscovered == tools:
             logger.debug("Something under the scanned directories changed, the tools did not")
             continue
-        _log_lost_tools(tools, rediscovered)
+        await asyncio.to_thread(_log_lost_tools, dict(tools), rediscovered)
         tools.clear()
         tools.update(rediscovered)
         logger.info("Tools changed, now offering %d: %s", len(tools), ", ".join(sorted(tools)))
@@ -629,6 +632,11 @@ async def main():
             await running.server.run(read_stream, write_stream, init_options)
         finally:
             watcher.cancel()
+            # Awaited so the cancellation is retrieved rather than left for the
+            # interpreter to complain about at exit, and so a poll already
+            # inside a thread finishes before stdio goes away under it.
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
 
 
 if __name__ == "__main__":

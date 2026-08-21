@@ -581,9 +581,15 @@ class TestDiscoveryFingerprint:
         assert discovery_fingerprint(tmp_path) != before
 
 
-# Long enough for a scan running in a worker thread to land, short enough that
-# a case asserting nothing happened does not dominate the suite.
+# The bound on a case whose *done* signal never arrives, not the wait a passing
+# case makes: every case below names a signal, so this is only how long a
+# regression takes to fail.
 WATCH_SETTLE = 1.0
+
+# Enough polls to have re-scanned had the fingerprint moved. A case asserting
+# that nothing happened has no event to wait for, so it waits for the watcher to
+# have had the chance.
+SETTLED_POLLS = 3
 
 
 class _Recorder:
@@ -596,6 +602,7 @@ class _Recorder:
     def __init__(self, fingerprints, tool_sets):
         self.fingerprints = list(fingerprints)
         self.tool_sets = list(tool_sets)
+        self.polls = 0
         self.scans = 0
         self.announcements = 0
 
@@ -603,6 +610,7 @@ class _Recorder:
         return answers.pop(0) if len(answers) > 1 else answers[0]
 
     def fingerprint(self, root=None):
+        self.polls += 1
         return self._next(self.fingerprints)
 
     def discover(self, dirs=None, registry=None):
@@ -650,7 +658,8 @@ class TestWatchForToolChanges:
         """The stat sweep is the cheap half; the point is not paying for the rest."""
         tools = {"a": _schema("a")}
 
-        recorder = self._run(monkeypatch, ["same"], [tools], tools)
+        recorder = self._run(monkeypatch, ["same"], [tools], tools,
+                             done=lambda r: r.polls >= SETTLED_POLLS)
 
         assert recorder.scans == 0
         assert recorder.announcements == 0
@@ -680,7 +689,8 @@ class TestWatchForToolChanges:
         """Touching a README under a scanned directory is not a tool change."""
         tools = {"a": _schema("a")}
 
-        recorder = self._run(monkeypatch, ["before", "after"], [dict(tools)], tools)
+        recorder = self._run(monkeypatch, ["before", "after"], [dict(tools)], tools,
+                             done=lambda r: r.scans and r.polls >= SETTLED_POLLS)
 
         assert recorder.scans == 1
         assert recorder.announcements == 0
@@ -709,8 +719,9 @@ class TestLostTools:
         assert "its script is gone" in caplog.text
 
     def test_a_broken_script_is_an_error_carrying_the_probe_reason(self, tmp_path, caplog):
-        script = _write_marked_script(tmp_path, "broken-tool")
+        script = tmp_path / "broken-tool"
         script.write_text("#!/bin/sh\n# --tool-schema\nexit 3\n")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
         before = {"broken-tool": {"name": "broken-tool", "_script": str(script)}}
 
         with caplog.at_level(logging.ERROR, logger="otto-mcp"):

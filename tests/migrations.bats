@@ -761,6 +761,166 @@ EOF
   [[ "$output" == *"ai/claude/20260819-context-to-architecture.sh"* ]]
 }
 
+# ─── Migrations that find nothing to do ──────────────────────────────────────
+#
+# A migration has to be idempotent, so "already in the target shape" is its
+# commonest outcome and, for a project-scoped one on a machine that registers a
+# worktree whenever one is opened, very nearly its only outcome. Returning 0
+# there reported a rename that could never happen as work applied, once per
+# sync, forever. MIGRATION_NOOP is how a migration says which of the two it did.
+
+# Helper: a project-scoped migration that answers MIGRATION_NOOP for any repo
+# not holding a `work` file, and logs every repo it is handed either way.
+create_noop_project_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+set -e
+# project-scoped: edits files inside each repo.
+${fn_name}() {
+  echo "\$1" >> "$TMPDIR/exec.log"
+  if [[ ! -e "\$1/work" ]]; then
+    return "\$MIGRATION_NOOP"
+  fi
+}
+EOF
+}
+
+@test "a migration that finds nothing to do is recorded but not announced" {
+  # And the sync survives it: MIGRATION_NOOP is a non-zero status returned into
+  # a caller running under errexit, which is what SYNC CONTINUED proves.
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-noop.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+migration_20250101_noop() {
+  echo "CALLED" >> "$TMPDIR/exec.log"
+  return "\$MIGRATION_NOOP"
+}
+EOF
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+  [[ "$output" != *"Migration applied"* ]]
+  # Not a failure either — a warning here would send an operator looking for a
+  # broken migration that did exactly what it was supposed to.
+  [[ "$output" != *"Migration failed"* ]]
+  # The summary line only prints when something applied, so a sync whose whole
+  # migration story is "nothing to do" prints nothing about migrations at all.
+  [[ "$output" != *"already applied"* ]]
+
+  [ "$(cat "$TMPDIR/exec.log")" = "CALLED" ]
+  grep -qxF "mycomp/20250101-noop.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a migration that found nothing to do is not visited again" {
+  # Recorded, not retried: the target has been looked at and the answer cannot
+  # change, so running it every sync forever is the one thing this must not do.
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-noop.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+migration_20250101_noop() {
+  echo "CALLED" >> "$TMPDIR/exec.log"
+  return "\$MIGRATION_NOOP"
+}
+EOF
+
+  run_migrations_in_fake
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
+}
+
+@test "the project count names the repos changed, not the repos visited" {
+  create_noop_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/repo-a"
+  register_fake_project "$TMPDIR/repo-b"
+  register_fake_project "$TMPDIR/repo-c"
+  touch "$TMPDIR/repo-b/work"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-proj.sh (1 project)"* ]]
+
+  # All three were visited, and all three are recorded — the two that found
+  # nothing to do are as done as the one that did the work.
+  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 3 ]
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-c"
+}
+
+@test "a sync whose only new repo has nothing to do says nothing" {
+  # The shape that put a line in every sync: a worktree registers itself the
+  # first time anything runs in it, the framework visits it because the state
+  # file does not name it yet, and the visit finds the work already done.
+  create_noop_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_project "$TMPDIR/repo-a"
+  touch "$TMPDIR/repo-a/work"
+  run_migrations_in_fake
+
+  register_fake_project "$TMPDIR/repo-b"
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Migration applied"* ]]
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
+}
+
+@test "a repo that fails is still a failure alongside one that no-ops" {
+  # MIGRATION_NOOP is one specific status, not "any non-zero is fine now".
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-proj.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+# project-scoped: edits files inside each repo.
+migration_20250101_proj() {
+  if [[ -e "\$1/fail" ]]; then
+    return 1
+  fi
+  return "\$MIGRATION_NOOP"
+}
+EOF
+  register_fake_project "$TMPDIR/repo-a"
+  register_fake_project "$TMPDIR/repo-b"
+  touch "$TMPDIR/repo-b/fail"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration failed: 20250101-proj.sh in $TMPDIR/repo-b"* ]]
+  [[ "$output" != *"Migration applied"* ]]
+
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
+}
+
+@test "the context rename counts only the repos it renamed in" {
+  # Against the real migration file, because the whole point is what this one
+  # prints on a machine full of worktrees cut from a main that already holds
+  # architecture.md.
+  mkdir -p "$FAKE_ROOT/ai/claude/migrations"
+  cp "$REPO_ROOT/ai/claude/migrations/20260819-context-to-architecture.sh" \
+    "$FAKE_ROOT/ai/claude/migrations/"
+  register_fake_project "$TMPDIR/repo-old"
+  register_fake_project "$TMPDIR/repo-new"
+  register_fake_project "$TMPDIR/repo-bare"
+  mkdir -p "$TMPDIR/repo-old/.claude" "$TMPDIR/repo-new/.claude"
+  echo old > "$TMPDIR/repo-old/.claude/context.md"
+  echo new > "$TMPDIR/repo-new/.claude/architecture.md"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(1 project)"* ]]
+  [[ "$output" != *"(3 projects)"* ]]
+
+  [ "$(cat "$TMPDIR/repo-old/.claude/architecture.md")" = "old" ]
+  [ ! -e "$TMPDIR/repo-old/.claude/context.md" ]
+  # Left alone, not overwritten with the file it already had.
+  [ "$(cat "$TMPDIR/repo-new/.claude/architecture.md")" = "new" ]
+}
+
 # ─── Component discovery under set -e ────────────────────────────────────────
 
 @test "discover_migration_dirs returns 0 under set -e with no migrations" {

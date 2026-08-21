@@ -302,7 +302,9 @@ Migration framework with state tracking.
 
 Migration files live in `<component>/migrations/YYYYMMDD-slug.sh` and define a
 single idempotent function named `migration_YYYYMMDD_slug` — dashes replaced
-with underscores.
+with underscores. Such a function returns 0 when it changed something,
+`MIGRATION_NOOP` when it found nothing to do, and anything else to fail and
+be retried on the next sync.
 
 State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state
 root](#rootssh). One line per applied migration, or one line per repo — the

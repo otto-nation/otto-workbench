@@ -3,7 +3,9 @@
 #
 # Migration files live in `<component>/migrations/YYYYMMDD-slug.sh` and define a
 # single idempotent function named `migration_YYYYMMDD_slug` — dashes replaced
-# with underscores.
+# with underscores. Such a function returns 0 when it changed something,
+# `MIGRATION_NOOP` when it found nothing to do, and anything else to fail and
+# be retried on the next sync.
 #
 # State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state
 # root](#rootssh). One line per applied migration, or one line per repo — the
@@ -60,6 +62,27 @@ _array_contains() {
 # goes stale when one is renamed. bin/local/validate-migrations checks that a
 # file carrying it reads the argument, and that one without it does not.
 readonly _PROJECT_SCOPED_MARKER='^# project-scoped:'
+
+# The status a migration returns to say it found nothing to do.
+#
+# A migration has to be idempotent, so "already in the target shape" is its
+# commonest outcome — and for a project-scoped one it is very nearly the only
+# outcome, since the framework visits every repo the machine has registered
+# since the last sync and almost none of them are in the shape the migration
+# exists to replace. Returning 0 there is indistinguishable from having done
+# the work, so the sync reported "Migration applied: <file> (3 projects)" for
+# three repos it changed nothing in, on a machine that registers a worktree
+# whenever one is opened. The line reappeared every sync, named a different
+# count each time, and never meant anything.
+#
+# Distinct from 0 rather than signalled through a variable so a migration says
+# it in the same place it says everything else, and so a migration that never
+# heard of this keeps working: an unconverted one returns 0 and is reported as
+# having done work, which is what it did before. Non-zero but recorded — the
+# repo has been visited and the answer will not change, so retrying it every
+# sync forever is the one thing this must not do. 3 for the reason
+# `project_register` uses it: nothing was wrong, nothing changed.
+readonly MIGRATION_NOOP=3
 
 # What separates a state key from the repo it was applied to.
 #
@@ -165,29 +188,45 @@ _migration_targets() {
 }
 
 # _run_migration_targets FN BASENAME BASE_KEY STATE_FILE TARGETS...
-# Run FN once per target, recording each success, and leave the number recorded
-# in _MIGRATION_RAN.
+# Run FN once per target, recording each one it did not fail on, and leave the
+# tallies in _MIGRATION_CHANGED and _MIGRATION_UNCHANGED.
 #
 # A target is a repo path, or the empty string for a machine-scoped migration —
 # which is handed no argument at all and recorded under a key naming no repo.
 # A target that fails is simply not recorded, so the next sync retries that one
 # rather than the whole migration.
+#
+# The two tallies are what lets the caller report work rather than attendance.
+# A target answering MIGRATION_NOOP is recorded exactly like one that did work
+# — it has been visited, and visiting it again would find the same nothing —
+# but it is counted apart, so a run that changed nothing can say nothing.
 _run_migration_targets() {
   local fn_name="$1" basename_m="$2" base_key="$3" state_file="$4"
   shift 4
 
-  local target
-  _MIGRATION_RAN=0
+  local target status
+  _MIGRATION_CHANGED=0
+  _MIGRATION_UNCHANGED=0
   for target in "$@"; do
+    status=0
+    # `|| status=$?` rather than `if ! ...`: MIGRATION_NOOP is a non-zero
+    # status that must not read as failure, and a bare call would take the
+    # sync down with it under the errexit the real caller runs with.
+    #
     # `${target:+...}` drops the argument entirely for a machine-scoped
     # migration rather than handing its function an empty string it never
     # asked for, and keeps the repo out of the state key it records.
-    if ! "$fn_name" ${target:+"$target"}; then
+    "$fn_name" ${target:+"$target"} || status=$?
+    if (( status != 0 && status != MIGRATION_NOOP )); then
       warn "Migration failed: $basename_m${target:+ in $target} — will retry on next run"
       continue
     fi
     printf '%s\n' "$base_key${target:+$_MIGRATION_KEY_SEP$target}" >> "$state_file"
-    _MIGRATION_RAN=$(( _MIGRATION_RAN + 1 ))
+    if (( status == MIGRATION_NOOP )); then
+      _MIGRATION_UNCHANGED=$(( _MIGRATION_UNCHANGED + 1 ))
+      continue
+    fi
+    _MIGRATION_CHANGED=$(( _MIGRATION_CHANGED + 1 ))
   done
 }
 
@@ -200,6 +239,12 @@ _run_migration_targets() {
 # that repo's path as its only argument, and is recorded once per repo. A repo
 # that fails is the only one not recorded, so the next sync retries that repo
 # alone rather than the whole machine.
+#
+# A migration that returns MIGRATION_NOOP found the target already in the shape
+# it exists to produce. That is recorded like any other success — the answer
+# will not change on a later sync — but it is not announced, and the count in
+# the line printed for a project-scoped migration is repos changed rather than
+# repos visited.
 run_component_migrations() {
   local dir="$1"
   local migrations_dir="$dir/migrations"
@@ -242,14 +287,29 @@ run_component_migrations() {
     fi
 
     _run_migration_targets "$fn_name" "$basename_m" "$base_key" "$state_file" "${targets[@]}"
-    (( _MIGRATION_RAN > 0 )) || continue
+
+    # Nothing changed, and at least one target said so itself. Those targets are
+    # recorded, so this is the last sync that visits them — and announcing the
+    # visit would report work that did not happen, which on a machine that
+    # registers a worktree whenever one is opened is most of what a sync prints.
+    if (( _MIGRATION_CHANGED == 0 && _MIGRATION_UNCHANGED > 0 )); then
+      skipped=$(( skipped + 1 ))
+      continue
+    fi
+    # Nothing changed and nothing reported itself unchanged: every target
+    # failed, and each one has already warned for itself. Counting that as
+    # either applied or skipped would say something untrue about the next sync.
+    if (( _MIGRATION_CHANGED == 0 )); then
+      continue
+    fi
+
     applied=$(( applied + 1 ))
     if [[ -z "${targets[0]}" ]]; then
       success "Migration applied: $basename_m"
-    elif (( _MIGRATION_RAN == 1 )); then
+    elif (( _MIGRATION_CHANGED == 1 )); then
       success "Migration applied: $basename_m (1 project)"
     else
-      success "Migration applied: $basename_m ($_MIGRATION_RAN projects)"
+      success "Migration applied: $basename_m ($_MIGRATION_CHANGED projects)"
     fi
   done
 

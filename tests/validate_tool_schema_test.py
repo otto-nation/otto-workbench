@@ -19,6 +19,7 @@ sys.path.insert(0, str(REPO_ROOT / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
 import server  # noqa: E402
+import tool_registry  # noqa: E402
 
 _loader = importlib.machinery.SourceFileLoader("validate_tool_schema", str(SCRIPT))
 _spec = importlib.util.spec_from_loader("validate_tool_schema", _loader)
@@ -33,6 +34,19 @@ def _write_script(root: Path, relpath: str, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(textwrap.dedent(body))
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
+def _write_registry(root: Path, source: str, *names: str,
+                    visibility: str = "brief") -> Path:
+    """A bindir registry under *source* naming each of *names*."""
+    path = root / source / "registry.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f'meta:\n  section: "Fixture"\n  validation: bindir\n  source: {source}\n\ntools:\n'
+        + "".join(f'  - name: {name}\n    permission: false\n'
+                  f'    visibility: {visibility}\n'
+                  f'    description: "the {name} fixture"\n' for name in names))
     return path
 
 
@@ -160,6 +174,50 @@ def test_candidates_are_found_at_every_component_level(tmp_path):
     assert found == {"root-tool", "component-tool", "nested-tool"}
 
 
+# ── every marked script needs a registry entry ───────────────────────────
+
+
+def test_a_tool_no_registry_names_is_caught(tmp_path):
+    """The server offers what the registries document, so an absent entry hides it."""
+    _write_script(tmp_path, "bin/stray-tool", GOOD)
+
+    assert [p.name for p in vts.unregistered(str(tmp_path))] == ["stray-tool"]
+
+
+def test_a_registered_tool_is_not_flagged(tmp_path):
+    _write_script(tmp_path, "bin/good-tool", GOOD)
+    _write_registry(tmp_path, "bin", "good-tool")
+
+    assert vts.unregistered(str(tmp_path)) == []
+
+
+def test_a_hidden_tool_is_registered_and_so_passes(tmp_path):
+    """Visibility is a decision somebody made; only a missing entry is a mistake.
+
+    `pr rebase` runs pr-rebase, which is registered hidden for that reason —
+    failing the build on it would make the check unsatisfiable.
+    """
+    _write_script(tmp_path, "bin/inner-tool", GOOD)
+    _write_registry(tmp_path, "bin", "inner-tool", visibility="hidden")
+
+    assert vts.unregistered(str(tmp_path)) == []
+
+
+def test_an_entry_in_another_components_registry_does_not_count(tmp_path):
+    """Entries key on the script's own path, not on a name matching somewhere."""
+    _write_script(tmp_path, "git/bin/good-tool", GOOD)
+    _write_registry(tmp_path, "bin", "good-tool")
+
+    assert [p.name for p in vts.unregistered(str(tmp_path))] == ["good-tool"]
+
+
+def test_an_unmarked_script_needs_no_entry(tmp_path):
+    """Most executables are not tools — the gate follows the marker, not the dir."""
+    _write_script(tmp_path, "bin/plain-script", "#!/bin/bash\necho hello\n")
+
+    assert vts.unregistered(str(tmp_path)) == []
+
+
 # ── the rules come from the server ───────────────────────────────────────
 
 
@@ -168,6 +226,7 @@ def test_the_checks_are_the_servers_own():
     assert vts.probe_tool is server.probe_tool
     assert vts.tool_candidates is server.tool_candidates
     assert vts.discover_tool_dirs is server.discover_tool_dirs
+    assert vts.load_registry_entries is tool_registry.load_registry_entries
 
 
 # ── the real repo ────────────────────────────────────────────────────────
@@ -184,6 +243,10 @@ def test_the_repos_real_tools_are_reached():
     found = {r.schema["name"] for r in vts.check_root(str(REPO_ROOT)) if r.ok}
 
     assert {"pr", "pr-rebase", "ci-check"} <= found
+
+
+def test_every_marked_script_in_the_repo_is_registered():
+    assert vts.unregistered(str(REPO_ROOT)) == []
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
@@ -205,8 +268,24 @@ def test_main_exits_1_and_names_the_reason(tmp_path, monkeypatch, capsys):
     assert "1 of 1 tools" in err
 
 
+def test_main_exits_1_and_names_an_unregistered_tool(tmp_path, monkeypatch, capsys):
+    _write_script(tmp_path, "bin/stray-tool", GOOD)
+    monkeypatch.setenv("VALIDATOR_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["validate-tool-schema", "--quiet"])
+
+    with pytest.raises(SystemExit) as exc:
+        vts.main()
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "bin/stray-tool" in err
+    assert "no registry entry" in err
+    assert "meta.source" in err
+
+
 def test_main_exits_0_on_a_clean_tree(tmp_path, monkeypatch, capsys):
     _write_script(tmp_path, "bin/good-tool", GOOD)
+    _write_registry(tmp_path, "bin", "good-tool")
     monkeypatch.setenv("VALIDATOR_ROOT", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["validate-tool-schema"])
 
@@ -219,6 +298,7 @@ def test_main_exits_0_on_a_clean_tree(tmp_path, monkeypatch, capsys):
 
 def test_quiet_suppresses_the_passing_lines(tmp_path, monkeypatch, capsys):
     _write_script(tmp_path, "bin/good-tool", GOOD)
+    _write_registry(tmp_path, "bin", "good-tool")
     monkeypatch.setenv("VALIDATOR_ROOT", str(tmp_path))
     monkeypatch.setattr(sys, "argv", ["validate-tool-schema", "--quiet"])
 

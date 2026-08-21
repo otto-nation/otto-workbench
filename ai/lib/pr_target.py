@@ -99,10 +99,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import git_client
 import workbench_paths
 
 TARGETS_DIR = "pr"
@@ -265,13 +265,7 @@ def _repo_key(url: str) -> str | None:
 
 def _origin_url(cwd: str | None) -> str | None:
     """The ``origin`` remote's URL as git records it, or None if it has none."""
-    r = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if r.returncode != 0 or not r.stdout.strip():
-        return None
-    return r.stdout.strip()
+    return git_client.out("remote", "get-url", "origin", cwd=cwd) or None
 
 
 @dataclass(frozen=True)
@@ -345,11 +339,7 @@ def target_dir_for_checkout(path: Path) -> Path | None:
     # it fails on a freshly-init'd branch with nothing committed yet.
     # `symbolic-ref` reads the ref HEAD points at, unborn or not, and fails
     # cleanly on detached HEAD instead of resolving to the literal name "HEAD".
-    r = subprocess.run(
-        ["git", "symbolic-ref", "--short", "HEAD"],
-        capture_output=True, text=True, cwd=str(path),
-    )
-    branch = r.stdout.strip()
-    if r.returncode != 0 or not branch:
+    branch = git_client.out("symbolic-ref", "--short", "HEAD", cwd=str(path))
+    if not branch:
         return None
     return target_dir(repo_key, branch)

@@ -22,6 +22,8 @@ ci_check.__file__ = _ci_check_path
 _spec.loader.exec_module(ci_check)
 sys.modules.setdefault("ci_check", ci_check)
 
+from proc import CmdResult  # noqa: E402
+
 
 # ── _fetch_latest_run_ids ─────────────────────────────────────────────────
 
@@ -1082,15 +1084,11 @@ def _run_commit_and_push(dirty):
     """Run _commit_and_push against a stubbed git. Returns (sha, git argv list)."""
     calls = []
 
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        return MagicMock(
-            returncode=0,
-            stdout="abc1234\n" if "rev-parse" in cmd else "",
-            stderr="",
-        )
+    def fake_run(*args, **kwargs):
+        calls.append(list(args))
+        return CmdResult(0, "abc1234\n" if "rev-parse" in args else "")
 
-    with patch.object(ci_check.subprocess, "run", side_effect=fake_run), \
+    with patch.object(ci_check.git_client, "run", side_effect=fake_run), \
          patch.object(ci_check.review_common, "has_uncommitted_changes",
                       return_value=dirty):
         sha = ci_check._commit_and_push(Path("/fake"), 1, 0)

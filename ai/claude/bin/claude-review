@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
+import git_client
 import log
 import pr_context
 import pr_state
@@ -625,13 +626,15 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
             return explicit_dir
         return ""
 
+    # An unusable git has to fall through to the gh and find lookups below,
+    # which are guarded the same way — a non-zero exit already does, but an
+    # absent binary raises out of subprocess. Caught broadly as OSError (not
+    # just FileNotFoundError, as retro-scan and reuse-session-start do for the
+    # same call) because a permissions error on the git binary should fall
+    # through here too, not surface as an unhandled exception.
     try:
-        r = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True,
-        )
-        git_toplevel = r.stdout.strip()
-    except Exception:
+        git_toplevel = git_client.out("rev-parse", "--show-toplevel")
+    except OSError:
         git_toplevel = ""
 
     if git_toplevel:
@@ -1052,16 +1055,13 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
 
 
 def _cleanup_self_review_worktree(wt_cleanup, repo_dir: str) -> None:
-    original_repo_dir = repo_dir or ""
-    if not original_repo_dir:
-        try:
-            r = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True,
-            )
-            original_repo_dir = r.stdout.strip()
-        except Exception:
-            pass
+    # Runs from a `finally` that may already be unwinding the failure the
+    # operator needs to see, so raising here would replace it with something
+    # about git. Leaving the worktree behind is the lesser loss.
+    try:
+        original_repo_dir = repo_dir or git_client.out("rev-parse", "--show-toplevel")
+    except OSError:
+        return
     if original_repo_dir:
         review_worktree.cleanup_worktree(wt_cleanup, original_repo_dir)
 

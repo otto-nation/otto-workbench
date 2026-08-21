@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TypeVar
 
 import ai_usage
+import git_client
 import log
 import serde
 import workbench_paths
@@ -760,15 +761,11 @@ def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
 def has_uncommitted_changes(wt_path: str | Path) -> bool:
     """Whether a worktree has unstaged, staged, or untracked changes.
 
-    Porcelain rather than `diff --quiet`: a fix agent that only adds files
-    (tests, fixtures) leaves the tracked diff empty, and a diff-only gate
-    skips the commit while the caller still reports the finding as fixed.
+    The name the review commands share for the fix pass's commit gate; the
+    check itself, and why it reads porcelain rather than `diff --quiet`, lives
+    in `git_client.is_dirty`.
     """
-    r = subprocess.run(
-        ["git", "-C", str(wt_path), "status", "--porcelain"],
-        capture_output=True, text=True,
-    )
-    return bool(r.stdout.strip())
+    return git_client.is_dirty(wt_path)
 
 
 # ── Review file helpers ─────────────────────────────────────────────────────

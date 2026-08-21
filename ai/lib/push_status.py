@@ -6,8 +6,9 @@ tracking branch.  Computed at render time (no stored state needed).
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+
+import git_client
 
 
 def detect_unpushed(worktree_root: Path, branch: str) -> int | None:
@@ -16,12 +17,9 @@ def detect_unpushed(worktree_root: Path, branch: str) -> int | None:
     Returns the count (0 = up to date), or None if no remote ref exists
     (branch never pushed).
     """
-    cwd = str(worktree_root)
-    r = subprocess.run(
-        ["git", "rev-list", "--count", f"origin/{branch}..HEAD"],
-        capture_output=True, text=True, cwd=cwd,
-    )
-    if r.returncode != 0:
+    r = git_client.run("rev-list", "--count", f"origin/{branch}..HEAD",
+                       cwd=worktree_root)
+    if not r.ok:
         return None
     count = r.stdout.strip()
     return int(count) if count.isdigit() else None

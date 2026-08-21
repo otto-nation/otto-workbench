@@ -15,17 +15,18 @@ observation of "a workbench-managed session ran in this repo" the machine has.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 BIN_DIR = Path(__file__).resolve().parent
 # ai/lib goes after this script's own directory, not in front of it: a module
-# named the same in both belongs to the hook, and ai/lib is only on the path at
-# all for workbench_projects.
+# named the same in both belongs to the hook.
 sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(BIN_DIR))
 
+import git_client  # noqa: E402
+import proc  # noqa: E402
+import timeouts  # noqa: E402
 import workbench_projects  # noqa: E402
 from _reuse_levels import (  # noqa: E402
     LEVEL_DESCRIPTIONS,
@@ -36,30 +37,39 @@ import workbench_config  # noqa: E402
 
 
 def _repo_root() -> str | None:
+    """The repo this session started in, or None outside one.
+
+    A timeout arrives as a failed result rather than an exception, so only the
+    missing-binary case still needs catching.
+    """
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return None
+        result = git_client.run("rev-parse", "--show-toplevel")
+    except FileNotFoundError:
+        return None
+    return result.stdout.strip() if result.ok else None
 
 
 def _ceiling_counts(repo: str) -> dict | None:
-    ceiling_scan = Path(__file__).resolve().parent / "ceiling-scan"
+    """What ceiling-scan makes of the repo, or None if it could not answer.
+
+    The scan is a local AST walk over the tree, so it is bounded like any other
+    flat-cost local read: a breach means something is wrong, not that the repo
+    is large.
+    """
+    ceiling_scan = BIN_DIR / "ceiling-scan"
     try:
-        result = subprocess.run(
+        result = proc.run(
             [sys.executable, str(ceiling_scan), "--json", repo],
-            capture_output=True, text=True, timeout=10,
+            timeout=timeouts.LOCAL,
         )
-        if result.returncode == 0:
-            return json.loads(result.stdout)
-    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
-        pass
-    return None
+    except FileNotFoundError:
+        return None
+    if not result.ok:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
 
 
 def _issue_tracker_line(repo: str) -> str:

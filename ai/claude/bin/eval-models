@@ -31,7 +31,7 @@ from eval_scoring import (  # noqa: E402
     format_comparison_table,
     format_summary_table,
 )
-from eval_task import RunOptions, get_task, task_name  # noqa: E402
+from eval_task import EVAL_CASE_BUDGET, RunOptions, get_task, task_name  # noqa: E402
 
 
 def discover_entries(corpus_dir: str, entry_filter: str) -> list[dict]:
@@ -366,8 +366,8 @@ def main():
         help="Filter to a specific corpus entry by name",
     )
     parser.add_argument(
-        "--timeout", type=int, default=300,
-        help="Timeout in seconds per review run (default: 300)",
+        "--timeout", type=int, default=EVAL_CASE_BUDGET,
+        help=f"Timeout in seconds per review run (default: {EVAL_CASE_BUDGET})",
     )
     parser.add_argument(
         "--dry-run", action="store_true",

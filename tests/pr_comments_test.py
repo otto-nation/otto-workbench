@@ -835,7 +835,7 @@ def no_subprocess(monkeypatch):
     def boom(*a, **kw):
         raise AssertionError(f"a subprocess ran in draft mode: {a}")
     monkeypatch.setattr(pr_comments.subprocess, "run", boom)
-    monkeypatch.setattr(review_issue.subprocess, "run", boom)
+    monkeypatch.setattr(review_issue.proc, "run", boom)
 
 
 class TestPublishingGate:

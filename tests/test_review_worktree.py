@@ -163,7 +163,10 @@ def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run, mock_far):
 @patch("review_worktree.subprocess.run")
 def test_setup_pr_worktree_raises_on_total_failure(mock_run):
     def side_effect(cmd, **kwargs):
-        m = MagicMock()
+        # Both streams are strings, as a real CompletedProcess carries them:
+        # the failure path quotes what git said, and a MagicMock there is not
+        # something `str.join` can render.
+        m = MagicMock(stdout="", stderr="")
         if cmd[0] == "git" and "--is-shallow-repository" in cmd:
             m.returncode = 0
             m.stdout = "false\n"
@@ -178,6 +181,7 @@ def test_setup_pr_worktree_raises_on_total_failure(mock_run):
             return m
         if cmd[0] == "git" and "worktree" in cmd and "add" in cmd:
             m.returncode = 1
+            m.stderr = "worktree add failed"
             return m
         m.returncode = 0
         m.stdout = ""
@@ -186,6 +190,30 @@ def test_setup_pr_worktree_raises_on_total_failure(mock_run):
     mock_run.side_effect = side_effect
 
     with pytest.raises(RuntimeError, match="Failed to create worktree"):
+        setup_pr_worktree("owner/repo", 42, "/repos/repo")
+
+
+@patch("review_worktree.subprocess.run")
+def test_setup_pr_worktree_quotes_what_git_said(mock_run):
+    """The raise names the cause, rather than only the step that failed.
+
+    `check=True` gave the caller a CalledProcessError whose message is the
+    command line, so the operator saw that a fetch failed and never why.
+    """
+    def side_effect(cmd, **kwargs):
+        m = MagicMock(stdout="", stderr="fatal: couldn't find remote ref pull/42/head")
+        if cmd[0] == "git" and "--is-shallow-repository" in cmd:
+            m.returncode = 0
+            m.stdout = "false\n"
+            return m
+        if cmd[0] == "wt" and "switch" in cmd:
+            raise FileNotFoundError("wt not found")
+        m.returncode = 1
+        return m
+
+    mock_run.side_effect = side_effect
+
+    with pytest.raises(RuntimeError, match="couldn't find remote ref"):
         setup_pr_worktree("owner/repo", 42, "/repos/repo")
 
 
@@ -247,7 +275,7 @@ def test_detached_worktree_at_fetches_a_missing_commit(mock_run):
 
     assert result is not None
     assert [c for c in calls if "fetch" in c] == [
-        ["git", "-C", "/repos/repo", "fetch", "origin", "abc1234"]
+        ["git", "fetch", "origin", "abc1234"]
     ]
 
 
@@ -488,9 +516,10 @@ def test_cleanup_worktree_none_is_noop(mock_run):
     mock_run.assert_not_called()
 
 
-@patch("review_worktree.subprocess.run")
+@patch("review_worktree.git_client.run")
 def test_cleanup_worktree_fallback_swallows_errors(mock_run):
-    mock_run.side_effect = Exception("boom")
+    """A git that cannot even be launched must not replace the review's error."""
+    mock_run.side_effect = OSError("git not found")
     result = WorktreeResult(
         path="/repos/repo/.worktrees/pr-42-review",
         cleanup_ref="/repos/repo/.worktrees/pr-42-review",

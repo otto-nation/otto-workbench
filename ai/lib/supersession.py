@@ -27,6 +27,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import git_client
 import log
 import pr_context
 import pr_state
@@ -106,11 +107,7 @@ def _rev(wt_path: Path, ref: str) -> str:
     Empty is a usable answer: it makes `SupersessionDomain.matches` fail, so a
     verdict computed against a ref that would not resolve is never reused.
     """
-    result = subprocess.run(
-        ["git", "-C", str(wt_path), "rev-parse", ref],
-        capture_output=True, text=True,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
+    return git_client.out("rev-parse", ref, cwd=wt_path)
 
 
 def _rebase_skew_days(wt_path: Path, base: str) -> int:
@@ -121,14 +118,11 @@ def _rebase_skew_days(wt_path: Path, base: str) -> int:
     Unreadable output reads as no skew: this is a hint, and a hint that cannot
     be computed is not a finding.
     """
-    result = subprocess.run(
-        ["git", "-C", str(wt_path), "log", "--reverse", "--format=%at %ct",
-         f"{base}..HEAD"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
+    out = git_client.out(
+        "log", "--reverse", "--format=%at %ct", f"{base}..HEAD", cwd=wt_path)
+    if not out:
         return 0
-    parts = result.stdout.strip().splitlines()[0].split()
+    parts = out.splitlines()[0].split()
     if len(parts) != 2 or not all(p.isdigit() for p in parts):
         return 0
     return max(0, (int(parts[1]) - int(parts[0])) // 86400)
@@ -141,15 +135,9 @@ def _branch_added_symbols(wt_path: Path, base: str) -> list[AddedSymbol]:
     definition and one re-added over a deletion are indistinguishable here —
     `_removed_from_base` is what tells them apart.
     """
-    result = subprocess.run(
-        ["git", "-C", str(wt_path), "diff", f"{base}...HEAD"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return []
     found: dict[str, str] = {}
     path = ""
-    for line in result.stdout.splitlines():
+    for line in git_client.lines("diff", f"{base}...HEAD", cwd=wt_path):
         if line.startswith("+++ b/"):
             path = line[len("+++ b/"):]
             continue
@@ -166,19 +154,12 @@ def _removed_from_base(wt_path: Path, base: str, symbol: str, path: str) -> str:
     signal: a symbol the base never had is simply new. Pinned to the file the
     branch adds it in, which keeps the pickaxe off the full history.
     """
-    present = subprocess.run(
-        ["git", "-C", str(wt_path), "grep", "-q", "-F", symbol, base],
-        capture_output=True, text=True,
-    )
-    if present.returncode == 0:
+    if git_client.ok("grep", "-q", "-F", symbol, base, cwd=wt_path):
         return ""
-    log_out = subprocess.run(
-        ["git", "-C", str(wt_path), "log", "--format=%h", "--max-count=1",
-         f"-S{symbol}", base, "--", path],
-        capture_output=True, text=True,
-    )
-    lines = log_out.stdout.strip().splitlines()
-    return lines[0] if lines else ""
+    found = git_client.lines(
+        "log", "--format=%h", "--max-count=1", f"-S{symbol}", base, "--", path,
+        cwd=wt_path)
+    return found[0] if found else ""
 
 
 def _superseding_prs(repo: str, symbols: list[str]) -> list[SupersessionSignal]:

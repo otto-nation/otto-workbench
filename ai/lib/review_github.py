@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 import log
 import proc
+import timeouts
 from proc import CmdResult
 
 
@@ -23,7 +24,6 @@ RATE_LIMIT_WAIT = 60
 RATE_LIMIT_BACKOFF = 1.5
 RATE_LIMIT_MAX_WAIT = 300
 NON_RATE_LIMIT_DELAY = 5
-GH_API_TIMEOUT = 30
 
 REVIEW_STATE_PENDING = "PENDING"
 
@@ -69,7 +69,7 @@ def _gh_api(
     for key, val in (headers or {}).items():
         cmd.extend(["--header", f"{key}: {val}"])
 
-    return proc.run(cmd, timeout=GH_API_TIMEOUT)
+    return proc.run(cmd, timeout=timeouts.NETWORK)
 
 
 def _gh_graphql(query: str, variables: dict) -> CmdResult:
@@ -81,7 +81,7 @@ def _gh_graphql(query: str, variables: dict) -> CmdResult:
     cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
     for key, val in variables.items():
         cmd.extend(["-F", f"{key}={val}"])
-    return proc.run(cmd, timeout=GH_API_TIMEOUT)
+    return proc.run(cmd, timeout=timeouts.NETWORK)
 
 
 def _fetch_json_list(endpoint: str) -> list:

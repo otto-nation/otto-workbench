@@ -32,12 +32,20 @@ _GIT_ENV_SANITIZE = [
 ]
 
 
+# Seconds one eval case gets before it is scored as a failure. Not a tier from
+# `timeouts`: those bound a subprocess that should have answered by now, while
+# this is a budget for an agent that could reasonably keep working — the number
+# says how long a case is worth, and `--timeout` exists so a slow model can be
+# given more. The eval job's own `timeout-minutes` is the real backstop.
+EVAL_CASE_BUDGET = 300
+
+
 @dataclass(frozen=True)
 class RunOptions:
     """Everything a task needs from the command line, model included."""
     model: str = ""
     effort: str = "low"
-    timeout: int = 300
+    timeout: int = EVAL_CASE_BUDGET
     verbose: bool = False
 
 

@@ -17,6 +17,7 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 import proc
+import timeouts
 from proc import CmdResult
 
 
@@ -99,20 +100,56 @@ class TestFailureMessage:
 
 class TestRun:
     def test_captures_both_streams_and_the_exit_code(self):
-        r = proc.run(["sh", "-c", "echo out; echo err >&2; exit 3"])
+        r = proc.run(["sh", "-c", "echo out; echo err >&2; exit 3"], timeout=timeouts.QUICK)
         assert r.returncode == 3
         assert r.stdout == "out\n"
         assert r.detail == "err"
 
     def test_does_not_raise_on_a_non_zero_exit(self):
-        assert proc.run(["sh", "-c", "exit 1"]).returncode == 1
+        assert proc.run(["sh", "-c", "exit 1"], timeout=timeouts.QUICK).returncode == 1
 
     def test_runs_in_the_given_directory(self, tmp_path):
-        assert proc.run(["pwd"], cwd=tmp_path).stdout.strip() == str(Path(tmp_path).resolve())
+        r = proc.run(["pwd"], cwd=tmp_path, timeout=timeouts.QUICK)
+        assert r.stdout.strip() == str(Path(tmp_path).resolve())
 
     def test_feeds_input_to_the_command(self):
-        assert proc.run(["cat"], input_text="hello").stdout == "hello"
+        assert proc.run(["cat"], input_text="hello", timeout=timeouts.QUICK).stdout == "hello"
 
-    def test_a_timeout_still_propagates(self):
-        with pytest.raises(subprocess.TimeoutExpired):
-            proc.run(["sleep", "5"], timeout=0.1)
+    def test_a_bound_is_required(self):
+        """An omitted bound reads as nobody having thought about one."""
+        with pytest.raises(TypeError):
+            proc.run(["true"])
+
+    def test_unbounded_is_spelled_out_and_runs(self):
+        assert proc.run(["true"], timeout=timeouts.UNBOUNDED).ok
+
+
+class TestRunTimeout:
+    """An expired bound is an answer, not an exception.
+
+    Every caller already handles a non-zero exit, and a timed-out command has
+    produced no usable output — which is what a non-zero exit already means to
+    all of them. Raising instead would need a handler at each of the call sites
+    that has none.
+    """
+
+    def test_an_expired_bound_comes_back_as_a_result(self):
+        r = proc.run(["sleep", "5"], timeout=0.1)
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert not r.ok
+
+    def test_the_bound_and_the_command_are_named(self):
+        r = proc.run(["sleep", "5"], timeout=0.1)
+        assert "timed out after 0.1s" in r.stderr
+        assert "sleep 5" in r.stderr
+
+    def test_what_the_command_managed_to_say_is_kept(self):
+        """A command that times out mid-answer often explains itself first."""
+        r = proc.run(["sh", "-c", "echo partial; echo why >&2; sleep 5"], timeout=0.5)
+        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert r.stdout == "partial\n"
+        assert "why" in r.stderr
+
+    def test_a_timeout_is_distinguishable_from_an_ordinary_failure(self):
+        """The eval scorers separate the two by this code."""
+        assert proc.run(["false"], timeout=timeouts.QUICK).returncode != proc.TIMEOUT_RETURNCODE

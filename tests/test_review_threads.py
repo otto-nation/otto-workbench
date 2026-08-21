@@ -1,11 +1,14 @@
 """Tests for review-threads: JSON extraction, thread classification, and prompt formatting."""
 
+import atexit
 import contextlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
@@ -23,6 +26,7 @@ from conftest import (
     write_thrash_log,
 )
 import pr_state
+import proc
 from pr_comments import ThreadState
 from pr_state import (
     CommitStatus, FixSummary, PRIdentity, PRState, SupersessionKind,
@@ -635,9 +639,22 @@ class TestFormatGeneralComments:
 
 
 def _make_completed(returncode, stdout="", stderr=""):
-    """Create a CompletedProcess with the given results."""
+    """Create a CompletedProcess with the given results.
+
+    For the call sites still on `subprocess` directly — `pr_comments`, which
+    the git client does not cover. Git goes through `_git_ran`.
+    """
     import subprocess
     return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
+
+
+def _git_ran(returncode, stdout="", stderr=""):
+    """What a stubbed `git_client.run` hands back.
+
+    `out`, `ok`, `lines` and `head_sha` are all `run` underneath, so patching
+    the one call covers every read the script makes.
+    """
+    return proc.CmdResult(returncode, stdout, stderr)
 
 
 class TestCommitAndPush:
@@ -645,14 +662,14 @@ class TestCommitAndPush:
 
     def _commit(self, rt, mock_run, dirty=True):
         """Run _commit_and_push with a stubbed git and a known worktree state."""
-        with patch.object(rt.subprocess, "run", side_effect=mock_run), \
+        with patch.object(rt.git_client, "run", side_effect=mock_run), \
                 patch.object(rt.review_common, "has_uncommitted_changes",
                              return_value=dirty):
             return rt._commit_and_push(Path("/fake"), 1, 0)
 
     def test_no_changes(self, rt):
         """A clean worktree → no_changes."""
-        result = self._commit(rt, lambda cmd, **kw: _make_completed(0), dirty=False)
+        result = self._commit(rt, lambda *cmd, **kw: _git_ran(0), dirty=False)
         assert result.status == "no_changes"
         assert result.sha is None
 
@@ -660,22 +677,32 @@ class TestCommitAndPush:
         """A fix that only adds files leaves the tracked diff empty — still commit."""
         calls = []
 
-        def mock_run(cmd, **kwargs):
+        def mock_run(*cmd, **kwargs):
             calls.append(cmd)
             if "rev-parse" in cmd:
-                return _make_completed(0, stdout="abc1234\n")
-            return _make_completed(0)
+                return _git_ran(0, stdout="abc1234\n")
+            return _git_ran(0)
 
         result = self._commit(rt, mock_run)
         assert result.status == "pushed"
-        assert ["add", "-A"] == calls[0][-2:]
+        assert calls[0] == ("add", "-A")
+
+    def test_a_refused_stage_is_not_swallowed(self, rt):
+        """`git add` failing means the commit would be of the wrong thing."""
+        def mock_run(*cmd, **kwargs):
+            if "add" in cmd:
+                return _git_ran(1, stderr="index.lock exists\n")
+            return _git_ran(0)
+
+        with pytest.raises(RuntimeError, match="index.lock"):
+            self._commit(rt, mock_run)
 
     def test_commit_failed(self, rt):
         """git commit returns non-zero → commit_failed with error text."""
-        def mock_run(cmd, **kwargs):
+        def mock_run(*cmd, **kwargs):
             if "commit" in cmd:
-                return _make_completed(1, stderr="hook failed\n")
-            return _make_completed(0)
+                return _git_ran(1, stderr="hook failed\n")
+            return _git_ran(0)
 
         result = self._commit(rt, mock_run)
         assert result.status == "commit_failed"
@@ -684,12 +711,12 @@ class TestCommitAndPush:
 
     def test_push_failed(self, rt, publishing_on):
         """git push returns non-zero → push_failed with SHA preserved."""
-        def mock_run(cmd, **kwargs):
+        def mock_run(*cmd, **kwargs):
             if "rev-parse" in cmd:
-                return _make_completed(0, stdout="abc1234\n")
+                return _git_ran(0, stdout="abc1234\n")
             if "push" in cmd:
-                return _make_completed(1, stderr="rejected\n")
-            return _make_completed(0)
+                return _git_ran(1, stderr="rejected\n")
+            return _git_ran(0)
 
         result = self._commit(rt, mock_run)
         assert result.status == "push_failed"
@@ -698,10 +725,10 @@ class TestCommitAndPush:
 
     def test_success(self, rt, publishing_on):
         """git push returns 0 → pushed with SHA."""
-        def mock_run(cmd, **kwargs):
+        def mock_run(*cmd, **kwargs):
             if "rev-parse" in cmd:
-                return _make_completed(0, stdout="abc1234\n")
-            return _make_completed(0)
+                return _git_ran(0, stdout="abc1234\n")
+            return _git_ran(0)
 
         result = self._commit(rt, mock_run)
         assert result.status == "pushed"
@@ -712,11 +739,11 @@ class TestCommitAndPush:
         """The commit is local and undoable; the push is the outward act."""
         calls = []
 
-        def mock_run(cmd, **kwargs):
+        def mock_run(*cmd, **kwargs):
             calls.append(cmd)
             if "rev-parse" in cmd:
-                return _make_completed(0, stdout="abc1234\n")
-            return _make_completed(0)
+                return _git_ran(0, stdout="abc1234\n")
+            return _git_ran(0)
 
         result = self._commit(rt, mock_run)
         assert result.status == "push_held"
@@ -730,7 +757,8 @@ class TestCommitAndPush:
 
 class TestGetHeadSha:
     def test_returns_short_sha(self, rt):
-        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="abc1234\n")):
+        with patch.object(rt.git_client, "run",
+                          return_value=_git_ran(0, stdout="abc1234\n")):
             result = rt._get_head_sha(Path("/fake"))
         assert result == "abc1234"
 
@@ -740,15 +768,16 @@ class TestGetHeadSha:
 
 class TestIsPushed:
     def test_sha_on_remote(self, rt):
-        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="  origin/main\n")):
+        with patch.object(rt.git_client, "run",
+                          return_value=_git_ran(0, stdout="  origin/main\n")):
             assert rt._is_pushed(Path("/fake"), "abc1234") is True
 
     def test_sha_not_on_remote(self, rt):
-        with patch.object(rt.subprocess, "run", return_value=_make_completed(0, stdout="")):
+        with patch.object(rt.git_client, "run", return_value=_git_ran(0, stdout="")):
             assert rt._is_pushed(Path("/fake"), "abc1234") is False
 
     def test_command_failure_returns_false(self, rt):
-        with patch.object(rt.subprocess, "run", return_value=_make_completed(1)):
+        with patch.object(rt.git_client, "run", return_value=_git_ran(1)):
             assert rt._is_pushed(Path("/fake"), "abc1234") is False
 
 
@@ -796,7 +825,7 @@ class TestRecoverAgentCommit:
         """head changed, not yet on remote, push succeeds → pushed."""
         with patch.object(rt, "_get_head_sha", return_value="def5678"), \
              patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.subprocess, "run", return_value=_make_completed(0)):
+             patch.object(rt.git_client, "run", return_value=_git_ran(0)):
             result = rt._recover_agent_commit(Path("/fake"), "abc1234")
         assert result.status == "pushed"
         assert result.sha == "def5678"
@@ -805,7 +834,8 @@ class TestRecoverAgentCommit:
         """head changed, not yet on remote, push fails → push_failed with error."""
         with patch.object(rt, "_get_head_sha", return_value="def5678"), \
              patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.subprocess, "run", return_value=_make_completed(1, stderr="rejected\n")):
+             patch.object(rt.git_client, "run",
+                          return_value=_git_ran(1, stderr="rejected\n")):
             result = rt._recover_agent_commit(Path("/fake"), "abc1234")
         assert result.status == "push_failed"
         assert result.sha == "def5678"
@@ -818,7 +848,7 @@ class TestRecoverAgentCommit:
 
         with patch.object(rt, "_get_head_sha", return_value="def5678"), \
              patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.subprocess, "run", boom):
+             patch.object(rt.git_client, "run", boom):
             result = rt._recover_agent_commit(Path("/fake"), "abc1234")
         assert result.status == "push_held"
         assert result.sha == "def5678"
@@ -1158,12 +1188,21 @@ class TestBuildSummaryBody:
 # ── _render_deferred_summary ───────────────────────────────────────────────
 
 
+# A worktree root that exists but holds no repo. Existing is the part that
+# matters: the git client passes the root as `cwd`, so a made-up path fails in
+# Python before git is reached, where `git -C` used to just exit non-zero. Not
+# being a repo is what these tests want — every git read degrades to its
+# default, which is the state each of them was written against.
+_STATE_WORKTREE = tempfile.mkdtemp(prefix="review-threads-state-")
+atexit.register(shutil.rmtree, _STATE_WORKTREE, ignore_errors=True)
+
+
 def _make_state(fix=None):
     """Build a minimal PRState with the given FixSummary."""
     return PRState(
         identity=PRIdentity(
             repo="owner/repo", branch="feat", pr_number=1,
-            head_sha="abc1234", worktree_root="/tmp/wt",
+            head_sha="abc1234", worktree_root=_STATE_WORKTREE,
         ),
         fix=fix or FixSummary(),
     )
@@ -1542,13 +1581,13 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         pushes = []
         commits = []
 
-        def mock_run(cmd, **kwargs):
+        def mock_run(*cmd, **kwargs):
             if "push" in cmd:
                 pushes.append(cmd)
             if "commit" in cmd:
                 commits.append(cmd)
-                return _make_completed(1, stderr="pre-commit hook failed\n")
-            return _make_completed(0, stdout="aaa1111\n")
+                return _git_ran(1, stderr="pre-commit hook failed\n")
+            return _git_ran(0, stdout="aaa1111\n")
 
         batch = rt.FixBatchResult(
             tracking=TrackingResult(fixed=threads),
@@ -1559,7 +1598,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch.object(rt, "_resolve_default_branch", return_value="main"), \
              patch.object(rt, "_persist_fix_state") as persist, \
              patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
-             patch.object(rt.subprocess, "run", side_effect=mock_run), \
+             patch.object(rt.git_client, "run", side_effect=mock_run), \
              patch("pr_comments.post_thread_reply", return_value=True), \
              patch("pr_comments.post_issue_comment", return_value="u"), \
              patch("pr_comments.resolve_thread", return_value=True):
@@ -1632,14 +1671,15 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         # file cell pins the tree that holds the work.
         assert "/blob/ccc3333/f.go" in body
 
-    def test_a_range_git_cannot_read_keeps_the_single_commit_reading(self, rt):
+    def test_a_range_git_cannot_read_keeps_the_single_commit_reading(self, rt, worktree):
         """An unresolvable range must not withdraw every attribution on the branch.
 
         The multi-commit guard fires on positive evidence of more than one
         commit. A rebased-away snapshot makes `rev-list` fail, which is not
-        that evidence.
+        that evidence — so this asks a real repo for a range neither end of
+        which it has, rather than standing that in with an absent worktree.
         """
-        assert rt._commits_since(Path("/nonexistent-worktree"), "aaa1111", "bbb2222") == []
+        assert rt._commits_since(worktree, "aaa1111", "bbb2222") == []
 
     def test_an_unpushed_hand_commit_claims_nothing(self, rt):
         """A SHA a reviewer cannot open is not worth naming."""
@@ -1803,10 +1843,10 @@ class TestPushHeldCommit:
     def test_pushes_and_marks_it_pushed(self, rt, publishing_on):
         state = self._state()
         with patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.subprocess, "run", return_value=_make_completed(0)) as run:
+             patch.object(rt.git_client, "run", return_value=_git_ran(0)) as run:
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "pushed"
-        assert "push" in run.call_args[0][0]
+        assert run.call_args[0] == ("push",)
 
     def test_a_draft_finish_still_holds_it(self, rt):
         """--finish without --post is not the human saying go."""
@@ -1815,7 +1855,7 @@ class TestPushHeldCommit:
 
         state = self._state()
         with patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.subprocess, "run", boom):
+             patch.object(rt.git_client, "run", boom):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "push_held"
 
@@ -1829,14 +1869,15 @@ class TestPushHeldCommit:
 
         state = self._state()
         with patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.subprocess, "run", boom):
+             patch.object(rt.git_client, "run", boom):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "push_held"
 
     def test_a_failed_push_is_recorded_as_such(self, rt, publishing_on):
         state = self._state()
         with patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.subprocess, "run", return_value=_make_completed(1, stderr="rejected\n")):
+             patch.object(rt.git_client, "run",
+                          return_value=_git_ran(1, stderr="rejected\n")):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "push_failed"
 
@@ -1845,7 +1886,8 @@ class TestPushHeldCommit:
         trail = MagicMock()
         state = self._state()
         with patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.subprocess, "run", return_value=_make_completed(1, stderr="rejected\n")):
+             patch.object(rt.git_client, "run",
+                          return_value=_git_ran(1, stderr="rejected\n")):
             rt._push_held_commit(state, Path("/fake"), trail)
         trail.error.assert_called_once()
         assert "rejected" in trail.error.call_args.kwargs["data"]["error"]
@@ -1857,7 +1899,7 @@ class TestPushHeldCommit:
 
         state = self._state()
         with patch.object(rt, "_is_pushed", return_value=True), \
-             patch.object(rt.subprocess, "run", boom):
+             patch.object(rt.git_client, "run", boom):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "pushed"
 
@@ -1866,7 +1908,7 @@ class TestPushHeldCommit:
             raise AssertionError(f"pushed an already-pushed commit: {a}")
 
         state = self._state(status="pushed")
-        with patch.object(rt.subprocess, "run", boom):
+        with patch.object(rt.git_client, "run", boom):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "pushed"
 
@@ -1875,7 +1917,7 @@ class TestPushHeldCommit:
             raise AssertionError(f"pushed with no commit to push: {a}")
 
         state = self._state(status="no_changes", sha="")
-        with patch.object(rt.subprocess, "run", boom):
+        with patch.object(rt.git_client, "run", boom):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "no_changes"
 
@@ -2743,7 +2785,7 @@ class TestUnfiledDeferralsAreNamed:
     def _report(self, rt, ids, track):
         state = PRState(
             identity=PRIdentity(repo="owner/repo", branch="b", pr_number=42,
-                                head_sha="abc1234", worktree_root="/tmp/wt"),
+                                head_sha="abc1234", worktree_root=_STATE_WORKTREE),
             fix=FixSummary(threads=[
                 ThreadOutcome(id=i, action=ThreadAction.DEFERRED) for i in ids
             ]),
@@ -3756,26 +3798,23 @@ class TestDiffContextForFile:
     def test_empty_file_path(self, rt):
         assert rt._diff_context_for_file("", Path("/wt")) == ""
 
-    @patch("review_threads.subprocess.run")
+    @patch("git_client.run")
     def test_returns_diff(self, mock_run, rt):
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = "+ added line\n- removed line\n"
+        mock_run.return_value = _git_ran(0, stdout="+ added line\n- removed line\n")
         result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
         assert "```diff" in result
         assert "+ added line" in result
 
-    @patch("review_threads.subprocess.run")
+    @patch("git_client.run")
     def test_truncates_long_diff(self, mock_run, rt):
         long_diff = "\n".join(f"+ line {i}" for i in range(200))
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = long_diff
+        mock_run.return_value = _git_ran(0, stdout=long_diff)
         result = rt._diff_context_for_file("src/foo.go", Path("/wt"))
         assert "more lines" in result
 
-    @patch("review_threads.subprocess.run")
+    @patch("git_client.run")
     def test_git_failure_returns_empty(self, mock_run, rt):
-        mock_run.return_value.returncode = 1
-        mock_run.return_value.stdout = ""
+        mock_run.return_value = _git_ran(1)
         assert rt._diff_context_for_file("src/foo.go", Path("/wt")) == ""
 
 
@@ -4064,12 +4103,12 @@ class TestFixPassHoldsWhenContested:
         pushes = []
         commits = []
 
-        def mock_run(cmd, **kwargs):
+        def mock_run(*cmd, **kwargs):
             if "push" in cmd:
                 pushes.append(cmd)
             if "commit" in cmd:
                 commits.append(cmd)
-            return _make_completed(0, stdout="abc1234\n")
+            return _git_ran(0, stdout="abc1234\n")
 
         batch = rt.FixBatchResult(
             tracking=TrackingResult(fixed=[threads[0]]),
@@ -4080,7 +4119,7 @@ class TestFixPassHoldsWhenContested:
              patch.object(rt, "_resolve_default_branch", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
              patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
-             patch.object(rt.subprocess, "run", side_effect=mock_run), \
+             patch.object(rt.git_client, "run", side_effect=mock_run), \
              patch("pr_comments.post_thread_reply", return_value=True), \
              patch("pr_comments.post_issue_comment", return_value="u"), \
              patch("pr_comments.resolve_thread", return_value=True):
@@ -5296,22 +5335,20 @@ class TestCommitLookupsUseDefaultBranch:
     def test_branch_commit_log_uses_resolved_branch(self, rt, tmp_path):
         with (
             patch.object(rt, "_resolve_default_branch", return_value="trunk"),
-            patch.object(rt.subprocess, "run") as run,
+            patch.object(rt.git_client, "run") as run,
         ):
-            run.return_value.returncode = 0
-            run.return_value.stdout = "abc1234 fix: thing\n"
+            run.return_value = _git_ran(0, stdout="abc1234 fix: thing\n")
             assert rt._branch_commit_log(tmp_path) == "abc1234 fix: thing"
-        assert "origin/trunk..HEAD" in run.call_args[0][0]
+        assert "origin/trunk..HEAD" in run.call_args[0]
 
     def test_find_addressing_commit_uses_resolved_branch(self, rt, tmp_path):
         with (
             patch.object(rt, "_resolve_default_branch", return_value="trunk"),
-            patch.object(rt.subprocess, "run") as run,
+            patch.object(rt.git_client, "run") as run,
         ):
-            run.return_value.returncode = 0
-            run.return_value.stdout = "deadbeef\n"
+            run.return_value = _git_ran(0, stdout="deadbeef\n")
             assert rt._find_addressing_commit(tmp_path, "a.py", 10) == "deadbeef"
-        assert "origin/trunk..HEAD" in run.call_args[0][0]
+        assert "origin/trunk..HEAD" in run.call_args[0]
 
     def test_branch_commit_log_without_worktree(self, rt):
         assert rt._branch_commit_log(None) == ""

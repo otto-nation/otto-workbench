@@ -87,28 +87,37 @@ _NONE = pr_context.ContextDepth.NONE
 _LOCAL = pr_context.ContextDepth.LOCAL
 _REMOTE = pr_context.ContextDepth.REMOTE
 
-# What `pr review` needs when no mode flag says otherwise: a review run, which
-# reads the PR, resets the worktree it is about to review, and holds the lock
-# for the whole thing.
+# What `pr review` needs with no mode flag: a review run, which reads the PR,
+# resets the worktree it is about to review, and holds the lock for the whole
+# thing. The fetch belongs to this one invocation — it is the only one whose
+# subject is the branch's current state.
 _REVIEW_DEFAULT_NEED = Need(_REMOTE, update=True, lock=True)
+
+# What a mode flag needs unless it declares otherwise. Every mode acts on a
+# review that already exists on disk, at the commit that review describes, so
+# none of them may fast-forward the worktree out from under it: `--summary` and
+# `--post` would report or publish a review of a commit the worktree no longer
+# sits on, and `--recover` would move HEAD off the SHA it is about to pin a
+# throwaway worktree back to. They still resolve the PR and hold the lock.
+_REVIEW_MODE_NEED = Need(_REMOTE, update=False, lock=True)
 
 
 def _review_need(argv: list[str]) -> Need:
     """`review`'s need, which its mode flag decides.
 
-    The one command that declares a callable rather than a constant. Every mode
-    but `--list` runs a review or reads one for a PR, so they need what a
-    review run needs; `--list` answers from the reviews root alone. Reading the
-    declaration off the mode table is what keeps the listing off the
-    fetch-and-lock path structurally, rather than by an exemption someone has
-    to remember.
+    The one command that declares a callable rather than a constant. A mode
+    flag means the subject is a review that already exists, and a bare `review`
+    means the subject is the branch — which is the whole of why the fetch
+    differs between them. Reading the declaration off the mode table is what
+    keeps each mode off the paths it does not need structurally, rather than by
+    an exemption someone has to remember.
 
     `_REVIEW_MODES` is defined further down, beside the handlers it names —
     this runs per invocation, long after import.
     """
     for token in argv:
         mode = _REVIEW_MODES.get(token)
-        if mode and mode.need is not None:
+        if mode:
             return mode.need
     return _REVIEW_DEFAULT_NEED
 
@@ -572,13 +581,14 @@ class ReviewMode:
     * ``handler`` — what runs locally, or None for a mode `claude-review`
       handles. A `None` handler still belongs here: `--recover` collides with
       the others whoever ends up running it.
-    * ``need`` — this mode's dispatch need, or None to take `review`'s default.
+    * ``need`` — this mode's dispatch need. Defaults to what acting on an
+      existing review takes; a mode that needs less says so.
     * ``schema_versions`` — the row-schema versions this mode can serve, empty
       for a mode with no versioned document to hand a caller.
     """
 
     handler: Callable[..., int] | None = None
-    need: Need | None = None
+    need: Need = _REVIEW_MODE_NEED
     schema_versions: tuple[int, ...] = ()
 
 

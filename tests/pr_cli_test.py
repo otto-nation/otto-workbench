@@ -277,15 +277,34 @@ def test_every_command_declares_a_need():
 
 
 def test_review_declares_a_need_per_invocation():
-    """`review` is the one entry whose declaration its argv resolves."""
+    """`review` is the one entry whose declaration its argv resolves. A bare
+    invocation is about to review the branch, so it wants the branch current;
+    `--self` is not a mode flag and changes nothing about that."""
     entry = pr_cli._COMMANDS["review"]
     assert callable(entry["need"])
 
     plain = pr_cli._need_for(entry, [])
     assert plain == pr_cli.Need(pr_cli._REMOTE, update=True, lock=True)
+    assert pr_cli._need_for(entry, ["--self"]) == plain
 
-    for argv in ([], ["--self"], ["--post"], ["--repair"], ["--summary"], ["--recover"]):
-        assert pr_cli._need_for(entry, argv) == plain, argv
+
+@pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])
+def test_a_mode_acting_on_an_existing_review_does_not_fetch(mode):
+    """A mode flag's subject is a review already on disk, at the commit that
+    review describes. Fast-forwarding under it leaves `--summary` and `--post`
+    reporting a review of a commit the worktree no longer sits on, and pushes
+    `--recover` off the SHA it then has to pin a worktree back to. The PR still
+    has to be resolved and the lock still has to be held."""
+    need = pr_cli._need_for(pr_cli._COMMANDS["review"], [mode])
+    assert need == pr_cli.Need(pr_cli._REMOTE, update=False, lock=True)
+
+
+def test_every_mode_flag_declares_a_need():
+    """The default is a real Need rather than a "take review's" sentinel, so a
+    mode added without thinking about the axes lands on not-fetching — the safe
+    side — instead of on whatever `review` happens to declare."""
+    for flag, mode in pr_cli._REVIEW_MODES.items():
+        assert isinstance(mode.need, pr_cli.Need), flag
 
 
 def test_review_list_resolves_nothing_and_takes_no_lock():
@@ -1715,6 +1734,17 @@ def test_review_delegating_still_resolves_updates_and_locks(tmp_path):
     assert stage.remote.called
     assert stage.update.called
     assert _lock_file(target).is_file()
+
+
+@pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])
+def test_a_mode_reaches_dispatch_without_the_worktree_moving(mode, tmp_path):
+    """The declaration read end to end: `update_to_remote` is what fetches and
+    resets, and no mode may reach its handler having called it."""
+    target = tmp_path / "target"
+    stage = _dispatch_stage("review", mode, ctx=make_ctx(target_dir=target))
+    assert not stage.update.called
+    assert stage.remote.called, "the PR still has to be named"
+    assert _lock_file(target).is_file(), "and the run still holds the lock"
 
 
 def test_review_list_refuses_a_positional_target(capsys):

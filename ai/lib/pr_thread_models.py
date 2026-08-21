@@ -4,6 +4,8 @@ Persistence-oriented structures live in pr_state.py; these model the
 runtime pipeline: triage, classification, tracking, and fix-pass results.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

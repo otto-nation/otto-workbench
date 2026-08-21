@@ -5,6 +5,8 @@ per invocation. Replaces the duplicated discovery logic in ci-check,
 review-threads, and the former review_common.detect_repo().
 """
 
+# doc-group: pr-state
+
 from __future__ import annotations
 
 import json

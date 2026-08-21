@@ -6,7 +6,7 @@
 # WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
 # ```
 #
-# <!-- include: bin/local/generate-lib-reference --roots-table -->
+# <!-- include: bin/local/generate-doc-reference --roots-table -->
 #
 # `install.yml` sits under state despite the name: `lib/state.sh` owns every
 # write to it, and it is what the old `installed.components` file migrated into.

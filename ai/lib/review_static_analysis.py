@@ -5,6 +5,8 @@ for inclusion in review output. Each checker is a plain function with the
 signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import os

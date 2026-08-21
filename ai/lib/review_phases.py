@@ -13,6 +13,8 @@ What a phase *produces* is somebody else's problem: the review document, the
 synthesis and the run drivers stay in review_pipeline.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor

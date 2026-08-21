@@ -4,6 +4,8 @@ Handles everything needed before prompt construction: collecting diffs, commit l
 file contents, permissions, and organizing files into review groups.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import functools

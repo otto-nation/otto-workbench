@@ -4,6 +4,8 @@ Detects unpushed commits by comparing local HEAD against the remote
 tracking branch.  Computed at render time (no stored state needed).
 """
 
+# doc-group: pr-state
+
 from __future__ import annotations
 
 from pathlib import Path

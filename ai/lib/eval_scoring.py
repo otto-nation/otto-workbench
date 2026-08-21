@@ -6,6 +6,8 @@ of a score, the statistics over repeated runs, and the baseline diff — the par
 every task shares.
 """
 
+# doc-group: eval
+
 from __future__ import annotations
 
 import math

@@ -4,6 +4,8 @@ The scout phase replaces the holistic phase's prose output with structured
 leads that tell group reviewers exactly where to focus investigation.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import re

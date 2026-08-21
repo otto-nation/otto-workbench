@@ -28,6 +28,8 @@ Gaps vs Claude Code CLI:
   --agent          Not available; use --append-system-prompt with agent file contents
 """
 
+# doc-group: backend
+
 from __future__ import annotations
 
 import json

@@ -1,5 +1,7 @@
 """Issue tracking integration for claude-review."""
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 import contextlib

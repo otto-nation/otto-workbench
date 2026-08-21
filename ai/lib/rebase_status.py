@@ -4,6 +4,8 @@ Owns the display logic for RebaseSummary so the pr dispatcher
 doesn't need to know rebase internals.
 """
 
+# doc-group: pr-state
+
 from __future__ import annotations
 
 from pr_state import RebaseStatus, RebaseSummary

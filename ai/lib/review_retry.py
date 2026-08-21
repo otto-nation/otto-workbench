@@ -11,6 +11,8 @@ The hints, the retryability test and the retry driver are shared with the other
 the way they always have.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 from dataclasses import dataclass

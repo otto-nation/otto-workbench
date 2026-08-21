@@ -20,6 +20,7 @@ export const SIDEBAR_ORDER = [
   'libraries',
   'tools',
   'ai-automation',
+  'ai-libraries',
   'user-overrides',
   'troubleshooting',
 ] as const;

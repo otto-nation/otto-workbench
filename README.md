@@ -106,6 +106,7 @@ These are created once (from templates or by first-time setup) and never modifie
 - [Libraries](docs/libraries.md) — all lib/ modules: purpose and key functions
 - [Tools & Scripts](docs/tools.md) — full catalog of installed tools and workbench scripts
 - [AI Automation](docs/ai-automation.md) — Claude Code setup, skills, agents, and task automation
+- [AI Libraries](docs/ai-libraries.md) — all ai/lib/ modules: the Python behind the `pr` scripts
 - [User Overrides](docs/user-overrides.md) — customizing AI config without editing tracked files
 - [Troubleshooting](docs/troubleshooting.md) — common issues and solutions
 - [Contributing](CONTRIBUTING.md) — dev setup, testing, and code conventions

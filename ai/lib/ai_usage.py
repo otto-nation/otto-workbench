@@ -8,6 +8,8 @@ Lives below the review layer so ai_backend can depend on it without inverting
 the dependency.
 """
 
+# doc-group: backend
+
 from __future__ import annotations
 
 import json

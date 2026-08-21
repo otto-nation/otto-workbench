@@ -4,6 +4,8 @@ After synthesis, each Must-fix and Should-fix finding is challenged.
 Findings that cannot survive scrutiny are dropped before posting.
 """
 
+# doc-group: findings
+
 from __future__ import annotations
 
 import re

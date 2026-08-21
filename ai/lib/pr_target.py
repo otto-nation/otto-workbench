@@ -95,6 +95,8 @@ resolving through the function is what makes ``pr/`` ride along with a move
 instead of being stranded at the old location.
 """
 
+# doc-group: pr-state
+
 from __future__ import annotations
 
 import hashlib

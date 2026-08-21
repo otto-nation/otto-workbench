@@ -5,6 +5,8 @@ the aggregation over runs live in `eval_task` and `eval_scoring` and know nothin
 about findings.
 """
 
+# doc-group: eval
+
 from __future__ import annotations
 
 import subprocess

@@ -5,6 +5,8 @@ stream-json format and Pi's --mode json format, so stream_progress()
 works identically regardless of backend.
 """
 
+# doc-group: backend
+
 from __future__ import annotations
 
 import json

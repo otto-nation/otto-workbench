@@ -5,6 +5,8 @@ Claude Code CLI or Pi CLI based on AI_BACKEND env var). This module
 adds cost tracking, failure diagnosis, and output recovery on top.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import json

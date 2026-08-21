@@ -4,6 +4,8 @@ Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
 building `claude -p` commands and running them as subprocesses.
 """
 
+# doc-group: backend
+
 from __future__ import annotations
 
 import json

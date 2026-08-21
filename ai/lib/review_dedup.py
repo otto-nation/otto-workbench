@@ -4,6 +4,8 @@ Fetches existing bot comments (inline and review-body), compares via
 Jaccard similarity, and filters out duplicates before posting.
 """
 
+# doc-group: findings
+
 from __future__ import annotations
 
 import functools

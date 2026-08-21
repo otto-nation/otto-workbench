@@ -5,6 +5,8 @@ Handles failure classification, progression tracking, and rendering for the
 ci-failures skill. State persistence is delegated to pr_state.CIDomain.
 """
 
+# doc-group: pr-state
+
 from __future__ import annotations
 
 import re

@@ -5,6 +5,8 @@ synthesis, self-review, and self-review-synthesis. Includes section builders,
 budget computation, and prompt size logging.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import re

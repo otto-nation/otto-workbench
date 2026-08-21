@@ -4,6 +4,8 @@ Handles thread lifecycle state computation, local state persistence,
 and GitHub data fetching for the pr-comments skill.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 import json

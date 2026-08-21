@@ -4,6 +4,8 @@ Classifies findings as inline/file-level/skipped based on the PR diff,
 renumbers them for posted order, and formats as GitHub review comments.
 """
 
+# doc-group: findings
+
 from __future__ import annotations
 
 import re

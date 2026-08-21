@@ -18,6 +18,8 @@ Argparse introspection that reaches past the public API is collected here —
 ``value_taking_options`` and ``subparsers`` — so a caller never has to.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import dataclasses

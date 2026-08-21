@@ -7,20 +7,23 @@ setup_file() {
 setup() {
   load 'test_helper'
   common_setup
-  source "$REPO_ROOT/bin/local/generate-lib-reference"
+  source "$REPO_ROOT/bin/local/generate-doc-reference"
   TMPDIR="$(mktemp -d)"
 
-  # LIB_DIR is the env hook the script resolves through, so the fixtures below
-  # stand in for the real lib/ and no test reads the modules it documents.
-  export LIB_DIR="$TMPDIR/lib"
-  mkdir -p "$LIB_DIR/ai"
+  # SOURCE_ROOT is the env hook every source set resolves its globs against, so
+  # the fixtures below stand in for the real trees and no test reads the modules
+  # it documents.
+  export SOURCE_ROOT="$TMPDIR"
+  LIB_DIR="$SOURCE_ROOT/lib"
+  AI_LIB_DIR="$SOURCE_ROOT/ai/lib"
+  mkdir -p "$LIB_DIR/ai" "$AI_LIB_DIR"
   printf '#!/usr/bin/env bash\n' > "$LIB_DIR/ui.sh"
 }
 
 teardown() {
   rm -rf "$TMPDIR"
   common_teardown
-  unset LIB_DIR
+  unset SOURCE_ROOT
 }
 
 # _facade MODULE... — rewrites the fixture ui.sh to source the named modules,
@@ -40,7 +43,7 @@ _facade() {
 # info MESSAGE — blue info message with an arrow.
 info() { echo "$*"; }
 EOF
-  run _lib_doc_rows "$LIB_DIR/output.sh"
+  run _bash_doc_rows "$LIB_DIR/output.sh"
   [ "$output" = "$(printf 'info MESSAGE\tblue info message with an arrow.')" ]
 }
 
@@ -51,7 +54,7 @@ EOF
 # Displays a numbered selection prompt.
 select_menu() { :; }
 EOF
-  run _lib_doc_rows "$LIB_DIR/menu.sh"
+  run _bash_doc_rows "$LIB_DIR/menu.sh"
   [ "$output" = "$(printf 'select_menu RESULT_VAR COUNT\tDisplays a numbered selection prompt.')" ]
 }
 
@@ -61,7 +64,7 @@ EOF
 # filesystems that do not record one. Callers must treat 0 as unknown.
 file_birth() { :; }
 EOF
-  run _lib_doc_rows "$LIB_DIR/portable.sh"
+  run _bash_doc_rows "$LIB_DIR/portable.sh"
   [ "$output" = "$(printf 'file_birth PATH\tbirth time in epoch seconds. Prints 0 on filesystems that do not record one. Callers must treat 0 as unknown.')" ]
 }
 
@@ -72,7 +75,7 @@ EOF
 # SURFACE_NOTE is rendered after the rules.
 prompt_commit() { :; }
 EOF
-  run _lib_doc_rows "$LIB_DIR/prompts.sh"
+  run _bash_doc_rows "$LIB_DIR/prompts.sh"
   [ "$output" = "$(printf 'prompt_commit DIFF [RETRY_PREAMBLE] [SURFACE_NOTE]\tthe commit prompt. RETRY_PREAMBLE is prepended to it. SURFACE_NOTE is rendered after the rules.')" ]
 }
 
@@ -84,7 +87,7 @@ EOF
 # is missing, which defeats the fallback.
 resolve_default_branch() { :; }
 EOF
-  run _lib_doc_rows "$LIB_DIR/git.sh"
+  run _bash_doc_rows "$LIB_DIR/git.sh"
   [ "$output" = "$(printf "resolve_default_branch\tthe remote's default branch.")" ]
 }
 
@@ -94,7 +97,7 @@ EOF
 #   WORKBENCH_DIR/*/steps.sh and WORKBENCH_DIR/*/*/steps.sh
 discover_step_files() { :; }
 EOF
-  run _lib_doc_rows "$LIB_DIR/components.sh"
+  run _bash_doc_rows "$LIB_DIR/components.sh"
   [ "$output" = "$(printf 'discover_step_files ARRAY_REF\tevery steps.sh file: WORKBENCH_DIR/*/steps.sh and WORKBENCH_DIR/*/*/steps.sh')" ]
 }
 
@@ -105,7 +108,7 @@ declare -a KNOWN_COMPONENTS=()
 declare -A COMPONENT_PATHS=()
 resolve_known_components() { :; }
 EOF
-  run _lib_doc_rows "$LIB_DIR/install.sh"
+  run _bash_doc_rows "$LIB_DIR/install.sh"
   [ "$output" = "$(printf 'resolve_known_components ARRAY_REF\tresolves component names to paths.')" ]
 }
 
@@ -117,7 +120,7 @@ select_menu() { :; }
 # _render_row INDEX — internal.
 _render_row() { :; }
 EOF
-  run _lib_functions_table "$LIB_DIR/menu.sh"
+  run _functions_table lib "$LIB_DIR/menu.sh"
   [[ "$output" == *'| `select_menu RESULT_VAR [--default all\|skip]` | numbered selection prompt. |'* ]]
   [[ "$output" != *_render_row* ]]
 }
@@ -127,13 +130,26 @@ EOF
 # Shared constants.
 WORKBENCH_NAME="workbench"
 EOF
-  run _lib_functions_table "$LIB_DIR/constants.sh"
+  run _functions_table lib "$LIB_DIR/constants.sh"
   [ -z "$output" ]
 }
 
-# ── Header extraction ────────────────────────────────────────────────────────
+@test "a set that declares no symbol syntax renders no functions table" {
+  cat > "$AI_LIB_DIR/proc.py" << 'EOF'
+"""Subprocess helpers."""
 
-@test "header prints the comment block under the shebang, uncommented" {
+# doc-group: platform
+
+def run(cmd):
+    """Run CMD."""
+EOF
+  run _functions_table ai-lib "$AI_LIB_DIR/proc.py"
+  [ -z "$output" ]
+}
+
+# ── Doc block extraction ─────────────────────────────────────────────────────
+
+@test "doc block prints the comment block under the shebang, uncommented" {
   cat > "$LIB_DIR/output.sh" << 'EOF'
 #!/usr/bin/env bash
 # Terminal output helpers.
@@ -141,11 +157,11 @@ EOF
 # Every message goes to stderr.
 info() { :; }
 EOF
-  run _lib_header "$LIB_DIR/output.sh"
+  run _doc_block lib "$LIB_DIR/output.sh"
   [ "$output" = "$(printf 'Terminal output helpers.\n\nEvery message goes to stderr.')" ]
 }
 
-@test "header drops linter directives and the group marker" {
+@test "doc block drops linter directives and the group marker" {
   cat > "$LIB_DIR/registries.sh" << 'EOF'
 #!/usr/bin/env bash
 # doc-group: registry
@@ -153,19 +169,57 @@ EOF
 # Registry readers.
 info() { :; }
 EOF
-  run _lib_header "$LIB_DIR/registries.sh"
+  run _doc_block lib "$LIB_DIR/registries.sh"
   [ "$output" = "Registry readers." ]
 }
 
-@test "header stops at the first line of code" {
+@test "doc block stops at the first line of code" {
   cat > "$LIB_DIR/roots.sh" << 'EOF'
 #!/usr/bin/env bash
 # The three workbench roots.
 WORKBENCH_STATE_DIR="/tmp/state"
 # Not part of the header.
 EOF
-  run _lib_header "$LIB_DIR/roots.sh"
+  run _doc_block lib "$LIB_DIR/roots.sh"
   [ "$output" = "The three workbench roots." ]
+}
+
+@test "doc block reads a multi-line Python docstring without its quotes" {
+  cat > "$AI_LIB_DIR/supersession.py" << 'EOF'
+"""Whether a branch's reason to exist is already gone.
+
+The skew is in the commit dates.
+"""
+
+# doc-group: pr-state
+
+import re
+EOF
+  run _doc_block ai-lib "$AI_LIB_DIR/supersession.py"
+  [ "$output" = "$(printf "Whether a branch's reason to exist is already gone.\n\nThe skew is in the commit dates.")" ]
+}
+
+@test "doc block reads a single-line Python docstring" {
+  printf '"""Issue tracking integration."""\n\n# doc-group: publishing\n' > "$AI_LIB_DIR/review_issue.py"
+  run _doc_block ai-lib "$AI_LIB_DIR/review_issue.py"
+  [ "$output" = "Issue tracking integration." ]
+}
+
+@test "doc block skips a shebang above the Python docstring" {
+  cat > "$AI_LIB_DIR/ci_failures.py" << 'EOF'
+#!/usr/bin/env python3
+"""CI failure lifecycle tracking."""
+
+# doc-group: pr-state
+EOF
+  run _doc_block ai-lib "$AI_LIB_DIR/ci_failures.py"
+  [ "$output" = "CI failure lifecycle tracking." ]
+}
+
+@test "doc block is empty for a Python module with no docstring" {
+  printf 'from __future__ import annotations\n\n# doc-group: platform\n' > "$AI_LIB_DIR/serde.py"
+  run _doc_block ai-lib "$AI_LIB_DIR/serde.py"
+  [ -z "$output" ]
 }
 
 # ── Groups ───────────────────────────────────────────────────────────────────
@@ -173,15 +227,14 @@ EOF
 @test "group defaults to core for lib and ai for lib/ai" {
   printf '#!/usr/bin/env bash\n# Output.\n' > "$LIB_DIR/output.sh"
   printf '#!/usr/bin/env bash\n# PR context.\n' > "$LIB_DIR/ai/pr.sh"
-  run _lib_group "$LIB_DIR/output.sh"
-  [ "$output" = "core" ]
-  run _lib_group "$LIB_DIR/ai/pr.sh"
-  [ "$output" = "ai" ]
+  run main --set lib --groups
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'ai\ncore')" ]
 }
 
 @test "a declared group marker overrides the directory default" {
   printf '#!/usr/bin/env bash\n# doc-group: registry\n# Registries.\n' > "$LIB_DIR/registries.sh"
-  run _lib_group "$LIB_DIR/registries.sh"
+  run _file_group lib "$LIB_DIR/registries.sh" core
   [ "$output" = "registry" ]
 }
 
@@ -193,8 +246,36 @@ info() { :; }
 
 # The convention is a header line reading: # doc-group: registry
 EOF
-  run _lib_group "$LIB_DIR/output.sh"
+  run _file_group lib "$LIB_DIR/output.sh" core
   [ "$output" = "core" ]
+}
+
+@test "a Python module declares its group below the docstring" {
+  cat > "$AI_LIB_DIR/trail.py" << 'EOF'
+"""Structured trail logging.
+
+Every script appends to one root.
+"""
+
+# doc-group: platform
+
+from __future__ import annotations
+EOF
+  run _file_group ai-lib "$AI_LIB_DIR/trail.py" ""
+  [ "$output" = "platform" ]
+}
+
+@test "a Python doc-group line below the imports does not declare a group" {
+  cat > "$AI_LIB_DIR/trail.py" << 'EOF'
+"""Structured trail logging."""
+
+import re
+
+# doc-group: platform
+EOF
+  run _file_group ai-lib "$AI_LIB_DIR/trail.py" ""
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ai/lib/trail.py declares no group"* ]]
 }
 
 @test "--groups lists every declared key once" {
@@ -202,7 +283,7 @@ EOF
   printf '#!/usr/bin/env bash\n# doc-group: registry\n# Registries.\n' > "$LIB_DIR/registries.sh"
   printf '#!/usr/bin/env bash\n# doc-group: registry\n# Conventions.\n' > "$LIB_DIR/conventions.sh"
   printf '#!/usr/bin/env bash\n# PR context.\n' > "$LIB_DIR/ai/pr.sh"
-  run main --groups
+  run main --set lib --groups
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf 'ai\ncore\nregistry')" ]
 }
@@ -212,7 +293,7 @@ EOF
   printf '#!/usr/bin/env bash\n# Portability shims.\n' > "$LIB_DIR/portable.sh"
   printf '#!/usr/bin/env bash\n# PR context.\n' > "$LIB_DIR/ai/pr.sh"
 
-  run main --group core
+  run main --set lib --group core
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf '### output.sh\n\nOutput helpers.\n\n### portable.sh\n\nPortability shims.')" ]
 }
@@ -220,22 +301,72 @@ EOF
 @test "--group excludes the ui.sh facade, which has its own prose" {
   printf '#!/usr/bin/env bash\n# The facade.\n' > "$LIB_DIR/ui.sh"
   printf '#!/usr/bin/env bash\n# Output helpers.\n' > "$LIB_DIR/output.sh"
-  run main --group core
+  run main --set lib --group core
   [ "$status" -eq 0 ]
   [[ "$output" != *"ui.sh"* ]]
 }
 
 @test "--group fails when no module declares the key" {
   printf '#!/usr/bin/env bash\n# Output helpers.\n' > "$LIB_DIR/output.sh"
-  run main --group registry
+  run main --set lib --group registry
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no module declares the group 'registry'"* ]]
+  [[ "$output" == *"no module in the 'lib' set declares the group 'registry'"* ]]
 }
 
 @test "--group without a key fails instead of rendering an empty group" {
-  run main --group
+  run main --set lib --group
   [ "$status" -eq 2 ]
   [[ "$output" == *"--group requires a group key"* ]]
+}
+
+# ── Source sets ──────────────────────────────────────────────────────────────
+
+@test "--sets lists every source set" {
+  run main --sets
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'ai-lib\nlib')" ]
+}
+
+@test "the ai-lib set renders module docstrings under their own heading" {
+  cat > "$AI_LIB_DIR/publishing.py" << 'EOF'
+"""The gate every outward-facing write passes through.
+
+Callers print what they would have sent.
+"""
+
+# doc-group: publishing
+EOF
+  printf '"""Reply threads."""\n\n# doc-group: publishing\n' > "$AI_LIB_DIR/pr_comments.py"
+  run main --set ai-lib --group publishing
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '### pr_comments.py\n\nReply threads.\n\n### publishing.py\n\nThe gate every outward-facing write passes through.\n\nCallers print what they would have sent.')" ]
+}
+
+@test "the two sets do not see each other's modules" {
+  printf '#!/usr/bin/env bash\n# Output helpers.\n' > "$LIB_DIR/output.sh"
+  printf '"""Subprocess helpers."""\n\n# doc-group: platform\n' > "$AI_LIB_DIR/proc.py"
+  run main --set lib --group core
+  [[ "$output" != *"proc.py"* ]]
+  run main --set ai-lib --group platform
+  [[ "$output" != *"output.sh"* ]]
+}
+
+@test "an unknown set fails instead of rendering nothing" {
+  run main --set widgets --group core
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Unknown source set: widgets"* ]]
+}
+
+@test "--groups without a set fails instead of guessing one" {
+  run main --groups
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--groups requires --set"* ]]
+}
+
+@test "--set without a value fails" {
+  run main --set
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--set requires a source set"* ]]
 }
 
 # ── Facade note ──────────────────────────────────────────────────────────────
@@ -245,23 +376,23 @@ EOF
   printf '#!/usr/bin/env bash\n# Migration runner.\n' > "$LIB_DIR/migrations.sh"
   _facade "output.sh"
 
-  run main --group core
+  run main --set lib --group core
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf '### migrations.sh\n\nMigration runner.\n\n### output.sh\n\nOutput helpers.\n\nLoaded via `ui.sh`.')" ]
 }
 
 # ── Nested includes ──────────────────────────────────────────────────────────
 
-@test "an include directive in a header is printed for compose-docs to expand" {
+@test "an include directive in a doc block is printed for compose-docs to expand" {
   cat > "$LIB_DIR/roots.sh" << 'EOF'
 #!/usr/bin/env bash
 # The three workbench roots.
 #
-# <!-- include: bin/local/generate-lib-reference --roots-table -->
+# <!-- include: bin/local/generate-doc-reference --roots-table -->
 EOF
-  run main --group core
+  run main --set lib --group core
   [ "$status" -eq 0 ]
-  [[ "$output" == *'<!-- include: bin/local/generate-lib-reference --roots-table -->'* ]]
+  [[ "$output" == *'<!-- include: bin/local/generate-doc-reference --roots-table -->'* ]]
 }
 
 # ── Roots table ──────────────────────────────────────────────────────────────
@@ -271,12 +402,13 @@ EOF
 # Hand-authored settings: config.yml, overrides/.
 WORKBENCH_CONFIG_DIR="$(_wb_root "${WORKBENCH_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
 EOF
-  run _lib_roots_table
+  run _roots_table
   [[ "$output" == *'| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: config.yml, overrides/ | `XDG_CONFIG_HOME` | `~/.config/workbench` |'* ]]
 }
 
 @test "roots table fails when lib/roots.sh is missing" {
-  run _lib_roots_table
+  rm -f "$LIB_DIR/roots.sh"
+  run _roots_table
   [ "$status" -ne 0 ]
   [[ "$output" == *"lib/roots.sh is missing"* ]]
 }
@@ -292,7 +424,7 @@ info() { echo "$*"; }
 
 warn() { echo "$*"; }
 EOF
-  run main --group core
+  run main --set lib --group core
   [ "$status" -ne 0 ]
   [[ "$output" == *"lib/output.sh: warn has no doc comment"* ]]
 }
@@ -308,10 +440,31 @@ info() { echo "$*"; }
 # _shout MESSAGE — internal, needs no row.
 _shout() { echo "$*"; }
 EOF
-  run main --group core
+  run main --set lib --group core
   [ "$status" -eq 0 ]
   [[ "$output" == *'| `info MESSAGE` | blue info message with an arrow. |'* ]]
   [[ "$output" != *_shout* ]]
+}
+
+@test "rendering fails on a module whose doc block is empty" {
+  printf '#!/usr/bin/env bash\nWORKBENCH_NAME="workbench"\n' > "$LIB_DIR/constants.sh"
+  run main --set lib --group core
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"lib/constants.sh has no doc block"* ]]
+}
+
+@test "a module in a set with no default group must declare one" {
+  printf '"""Serialization helpers."""\n' > "$AI_LIB_DIR/serde.py"
+  run main --set ai-lib --groups
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ai/lib/serde.py declares no group"* ]]
+}
+
+@test "a module with no docstring cannot declare a group above it" {
+  printf '# doc-group: platform\n\nfrom __future__ import annotations\n' > "$AI_LIB_DIR/serde.py"
+  run main --set ai-lib --groups
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ai/lib/serde.py declares no group"* ]]
 }
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -331,7 +484,9 @@ EOF
 @test "--help lists every mode" {
   run main --help
   [ "$status" -eq 0 ]
+  [[ "$output" == *"--set"* ]]
   [[ "$output" == *"--group"* ]]
-  [[ "$output" == *"--roots-table"* ]]
   [[ "$output" == *"--groups"* ]]
+  [[ "$output" == *"--sets"* ]]
+  [[ "$output" == *"--roots-table"* ]]
 }

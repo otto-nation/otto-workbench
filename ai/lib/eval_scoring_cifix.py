@@ -9,6 +9,8 @@ corrected. It is not used at eval time; it exists so the test suite can prove th
 case is solvable and the oracle is not vacuous, without spending a token.
 """
 
+# doc-group: eval
+
 from __future__ import annotations
 
 import json

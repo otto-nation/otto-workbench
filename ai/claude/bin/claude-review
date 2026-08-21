@@ -22,6 +22,7 @@ import log
 import pr_context
 import pr_state
 import run_lock
+import timeouts
 import workbench_paths
 from tool_parser import handle_value_flags
 from trail import Trail, add_trail_args
@@ -149,7 +150,7 @@ def _post_review(repo: str, pr_number: str, review_file: str, submit: bool) -> N
     ]
     if submit:
         post_args.append("--submit")
-    subprocess.run(post_args, check=False)
+    subprocess.run(post_args, check=False, timeout=timeouts.UNBOUNDED)
 
 
 def _display_review(path: Path) -> None:
@@ -377,7 +378,7 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
     try:
         r = subprocess.run(
             ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         gh_user = r.stdout.strip()
     except Exception:
@@ -387,7 +388,7 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
         r = subprocess.run(
             ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
              "--jq", f'[.[] | select(.user.login == "{gh_user}" and .state == "PENDING")] | first // empty'],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         pending_json = r.stdout.strip()
     except Exception:
@@ -407,7 +408,7 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
         r = subprocess.run(
             ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}/comments",
              "--jq", "length"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         comment_count = r.stdout.strip() or "0"
     except Exception:
@@ -422,7 +423,7 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
         subprocess.run(
             ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}",
              "--method", "DELETE"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         log.info("Deleted pending review")
     except Exception:
@@ -443,7 +444,7 @@ def _get_pr_head_sha(repo: str, pr_number: str) -> str:
         r = subprocess.run(
             ["gh", "pr", "view", pr_number, "--repo", repo,
              "--json", "headRefOid", "--jq", ".headRefOid"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         return r.stdout.strip()
     except Exception:
@@ -575,7 +576,7 @@ def _submit_pending_review(repo: str, pr_number: str, review_file: str) -> None:
     r = subprocess.run(
         ["gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews/{tracking.review_id}/events",
          "--method", "POST", "-f", "event=COMMENT"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     if r.returncode == 0:
         log.info(f"Review #{tracking.review_id} submitted")
@@ -596,7 +597,7 @@ def _verify_pr_ownership(pr_number: str, repo: str) -> None:
         r = subprocess.run(
             ["gh", "pr", "view", pr_number, "--repo", repo,
              "--json", "author", "--jq", ".author.login"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         pr_author = r.stdout.strip()
     except Exception:
@@ -604,7 +605,7 @@ def _verify_pr_ownership(pr_number: str, repo: str) -> None:
     try:
         r = subprocess.run(
             ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         gh_user = r.stdout.strip()
     except Exception:
@@ -647,7 +648,7 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
     try:
         r = subprocess.run(
             ["gh", "repo", "view", repo, "--json", "name", "--jq", ".name"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         name = r.stdout.strip()
     except Exception:
@@ -659,7 +660,7 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
     try:
         r2 = subprocess.run(
             ["find", home_git, "-maxdepth", "2", "-name", name, "-type", "d"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.LOCAL,
         )
         found = r2.stdout.strip().splitlines()
     except Exception:
@@ -829,7 +830,7 @@ def _run_review_body(
         recover_sha=recover_sha, target_dir=target_dir,
     )
     wall_start = time.monotonic()
-    rc = subprocess.run(orchestrate_args).returncode
+    rc = subprocess.run(orchestrate_args, timeout=timeouts.UNBOUNDED).returncode
     wall_ms = int((time.monotonic() - wall_start) * 1000)
     if rc != 0:
         _fail_orchestration("Review orchestration failed", session_log)
@@ -898,7 +899,7 @@ def _run_review_pr(
         r = subprocess.run(
             ["gh", "pr", "view", pr_number, "--repo", repo,
              "--json", "headRefName,body"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         if r.returncode == 0:
             pr_meta = json.loads(r.stdout)
@@ -1127,7 +1128,7 @@ def _run_self_review_body(
 
     wall_start = time.monotonic()
     try:
-        rc = subprocess.run(orchestrate_args).returncode
+        rc = subprocess.run(orchestrate_args, timeout=timeouts.UNBOUNDED).returncode
     finally:
         review_worktree.cleanup_worktree(pinned_wt, wt_path)
     wall_ms = int((time.monotonic() - wall_start) * 1000)
@@ -1171,7 +1172,7 @@ def _resolve_branch_input(pr_input: str, repo_dir: str) -> str:
     try:
         r = subprocess.run(
             ["resolve-branch", pr_input],
-            capture_output=True, text=True, cwd=resolve_dir,
+            capture_output=True, text=True, cwd=resolve_dir, timeout=timeouts.LOCAL,
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()

@@ -3,8 +3,13 @@ set -e
 # project-scoped: renames a file inside each repo, so being done is a fact about
 # a repo and not about the machine.
 # Migration: rename .claude/context.md to .claude/architecture.md in every repo
-# the machine knows about. Idempotent — skips a repo already renamed or without
-# the file.
+# the machine knows about. A repo already renamed, or one that never had the
+# file, answers MIGRATION_NOOP rather than 0 — every worktree registers itself
+# the first time anything runs in it, and a branch cut from a main that already
+# holds architecture.md is a visit that can never rename anything. Reported as
+# success, that is a "Migration applied" line on every sync for as long as the
+# machine keeps making worktrees, each naming a different count and none of
+# them meaning work was done.
 #
 # Dated later than the rename it performs, on purpose. The first version searched
 # for projects itself, found none on a machine whose repos it did not guess at,
@@ -22,7 +27,7 @@ migration_20260819_context_to_architecture() {
   local new="$project_dir/.claude/architecture.md"
 
   if [[ ! -f "$old" || -f "$new" ]]; then
-    return 0
+    return "$MIGRATION_NOOP"
   fi
 
   mv "$old" "$new"

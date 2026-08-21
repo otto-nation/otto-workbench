@@ -18,6 +18,7 @@ from typing import NoReturn
 
 import log
 import pr_target
+import timeouts
 # Re-exported rather than called through the module: this file's own call sites
 # read as `failure_message(...)`, and proc.py is stdlib-only so the import costs
 # consumers nothing.
@@ -313,7 +314,7 @@ def _worktree_is_dirty(cwd: str) -> bool:
     """Whether *cwd* has uncommitted changes."""
     r = subprocess.run(
         ["git", "-C", cwd, "status", "--porcelain"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.LOCAL,
     )
     return r.returncode == 0 and bool(r.stdout.strip())
 
@@ -327,7 +328,7 @@ def _unpushed_count(cwd: str, branch: str) -> int:
     """
     r = subprocess.run(
         ["git", "-C", cwd, "rev-list", f"origin/{branch}..HEAD", "--count"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.LOCAL,
     )
     if r.returncode != 0 or not r.stdout.strip():
         return 0
@@ -361,7 +362,7 @@ def fetch_and_reset(wt_path: str, branch: str) -> None:
     try:
         subprocess.run(
             ["git", "-C", wt_path, "fetch", "origin", branch],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, check=True, timeout=timeouts.TRANSFER,
         )
     except Exception:
         return
@@ -372,7 +373,7 @@ def fetch_and_reset(wt_path: str, branch: str) -> None:
     try:
         subprocess.run(
             ["git", "-C", wt_path, "reset", "--hard", f"origin/{branch}"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
         )
     except Exception:
         pass
@@ -409,14 +410,14 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
 
     r = subprocess.run(
         ["git", "-C", cwd, "fetch", "origin", ctx.branch],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.TRANSFER,
     )
     if r.returncode != 0:
         return ctx
 
     r = subprocess.run(
         ["git", "-C", cwd, "rev-parse", "--verify", f"origin/{ctx.branch}"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.LOCAL,
     )
     if r.returncode != 0:
         return ctx
@@ -433,7 +434,7 @@ def update_to_remote(ctx: ResolvedContext) -> ResolvedContext:
 
     r = subprocess.run(
         ["git", "-C", cwd, "reset", "--hard", f"origin/{ctx.branch}"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
     )
     if r.returncode != 0:
         log.warn(failure_message(f"git reset --hard origin/{ctx.branch} failed", r))
@@ -448,7 +449,7 @@ def _current_branch_quiet(cwd: str | None = None) -> str | None:
     """Return current branch name, or None on failure (e.g. detached HEAD)."""
     r = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     if r.returncode != 0 or not r.stdout.strip() or r.stdout.strip() == "HEAD":
         return None
@@ -549,7 +550,7 @@ def detect_repo(cwd: str | None = None) -> str:
     """
     r = subprocess.run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.NETWORK,
     )
     if r.returncode != 0 or not r.stdout.strip():
         log.error(failure_message("Cannot determine repository via `gh repo view`", r))
@@ -560,7 +561,7 @@ def detect_repo(cwd: str | None = None) -> str:
 def _current_branch(cwd: str | None = None) -> str:
     r = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     branch = r.stdout.strip()
     if r.returncode != 0 or not branch:
@@ -576,7 +577,7 @@ def _resolve_branch(hint: str, cwd: str | None = None) -> str:
     try:
         r = subprocess.run(
             [str(RESOLVE_BRANCH), hint],
-            capture_output=True, text=True, cwd=cwd,
+            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
@@ -585,14 +586,16 @@ def _resolve_branch(hint: str, cwd: str | None = None) -> str:
         log.warn(failure_message(f"resolve-branch could not resolve {hint!r}", r))
         log.dim(f"using {hint!r} as-is")
         return hint
-    except FileNotFoundError:
+    # A resolver that hangs is a resolver that did not answer, which this
+    # function already knows how to survive.
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return hint if hint else _current_branch(cwd)
 
 
 def _git_toplevel(cwd: str | None = None) -> Path | None:
     r = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     if r.returncode != 0:
         return None
@@ -602,7 +605,7 @@ def _git_toplevel(cwd: str | None = None) -> Path | None:
 def _head_sha(cwd: str | None = None) -> str:
     r = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     return r.stdout.strip()
 
@@ -622,7 +625,7 @@ def _parse_pr_input(pr_input: str) -> int:
 def _pr_from_current(cwd: str | None = None) -> int | None:
     r = subprocess.run(
         ["gh", "pr", "view", "--json", "number", "-q", ".number"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.NETWORK,
     )
     if r.returncode != 0:
         return None
@@ -636,7 +639,7 @@ def _pr_from_branch(repo: str, branch: str) -> int | None:
     r = subprocess.run(
         ["gh", "pr", "list", "--repo", repo, "--head", branch,
          "--json", "number", "--jq", ".[0].number"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     if r.returncode != 0:
         return None
@@ -652,7 +655,7 @@ def _pr_head(repo: str, pr_number: int) -> PRHead:
         ["gh", "pr", "view", str(pr_number), "--repo", repo,
          "--json", "headRefName,headRefOid",
          "-q", '.headRefName + " " + .headRefOid'],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     parts = r.stdout.split()
     if r.returncode != 0 or len(parts) != 2:
@@ -668,7 +671,7 @@ def is_bare_repo(cwd: str | None = None) -> bool:
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--is-bare-repository"],
-            capture_output=True, text=True, cwd=cwd,
+            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
         )
         return r.stdout.strip() == "true"
     except Exception:
@@ -704,7 +707,7 @@ def _worktree_entries(cwd: str | None = None) -> list[tuple[Path, str | None]]:
     try:
         r = subprocess.run(
             ["git", "worktree", "list", "--porcelain"],
-            capture_output=True, text=True, cwd=cwd,
+            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
         )
     except Exception:
         return []
@@ -781,7 +784,7 @@ def wt_switch(ref: str, cwd: str | None = None) -> str | None:
         r = subprocess.run(
             ["wt", "switch", ref, "--no-cd", "--no-hooks", "--format", "json", "-y"]
             + (["-C", cwd] if cwd else []),
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
         )
     except FileNotFoundError:
         log.warn("worktrunk (wt) is not installed — cannot switch worktrees")
@@ -823,7 +826,7 @@ def default_branch(cwd: str | Path | None = None) -> str:
     try:
         ref = subprocess.run(
             ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True, text=True, cwd=cwd,
+            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
         ).stdout.strip()
     except Exception:
         return "main"

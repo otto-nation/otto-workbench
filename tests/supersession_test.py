@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -44,7 +46,7 @@ def _subcommand(cmd) -> str:
 
 
 def _git_stub(*, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
-              gh_out="", gh_rc=0, calls=None):
+              gh_out="", gh_rc=0, gh_exc=None, calls=None):
     """A `subprocess.run` stand-in answering every call the preflight makes.
 
     Dispatch is on the git subcommand rather than on call order, so a test that
@@ -55,6 +57,8 @@ def _git_stub(*, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
         if calls is not None:
             calls.append(cmd)
         if cmd[0] == "gh":
+            if gh_exc is not None:
+                raise gh_exc
             return _completed(gh_rc, stdout=gh_out)
         sub = _subcommand(cmd)
         if sub == "rev-parse":
@@ -135,10 +139,20 @@ class TestDetect:
         ]
         assert "#42 refactor: drop dropped_helper" in signals[1].detail
 
-    def test_a_failed_search_still_leaves_the_local_signal(self):
-        """No network is a reason to say less, not a reason to say nothing."""
+    @pytest.mark.parametrize(
+        "gh_kwargs",
+        [
+            pytest.param({"gh_rc": 1}, id="failed"),
+            pytest.param(
+                {"gh_exc": subprocess.TimeoutExpired(["gh"], 1)}, id="stalled",
+            ),
+        ],
+    )
+    def test_a_failed_or_stalled_search_still_leaves_the_local_signal(self, gh_kwargs):
+        """No network, or a network that never answers, is a reason to say less —
+        not a reason to say nothing."""
         signals = _signals(
-            diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n", gh_rc=1,
+            diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n", **gh_kwargs,
         )
         assert [s.kind for s in signals] == [
             SupersessionKind.READDS_REMOVED_SYMBOL,

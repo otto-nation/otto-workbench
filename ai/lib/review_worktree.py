@@ -9,6 +9,7 @@ import git_client
 import log
 import pr_context
 import proc
+import timeouts
 
 
 WORKTREE_FALLBACK_DIR = ".worktrees"
@@ -105,7 +106,7 @@ def switch_to_pr_branch(pr_number: int | str, repo: str, repo_dir: str) -> Workt
         gh_result = subprocess.run(
             ["gh", "pr", "view", str(pr_number), "--repo", repo,
              "--json", "headRefName", "--jq", ".headRefName"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         pr_head = gh_result.stdout.strip()
     except Exception:

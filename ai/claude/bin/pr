@@ -218,7 +218,7 @@ def _run_delegate(entry: dict, argv: list[str],
     elif ctx.branch:
         cmd += ["--branch", ctx.branch]
     cmd += list(argv)
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -507,7 +507,7 @@ def _review_post(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int
         cmd.append("--submit")
         argv = [a for a in argv if a != "--submit"]
     cmd += argv
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
 
 
 def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -531,7 +531,7 @@ def _review_repair(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> i
 
     cmd = [str(BIN_DIR / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num]
     cmd += argv
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeouts.UNBOUNDED)
     if result.stderr:
         print(result.stderr, file=sys.stderr, end="")
     if result.stdout:
@@ -677,7 +677,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         review_args = [str(BIN_DIR / "claude-review"), "--self", "--fix"]
         review_args += ["--repo-dir", str(wt)]
         review_args += list(argv)
-        r = subprocess.run(review_args)
+        r = subprocess.run(review_args, timeout=timeouts.UNBOUNDED)
         if r.returncode == supersession.EXIT_SUPERSEDED:
             # Every remaining pass acts on the same branch, so a refusal that
             # says "this branch may not be worth working on" answers for all of
@@ -777,7 +777,7 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     cmd.append("pr:create")
     if argv:
         cmd += ["--"] + list(argv)
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
 
 
 def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail: Trail, **_kw) -> int:
@@ -1024,7 +1024,7 @@ def main():
     entry = _COMMANDS[args.command]
     if {"-h", "--help"} & set(extra) and "script" in entry:
         cmd = [str(BIN_DIR / entry["script"])] + entry.get("prefix", []) + ["--help"]
-        sys.exit(subprocess.run(cmd).returncode)
+        sys.exit(subprocess.run(cmd, timeout=timeouts.LOCAL).returncode)
 
     original_pr = getattr(args, "pr", None)
     original_branch = getattr(args, "branch", None)

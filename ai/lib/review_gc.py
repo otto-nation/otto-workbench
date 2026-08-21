@@ -23,6 +23,7 @@ import log
 import pr_state
 import pr_target
 import run_lock
+import timeouts
 import workbench_paths
 from pr_state import PRClosure, PRCloseState, ReviewStatus
 from review_common import (
@@ -264,7 +265,7 @@ def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
         r = subprocess.run(
             ["gh", "pr", "view", str(pr_number), "--repo", repo,
              "--json", pr_state.GH_STATE_JSON_FIELDS],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
     except Exception as exc:
         log.warn(f"GC: could not run gh for {repo}#{pr_number} ({exc}) — leaving it in place")

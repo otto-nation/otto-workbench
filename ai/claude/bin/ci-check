@@ -38,6 +38,7 @@ import proc
 import run_lock
 import review_common
 import log
+import timeouts
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 
@@ -69,7 +70,7 @@ def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
         ["gh", "run", "list", "--repo", repo, "--branch", branch,
          "--limit", "20", "--json",
          "databaseId,headSha,workflowName,conclusion"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     if result.returncode != 0 or not result.stdout.strip():
         return []
@@ -100,7 +101,7 @@ def _fetch_run_data(repo: str, run_id: int) -> dict | None:
     result = subprocess.run(
         ["gh", "run", "view", str(run_id), "--repo", repo,
          "--json", "databaseId,number,headSha,status,conclusion,jobs"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     if result.returncode != 0:
         return None
@@ -115,7 +116,7 @@ def _fetch_annotations(repo: str, job_id: int) -> list[dict]:
     result = subprocess.run(
         ["gh", "api", f"repos/{repo}/check-runs/{job_id}/annotations",
          "--paginate"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.TRANSFER,
     )
     if result.returncode != 0:
         return []
@@ -129,7 +130,7 @@ def _fetch_job_logs(repo: str, job_id: int) -> str:
     """Fetch logs for a single job via API. Smaller and faster than per-run."""
     result = subprocess.run(
         ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.TRANSFER,
     )
     if result.returncode != 0:
         return ""
@@ -140,7 +141,7 @@ def _fetch_failed_logs(repo: str, run_id: int) -> str:
     """Fetch logs for failed steps. Returns raw log text."""
     result = subprocess.run(
         ["gh", "run", "view", str(run_id), "--repo", repo, "--log-failed"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.TRANSFER,
     )
     if result.returncode != 0:
         return ""
@@ -297,7 +298,7 @@ def _fetch_test_artifact(repo: str, run_id: int, job_name: str) -> str:
         result = subprocess.run(
             ["gh", "run", "download", str(run_id), "--repo", repo,
              "--name", artifact_name, "--dir", tmpdir],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.TRANSFER,
         )
         if result.returncode != 0:
             return ""
@@ -468,7 +469,7 @@ def _commits_behind_main(repo: str, branch: str) -> int:
     result = subprocess.run(
         ["gh", "api", f"repos/{repo}/compare/{branch}...main",
          "--jq", ".ahead_by"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     val = result.stdout.strip()
     return int(val) if result.returncode == 0 and val.isdigit() else 0
@@ -718,7 +719,7 @@ def _rebase_if_behind(trail, report: dict, ctx) -> bool:
            "--repo-dir", str(ctx.require_worktree())]
     if ctx.branch:
         cmd += ["--branch", ctx.branch]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeouts.UNBOUNDED)
 
     if r.returncode != 0:
         trail.warn("rebase_failed", f"rebase failed (exit {r.returncode})")

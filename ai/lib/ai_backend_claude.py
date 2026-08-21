@@ -14,6 +14,7 @@ from pathlib import Path
 
 import ai_usage
 import log
+import timeouts
 import vertex_quota
 from ai_backend import AgentInvocation
 from ai_backend_events import _log_stderr_on_failure, claude_display_text, parse_claude_event
@@ -194,7 +195,8 @@ def prompt(
     usage is None when the reply carried no envelope to measure.
     """
     cmd = _build_prompt_cmd(model=model)
-    result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd)
+    result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
+                            timeout=timeouts.UNBOUNDED)
     if result.returncode != 0:
         log.dim(_failure_detail(result))
     reply, usage = _unwrap_prompt_output(result.stdout)

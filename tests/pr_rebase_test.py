@@ -599,7 +599,7 @@ def test_get_ours_content_returns_stage2():
     assert result == "base version content\n"
     mock_run.assert_called_once_with(
         ["git", "show", ":2:src/file.py"],
-        capture_output=True, text=True, cwd="/fake",
+        capture_output=True, text=True, cwd="/fake", timeout=timeouts.LOCAL,
     )
 
 
@@ -621,7 +621,7 @@ def test_get_commit_diff_returns_diff():
     assert result == diff_text.strip()
     mock_run.assert_called_once_with(
         ["git", "diff", "REBASE_HEAD^", "REBASE_HEAD", "--", "file.py"],
-        capture_output=True, text=True, cwd="/fake",
+        capture_output=True, text=True, cwd="/fake", timeout=timeouts.LOCAL,
     )
 
 

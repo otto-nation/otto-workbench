@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Validate that every subprocess bound under ai/ comes from the timeouts table.
+
+Usage: bin/local/validate-timeouts [--quiet] [file...]
+
+`ai/lib/timeouts.py` owns how long a subprocess is allowed to take.  A literal
+written at the call site is a decision nobody can audit: 5 here and 30 there
+says nothing about which operations are alike, and the two drift apart the
+first time one of them is found to be too tight.  The tiers name the reason
+instead — flat-cost local read, one network round trip, a transfer whose length
+is the data's — so a bound is chosen once and every site that shares a reason
+shares a number.
+
+Two shapes are rejected on any argument named `timeout`, whether it is passed
+at a call or defaulted in a signature:
+
+  timeout=30     a number nobody can trace to a reason  -> timeouts.NETWORK
+  timeout=None   silence, not a decision                -> timeouts.UNBOUNDED
+
+Anything else passes.  A name (`timeout=timeout`, `timeout=opts.timeout`) is a
+bound being forwarded, and the site it came from is checked on its own.
+
+Known limit: only the argument spelled `timeout` is checked, so a wrapper that
+renames it — `def fetch(*, budget)` handing `budget` to `subprocess.run` — hides
+its literal from this check.  The convention is to keep the name; a wrapper that
+does is fully covered.
+
+Exit code: 0 if all files pass, 1 if any have violations.
+"""
+
+import argparse
+import ast
+import os
+import sys
+from dataclasses import dataclass
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
+KEYWORD = 'timeout'
+TABLE = 'timeouts'
+UNBOUNDED = f'{TABLE}.UNBOUNDED'
+
+SEARCH_DIRS = ('ai',)
+SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
+
+# The MCP server runs under `uv run --with mcp python3` with ai/lib nowhere on
+# sys.path, so it cannot import the table however much it would like to.  It is
+# the one file here that owns its own numbers.
+EXEMPT = {os.path.join('ai', 'claude', 'mcps', 'server.py')}
+
+SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+@dataclass(frozen=True)
+class Violation:
+    line: int
+    literal: str
+    suggestion: str
+
+
+# ── AST analysis ─────────────────────────────────────────────────────────────
+
+
+def _literal(node) -> str | None:
+    """The offending constant in *node*, or None if the value is acceptable.
+
+    Walks the whole subtree so an expression built around a number —
+    `timeouts.LOCAL * 3`, `30 if slow else 10` — is caught too: the point is
+    that the number is written here rather than in the table.
+    """
+    numbers = [n for n in ast.walk(node)
+               if isinstance(n, ast.Constant) and isinstance(n.value, (int, float))
+               and not isinstance(n.value, bool)]
+    if numbers:
+        return repr(numbers[0].value)
+    if isinstance(node, ast.Constant) and node.value is None:
+        return 'None'
+    return None
+
+
+def _suggestion(literal: str) -> str:
+    return UNBOUNDED if literal == 'None' else f'a tier from `{TABLE}`'
+
+
+def _call_kwargs(tree):
+    """Every `timeout=` argument passed at a call site."""
+    return [kw.value for node in ast.walk(tree) if isinstance(node, ast.Call)
+            for kw in node.keywords if kw.arg == KEYWORD]
+
+
+def _param_defaults(tree):
+    """Every default on a parameter named `timeout`.
+
+    A default is a bound too, and the one most likely to go unread — every
+    caller that omits the argument inherits it.
+    """
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, SCOPE_NODES):
+            continue
+        a = node.args
+        # Defaults bind to the tail of their parameter list; keyword-only
+        # defaults are positional against kwonlyargs and may be None for a
+        # required one.
+        positional = a.posonlyargs + a.args
+        pairs = list(zip(positional[len(positional) - len(a.defaults):], a.defaults))
+        pairs += [(arg, d) for arg, d in zip(a.kwonlyargs, a.kw_defaults) if d is not None]
+        found += [d for arg, d in pairs if arg.arg == KEYWORD]
+    return found
+
+
+def check_file(filepath: str) -> list[Violation]:
+    with open(filepath) as f:
+        source = f.read()
+    if KEYWORD not in source:
+        return []
+    try:
+        tree = ast.parse(source, filename=filepath)
+    except SyntaxError as exc:
+        # Silence here would read as "clean" for a file this check never saw.
+        print(f'{RED}!{NC} {filepath}: unparseable, not checked ({exc})',
+              file=sys.stderr)
+        return []
+    values = _call_kwargs(tree) + _param_defaults(tree)
+    found = [Violation(line=v.lineno, literal=lit, suggestion=_suggestion(lit))
+             for v in values for lit in [_literal(v)] if lit is not None]
+    return sorted(found, key=lambda v: v.line)
+
+
+# ── Discovery ────────────────────────────────────────────────────────────────
+
+
+def _is_python(path: str) -> bool:
+    if path.endswith('.py'):
+        return True
+    if os.path.splitext(path)[1] or not os.access(path, os.X_OK):
+        return False
+    try:
+        with open(path, 'rb') as f:
+            first = f.readline()
+    except OSError:
+        return False
+    return first.startswith(b'#!') and b'python' in first
+
+
+def discover_scripts(repo_root: str) -> list[str]:
+    found = []
+    roots = [os.path.join(repo_root, d) for d in SEARCH_DIRS]
+    walked = [(dp, dn, fn) for root in roots for dp, dn, fn in os.walk(root)]
+    for dirpath, dirnames, filenames in walked:
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        paths = [os.path.join(dirpath, f) for f in filenames]
+        found += [p for p in paths if _is_python(p)]
+    exempt = {os.path.join(repo_root, rel) for rel in EXEMPT}
+    return sorted(p for p in found if p not in exempt)
+
+
+# ── Reporting ────────────────────────────────────────────────────────────────
+
+
+def _report_violations(relpath: str, violations: list[Violation]) -> None:
+    print(f'{RED}✗{NC} {relpath}: {KEYWORD} not taken from `{TABLE}`', file=sys.stderr)
+    for v in violations:
+        print(f'    line {v.line}: {KEYWORD}={v.literal} '
+              f'{DIM}— use {v.suggestion}{NC}', file=sys.stderr)
+    print(f'    {DIM}the tiers and what belongs in each are in '
+          f'ai/lib/{TABLE}.py{NC}', file=sys.stderr)
+
+
+def _print_summary(files_checked: int, errors: int) -> None:
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, '
+              f'every {KEYWORD} comes from `{TABLE}`')
+    else:
+        print(f'{RED}✗{NC} {errors} of {files_checked} files write a {KEYWORD} '
+              f'literal instead of taking a tier', file=sys.stderr)
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate that every subprocess bound comes from the timeouts table.')
+    parser.add_argument('--quiet', action='store_true',
+                        help='Only show failures and summary')
+    parser.add_argument('files', nargs='*',
+                        help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = _WORKBENCH_DIR
+    files = args.files if args.files else discover_scripts(repo_root)
+
+    errors = 0
+    for filepath in files:
+        violations = check_file(filepath)
+        relpath = os.path.relpath(filepath, repo_root)
+        errors += 1 if violations else 0
+        if violations:
+            _report_violations(relpath, violations)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    _print_summary(len(files), errors)
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

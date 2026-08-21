@@ -32,8 +32,10 @@ _spec.loader.exec_module(pr_cli)
 # Register so @patch("pr_cli.subprocess.run") can resolve the module
 sys.modules.setdefault("pr_cli", pr_cli)
 
+import proc  # noqa: E402
 import pr_state  # noqa: E402
 import run_lock  # noqa: E402
+import timeouts  # noqa: E402
 import tool_parser  # noqa: E402
 import workbench_paths  # noqa: E402
 
@@ -1168,21 +1170,27 @@ def test_delegate_value_flags_degrades_when_the_delegate_is_missing():
     assert pr_cli._delegate_value_flags({"script": "no-such-delegate"}) == frozenset()
 
 
-@patch("pr_cli.subprocess.run", side_effect=subprocess.TimeoutExpired("x", 1))
-def test_delegate_value_flags_degrades_on_a_hung_delegate(_mock_run):
+@patch("pr_cli.proc.run")
+def test_delegate_value_flags_degrades_on_a_hung_delegate(mock_run, capsys):
+    """A timeout arrives as rc=124, and the hang is still named."""
+    mock_run.return_value = proc.CmdResult(
+        returncode=proc.TIMEOUT_RETURNCODE, stdout="",
+        stderr="timed out after 5s: ci-check --value-flags",
+    )
     assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
+    assert "timed out after 5s" in capsys.readouterr().err
 
 
-@patch("pr_cli.subprocess.run")
+@patch("pr_cli.proc.run")
 def test_delegate_value_flags_degrades_on_a_nonzero_exit(mock_run):
-    mock_run.return_value = MagicMock(returncode=2, stdout="--reply\n", stderr="")
+    mock_run.return_value = proc.CmdResult(returncode=2, stdout="--reply\n", stderr="")
     assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
 
 
-@patch("pr_cli.subprocess.run")
+@patch("pr_cli.proc.run")
 def test_delegate_value_flags_reprints_a_refusal(mock_run, capsys):
     """Degrading is silent misclassification, so the delegate's reason is surfaced."""
-    mock_run.return_value = MagicMock(
+    mock_run.return_value = proc.CmdResult(
         returncode=2, stdout="",
         stderr="ci-check: --value-flags: --track declares nargs='+'\n",
     )
@@ -1192,9 +1200,9 @@ def test_delegate_value_flags_reprints_a_refusal(mock_run, capsys):
     assert "--track declares nargs='+'" in err
 
 
-@patch("pr_cli.subprocess.run")
+@patch("pr_cli.proc.run")
 def test_delegate_value_flags_stays_quiet_when_the_probe_says_nothing(mock_run, capsys):
-    mock_run.return_value = MagicMock(returncode=2, stdout="", stderr="  \n")
+    mock_run.return_value = proc.CmdResult(returncode=2, stdout="", stderr="  \n")
     assert pr_cli._delegate_value_flags({"script": "ci-check"}) == frozenset()
     assert capsys.readouterr().err == ""
 
@@ -1213,7 +1221,7 @@ def test_every_delegate_answers_the_probe(command):
     script = str(BIN_DIR / pr_cli._COMMANDS[command]["script"])
     probe = _REAL_SUBPROCESS_RUN(
         [script, pr_cli.VALUE_FLAGS_FLAG],
-        capture_output=True, text=True, timeout=pr_cli.VALUE_FLAGS_TIMEOUT,
+        capture_output=True, text=True, timeout=timeouts.QUICK,
     )
     assert probe.returncode == 0, probe.stderr
     assert probe.stdout.split(), f"{script} answered the probe with nothing"

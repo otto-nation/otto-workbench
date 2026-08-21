@@ -36,6 +36,12 @@ _SERVER_ERROR_RE = re.compile(r"\bHTTP 5\d\d\b")
 # quoted whole because a command that writes an essay there is the exception.
 DETAIL_LIMIT = 200
 
+# What `run` reports when a command outlived its timeout. 124 is the shell
+# convention for a timeout kill, and it is contract rather than an
+# implementation detail: the eval scorers distinguish a timed-out case from a
+# failed one by this code.
+TIMEOUT_RETURNCODE = 124
+
 
 @dataclass(frozen=True)
 class CmdResult:
@@ -110,21 +116,50 @@ def failure_message(action: str, r: CmdResult | subprocess.CompletedProcess) -> 
     return f"{action}: {r.detail}"
 
 
+def _text(value: str | bytes | None) -> str:
+    """Whatever a killed process left on a stream, as text."""
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else value.decode(errors="replace")
+
+
 def run(
     cmd: list[str],
     *,
+    timeout: float | None,
     cwd: str | Path | None = None,
-    timeout: float | None = None,
     input_text: str | None = None,
 ) -> CmdResult:
     """Run *cmd*, capturing both streams, and return what it said.
 
     Never raises on a non-zero exit — the exit code is one of the three things
-    the caller gets back, not an exception. `subprocess.TimeoutExpired` still
-    propagates: a command that never returned said nothing, and a caller that
-    set a timeout is the one that has to decide what that means.
+    the caller gets back, not an exception. An expired timeout is the same
+    answer for the same reason: the command produced no usable output, which is
+    what a non-zero exit already means to every caller here. It comes back as
+    `TIMEOUT_RETURNCODE` with the bound and the command quoted on stderr, so
+    `git_client.out`/`ok`/`lines` degrade to their defaults exactly as they do
+    for any other failure and no call site needs a handler it does not have.
+
+    Whatever the process managed to write before it was killed is preserved —
+    a command that timed out mid-answer often explains itself in the part that
+    arrived.
+
+    `timeout` is a tier from `timeouts`, not a number, and it has no default:
+    an omitted bound is indistinguishable from nobody having thought about one,
+    so opting out is spelled `timeouts.UNBOUNDED` and shows up in review. See
+    that module for why the number itself does not belong to the caller.
     """
-    r = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout, input=input_text,
-    )
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+            input=input_text,
+        )
+    except subprocess.TimeoutExpired as exc:
+        detail = f"timed out after {timeout:g}s: {' '.join(cmd)}"
+        partial = _text(exc.stderr)
+        return CmdResult(
+            returncode=TIMEOUT_RETURNCODE,
+            stdout=_text(exc.stdout),
+            stderr=f"{detail}\n{partial}" if partial else detail,
+        )
     return CmdResult(returncode=r.returncode, stdout=r.stdout or "", stderr=r.stderr or "")

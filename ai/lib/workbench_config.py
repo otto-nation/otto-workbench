@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import get_type_hints
 
 import serde
+import timeouts
 import workbench_paths
 from review_common import Effort, Phase, Thinking
 
@@ -81,8 +82,6 @@ ISSUE_PROVIDER_KEY = "issue_tracker.provider"
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
 # cross-validates the pair.
 GITHUB_SSH_443_KEY = "github.ssh_over_443"
-
-_YQ_TIMEOUT = 10
 
 
 class ConfigError(ValueError):
@@ -364,7 +363,7 @@ def _parse_yaml(path: Path):
         raise ValueError("neither PyYAML nor yq is available to read YAML")
     result = subprocess.run(
         ["yq", "-o=json", ".", str(path)],
-        capture_output=True, text=True, timeout=_YQ_TIMEOUT,
+        capture_output=True, text=True, timeout=timeouts.LOCAL,
     )
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or "yq failed")
@@ -380,7 +379,7 @@ def yaml_dump(data: dict) -> str:
     try:
         result = subprocess.run(
             ["yq", "-P", "."], input=json.dumps(data),
-            capture_output=True, text=True, timeout=_YQ_TIMEOUT,
+            capture_output=True, text=True, timeout=timeouts.LOCAL,
         )
     except subprocess.SubprocessError as exc:
         raise ConfigError(f"could not render YAML: {exc}") from exc
@@ -469,7 +468,7 @@ def set_value(key: str, value: str, path: Path | None = None) -> None:
         try:
             subprocess.run(
                 ["yq", "-i", f".{key} = strenv(WB_CONFIG_VALUE)", str(path)],
-                check=True, timeout=_YQ_TIMEOUT, env=env,
+                check=True, timeout=timeouts.LOCAL, env=env,
             )
         except subprocess.SubprocessError as exc:
             raise ConfigError(f"could not write {key} to {path}: {exc}") from exc

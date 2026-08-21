@@ -28,6 +28,7 @@ _spec.loader.exec_module(pr_rebase_cli)
 
 import pr_context  # noqa: E402
 import pr_state  # noqa: E402
+import timeouts  # noqa: E402
 
 from conftest import assert_no_worktree_exit, init_worktree, make_ctx  # noqa: E402
 
@@ -2516,16 +2517,20 @@ def test_merged_pr_omits_repo_when_the_context_has_none():
 
 
 def test_merged_pr_bounds_the_gh_call():
-    """One of two gh probes on the rebase path — a stall must not hang it."""
+    """One of two gh probes on the rebase path — a stall must not hang it.
+
+    One round trip, so the bound is the network tier rather than a number this
+    file picked for itself.
+    """
     with _gh_response('{"state": "OPEN"}') as mock_try:
         pr_rebase_cli._merged_pr("/fake", _landed_ctx())
 
-    assert mock_try.call_args.kwargs["timeout"] == pr_rebase_cli._GH_TIMEOUT
+    assert mock_try.call_args.kwargs["timeout"] == timeouts.NETWORK
 
 
 def test_merged_pr_degrades_when_gh_times_out():
     """A timeout is "the tracker has nothing to say", not a crash."""
-    expired = subprocess.TimeoutExpired(cmd=["gh"], timeout=pr_rebase_cli._GH_TIMEOUT)
+    expired = subprocess.TimeoutExpired(cmd=["gh"], timeout=timeouts.NETWORK)
 
     with mock.patch("subprocess.run", side_effect=expired):
         assert pr_rebase_cli._merged_pr("/fake", _landed_ctx()) is None

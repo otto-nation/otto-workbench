@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -24,7 +23,9 @@ from enum import StrEnum
 from pathlib import Path
 
 import log
+import proc
 import serde
+import timeouts
 import workbench_paths
 from review_common import Phase
 
@@ -120,13 +121,13 @@ def _get_access_token() -> str | None:
         except (_GoogleAuthError, OSError) as exc:
             log.dim(f"google-auth unavailable ({exc}) — falling back to gcloud")
     try:
-        result = subprocess.run(
+        result = proc.run(
             ["gcloud", "auth", "application-default", "print-access-token"],
-            capture_output=True, text=True, timeout=10,
+            timeout=timeouts.NETWORK,
         )
-        if result.returncode == 0 and result.stdout.strip():
+        if result.ok and result.stdout.strip():
             return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError:
         pass
     return None
 
@@ -186,7 +187,7 @@ def _fetch_provisioned_models(
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {token}",
     })
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with urllib.request.urlopen(req, timeout=timeouts.NETWORK) as resp:
         data = json.loads(resp.read())
 
     buckets = [

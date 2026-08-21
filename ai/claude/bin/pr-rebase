@@ -48,6 +48,7 @@ import ai_backend
 import log
 import pr_context
 import pr_state
+import timeouts
 from pr_state import RebaseStatus, RebaseSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
@@ -427,7 +428,7 @@ def _detect_mise(target_dir: str, repo_root: str) -> bool:
 
 
 def _try_run(
-    cmd: list[str], *, cwd: str, timeout: float | None = None,
+    cmd: list[str], *, cwd: str, timeout: float | None = timeouts.UNBOUNDED,
 ) -> subprocess.CompletedProcess | None:
     """Run a command, returning None if it could not be launched or finished.
 
@@ -435,6 +436,11 @@ def _try_run(
     not executable, or cwd is unusable. All of these mean the command never
     ran, so the caller should fall back or report the file as stale. An expired
     ``timeout`` is the same answer for the same reason: no usable output.
+
+    Unbounded by default because the caller that omits a bound is running a
+    project's own regeneration command — an arbitrary build step whose runtime
+    belongs to the project, not to us. Callers with a bound take a tier from
+    ``timeouts``; see that module for why the number is not theirs to pick.
     """
     try:
         return subprocess.run(
@@ -444,7 +450,7 @@ def _try_run(
         log.dim(f"Could not launch {' '.join(cmd)}: {exc}")
         return None
     except subprocess.TimeoutExpired:
-        log.dim(f"Timed out after {timeout}s: {' '.join(cmd)}")
+        log.dim(f"Timed out after {timeout:g}s: {' '.join(cmd)}")
         return None
 
 
@@ -1795,12 +1801,6 @@ class RebaseOutcome:
 _REFUSAL_EXIT = 4
 _REFUSAL_OVERRIDE_FLAG = "--force"
 
-# The gh probes — this one and the PR's base branch — are the only network
-# calls on the rebase path. Bounded so a hung or throttled gh cannot stall every
-# rebase: an expired timeout degrades to "the tracker has nothing to say", which
-# the git signals and the default-branch fallback already handle.
-_GH_TIMEOUT = 10
-
 
 @dataclass(frozen=True)
 class RefusalReport:
@@ -1852,7 +1852,7 @@ def _merged_pr(cwd: str, ctx: pr_context.ResolvedContext) -> MergedPR | None:
     if ctx.repo:
         cmd += ["--repo", ctx.repo]
 
-    r = _try_run(cmd, cwd=cwd, timeout=_GH_TIMEOUT)
+    r = _try_run(cmd, cwd=cwd, timeout=timeouts.NETWORK)
     if r is None or r.returncode != 0:
         return None
     try:
@@ -2074,7 +2074,7 @@ def _pr_base_branch(cwd: str, ctx: pr_context.ResolvedContext) -> str | None:
     if ctx.repo:
         cmd += ["--repo", ctx.repo]
 
-    r = _try_run(cmd, cwd=cwd, timeout=_GH_TIMEOUT)
+    r = _try_run(cmd, cwd=cwd, timeout=timeouts.NETWORK)
     if r is None or r.returncode != 0:
         return None
     try:

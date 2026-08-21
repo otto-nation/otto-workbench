@@ -30,6 +30,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import proc
+import timeouts
 from proc import CmdResult
 
 # Subcommands whose output is a list of paths. git escapes a non-ASCII name in
@@ -39,6 +40,38 @@ from proc import CmdResult
 # the sites that needed it; applying it to the subcommand rather than to the
 # caller is what stops the next one from forgetting.
 _PATH_LISTING = frozenset({"diff", "ls-files", "status"})
+
+# Subcommands whose cost is the input's rather than the operation's, where any
+# fixed bound would report a large repository as a broken one.
+#
+# `worktree add` materializes every file in the tree — measured at roughly 6,300
+# files a second, so a hundred-thousand-file repo needs longer than any tier
+# here would give it, and it sits on the default review path rather than a
+# fallback. `commit` and `push` run hooks belonging to whatever repository is
+# being operated on, which is routinely a secret scan, a linter, or a full test
+# suite; this repo's own pre-push runs three gates. Killing a push part-way is
+# also the worst available outcome, since it leaves the remote's state in doubt.
+_UNBOUNDED = frozenset({"worktree", "commit", "push"})
+
+# Data-proportional like the above, but over a socket that can genuinely stall,
+# so a generous bound still catches a failure that waiting will not fix.
+_TRANSFER = frozenset({"fetch"})
+
+
+def _timeout_for(args: tuple[str, ...]) -> float | None:
+    """The bound for this subcommand — see `timeouts` for the tiers.
+
+    ceiling: keyed on the subcommand alone, so `remote get-url` (local) and a
+    `remote update` (network) would share a tier. Only `get-url` is called
+    today. Upgrade trigger: when a network-side `remote` or `submodule`
+    subcommand is added, key this on the first two argv words instead.
+    """
+    subcommand = args[0] if args else ""
+    if subcommand in _UNBOUNDED:
+        return timeouts.UNBOUNDED
+    if subcommand in _TRANSFER:
+        return timeouts.TRANSFER
+    return timeouts.LOCAL
 
 
 def _argv(args: tuple[str, ...], config: dict[str, str] | None) -> list[str]:
@@ -55,16 +88,21 @@ def _argv(args: tuple[str, ...], config: dict[str, str] | None) -> list[str]:
 def run(
     *args: str,
     cwd: str | Path | None = None,
-    timeout: float | None = None,
     config: dict[str, str] | None = None,
 ) -> CmdResult:
     """Run git with *args* in *cwd*, capturing both streams.
 
     Never raises on a non-zero exit — for git that is routine, since
     `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a
-    question with their exit code.
+    question with their exit code. A timeout arrives the same way, as a
+    `CmdResult` carrying `proc.TIMEOUT_RETURNCODE`.
+
+    There is no `timeout` parameter. The bound follows from the subcommand, the
+    same way `core.quotePath` does, so that the knowledge lives with the client
+    that owns it rather than at each of the forty-five call sites — one of
+    which used to pass a number of its own.
     """
-    return proc.run(_argv(args, config), cwd=cwd, timeout=timeout)
+    return proc.run(_argv(args, config), cwd=cwd, timeout=_timeout_for(args))
 
 
 def out(

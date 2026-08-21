@@ -17,6 +17,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import git_client  # noqa: E402
+import proc  # noqa: E402
+import timeouts  # noqa: E402
 
 from conftest import init_worktree  # noqa: E402
 
@@ -60,6 +62,43 @@ def test_argv_lets_a_caller_override_the_quote_path_default():
     assert git_client._argv(("diff",), {"core.quotePath": "true"}) == [
         "git", "-c", "core.quotePath=true", "diff",
     ]
+
+
+# ── Timeout policy ──────────────────────────────────────────────────────────
+
+
+def test_a_metadata_read_takes_the_local_tier():
+    assert git_client._timeout_for(("rev-parse", "HEAD")) == timeouts.LOCAL
+
+
+def test_a_fetch_takes_the_transfer_tier():
+    """--unshallow moves the whole history, so latency is not the bound."""
+    assert git_client._timeout_for(("fetch", "--unshallow")) == timeouts.TRANSFER
+
+
+@pytest.mark.parametrize("subcommand", ["worktree", "commit", "push"])
+def test_input_and_hook_bound_subcommands_run_unbounded(subcommand):
+    """A fixed bound here reports a large repo, or a slow hook, as a breakage."""
+    assert git_client._timeout_for((subcommand, "-m", "x")) is timeouts.UNBOUNDED
+
+
+def test_an_empty_argv_still_resolves_a_tier():
+    assert git_client._timeout_for(()) == timeouts.LOCAL
+
+
+def test_run_takes_no_timeout_from_its_caller():
+    """The bound is the client's to decide, so there is nothing to override."""
+    with pytest.raises(TypeError):
+        git_client.run("rev-parse", "HEAD", timeout=1)
+
+
+def test_an_expired_bound_arrives_as_a_failed_result(repo, monkeypatch):
+    """Every read degrades to its default, so no call site needs a handler."""
+    monkeypatch.setattr(git_client, "_timeout_for", lambda args: 0.001)
+    r = git_client.run("log", "-1", cwd=repo)
+    assert r.returncode == proc.TIMEOUT_RETURNCODE
+    assert "timed out after" in r.stderr
+    assert git_client.out("log", "-1", cwd=repo, default="unknown") == "unknown"
 
 
 # ── Runner ──────────────────────────────────────────────────────────────────

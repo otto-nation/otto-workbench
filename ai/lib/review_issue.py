@@ -7,7 +7,6 @@ import dataclasses
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -15,8 +14,10 @@ from enum import StrEnum
 from pathlib import Path
 
 import log
+import proc
 import prompt
 import publishing
+import timeouts
 import workbench_config
 from workbench_config import yaml_dump
 
@@ -318,14 +319,16 @@ def extract_issue_id(provider: str, branch: str, pr_body: str = "") -> str | Non
 
 
 def _run_issue_cli(cmd: list[str]) -> str:
-    """Run a CLI command and return stripped stdout, or empty string on failure."""
+    """Run a CLI command and return stripped stdout, or empty string on failure.
+
+    A timeout arrives as a failed result rather than an exception, so only the
+    missing-binary case still needs catching — the tracker CLI is optional.
+    """
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        r = proc.run(cmd, timeout=timeouts.NETWORK)
+    except FileNotFoundError:
         return ""
-    if r.returncode != 0:
-        return ""
-    return r.stdout.strip()
+    return r.stdout.strip() if r.ok else ""
 
 
 def _fetch_linear(issue_id: str) -> IssueContext:
@@ -448,12 +451,8 @@ def get_issue_url(provider: str, issue_id: str) -> str:
 def _run_issue_cmd(cmd_prefix: list[str], description: str) -> bool:
     with _description_file(description) as desc_file:
         try:
-            result = subprocess.run(
-                cmd_prefix + [desc_file],
-                capture_output=True, text=True, timeout=30,
-            )
-            return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return proc.run(cmd_prefix + [desc_file], timeout=timeouts.NETWORK).ok
+        except FileNotFoundError:
             return False
 
 

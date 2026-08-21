@@ -25,17 +25,27 @@ one line per prior finding, `- **[M1]** \`path\` — Fixed`, `— Still open`, o
 verdicts are `PriorDisposition`, and `_build_prior_section()`'s instruction
 interpolates the enum's values, so the words asked for and the words parsed
 cannot drift apart.
-`unaccounted_prior_findings()` matches a prior finding against a `FindingRef`
-(ID plus path) named by the ledger, or against the stable ID the new review's
-own finding lines hash to (so a verbatim carry-forward matches with or without
-its `<!-- sid: -->` marker); anything it cannot match is warned about. The
-ledger is unioned across groups by `merge_reviews()` — where the strongest
+The ledger is unioned across groups by `merge_reviews()` — where the strongest
 verdict wins, in `PriorDisposition.precedence` order (`Declined` beats
 `Still open` beats `Fixed`) — copied through by the synthesis templates, and
 stripped in `post_process_findings()` before renumbering, since its IDs number
 the prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`,
 `PriorDisposition`, the merge, the synthesis templates, or
 `_build_prior_section()`'s instruction means checking the others.
+
+`review_prior.reconcile()` gives every prior finding a disposition, and
+`record_prior_findings()` runs it from `_post_process_review()` — before the
+strip, which is the last moment the review still says what it made of them.
+Sources, in the order they are asked: a ledger entry matching the prior
+finding's `FindingRef` (ID plus path); the stable ID the new review's own
+finding lines hash to, so a verbatim carry-forward counts with or without its
+`<!-- sid: -->` marker; then the tree, which settles a finding whose file is
+gone, or whose quoted code was in that file at the prior review's `head_sha`
+and is not in it now. `DispositionSource` records which of those answered, so
+an inference is never read back as something the review stated, and the tree is
+asked last because it cannot produce `Declined`. What none of them settles is
+undecided: it is warned about with a basis saying why, and the whole
+reconciliation — settled and not — is written to `prior-findings.json`.
 
 Because the ledger is stripped, `Declined` also has to survive on the finding
 line itself: a declined finding is carried forward annotated
@@ -67,6 +77,7 @@ Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}
 | `meta.json` | yes | PR metadata sidecar |
 | `session.jsonl` | yes | Agent cost/usage/errors |
 | `prompt-stats.json` | yes | Prompt composition diagnostics |
+| `prior-findings.json` | yes | What became of each prior finding, and what settled it |
 | `prompt-*.md` | no (kept on failure) | Full prompts sent to agents |
 | `pipeline.json` | no | Resume state for multi-phase |
 

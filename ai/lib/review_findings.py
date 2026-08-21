@@ -253,10 +253,16 @@ class LedgerEntry:
 
 @dataclass(frozen=True)
 class PriorFinding:
-    """A finding line from the prior review, as reconciliation sees it."""
+    """A finding line from the prior review, as reconciliation sees it.
+
+    `text` runs from the finding line to whatever ends it, so a finding that
+    quotes the code it objects to below its first line keeps the quotation —
+    which is what lets reconciliation ask whether that code is still there.
+    """
 
     ref: FindingRef
     stable_id: str
+    text: str = ""
 
 
 def _parse_ledger_line(raw: str) -> LedgerEntry | None:
@@ -1086,46 +1092,33 @@ def _parse_ledger(review_text: str) -> list[LedgerEntry]:
     return [entry for entry in entries if entry]
 
 
+def _prior_finding(block: list[str]) -> PriorFinding:
+    """One prior finding, read from its own line down to whatever ends it."""
+    text: list[str] = []
+    for raw in block:
+        stripped = raw.strip()
+        if text and (_is_next_finding_or_section(stripped) or _is_section_boundary(stripped)):
+            break
+        text.append(stripped)
+    line = text[0]
+    m = _ANNOTATE_FINDING_RE.match(line)
+    label_m = BOLD_FINDING_ID_RE.search(line)
+    return PriorFinding(
+        ref=FindingRef(
+            label_m.group(1) if label_m else "",
+            _extract_finding_path(line, line[m.end():]),
+        ),
+        stable_id=_finding_stable_id(line, m),
+        text="\n".join(text).strip(),
+    )
+
+
 def _parse_prior_findings(prior_text: str) -> list[PriorFinding]:
-    """Every finding the prior review reported."""
-    findings: list[PriorFinding] = []
-    for raw in prior_text.split("\n"):
-        line = raw.strip()
-        m = _ANNOTATE_FINDING_RE.match(line)
-        if not m:
-            continue
-        label_m = BOLD_FINDING_ID_RE.search(line)
-        findings.append(PriorFinding(
-            ref=FindingRef(
-                label_m.group(1) if label_m else "",
-                _extract_finding_path(line, line[m.end():]),
-            ),
-            stable_id=_finding_stable_id(line, m),
-        ))
-    return findings
-
-
-def unaccounted_prior_findings(prior_text: str, review_text: str) -> list[str]:
-    """Prior findings the new review neither restates nor dispositions.
-
-    A prior finding is accounted for when the new review carries it forward —
-    same path and wording, marker or not — or when the ledger has an entry for
-    it, whatever that entry says became of it. Matching stops there on purpose:
-    an agent restates an ID and a path verbatim but rewords a description, and
-    never reproduces an internal marker it was not handed. A still-open entry
-    counts too — the same rewording that hides a carry-forward from the stable
-    IDs is what the ledger is there to vouch for.
-    """
-    carried = _stable_ids(review_text)
-    ledger = _parse_ledger(review_text)
-    missing: list[str] = []
-    for finding in _parse_prior_findings(prior_text):
-        if finding.stable_id in carried:
-            continue
-        if any(entry.covers(finding.ref) for entry in ledger):
-            continue
-        missing.append(finding.ref.label or finding.stable_id)
-    return missing
+    """Every finding the prior review reported, each with the text reporting it."""
+    lines = prior_text.split("\n")
+    starts = [i for i, raw in enumerate(lines) if _ANNOTATE_FINDING_RE.match(raw.strip())]
+    ends = [*starts[1:], len(lines)]
+    return [_prior_finding(lines[start:end]) for start, end in zip(starts, ends)]
 
 
 def strip_sections(text: str, headers: Iterable[str]) -> str:
@@ -1268,24 +1261,13 @@ def reconcile_dropped_findings(text: str, verification: dict) -> str:
     return _insert_drop_note(text, _drop_note(verification.get("details") or [], dropped))
 
 
-def post_process_findings(
-    review_file: str,
-    wt_path: str = "",
-    prior_review: str = "",
-) -> dict | None:
+def post_process_findings(review_file: str, wt_path: str = "") -> dict | None:
     path = Path(review_file)
     # Guard covers all sub-steps (verify, strip, renumber, write) — callers
     # receive None rather than a partial result when the file is missing.
     if not path.exists():
         return None
     text = path.read_text()
-    if prior_review:
-        unaccounted = unaccounted_prior_findings(prior_review, text)
-        if unaccounted:
-            log.warn(
-                f"{len(unaccounted)} prior findings not accounted for in "
-                f"'{SECTION_PRIOR_FINDINGS}': {', '.join(unaccounted)}"
-            )
     verification: dict | None = None
     if wt_path:
         text, verification = verify_findings(text, wt_path)

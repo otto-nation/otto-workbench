@@ -80,8 +80,12 @@ readonly _PROJECT_SCOPED_MARKER='^# project-scoped:'
 # heard of this keeps working: an unconverted one returns 0 and is reported as
 # having done work, which is what it did before. Non-zero but recorded — the
 # repo has been visited and the answer will not change, so retrying it every
-# sync forever is the one thing this must not do. 3 for the reason
-# `project_register` uses it: nothing was wrong, nothing changed.
+# sync forever is the one thing this must not do.
+#
+# 3 is a mnemonic borrowed from `project_register`'s already-registered case,
+# not a status shared with it: the two are independent constants that happen to
+# agree on a number for the same reason, that nothing was wrong and nothing
+# changed. Neither reads the other's.
 readonly MIGRATION_NOOP=3
 
 # What separates a state key from the repo it was applied to.
@@ -189,24 +193,24 @@ _migration_targets() {
 
 # _run_migration_targets FN BASENAME BASE_KEY STATE_FILE TARGETS...
 # Run FN once per target, recording each one it did not fail on, and leave the
-# tallies in _MIGRATION_CHANGED and _MIGRATION_UNCHANGED.
+# number of targets it changed in _MIGRATION_CHANGED.
 #
 # A target is a repo path, or the empty string for a machine-scoped migration —
 # which is handed no argument at all and recorded under a key naming no repo.
 # A target that fails is simply not recorded, so the next sync retries that one
 # rather than the whole migration.
 #
-# The two tallies are what lets the caller report work rather than attendance.
-# A target answering MIGRATION_NOOP is recorded exactly like one that did work
-# — it has been visited, and visiting it again would find the same nothing —
-# but it is counted apart, so a run that changed nothing can say nothing.
+# The tally counts work rather than attendance, which is what lets the caller
+# report one and not the other. A target answering MIGRATION_NOOP is recorded
+# exactly like one that did work — it has been visited, and visiting it again
+# would find the same nothing — but it is not counted, so a run that changed
+# nothing can say nothing.
 _run_migration_targets() {
   local fn_name="$1" basename_m="$2" base_key="$3" state_file="$4"
   shift 4
 
   local target status
   _MIGRATION_CHANGED=0
-  _MIGRATION_UNCHANGED=0
   for target in "$@"; do
     status=0
     # `|| status=$?` rather than `if ! ...`: MIGRATION_NOOP is a non-zero
@@ -222,11 +226,9 @@ _run_migration_targets() {
       continue
     fi
     printf '%s\n' "$base_key${target:+$_MIGRATION_KEY_SEP$target}" >> "$state_file"
-    if (( status == MIGRATION_NOOP )); then
-      _MIGRATION_UNCHANGED=$(( _MIGRATION_UNCHANGED + 1 ))
-      continue
+    if (( status != MIGRATION_NOOP )); then
+      _MIGRATION_CHANGED=$(( _MIGRATION_CHANGED + 1 ))
     fi
-    _MIGRATION_CHANGED=$(( _MIGRATION_CHANGED + 1 ))
   done
 }
 
@@ -288,17 +290,10 @@ run_component_migrations() {
 
     _run_migration_targets "$fn_name" "$basename_m" "$base_key" "$state_file" "${targets[@]}"
 
-    # Nothing changed, and at least one target said so itself. Those targets are
-    # recorded, so this is the last sync that visits them — and announcing the
-    # visit would report work that did not happen, which on a machine that
-    # registers a worktree whenever one is opened is most of what a sync prints.
-    if (( _MIGRATION_CHANGED == 0 && _MIGRATION_UNCHANGED > 0 )); then
-      skipped=$(( skipped + 1 ))
-      continue
-    fi
-    # Nothing changed and nothing reported itself unchanged: every target
-    # failed, and each one has already warned for itself. Counting that as
-    # either applied or skipped would say something untrue about the next sync.
+    # Nothing changed: either every target found its work already done, or every
+    # target failed and has warned for itself. Neither is worth announcing, and
+    # neither belongs in a tally — `skipped` means "recorded before this sync
+    # began", which is the one thing these targets are not.
     if (( _MIGRATION_CHANGED == 0 )); then
       continue
     fi

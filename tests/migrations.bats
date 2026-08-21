@@ -896,6 +896,44 @@ EOF
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 }
 
+@test "changed, unchanged and failed repos are each reported as themselves" {
+  # All three outcomes in one run, because the count, the warning and the state
+  # file each read a different one and only a mixed run can tell them apart.
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-proj.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+# project-scoped: edits files inside each repo.
+migration_20250101_proj() {
+  if [[ -e "\$1/fail" ]]; then
+    return 1
+  fi
+  if [[ -e "\$1/work" ]]; then
+    return 0
+  fi
+  return "\$MIGRATION_NOOP"
+}
+EOF
+  register_fake_project "$TMPDIR/repo-work"
+  register_fake_project "$TMPDIR/repo-noop"
+  register_fake_project "$TMPDIR/repo-fail"
+  touch "$TMPDIR/repo-work/work" "$TMPDIR/repo-fail/fail"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  # One repo changed, so the migration is announced — and named once, not three
+  # times, since neither the no-op nor the failure is work it did.
+  [[ "$output" == *"Migration applied: 20250101-proj.sh (1 project)"* ]]
+  [[ "$output" == *"Migration failed: 20250101-proj.sh in $TMPDIR/repo-fail"* ]]
+  [[ "$output" == *"migrations: 1 applied, 0 already applied"* ]]
+
+  # Recorded: the one that worked and the one that had nothing to do. Not the
+  # one that failed — that repo alone is retried next sync.
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-work"
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-noop"
+  run ! grep -qF "repo-fail" "$FAKE_STATE/migrations.applied"
+}
+
 @test "the context rename counts only the repos it renamed in" {
   # Against the real migration file, because the whole point is what this one
   # prints on a machine full of worktrees cut from a main that already holds

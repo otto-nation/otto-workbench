@@ -45,7 +45,7 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 
 - Never wrap a command in `sh -c "..."` (or `bash -c`, `zsh -c`) — the analyzer cannot see inside the quoted string, so it asks approval for the wrapper as a whole and no allow-list entry ever matches the real command. Worse, the offered "don't ask again" rule keys on that exact string, so the next `sh -c` prompts again
 - `sh -c "cd /dir; cmd"` is the usual reason to reach for it. Run a bare `cd /dir` as its own call, then `cmd` as the next one — per § Avoid Compound `cd` Commands
-- If you need a specific shell's behavior (`sh` word-splitting, glob handling), put the script in a file with the Write tool and run `bash /tmp/probe.sh` — the file is also readable, which a quoted one-liner is not. Reach for `sh /tmp/probe.sh` only when POSIX semantics are the actual point, and expect it to prompt
+- If you need a specific shell's behavior (`sh` word-splitting, glob handling), put the script in a file with the Write tool and run `bash /tmp/probe.sh` — the file is also readable, which a quoted one-liner is not. Reach for `sh /tmp/probe.sh` only when the POSIX behaviour is the thing under test — this is the one place `sh` survives the § Subagents Reset the Working Directory rule, because swapping in `bash` here would change the result the probe exists to observe. It prompts, and that is the right trade for the one case that cannot use the granted shell
 
 ## Avoid Absolute Paths to PATH Binaries
 

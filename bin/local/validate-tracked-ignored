@@ -91,7 +91,7 @@ if [[ -n "$offenders" ]]; then
     subject="file lives"
   fi
   err "$count tracked $subject under an ignored path"
-  printf '%s\n' "$offenders" | sed 's/^/      /' >&2
+  printf '%s\n' "$offenders" | sed 's/^/    /' >&2
   echo -e "    ${DIM}the ignore entry does not apply to a file already in the index —" >&2
   echo -e "    untrack it with: git rm --cached <path>${NC}" >&2
   exit 1

@@ -631,6 +631,10 @@ print(workbench_projects.register('$TMPDIR/container'))
   run project_registered
   [[ "$output" == *"$deep"* ]]
 
+  # The framework as well as the migration: a migration's return codes are the
+  # framework's vocabulary, and the twin test below asserts against one of them.
+  # shellcheck source=../lib/migrations.sh
+  . "$REPO_ROOT/lib/migrations.sh"
   # shellcheck source=../ai/claude/migrations/20260819-context-to-architecture.sh
   . "$REPO_ROOT/ai/claude/migrations/20260819-context-to-architecture.sh"
   run migration_20260819_context_to_architecture "$deep"
@@ -649,9 +653,13 @@ print(workbench_projects.register('$TMPDIR/container'))
   echo "old" > "$TMPDIR/alpha/.claude/context.md"
   echo "current" > "$TMPDIR/alpha/.claude/architecture.md"
 
+  # shellcheck source=../lib/migrations.sh
+  . "$REPO_ROOT/lib/migrations.sh"
   # shellcheck source=../ai/claude/migrations/20260819-context-to-architecture.sh
   . "$REPO_ROOT/ai/claude/migrations/20260819-context-to-architecture.sh"
   run migration_20260819_context_to_architecture "$TMPDIR/alpha"
-  [ "$status" -eq 0 ]
+  # MIGRATION_NOOP, not 0: leaving the file alone is the migration finding its
+  # work already done, and the framework counts and reports the two apart.
+  [ "$status" -eq "$MIGRATION_NOOP" ]
   [ "$(cat "$TMPDIR/alpha/.claude/architecture.md")" = "current" ]
 }

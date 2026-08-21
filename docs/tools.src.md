@@ -440,6 +440,7 @@ than leaving the tool to vanish at runtime. Visibility is not checked: a `hidden
 a decision somebody made, and the probe has to cover the script anyway because `pr` runs
 it.
 
+
 **What a call returns.** Stdout that parses as JSON comes back as the text content of the
 result, so a client sees the tool's own output rather than a rendering of it. A tool whose
 schema declares `output_schema` returns that JSON as structured content as well, because a

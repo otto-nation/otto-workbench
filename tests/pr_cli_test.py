@@ -1802,9 +1802,33 @@ def test_review_list_records_no_trail(reviews_dir, capsys):
     they land in the file every `otto-log` query then reads. A query that
     resolves no subject and takes no lock is not an action a trail is for."""
     _a_review(reviews_dir)
-    assert _run_main("review", "--list", "--schema-version", "1") in (None, 0)
+    mock_trail = MagicMock()
+    with patch("sys.argv", ["pr", "review", "--list", "--schema-version", "1"]), \
+         patch("pr_cli.Trail.start", return_value=mock_trail) as mock_start:
+        try:
+            pr_cli.main()
+        except SystemExit as e:
+            assert e.code in (None, 0)
     assert json.loads(capsys.readouterr().out)["reviews"]
-    assert not workbench_paths.trail_dir().exists()
+    assert mock_start.call_args.kwargs["record"] is False
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_non_list_dispatch_records_a_trail(mock_resolve, mock_run):
+    """The exemption is scoped to `review --list`; every other dispatch still
+    tells `Trail.start` to record, which is the wiring the exemption test
+    above would miss if `_dispatch` stopped passing it through."""
+    mock_resolve.return_value = make_ctx()
+    mock_run.return_value = MagicMock(returncode=0)
+    mock_trail = MagicMock()
+    with patch("sys.argv", ["pr", "rebase"]), \
+         patch("pr_cli.Trail.start", return_value=mock_trail) as mock_start:
+        try:
+            pr_cli.main()
+        except SystemExit:
+            pass
+    assert mock_start.call_args.kwargs["record"] is True
 
 
 def test_only_the_listing_is_exempt_from_the_trail():

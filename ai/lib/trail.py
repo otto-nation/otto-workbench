@@ -50,8 +50,8 @@ class EventType(str, Enum):
 SCHEMA_VERSION = 1
 
 # Hex characters of a uuid4 an invocation ID keeps. Every script on the machine
-# writes into one root, and `otto-log show` loads every month of it retention
-# keeps — so an ID has to stay unique across all of them, not just one
+# writes into one root, and `otto-log show` loads every month of it that
+# retention keeps — so an ID has to stay unique across all of them, not just one
 # worktree's file. 8 characters put the birthday bound around 65k invocations,
 # and one tool alone logged 9,134 in two months; 48 bits moves the bound to
 # 16.7M. Readers match the field whole, so records minted at the old width keep

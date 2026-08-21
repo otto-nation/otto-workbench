@@ -113,6 +113,19 @@ def load_trail_events(since: str | None) -> list[dict]:
 _FALLBACK_WINDOW = timedelta(hours=1)
 
 
+def _positive_int(value: str) -> int:
+    """An argparse type for a month count: never negative.
+
+    `oldest_kept_month` clamps a negative count to the same cutoff as zero, so
+    a negative `--keep` would silently keep the current month instead of
+    erroring on the nonsensical value it actually was.
+    """
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"must be a non-negative integer: {value!r}")
+    return n
+
+
 def _parse_since(since: str) -> datetime:
     now = datetime.now(timezone.utc)
     suffixes = {"h": "hours", "d": "days", "m": "minutes"}
@@ -596,7 +609,7 @@ def main():
     # prune
     p_prune = sub.add_parser("prune", help="Drop trail months past the horizon")
     p_prune.add_argument(
-        "--keep", type=int, default=TRAIL_KEEP_MONTHS,
+        "--keep", type=_positive_int, default=TRAIL_KEEP_MONTHS,
         help=f"Months of history to keep (default: {TRAIL_KEEP_MONTHS})",
     )
 

@@ -40,6 +40,7 @@ from pathlib import Path
 
 import ai_usage
 import log
+import timeouts
 from ai_backend import AgentInvocation
 from ai_backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_write_tool_used,
@@ -348,7 +349,8 @@ def prompt(
     ledger records nothing rather than a zeroed row that reads as a free call.
     """
     cmd = _build_prompt_cmd(model=model)
-    result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd)
+    result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
+                            timeout=timeouts.UNBOUNDED)
     return result.stdout, result.returncode, None
 
 

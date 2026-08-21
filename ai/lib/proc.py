@@ -129,6 +129,7 @@ def run(
     timeout: float | None,
     cwd: str | Path | None = None,
     input_text: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> CmdResult:
     """Run *cmd*, capturing both streams, and return what it said.
 
@@ -148,11 +149,19 @@ def run(
     an omitted bound is indistinguishable from nobody having thought about one,
     so opting out is spelled `timeouts.UNBOUNDED` and shows up in review. See
     that module for why the number itself does not belong to the caller.
+
+    `env` replaces the child's environment outright rather than extending the
+    parent's — `subprocess.run`'s own contract, and the only shape that lets a
+    caller *remove* a variable. `eval_task` builds its fixture repo with the
+    inherited `GIT_DIR` and friends stripped, and merging over `os.environ`
+    here would put them back and quietly make the fixture a worktree of this
+    checkout. A caller that wants to add rather than replace passes
+    `os.environ | {...}`.
     """
     try:
         r = subprocess.run(
             cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
-            input=input_text,
+            input=input_text, env=env,
         )
     except subprocess.TimeoutExpired as exc:
         detail = f"timed out after {timeout:g}s: {' '.join(cmd)}"

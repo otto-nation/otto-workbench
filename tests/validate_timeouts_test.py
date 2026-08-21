@@ -72,8 +72,28 @@ def add_args(parser):
 """) == []
 
 
-def test_file_without_the_keyword_is_skipped(tmp_path):
-    assert _check(tmp_path, "def f(cmd):\n    return proc.run(cmd)\n") == []
+def test_a_kwargs_splat_counts_as_a_bound(tmp_path):
+    """The argument may be in the dict, and an AST walk cannot read it."""
+    assert _check(tmp_path, """
+def forward(cmd, **kwargs):
+    return subprocess.run(cmd, **kwargs)
+""") == []
+
+
+def test_a_call_that_is_not_a_runner_needs_no_bound(tmp_path):
+    """Only the launchers are held to this — `runner.run` is somebody's method."""
+    assert _check(tmp_path, """
+def go(runner, cmd):
+    return runner.run(cmd)
+""") == []
+
+
+def test_popen_needs_no_bound(tmp_path):
+    """It takes none; the one `communicate` takes belongs to that call."""
+    assert _check(tmp_path, """
+def stream(cmd):
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE)
+""") == []
 
 
 def test_syntax_error_is_tolerated_but_reported(tmp_path, capsys):
@@ -89,7 +109,7 @@ def test_a_numeric_literal_is_flagged(tmp_path):
 def fetch(cmd):
     return proc.run(cmd, timeout=30)
 """)
-    assert [(v.line, v.literal) for v in violations] == [(3, "30")]
+    assert [(v.line, v.found) for v in violations] == [(3, "timeout=30")]
     assert violations[0].suggestion == "a tier from `timeouts`"
 
 
@@ -98,7 +118,7 @@ def test_a_float_literal_is_flagged(tmp_path):
 def probe(cmd):
     return proc.run(cmd, timeout=5.0)
 """)
-    assert [(v.line, v.literal) for v in violations] == [(3, "5.0")]
+    assert [(v.line, v.found) for v in violations] == [(3, "timeout=5.0")]
 
 
 def test_bare_none_is_flagged(tmp_path):
@@ -107,7 +127,7 @@ def test_bare_none_is_flagged(tmp_path):
 def push(cmd):
     return proc.run(cmd, timeout=None)
 """)
-    assert [(v.line, v.literal) for v in violations] == [(3, "None")]
+    assert [(v.line, v.found) for v in violations] == [(3, "timeout=None")]
     assert violations[0].suggestion == "timeouts.UNBOUNDED"
 
 
@@ -117,7 +137,7 @@ def test_a_literal_parameter_default_is_flagged(tmp_path):
 def try_run(cmd, *, timeout=10):
     return subprocess.run(cmd, timeout=timeout)
 """)
-    assert [(v.line, v.literal) for v in violations] == [(2, "10")]
+    assert [(v.line, v.found) for v in violations] == [(2, "timeout=10")]
 
 
 def test_a_positional_default_is_flagged(tmp_path):
@@ -125,7 +145,7 @@ def test_a_positional_default_is_flagged(tmp_path):
 def try_run(cmd, timeout=10):
     return subprocess.run(cmd, timeout=timeout)
 """)
-    assert [(v.line, v.literal) for v in violations] == [(2, "10")]
+    assert [(v.line, v.found) for v in violations] == [(2, "timeout=10")]
 
 
 def test_a_required_keyword_only_bound_is_not_a_default(tmp_path):
@@ -142,7 +162,7 @@ def test_arithmetic_on_a_tier_is_flagged(tmp_path):
 def slow(cmd):
     return proc.run(cmd, timeout=timeouts.LOCAL * 3)
 """)
-    assert [(v.line, v.literal) for v in violations] == [(3, "3")]
+    assert [(v.line, v.found) for v in violations] == [(3, "timeout=3")]
 
 
 def test_a_conditional_literal_is_flagged(tmp_path):
@@ -164,6 +184,45 @@ def b(cmd):
     assert [v.line for v in violations] == [3, 6]
 
 
+# ── an omitted bound ─────────────────────────────────────────────────────
+
+
+def test_a_launch_with_no_bound_is_flagged(tmp_path):
+    """Nothing was written down, so nothing was decided."""
+    violations = _check(tmp_path, """
+def fetch(cmd):
+    return proc.run(cmd)
+""")
+    assert [(v.line, v.found) for v in violations] == [(3, "proc.run(...) with no timeout=")]
+    assert violations[0].suggestion == "a tier from `timeouts`"
+
+
+@pytest.mark.parametrize("runner", [
+    "subprocess.run",
+    "subprocess.call",
+    "subprocess.check_call",
+    "subprocess.check_output",
+])
+def test_every_subprocess_runner_is_covered(tmp_path, runner):
+    violations = _check(tmp_path, f"def fetch(cmd):\n    return {runner}(cmd)\n")
+    assert [v.found for v in violations] == [f"{runner}(...) with no timeout="]
+
+
+def test_an_omission_and_a_literal_are_reported_together(tmp_path):
+    """Both are the same finding — a bound the table does not own."""
+    violations = _check(tmp_path, """
+def a(cmd):
+    return proc.run(cmd)
+
+def b(cmd):
+    return proc.run(cmd, timeout=5)
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (3, "proc.run(...) with no timeout="),
+        (6, "timeout=5"),
+    ]
+
+
 # ── discovery and CLI ────────────────────────────────────────────────────
 
 
@@ -178,6 +237,15 @@ def test_the_mcp_server_is_exempt():
     exempt = REPO_ROOT / "ai" / "claude" / "mcps" / "server.py"
     assert exempt.is_file(), "the exemption names a file that no longer exists"
     assert str(exempt) not in vt.discover_scripts(str(REPO_ROOT))
+
+
+def test_the_exemption_holds_when_the_file_is_named(monkeypatch, capsys):
+    """Discovery is not the only way in — a hook or an editor passes paths."""
+    exempt = REPO_ROOT / "ai" / "claude" / "mcps" / "server.py"
+    assert vt.check_file(str(exempt)), "the exempt file would now pass on its own"
+    monkeypatch.setattr(sys, "argv", ["validate-timeouts", "--quiet", str(exempt)])
+    vt.main()
+    assert "0 files checked" in capsys.readouterr().out
 
 
 def test_repo_is_clean():

@@ -31,6 +31,7 @@ import git_client
 import log
 import pr_context
 import pr_state
+import timeouts
 from pr_state import SupersessionKind, SupersessionSignal
 from trail import Trail
 
@@ -173,7 +174,7 @@ def _superseding_prs(repo: str, symbols: list[str]) -> list[SupersessionSignal]:
         result = subprocess.run(
             ["gh", "api", f"search/issues?q=repo:{repo}+{symbol}+is:merged",
              "--jq", '.items[0] // empty | "#\\(.number) \\(.title)"'],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
         )
         title = result.stdout.strip()
         if result.returncode == 0 and title:

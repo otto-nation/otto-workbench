@@ -20,10 +20,22 @@ at a call or defaulted in a signature:
 Anything else passes.  A name (`timeout=timeout`, `timeout=opts.timeout`) is a
 bound being forwarded, and the site it came from is checked on its own.
 
-Known limit: only the argument spelled `timeout` is checked, so a wrapper that
+A third shape is rejected at the call sites that launch a subprocess —
+`proc.run`, `subprocess.run`, `subprocess.call`, `subprocess.check_call`,
+`subprocess.check_output`:
+
+  proc.run(cmd)  no bound written down at all            -> a tier
+
+Reading only the bounds that were written down leaves the omission invisible,
+which is the case the table exists to eliminate: a call with no `timeout=` is
+indistinguishable from nobody having thought about one.  A `**kwargs` splat
+counts as a bound, because this check cannot see what is in it.
+
+Known limits: only the argument spelled `timeout` is checked, so a wrapper that
 renames it — `def fetch(*, budget)` handing `budget` to `subprocess.run` — hides
-its literal from this check.  The convention is to keep the name; a wrapper that
-does is fully covered.
+its literal from this check.  And a runner is recognised by its written name, so
+`from subprocess import run` escapes the omission check.  The convention is to
+keep both names; a call site that does is fully covered.
 
 Exit code: 0 if all files pass, 1 if any have violations.
 """
@@ -41,6 +53,18 @@ from ansi import RED, GREEN, DIM, NC  # noqa: E402
 KEYWORD = 'timeout'
 TABLE = 'timeouts'
 UNBOUNDED = f'{TABLE}.UNBOUNDED'
+A_TIER = f'a tier from `{TABLE}`'
+
+# The runners that launch a subprocess and accept `timeout=`.  `Popen` is absent
+# on purpose: it takes no bound, and the one its `communicate` takes belongs to
+# that call rather than to the launch.
+RUNNERS = {
+    ('proc', 'run'),
+    ('subprocess', 'run'),
+    ('subprocess', 'call'),
+    ('subprocess', 'check_call'),
+    ('subprocess', 'check_output'),
+}
 
 SEARCH_DIRS = ('ai',)
 SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
@@ -55,8 +79,15 @@ SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 @dataclass(frozen=True)
 class Violation:
+    """One bound that cannot be traced to the table, and what to write instead.
+
+    `found` is what is at the call site — `timeout=30`, or the runner that was
+    called with no bound at all.  One field rather than two, because a literal
+    and an omission are the same finding reported differently.
+    """
+
     line: int
-    literal: str
+    found: str
     suggestion: str
 
 
@@ -81,13 +112,44 @@ def _literal(node) -> str | None:
 
 
 def _suggestion(literal: str) -> str:
-    return UNBOUNDED if literal == 'None' else f'a tier from `{TABLE}`'
+    return UNBOUNDED if literal == 'None' else A_TIER
 
 
 def _call_kwargs(tree):
     """Every `timeout=` argument passed at a call site."""
     return [kw.value for node in ast.walk(tree) if isinstance(node, ast.Call)
             for kw in node.keywords if kw.arg == KEYWORD]
+
+
+def _runner(node) -> str | None:
+    """The name a call spells, if it is one of the subprocess runners."""
+    func = node.func
+    if not isinstance(func, ast.Attribute) or not isinstance(func.value, ast.Name):
+        return None
+    pair = (func.value.id, func.attr)
+    return f'{pair[0]}.{pair[1]}' if pair in RUNNERS else None
+
+
+def _unbounded_launches(tree):
+    """Every subprocess launch that names no bound at all.
+
+    A `**kwargs` splat (`kw.arg is None`) is taken as a bound: the argument may
+    well be in it, and reading a dict this check cannot see is not something an
+    AST walk can do.
+    """
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _runner(node)
+        if name is None:
+            continue
+        if any(kw.arg in (KEYWORD, None) for kw in node.keywords):
+            continue
+        found.append(Violation(line=node.lineno,
+                               found=f'{name}(...) with no {KEYWORD}=',
+                               suggestion=A_TIER))
+    return found
 
 
 def _param_defaults(tree):
@@ -114,8 +176,8 @@ def _param_defaults(tree):
 def check_file(filepath: str) -> list[Violation]:
     with open(filepath) as f:
         source = f.read()
-    if KEYWORD not in source:
-        return []
+    # Every file is parsed now that an *absent* bound is a violation: a file
+    # with no `timeout` in it anywhere is exactly the shape being looked for.
     try:
         tree = ast.parse(source, filename=filepath)
     except SyntaxError as exc:
@@ -124,9 +186,10 @@ def check_file(filepath: str) -> list[Violation]:
               file=sys.stderr)
         return []
     values = _call_kwargs(tree) + _param_defaults(tree)
-    found = [Violation(line=v.lineno, literal=lit, suggestion=_suggestion(lit))
+    found = [Violation(line=v.lineno, found=f'{KEYWORD}={lit}',
+                       suggestion=_suggestion(lit))
              for v in values for lit in [_literal(v)] if lit is not None]
-    return sorted(found, key=lambda v: v.line)
+    return sorted(found + _unbounded_launches(tree), key=lambda v: v.line)
 
 
 # ── Discovery ────────────────────────────────────────────────────────────────
@@ -167,7 +230,7 @@ def discover_scripts(repo_root: str) -> list[str]:
 def _report_violations(relpath: str, violations: list[Violation]) -> None:
     print(f'{RED}✗{NC} {relpath}: {KEYWORD} not taken from `{TABLE}`', file=sys.stderr)
     for v in violations:
-        print(f'    line {v.line}: {KEYWORD}={v.literal} '
+        print(f'    line {v.line}: {v.found} '
               f'{DIM}— use {v.suggestion}{NC}', file=sys.stderr)
     print(f'    {DIM}the tiers and what belongs in each are in '
           f'ai/lib/{TABLE}.py{NC}', file=sys.stderr)
@@ -179,8 +242,8 @@ def _print_summary(files_checked: int, errors: int) -> None:
         print(f'{GREEN}✓{NC} {files_checked} files checked, '
               f'every {KEYWORD} comes from `{TABLE}`')
     else:
-        print(f'{RED}✗{NC} {errors} of {files_checked} files write a {KEYWORD} '
-              f'literal instead of taking a tier', file=sys.stderr)
+        print(f'{RED}✗{NC} {errors} of {files_checked} files leave a {KEYWORD} '
+              f'unwritten or write it as a literal', file=sys.stderr)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────

@@ -252,7 +252,7 @@ def _git_dir(cwd: str) -> Path:
     """Return the .git directory path for the repo."""
     git_dir = subprocess.run(
         ["git", "rev-parse", "--git-dir"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).stdout.strip()
     return Path(git_dir) if Path(git_dir).is_absolute() else Path(cwd) / git_dir
 
@@ -268,7 +268,7 @@ def _status_lines(cwd: str, untracked: bool = True) -> list[str]:
     cmd = ["git", "status", "--porcelain"]
     if not untracked:
         cmd.append("--untracked-files=no")
-    status = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    status = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL)
     return [line for line in status.stdout.splitlines() if line.strip()]
 
 
@@ -276,7 +276,7 @@ def _detect_conflicts(cwd: str) -> list[str]:
     """Return list of conflicted file paths."""
     r = subprocess.run(
         ["git", "diff", "--name-only", "--diff-filter=U"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     return [f for f in r.stdout.strip().splitlines() if f]
 
@@ -285,11 +285,11 @@ def _rebase_head_info(cwd: str) -> tuple[str, str]:
     """Return (short SHA, subject) of the commit being rebased."""
     sha = subprocess.run(
         ["git", "rev-parse", "--short", "REBASE_HEAD"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).stdout.strip()
     subject = subprocess.run(
         ["git", "log", "-1", "--format=%s", "REBASE_HEAD"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).stdout.strip()
     return sha, subject
 
@@ -354,7 +354,7 @@ def _commits_ahead(cwd: str, *, target_ref: str) -> int:
     """Count commits ahead of the target ref."""
     out = subprocess.run(
         ["git", "rev-list", "--count", f"{target_ref}..HEAD"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).stdout.strip()
     return int(out) if out.isdigit() else 0
 
@@ -363,11 +363,11 @@ def _is_empty_patch(cwd: str) -> bool:
     """Check if the current rebase step has no changes (patch already applied upstream)."""
     staged = subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
-        capture_output=True, cwd=cwd,
+        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     unstaged = subprocess.run(
         ["git", "diff", "--quiet"],
-        capture_output=True, cwd=cwd,
+        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     return staged.returncode == 0 and unstaged.returncode == 0
 
@@ -458,7 +458,7 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
     """Run a regeneration command and stage the result. Returns success."""
     repo_root = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).stdout.strip() or cwd
 
     cmd = list(job.cmd)
@@ -491,7 +491,8 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
         return False
 
     if job.stage_dir:
-        sr = subprocess.run(["git", "add", "-u", "."], cwd=job.regen_dir)
+        sr = subprocess.run(["git", "add", "-u", "."], cwd=job.regen_dir,
+                            timeout=timeouts.UNBOUNDED)
         if sr.returncode != 0:
             _terr("regeneration", f"git add -u failed in {job.regen_dir}")
             log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
@@ -525,7 +526,7 @@ def _is_generated_file(
     """
     r = subprocess.run(
         ["git", "check-attr", "linguist-generated", "--", filepath],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     if r.returncode == 0 and ": true" in r.stdout:
         return GeneratedSignal.GITATTRIBUTES
@@ -554,7 +555,7 @@ def _detect_delete_conflict(filepath: str, cwd: str) -> DeleteSide | None:
     """
     r = subprocess.run(
         ["git", "ls-files", "-u", "--stage", "--", filepath],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     if r.returncode != 0 or not r.stdout.strip():
         return None
@@ -592,7 +593,7 @@ def _resolve_delete_conflict(
             reason=f"{reason} (modify/delete conflict)",
         )
 
-    r = subprocess.run(["git", "rm", "--force", filepath], cwd=cwd)
+    r = subprocess.run(["git", "rm", "--force", filepath], cwd=cwd, timeout=timeouts.LOCAL)
     if r.returncode != 0:
         log.error(f"git rm failed for {filepath}")
         return False
@@ -609,7 +610,7 @@ def _get_ours_content(filepath: str, cwd: str) -> str | None:
     """
     r = subprocess.run(
         ["git", "show", f":2:{filepath}"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     return r.stdout if r.returncode == 0 else None
 
@@ -622,7 +623,7 @@ def _get_commit_diff(filepath: str, cwd: str) -> str | None:
     """
     r = subprocess.run(
         ["git", "diff", "REBASE_HEAD^", "REBASE_HEAD", "--", filepath],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
@@ -914,7 +915,7 @@ def _splice_resolutions(
 
 def _git_add(filepath: str, cwd: str) -> bool:
     """Stage a file and return True on success."""
-    r = subprocess.run(["git", "add", filepath], cwd=cwd)
+    r = subprocess.run(["git", "add", filepath], cwd=cwd, timeout=timeouts.UNBOUNDED)
     if r.returncode != 0:
         log.error(f"git add failed for {filepath}")
     return r.returncode == 0
@@ -967,6 +968,7 @@ def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
     """
     diff = subprocess.run(
         ["git", "diff", "--cached"], capture_output=True, text=True, cwd=cwd,
+        timeout=timeouts.LOCAL,
     ).stdout[:_FIX_ERROR_MAX_CHARS]
     if not diff.strip():
         return _FALLBACK_FIX_SUBJECT
@@ -1070,12 +1072,12 @@ def _stage_worktree(cwd: str) -> list[str]:
     untracked files included, so staging anything narrower commits something
     other than what the hooks passed.
     """
-    if subprocess.run(["git", "add", "-A"], cwd=cwd).returncode != 0:
+    if subprocess.run(["git", "add", "-A"], cwd=cwd, timeout=timeouts.UNBOUNDED).returncode != 0:
         log.error("Failed to stage fixes.")
         return []
     r = subprocess.run(
         ["git", "diff", "--cached", "--name-only"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     return [line for line in r.stdout.splitlines() if line.strip()]
 
@@ -1125,7 +1127,7 @@ def _fix_push_failures(
 
     cr = subprocess.run(
         ["git", "commit", "-m", _fix_commit_message(cwd, staged)],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
     )
     if cr.returncode != 0:
         log.error("Failed to commit fixes.")
@@ -1140,7 +1142,7 @@ def _fix_push_failures(
 
 def _accept_theirs_and_stage(filepath: str, parent: Path, cwd: str) -> bool:
     """Accept theirs for a generated file and stage it."""
-    r = subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd)
+    r = subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd, timeout=timeouts.LOCAL)
     if r.returncode != 0:
         log.error(f"git checkout --theirs failed for {filepath}")
         return False
@@ -1268,7 +1270,7 @@ def _ai_suggest_regeneration(filepath: str, cwd: str) -> tuple[str, ...] | None:
     try:
         nearby = subprocess.run(
             ["ls", "-1"],
-            capture_output=True, text=True, cwd=target_dir,
+            capture_output=True, text=True, cwd=target_dir, timeout=timeouts.LOCAL,
         ).stdout.strip()
     except Exception:  # non-fatal: AI can work without directory context
         nearby = "(unavailable)"
@@ -1458,7 +1460,7 @@ def _drive_loop(
 
     _terr("drive_to_completion", f"rebase did not complete after {_MAX_REBASE_STEPS} steps")
     log.error(f"Rebase did not complete after {_MAX_REBASE_STEPS} steps — aborting.")
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+    subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
     return 1
 
 
@@ -1535,21 +1537,21 @@ def _step_conflicts(
     if resolved is None:
         _terr("resolve_conflicts", "AI resolution failed, aborting rebase")
         log.error("AI conflict resolution failed — aborting rebase.")
-        subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+        subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
         return 1
     tally.absorb(resolved)
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
     unstaged = subprocess.run(
         ["git", "diff", "--name-only"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     if unstaged.stdout.strip():
-        subprocess.run(["git", "add", "-u"], cwd=cwd)
+        subprocess.run(["git", "add", "-u"], cwd=cwd, timeout=timeouts.UNBOUNDED)
 
     r = subprocess.run(
         ["git", "-c", "core.editor=true", "rebase", "--continue"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
     )
     if r.returncode == 0:
         return None
@@ -1564,7 +1566,7 @@ def _step_conflicts(
 
     _terr("step_conflicts", "rebase --continue failed after resolution", data={"stderr": r.stderr.strip()})
     log.error("rebase --continue failed after conflict resolution — aborting.")
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+    subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
     return 1
 
 
@@ -1579,7 +1581,7 @@ def _step_advance(cwd: str) -> int | None:
                 reason="patch already applied upstream",
                 data={"commit": sha, "subject": subject},
             )
-        r = subprocess.run(["git", "rebase", "--skip"], cwd=cwd)
+        r = subprocess.run(["git", "rebase", "--skip"], cwd=cwd, timeout=timeouts.UNBOUNDED)
         if r.returncode != 0:
             log.error(f"git rebase --skip failed (exit {r.returncode})")
             return 1
@@ -1587,7 +1589,7 @@ def _step_advance(cwd: str) -> int | None:
 
     r = subprocess.run(
         ["git", "-c", "core.editor=true", "rebase", "--continue"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
     )
     if r.returncode == 0:
         return None
@@ -1605,7 +1607,7 @@ def _step_advance(cwd: str) -> int | None:
             "step", "aborting after --continue failure",
             data={"stderr": r.stderr.strip(), "exit_code": r.returncode},
         )
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+    subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
     return 1
 
 
@@ -1631,7 +1633,7 @@ def _auto_stash(cwd: str) -> bool | None:
     log.info("Stashing uncommitted changes...")
     r = subprocess.run(
         ["git", "stash", "push", "-u", "-m", _STASH_MSG],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
     )
     if r.returncode != 0:
         log.error(f"git stash failed: {r.stderr.strip()}")
@@ -1651,7 +1653,7 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
     """
     r = subprocess.run(
         ["git", "stash", "pop"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
     )
     if r.returncode == 0:
         log.ok("Restored stashed changes.")
@@ -1724,7 +1726,8 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
     if remaining:
         log.warn(f"{len(remaining)} stash conflict(s) remain — resolve manually, then `git stash drop`.")
     else:
-        r = subprocess.run(["git", "stash", "drop"], cwd=cwd, capture_output=True, text=True)
+        r = subprocess.run(["git", "stash", "drop"], cwd=cwd, capture_output=True, text=True,
+                           timeout=timeouts.LOCAL)
         if r.returncode != 0:
             log.warn(f"git stash drop failed: {r.stderr.strip()}")
         else:
@@ -1873,7 +1876,7 @@ def _diff_is_empty(cwd: str, *, target_ref: str) -> bool:
     """
     return subprocess.run(
         ["git", "diff", "--quiet", target_ref, "HEAD"],
-        capture_output=True, cwd=cwd,
+        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).returncode == 0
 
 
@@ -1886,7 +1889,7 @@ def _all_commits_upstream(cwd: str, *, target_ref: str) -> bool:
     """
     r = subprocess.run(
         ["git", "cherry", target_ref, "HEAD"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     if r.returncode != 0:
         return False
@@ -1959,7 +1962,7 @@ def _ref_exists(cwd: str, ref: str) -> bool:
     """Whether the ref names a commit in this repo."""
     return subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-        capture_output=True, cwd=cwd,
+        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).returncode == 0
 
 
@@ -1976,7 +1979,7 @@ def _shares_history(cwd: str, *, target_ref: str) -> bool:
         return True
     return subprocess.run(
         ["git", "merge-base", target_ref, "HEAD"],
-        capture_output=True, cwd=cwd,
+        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).returncode == 0
 
 
@@ -2044,7 +2047,7 @@ def _refuse_over_budget(
     abort restores the branch, so the refusal leaves the worktree where the
     preflight refusals do — untouched, with nothing pushed.
     """
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+    subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
     return _refuse(ctx, RefusalReport(
         branch=ctx.branch, signal=RefusalSignal.CONFLICTS_OVER_BUDGET.value,
         detail=f"conflicts in {spread} files, over the "
@@ -2119,7 +2122,7 @@ def _push(cwd: str) -> subprocess.CompletedProcess:
     """Run the force-push, capturing output so hook failures can be parsed."""
     return subprocess.run(
         ["git", "push", "--force-with-lease"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
     )
 
 
@@ -2160,12 +2163,12 @@ def _commit_regenerated(cwd: str) -> bool:
             data={"files": modified},
         )
     log.info("Committing regenerated files...")
-    if subprocess.run(["git", "add", "-u"], cwd=cwd).returncode != 0:
+    if subprocess.run(["git", "add", "-u"], cwd=cwd, timeout=timeouts.UNBOUNDED).returncode != 0:
         log.error("Failed to stage regenerated files.")
         return False
     cr = subprocess.run(
         ["git", "commit", "-m", "chore(docs): regenerate after rebase"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
     )
     if cr.returncode != 0:
         log.error("Failed to commit regenerated files.")
@@ -2258,7 +2261,7 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
 def cmd_abort(cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str) -> int:
     """Abort an in-progress rebase and reset state."""
     log.info("Aborting rebase...")
-    r = subprocess.run(["git", "rebase", "--abort"], cwd=cwd)
+    r = subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
     if r.returncode == 0:
         RebaseOutcome(status=RebaseStatus.ABORTED, target_base=target_ref).save(ctx)
         log.ok("Rebase aborted.")
@@ -2384,7 +2387,7 @@ def _ref_exists(cwd: str, ref: str) -> bool:
     """Whether *ref* resolves in the repo at *cwd*."""
     return subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", ref],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     ).returncode == 0
 
 
@@ -2398,7 +2401,7 @@ def _local_vs_remote(cwd: str, branch: str) -> RefDivergence:
     r = subprocess.run(
         ["git", "rev-list", "--left-right", "--count",
          f"origin/{branch}...refs/heads/{branch}"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     if r.returncode != 0:
         return RefDivergence()
@@ -2414,7 +2417,7 @@ def _unpushed_subjects(cwd: str, branch: str) -> list[str]:
     r = subprocess.run(
         ["git", "log", "--no-decorate", "--oneline",
          f"-{_UNPUSHED_SUBJECT_LIMIT}", f"origin/{branch}..refs/heads/{branch}"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
     )
     if r.returncode != 0:
         return []
@@ -2473,7 +2476,7 @@ def _checkout_target_branch(cwd: str, ctx: pr_context.ResolvedContext) -> int:
 
 def _run_checkout(cwd: str, ctx: pr_context.ResolvedContext, cmd: list[str]) -> int:
     """Run one checkout, reporting git's own stderr when it refuses."""
-    co = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    co = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED)
     if co.returncode != 0:
         _terr("preflight", f"cannot checkout {ctx.branch}", data={"stderr": co.stderr.strip()})
         log.error(f"Cannot checkout {ctx.branch}: {co.stderr.strip()}")
@@ -2499,7 +2502,7 @@ def _fresh(
     # lease and silently recreating the remote branch.
     fetch = subprocess.run(
         ["git", "fetch", "--prune", "origin"],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.TRANSFER,
     )
     if fetch.returncode != 0:
         log.warn(f"Fetch failed — rebasing against potentially stale {target_ref}.")
@@ -2553,7 +2556,7 @@ def _fresh(
     log.info(f"Rebasing onto {target_ref}...")
     r = subprocess.run(
         ["git", "rebase", target_ref],
-        capture_output=True, text=True, cwd=cwd,
+        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
     )
 
     if r.returncode == 0 and not _detect_rebase_in_progress(cwd):

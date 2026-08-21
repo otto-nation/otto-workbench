@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import queue
@@ -26,9 +27,12 @@ from server import (
     WORKBENCH_DIR,
     _args_to_cli,
     _extract_json,
+    _log_lost_tools,
     declares_tool_schema,
     discover_tool_dirs,
     discover_tools,
+    discovery_fingerprint,
+    watch_for_tool_changes,
 )
 from tool_registry import RegistryEntry, Visibility
 
@@ -493,6 +497,246 @@ class TestWorkbenchToolDirs:
         assert discover_tools() == discover_tools(discover_tool_dirs())
 
 
+# ── Re-discovery ──────────────────────────────────────────────────────────
+
+
+def _fingerprint_tree(root: Path) -> Path:
+    """A checkout with one registered, marked script in its bin/."""
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    script = _write_marked_script(bin_dir, "watched-tool")
+    (bin_dir / "registry.yml").write_text(textwrap.dedent("""\
+        meta:
+          validation: bindir
+          source: bin
+
+        tools:
+          - name: watched-tool
+            permission: false
+            visibility: brief
+            description: "The watched tool"
+    """))
+    return script
+
+
+class TestDiscoveryFingerprint:
+    """What has to move before the server pays for a re-scan."""
+
+    def test_an_untouched_tree_fingerprints_the_same_twice(self, tmp_path):
+        _fingerprint_tree(tmp_path)
+
+        assert discovery_fingerprint(tmp_path) == discovery_fingerprint(tmp_path)
+
+    def test_an_edited_script_changes_it(self, tmp_path):
+        script = _fingerprint_tree(tmp_path)
+        before = discovery_fingerprint(tmp_path)
+
+        script.write_text(script.read_text() + "\n# a new line\n")
+
+        assert discovery_fingerprint(tmp_path) != before
+
+    def test_a_new_file_in_a_scanned_directory_changes_it(self, tmp_path):
+        _fingerprint_tree(tmp_path)
+        before = discovery_fingerprint(tmp_path)
+
+        _write_marked_script(tmp_path / "bin", "later-tool")
+
+        assert discovery_fingerprint(tmp_path) != before
+
+    def test_a_deleted_script_changes_it(self, tmp_path):
+        script = _fingerprint_tree(tmp_path)
+        before = discovery_fingerprint(tmp_path)
+
+        script.unlink()
+
+        assert discovery_fingerprint(tmp_path) != before
+
+    def test_an_edited_registry_changes_it(self, tmp_path):
+        """A tool withdrawn by going hidden touches no line of its script."""
+        _fingerprint_tree(tmp_path)
+        registry = tmp_path / "bin" / "registry.yml"
+        before = discovery_fingerprint(tmp_path)
+
+        registry.write_text(registry.read_text().replace("brief", "hidden"))
+
+        assert discovery_fingerprint(tmp_path) != before
+
+    def test_making_a_script_executable_changes_it(self, tmp_path):
+        """chmod +x is the whole of what turns a file into a candidate."""
+        _fingerprint_tree(tmp_path)
+        plain = tmp_path / "bin" / "not-yet-a-tool"
+        plain.write_text("#!/bin/sh\n# --tool-schema\n")
+        before = discovery_fingerprint(tmp_path)
+
+        plain.chmod(plain.stat().st_mode | stat.S_IXUSR)
+
+        assert discovery_fingerprint(tmp_path) != before
+
+    def test_a_new_component_directory_changes_it(self, tmp_path):
+        _fingerprint_tree(tmp_path)
+        before = discovery_fingerprint(tmp_path)
+
+        (tmp_path / "editors" / "zed" / "bin").mkdir(parents=True)
+
+        assert discovery_fingerprint(tmp_path) != before
+
+
+# Long enough for a scan running in a worker thread to land, short enough that
+# a case asserting nothing happened does not dominate the suite.
+WATCH_SETTLE = 1.0
+
+
+class _Recorder:
+    """Stands in for discovery, answering whatever the case sets up next.
+
+    Each list holds the answers in order and repeats its last one forever, so a
+    watcher polling on a zero interval settles instead of cycling.
+    """
+
+    def __init__(self, fingerprints, tool_sets):
+        self.fingerprints = list(fingerprints)
+        self.tool_sets = list(tool_sets)
+        self.scans = 0
+        self.announcements = 0
+
+    def _next(self, answers):
+        return answers.pop(0) if len(answers) > 1 else answers[0]
+
+    def fingerprint(self, root=None):
+        return self._next(self.fingerprints)
+
+    def discover(self, dirs=None, registry=None):
+        self.scans += 1
+        return self._next(self.tool_sets)
+
+    async def notify(self):
+        self.announcements += 1
+
+
+def _schema(name: str) -> dict:
+    return {"name": name, "input_schema": {}, "_script": f"/bin/{name}"}
+
+
+async def _watch_until(recorder, tools, ready, done) -> None:
+    """Run the watcher until *done*, then stop it the way a cancel would."""
+    task = asyncio.create_task(
+        watch_for_tool_changes(tools, recorder.notify, ready, interval=0))
+    deadline = time.monotonic() + WATCH_SETTLE
+    while not done() and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+class TestWatchForToolChanges:
+    """The poll that makes a merged tool usable without a client restart."""
+
+    def _run(self, monkeypatch, fingerprints, tool_sets, tools,
+             done=None, ready_now=True):
+        recorder = _Recorder(fingerprints, tool_sets)
+        monkeypatch.setattr(server, "discovery_fingerprint", recorder.fingerprint)
+        monkeypatch.setattr(server, "discover_tools", recorder.discover)
+        ready = asyncio.Event()
+        if ready_now:
+            ready.set()
+        settled = done or (lambda _: False)
+        asyncio.run(_watch_until(recorder, tools, ready, lambda: settled(recorder)))
+        return recorder
+
+    def test_a_still_tree_is_never_re_scanned(self, monkeypatch):
+        """The stat sweep is the cheap half; the point is not paying for the rest."""
+        tools = {"a": _schema("a")}
+
+        recorder = self._run(monkeypatch, ["same"], [tools], tools)
+
+        assert recorder.scans == 0
+        assert recorder.announcements == 0
+
+    def test_a_new_tool_is_offered_and_announced(self, monkeypatch):
+        tools = {"a": _schema("a")}
+        grown = {"a": _schema("a"), "b": _schema("b")}
+
+        recorder = self._run(monkeypatch, ["before", "after"], [grown], tools,
+                             done=lambda r: r.announcements)
+
+        assert set(tools) == {"a", "b"}
+        assert recorder.announcements == 1
+
+    def test_the_handlers_read_the_same_dict(self, monkeypatch):
+        """Rebinding would leave them on the snapshot taken at startup."""
+        tools = {"a": _schema("a")}
+        held = tools
+
+        self._run(monkeypatch, ["before", "after"], [{"b": _schema("b")}], tools,
+                  done=lambda r: r.announcements)
+
+        assert held is tools
+        assert set(held) == {"b"}
+
+    def test_a_change_that_leaves_the_tools_alone_announces_nothing(self, monkeypatch):
+        """Touching a README under a scanned directory is not a tool change."""
+        tools = {"a": _schema("a")}
+
+        recorder = self._run(monkeypatch, ["before", "after"], [dict(tools)], tools)
+
+        assert recorder.scans == 1
+        assert recorder.announcements == 0
+
+    def test_nothing_is_announced_before_a_client_has_spoken(self, monkeypatch):
+        """A notification ahead of the handshake reaches a client not yet listening."""
+        tools = {"a": _schema("a")}
+
+        recorder = self._run(monkeypatch, ["before", "after"], [{"b": _schema("b")}],
+                             tools, done=lambda r: set(tools) == {"b"}, ready_now=False)
+
+        assert set(tools) == {"b"}
+        assert recorder.announcements == 0
+
+
+class TestLostTools:
+    """A tool that worked until this scan is a regression, not a work in progress."""
+
+    def test_a_vanished_script_is_an_error_naming_the_tool(self, tmp_path, caplog):
+        before = {"gone-tool": {"name": "gone-tool", "_script": str(tmp_path / "gone-tool")}}
+
+        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
+            _log_lost_tools(before, {})
+
+        assert "gone-tool" in caplog.text
+        assert "its script is gone" in caplog.text
+
+    def test_a_broken_script_is_an_error_carrying_the_probe_reason(self, tmp_path, caplog):
+        script = _write_marked_script(tmp_path, "broken-tool")
+        script.write_text("#!/bin/sh\n# --tool-schema\nexit 3\n")
+        before = {"broken-tool": {"name": "broken-tool", "_script": str(script)}}
+
+        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
+            _log_lost_tools(before, {})
+
+        assert "broken-tool" in caplog.text
+        assert "exited 3" in caplog.text
+
+    def test_a_tool_that_still_answers_says_the_registry_withdrew_it(self, tmp_path, caplog):
+        script = _write_marked_script(tmp_path, "hidden-tool")
+        before = {"hidden-tool": {"name": "hidden-tool", "_script": str(script)}}
+
+        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
+            _log_lost_tools(before, {})
+
+        assert "no longer offers it" in caplog.text
+
+    def test_a_tool_that_survived_the_scan_is_not_reported(self, caplog):
+        tools = {"a": _schema("a")}
+
+        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
+            _log_lost_tools(tools, tools)
+
+        assert caplog.text == ""
+
+
 # ── Client Transport ──────────────────────────────────────────────────────
 
 
@@ -500,6 +744,7 @@ MCP_PROTOCOL_VERSION = "2025-06-18"
 
 # One id per turn of the conversation the module fixture drives, named so a
 # failing assertion says which request it was reading the answer to.
+INITIALIZE_ID = 1
 LIST_ID = 2
 ECHO_ID = 3
 PLAIN_ID = 4
@@ -734,6 +979,22 @@ class _ServerProcess:
             # with the exit code and stderr attached.
             pass
 
+    def await_notification(self, method: str, timeout: float) -> dict | None:
+        """The next frame announcing *method*, or None if it never arrives.
+
+        Frames read on the way are dropped: a caller waiting on a notification
+        has already collected the replies it asked for, and re-listing after
+        this returns is what it wants the answer to anyway.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            line = self._next_line(deadline)
+            if line is None:
+                return None
+            frame = json.loads(line) if line.strip() else {}
+            if frame.get("method") == method:
+                return frame
+
     def collect(self, expected: int) -> list[dict]:
         """Frames written back, returning early once no more can arrive."""
         frames: list[dict] = []
@@ -804,23 +1065,32 @@ def _talk(script: Path, messages: list[dict]) -> _Exchange:
         proc.close()
 
 
+_HANDSHAKE = [
+    {
+        "jsonrpc": "2.0",
+        "id": INITIALIZE_ID,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "test-client", "version": "0"},
+        },
+    },
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+]
+
+
+def _list(request_id: int) -> dict:
+    return {"jsonrpc": "2.0", "id": request_id, "method": "tools/list", "params": {}}
+
+
 @pytest.fixture(scope="module")
 def transport(tmp_path_factory):
     """One conversation, reused by every case — each spawn costs a uv resolve."""
     script = _build_fake_checkout(tmp_path_factory.mktemp("checkout"))
     return _talk(script, [
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "test-client", "version": "0"},
-            },
-        },
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": LIST_ID, "method": "tools/list", "params": {}},
+        *_HANDSHAKE,
+        _list(LIST_ID),
         _call(ECHO_ID, "echo-tool", {"word": "hello"}),
         _call(PLAIN_ID, "plain-tool", {}),
         _call(SILENT_ID, "silent-tool", {}),
@@ -893,3 +1163,86 @@ class TestClientTransport:
 
         assert result["isError"] is True
         assert "silent-tool" in result["content"][0]["text"]
+
+    def test_the_server_promises_to_announce_tool_changes(self, transport):
+        """listChanged is a promise: without it a client has no reason to re-list."""
+        capabilities = transport.result(INITIALIZE_ID)["capabilities"]
+
+        assert capabilities["tools"]["listChanged"] is True
+
+
+_LATER_TOOL = '''\
+#!/usr/bin/env python3
+"""Merged while the client was already connected."""
+import json, sys
+
+if "--tool-schema" in sys.argv:
+    json.dump({
+        "name": "later-tool",
+        "description": "Arrived after the handshake",
+        "input_schema": {"type": "object", "properties": {}},
+    }, sys.stdout)
+    sys.exit(0)
+
+print("later output")
+'''
+
+_LATER_ENTRY = """\
+  - name: later-tool
+    permission: false
+    visibility: brief
+    description: "The later-tool fixture"
+"""
+
+# Several poll intervals, so a loaded runner has room without the case passing
+# for the wrong reason — the notification is either sent on the next poll or not
+# at all.
+REDISCOVERY_TIMEOUT = 60
+
+FIRST_LIST_ID = 2
+SECOND_LIST_ID = 3
+
+
+def _tools_of(frames: list[dict], request_id: int) -> list[dict]:
+    for frame in frames:
+        if frame.get("id") == request_id:
+            return frame["result"]["tools"]
+    raise AssertionError(f"no tools/list reply with id {request_id} in {frames}")
+
+
+@uv_required
+class TestRediscovery:
+    """A tool merged while the client is connected, without restarting it.
+
+    The unit cases drive the watcher with discovery stubbed out. This is the
+    only place the whole chain runs: a real script appearing in a scanned
+    directory, the poll noticing, and a frame reaching the client that did not
+    ask for it.
+    """
+
+    def test_a_tool_added_after_startup_is_announced_and_then_listed(self, tmp_path):
+        script = _build_fake_checkout(tmp_path)
+        proc = _ServerProcess(script)
+        try:
+            proc.send([*_HANDSHAKE, _list(FIRST_LIST_ID)])
+            first = proc.collect(2)
+            assert {tool["name"] for tool in _tools_of(first, FIRST_LIST_ID)} == {
+                "echo-tool", "plain-tool", "silent-tool"}
+
+            later = tmp_path / "bin" / "later-tool"
+            later.write_text(_LATER_TOOL)
+            later.chmod(later.stat().st_mode | stat.S_IXUSR)
+            registry = tmp_path / "bin" / "registry.yml"
+            registry.write_text(registry.read_text() + _LATER_ENTRY)
+
+            announced = proc.await_notification(
+                "notifications/tools/list_changed", REDISCOVERY_TIMEOUT)
+            assert announced is not None, (
+                f"the tool change was never announced — {proc.status}; "
+                f"server stderr:\n{proc.stderr}")
+
+            proc.send([_list(SECOND_LIST_ID)])
+            relisted = _tools_of(proc.collect(1), SECOND_LIST_ID)
+            assert "later-tool" in {tool["name"] for tool in relisted}
+        finally:
+            proc.close()

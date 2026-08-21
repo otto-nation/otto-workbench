@@ -523,6 +523,28 @@ than leaving the tool to vanish at runtime. Visibility is not checked: a `hidden
 a decision somebody made, and the probe has to cover the script anyway because `pr` runs
 it.
 
+**Staying current without a restart.** The client owns this process — it spawns the server
+over stdio and nothing outside can restart it — so a tool added, re-signatured, or
+registered differently after startup would otherwise stay invisible until the next client
+session. Every couple of seconds the server fingerprints what discovery reads: the scanned
+directories, every file in them (modification time, size, and mode, since `chmod +x` is the
+whole of what turns a file into a candidate), and every `registry.yml`. Nothing is executed
+and no source is read, so a poll that finds nothing costs one `stat` per file; the interval
+is a bound on staleness rather than a cost to trade against.
+
+When the fingerprint moves, discovery runs again. Only a change to the offered set is
+announced — pulling a branch touches many files and usually changes no tools — and the
+announcement is `notifications/tools/list_changed`, which the server advertises as the
+`tools.listChanged` capability during initialization. A client that never saw that promise
+has no reason to re-list, so the notification and the capability ship together. Nothing is
+sent before the client's first request, since a notification arriving mid-handshake is one
+a client is entitled to reject.
+
+A tool that was working and now is not is logged at error level with the reason it stopped
+answering — its script is gone, it exited non-zero, or its registry entry no longer offers
+it. A silent disappearance from `tools/list` is the failure this exists to prevent: the
+client shows one fewer tool and says nothing about why.
+
 **What a call returns.** Stdout that parses as JSON comes back as the text content of the
 result, so a client sees the tool's own output rather than a rendering of it. A tool whose
 schema declares `output_schema` returns that JSON as structured content as well, because a

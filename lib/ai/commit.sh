@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
-# Commit message generation and validation helpers.
-# Requires lib/ai/core.sh to be sourced first.
+# Commit message generation with validation and automatic retry on length
+# violations.
+#
+# Requires [`ai/core.sh`](#aicoresh) to be sourced first. Typical call sequence:
+#
+# ```bash
+# find_commitlint_config   # sets COMMITLINT_CONFIG
+# build_commit_rules       # sets COMMIT_RULES (derived from COMMITLINT_CONFIG)
+# generate_commit_msg DIFF # sets AI_MSG
+# validate_commit_msg MSG  # validates; returns 1 on failure
+# ```
+#
+# State set by its functions: `COMMITLINT_CONFIG`, `COMMIT_RULES`, `AI_MSG`.
+
 # shellcheck source=compact_diff.sh
 if [ -n "${BASH_SOURCE:-}" ]; then
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compact_diff.sh"
 else
   . "${TASKFILE_DIR:?commit.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai/compact_diff.sh"
 fi
-#
-# Typical call sequence:
-#   find_commitlint_config   → sets COMMITLINT_CONFIG
-#   build_commit_rules       → sets COMMIT_RULES (derived from COMMITLINT_CONFIG)
-#   generate_commit_msg DIFF → sets AI_MSG
-#   validate_commit_msg MSG  → validates; returns 1 on failure
-#
-# State set by functions: COMMITLINT_CONFIG, COMMIT_RULES, AI_MSG
 
 # find_commitlint_config
 # Sets COMMITLINT_CONFIG to the first config found, or empty string if none.

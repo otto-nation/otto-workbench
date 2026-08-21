@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# Shared configuration and helpers for AI-powered git automation.
-# Sourced by lib/ai/commit.sh, lib/ai/pr.sh, and lib/ai/review.sh via Taskfile tasks.
+# Foundation module: AI command loading, GitHub token resolution with per-org
+# routing, response handling.
 #
-# State set by functions: AI_COMMAND, AI_RESPONSE
+# Sourced first by `commit.sh`, `pr.sh`, and `review.sh`, and by the Taskfile
+# tasks that drive them. It inherits the commit conventions by sourcing
+# [`conventions.sh`](#conventionssh), so `COMMIT_TYPES` and the length limits
+# have one owner across both halves.
+#
+# POSIX-compatible: go-task sources it through `sh -c`, which is why the array
+# work lives in [`compact_diff.sh`](#aicompact_diffsh) instead.
+#
+# State set by its functions: `AI_COMMAND`, `AI_RESPONSE`.
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 # shellcheck disable=SC2034  # All config variables are used by sourcing scripts (commit.sh, pr.sh, review.sh)

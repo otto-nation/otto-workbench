@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Component installation state tracking via YAML.
+# Component installation state tracking.
 #
-# Tracks which components and sub-tools are installed in a structured
-# YAML file (~/.local/state/workbench/install.yml). Core components (bin, git,
-# zsh, task) are omitted — they always sync.
+# Records which components and sub-tools are installed in a structured YAML
+# file. Core components — bin, git, zsh, task — are omitted, since they always
+# sync.
 #
-# Usage (from scripts that already source lib/ui.sh):
-#   state_record "ai"           # record a component
-#   state_record "ai/claude"    # record a sub-tool
-#   state_is_installed "ai"     # returns 0 if installed
-#   state_remove "ai/claude"    # remove an entry
-#   state_file_exists           # returns 0 if state file exists
+# State file: `$INSTALL_YML_FILE` — `install.yml` under the state root. The flat
+# `installed.components` it replaced survives only as the second half of
+# `state_file_exists`.
+#
+# ```bash
+# state_record "ai"           # record a component
+# state_record "ai/claude"    # record a sub-tool
+# state_is_installed "ai"     # returns 0 if installed
+# state_remove "ai/claude"    # remove an entry
+# state_file_exists           # returns 0 if state file exists
+# ```
 
 # Guard: constants must be loaded (provides INSTALL_YML_FILE)
 if [[ -z "${INSTALL_YML_FILE:-}" ]]; then

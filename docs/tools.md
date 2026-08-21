@@ -66,7 +66,9 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-tool-schema` | Validates that every script claiming the --tool-schema protocol can answer the MCP server's probe |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
 | `validate-docs-composed` | Validates that every composed doc matches what its docs/*.src.md composes to |
+| `validate-lib-reference` | Validates that docs/libraries.src.md renders every module group lib/ declares |
 | `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
+| `generate-lib-reference` | Renders the docs/libraries.md module reference from the lib/ module headers |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |

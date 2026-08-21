@@ -1,50 +1,18 @@
 #!/usr/bin/env bash
-# Shared registry discovery, install-check, and env/auth iteration.
+# doc-group: registry
+# Registry discovery, install-check gating, and env/auth iteration.
 #
-# Used by: bin/generate-tool-context, brew/summary.sh, bin/validate-registries,
-#          ai/claude/steps.sh
+# The schema these functions read — the meta block, the tool entry fields, the
+# `*.env.yml` shape, and the cross-validation modes — is documented once, in
+# [Registries](registries.md#schema). `KNOWN_TOOL_FIELDS` and
+# `KNOWN_COMMAND_FIELDS` below are what `validate-registries` rejects unknown
+# keys against.
 #
-# ── Tool Entry Interface ─────────────────────────────────────────────────
-#
-# Always required:
-#   name          string          Tool or command name
-#   description   string          One-line description
-#   permission    bool|str|str[]  Bash permission for Claude Code settings.json:
-#                   false              → no permission (internal/indirect tools)
-#                   true               → Bash(name:*)
-#                   "cmd"              → Bash(cmd:*)  (CLI differs from registry name)
-#                   ["Bash(cmd:*)"]    → verbatim patterns (granular subcommand control)
-#   visibility    enum            AI context visibility + rendering style:
-#                   full   → full entry in tools.generated.md (heading, description, when_to_use, usage)
-#                   brief  → compact one-liner (name + description)
-#                   hidden → omitted from AI context
-#
-# Required when visibility: full (forbidden otherwise):
-#   when_to_use   string          When the AI should reach for this tool
-#   usage         string          Example invocations
-#
-# Optional:
-#   docs          string          URL to external documentation
-#   brew_name     string          Brewfile formula name when it differs from tool name
-#   commands      object[]        Subcommand definitions (name + description required)
-#   auth          object          Auth block with env_var, setup_url, prefix
-#
-# ── Functions ─────────────────────────────────────────────────────────────
-#
-#   is_installed NAME             — returns 0 if NAME is in PATH
-#   collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
-#                                 — populates array with deduplicated registry paths
-#   collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
-#                                 — populates array with Bash(...) permission patterns
-#                                   from tools that declare an allow field
-#   registry_passes_install_check FILE
-#                                 — returns 0 if registry should be rendered
-#   iter_registry_env FILE CALLBACK
-#                                 — calls CALLBACK var comment default_val setup_url prefix
-#                                   for each env[] entry in FILE
-#   iter_registry_auth FILE CALLBACK
-#                                 — calls CALLBACK name env_var setup_url prefix
-#                                   for each tool with an auth block in FILE
+# Sourced directly by its consumers — `bin/local/generate-tool-context`,
+# `bin/local/validate-registries`, `brew/summary.sh`, `summary.sh`, and
+# `ai/claude/steps.sh`. Not in the `ui.sh` facade. It loads `roots.sh` itself when
+# the caller has not already sourced `constants.sh`, since an
+# `install_check_symlink` value may name a workbench root.
 
 # install_check_symlink values may reference the workbench roots, so load them
 # when the caller has not already sourced lib/constants.sh — tests source this

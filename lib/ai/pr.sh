@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# PR generation helpers.
-# Requires lib/ai/core.sh to be sourced first.
+# PR content generation: title, description, issue linking, template loading.
 #
-# Typical call sequence:
-#   load_pr [ARGS]                          → sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH
-#   push_branch BRANCH                      → pushes branch if needed
-#   generate_pr_content BRANCH DEFAULT      → sets PR_TITLE, PR_DESCRIPTION
-#   create_pr GH_ARGS...                    → runs gh pr create, reports the PR URL
+# Requires [`ai/core.sh`](#aicoresh) to be sourced first. Typical call sequence:
 #
-# State set by functions: BRANCH, DEFAULT_BRANCH, SKIP_ISSUE, PR_BASE,
-#                         PR_ISSUE, PR_TEMPLATE, PR_HAS_TEMPLATE, PR_TITLE, PR_DESCRIPTION
+# ```bash
+# load_pr [ARGS]                     # sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH
+# push_branch BRANCH                 # pushes the branch if needed
+# generate_pr_content BRANCH DEFAULT # sets PR_TITLE, PR_DESCRIPTION
+# create_pr GH_ARGS...               # runs gh pr create, reports the PR URL
+# ```
+#
+# State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
+# `PR_BASE`, `PR_ISSUE`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`, `PR_TITLE`,
+# `PR_DESCRIPTION`.
 
 # push_branch BRANCH
 # Pushes BRANCH to remote, handling first-push and divergence cases.

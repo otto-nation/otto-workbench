@@ -13,6 +13,7 @@ config.schema.json linguist-generated=true
 docs/ai-automation.md linguist-generated=true
 docs/components.md linguist-generated=true
 docs/getting-started.md linguist-generated=true
+docs/libraries.md linguist-generated=true
 docs/tools.md linguist-generated=true
 
 # release-please

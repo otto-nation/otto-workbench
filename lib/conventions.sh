@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Git convention constants — single source of truth for commit and PR formatting.
 #
-# Sourced by lib/ai/core.sh (for AI automation tasks) and directly by scripts
-# that only need convention constants (git/bin/generate-changelog, git/bin/generate-git-rules).
+# Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`,
+# `BREAKING_CHANGE_FOOTER`, `BREAKING_CHANGE_FOOTER_ALT`, `NOT_BREAKING_FOOTER`,
+# `BREAKING_FOOTER_RE`, `DECLARED_FOOTER_RE`. To add a commit type, append it to
+# `COMMIT_TYPES` — no other change is needed.
 #
-# To add a commit type, append it to COMMIT_TYPES — no other changes needed.
+# The footer helpers answer one question — "does this message declare a breaking
+# change" — for all three readers that ask it: the pre-push gate
+# (`bin/local/check-surface-compat`), the local commit validator
+# (`validate_commit_msg`), and the reword path that carries an existing footer
+# onto a regenerated message. POSIX only: the file is sourced by `/bin/sh` on the
+# go-task path, so no `[[`, no `<<<`, no pattern-replacement expansion.
 #
-# The footer helpers at the bottom are here for the same reason the tokens are:
-# "this message declares a breaking change" is asked by the pre-push gate
-# (bin/local/check-surface-compat), by the local commit validator, and by the
-# reword path that has to carry an existing footer forward. Three readers, one
-# answer. The file is sourced by /bin/sh on the go-task path, so everything
-# below stays POSIX — no [[, no <<<, no pattern-replacement expansion.
+# Sourced directly by `lib/ai/core.sh` and the git generation scripts
+# (`git/bin/generate-changelog`, `git/bin/local/generate-git-rules`).
 
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 

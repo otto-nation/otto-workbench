@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# File operation helpers — symlinks, copies, and config patching.
-# Bash-only (uses local, arrays, and prompt helpers).
+# File operations with idempotency: symlinks, copies, directory operations,
+# layer merging.
 #
-# Functions: install_symlink, install_file, copy_dir, symlink_dir, apply_config_patch,
-#            list_shell_scripts, resolve_layers, is_disabled, install_hook_dispatcher
+# Bash-only — it uses `local`, arrays, and the prompt helpers.
 
 [[ -n "${_LIB_FILES_SH:-}" ]] && return
 _LIB_FILES_SH=1

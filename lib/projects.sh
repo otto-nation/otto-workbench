@@ -1,22 +1,85 @@
 #!/usr/bin/env bash
 # The repos on this machine that use otto-workbench.
 #
-# Membership means a workbench command actually ran in a repo, not that a
-# `.claude` directory turned up somewhere under a directory someone guessed at.
-# Both consumers that used to guess — the machine profile generator and the
-# project-scoped migrations — read this list instead of deriving their own.
+# State file: `$PROJECTS_REGISTRY_FILE` — `projects.registry` under the [state
+# root](#rootssh), one absolute path per line with `#` comment lines. Text rather
+# than YAML for the reason `migrations.applied` is: every write is an append and
+# every read is a scan, and YAML would pay a `yq` fork on each of them. The
+# filename is declared once, in [`constants.sh`](#constantssh), and this file
+# holds functions only.
 #
-# The file is one absolute path per line under the state root, with `#` comment
-# lines. Text rather than YAML for the reason `migrations.applied` is: every
-# write is an append and every read is a scan, and YAML would pay a `yq` fork on
-# each of them.
+# Membership means a workbench command actually ran in a repo. Nothing scans for
+# candidates — the two consumers that used to, the machine profile generator and
+# the project-scoped migrations, each carried their own guessed-at list of git
+# roots and a depth limit, so a repo cloned anywhere else was invisible and the
+# migration recorded itself applied all the same. Registration is an observation,
+# so it can only ever be late; `otto-workbench projects add` is what covers a
+# repo that joined after something needed to see it. The registrations are:
 #
-# ai/lib/workbench_projects.py is the Python half — Claude's SessionStart hook
-# and the `pr` CLI register through it, and it reads and writes the same file in
-# the same shape. tests/projects.bats cross-validates the two.
+# | Caller | Where the root comes from |
+# |--------|---------------------------|
+# | Claude's SessionStart hook (`reuse-session-start`) | already resolved for the ceiling scan |
+# | `pr` | `ctx.worktree_root` |
+# | `otto-workbench ai init` | the repo being scaffolded |
+# | `otto-workbench projects add [DIR]` | by hand, for a repo that uses neither |
 #
-# The filename itself is declared once, in lib/constants.sh, and this file holds
-# functions only.
+# `project_register` does no discovery of its own and forks nothing: every caller
+# has a resolved work-tree root in hand. A path under `$TMPDIR`, `/tmp`,
+# `/var/folders`, or the workbench's own state or cache root is refused — `bats`
+# builds throwaway repos there and runs validators and pre-commit hooks inside
+# them. The `/private` twins of the temp roots are listed too, because callers
+# hand over a path `git rev-parse --show-toplevel` already resolved and those two
+# are symlinks into `/private` on macOS. A bare repo's container is refused as
+# well, holding worktrees rather than being one. `PROJECTS_EXCLUDED_PREFIXES` is
+# assignable so a test can register the repos it builds, which are all temporary.
+#
+# Reads drop entries whose directory is gone, which is what saves the registry
+# from needing a pruning job; `otto-workbench projects prune` makes the drop
+# permanent. Repeats are dropped on read for a related reason: registration is an
+# append guarded by a membership check rather than a lock, so two workbench
+# commands starting in one repo at the same moment can each read "absent" and
+# each append. Absorbing that where it is read costs nothing; a lock would tax
+# every hook to prevent a duplicate line.
+#
+# `otto-workbench projects forget DIR` canonicalises `DIR` before matching —
+# entries are stored as `git rev-parse --show-toplevel` returned them, and the
+# comparison is an exact string, so a relative path, one holding `..`, one
+# reaching through a symlink, or one naming a subdirectory of the repo all have
+# to arrive in that form or a valid request reads as "not in the registry". A
+# directory that is already gone can only be normalised lexically, which is the
+# right answer for it: whatever entry it matches was written while it still
+# existed.
+#
+# `seed_project_registry` backfills the repos that predate the registry, once per
+# machine, from the `.projects` map in `~/.claude.json` — an observation Claude
+# Code wrote, not another guess at where repos live. Each key is a session cwd,
+# so `_project_seed_roots` turns one into a work-tree root: `git rev-parse
+# --show-toplevel` for a normal checkout, and for a bare-repo container — a
+# directory that refuses `--show-toplevel` outright — the worktree checked out on
+# the branch the container's HEAD names, the same choice `WORKBENCH_STABLE_DIR`
+# makes. A container's feature worktrees are deliberately left out: they come and
+# go, each would be a row of its own everywhere the registry is read, and any
+# still around registers itself the next time a workbench command runs in it.
+#
+# A `# backfilled from <path>` line inside the file records that the backfill
+# ran: the Python half creates the file the first time `pr` registers anything,
+# so a backfill keyed on the file's existence would be skipped forever on a
+# machine that used a tool before it next synced. Without `jq` it writes no
+# marker and returns — no candidates for want of a reader is indistinguishable
+# from a machine that has none, and recording the marker on that reading would
+# retire the backfill before it ever ran. It is called from `run_all_migrations`
+# ahead of the framework rather than written as a migration, for the reason
+# adoption is — see [Execution Flow —
+# Migrations](execution-flow.md#migrations).
+#
+# [`ai/lib/workbench_projects.py`](../ai/lib/workbench_projects.py) is the Python
+# half — the SessionStart hook and `pr` register through it, against the same
+# file in the same shape. It raises nothing: registration is a side effect of a
+# command run for some other reason, and a hook that died on an unwritable state
+# file would cost a session for a bookkeeping entry. The filename is declared
+# once in [`constants.sh`](#constantssh) as `PROJECTS_REGISTRY_NAME` and once in
+# `workbench_paths.py`; `tests/workbench_roots.bats` fails when the two drift,
+# and `tests/projects.bats` cross-validates the halves against one file.
 
 # Guard: constants must be loaded (provides PROJECTS_REGISTRY_FILE, plus the
 # state and cache roots the exclusion rules below refer to)

@@ -1,19 +1,80 @@
 #!/usr/bin/env bash
-# The three workbench roots — config, state, and cache.
+# The three user-level roots the workbench writes to, each resolved through the
+# same chain:
 #
-# Each resolves through the same chain:
-#   WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
+# ```
+# WORKBENCH_<ROOT>_DIR  →  XDG_<ROOT>_HOME/workbench  →  built-in default
+# ```
 #
-# Its own module rather than part of constants.sh because the otto-ai-tools
-# tarball ships this file directly (see BASH_MODULES in
-# ai/claude/bin/build-otto-ai-tools-tarball). The tarball's ui.sh facade
-# replaces constants.sh, so anything spelled there would have to be spelled
-# again in the facade.
+# <!-- include: bin/local/generate-lib-reference --roots-table -->
 #
-# Two other definitions express the same chain and must stay in step:
-# ai/lib/workbench_paths.py for Python, and zsh/config.d/aliases/docker.zsh,
-# which cannot source this file at shell startup. tests/workbench_roots.bats
-# cross-validates all three.
+# `install.yml` sits under state despite the name: `lib/state.sh` owns every
+# write to it, and it is what the old `installed.components` file migrated into.
+# It records what a sync found or installed, not anything a user chose to type.
+#
+# Machines set up before the split keep everything in `~/.config/workbench`.
+# `adopt_legacy_workbench_root` in [`lib/migrations.sh`](../lib/migrations.sh)
+# carries that directory across on the next sync, entry by entry, and runs ahead
+# of the migration framework because `migrations.applied` is one of the files it
+# moves. Nothing falls back to the old path once it has run — the adoption is the
+# entire compatibility story.
+#
+# Routing is by name and spelled out in three branches, not two plus a
+# fallthrough: `_LEGACY_CONFIG_ENTRIES` goes to the config root,
+# `_LEGACY_UNCLAIMED_ENTRIES` is skipped and left in the legacy root, and
+# everything else goes to the state root. That last default is deliberate — the
+# inventory behind the split found state files no manifest written in advance had
+# listed — but it must not also absorb a name no root holds any more: adoption
+# runs before any migration reads its bookkeeping, so an entry a completed
+# migration deleted on purpose (`logs/`, for one) would come back with nothing
+# left to take it out again. Adding one to the unclaimed list is the fix whenever
+# a migration prunes a top-level name from a root.
+#
+# A file the new root already holds is normally kept on both sides and warned
+# about rather than clobbered. The exception is the append-only ledgers —
+# `trail.jsonl` and `usage/*.jsonl` — which are concatenated instead: their only
+# writers open them in append mode, and `otto-log` sorts every record by `ts`
+# after loading, so one history split across two files reassembles either way.
+# The rule is keyed on those names, not on the `.jsonl` extension, because the
+# review artifacts (`session.jsonl`, `post.jsonl`, `*.holistic.jsonl`) are
+# whole-file writes whose convention is prior-content-first.
+#
+# Its own module rather than part of `constants.sh` because two other consumers
+# need the roots without the rest: the `otto-ai-tools` tarball ships `roots.sh`
+# alongside its own `ui.sh` facade (see `BASH_MODULES` in
+# `ai/claude/bin/build-otto-ai-tools-tarball`), and `registries.sh` sources it
+# directly when a caller has not loaded `constants.sh`.
+#
+# Two definitions outside `lib/` express the same chain, and
+# `tests/workbench_roots.bats` cross-validates all three:
+#
+# - [`ai/lib/workbench_paths.py`](../ai/lib/workbench_paths.py) — the Python
+#   owner. Exposes `config_dir()`, `state_dir()`, `cache_dir(consumer=None)`,
+#   `trail_dir()`, and `reviews_dir()`, resolved per call rather than frozen at
+#   import. `cache_dir` takes a consumer name and rejects anything but a bare
+#   directory name — a path would land outside the tree the root's owner globs
+#   over. `trail_dir()` takes nothing: every trail writer shares one root,
+#   `<state>/trail/`, with one file per month. `reviews_dir()` is the sole owner
+#   of the reviews join, so the review system and the tool that reads its output
+#   — `retro-scan` for the findings — cannot disagree about where a review is.
+# - [`zsh/config.d/aliases/docker.zsh`](../zsh/config.d/aliases/docker.zsh) —
+#   spelled inline, because `WORKBENCH_DIR` is unknown at shell startup and
+#   sourcing would add a file read to every shell.
+#
+# #### Trails
+#
+# Every AI script appends to `trail_dir()`, in a file named for the emitting
+# event's UTC month. The layout mirrors `ai_usage.LEDGER_DIR`: rotation falls out
+# of the filename, `--since` drops whole files without opening them, and nothing
+# needs a pruning job. `_emit` takes an `fcntl.flock` on the open handle inside
+# the module's thread lock — one file now takes appends from concurrent
+# processes (`pr` and the script it spawned), and a short write (NFS, a signal,
+# an rlimit boundary) can split a record across two `write()` calls, letting the
+# other process's append land in the gap.
+#
+# The `20260814-unify-trail-root` migration carried the pre-cutover review trails
+# into `trail/legacy.jsonl`. `otto-log` always reads a file whose stem does not
+# name a month, which is what keeps it visible under `--since`.
 
 # _wb_root OVERRIDE XDG_HOME FALLBACK — resolve one root.
 # An override that is exported but empty counts as unset, matching how the XDG

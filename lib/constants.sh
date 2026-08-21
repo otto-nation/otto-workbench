@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Shared path and filename constants — sourced automatically via lib/ui.sh.
+# Path and filename constants, auto-derived from the workbench root.
 #
-# HOME-relative paths work on any machine without any caller setup.
-# Workbench source paths are derived from this file's own location so callers
-# never need to set WORKBENCH_DIR, DOTFILES_DIR, SCRIPT_DIR, or _AI_DIR.
-# Any caller may set WORKBENCH_DIR before sourcing to override the derived path.
+# The single source of truth for `WORKBENCH_DIR`, `LOCAL_BIN_DIR`,
+# `ZSH_CONFIG_DIR`, `CLAUDE_DIR`, `MIGRATIONS_STATE_FILE`, `INSTALL_YML_FILE`,
+# `INSTALLED_STATE_FILE`, `MAINTENANCE_LAST_FILE`, and every other shared path.
+#
+# HOME-relative paths work on any machine without any caller setup. Workbench
+# source paths are derived from this file's own location, so callers never need
+# to set `WORKBENCH_DIR`, `DOTFILES_DIR`, `SCRIPT_DIR`, or `_AI_DIR`; any caller
+# may set `WORKBENCH_DIR` before sourcing to override the derived path.
+#
+# No public functions — constants only. Sources `roots.sh`.
 
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 

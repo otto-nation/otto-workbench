@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# User interaction helpers — confirmation prompts, menus, and config reading.
-# Bash-only (read -n 1 behaves differently in zsh).
+# User interaction: confirmations, menus, and config reading.
 #
-# Functions: confirm, confirm_n, confirm_step, prompt_overwrite,
-#            select_menu, select_subdirs, conf_get
+# Bash-only — `read -n 1` behaves differently in zsh.
 
 [[ -n "${_LIB_PROMPTS_SH:-}" ]] && return
 _LIB_PROMPTS_SH=1

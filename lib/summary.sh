@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Post-run summary for install.sh and otto-workbench sync.
+# doc-group: registry
+# Post-run summary output for install and sync.
 #
 # Prints a consolidated view of managed files, editable configs, and quick
-# reference commands. Sourced by install.sh and bin/otto-workbench.
+# reference commands. Every path variable comes from `constants.sh`, and the
+# environment-setup block is rendered from the registries, so a new `*.env.yml`
+# entry appears here without an edit.
 #
-# All path variables come from lib/constants.sh (sourced via lib/ui.sh).
+# Sourced directly by the top-level `install.sh` and `bin/otto-workbench`.
 
 # ── Environment setup from registries ──────────────────────────────────────────
 

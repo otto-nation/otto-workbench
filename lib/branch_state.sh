@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# Branch state shared by the cleanup tools — "has this branch's work finished?"
+# "Has this branch's work finished?", shared by the cleanup tools.
 #
 # The answer comes from the issue tracker rather than from git whenever a PR
-# exists, because git cannot always answer it: a branch descending from a
+# exists, because git cannot always give one: a branch descending from a
 # different root has no merge base with the default branch, so `git cherry` and
-# `git branch --merged` have nothing to compare and report it as unmerged
-# forever. The PR state is the only signal that survives a re-rooted repo.
+# `git branch --merged` have nothing to compare and report it unmerged forever.
+# The PR state is the only signal that survives a re-rooted repo.
 #
-# Usage (from scripts that already source lib/ui.sh, or by sourcing this file
-# directly — it depends only on gh and jq):
-#   declare -A states
-#   branch_pr_states states || echo "no tracker available"
-#   echo "${states[feat/x]:-}"   # OPEN | MERGED | CLOSED, or empty
+# The lookup is batched — one `gh pr list` for the whole repo, not one `gh pr
+# view` per branch, which cost a sequential round trip each.
+#
+# ```bash
+# declare -A states
+# branch_pr_states states || echo "no tracker available"
+# echo "${states[feat/x]:-}"   # OPEN | MERGED | CLOSED, or empty
+# ```
+#
+# Bash-only — the state map is an associative array returned through a nameref.
+# Sourced directly by scripts that already load `lib/ui.sh` or on its own;
+# it depends only on `gh` and `jq`.
 
 # One page covers every repo this has been pointed at (738 PRs in the largest).
 # A truncated page is reported rather than silently dropping branches — see

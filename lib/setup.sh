@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Install and setup helpers — step workflows, requirement checks, and cask installs.
-# Bash-only. Used primarily by install.sh and component setup scripts.
+# Install workflow helpers: step registration, requirement checks, cask installs.
 #
-# Functions: register_step, run_steps, require_command, install_cask, run_migrations
+# Bash-only. Used primarily by `install.sh` and component setup scripts.
 
 [[ -n "${_LIB_SETUP_SH:-}" ]] && return
 _LIB_SETUP_SH=1

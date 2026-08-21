@@ -5022,6 +5022,194 @@ class TestAddressedInResponseFraming:
         assert "fixed" not in body
 
 
+# ── per-row attribution when work landed by hand across commits ────────────
+
+
+class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
+    """Several commits outside the pass is a fact about the branch, not the row.
+
+    Reconciliation could only ask "did this branch move?", so more than one
+    commit left it with nothing per-row to say and it declined for every row at
+    once — correctly, since the SHA it would otherwise stamp is HEAD, picked for
+    having no relationship to any of them. The line a thread is anchored to is a
+    different question with a different answer, and it is answerable: the commit
+    that changed that line after the reviewer asked is evidence about that
+    thread.
+
+    The reply path has resolved rows this way since #820. Only the table
+    declined, so one PR carried a thread reply reading "Fixed in `abc1234`"
+    beside a summary row reading "Fix applied (commit not recorded)".
+    """
+
+    @staticmethod
+    def _git(wt, *args, when=""):
+        env = dict(os.environ)
+        if when:
+            env["GIT_AUTHOR_DATE"] = when
+            env["GIT_COMMITTER_DATE"] = when
+        subprocess.run(["git", "-C", str(wt), *args],
+                       check=True, capture_output=True, env=env)
+
+    def _sha(self, wt, rev):
+        return subprocess.run(
+            ["git", "-C", str(wt), "rev-parse", rev],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    @pytest.fixture
+    def branch(self, worktree):
+        """Two hand-landed commits after the review, each at its own line.
+
+        `snapshot` is where the fix pass left the branch, so both commits are
+        outside it and `_reconciled_commit` reads UNDETERMINED — the state this
+        issue is about. `stale` predates the review and is the control: a line
+        whose only commit is older cannot be what carried a fix made later.
+        """
+        hooks = worktree / ".git" / "empty-hooks"
+        hooks.mkdir()
+        self._git(worktree, "config", "user.email", "test@example.com")
+        self._git(worktree, "config", "user.name", "Test")
+        self._git(worktree, "config", "commit.gpgsign", "false")
+        self._git(worktree, "config", "core.hooksPath", str(hooks))
+        (worktree / "a.py").write_text("one\ntwo\nthree\n")
+        self._git(worktree, "add", "-A")
+        self._git(worktree, "commit", "-qm", "base")
+        self._git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+        (worktree / "a.py").write_text("one\ntwo\nTHREE\n")
+        self._git(worktree, "commit", "-qam", "line three, before the review",
+                  when=_BEFORE_THE_REVIEW)
+        stale = self._sha(worktree, "HEAD")
+        snapshot = self._sha(worktree, "HEAD")
+        (worktree / "a.py").write_text("ONE\ntwo\nTHREE\n")
+        self._git(worktree, "commit", "-qam", "line one, by hand",
+                  when=_AFTER_THE_REVIEW)
+        first = self._sha(worktree, "HEAD")
+        (worktree / "a.py").write_text("ONE\nTWO\nTHREE\n")
+        self._git(worktree, "commit", "-qam", "line two, by hand",
+                  when=_AFTER_THE_REVIEW)
+        return SimpleNamespace(
+            path=worktree, snapshot=snapshot, stale=stale,
+            first=first, second=self._sha(worktree, "HEAD"),
+        )
+
+    @staticmethod
+    def _thread(tid, database_id):
+        return ReportThread(id=tid, comments=[
+            {"databaseId": database_id, "createdAt": _THE_REVIEW_COMMENT},
+        ])
+
+    @staticmethod
+    def _outcome(tid, line, summary):
+        return ThreadOutcome(
+            id=tid, file="a.py", line=line, reviewer="kgn",
+            summary=summary, action=ThreadAction.FIXED,
+        )
+
+    def _undetermined(self, rt, branch):
+        """The pass's own view of the branch: nothing recorded, HEAD moved on."""
+        fix = FixSummary(
+            threads=[], commit_status=CommitStatus.NO_CHANGES,
+            head_sha=branch.snapshot,
+        )
+        with patch.object(rt, "_is_pushed", return_value=True):
+            cp = rt._reconciled_commit(fix, CommitStatus.NO_CHANGES, branch.path)
+        assert cp.claim is rt.CommitClaim.UNDETERMINED, "fixture must reach the gap"
+        return cp
+
+    def _summary(self, rt, branch, entries, threads):
+        cp = self._undetermined(rt, branch)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            return rt._build_summary_body(
+                entries, [], [], cp, "owner/repo", 42, threads,
+                wt_path=branch.path,
+            )
+
+    def test_each_row_cites_the_commit_that_carried_it(self, rt, branch):
+        """The defect: both rows rendered "commit not recorded" together."""
+        body = self._summary(
+            rt,
+            branch,
+            [self._outcome("t1", 1, "first point"),
+             self._outcome("t2", 2, "second point")],
+            {"t1": self._thread("t1", 111), "t2": self._thread("t2", 222)},
+        )
+        assert f"Fixed in [`{branch.first}`]" in body
+        assert f"Fixed in [`{branch.second}`]" in body
+        assert "commit not recorded" not in body
+        assert "**2 fixed**" in body
+
+    def test_a_row_whose_line_predates_the_review_is_not_credited(self, rt, branch):
+        """A commit older than the comment cannot be the fix that answered it."""
+        body = self._summary(
+            rt, branch, [self._outcome("t3", 3, "third point")],
+            {"t3": self._thread("t3", 333)},
+        )
+        assert branch.stale not in body
+        assert "Fix applied (commit not recorded)" in body
+
+    def test_a_row_with_no_line_stays_uncited(self, rt, branch):
+        """A file-wide thread has no line history, so nothing resolves it."""
+        body = self._summary(
+            rt, branch, [self._outcome("t4", 0, "file-wide point")],
+            {"t4": self._thread("t4", 444)},
+        )
+        assert "Fix applied (commit not recorded)" in body
+
+    def test_a_render_with_no_worktree_still_declines(self, rt, branch):
+        """No tree to read is the case reconciliation was right to decline."""
+        cp = self._undetermined(rt, branch)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            body = rt._build_summary_body(
+                [self._outcome("t1", 1, "first point")], [], [], cp,
+                "owner/repo", 42, {"t1": self._thread("t1", 111)},
+            )
+        assert branch.first not in body
+        assert "Fix applied (commit not recorded)" in body
+
+    def test_the_table_and_the_reply_name_the_same_commit(self, rt, branch):
+        """One thread, two surfaces — they read the same resolver or they lie."""
+        entry = CommentItem(id="t1", summary="first point", file="a.py", line=1)
+        cp = self._undetermined(rt, branch)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            rt._reply_to_fixed(
+                [entry], {"t1": self._thread("t1", 111)}, "owner/repo", 42,
+                cp, branch.path,
+            )
+        reply = post.call_args[0][3]
+        row = self._summary(
+            rt, branch, [self._outcome("t1", 1, "first point")],
+            {"t1": self._thread("t1", 111)},
+        )
+        assert branch.first[:7] in reply
+        assert f"Fixed in [`{branch.first}`]" in row
+
+    def test_a_resolved_row_is_not_warned_about(self, rt, branch, capsys):
+        """The warning counts rows the table publishes without a claim.
+
+        A row the table now cites is attributed, so counting it would report an
+        attribution problem no reader of that table can find.
+        """
+        cp = self._undetermined(rt, branch)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            rt._warn_unattributed_fixes(
+                [self._outcome("t1", 1, "first point")], cp, "owner/repo", None,
+                rt.AddressingHistory(branch.path),
+                {"t1": self._thread("t1", 111)},
+            )
+        assert "no commit to attribute" not in capsys.readouterr().err
+
+    def test_a_row_that_stays_uncited_is_still_warned_about(self, rt, branch, capsys):
+        cp = self._undetermined(rt, branch)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            rt._warn_unattributed_fixes(
+                [self._outcome("t3", 3, "third point")], cp, "owner/repo", None,
+                rt.AddressingHistory(branch.path),
+                {"t3": self._thread("t3", 333)},
+            )
+        assert "1 fixed row(s) have no commit" in capsys.readouterr().err
+
+
 # ── default-branch resolution in commit lookups ────────────────────────────
 
 

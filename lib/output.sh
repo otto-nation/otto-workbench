@@ -43,6 +43,25 @@ fi
 # shellcheck disable=SC2145  # ${@: -1} extracts the last argument (the file), not a join
 sed_i() { sed -i.bak "$@" && rm -f "${@: -1}.bak"; }
 
+# indent PREFIX — copy stdin to stdout with PREFIX at the start of every line.
+# PREFIX is written literally, so it is spaces for a nested block of output and
+# a marker word for a machine-readable one.
+#
+# A final line arriving without a trailing newline comes back the same way on
+# BSD sed and terminated on GNU sed. Callers redirect to a terminal or sit in a
+# command substitution, and neither can tell the difference.
+#
+# ShellCheck reads the anchored substitution as SC2001 and suggests
+# `${var//x/y}`, which cannot express it: parameter expansion has no line
+# anchor, so the equivalent is a newline-to-newline-plus-prefix replacement that
+# still has to prepend the first line by hand.
+#
+# ceiling: PREFIX reaches sed as a replacement without escaping, so a `/`, `&`,
+# or backslash in it would be read as syntax rather than text. Every caller
+# passes spaces or a plain word. Upgrade trigger: escape the replacement if a
+# caller ever needs to indent with a path or a regex metacharacter.
+indent() { sed "s/^/$1/"; }
+
 # info MESSAGE — blue info message with an arrow.
 info()    { echo -e "${BLUE}→${NC} $*"; }
 

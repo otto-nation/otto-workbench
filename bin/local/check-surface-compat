@@ -74,10 +74,14 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # program never runs at all, so a zero-byte snapshot would print nothing and
 # exit 0, and the caller would read that empty capture as an empty surface.
 # With -s the input becomes an array of documents and the length check fires.
+#
+# shellcheck disable=SC2016  # \($src) is jq interpolating a jq variable, set by
+# --arg src; double quotes would let the shell expand it away first.
 _ENTRIES_JQ='if length != 1 then error("\($src): not a single JSON document") else .[0] end
   | .entries | if type == "array" then . else error("\($src): .entries is not an array") end'
 
 # jq program reading a snapshot's package name, run with -s for the same reason.
+# shellcheck disable=SC2016  # jq interpolation, as above
 _PACKAGE_JQ='if length != 1 then error("\($src): not a single JSON document") else .[0] end
   | if (.package | type) == "string" then .package else error("\($src): .package is missing or not a string") end'
 
@@ -292,7 +296,7 @@ fi
 
 if [[ "$MERGE_BASE_STATUS" -ne 0 ]]; then
   err "Could not resolve a merge base between HEAD and $BASE (git exit $MERGE_BASE_STATUS):"
-  sed 's/^/    /' "$MERGE_BASE_ERR" >&2
+  indent '    ' < "$MERGE_BASE_ERR" >&2
   echo "" >&2
   echo "  The surface was NOT checked. Fetch the base ref (git fetch origin)" >&2
   echo "  or pass an existing one with --base REF." >&2
@@ -320,7 +324,7 @@ if ! $HAS_BREAKING; then
   BANG_SUBJECTS=$(_bang_subjects)
   if [[ -n "$BANG_SUBJECTS" ]]; then
     err "A '!' header claims a breaking change but no ${BREAKING_CHANGE_FOOTER} footer was found:"
-    sed 's/^/    /' <<<"$BANG_SUBJECTS" >&2
+    indent '    ' <<<"$BANG_SUBJECTS" >&2
     echo "" >&2
     echo "  This repo squash-merges. On a multi-commit PR the PR title replaces" >&2
     echo "  your subject, so a header-only marker never reaches release-please." >&2
@@ -379,11 +383,11 @@ for snapshot in "${PUBLIC_SURFACE_RELPATHS[@]}"; do
 
   # Machine-readable, on stdout: task automation reads these to draft the
   # footer the author is missing. Everything else the gate prints is stderr.
-  sed 's/^/REMOVED /' <<<"$undeclared"
+  indent 'REMOVED ' <<<"$undeclared"
 
   undeclared_count=$(grep -c '' <<<"$undeclared")
   err "$package: $undeclared_count public surface entries removed without a declaration:"
-  sed 's/^/    /' <<<"$undeclared" >&2
+  indent '    ' <<<"$undeclared" >&2
   echo "" >&2
   echo "  Add one of these to a commit body on this branch:" >&2
   echo "" >&2

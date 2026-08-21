@@ -341,6 +341,7 @@ output.
 | Function | Purpose |
 |----------|---------|
 | `sed_i EXPRESSION FILE` | portable in-place sed (macOS and Linux). |
+| `indent PREFIX` | copy stdin to stdout with PREFIX at the start of every line. PREFIX is written literally, so it is spaces for a nested block of output and a marker word for a machine-readable one. |
 | `info MESSAGE` | blue info message with an arrow. |
 | `success MESSAGE` | green success message with a checkmark. |
 | `warn MESSAGE` | yellow warning; also logged to WORKBENCH_INSTALL_LOG. |

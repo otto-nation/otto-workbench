@@ -1,6 +1,6 @@
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import type { ReactNode } from 'react';
-import { Greca } from '@/components/greca';
+import { Greca } from '@otto-nation/brand';
 import { source, sortTree } from '@/lib/source';
 
 export default function Layout({ children }: { children: ReactNode }) {

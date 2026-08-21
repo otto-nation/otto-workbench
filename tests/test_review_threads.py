@@ -4512,6 +4512,33 @@ class TestGeneratedActionCell:
         assert rt._row_action_cell(held[0].published) == _HAND_WRITTEN_ACTION_CELL
         assert rt._row_action_cell(held[0].replaced_by) == "Conflicting reviewer feedback"
 
+    def test_an_edit_on_an_older_comment_is_still_found(self, rt):
+        """Once a round posts its own comment, the edited cell is on one no
+        later round targets — reading only the newest hands the row back."""
+        fresh = _published_summary(rt, ROUND_ONE_ROW)
+        held = rt._hand_written_rows(
+            [_published_summary(rt, HAND_EDITED_ROW),
+             _published_summary(rt, "| [other](https://x/pull/1#discussion_r9) "
+                                    "| @kgn | `b.go:1` | Fixed |")],
+            fresh)
+        assert [rt._row_action_cell(h.published) for h in held] == [
+            _HAND_WRITTEN_ACTION_CELL]
+
+    def test_the_newest_comment_wins_the_row(self, rt):
+        """Restoring a generated cell on the newest comment hands the row back."""
+        fresh = _published_summary(rt, ROUND_ONE_ROW)
+        assert rt._hand_written_rows(
+            [_published_summary(rt, HAND_EDITED_ROW),
+             _published_summary(rt, ROUND_ONE_ROW)], fresh) == []
+
+    def test_a_later_hand_edit_supersedes_the_generated_cell(self, rt):
+        """The mirror case — proves the newest-wins rule is not just first-wins."""
+        fresh = _published_summary(rt, ROUND_ONE_ROW)
+        held = rt._hand_written_rows(
+            [_published_summary(rt, ROUND_ONE_ROW),
+             _published_summary(rt, HAND_EDITED_ROW)], fresh)
+        assert [h.published for h in held] == [HAND_EDITED_ROW]
+
 
 class TestHandEditedCellsSurviveTheRender:
     """State regaining coverage of a thread used to be what destroyed the edit."""
@@ -4857,6 +4884,26 @@ class TestASummaryDescribesItsOwnRound:
         )
         assert "drop the guard" in body
         assert "1 need discussion" in body
+
+    def test_an_entry_the_run_cannot_date_reads_as_quiet(self, rt):
+        """An item keeps its source anchor whether or not the report still
+        carries the comment, so it is the entry this reading decides. A settled
+        thread stops being fetched, so undatable is the ordinary shape of the
+        row being scoped out, not a signal that it is new."""
+        item = ThreadOutcome(id="ic-900-0", summary="drop the guard",
+                             reviewer="kgn", file="old.go", line=4,
+                             action=ThreadAction.FIXED)
+        body = _repost_over(rt, *_sibling_rows(rt), outcomes=[item])
+        assert "drop the guard" not in body
+        assert "1 thread settled in an earlier round" in body
+
+    def test_an_undatable_entry_no_comment_holds_is_still_written(self, rt):
+        """#712 outranks that reading: absent from the record, so never dropped."""
+        item = ThreadOutcome(id="ic-901-0", summary="never published",
+                             reviewer="kgn", file="old.go", line=4,
+                             action=ThreadAction.FIXED)
+        body = _repost_over(rt, *_sibling_rows(rt), outcomes=[item])
+        assert "never published" in body
 
     def test_a_row_no_summary_comment_holds_is_written(self, rt):
         """#712 read against the set: absent from the record, so never dropped."""

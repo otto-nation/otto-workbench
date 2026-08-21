@@ -2918,10 +2918,23 @@ class RoundScope:
     target_keys: frozenset[str] = frozenset()
 
     def covers(self, key: str, activity_at: str) -> bool:
-        """Whether this round's summary writes the row keyed `key`."""
+        """Whether this round's summary writes the row keyed `key`.
+
+        An entry the run cannot date — `activity_at` empty — reads as quiet
+        rather than as new. A thread an earlier round settled stops being
+        fetched, so undatable is the ordinary shape of exactly the row this
+        scoping exists to stop restating, and treating it as new would leave the
+        settled tail of a long PR restated every round. Nothing is lost to that
+        reading: a key no summary comment holds has already returned True above,
+        whatever the run can or cannot date about it.
+
+        An undatable *summary* is the mirror case and goes the other way. With
+        `since` empty every real timestamp sorts after it, so a round that
+        cannot date the comment it is continuing writes every row it can date.
+        """
         if key not in self.published_keys or key in self.target_keys:
             return True
-        return bool(activity_at) and activity_at > self.since
+        return activity_at > self.since
 
 
 def _comment_timestamps(
@@ -2958,8 +2971,8 @@ def _entry_activity_at(
 
     "" means the run cannot date the entry — a thread this checkout did not
     fetch, an item whose source comment is not in the report. `RoundScope.covers`
-    reads that as uncoverable rather than as quiet, so the row is written unless
-    some summary comment already holds it.
+    reads that as quiet, so such a row is left where it was published; a row no
+    summary comment holds is written whatever this returns.
     """
     thread = threads_by_id.get(entry.id)
     if thread:

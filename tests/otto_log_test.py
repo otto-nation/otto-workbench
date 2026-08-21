@@ -17,6 +17,7 @@ sys.path.insert(0, str(LIB_DIR))
 sys.path.insert(0, str(BIN_DIR))
 
 import ai_usage
+import trail as trail_module
 import workbench_paths
 from trail import Trail
 
@@ -338,6 +339,34 @@ class TestStatsCommand:
         out = capsys.readouterr().out
         assert "fresh" in out
         assert "stale" not in out
+
+
+class TestPruneCommand:
+    def _write(self, name: str):
+        root = workbench_paths.trail_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / name
+        path.write_text('{"action":"old"}\n')
+        return path
+
+    def _run(self, keep):
+        otto_log.cmd_prune(argparse.Namespace(keep=keep))
+
+    def test_a_horizon_the_caller_names_overrides_the_default(self, capsys):
+        """The reason to run it by hand at all: taking history down past the
+        default after a burst, without waiting for the next trail to open."""
+        stale = self._write("2026-01.jsonl")
+        self._write(f"{datetime.now(timezone.utc):%Y-%m}.jsonl")
+
+        self._run(1)
+
+        assert not stale.exists()
+        assert "2026-01.jsonl" in capsys.readouterr().out
+
+    def test_an_already_bounded_root_says_so(self, capsys):
+        self._write(f"{datetime.now(timezone.utc):%Y-%m}.jsonl")
+        self._run(trail_module.TRAIL_KEEP_MONTHS)
+        assert "nothing older" in capsys.readouterr().out
 
 
 class TestSummaryIsNotAlwaysFinish:

@@ -1,8 +1,10 @@
 """Structured trail logging for otto-workbench AI scripts.
 
 Every script appends to one root, ``workbench_paths.trail_dir()``, in a file
-named for the emitting event's UTC month. The trail is always written; the
---debug flag controls stderr echo only.
+named for the emitting event's UTC month. Months past ``TRAIL_KEEP_MONTHS``
+are dropped as runs start, so the root stays bounded whatever writes to it.
+The --debug flag controls stderr echo only; whether a run is recorded at all
+is the caller's ``record`` argument to ``Trail.start``.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -18,6 +21,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from uuid import uuid4
 
 import workbench_paths
@@ -46,13 +50,29 @@ class EventType(str, Enum):
 SCHEMA_VERSION = 1
 
 # Hex characters of a uuid4 an invocation ID keeps. Every script on the machine
-# now writes into one root that nothing prunes, and `otto-log show` loads all of
-# it — so an ID has to stay unique across the machine's whole recorded history,
-# not just one worktree's file. 8 characters put the birthday bound around 65k
-# invocations, and one tool alone logged 9,134 in two months, so a machine
-# reaches that in about a year; 48 bits moves the bound to 16.7M. Readers match
-# the field whole, so records minted at the old width keep resolving.
+# writes into one root, and `otto-log show` loads every month of it that
+# retention keeps — so an ID has to stay unique across all of them, not just one
+# worktree's file. 8 characters put the birthday bound around 65k invocations,
+# and one tool alone logged 9,134 in two months; 48 bits moves the bound to
+# 16.7M. Readers match the field whole, so records minted at the old width keep
+# resolving.
 INVOCATION_HEX_WIDTH = 12
+
+# Months of history the root keeps, counting the month in progress. Nothing
+# used to drop anything, which was survivable while every writer was a human at
+# a keyboard — but a query built to be polled writes on an interval rather than
+# at human pace, and every `otto-log` query reads every file it finds. Six
+# months covers what anyone actually traces, a run from this cycle or the last
+# few; `otto-log prune --keep` overrides it for a one-off sweep.
+TRAIL_KEEP_MONTHS = 6
+
+# The stem the month naming produces, and the whole of what retention acts on.
+# A stem that does not match — `legacy.jsonl`, where the cutover migration
+# parked the pre-cutover history — cannot be placed in time by its name, so a
+# reader always reads it and a sweep never drops it. Nothing appends to such a
+# file, so it is a fixed size rather than a source of growth; removing one is a
+# deliberate `rm`.
+MONTH_STEM = re.compile(r"^\d{4}-\d{2}$")
 
 # The action on the one summary event that reports a run's own duration.
 # `pr gc` writes a second kind of summary with no duration, so readers select
@@ -85,6 +105,47 @@ _ANSI_LEVELS = {
     Level.WARN: "\033[1;33m",
     Level.ERROR: "\033[1;31m",
 }
+
+
+# ── Retention ─────────────────────────────────────────────────────────────
+
+def oldest_kept_month(now: datetime, keep_months: int) -> str:
+    """The stem of the oldest month a *keep_months* horizon retains.
+
+    Never later than the month *now* falls in, whatever is asked for: a run is
+    appending to that file as this is computed, so a horizon that excluded it
+    would delete the records of the invocation doing the deleting.
+    """
+    months = now.year * 12 + now.month - 1 - max(keep_months - 1, 0)
+    return f"{months // 12:04d}-{months % 12 + 1:02d}"
+
+
+def prune_trail(keep_months: int = TRAIL_KEEP_MONTHS) -> list[Path]:
+    """Drop every month file older than the horizon; return what went.
+
+    Runs as each trail opens, so it costs one readdir of a directory holding
+    one file per retained month — less than the records the run is about to
+    write. A file that is already gone is not an error: two runs sweeping at
+    once is the ordinary case, not a race worth reporting.
+    """
+    cutoff = oldest_kept_month(datetime.now(timezone.utc), keep_months)
+    try:
+        files = sorted(workbench_paths.trail_dir().glob("*.jsonl"))
+    except OSError:
+        # Same reading as `otto-log`'s discovery: a root that is not there yet
+        # holds nothing to drop, and a root that cannot be read is not one to
+        # start deleting from.
+        return []
+    removed = []
+    for path in files:
+        if not MONTH_STEM.match(path.stem) or path.stem >= cutoff:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        removed.append(path)
+    return removed
 
 
 # ── Event ─────────────────────────────────────────────────────────────────
@@ -126,39 +187,61 @@ class Trail:
         invocation: str,
         debug: bool,
         start_ns: int,
+        record: bool = True,
     ):
         self._script = script
         self._context = context
         self.invocation = invocation
         self._debug = debug
         self._start_ns = start_ns
+        self._record = record
 
     @classmethod
-    def start(cls, script: str, context: dict, debug: bool = False) -> Trail:
+    def start(cls, script: str, context: dict, debug: bool = False, *,
+              record: bool = True) -> Trail:
+        """Open a trail for one invocation.
+
+        ``record=False`` opens one that writes nothing. An invocation that
+        resolves no subject and takes no lock reads the state root, prints, and
+        returns — there is no action for an audit trail to hold, and a query
+        built to be polled would otherwise write two records a tick into the
+        file every `otto-log` query then reads. Such a run sweeps nothing and
+        creates nothing either: it leaves the root exactly as it found it.
+
+        ``--debug`` echoes either way, because the flag is about watching what a
+        run decided rather than about what is worth keeping.
+        """
         debug = debug or os.environ.get("WORKBENCH_DEBUG", "") == "1"
-        workbench_paths.trail_dir().mkdir(parents=True, exist_ok=True)
+        if record:
+            workbench_paths.trail_dir().mkdir(parents=True, exist_ok=True)
+            prune_trail()
         return cls(
             script=script,
             context=context,
             invocation=uuid4().hex[:INVOCATION_HEX_WIDTH],
             debug=debug,
             start_ns=time.monotonic_ns(),
+            record=record,
         )
 
-    def _emit(self, event: TrailEvent) -> None:
-        line = event.to_json()
+    def _append(self, event: TrailEvent) -> None:
         # The month comes from the event, not from the run: a run crossing a
         # month boundary writes each record to the file its timestamp names.
         path = workbench_paths.trail_dir() / f"{event.ts[TS_MONTH]}.jsonl"
+        # The flock covers the other processes appending to the same file —
+        # `pr` and the script it spawned. A short write — NFS, a signal, an
+        # rlimit — splits a record across two write() calls, and without the
+        # flock the other process's append can land in the gap between them.
+        with open(path, "a") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.write(event.to_json() + "\n")
+
+    def _emit(self, event: TrailEvent) -> None:
+        # _emit_lock covers this process's worker threads, for both halves: a
+        # record is written and echoed before another thread's is.
         with _emit_lock:
-            # _emit_lock covers this process's worker threads; the flock covers
-            # the other processes appending to the same file — `pr` and the
-            # script it spawned. A short write — NFS, a signal, an rlimit —
-            # splits a record across two write() calls, and without the flock
-            # the other process's append can land in the gap between them.
-            with open(path, "a") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                f.write(line + "\n")
+            if self._record:
+                self._append(event)
             if self._debug:
                 self._echo_stderr(event)
 

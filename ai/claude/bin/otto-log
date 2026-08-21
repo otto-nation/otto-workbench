@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import statistics
 import sys
 from collections.abc import Callable
@@ -30,9 +29,12 @@ from trail import (
     FINISH_ACTION,
     INVOCATION_HEX_WIDTH,
     LEVEL_WIDTH,
+    MONTH_STEM,
+    TRAIL_KEEP_MONTHS,
     TS_FORMAT,
     TS_TIME_OF_DAY,
     TS_TO_SECONDS,
+    prune_trail,
 )
 
 
@@ -48,12 +50,6 @@ ANSI_LEVELS = {
 
 # ── Discovery ─────────────────────────────────────────────────────────────
 
-# A file whose stem names a month can be skipped by name. Any other stem —
-# `legacy.jsonl`, where the cutover migration parks the pre-cutover history —
-# cannot be placed in time from its name, so it is always read.
-_MONTH_STEM = re.compile(r"^\d{4}-\d{2}$")
-
-
 def discover_trails(since: datetime | None = None) -> list[Path]:
     """Every trail file a *since* window can reach, oldest month first."""
     try:
@@ -67,7 +63,9 @@ def discover_trails(since: datetime | None = None) -> list[Path]:
     if since is None:
         return files
     cutoff = f"{since:%Y-%m}"
-    return [p for p in files if not _MONTH_STEM.match(p.stem) or p.stem >= cutoff]
+    # A stem that does not name a month cannot be placed in time by its name,
+    # so no window excludes it — see `trail.MONTH_STEM`.
+    return [p for p in files if not MONTH_STEM.match(p.stem) or p.stem >= cutoff]
 
 
 # ── Loading ───────────────────────────────────────────────────────────────
@@ -113,6 +111,19 @@ def load_trail_events(since: str | None) -> list[dict]:
 # worth failing over a typo, and the narrowest useful window shows less rather
 # than the wrong thing — the same hour `recent` defaults to.
 _FALLBACK_WINDOW = timedelta(hours=1)
+
+
+def _positive_int(value: str) -> int:
+    """An argparse type for a month count: never negative.
+
+    `oldest_kept_month` clamps a negative count to the same cutoff as zero, so
+    a negative `--keep` would silently keep the current month instead of
+    erroring on the nonsensical value it actually was.
+    """
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"must be a non-negative integer: {value!r}")
+    return n
 
 
 def _parse_since(since: str) -> datetime:
@@ -528,6 +539,22 @@ def cmd_list(args):
                   f"{ts}  {n:>{_EVENT_COUNT_WIDTH}} events  {duration}")
 
 
+def cmd_prune(args):
+    """Sweep now, at whatever horizon the caller names.
+
+    Every trail already sweeps at the default horizon as it opens, so this is
+    for the two cases that cannot wait for one: reclaiming the root after a
+    burst without running something else first, and taking history down past
+    the default when a machine is short of space.
+    """
+    removed = prune_trail(args.keep)
+    if not removed:
+        print(f"Trail: nothing older than the last {args.keep} month(s).")
+        return
+    for path in removed:
+        print(f"Trail: dropped {path.name}")
+
+
 def cmd_stats(args):
     records = ai_usage.read_ledger(since=_parse_since(args.since))
     rows = aggregate_usage(records, args.by)
@@ -579,6 +606,13 @@ def main():
     p_list.add_argument("--repo", help="Filter by repo (org/repo)")
     p_list.add_argument("--json", action="store_true", help="Output raw JSONL")
 
+    # prune
+    p_prune = sub.add_parser("prune", help="Drop trail months past the horizon")
+    p_prune.add_argument(
+        "--keep", type=_positive_int, default=TRAIL_KEEP_MONTHS,
+        help=f"Months of history to keep (default: {TRAIL_KEEP_MONTHS})",
+    )
+
     # stats
     p_stats = sub.add_parser("stats", help="Aggregate AI cost and token usage")
     p_stats.add_argument("--since", default="7d", help="Time window (e.g. 24h, 7d)")
@@ -599,6 +633,7 @@ def main():
         "query": cmd_query,
         "show": cmd_show,
         "list": cmd_list,
+        "prune": cmd_prune,
         "stats": cmd_stats,
     }
     commands[args.command](args)

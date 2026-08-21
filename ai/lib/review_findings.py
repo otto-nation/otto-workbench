@@ -3,6 +3,8 @@
 Shared between review-orchestrate (merging/verification) and review-post (parsing).
 """
 
+# doc-group: findings
+
 from __future__ import annotations
 
 import hashlib

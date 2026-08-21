@@ -5,6 +5,8 @@ review rules matched against changed file paths. Group reviewers receive
 only the profiles relevant to their files.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import fnmatch

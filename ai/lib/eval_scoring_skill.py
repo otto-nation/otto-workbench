@@ -11,6 +11,8 @@ The file is the single source of truth; a copy would let the eval keep passing
 against a skill that no longer says what the copy says.
 """
 
+# doc-group: eval
+
 from __future__ import annotations
 
 import json

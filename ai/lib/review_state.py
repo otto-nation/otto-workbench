@@ -11,6 +11,8 @@ the recovery path, the tests and the phase executors all reach the same
 functions.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import re

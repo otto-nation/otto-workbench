@@ -10,6 +10,8 @@ afterwards belongs to review_fix, and removing what the run left behind belongs
 to review_gc, which the orchestrator runs once every phase is done.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import json

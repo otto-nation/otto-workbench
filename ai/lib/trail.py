@@ -7,6 +7,8 @@ The --debug flag controls stderr echo only; whether a run is recorded at all
 is the caller's ``record`` argument to ``Trail.start``.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import argparse

@@ -4,6 +4,8 @@ Defines section configs declaratively and extracts them from review markdown.
 Replaces per-section parameter threading across the posting pipeline.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import re

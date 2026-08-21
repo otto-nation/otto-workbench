@@ -21,6 +21,8 @@ reconciliation written into the review would come back to the next round
 looking like a fresh set of prior findings.
 """
 
+# doc-group: findings
+
 from __future__ import annotations
 
 import re

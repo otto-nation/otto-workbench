@@ -64,5 +64,6 @@ For details on what sync does step-by-step, see [Execution Flow](execution-flow.
 | Set up AI tooling | [AI Automation](ai-automation.md) — Claude Code, skills, agents |
 | Customize AI config | [User Overrides](user-overrides.md) — replace, extend, or disable |
 | Understand the shared libraries | [Libraries](libraries.md) — all lib/ modules and their functions |
+| Understand the AI Python modules | [AI Libraries](ai-libraries.md) — every module in ai/lib/ |
 | Fix something broken | [Troubleshooting](troubleshooting.md) — common issues |
 | Contribute changes | [Contributing](../CONTRIBUTING.md) — dev setup, tests, conventions |

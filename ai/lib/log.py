@@ -3,6 +3,8 @@
 NOT for structured event logging — use trail.py for that.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import os

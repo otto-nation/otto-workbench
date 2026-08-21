@@ -14,6 +14,8 @@ Two shapes are supported, matching the two ways the `pr` scripts call an agent:
                         no session log, so the response itself is the signal.
 """
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 from collections.abc import Callable

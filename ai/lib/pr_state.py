@@ -8,6 +8,8 @@ State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on t
 run's target — see ``pr_target.target_dir``, which owns that path.
 """
 
+# doc-group: pr-state
+
 from __future__ import annotations
 
 import re

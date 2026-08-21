@@ -4,6 +4,8 @@ Dispatches preflight(), prompt(), invoke_agent(), and invoke_fix() to the
 correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
 """
 
+# doc-group: backend
+
 from __future__ import annotations
 
 import os

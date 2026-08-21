@@ -14,6 +14,8 @@ It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
 """
 
+# doc-group: findings
+
 from __future__ import annotations
 
 import sys

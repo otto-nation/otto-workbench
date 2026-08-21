@@ -4,6 +4,8 @@ This module is the contract between review-orchestrate and review-post.
 Both scripts import from here instead of defining their own constants.
 """
 
+# doc-group: findings
+
 from __future__ import annotations
 
 import argparse

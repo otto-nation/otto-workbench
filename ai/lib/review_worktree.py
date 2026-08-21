@@ -1,5 +1,7 @@
 """Worktree lifecycle management for claude-review."""
 
+# doc-group: pipeline
+
 from __future__ import annotations
 
 import subprocess

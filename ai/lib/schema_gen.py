@@ -7,6 +7,8 @@ reads and the reader that accepts the model's answer cannot disagree about
 which shapes are legal.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import dataclasses

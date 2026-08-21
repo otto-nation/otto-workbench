@@ -18,6 +18,8 @@ should be free to depend on, and pulling in `log`, `ai_usage`, or
 `workbench_paths` from here would make that impossible.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import re

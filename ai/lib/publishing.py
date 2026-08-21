@@ -14,6 +14,8 @@ machine, whatever the entrypoint was told. `hold` closes the gate for good, so
 the two only ever compose in the safe direction.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 import log

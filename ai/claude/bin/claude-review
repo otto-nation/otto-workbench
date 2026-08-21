@@ -628,7 +628,10 @@ def _find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
     # An unusable git has to fall through to the gh and find lookups below,
     # which are guarded the same way — a non-zero exit already does, but an
-    # absent binary raises out of subprocess.
+    # absent binary raises out of subprocess. Caught broadly as OSError (not
+    # just FileNotFoundError, as retro-scan and reuse-session-start do for the
+    # same call) because a permissions error on the git binary should fall
+    # through here too, not surface as an unhandled exception.
     try:
         git_toplevel = git_client.out("rev-parse", "--show-toplevel")
     except OSError:

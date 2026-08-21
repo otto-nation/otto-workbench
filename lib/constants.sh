@@ -127,6 +127,7 @@ WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHE
 # names above are: workbench_config.py holds the other spelling, and
 # tests/config.bats fails when a pair drifts.
 GITHUB_SSH_443_CONFIG_KEY="github.ssh_over_443"
+ISSUE_PROVIDER_CONFIG_KEY="issue_tracker.provider"
 
 # ─── Review state ─────────────────────────────────────────────────────────────
 # The shell half of two joins the Python side also spells out — this file for

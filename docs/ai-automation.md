@@ -1415,11 +1415,18 @@ site, spelled out with `run`. Writes are not modelled beyond `run`: committing a
 pushing gets an owner of its own, with the publishing gate over it, rather than a
 convenience wrapper here that would turn four gate-less push sites into five.
 
-Not everything has moved across yet. `pr_context`, `review-threads`, `pr-rebase`,
-`mcps/server` and `eval_task` still invoke git as literal argv — the first four
-because a behaviour fix is open on them and a refactor underneath it would collide,
-`eval_task` because its calls need `env=`, which `proc.run` does not take. A new call
-site should still go through the client.
+Not everything has moved across yet. `pr_context`, `pr-rebase`, `mcps/server` and
+`eval_task` still invoke git as literal argv — the first three because a behaviour fix
+is open on them and a refactor underneath it would collide, `eval_task` because its
+calls need `env=`, which `proc.run` does not take. A new call site should still go
+through the client.
+
+One consequence of the move is worth knowing before migrating the rest: the client
+passes the worktree as `cwd` rather than as `git -C`. A root that does not exist used
+to come back as a non-zero exit that `out` and `ok` degraded away; it now raises
+`FileNotFoundError` out of Python before git is reached. That is the better answer —
+an absent worktree is a broken caller, not a question git declined to answer — but a
+call site that was quietly relying on the old degradation will start failing loudly.
 
 ## Guidelines & Rules
 

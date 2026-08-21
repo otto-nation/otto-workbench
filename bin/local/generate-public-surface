@@ -50,6 +50,10 @@ _SELF="${BASH_SOURCE[0]}"
 REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # shellcheck source=../../lib/ui.sh
 . "$REPO_ROOT/lib/ui.sh"
+# Not in the ui.sh facade, so it is sourced on its own — _registries_for reads
+# its component-registry discovery from collect_component_registries.
+# shellcheck source=../../lib/registries.sh
+. "$REPO_ROOT/lib/registries.sh"
 
 usage() {
   cat <<EOF
@@ -89,10 +93,17 @@ done
 # tools are scripts this repo ships; validation:none marks third-party tools
 # (brew, mise, rtk), which are a dependency concern, not our contract.
 # meta.scope:workbench marks repo-internal scripts that are never installed.
+#
+# Which files count as component registries is lib/registries.sh's to say, so
+# the discovery is collect_component_registries' and only the filter is here.
+# The wider collect_registries is not what this wants: it also returns
+# *.env.yml files and brew stack registries, and brew tools are a dependency
+# concern rather than part of this repo's contract.
 _registries_for() {
   local package="$1" f rel validation scope owner
-  for f in "$REPO_ROOT"/*/registry.yml "$REPO_ROOT"/*/*/registry.yml; do
-    [[ -f "$f" ]] || continue
+  local -a discovered=()
+  collect_component_registries discovered "$REPO_ROOT"
+  for f in "${discovered[@]}"; do
     rel="${f#"$REPO_ROOT"/}"
     validation=$(yq '.meta.validation // ""' "$f")
     scope=$(yq '.meta.scope // ""' "$f")

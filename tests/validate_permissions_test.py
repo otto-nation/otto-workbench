@@ -301,6 +301,15 @@ def test_a_worktree_finds_its_bare_repo_container(container):
     assert found == str(Path(container).resolve())
 
 
+def test_a_worktree_finds_its_container_under_an_inherited_git_dir(container, monkeypatch):
+    """The pre-push hook exports GIT_DIR, and git reads it ahead of `-C`: with
+    one set, `rev-parse --show-toplevel` asked at the container answers the
+    container, the no-working-tree guard holds, and the container is skipped in
+    exactly the run that had to see it."""
+    monkeypatch.setenv("GIT_DIR", str(container / "main" / ".git"))
+    assert vp.container_dir(str(container / "main")) == str(Path(container).resolve())
+
+
 def test_a_linked_worktree_of_a_normal_clone_has_no_container(tmp_path):
     """The parent there is somebody's checkout, and its .claude/ is tracked."""
     seed = _seed_repo(tmp_path / "seed")

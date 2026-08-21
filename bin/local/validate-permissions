@@ -65,6 +65,7 @@ import sys
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
+from gitenv import git_env_clear  # noqa: E402
 
 BASH_RULE = re.compile(r'^Bash\((.*)\)$', re.DOTALL)
 
@@ -367,10 +368,19 @@ def discover_settings(repo_root: str) -> list[str]:
 
 
 def _git(repo_root: str, *args: str) -> str | None:
-    """Run a read-only git query in the repo, or None if git cannot answer."""
+    """Run a read-only git query in the repo, or None if git cannot answer.
+
+    The environment is cleared of git's own overrides first, because they beat
+    `-C`. The pre-push hook exports `GIT_DIR`, and with one set every question
+    below is answered for the hook's repository instead of the directory asked
+    about — `rev-parse --show-toplevel` at the container answers the container,
+    so the no-working-tree guard holds and the container is skipped in exactly
+    the run that had to see it.
+    """
     try:
         result = subprocess.run(('git', '-C', repo_root, *args),
-                                capture_output=True, text=True, check=False)
+                                capture_output=True, text=True, check=False,
+                                env=git_env_clear())
     except OSError:
         return None
     return result.stdout.strip() if result.returncode == 0 else None

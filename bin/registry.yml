@@ -81,6 +81,16 @@ tools:
         description: "Drop registry entries whose directory is gone"
         scope: "Machine"
         when: "Cleaning up entries left behind by deleted repos"
+      - name: "permissions sweep"
+        description: "Report Claude Code permission-grant drift in every registered repo"
+        scope: "Machine"
+        when: "Checking what has accumulated in settings.local.json and in bare-repo containers"
+        detail: "Reports three classes per untracked settings file — a grant re-granting an ask-gated command, a grant another rule already makes, and a grant naming a directory that is gone. Reports only; exits 0 whether or not it finds drift."
+      - name: "permissions sweep --prune"
+        description: "Delete the local grants another rule already makes"
+        scope: "Machine"
+        when: "Clearing the dead-weight class after reading the report"
+        detail: "Deletes only grants a tracked or machine-wide rule already makes, which is a no-op on effective permissions. Ask-overrides and stale paths are never touched."
 
   - name: mem-analyze
     permission: true

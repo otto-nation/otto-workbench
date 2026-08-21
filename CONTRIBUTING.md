@@ -135,6 +135,49 @@ tree, so nothing there can be committed. Run the session from a worktree, where
 the tracked `.claude/settings.json` applies and an approved grant has somewhere
 to live.
 
+### The rest of the machine
+
+The validator only ever sees this repo, because the two things that run it are
+this repo's: CI clones it alone, and its pre-push hook should not fail over a
+stale grant in some other checkout. The drift is not this repo's, though —
+`otto-workbench ai init` scaffolds a `.claude/` into every registered project
+and the same accumulation happens in each one, unwatched.
+
+`otto-workbench permissions sweep` walks the project registry instead, so the
+unit is the machine rather than a repo. It asks the validator's two questions
+of every untracked settings file it finds, plus a third the validator has no
+use for.
+
+| Class | Fix |
+|---|---|
+| A local `allow` reaching an `ask`-gated command | a human deletes it |
+| A local `allow` another rule already makes | `--prune` deletes it |
+| A local `allow` naming a directory that is gone | a human deletes it |
+
+Coverage is measured against two files there, not one. Per the paragraphs above
+most registered repos have no tracked `settings.json` at all, so measuring only
+against it would call every grant in them uncovered; the machine-wide
+`~/.claude/settings.json` is the rule source that exists everywhere, and a grant
+either file already makes is dead weight.
+
+The third class needs neither file. A grant naming `/…/some-worktree/bin/thing`
+when that directory is gone outlived its subject whatever else the machine
+grants, and it is the class that explains why the counts only ever go up. It is
+a heuristic — a rule can name a path for reasons this cannot see — so it is
+reported and never pruned, and the report names the top of the missing subtree
+rather than the file four levels down inside it.
+
+The sweep exits 0 whether or not it found anything. It is a report, not a gate:
+`otto-workbench maintenance` must not start failing the day some unrelated repo
+accumulates its first covered grant. `--prune` is opt-in for the same reason the
+validator's `--fix` is safe — the covered class is provably a no-op on effective
+permissions — and it is the only class the sweep will touch inside a repo the
+user did not ask it to visit.
+
+The classification itself is `lib/permissions.py`, which the validator and the
+sweep share. A second copy of the matcher is the thing that module exists to
+prevent.
+
 ## Environment Variables
 
 | Variable | Where set | Effect |

@@ -10,6 +10,7 @@
 #   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
 #   sync                  Re-apply all workbench configuration to ~/
 #   ai <subcmd>           Manage AI tools — scaffold projects, sync config, manage overrides
+#   permissions <subcmd>  Claude Code permission-grant drift across registered repos
 #   maintenance <subcmd>  Scheduled pull, sync, and cleanup via launchd
 #   state [regenerate]    Show or re-detect installed component state
 #   changelog             Show recent changes from conventional commits
@@ -88,6 +89,7 @@ COMMANDS=(
   "ai <subcmd>"                       "Manage AI tools — scaffold projects, sync config, manage overrides"
   "discover [regenerate]"             "Show installed components, scripts, and launchd agents"
   "projects <subcmd>"                 "The repos on this machine that use the workbench"
+  "permissions <subcmd>"              "Claude Code permission-grant drift across registered repos"
   "maintenance <subcmd>"              "Scheduled pull, sync, and cleanup via launchd"
   "changelog"                         "Show recent changes from conventional commits"
 )
@@ -98,6 +100,11 @@ COMMANDS_PROJECTS=(
   "add [DIR]"      "Register DIR's repo (default: the current one)"
   "forget DIR"     "Drop DIR's entry"
   "prune"          "Delete entries whose directory is gone, and repeats"
+)
+
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS_PERMISSIONS=(
+  "sweep [--prune] [--verbose]"  "Report local permission-grant drift in every registered repo"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
@@ -676,6 +683,48 @@ cmd_projects() {
     prune)     cmd_projects_prune ;;
     -h|--help) _projects_usage; return 0 ;;
     *)         _projects_usage >&2; return 1 ;;
+  esac
+}
+
+# ─── Permission grants ───────────────────────────────────────────────────────
+#
+# The classification lives in lib/permission_sweep.py, which shares its matcher
+# and its container discovery with bin/local/validate-permissions through
+# lib/permissions.py; everything here is dispatch.
+
+_permissions_usage() {
+  cat <<EOF
+Usage: otto-workbench permissions [command]
+
+Claude Code permission grants that accumulate where nothing reviews them — a
+repo's untracked .claude/settings.local.json, and the .claude/ of a bare repo's
+container, which is above every worktree and so invisible to all of them.
+
+Reports three classes: a grant re-granting an ask-gated command, a grant some
+other rule already makes, and a grant naming a directory that is gone. Only the
+second is ever deleted, and only under --prune.
+
+Commands:
+$(commands_usage COMMANDS_PERMISSIONS)
+EOF
+}
+
+cmd_permissions_sweep() {
+  python3 "$WORKBENCH_DIR/lib/permission_sweep.py" "$@"
+}
+
+# `sweep` is the default and the only subcommand, so a bare flag is passed
+# straight through — `permissions --prune` is what a reader who saw the usage
+# line types, and rejecting it to insist on the word `sweep` teaches nothing.
+cmd_permissions() {
+  local subcmd="${1:-sweep}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    sweep)     cmd_permissions_sweep "$@" ;;
+    -h|--help) _permissions_usage; return 0 ;;
+    -*)        cmd_permissions_sweep "$subcmd" "$@" ;;
+    *)         _permissions_usage >&2; return 1 ;;
   esac
 }
 
@@ -1287,6 +1336,7 @@ case "${1:-}" in
   ai)         shift; cmd_ai "$@" ;;
   discover)   shift; cmd_discover "$@" ;;
   projects)   shift; cmd_projects "$@" ;;
+  permissions) shift; cmd_permissions "$@" ;;
   maintenance) shift; cmd_maintenance "$@" ;;
   changelog)  shift; cmd_changelog "$@" ;;
   -h|--help) usage; exit 0 ;;

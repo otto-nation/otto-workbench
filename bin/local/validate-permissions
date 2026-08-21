@@ -20,31 +20,30 @@ Neither mistake is an error anywhere.  The rule simply never matches, and the
 permission prompt it was written to prevent keeps appearing; the usual repair
 is a one-off entry in settings.local.json, which hides the dead rule for good.
 
-Both facts were read off the matcher in the shipped Claude Code bundle rather
-than documentation: the rule classifier tests `/^(.+):\\*$/` before it looks for
-an unescaped `*`, and the wildcard branch compiles the pattern to a `^…$`
-regex.  Re-derive them the same way if a release ever changes the behaviour.
-
 Registry `permission:` entries never reach a committed settings file — they are
 collected at sync time and injected into ~/.claude/settings.json.  Pass that
 file (or any other) as an argument to check them; tests/claude_settings.bats
 does exactly that against a synced sandbox.
 
-The second question is where a live rule is written down.  CONTRIBUTING.md
-§ Permission grants puts the grants for this repo's own scripts in the tracked
-.claude/settings.json, so a copy of one of those grants sitting in an untracked
-settings.local.json is a bug report: the tracked rule should have matched, and
-the local copy dies with the worktree.  Both drift classes fail:
+The second question is where a live rule is written down, and `lib/permissions`
+answers it — the matcher, the coverage test, and the discovery walk all live
+there so that `otto-workbench permissions sweep` can ask the same questions of
+every registered repo.  Its two drift classes land here as:
 
     a local `allow` a tracked `allow` already makes   → --fix deletes it
     a local `allow` over a tracked `ask` rule         → a human deletes it
 
-The second is never touched by --fix.  Removing it restores a deliberate gate
-on credential access, and `ask` outranks `allow` precisely so that a person
-sees the call; deciding to drop that gate is not a script's to make.
+Both fail rather than warn.  A warning could not reach anyone here: validate-all
+captures each validator's output and prints it only when the validator exits
+non-zero, so on a green run the text is discarded before the pre-push hook or CI
+ever renders it.  Failing is what makes the finding visible, and --fix is what
+keeps that defensible — the covered class is pruned by a command, not by hand,
+and the file it prunes regrows.
 
-A grant with no tracked home — a one-afternoon WebFetch domain, a /tmp scratch
-script — is nobody's bug and is left alone by both the check and the fix.
+This validator is scoped to this repo on purpose: validate-all runs from
+git/hooks/pre-push-workbench and .github/workflows/ci.yml, and neither is a
+sensible vehicle for failing on drift in somebody else's checkout.  The
+machine-wide view is `otto-workbench permissions sweep`, which reports.
 
 When no files are given, discovers every settings JSON in the repo that
 declares Bash rules, plus the untracked ones in the bare-repo container above
@@ -58,24 +57,16 @@ import argparse
 import dataclasses
 import json
 import os
-import re
-import subprocess
 import sys
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
-from gitenv import git_env_clear  # noqa: E402
-
-BASH_RULE = re.compile(r'^Bash\((.*)\)$', re.DOTALL)
-
-# Buckets under `permissions` holding rule strings.
-RULE_BUCKETS = ('allow', 'deny', 'ask')
-
-# The tracked project file that owns this repo's grants, and the untracked name
-# Claude Code writes an approved one-off into.
-TRACKED_SETTINGS = os.path.join('.claude', 'settings.json')
-LOCAL_SETTINGS = 'settings.local.json'
+from permissions import (  # noqa: E402
+    BASH_RULE, TRACKED_SETTINGS, Drift, Grant,
+    at_container, container_dir, discover_container_settings, discover_settings,
+    drift_in, is_local, line_of, prune, rules_in, tracked_rules,
+)
 
 # Named in the failure message: validate-all does not pass --fix, so the human
 # reading a failed pre-push has to be told exactly what to type.
@@ -139,24 +130,9 @@ def _diagnose(rule: str) -> Violation | None:
     return None
 
 
-def rules_in(settings: dict) -> list[str]:
-    """Collect every permission rule string declared by a settings object."""
-    permissions = settings.get('permissions') or {}
-    rules = [r for bucket in RULE_BUCKETS for r in permissions.get(bucket) or []]
-    # A rule repeated across buckets is one mistake, reported once.
-    return list(dict.fromkeys(rules))
-
-
 def check_rules(rules: list[str]) -> list[Violation]:
     """Return a Violation for every rule that can never match a command."""
     return [v for v in (_diagnose(rule) for rule in rules) if v is not None]
-
-
-def _line_of(lines: list[str], rule: str) -> int:
-    """1-based line the rule is written on, or 0 if it cannot be located."""
-    quoted = json.dumps(rule)
-    matches = (i for i, line in enumerate(lines, 1) if quoted in line)
-    return next(matches, 0)
 
 
 def check_file(filepath: str) -> list[Violation]:
@@ -166,295 +142,7 @@ def check_file(filepath: str) -> list[Violation]:
 
     lines = text.splitlines()
     violations = check_rules(rules_in(json.loads(text)))
-    return [dataclasses.replace(v, line=_line_of(lines, v.rule)) for v in violations]
-
-
-# ── Local grant drift ───────────────────────────────────────────────────────
-# Only a grant with a tracked home is reportable.  The tracked settings file is
-# the owner of that list — the directories it grants are read from it, never
-# repeated here — and a grant naming something outside it has nowhere to move
-# to, so it stays silent.  Flagging every local entry would make the check
-# noise, which costs more than the entries it would catch.
-#
-# Both classes fail rather than warn.  A warning could not reach anyone here:
-# validate-all captures each validator's output and prints it only when the
-# validator exits non-zero, so on a green run the text is discarded before the
-# pre-push hook or CI ever renders it.  Failing is what makes the finding
-# visible, and --fix is what keeps that defensible — the covered class is
-# pruned by a command, not by hand, and the file it prunes regrows.
-#
-# `deny` needs no class of its own: deny outranks allow unconditionally, so a
-# local allow cannot hand back a denied command.  `ask` can be handed back,
-# which is why it is the class a script must never prune.
-
-@dataclasses.dataclass(frozen=True)
-class Grant:
-    """A local grant, paired with the tracked rule that speaks for it."""
-
-    rule: str
-    tracked: str
-    line: int = 0
-
-
-@dataclasses.dataclass(frozen=True)
-class Drift:
-    """The reportable grants in one untracked settings file."""
-
-    overrides: list[Grant] = dataclasses.field(default_factory=list)
-    covered: list[Grant] = dataclasses.field(default_factory=list)
-
-    @property
-    def empty(self) -> bool:
-        return not self.overrides and not self.covered
-
-
-@dataclasses.dataclass(frozen=True)
-class TrackedRules:
-    """The Bash rule bodies the tracked project settings file declares."""
-
-    allow: list[str] = dataclasses.field(default_factory=list)
-    ask: list[str] = dataclasses.field(default_factory=list)
-
-
-def _matches(body: str, command: str) -> bool:
-    """Does a rule body match a command, by Claude Code's own matcher?
-
-    The three forms `_diagnose` already classifies: `X:*` is a literal
-    startsWith, a `*` anywhere else compiles to an anchored regex, and a body
-    with neither names one exact command.
-    """
-    if body.endswith(':*'):
-        return command.startswith(body[:-2])
-    if '*' in body:
-        pattern = '.*'.join(re.escape(part) for part in body.split('*'))
-        return re.fullmatch(pattern, command, re.DOTALL) is not None
-    return command == body
-
-
-def _required_prefix(body: str) -> str:
-    """The text every command the rule can match has to start with.
-
-    Both matching forms are anchored at the front — a prefix rule by
-    definition, a wildcard rule because its regex is — so the text before the
-    first `*` is a hard requirement whichever form the rule takes.
-    """
-    stem = body[:-2] if body.endswith(':*') else body
-    return stem.split('*', 1)[0]
-
-
-def _covered_by(local: str, tracked: str) -> bool:
-    """Does the tracked rule already grant everything the local rule grants?
-
-    Sound in the one direction that matters: it answers yes only when every
-    command the local rule can match is matched by the tracked rule too.
-
-    An exact local rule names a single command, so running that command through
-    the tracked matcher settles it.  A local rule that can match more than one
-    command is only safe to judge against a tracked rule that is open-ended — a
-    prefix rule and a wildcard body ending in `*` both keep matching as the
-    command grows to the right, so covering the local rule's required prefix
-    covers every command built on it.  Anything else answers no: a false
-    positive trains the warning away, a miss only leaves an entry unreported.
-    """
-    open_ended = tracked.endswith(':*') or tracked.endswith('*')
-    exact_local = not local.endswith(':*') and '*' not in local
-    if not (exact_local or open_ended):
-        return False
-    return _matches(tracked, _required_prefix(local))
-
-
-def _re_grants(local: str, gated: str) -> bool:
-    """Does a local allow rule hand back a command a tracked `ask` rule gates?
-
-    Either direction of overlap counts.  The shortest command the ask rule
-    matches — its body with the wildcards taken out — is a witness both rules
-    match, and a local rule the ask rule covers outright is the same fault
-    written the other way round.
-    """
-    witness = gated[:-2] if gated.endswith(':*') else gated.replace('*', '')
-    return _matches(local, witness) or _covered_by(local, gated)
-
-
-def _bodies(permissions: dict, bucket: str) -> list[str]:
-    """The Bash rule bodies in one permissions bucket, wrapper stripped."""
-    matches = (BASH_RULE.match(rule) for rule in permissions.get(bucket) or [])
-    return [m.group(1) for m in matches if m]
-
-
-def tracked_rules(repo_root: str) -> TrackedRules:
-    """Read the grants the tracked project settings file already makes.
-
-    A repo with no tracked settings file makes no grants, so nothing local can
-    duplicate one — every grant there is a one-off and the drift check is a
-    no-op.
-    """
-    try:
-        with open(os.path.join(repo_root, TRACKED_SETTINGS)) as f:
-            permissions = json.load(f).get('permissions') or {}
-    except FileNotFoundError:
-        return TrackedRules()
-    return TrackedRules(_bodies(permissions, 'allow'), _bodies(permissions, 'ask'))
-
-
-def drift_in(filepath: str, tracked: TrackedRules) -> Drift:
-    """Return the grants in an untracked settings file that have a tracked home."""
-    with open(filepath) as f:
-        text = f.read()
-
-    lines = text.splitlines()
-    permissions = json.loads(text).get('permissions') or {}
-
-    overrides: list[Grant] = []
-    covered: list[Grant] = []
-    for body in dict.fromkeys(_bodies(permissions, 'allow')):
-        rule = f'Bash({body})'
-        gated = next((t for t in tracked.ask if _re_grants(body, t)), None)
-        home = gated or next((t for t in tracked.allow if _covered_by(body, t)), None)
-        if home is None:
-            continue
-        grant = Grant(rule, f'Bash({home})', _line_of(lines, rule))
-        (overrides if gated else covered).append(grant)
-
-    return Drift(overrides, covered)
-
-
-def prune(filepath: str, grants: list[Grant]) -> None:
-    """Delete covered grants from an untracked settings file, in place.
-
-    Provably a no-op on effective permissions: every grant passed here is one
-    `_covered_by` proved a tracked rule already matches for every command the
-    local rule can match, so the set of commands the file permits is the same
-    before and after.  Only the covered class is ever passed in — an override
-    would change permissions, which is why it is reported and left alone.
-
-    Everything else in the file survives: other top-level keys, the other
-    buckets, and every grant with no tracked home are written back unchanged.
-    """
-    with open(filepath) as f:
-        settings = json.load(f)
-
-    doomed = {grant.rule for grant in grants}
-    permissions = settings['permissions']
-    # An emptied bucket keeps its key rather than being dropped.  `allow` is
-    # Claude Code's own and it appends to that list on the next approval, so
-    # leaving the key is the smaller edit to a file this script does not own.
-    permissions['allow'] = [rule for rule in permissions['allow'] if rule not in doomed]
-
-    # `ensure_ascii=False` keeps a rule containing an em dash or any other
-    # non-ASCII character written the way Claude Code writes it.  Escaping it to
-    # \uXXXX would rewrite entries this run is not touching, turning a one-line
-    # deletion into a diff across the whole file.
-    with open(filepath, 'w') as f:
-        f.write(json.dumps(settings, indent=2, ensure_ascii=False) + '\n')
-
-
-# ── Discovery ───────────────────────────────────────────────────────────────
-
-def _declares_bash_rules(path: str) -> bool:
-    with open(path, errors='replace') as f:
-        return 'Bash(' in f.read()
-
-
-def discover_settings(repo_root: str) -> list[str]:
-    """Find every settings JSON in the repo that declares Bash rules."""
-    found: list[str] = []
-
-    for dirpath, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = [d for d in dirnames if d not in ('.git', 'node_modules')]
-        names = [f for f in filenames if f.startswith('settings') and f.endswith('.json')]
-        found.extend(os.path.join(dirpath, f) for f in names)
-
-    return sorted(p for p in found if _declares_bash_rules(p))
-
-
-def _git(repo_root: str, *args: str) -> str | None:
-    """Run a read-only git query in the repo, or None if git cannot answer.
-
-    The environment is cleared of git's own overrides first, because they beat
-    `-C`. The pre-push hook exports `GIT_DIR`, and with one set every question
-    below is answered for the hook's repository instead of the directory asked
-    about — `rev-parse --show-toplevel` at the container answers the container,
-    so the no-working-tree guard holds and the container is skipped in exactly
-    the run that had to see it.
-    """
-    try:
-        result = subprocess.run(('git', '-C', repo_root, *args),
-                                capture_output=True, text=True, check=False,
-                                env=git_env_clear())
-    except OSError:
-        return None
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
-def container_dir(repo_root: str) -> str | None:
-    """The directory holding the shared git dir, when it is not the worktree.
-
-    In a bare-repo worktree layout every worktree is a peer of the bare `.git`
-    inside a container directory, so a `.claude/` written at the container sits
-    above anything a walk rooted in a worktree can see — and Claude Code roots
-    a session wherever it was launched, the container included.
-
-    `--git-common-dir` names the shared git dir and its parent is the
-    container.  In a normal clone that parent is the worktree itself, so the
-    comparison makes the extra scan a no-op instead of a special case.  It is
-    the comparison rather than an unconditional `..` because the parent of a
-    plain checkout belongs to somebody else.
-
-    A container holds no working tree, which is the second half of the test:
-    linked worktrees added to an ordinary clone put the shared git dir inside
-    the main checkout, and that checkout's `.claude/settings.json` is a tracked
-    file with an owner, not an unreviewed local one.
-    """
-    common = _git(repo_root, 'rev-parse', '--git-common-dir')
-    toplevel = _git(repo_root, 'rev-parse', '--show-toplevel')
-    if not common or not toplevel:
-        return None
-    container = os.path.dirname(os.path.realpath(os.path.join(repo_root, common)))
-    if container == os.path.realpath(toplevel):
-        return None
-    return None if _git(container, 'rev-parse', '--show-toplevel') else container
-
-
-def discover_container_settings(container: str | None) -> list[str]:
-    """Find every settings JSON declaring Bash rules in the container's .claude.
-
-    A container with no `.claude/` — or no container at all — contributes
-    nothing, which is the normal-clone case CI runs in.
-    """
-    # ceiling: a dead rule in the container's untracked file fails the run like
-    # a dead rule anywhere else, even though nothing there can be committed.
-    # Claude Code writes those entries from commands it actually ran, so they
-    # are literal and live by construction and none has been dead yet.  Upgrade
-    # trigger: if a container-only dead rule ever blocks a push, downgrade
-    # deadness in untracked files to a warning beside the covered-grant class.
-    if container is None:
-        return []
-
-    claude = os.path.join(container, '.claude')
-    try:
-        names = os.listdir(claude)
-    except (FileNotFoundError, NotADirectoryError, PermissionError):
-        return []
-
-    paths = [os.path.join(claude, f) for f in names
-             if f.startswith('settings') and f.endswith('.json')]
-    return sorted(p for p in paths if os.path.isfile(p) and _declares_bash_rules(p))
-
-
-def _at_container(path: str, container: str | None) -> bool:
-    """Is this settings file the container's own, rather than a worktree's?
-
-    Directory equality, not a prefix test: every worktree lives *inside* the
-    container, so a prefix test would call the tracked project file local.
-    """
-    if container is None:
-        return False
-    return os.path.dirname(os.path.realpath(path)) == os.path.join(container, '.claude')
-
-
-def _is_local(path: str, at_container: bool) -> bool:
-    """Is this an untracked settings file — one whose grants nobody reviews?"""
-    return os.path.basename(path) == LOCAL_SETTINGS or at_container
+    return [dataclasses.replace(v, line=line_of(lines, v.rule)) for v in violations]
 
 
 # ── Reporting ───────────────────────────────────────────────────────────────
@@ -480,7 +168,7 @@ def _report_overrides(relpath: str, grants: list[Grant]) -> None:
         print(f'        {DIM}delete the local grant{NC}', file=sys.stderr)
 
 
-def _report_covered(relpath: str, grants: list[Grant], at_container: bool) -> None:
+def _report_covered(relpath: str, grants: list[Grant], in_container: bool) -> None:
     print(f'{RED}✗{NC} {relpath}: {len(grants)} local grant(s) a tracked rule already makes',
           file=sys.stderr)
     for grant in grants:
@@ -489,7 +177,7 @@ def _report_covered(relpath: str, grants: list[Grant], at_container: bool) -> No
         print(f'        {TRACKED_SETTINGS} already grants this via {grant.tracked}, '
               f'and the local copy dies with the checkout', file=sys.stderr)
     print(f'        {DIM}run `{FIX_COMMAND}` to delete them{NC}', file=sys.stderr)
-    if at_container:
+    if in_container:
         # The container holds no working tree, so there is no tracked file
         # there to move a grant into — the cure is to run the session where the
         # tracked file applies, not to edit a file that cannot exist.
@@ -537,8 +225,8 @@ def main():
     for filepath in files:
         relpath = os.path.relpath(filepath, repo_root)
         violations = check_file(filepath)
-        at_container = _at_container(filepath, container)
-        drift = drift_in(filepath, tracked) if _is_local(filepath, at_container) else Drift()
+        in_container = at_container(filepath, container)
+        drift = drift_in(filepath, tracked) if is_local(filepath, in_container) else Drift()
 
         pruned = drift.covered if args.fix else []
         if pruned:
@@ -553,7 +241,7 @@ def main():
         if drift.overrides:
             _report_overrides(relpath, drift.overrides)
         if drift.covered:
-            _report_covered(relpath, drift.covered, at_container)
+            _report_covered(relpath, drift.covered, in_container)
         if not violations and drift.empty and not pruned and not args.quiet:
             print(f'  {GREEN}✓{NC} {relpath}')
 

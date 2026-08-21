@@ -114,6 +114,8 @@ otto-workbench [--workbench-dir <path>] <command>
 | `otto-workbench projects add [DIR]` | Machine | Register a repo that hasn't run a workbench command yet |
 | `otto-workbench projects forget DIR` | Machine | Drop a repo's entry from the registry |
 | `otto-workbench projects prune` | Machine | Drop registry entries whose directory is gone |
+| `otto-workbench permissions sweep` | Machine | Report Claude Code permission-grant drift in every registered repo |
+| `otto-workbench permissions sweep --prune` | Machine | Delete the local grants another rule already makes |
 
 ### `task`
 

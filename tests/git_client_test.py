@@ -93,12 +93,19 @@ def test_run_takes_no_timeout_from_its_caller():
 
 
 def test_an_expired_bound_arrives_as_a_failed_result(repo, monkeypatch):
-    """Every read degrades to its default, so no call site needs a handler."""
-    monkeypatch.setattr(git_client, "_timeout_for", lambda args: 0.001)
-    r = git_client.run("log", "-1", cwd=repo)
+    """Every read degrades to its default, so no call site needs a handler.
+
+    The subcommand is a shell alias that sleeps rather than a real read: a read
+    races the bound, and one that loses returns its own exit code instead, so
+    the assertion would answer how fast the runner is rather than what an
+    expired bound comes back as.
+    """
+    monkeypatch.setattr(git_client, "_timeout_for", lambda args: 0.1)
+    slow = {"alias.slow": "!sleep 5"}
+    r = git_client.run("slow", cwd=repo, config=slow)
     assert r.returncode == proc.TIMEOUT_RETURNCODE
     assert "timed out after" in r.stderr
-    assert git_client.out("log", "-1", cwd=repo, default="unknown") == "unknown"
+    assert git_client.out("slow", cwd=repo, config=slow, default="unknown") == "unknown"
 
 
 # ── Runner ──────────────────────────────────────────────────────────────────

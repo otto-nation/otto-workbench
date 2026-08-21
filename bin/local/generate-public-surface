@@ -96,9 +96,8 @@ done
 #
 # Which files count as component registries is lib/registries.sh's to say, so
 # the discovery is collect_component_registries' and only the filter is here.
-# The wider collect_registries is not what this wants: it also returns
-# *.env.yml files and brew stack registries, and brew tools are a dependency
-# concern rather than part of this repo's contract.
+# That function's own comment says why the wider collect_registries is not what
+# this wants.
 _registries_for() {
   local package="$1" f rel validation scope owner
   local -a discovered=()

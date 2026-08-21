@@ -17,6 +17,7 @@ shellcheck <file>.sh           # lint a script
 bin/local/validate-all               # run every validator
 bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers
 bin/local/generate-tool-context      # regenerate tools.generated.md from registries
+bin/local/compose-docs               # recompose docs/*.md from docs/*.src.md
 bin/local/generate-config-schema     # regenerate config.schema.json + the docs key reference from WorkbenchConfig
 git/bin/local/generate-git-rules     # regenerate git.generated.md from lib/conventions.sh
 otto-workbench changelog       # show recent changes from conventional commits
@@ -41,6 +42,7 @@ allow-listed, so they only add a permission prompt.
 - Adding a brew tool = add to Brewfile + registry.yml. No other config edits needed. Env vars go in a `.env.yml` next to the consumer, not in the brew registry.
 - Adding a migration = create `<component>/migrations/YYYYMMDD-slug.sh` with a `migration_YYYYMMDD_slug()` function. No registry edits needed. Migrations must not source `lib/ui.sh` or assign `WORKBENCH_DIR` — both are provided by the migration framework (`lib/migrations.sh`).
 - Generated files (`tools.generated*.md`, `git.generated.md`, `config.schema.json`) are never edited directly — edit the source and regenerate.
+- Docs are composed, not spliced — a `docs/<name>.md` carrying a compose-docs banner is an artifact of `docs/<name>.src.md`. Prose goes in the `.src.md`; a generated section is an `<!-- include: bin/local/<generator> --emit <block> -->` directive, so a doc names the block it wants and no dispatch table sits between them.
 - Config files in `zsh/config.d/` use `# duplicate-check: <pattern>` headers to prevent overlapping concerns.
 - **Idempotency is required** — all setup scripts, sync functions, and migrations must be safe to re-run. Guard installs with presence checks, use `install_symlink` (not raw `ln`), and ensure repeated execution produces the same result with no side effects.
 - Migrations are state-tracked in `~/.local/state/workbench/migrations.applied` and auto-pruned when removed. A migration that drains a path under the config or state root must carry a `# adoption-sensitive: <reason>` header line — legacy-root adoption re-seeds such a path and would otherwise leave the work permanently undone (see `docs/execution-flow.md` § Migrations).

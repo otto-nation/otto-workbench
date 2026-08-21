@@ -140,16 +140,16 @@ These files are derived from source data and must never be edited directly. Edit
 |------|-----------|--------|
 | [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) | [`generate-tool-context`](../bin/local/generate-tool-context) | `*/registry.yml` |
 | [`git.generated.md`](../ai/guidelines/rules/git.generated.md) | [`generate-git-rules`](../git/bin/local/generate-git-rules) | [`lib/conventions.sh`](../lib/conventions.sh) |
-| `docs/tools.md` (tables) | [`generate-tool-context`](../bin/local/generate-tool-context) | Registries |
-| `docs/ai-automation.md` (tables) | [`generate-tool-context`](../bin/local/generate-tool-context) | Skills, agents, Taskfile |
-| `docs/components.md` (lists) | [`generate-tool-context`](../bin/local/generate-tool-context) | Component discovery |
-| `.env.local.template` (ENV section) | [`generate-tool-context`](../bin/local/generate-tool-context) | `*.env.yml` |
+| `docs/tools.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/tools.src.md` + registries |
+| `docs/ai-automation.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/ai-automation.src.md` + skills, agents, Taskfile |
+| `docs/components.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/components.src.md` + component discovery |
+| `docs/getting-started.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/getting-started.src.md` + `setup.conf` post-install notes |
 | `.claude/anatomy.md` | [`generate-anatomy.sh`](../ai/claude/skills/anatomy/generate-anatomy.sh) | `git ls-files` |
 | [`config.schema.json`](../config.schema.json) | [`generate-config-schema`](../bin/local/generate-config-schema) | [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) |
 | `docs/libraries.md` (config key reference) | [`generate-config-schema`](../bin/local/generate-config-schema) | [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) |
 | `docs/libraries.md` (module tables) | [`generate-tool-context`](../bin/local/generate-tool-context) | `lib/*.sh` doc comments |
 
-**Enforcement:** the pre-push hook runs the tool-context generators and blocks if output changed. The two rendered from `WorkbenchConfig` are enforced instead by `tests/test_workbench_config.py`, which fails when a committed copy differs from what the generator would write — pre-push runs pytest, so both paths block a stale file. CI runs the same freshness checks on every PR.
+**Enforcement:** the composed docs are covered by [`validate-docs-composed`](../bin/local/validate-docs-composed), which `validate-all` discovers, so a stale artifact fails before anything is regenerated and names one command to fix it. The pre-push hook then runs the tool-context generators and blocks if their own output changed. The two rendered from `WorkbenchConfig` are enforced instead by `tests/test_workbench_config.py`, which fails when a committed copy differs from what the generator would write — pre-push runs pytest, so both paths block a stale file. CI runs the same freshness checks on every PR.
 
 ## Environment Variable Generation
 

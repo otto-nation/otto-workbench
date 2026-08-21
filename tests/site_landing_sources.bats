@@ -1,17 +1,17 @@
 #!/usr/bin/env bats
 # The landing page restates data it does not own: how-it-works.tsx lists the
 # component tiers that install.components and the steps.sh/setup.conf convention
-# own (rendered into docs/components.md by generate-tool-context), and
+# own (composed into docs/components.md from a generate-tool-context block), and
 # included.tsx restates README's "What's Included" entries with their doc links.
 # Generating the page from those sources is the thorough fix; until then this is
 # the cross-validation test CLAUDE.md prescribes when one set of defaults has to
 # appear in more than one format.
 #
-# Comparing against the generated regions rather than install.components itself
-# is deliberate: ci.yml already re-runs generate-tool-context and fails on a
-# dirty tree, so the regions cannot lag their sources. Adding a component
-# therefore fails the freshness check until it is regenerated, and fails this
-# suite until the landing page catches up.
+# Comparing against the composed lines rather than install.components itself is
+# deliberate: validate-docs-composed fails when docs/components.md drifts from
+# what its .src.md composes to, so the lines cannot lag their sources. Adding a
+# component therefore fails the freshness check until it is recomposed, and
+# fails this suite until the landing page catches up.
 
 setup() {
   load 'test_helper'
@@ -36,10 +36,10 @@ _tier_items() {
   printf '%s' "$items" | sed 's/ · /|/g' | tr '|' '\n'
 }
 
-# _generated_components REGION — the backticked names inside a generated
-# CORE-COMPONENTS / OPTIONAL-COMPONENTS region of docs/components.md.
+# _generated_components TIER — the backticked names on the composed
+# "**Existing <tier> components:**" line of docs/components.md.
 _generated_components() {
-  sed -n "/<!-- $1-START -->/,/<!-- $1-END -->/p" "$COMPONENTS_DOC" \
+  grep -F "**Existing $1 components:**" "$COMPONENTS_DOC" \
     | grep -oE '`[a-z][a-z-]*`' | tr -d '`'
 }
 
@@ -88,13 +88,13 @@ _assert_same() {
 
 @test "landing Core tier matches the generated core component list" {
   _assert_same "how-it-works.tsx Core tier" \
-    "$(_generated_components CORE-COMPONENTS)" \
+    "$(_generated_components core)" \
     "$(_tier_items Core)"
 }
 
 @test "landing Optional tier matches the generated optional component list" {
   _assert_same "how-it-works.tsx Optional tier" \
-    "$(_generated_components OPTIONAL-COMPONENTS)" \
+    "$(_generated_components optional)" \
     "$(_tier_items Optional)"
 }
 

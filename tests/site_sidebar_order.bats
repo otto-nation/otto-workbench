@@ -16,8 +16,12 @@ _ordered_slugs() {
   sed -n "/SIDEBAR_ORDER = \[/,/\]/p" "$ORDER_FILE" | grep -oE "['\"][a-z0-9-]+['\"]" | tr -d "'\""
 }
 
+# The .src.md files are compose-docs inputs, not pages — source.config.ts
+# excludes them from the site, so the sidebar has nothing to order them into.
 _doc_slugs() {
+  local f
   for f in "$REPO_ROOT"/docs/*.md; do
+    [[ "$f" == *.src.md ]] && continue
     basename "$f" .md
   done
 }

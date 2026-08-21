@@ -56,31 +56,17 @@ jobs:
       - name: Validate conventions
         run: bash bin/local/validate-all
 
-      - name: Verify generated files are up to date
+      # The composed docs are covered by bin/local/validate-docs-composed, which
+      # the "Validate conventions" step above runs.
+      #
+      # The rule files these two generators write are gitignored — every machine
+      # regenerates them from the registries, so there is no committed copy for
+      # them to drift from and nothing a diff could catch. Running the generators
+      # is still worth a step: it fails CI when a registry edit breaks one.
+      - name: Run the rule-file generators
         run: |
           bash bin/local/generate-tool-context
-          failed=false
-          for f in docs/tools.md docs/ai-automation.md docs/components.md README.md; do
-            if ! git diff --exit-code "$f"; then
-              echo ""
-              echo "$f is out of date."
-              failed=true
-            fi
-          done
-          if $failed; then
-            echo "Run bin/generate-tool-context locally and commit the result."
-            exit 1
-          fi
-
-      - name: Verify git.generated.md is up to date
-        run: |
           bash git/bin/local/generate-git-rules
-          if ! git diff --exit-code ai/guidelines/rules/git.generated.md; then
-            echo ""
-            echo "git.generated.md is out of date."
-            echo "Run git/bin/generate-git-rules locally and commit the result."
-            exit 1
-          fi
 
   test-bats:
     name: Tests (bats)

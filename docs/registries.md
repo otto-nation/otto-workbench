@@ -99,12 +99,17 @@ Registries feed into several generated files:
 |--------|-----------|-----------|
 | `tools.generated.md` | [`generate-tool-context`](../bin/local/generate-tool-context) | Claude (path-scoped) |
 | `tools.workflow.generated.md` | [`generate-tool-context`](../bin/local/generate-tool-context) | Claude (every session) |
-| `docs/tools.md` tables | [`generate-tool-context`](../bin/local/generate-tool-context) | Humans |
-| `docs/ai-automation.md` tables | [`generate-tool-context`](../bin/local/generate-tool-context) | Humans |
-| `docs/components.md` lists | [`generate-tool-context`](../bin/local/generate-tool-context) | Humans |
-| `.env.local.template` ENV section | [`generate-tool-context`](../bin/local/generate-tool-context) | Shell |
+| every `docs/<name>.md` with a `docs/<name>.src.md` beside it | [`compose-docs`](../bin/local/compose-docs) | Humans |
 
-Freshness is enforced by the pre-push hook and CI — both run the generator and fail if the output differs.
+The composed docs ask for their generated sections with an include directive:
+
+```markdown
+<!-- include: bin/local/generate-tool-context --emit scripts-table -->
+```
+
+`compose-docs` runs the named command and substitutes its output, so the doc names the block it wants and the generator answers — neither keeps a list of the other's sections. `bin/local/generate-tool-context --help` lists the blocks it can emit.
+
+Freshness is enforced by the pre-push hook and CI — `validate-all` runs [`validate-docs-composed`](../bin/local/validate-docs-composed) for the composed docs, and both re-run the generator for the `tools.generated*.md` rule files.
 
 ## Adding an Entry
 
@@ -123,6 +128,6 @@ Freshness is enforced by the pre-push hook and CI — both run the generator and
 ### Adding environment variables
 
 1. Create or edit a `*.env.yml` next to the code that reads the variable
-2. Run `bin/local/generate-tool-context` — the variable will appear in `.env.local.template`
+2. Run `bin/local/generate-tool-context`
 
-No other config edits are needed for any of these. The pre-push hook enforces that generated files are up to date.
+No other config edits are needed for any of these. Run `bin/local/compose-docs` as well if the entry appears in a composed doc. The pre-push hook enforces that generated files are up to date.

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Validates that every composed doc matches what its .src.md composes to.
+#
+# The one freshness rule for docs/. It replaced two hardcoded four-file lists —
+# one in the pre-push hook, one in ci.yml — that had each drifted from the set
+# of files generation actually touched. There is nothing to keep in step here:
+# the set is whatever docs/*.src.md holds, and validate-all discovers this
+# script by glob.
+#
+# Usage: bin/local/validate-docs-composed [--quiet]
+# Exit code: 0 if every composed doc is current, 1 if any is stale.
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$_SELF")/../.." && pwd)}"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Check that each docs/<name>.md matches what docs/<name>.src.md composes to.
+
+Options:
+  --quiet     Print only failures
+  -h, --help  Show this help
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+exec "$REPO_ROOT/bin/local/compose-docs" --check "$@"

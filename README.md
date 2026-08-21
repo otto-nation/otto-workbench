@@ -27,36 +27,21 @@ cd ~/otto-workbench
 exec zsh
 ```
 
-The installer installs Homebrew (if missing), symlinks scripts, zsh configs, git config, and the global Taskfile, then presents an optional component menu (<!-- COMPONENT-MENU-START -->Homebrew packages, Docker, Terminals, Editors, AI tools, Mise<!-- COMPONENT-MENU-END -->).
+The installer installs Homebrew (if missing), symlinks scripts, zsh configs, git config, and the global Taskfile, then presents an optional component menu. See [Components](docs/components.md) for what is on it.
 
 ## After Install
 
-<!-- AFTER-INSTALL-START -->
-1. **Reload your shell**: `exec zsh`
-2. **Docker** (if installed): start your runtime — `colima start` or OrbStack (macOS), or `sudo systemctl start docker` (Linux)
-3. **AI tools** (if installed): run `task --global ai:setup` to configure your `AI_COMMAND` and tokens
-<!-- AFTER-INSTALL-END -->
+Reload your shell with `exec zsh`, then follow the post-install steps each component asks for — [Getting Started](docs/getting-started.md#after-install) lists them.
 
 Secrets and machine-specific env vars go in `~/.env.local` — sourced first by the shell loader, never committed. See [`zsh/.env.local.template`](zsh/.env.local.template).
 
 ## Keeping in Sync
 
-<!-- WORKBENCH-COMMANDS-START -->
-| Command | Scope | Description |
-|---------|-------|-------------|
-| `otto-workbench sync` | All components | Re-apply all workbench config — migrations, symlinks, tool context, AI settings |
-| `otto-workbench discover` | Environment overview | Show installed components, available scripts, and agent status |
-| `otto-workbench discover regenerate` | Component state | Re-detect installed components after manual changes |
-| `otto-workbench ai init` | Project | Scaffold .claude/ in the current repo with stack-detected rules |
-| `otto-workbench ai init --force` | Project | Re-scaffold an existing project's .claude/ directory |
-| `otto-workbench ai sync` | Machine | Sync machine-level AI config (settings, rules, skills, agents, MCPs) |
-| `otto-workbench ai override` | Machine | Manage user overrides for AI agents, skills, and rules |
-| `otto-workbench changelog` | Git history | Show recent changes from conventional commits |
-| `otto-workbench projects` | Machine | List the repos on this machine that use the workbench |
-| `otto-workbench projects add [DIR]` | Machine | Register a repo that hasn't run a workbench command yet |
-| `otto-workbench projects forget DIR` | Machine | Drop a repo's entry from the registry |
-| `otto-workbench projects prune` | Machine | Drop registry entries whose directory is gone |
-<!-- WORKBENCH-COMMANDS-END -->
+```bash
+otto-workbench sync
+```
+
+Re-applies all workbench config — migrations, symlinks, tool context, AI settings. The full subcommand table is in [Tools & Scripts](docs/tools.md#otto-workbench).
 
 ## What's Included
 

@@ -2,7 +2,6 @@
 title: Getting Started
 description: Install the workbench, run your first sync, and find your way around the docs.
 ---
-<!-- Generated from docs/getting-started.src.md by bin/local/compose-docs — do not edit. -->
 
 # Getting Started
 
@@ -34,9 +33,7 @@ Re-running is safe — existing symlinks are updated silently; real files prompt
 
 ## After Install
 
-1. **Reload your shell**: `exec zsh`
-2. **Docker** (if installed): start your runtime — `colima start` or OrbStack (macOS), or `sudo systemctl start docker` (Linux)
-3. **AI tools** (if installed): run `task --global ai:setup` to configure your `AI_COMMAND` and tokens
+<!-- include: bin/local/generate-tool-context --emit after-install -->
 
 Secrets and machine-specific env vars go in `~/.env.local` — sourced first by the shell loader, never committed. See [`zsh/.env.local.template`](../zsh/.env.local.template) for the documented starting point.
 

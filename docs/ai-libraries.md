@@ -6,7 +6,7 @@ description: Every module in ai/lib/ — the Python behind pr review, pr comment
 
 # AI Libraries
 
-Every module in `ai/lib/`, grouped by what it is for. This is the reference; [AI Automation](ai-automation) is the guide, and holds the setup, the configuration, and the flow that crosses several of these modules at once.
+Every module in `ai/lib/`, grouped by what it is for. This is the reference; [AI Automation](ai-automation.md) is the guide, and holds the setup, the configuration, and the flow that crosses several of these modules at once.
 
 Each section below is the module's own docstring, rendered from `ai/lib/` by [`generate-doc-reference`](../bin/local/generate-doc-reference) — so the prose describing a module lives beside the code it describes, and a module that moves takes its documentation with it. A module declares which group it belongs to with a `# doc-group: <key>` comment under its docstring; nothing here lists module names, so adding a module changes only the module.
 
@@ -497,6 +497,13 @@ one makes a network call that a rebase should not have to pay for.
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.
 
+### ai_backend.py
+
+AI backend abstraction layer.
+
+Dispatches preflight(), prompt(), invoke_agent(), and invoke_fix() to the
+correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
+
 ### ai_backend_claude.py
 
 Claude Code CLI backend for ai_backend.
@@ -543,13 +550,6 @@ Gaps vs Claude Code CLI:
   --add-dir        Not available; directories passed in prompt text
   --agent          Not available; use --append-system-prompt with agent file contents
 
-### ai_backend.py
-
-AI backend abstraction layer.
-
-Dispatches preflight(), prompt(), invoke_agent(), and invoke_fix() to the
-correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
-
 ### ai_usage.py
 
 AI usage accounting.
@@ -576,6 +576,15 @@ backend should import this module.
 ## Evaluation
 
 The eval harness: fixture tasks, the scorers that grade each task's output, and the aggregation the CI ratchet gates on.
+
+### eval_scoring.py
+
+Evaluation scoring, aggregation, and baseline comparison.
+
+Task-agnostic: what a run *is* and how it is scored belongs to the task
+(`eval_scoring_review`, `eval_scoring_cifix`, ...). What lives here is the shape
+of a score, the statistics over repeated runs, and the baseline diff — the parts
+every task shares.
 
 ### eval_scoring_cifix.py
 
@@ -610,15 +619,6 @@ declares which groups of tokens must appear, in order, and which must not.
 The SKILL.md is read live from `ai/claude/skills/`, never copied into a case.
 The file is the single source of truth; a copy would let the eval keep passing
 against a skill that no longer says what the copy says.
-
-### eval_scoring.py
-
-Evaluation scoring, aggregation, and baseline comparison.
-
-Task-agnostic: what a run *is* and how it is scored belongs to the task
-(`eval_scoring_review`, `eval_scoring_cifix`, ...). What lives here is the shape
-of a score, the statistics over repeated runs, and the baseline diff — the parts
-every task shares.
 
 ### eval_task.py
 

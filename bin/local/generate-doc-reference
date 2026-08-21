@@ -33,7 +33,7 @@
 # lib/config.sh for the config key reference, each next to the prose that
 # explains it.
 #
-# Modules are alphabetical within a group. Any other order would need a list of
+# Modules are byte-ordered within a group. Any other order would need a list of
 # module names somewhere, and that list is the thing this script exists to avoid.
 #
 # Usage: bin/local/generate-doc-reference --set <set> --group <key>
@@ -42,6 +42,17 @@
 #        bin/local/generate-doc-reference --roots-table
 
 set -euo pipefail
+
+# Module order is the order a glob expands in, and that follows the collation
+# locale: under en_US.UTF-8 the underscore in `ai_backend_pi.py` sorts before the
+# dot in `ai_backend.py`, under C it sorts after. Both are self-consistent, so a
+# contributor whose shell disagrees with CI's regenerates a doc that differs only
+# in module order and fails validate-docs-composed for no real change. Exported so
+# the `sort` calls below agree with the globs, and LC_ALL is unset because it
+# outranks LC_COLLATE and would put the caller's locale back. Collation only — the
+# doc blocks carry em dashes, and LC_ALL=C would take character classification too.
+unset LC_ALL
+export LC_COLLATE=C
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$_SELF")/../.." && pwd)}"
@@ -92,7 +103,7 @@ Render a module reference from the sources of one set.
 
 Options:
   --set <set>    Which source set to read: $(_set_keys | tr '\n' ' ')
-  --group <key>  Print every module in that group, alphabetically
+  --group <key>  Print every module in that group, in byte order
   --groups       List the group keys the set's modules declare
   --sets         List the source sets
   --roots-table  Print the workbench roots table read from lib/roots.sh
@@ -434,7 +445,7 @@ _render_module() {
   fi
 }
 
-# _emit_group KEY GROUP — every module in the group, alphabetical.
+# _emit_group KEY GROUP — every module in the group, in byte order.
 _emit_group() {
   local key="$1" group="$2" entry file default rel declared found=false
   local -a entries=() facade=()

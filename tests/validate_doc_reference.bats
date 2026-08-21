@@ -27,7 +27,7 @@ _copy_docs() {
 
 # _drop_directive DOC TEXT — removes the line holding TEXT from a fixture doc.
 _drop_directive() {
-  grep -v -- "$2" "$FIXTURE/$1" > "$FIXTURE/$1.tmp"
+  grep -vF -- "$2" "$FIXTURE/$1" > "$FIXTURE/$1.tmp"
   mv "$FIXTURE/$1.tmp" "$FIXTURE/$1"
 }
 

@@ -288,7 +288,7 @@ EOF
   [ "$output" = "$(printf 'ai\ncore\nregistry')" ]
 }
 
-@test "--group renders each module in the group alphabetically" {
+@test "--group renders each module in the group in byte order" {
   printf '#!/usr/bin/env bash\n# Output helpers.\n' > "$LIB_DIR/output.sh"
   printf '#!/usr/bin/env bash\n# Portability shims.\n' > "$LIB_DIR/portable.sh"
   printf '#!/usr/bin/env bash\n# PR context.\n' > "$LIB_DIR/ai/pr.sh"
@@ -296,6 +296,27 @@ EOF
   run main --set lib --group core
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf '### output.sh\n\nOutput helpers.\n\n### portable.sh\n\nPortability shims.')" ]
+}
+
+@test "module order does not follow the caller's collation" {
+  # `.` sorts before `_` in byte order and after it under en_US.UTF-8, so a
+  # contributor whose shell disagrees with CI's would otherwise regenerate a doc
+  # differing only in module order and fail validate-docs-composed for nothing.
+  # Run as a subprocess: the collation the script pins is pinned at startup, and
+  # sourcing it into the test shell is not how compose-docs reaches it.
+  # Not a pipe into grep: sourcing the generator brought its `set -o pipefail`
+  # into this shell, and grep -q closing the pipe early would fail the guard.
+  local locales
+  locales="$(locale -a)"
+  if [[ "$locales" != *"en_US.UTF-8"* ]]; then
+    skip "en_US.UTF-8 not generated on this machine"
+  fi
+  printf '#!/usr/bin/env bash\n# The backend.\n' > "$LIB_DIR/backend.sh"
+  printf '#!/usr/bin/env bash\n# The Pi backend.\n' > "$LIB_DIR/backend_pi.sh"
+
+  run env LC_ALL=en_US.UTF-8 "$REPO_ROOT/bin/local/generate-doc-reference" --set lib --group core
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '### backend.sh\n\nThe backend.\n\n### backend_pi.sh\n\nThe Pi backend.')" ]
 }
 
 @test "--group excludes the ui.sh facade, which has its own prose" {
@@ -407,7 +428,6 @@ EOF
 }
 
 @test "roots table fails when lib/roots.sh is missing" {
-  rm -f "$LIB_DIR/roots.sh"
   run _roots_table
   [ "$status" -ne 0 ]
   [[ "$output" == *"lib/roots.sh is missing"* ]]

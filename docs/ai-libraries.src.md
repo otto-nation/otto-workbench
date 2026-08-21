@@ -5,7 +5,7 @@ description: Every module in ai/lib/ — the Python behind pr review, pr comment
 
 # AI Libraries
 
-Every module in `ai/lib/`, grouped by what it is for. This is the reference; [AI Automation](ai-automation) is the guide, and holds the setup, the configuration, and the flow that crosses several of these modules at once.
+Every module in `ai/lib/`, grouped by what it is for. This is the reference; [AI Automation](ai-automation.md) is the guide, and holds the setup, the configuration, and the flow that crosses several of these modules at once.
 
 Each section below is the module's own docstring, rendered from `ai/lib/` by [`generate-doc-reference`](../bin/local/generate-doc-reference) — so the prose describing a module lives beside the code it describes, and a module that moves takes its documentation with it. A module declares which group it belongs to with a `# doc-group: <key>` comment under its docstring; nothing here lists module names, so adding a module changes only the module.
 

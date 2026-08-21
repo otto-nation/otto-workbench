@@ -2,6 +2,7 @@
 
 import importlib.machinery
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -181,6 +182,47 @@ def test_discover_finds_extensionless_python_scripts():
     scripts = vwg.discover_scripts(str(REPO_ROOT))
     assert str(REPO_ROOT / "ai" / "claude" / "bin" / "pr") in scripts
     assert str(REPO_ROOT / "ai" / "lib" / "pr_context.py") in scripts
+
+
+def _tree_with_skipped_dirs(tmp_path):
+    """A searched root holding one real script and one script per skipped dir."""
+    root = tmp_path / vwg.SEARCH_DIRS[0] / "lib"
+    root.mkdir(parents=True)
+    (root / "real.py").write_text("x = 1\n")
+    for skipped in vwg.SKIP_DIRS:
+        vendored = root / skipped / "nested"
+        vendored.mkdir(parents=True)
+        (vendored / "vendored.py").write_text("x = 1\n")
+    return root
+
+
+def test_discover_ignores_files_under_skipped_dirs(tmp_path):
+    assert vwg.discover_scripts(str(tmp_path)) == []
+    root = _tree_with_skipped_dirs(tmp_path)
+    assert vwg.discover_scripts(str(tmp_path)) == [str(root / "real.py")]
+
+
+def test_discover_never_descends_into_a_skipped_dir(tmp_path, monkeypatch):
+    """Pruning has to happen during the walk, not as a filter over its results.
+
+    A post-hoc filter drops the same files but still pays to traverse a vendored
+    tree, which is the cost the SKIP_DIRS pruning exists to avoid.
+    """
+    _tree_with_skipped_dirs(tmp_path)
+    real_walk = os.walk
+    visited: list[str] = []
+
+    def recording_walk(top, *args, **kwargs):
+        for dirpath, dirnames, filenames in real_walk(top, *args, **kwargs):
+            visited.append(dirpath)
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(os, "walk", recording_walk)
+    vwg.discover_scripts(str(tmp_path))
+
+    descended = [p for p in visited
+                 if set(p.split(os.sep)) & vwg.SKIP_DIRS]
+    assert descended == []
 
 
 def test_repo_is_clean():

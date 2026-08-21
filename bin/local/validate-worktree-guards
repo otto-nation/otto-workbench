@@ -168,11 +168,13 @@ def _is_python(path: str) -> bool:
 def discover_scripts(repo_root: str) -> list[str]:
     found = []
     roots = [os.path.join(repo_root, d) for d in SEARCH_DIRS]
-    walked = [(dp, dn, fn) for root in roots for dp, dn, fn in os.walk(root)]
-    for dirpath, dirnames, filenames in walked:
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        paths = [os.path.join(dirpath, f) for f in filenames]
-        found += [p for p in paths if _is_python(p)]
+    # os.walk only honours a dirnames mutation while its generator is being
+    # consumed, so the pruning has to happen inside the loop over the walk.
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            paths = [os.path.join(dirpath, f) for f in filenames]
+            found += [p for p in paths if _is_python(p)]
     return sorted(found)
 
 

@@ -34,6 +34,8 @@ _ui_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Prompt, file, and setup helpers are bash-only
 if [[ -n "${BASH_VERSION:-}" ]]; then
+  # shellcheck source=gitenv.sh
+  . "$_ui_lib_dir/gitenv.sh"
   # shellcheck source=portable.sh
   . "$_ui_lib_dir/portable.sh"
   # shellcheck source=prompts.sh

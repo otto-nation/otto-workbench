@@ -34,6 +34,11 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "ui.sh facade makes the git environment helper available" {
+  run bash -c ". '$REPO_ROOT/lib/ui.sh' && type git_env_clear"
+  [ "$status" -eq 0 ]
+}
+
 @test "ui.sh facade loads constants" {
   run bash -c ". '$REPO_ROOT/lib/ui.sh' && [[ -n \"\$WORKBENCH_DIR\" ]]"
   [ "$status" -eq 0 ]
@@ -59,6 +64,24 @@ teardown() {
 @test "setup.sh can be sourced independently" {
   run bash -c ". '$REPO_ROOT/lib/setup.sh' && type require_command && type run_steps"
   [ "$status" -eq 0 ]
+}
+
+@test "gitenv.sh can be sourced independently" {
+  run bash -c ". '$REPO_ROOT/lib/gitenv.sh' && type git_env_clear"
+  [ "$status" -eq 0 ]
+}
+
+@test "git_env_clear drops every inherited git override" {
+  # Exported, because that is how a hook hands them down — an unexported
+  # assignment would pass even if the function unset nothing.
+  run bash -c "
+    export GIT_DIR=/tmp/x.git GIT_WORK_TREE=/tmp/x GIT_INDEX_FILE=/tmp/x.idx
+    export GIT_OBJECT_DIRECTORY=/tmp/o GIT_ALTERNATE_OBJECT_DIRECTORIES=/tmp/a
+    . '$REPO_ROOT/lib/gitenv.sh'
+    git_env_clear
+    env | grep -cE '^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES)='
+  "
+  [ "$output" -eq 0 ]
 }
 
 # ─── Include guards prevent double-sourcing ─────────────────────────────────

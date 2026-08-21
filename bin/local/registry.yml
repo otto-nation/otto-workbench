@@ -89,6 +89,11 @@ tools:
     visibility: brief
     description: "Validates that docs/libraries.src.md renders every module group lib/ declares"
 
+  - name: validate-tracked-ignored
+    permission: false
+    visibility: brief
+    description: "Validates that no tracked file lives under a path .gitignore claims to ignore"
+
   - name: compose-docs
     permission: false
     visibility: brief

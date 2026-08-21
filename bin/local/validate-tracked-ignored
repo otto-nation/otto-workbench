@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Validate that no tracked file lives under a path the repo's .gitignore ignores.
+#
+# A directory can be listed in .gitignore and still hold tracked files: git keeps
+# tracking what it already tracks, so an entry added after those files were
+# committed never applied to them. Nothing else surfaces the discrepancy —
+# `git status` stays clean, and `git check-ignore` calls the path ignored whether
+# or not anything under it is tracked. The ignore entry reads as authoritative
+# while every write a sync step makes into that directory is one `git add` away
+# from being committed.
+#
+# Nothing is hardcoded here: the set is whatever the ignore rules cover at the
+# moment it runs, so adding an ignore entry needs no edit to this file.
+#
+# Usage: bin/local/validate-tracked-ignored [--quiet] [DIR]
+# Exit codes: 0 if no tracked file is ignored, 1 if any is, 2 on a usage error
+#             or a git invocation that never completed.
+
+set -euo pipefail
+
+_SELF="${BASH_SOURCE[0]}"
+# Path arithmetic rather than `git rev-parse --show-toplevel`: the pre-push hook
+# exports GIT_DIR, and with one set that form answers the caller's cwd instead of
+# the repo root. See lib/ui.sh for the full account.
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=../../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet] [DIR]
+
+Check that no file tracked in DIR lives under a path its .gitignore ignores.
+
+Arguments:
+  DIR         Repository to check (default: the workbench repo root)
+
+Options:
+  --quiet     Suppress output on success
+  -h, --help  Show this help
+EOF
+}
+
+QUIET=false
+TARGET=""
+POSITIONAL=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) QUIET=true ;;
+    -h|--help) usage; exit 0 ;;
+    -*) err "Unknown argument: $1"; usage; exit 2 ;;
+    *) TARGET="$1"; POSITIONAL=$(( POSITIONAL + 1 )) ;;
+  esac
+  shift
+done
+
+if (( POSITIONAL > 1 )); then
+  err "Only one directory may be given"
+  usage
+  exit 2
+fi
+
+TARGET="${TARGET:-$REPO_ROOT}"
+
+# DIR names the repository to read, so it has to outrank the environment: the
+# pre-push hook exports GIT_DIR, and a set GIT_DIR wins over `git -C`, which
+# would answer for the hook's repository whatever directory was asked for.
+# lib/gitenv.sh owns the list of variables that means.
+git_env_clear
+
+# One plumbing call reports exactly this set — the intersection of the index and
+# the ignore rules — so there is no directory walk to get wrong. Paths with
+# unusual characters come back quoted on a single line each (core.quotePath),
+# which is what lets the output be counted and indented by line below.
+#
+# ceiling: --exclude-standard also honours .git/info/exclude and the machine's
+# core.excludesFile, so a personal global ignore could in principle fail this on
+# one checkout while CI stays green. Upgrade trigger: if a contributor hits a
+# failure their global excludes caused, switch to --exclude-per-directory=.gitignore,
+# which reads only what the repo commits.
+if ! offenders="$(git -C "$TARGET" ls-files --cached --ignored --exclude-standard)"; then
+  err "Could not list tracked files in $TARGET"
+  exit 2
+fi
+
+if [[ -n "$offenders" ]]; then
+  count="$(wc -l <<< "$offenders" | tr -d ' ')"
+  subject="files live"
+  if (( count == 1 )); then
+    subject="file lives"
+  fi
+  err "$count tracked $subject under an ignored path"
+  printf '%s\n' "$offenders" | sed 's/^/    /' >&2
+  echo -e "    ${DIM}the ignore entry does not apply to a file already in the index —" >&2
+  echo -e "    untrack it with: git rm --cached <path>${NC}" >&2
+  exit 1
+fi
+
+$QUIET || success "no tracked file lives under an ignored path"

@@ -5,6 +5,20 @@ named for the emitting event's UTC month. Months past ``TRAIL_KEEP_MONTHS``
 are dropped as runs start, so the root stays bounded whatever writes to it.
 The --debug flag controls stderr echo only; whether a run is recorded at all
 is the caller's ``record`` argument to ``Trail.start``.
+
+One root for every script — ``~/.local/state/workbench/trail/YYYY-MM.jsonl``,
+one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
+repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
+terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
+
+The root keeps six months, counting the month in progress
+(``TRAIL_KEEP_MONTHS``). Every trail drops what falls outside the horizon as it
+opens, so growth is bounded whatever writes to the root, and
+``otto-log prune --keep <n>`` sweeps at a horizon you name when a machine is
+short of space. A file whose stem is not a month — ``legacy.jsonl``, where the
+cutover migration parked the pre-cutover history — is never dropped: its name
+cannot place it in time, and nothing appends to it, so it is a fixed size
+rather than a source of growth.
 """
 
 # doc-group: platform

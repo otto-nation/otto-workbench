@@ -3,6 +3,68 @@
 Resolves repo, branch, PR number, worktree root, and HEAD SHA once
 per invocation. Replaces the duplicated discovery logic in ci-check,
 review-threads, and the former review_common.detect_repo().
+
+How much of that a command wants is one of three axes every `pr` subcommand
+declares in its `_COMMANDS` entry in `ai/claude/bin/pr`. They are separate
+because they routinely disagree:
+
+| Axis | What it decides |
+|---|---|
+| **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
+| **fetch** | whether the worktree is fetched and fast-forwarded first |
+| **lock** | whether the target's `run.lock` is held for the whole run |
+
+| Command | Depth | Fetch | Lock |
+|---|---|---|---|
+| `create` | remote | no | yes |
+| `status` | local | no | **no** |
+| `ci` | remote | yes | yes |
+| `review` | remote | yes | yes |
+| `review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | yes |
+| `review --list` | **none** | no | **no** |
+| `comments` | remote | yes | yes |
+| `fix` | remote | yes | yes |
+| `rebase` | remote | no | yes |
+| `describe` | remote | yes | yes |
+| `gc` | remote | no | yes |
+
+`review` is the one command whose need its arguments decide, which is why its
+`_COMMANDS` entry holds a resolver rather than a `Need`. The fetch is the line
+between its two halves: a bare `pr review` is about to review the branch, so it
+wants the branch current, while every mode flag acts on a review that already
+exists at the commit that review describes. Fast-forwarding under one of those
+would leave `--summary` and `--post` reporting a review of a commit the
+worktree no longer sits on, and would push `--recover` off the SHA it then has
+to pin a throwaway worktree back to.
+
+`rebase` is the reason the axes are separate: it needs `gh` to name its PR and
+does its own fetch, so a single "is this command remote?" flag would either
+strand it or reset the worktree under it.
+
+A command that declares nothing fails at import rather than silently picking up
+a default — `_validate_needs` is the check, and it is what makes adding a
+command a one-line edit in one place.
+
+`status` is the only local one. It reads `state.json` and the worktree's push
+state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
+`state.json` yet, the header names the repo from the origin-derived label
+behind the repo key (`acme/widget`) rather than from `gh`. An explicit
+`--pr <n>` escalates it to remote anyway — a PR number names a branch only `gh`
+can report, and the branch is half the target key.
+
+`review --list` is the only `NONE` one, and that is not "resolve less" — it is
+"there is nothing to resolve". The listing answers from the user's own state
+root, so it has no repo, no branch, and no target, and unlike `LOCAL` it works
+from a directory that is not a git repository at all. `--pr` does not escalate
+it: there is no target for a PR number to name at that depth, so honouring one
+would spend a `gh` call on a value the handler never reads.
+
+`review --list` is also the one invocation that writes no trail at all.
+Resolving nothing and holding no lock is the shape of a query rather than of an
+action, and the listing exists to be polled: the two records a dispatch writes
+cost more than the query itself, and they land in the file every `otto-log`
+query then reads. The exemption is read off these same three axes — `Need`
+carries no trail flag of its own for a command to add itself to.
 """
 
 # doc-group: pr-state

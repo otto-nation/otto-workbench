@@ -52,6 +52,28 @@ Delegates actual AI invocation to ai_backend (which dispatches to
 Claude Code CLI or Pi CLI based on AI_BACKEND env var). This module
 adds cost tracking, failure diagnosis, and output recovery on top.
 
+**Which model a phase uses.** Every review phase resolves its model through one
+chain, most specific first:
+
+1. an explicit ``--model`` on the command
+2. the phase's own key — ``CLAUDE_REVIEW_GROUP_MODEL``,
+   ``CLAUDE_REVIEW_HOLISTIC_MODEL``, ``CLAUDE_REVIEW_SINGLE_MODEL``,
+   ``CLAUDE_REVIEW_SCOUT_MODEL``, ``CLAUDE_REVIEW_DISPROVE_MODEL``,
+   ``CLAUDE_REVIEW_FIX_MODEL``, ``CLAUDE_REVIEW_SYNTHESIS_MODEL``
+3. ``CLAUDE_REVIEW_MODEL``, which covers every phase at once
+4. the phase's built-in default
+
+Whichever wins, a bare tier alias (``sonnet``, ``opus``, ``haiku``) is then
+resolved through ``ANTHROPIC_DEFAULT_SONNET_MODEL`` /
+``ANTHROPIC_DEFAULT_OPUS_MODEL`` / ``ANTHROPIC_DEFAULT_HAIKU_MODEL``. An alias
+names a tier, not a deployment — on Vertex and Bedrock the account provisions a
+specific model ID, and that is where it lives. A concrete model ID anywhere in
+the chain passes through untouched.
+
+The Claude CLI does this resolution itself; the Pi backend does not, so the
+resolution happens here before dispatch and both backends land on the same
+model.
+
 ### review_gc.py
 
 Removal of review artifacts, at every lifecycle that removes one.
@@ -64,6 +86,20 @@ of reviews whose PR has been merged or closed.
 They differ only in what makes a file collectable — the run being over, age, or
 the PR being gone — and all of them read what a review directory holds from
 `review_common.phase_artifacts` rather than naming files themselves.
+
+`pr gc` collects loose files at the reviews root once they are a week old, prunes
+review directories and run-target directories for merged and closed PRs (skipping
+its own target), and sweeps the `state.json`, `run.lock`, and `trail.jsonl` the
+pre-target layout left behind in a worktree's `.workbench/`. The directory itself
+goes only when nothing else is in it. A flat `<name>.md` and its suffixed
+siblings are left alone: those are input to the startup migration that folds the
+old flat layout into directories.
+
+The scheduled maintenance job (`otto-workbench maintenance start`) runs `pr gc`
+each cycle, alongside its sync and stale-worktree cleanup — so this sweep, and
+the terminal `pr_outcome` event it fires, no longer depends on someone typing
+`pr gc` by hand. The step is skipped on an install without the ai component,
+which is what puts `pr` on the path.
 
 ### review_phases.py
 
@@ -182,6 +218,29 @@ Shared constants, types, and helpers for the claude-review system.
 This module is the contract between review-orchestrate and review-post.
 Both scripts import from here instead of defining their own constants.
 
+Each review owns a directory under `~/.local/state/workbench/reviews/` —
+`review.md` plus its session logs, group outputs, and pipeline state. The
+directory is derived from the review file's path, and it is the only place
+outside the worktree that review agents may write to. Granting the shared
+reviews root instead is how agent scratch files ended up sitting beside
+unrelated reviews.
+
+Each directory carries a `meta.json` sidecar, and that is what a review is
+attributed by — the repo, the PR number, the head and base refs. The directory
+name is for a human reading `ls`; nothing decides what a review is *for* by
+parsing it, so a lookup is never answered by a similarly-named directory that
+belongs to another repo. `meta.json` also carries two timestamps, which answer
+different questions: `started_at` is stamped when a run begins, `reviewed_at`
+only when it finishes with a review in hand. Neither is backfilled — a review
+written before they existed dates from its `review.md` mtime and reports no
+start.
+
+Everything that reads the tree — the two `pr gc` sweeps and every review lookup
+— walks it through one shared iterator (`iter_review_entries`), which classifies
+each entry at the root as a review, an orphaned directory, or a stray file. A
+new consumer reads that walk rather than adding a fourth set of rules for what
+counts as a review.
+
 ### review_dedup.py
 
 Deduplication of findings against already-posted PR comments.
@@ -196,11 +255,68 @@ Disprove-it gate: adversarial falsification of review findings.
 After synthesis, each Must-fix and Should-fix finding is challenged.
 Findings that cannot survive scrutiny are dropped before posting.
 
+Every must-fix and should-fix finding quotes the code it is about. After the
+review is written, that quote is checked against the file: a finding whose
+evidence does not match what is on disk is dropped, and the survivors are
+renumbered. Roughly a quarter of reviews drop at least one finding this way.
+
+The synthesis agent wrote the ``## Summary`` and the ``## Verdict`` before that
+check ran, so both can describe findings that are no longer in the file.
+Regenerating them would cost the agent's qualitative assessment, which is the
+part of a review a reader cannot reconstruct from counts. So the prose stays and
+the review says what left it:
+
+* A blockquote at the end of ``## Summary`` names each dropped finding by
+  severity and path — not by ID, since renumbering has already reassigned those
+  — and why it was dropped.
+* ``## Verdict`` is rewritten when the surviving counts no longer support the
+  stated action. A drop can only remove findings, so this only ever lowers a
+  verdict: ``Request changes`` → ``Needs discussion`` → ``Approve``. A verdict
+  the remaining findings still support is left exactly as written, and
+  ``Disapprove`` is never touched — it means the overall approach is wrong,
+  which the counts do not derive, so no drop refutes it.
+
+Both are idempotent — a review that already carries the note is left alone, so
+re-running post-processing does not stack notes or re-lower a verdict.
+
+This lowering rule only ever revises a verdict a drop leaves unsupported. How a
+verdict is decided in the first place belongs to ``ReviewVerdict``.
+
 ### review_findings.py
 
 Finding parsing, renumbering, deduplication, verification, and stable IDs.
 
 Shared between review-orchestrate (merging/verification) and review-post (parsing).
+
+Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
+only meaningful inside the review that carries them. Agents write whatever IDs
+they like; merging, deduplication, and evidence verification all remove
+findings, and a final pass closes the gaps so each severity numbers from 1 with
+no holes.
+
+Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
+…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
+a reference, and references are rewritten through the same map, so a finding
+that cites another one still cites the same one afterwards.
+
+Brackets are what make a reference unambiguous. A bare ``S3`` is also an object
+store and a bare ``M1`` is also a laptop, so an unbracketed mention only counts
+when a citing phrase introduces it — ``see S3``, ``duplicate of S3``, ``blocked
+on S3``. Anything else is left as prose; ``_REFERENCE_CUES`` is the phrase list.
+
+A reference to a finding that is no longer in the review becomes ``[removed]``.
+Leaving the ID alone would be worse than useless: the number it names has since
+been reassigned to a different finding, and a reader who follows it lands
+somewhere unrelated with nothing to signal the misdirection. Deduplication is
+the exception — a duplicate is merged rather than dropped, so references to it
+move to the copy that survived.
+
+Text that declares no findings of a given severity is left untouched, since
+there is no map to rewrite through and every ID in it belongs to some other
+document. The same reasoning applies while groups are still being merged: each
+group's IDs are shifted past the groups before it, references included, but a
+reference the group cannot resolve is left alone — another group may well
+declare it, and the merge-wide pass is the first place that can tell.
 
 ### review_fix.py
 
@@ -261,6 +377,42 @@ PR comments lifecycle tracking.
 Handles thread lifecycle state computation, local state persistence,
 and GitHub data fetching for the pr-comments skill.
 
+A thread's lifecycle state is what decides whether the run may report itself
+done. `--post` is a request, not a guarantee: if triage routes any thread to
+`needs_human` — contested, conflicting, a question, or too complex to
+auto-fix — the fix pass *holds* publishing for the rest of the process, and the
+hold outranks `--post`. Nothing reopens it (see `publishing`).
+
+The fixes still get applied and still get committed. What waits is everything
+that asserts the work is done: the push, the `Fixed in <sha>` replies, the
+thread resolutions, and the summary. The commit sits locally with status
+`push_held`, and `--finish --post` is what sends it:
+
+```bash
+pr comments --fix --post   # commits; holds the push, one thread is contested
+# read the thread, answer the reviewer
+pr comments --finish --post   # pushes, then drains the replies and the summary
+```
+
+Until that second command runs, the queue sits in state and the PR shows
+nothing — an undelivered summary is indistinguishable from a run that had
+nothing to say. `pr status` names it (`⚠ closeout owed: summary + 15 replies`)
+and counts it as a merge blocker, so the hold survives the session that created
+it.
+
+This exists because threads are triaged independently. A reviewer saying "the
+root cause you describe does not exist" removes that one thread from the
+fixable set and leaves the pass free to fix, push, and report success on
+everything else — 8 individually-real fixes pushed to a branch that had already
+been superseded.
+
+The halt is deliberately blunt: any open thread, not just a premise-invalidating
+one. Telling those apart is the hard classification problem, and the cost of
+being wrong is asymmetric — a needless hold costs one extra command, while a
+missed one costs a pushed commit and a reply claiming work is done. Running
+`--fix` and `--finish` in the same invocation does not defeat it: the discussion
+is still open at both points, so the hold applies to both.
+
 ### pr_thread_models.py
 
 Typed domain objects for PR review thread processing.
@@ -284,6 +436,53 @@ A hold overrides it. Some things a run learns mid-way — an unanswered question
 about whether the work should exist at all — mean nothing more should leave the
 machine, whatever the entrypoint was told. `hold` closes the gate for good, so
 the two only ever compose in the safe direction.
+
+What that means at the CLI: `pr comments` writes nothing outward unless you
+pass `--post`. Replies, the fix summary, thread resolutions, deferral tracking
+issues, the PR description, and the push are all printed to stderr as drafts
+instead, prefixed `DRAFT (not published)`. Code fixes and the commit are
+unaffected: they are local and undoable, and they are what makes the work
+reviewable at all. The gate covers what leaves the machine.
+
+A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
+drafts the body and reports the draft, and only `--post` sends it.
+
+Some comments are answered by rewriting the PR description rather than the code.
+That is a GitHub write like any other, so the fix agent does not make it: it is
+barred from running `gh` at all, and instead writes the replacement description
+to `ignore/pr-comments/pr-description.md` in the worktree. The fix pass sends it
+through the same gated client the replies use, which means a run without
+`--post` records the intended edit and performs none. The undelivered
+description is owed in `pr status` alongside the replies
+(`⚠ closeout owed: PR description`) and `--finish --post` delivers it.
+
+The default is draft because a review reply is public the moment it lands: an
+incorrect claim has to be retracted in front of the reviewer, and a wrong
+deferral issue has to be closed. Reading the drafts first costs one command:
+
+```bash
+pr comments --fix              # triage, fix, commit — drafts the push and replies
+pr comments --finish --post    # publish once the drafts read correctly
+```
+
+A draft run leaves state untouched, so nothing is recorded as posted and a later
+`--post` run picks up the same queue.
+
+Filing the deferral tracking issue is the one thing `--post` may stop to ask
+about. Nothing assumes a tracker: if `issue_tracker.provider` is unset for the
+repo, a `--post` run asks where the repo files issues, then whether to record
+the answer for this repo or for all of them. A repo-scoped answer is written to
+`.workbench.yml` at the repo root — commit it and nobody is asked again. A
+machine-wide answer goes to `config.yml` under the config root.
+
+The question is only ever asked when it can be answered and the answer would
+matter. A draft run does not ask, because it files nothing either way. A run
+with no terminal at all — CI, or anything else detached from one — reports the
+key to set instead of asking. A piped stdin is not that: the question goes to
+the terminal the command was started from, so a `--post` run piped into `tee`
+still asks. Either way an unanswered question files nothing: no tracking issue
+is created and the deferral replies that would link to it are not sent, rather
+than an issue being filed to a tracker nobody named.
 
 ### review_github.py
 
@@ -317,8 +516,61 @@ Two properties are the reason the query beats the path derivation it replaces:
   both timestamps are computed by the code that owns them and handed over
   whole, rather than parsed back out of a document written for a human.
 
+A consumer asks for the row schema it speaks, and the CLI enforces it:
+
+    pr review --list --schema-version 1
+
+An unsupported value exits non-zero and names the versions this build serves. A
+bare `pr review --list` writes a human table to stderr and nothing at all to
+stdout — a consumer that forgets the handshake gets a `jq` parse failure rather
+than a subtly-wrong document.
+
+`stdout` carries one JSON object:
+
+    {
+      "schema_version": 1,
+      "reviews": [
+        {
+          "repo": "otto-nation/otto-workbench",
+          "pr_number": 761,
+          "review_file": "/Users/…/reviews/otto-workbench-761/review.md",
+          "head_sha": "4a33027c…",
+          "head_ref": "isaac/761/…",
+          "base_ref": "main",
+          "review_type": "full",
+          "mode": "pr",
+          "reviewed_at": "2026-08-18T14:02:11+00:00",
+          "started_at": "2026-08-18T13:47:03+00:00",
+          "findings": {"must_fix": 0, "should_fix": 2, "nit": 1, "idiom": 0,
+                       "total": 3},
+          "verdict": "approve",
+          "status": "complete",
+          "failure_detail": "",
+          "cost_usd": 4.12,
+          "input_tokens": 0, "output_tokens": 0,
+          "cache_read_tokens": 0, "cache_write_tokens": 0,
+          "duration_ms": 0
+        }
+      ]
+    }
+
 A row reports its review's *path*, never its content: a consumer polling on an
-interval would otherwise carry every review's full text on every tick.
+interval would otherwise carry every review's full text on every tick. Finding
+keys are the `SeverityConfig.json_key` vocabulary the rest of the codebase
+already uses, so this document and `build_review_summary`'s cannot disagree
+about what a severity is called. A review written before `meta.json` existed is
+still listed, with an empty repo and a null PR number — unattributed is a fact
+about that review, and dropping it would hide one the consumer can still open.
+
+A missing reviews root is not an error; it is `{"reviews": []}` with exit 0.
+
+**Version policy.** A new *optional* field does not bump `schema_version`. A
+removed field, a renamed field, or a changed type adds a new version.
+Enforcement comes from the supported set being allowed to *shrink* —
+`--schema-version 1` keeps working until this build stops serving 1, and
+`SCHEMA_VERSIONS` is the one place that says which those are. Nothing
+hand-stamps a version into the document: the field echoes back what the caller
+declared and this build agreed to serve, so it cannot go stale on its own.
 
 ### review_posting.py
 
@@ -346,6 +598,68 @@ Shared PR context resolution.
 Resolves repo, branch, PR number, worktree root, and HEAD SHA once
 per invocation. Replaces the duplicated discovery logic in ci-check,
 review-threads, and the former review_common.detect_repo().
+
+How much of that a command wants is one of three axes every `pr` subcommand
+declares in its `_COMMANDS` entry in `ai/claude/bin/pr`. They are separate
+because they routinely disagree:
+
+| Axis | What it decides |
+|---|---|
+| **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
+| **fetch** | whether the worktree is fetched and fast-forwarded first |
+| **lock** | whether the target's `run.lock` is held for the whole run |
+
+| Command | Depth | Fetch | Lock |
+|---|---|---|---|
+| `create` | remote | no | yes |
+| `status` | local | no | **no** |
+| `ci` | remote | yes | yes |
+| `review` | remote | yes | yes |
+| `review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | yes |
+| `review --list` | **none** | no | **no** |
+| `comments` | remote | yes | yes |
+| `fix` | remote | yes | yes |
+| `rebase` | remote | no | yes |
+| `describe` | remote | yes | yes |
+| `gc` | remote | no | yes |
+
+`review` is the one command whose need its arguments decide, which is why its
+`_COMMANDS` entry holds a resolver rather than a `Need`. The fetch is the line
+between its two halves: a bare `pr review` is about to review the branch, so it
+wants the branch current, while every mode flag acts on a review that already
+exists at the commit that review describes. Fast-forwarding under one of those
+would leave `--summary` and `--post` reporting a review of a commit the
+worktree no longer sits on, and would push `--recover` off the SHA it then has
+to pin a throwaway worktree back to.
+
+`rebase` is the reason the axes are separate: it needs `gh` to name its PR and
+does its own fetch, so a single "is this command remote?" flag would either
+strand it or reset the worktree under it.
+
+A command that declares nothing fails at import rather than silently picking up
+a default — `_validate_needs` is the check, and it is what makes adding a
+command a one-line edit in one place.
+
+`status` is the only local one. It reads `state.json` and the worktree's push
+state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
+`state.json` yet, the header names the repo from the origin-derived label
+behind the repo key (`acme/widget`) rather than from `gh`. An explicit
+`--pr <n>` escalates it to remote anyway — a PR number names a branch only `gh`
+can report, and the branch is half the target key.
+
+`review --list` is the only `NONE` one, and that is not "resolve less" — it is
+"there is nothing to resolve". The listing answers from the user's own state
+root, so it has no repo, no branch, and no target, and unlike `LOCAL` it works
+from a directory that is not a git repository at all. `--pr` does not escalate
+it: there is no target for a PR number to name at that depth, so honouring one
+would spend a `gh` call on a value the handler never reads.
+
+`review --list` is also the one invocation that writes no trail at all.
+Resolving nothing and holding no lock is the shape of a query rather than of an
+action, and the listing exists to be polled: the two records a dispatch writes
+cost more than the query itself, and they land in the file every `otto-log`
+query then reads. The exemption is read off these same three axes — `Need`
+carries no trail flag of its own for a command to add itself to.
 
 ### pr_state.py
 
@@ -375,7 +689,7 @@ the under-locking bug this layout exists to close. ``acme/api`` and
 apart by flattening the origin path into one component with a character map has
 left another pair colliding — a lossy map cannot be injective, whatever the map.
 
-So the key does not rely on the flattening for distinctness::
+So the key does not rely on the flattening for distinctness:
 
     key = <readable>-<digest>
 
@@ -444,7 +758,7 @@ There is deliberately no second key format. An alternate PR-number key would be
 a second source of truth for one target, and a transient ``gh`` failure could
 move a live target between the two mid-flight.
 
-The layout, which is this repo's own and is not reimplemented anywhere else::
+The layout, which is this repo's own and is not reimplemented anywhere else:
 
     <state_dir()>/pr/<repo-key>-<branch-slug>/
         state.json
@@ -455,6 +769,11 @@ where ``<repo-key>`` is the key above and ``<branch-slug>`` is ``slug(branch)``.
 ``state_dir()`` rather than a literal path: the state root is relocatable, and
 resolving through the function is what makes ``pr/`` ride along with a move
 instead of being stranded at the old location.
+
+That both components are derivable offline is a convenience for this repo's own
+code, not an invitation to rebuild the path elsewhere: this module is the owner,
+and another repo that wants to know what has been reviewed asks the CLI (see
+``review_listing``) rather than deriving where a review would sit.
 
 ### push_status.py
 
@@ -468,7 +787,53 @@ tracking branch.  Computed at render time (no stored state needed).
 Rebase domain — status rendering.
 
 Owns the display logic for RebaseSummary so the pr dispatcher
-doesn't need to know rebase internals.
+doesn't need to know rebase internals — including the phrase each refusal is
+reported with, so a new refusal shows up by adding a row rather than by being
+forgotten and rendering as a completed rebase.
+
+The already-landed signals answer "is this work already in the base?". Two more
+answer a different question — "is replaying this branch onto that base a safe
+thing to do at all?" — and refuse on the same exit code, with the same `--force`
+override:
+
+| Signal | What it reads | When it fires |
+|---|---|---|
+| `no_merge_base` | `git merge-base <base> HEAD` exits nonzero | The branch and its base share no commit |
+| `conflicts_over_budget` | distinct conflicted files across the whole rebase | The count passes `_CONFLICT_FILE_BUDGET` |
+
+`no_merge_base` is exact rather than heuristic, and it costs one local git
+command, so it is asked before the landed signals rather than after them — those
+compare HEAD against a ref an unrelated branch has no relationship to, so they
+answer nothing there. A repo that was re-initialised leaves branches descending
+from a second root; rebasing one replays its entire history onto a base it has
+nothing in common with, which conflicts in every file both roots happen to
+contain.
+
+A ref that does not resolve is not this. `git merge-base` fails identically for a
+typo'd `--onto` and for a base branch the fetch never brought down, so the check
+verifies the ref names a commit first and passes when it does not — refusing
+those as unrelated history would send the operator after a root they do not
+have, where git's own error for the missing ref says what actually went wrong.
+
+The budget is the circuit breaker for what that produces. Conflict resolution is
+an AI call per conflicted file, with edit access to the worktree, and the wider
+the spread the less any single call can tell an intended change from an
+unrelated one — which is how a rebase resolving 51 conflicts rewrote
+`bin/otto-workbench`, a file the branch never touched, into invalid bash. Past
+the budget the rebase is aborted before the first resolution call, so the
+worktree is left clean rather than half-replayed.
+
+The count is of *distinct files* across the whole rebase, not conflicts: a file
+conflicting in every replayed commit is one file's worth of risk, and counting
+it once per commit would refuse a narrow rebase over a long branch. The tally
+carries across steps, so a rebase that widens gradually is refused at the step
+that crosses the line rather than never.
+
+A resumed rebase waives the budget. The conflicts are already sitting in the
+worktree by then; refusing would strand it mid-rebase with no path forward
+except the manual resolution the command exists to avoid. The waiver is the
+resume path passing `force=True` into the same parameter `--force` sets, so
+there is one waiver mechanism rather than two.
 
 ### supersession.py
 
@@ -479,19 +844,76 @@ fixing, and the reviewer's "this does not exist any more" is one thread among
 ten. None of that needs an AI call to notice — the skew is in the commit dates,
 the re-addition is in the diff, and the PR that removed it is one search away.
 
+Three cheap checks, run by every branch-acting command before it acts:
+
+| Signal | What it reads | Evidence? |
+|---|---|---|
+| `rebase_skew` | author vs committer date on the branch's first commit, ≥ 7 days apart | no |
+| `readds_removed_symbol` | a definition in `git diff origin/<default>...HEAD` that the default branch no longer contains but once did | yes |
+| `superseding_pr` | a merged PR mentioning that symbol, via `gh api search/issues` | yes |
+
+Each finding is printed with its kind, so the output says which check fired.
+Only the last two count as evidence: a branch replayed onto a base that has
+moved is what makes supersession visible, but on its own it describes every
+long-lived branch, and acting on it would fire on the healthy case.
+
+It is a preflight, not an investigation — the symbol scan stops at the first ten
+definitions and only the first two flagged symbols are searched for on GitHub, so
+a clean branch costs two local git commands and no network call at all. The
+verdict is cached in the state file against the HEAD *and* base SHAs it was
+computed from, so the next command on the same branch reuses it rather than
+repeating the search; a moved base invalidates it just as a moved HEAD does,
+because there is nothing to re-add until the default branch deletes it — a
+branch whose own HEAD never moves becomes superseded the moment `main` does.
+
 This module answers the question; it does not decide what to do about it. The
 two are separated because the callers legitimately differ. `pr comments` has
 already spent its money by the time it publishes, so a positive verdict holds
-the publishing. `pr review` spends the largest budget of any command in the
-repo, so a positive verdict refuses before the spend rather than after it. One
-detection, two policies, each stated where the cost is.
+the publishing — the same acts a contested thread's hold reaches: the push, the
+replies, the resolutions, and the summary, but not the local commit. `pr review`
+spends the largest budget of any command in the repo and the check runs before
+the first agent call, so a positive verdict refuses before the spend rather than
+after it, exit 4. One detection, two policies, each stated where the cost is.
+
+The refusal prints the signals and writes the same JSON shape `pr rebase` uses
+for its already-landed refusal, on the same exit code:
+
+```json
+{
+  "branch": "isaac/703/fix_the_thing",
+  "status": "superseded",
+  "signals": [
+    {
+      "kind": "readds_removed_symbol",
+      "detail": "`dropped_helper` is added by this branch but absent from origin/main, which last touched it in abc1234 (ai/lib/foo.py)",
+      "holds": true
+    }
+  ],
+  "override": "--force"
+}
+```
+
+Read the merged PR the `superseding_pr` signal names before doing anything else.
+If the branch really is still wanted, re-run with `--force`, which skips the
+check entirely. `pr fix` stops on the refusal rather than continuing to its CI
+pass: every remaining pass acts on the same branch, so one refusal answers for
+all of them.
+
+Two flags do *not* override it, and one does. `--post` and `--no-post` set the
+same internal flag `--force` does — they suppress the confirmation prompts,
+because nobody is present to answer one — but an unattended run is the one this
+refusal most has to survive, so the check reads the raw `--force` instead.
+`--recover` is exempt on both entry points: it finishes a run whose spend was
+already made, so refusing it saves nothing and strands the artifacts of the run
+it was asked to complete.
 
 Distinct from `pr rebase`'s already-landed check, which asks whether the work
 has *landed* rather than whether it has been *superseded*. Work can land
 without the branch being superseded, and a branch can be superseded without its
 commits having landed anywhere — someone solved the problem differently. They
 stay separate: two of the landed check's three signals are local-only, and this
-one makes a network call that a rebase should not have to pay for.
+one makes a network call that a rebase should not have to pay for. They share
+the exit code and the override flag, and nothing else.
 
 ## AI backends
 
@@ -827,6 +1249,20 @@ named for the emitting event's UTC month. Months past ``TRAIL_KEEP_MONTHS``
 are dropped as runs start, so the root stays bounded whatever writes to it.
 The --debug flag controls stderr echo only; whether a run is recorded at all
 is the caller's ``record`` argument to ``Trail.start``.
+
+One root for every script — ``~/.local/state/workbench/trail/YYYY-MM.jsonl``,
+one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
+repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
+terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
+
+The root keeps six months, counting the month in progress
+(``TRAIL_KEEP_MONTHS``). Every trail drops what falls outside the horizon as it
+opens, so growth is bounded whatever writes to the root, and
+``otto-log prune --keep <n>`` sweeps at a horizon you name when a machine is
+short of space. A file whose stem is not a month — ``legacy.jsonl``, where the
+cutover migration parked the pre-cutover history — is never dropped: its name
+cannot place it in time, and nothing appends to it, so it is a fixed size
+rather than a source of growth.
 
 ### workbench_config.py
 

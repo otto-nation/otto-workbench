@@ -3,6 +3,28 @@
 Delegates actual AI invocation to ai_backend (which dispatches to
 Claude Code CLI or Pi CLI based on AI_BACKEND env var). This module
 adds cost tracking, failure diagnosis, and output recovery on top.
+
+**Which model a phase uses.** Every review phase resolves its model through one
+chain, most specific first:
+
+1. an explicit ``--model`` on the command
+2. the phase's own key — ``CLAUDE_REVIEW_GROUP_MODEL``,
+   ``CLAUDE_REVIEW_HOLISTIC_MODEL``, ``CLAUDE_REVIEW_SINGLE_MODEL``,
+   ``CLAUDE_REVIEW_SCOUT_MODEL``, ``CLAUDE_REVIEW_DISPROVE_MODEL``,
+   ``CLAUDE_REVIEW_FIX_MODEL``, ``CLAUDE_REVIEW_SYNTHESIS_MODEL``
+3. ``CLAUDE_REVIEW_MODEL``, which covers every phase at once
+4. the phase's built-in default
+
+Whichever wins, a bare tier alias (``sonnet``, ``opus``, ``haiku``) is then
+resolved through ``ANTHROPIC_DEFAULT_SONNET_MODEL`` /
+``ANTHROPIC_DEFAULT_OPUS_MODEL`` / ``ANTHROPIC_DEFAULT_HAIKU_MODEL``. An alias
+names a tier, not a deployment — on Vertex and Bedrock the account provisions a
+specific model ID, and that is where it lives. A concrete model ID anywhere in
+the chain passes through untouched.
+
+The Claude CLI does this resolution itself; the Pi backend does not, so the
+resolution happens here before dispatch and both backends land on the same
+model.
 """
 
 # doc-group: pipeline

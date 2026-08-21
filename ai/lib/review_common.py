@@ -2,6 +2,29 @@
 
 This module is the contract between review-orchestrate and review-post.
 Both scripts import from here instead of defining their own constants.
+
+Each review owns a directory under `~/.local/state/workbench/reviews/` —
+`review.md` plus its session logs, group outputs, and pipeline state. The
+directory is derived from the review file's path, and it is the only place
+outside the worktree that review agents may write to. Granting the shared
+reviews root instead is how agent scratch files ended up sitting beside
+unrelated reviews.
+
+Each directory carries a `meta.json` sidecar, and that is what a review is
+attributed by — the repo, the PR number, the head and base refs. The directory
+name is for a human reading `ls`; nothing decides what a review is *for* by
+parsing it, so a lookup is never answered by a similarly-named directory that
+belongs to another repo. `meta.json` also carries two timestamps, which answer
+different questions: `started_at` is stamped when a run begins, `reviewed_at`
+only when it finishes with a review in hand. Neither is backfilled — a review
+written before they existed dates from its `review.md` mtime and reports no
+start.
+
+Everything that reads the tree — the two `pr gc` sweeps and every review lookup
+— walks it through one shared iterator (`iter_review_entries`), which classifies
+each entry at the root as a review, an orphaned directory, or a stray file. A
+new consumer reads that walk rather than adding a fourth set of rules for what
+counts as a review.
 """
 
 # doc-group: findings

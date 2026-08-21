@@ -1,6 +1,36 @@
 """Finding parsing, renumbering, deduplication, verification, and stable IDs.
 
 Shared between review-orchestrate (merging/verification) and review-post (parsing).
+
+Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
+only meaningful inside the review that carries them. Agents write whatever IDs
+they like; merging, deduplication, and evidence verification all remove
+findings, and a final pass closes the gaps so each severity numbers from 1 with
+no holes.
+
+Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
+…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
+a reference, and references are rewritten through the same map, so a finding
+that cites another one still cites the same one afterwards.
+
+Brackets are what make a reference unambiguous. A bare ``S3`` is also an object
+store and a bare ``M1`` is also a laptop, so an unbracketed mention only counts
+when a citing phrase introduces it — ``see S3``, ``duplicate of S3``, ``blocked
+on S3``. Anything else is left as prose; ``_REFERENCE_CUES`` is the phrase list.
+
+A reference to a finding that is no longer in the review becomes ``[removed]``.
+Leaving the ID alone would be worse than useless: the number it names has since
+been reassigned to a different finding, and a reader who follows it lands
+somewhere unrelated with nothing to signal the misdirection. Deduplication is
+the exception — a duplicate is merged rather than dropped, so references to it
+move to the copy that survived.
+
+Text that declares no findings of a given severity is left untouched, since
+there is no map to rewrite through and every ID in it belongs to some other
+document. The same reasoning applies while groups are still being merged: each
+group's IDs are shifted past the groups before it, references included, but a
+reference the group cannot resolve is left alone — another group may well
+declare it, and the merge-wide pass is the first place that can tell.
 """
 
 # doc-group: findings

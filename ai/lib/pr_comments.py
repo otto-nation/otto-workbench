@@ -2,6 +2,42 @@
 
 Handles thread lifecycle state computation, local state persistence,
 and GitHub data fetching for the pr-comments skill.
+
+A thread's lifecycle state is what decides whether the run may report itself
+done. `--post` is a request, not a guarantee: if triage routes any thread to
+`needs_human` — contested, conflicting, a question, or too complex to
+auto-fix — the fix pass *holds* publishing for the rest of the process, and the
+hold outranks `--post`. Nothing reopens it (see `publishing`).
+
+The fixes still get applied and still get committed. What waits is everything
+that asserts the work is done: the push, the `Fixed in <sha>` replies, the
+thread resolutions, and the summary. The commit sits locally with status
+`push_held`, and `--finish --post` is what sends it:
+
+```bash
+pr comments --fix --post   # commits; holds the push, one thread is contested
+# read the thread, answer the reviewer
+pr comments --finish --post   # pushes, then drains the replies and the summary
+```
+
+Until that second command runs, the queue sits in state and the PR shows
+nothing — an undelivered summary is indistinguishable from a run that had
+nothing to say. `pr status` names it (`⚠ closeout owed: summary + 15 replies`)
+and counts it as a merge blocker, so the hold survives the session that created
+it.
+
+This exists because threads are triaged independently. A reviewer saying "the
+root cause you describe does not exist" removes that one thread from the
+fixable set and leaves the pass free to fix, push, and report success on
+everything else — 8 individually-real fixes pushed to a branch that had already
+been superseded.
+
+The halt is deliberately blunt: any open thread, not just a premise-invalidating
+one. Telling those apart is the hard classification problem, and the cost of
+being wrong is asymmetric — a needless hold costs one extra command, while a
+missed one costs a pushed commit and a reply claiming work is done. Running
+`--fix` and `--finish` in the same invocation does not defeat it: the discussion
+is still open at both points, so the hold applies to both.
 """
 
 # doc-group: publishing

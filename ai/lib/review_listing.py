@@ -17,8 +17,61 @@ Two properties are the reason the query beats the path derivation it replaces:
   both timestamps are computed by the code that owns them and handed over
   whole, rather than parsed back out of a document written for a human.
 
+A consumer asks for the row schema it speaks, and the CLI enforces it:
+
+    pr review --list --schema-version 1
+
+An unsupported value exits non-zero and names the versions this build serves. A
+bare `pr review --list` writes a human table to stderr and nothing at all to
+stdout — a consumer that forgets the handshake gets a `jq` parse failure rather
+than a subtly-wrong document.
+
+`stdout` carries one JSON object:
+
+    {
+      "schema_version": 1,
+      "reviews": [
+        {
+          "repo": "otto-nation/otto-workbench",
+          "pr_number": 761,
+          "review_file": "/Users/…/reviews/otto-workbench-761/review.md",
+          "head_sha": "4a33027c…",
+          "head_ref": "isaac/761/…",
+          "base_ref": "main",
+          "review_type": "full",
+          "mode": "pr",
+          "reviewed_at": "2026-08-18T14:02:11+00:00",
+          "started_at": "2026-08-18T13:47:03+00:00",
+          "findings": {"must_fix": 0, "should_fix": 2, "nit": 1, "idiom": 0,
+                       "total": 3},
+          "verdict": "approve",
+          "status": "complete",
+          "failure_detail": "",
+          "cost_usd": 4.12,
+          "input_tokens": 0, "output_tokens": 0,
+          "cache_read_tokens": 0, "cache_write_tokens": 0,
+          "duration_ms": 0
+        }
+      ]
+    }
+
 A row reports its review's *path*, never its content: a consumer polling on an
-interval would otherwise carry every review's full text on every tick.
+interval would otherwise carry every review's full text on every tick. Finding
+keys are the `SeverityConfig.json_key` vocabulary the rest of the codebase
+already uses, so this document and `build_review_summary`'s cannot disagree
+about what a severity is called. A review written before `meta.json` existed is
+still listed, with an empty repo and a null PR number — unattributed is a fact
+about that review, and dropping it would hide one the consumer can still open.
+
+A missing reviews root is not an error; it is `{"reviews": []}` with exit 0.
+
+**Version policy.** A new *optional* field does not bump `schema_version`. A
+removed field, a renamed field, or a changed type adds a new version.
+Enforcement comes from the supported set being allowed to *shrink* —
+`--schema-version 1` keeps working until this build stops serving 1, and
+`SCHEMA_VERSIONS` is the one place that says which those are. Nothing
+hand-stamps a version into the document: the field echoes back what the caller
+declared and this build agreed to serve, so it cannot go stale on its own.
 """
 
 # doc-group: publishing

@@ -5,19 +5,76 @@ fixing, and the reviewer's "this does not exist any more" is one thread among
 ten. None of that needs an AI call to notice — the skew is in the commit dates,
 the re-addition is in the diff, and the PR that removed it is one search away.
 
+Three cheap checks, run by every branch-acting command before it acts:
+
+| Signal | What it reads | Evidence? |
+|---|---|---|
+| `rebase_skew` | author vs committer date on the branch's first commit, ≥ 7 days apart | no |
+| `readds_removed_symbol` | a definition in `git diff origin/<default>...HEAD` that the default branch no longer contains but once did | yes |
+| `superseding_pr` | a merged PR mentioning that symbol, via `gh api search/issues` | yes |
+
+Each finding is printed with its kind, so the output says which check fired.
+Only the last two count as evidence: a branch replayed onto a base that has
+moved is what makes supersession visible, but on its own it describes every
+long-lived branch, and acting on it would fire on the healthy case.
+
+It is a preflight, not an investigation — the symbol scan stops at the first ten
+definitions and only the first two flagged symbols are searched for on GitHub, so
+a clean branch costs two local git commands and no network call at all. The
+verdict is cached in the state file against the HEAD *and* base SHAs it was
+computed from, so the next command on the same branch reuses it rather than
+repeating the search; a moved base invalidates it just as a moved HEAD does,
+because there is nothing to re-add until the default branch deletes it — a
+branch whose own HEAD never moves becomes superseded the moment `main` does.
+
 This module answers the question; it does not decide what to do about it. The
 two are separated because the callers legitimately differ. `pr comments` has
 already spent its money by the time it publishes, so a positive verdict holds
-the publishing. `pr review` spends the largest budget of any command in the
-repo, so a positive verdict refuses before the spend rather than after it. One
-detection, two policies, each stated where the cost is.
+the publishing — the same acts a contested thread's hold reaches: the push, the
+replies, the resolutions, and the summary, but not the local commit. `pr review`
+spends the largest budget of any command in the repo and the check runs before
+the first agent call, so a positive verdict refuses before the spend rather than
+after it, exit 4. One detection, two policies, each stated where the cost is.
+
+The refusal prints the signals and writes the same JSON shape `pr rebase` uses
+for its already-landed refusal, on the same exit code:
+
+```json
+{
+  "branch": "isaac/703/fix_the_thing",
+  "status": "superseded",
+  "signals": [
+    {
+      "kind": "readds_removed_symbol",
+      "detail": "`dropped_helper` is added by this branch but absent from origin/main, which last touched it in abc1234 (ai/lib/foo.py)",
+      "holds": true
+    }
+  ],
+  "override": "--force"
+}
+```
+
+Read the merged PR the `superseding_pr` signal names before doing anything else.
+If the branch really is still wanted, re-run with `--force`, which skips the
+check entirely. `pr fix` stops on the refusal rather than continuing to its CI
+pass: every remaining pass acts on the same branch, so one refusal answers for
+all of them.
+
+Two flags do *not* override it, and one does. `--post` and `--no-post` set the
+same internal flag `--force` does — they suppress the confirmation prompts,
+because nobody is present to answer one — but an unattended run is the one this
+refusal most has to survive, so the check reads the raw `--force` instead.
+`--recover` is exempt on both entry points: it finishes a run whose spend was
+already made, so refusing it saves nothing and strands the artifacts of the run
+it was asked to complete.
 
 Distinct from `pr rebase`'s already-landed check, which asks whether the work
 has *landed* rather than whether it has been *superseded*. Work can land
 without the branch being superseded, and a branch can be superseded without its
 commits having landed anywhere — someone solved the problem differently. They
 stay separate: two of the landed check's three signals are local-only, and this
-one makes a network call that a rebase should not have to pay for.
+one makes a network call that a rebase should not have to pay for. They share
+the exit code and the override flag, and nothing else.
 """
 
 # doc-group: pr-state

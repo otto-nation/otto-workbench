@@ -13,7 +13,7 @@ the under-locking bug this layout exists to close. ``acme/api`` and
 apart by flattening the origin path into one component with a character map has
 left another pair colliding — a lossy map cannot be injective, whatever the map.
 
-So the key does not rely on the flattening for distinctness::
+So the key does not rely on the flattening for distinctness:
 
     key = <readable>-<digest>
 
@@ -82,7 +82,7 @@ There is deliberately no second key format. An alternate PR-number key would be
 a second source of truth for one target, and a transient ``gh`` failure could
 move a live target between the two mid-flight.
 
-The layout, which is this repo's own and is not reimplemented anywhere else::
+The layout, which is this repo's own and is not reimplemented anywhere else:
 
     <state_dir()>/pr/<repo-key>-<branch-slug>/
         state.json
@@ -93,6 +93,11 @@ where ``<repo-key>`` is the key above and ``<branch-slug>`` is ``slug(branch)``.
 ``state_dir()`` rather than a literal path: the state root is relocatable, and
 resolving through the function is what makes ``pr/`` ride along with a move
 instead of being stranded at the old location.
+
+That both components are derivable offline is a convenience for this repo's own
+code, not an invitation to rebuild the path elsewhere: this module is the owner,
+and another repo that wants to know what has been reviewed asks the CLI (see
+``review_listing``) rather than deriving where a review would sit.
 """
 
 # doc-group: pr-state

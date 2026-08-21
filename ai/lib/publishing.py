@@ -12,6 +12,53 @@ A hold overrides it. Some things a run learns mid-way — an unanswered question
 about whether the work should exist at all — mean nothing more should leave the
 machine, whatever the entrypoint was told. `hold` closes the gate for good, so
 the two only ever compose in the safe direction.
+
+What that means at the CLI: `pr comments` writes nothing outward unless you
+pass `--post`. Replies, the fix summary, thread resolutions, deferral tracking
+issues, the PR description, and the push are all printed to stderr as drafts
+instead, prefixed `DRAFT (not published)`. Code fixes and the commit are
+unaffected: they are local and undoable, and they are what makes the work
+reviewable at all. The gate covers what leaves the machine.
+
+A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
+drafts the body and reports the draft, and only `--post` sends it.
+
+Some comments are answered by rewriting the PR description rather than the code.
+That is a GitHub write like any other, so the fix agent does not make it: it is
+barred from running `gh` at all, and instead writes the replacement description
+to `ignore/pr-comments/pr-description.md` in the worktree. The fix pass sends it
+through the same gated client the replies use, which means a run without
+`--post` records the intended edit and performs none. The undelivered
+description is owed in `pr status` alongside the replies
+(`⚠ closeout owed: PR description`) and `--finish --post` delivers it.
+
+The default is draft because a review reply is public the moment it lands: an
+incorrect claim has to be retracted in front of the reviewer, and a wrong
+deferral issue has to be closed. Reading the drafts first costs one command:
+
+```bash
+pr comments --fix              # triage, fix, commit — drafts the push and replies
+pr comments --finish --post    # publish once the drafts read correctly
+```
+
+A draft run leaves state untouched, so nothing is recorded as posted and a later
+`--post` run picks up the same queue.
+
+Filing the deferral tracking issue is the one thing `--post` may stop to ask
+about. Nothing assumes a tracker: if `issue_tracker.provider` is unset for the
+repo, a `--post` run asks where the repo files issues, then whether to record
+the answer for this repo or for all of them. A repo-scoped answer is written to
+`.workbench.yml` at the repo root — commit it and nobody is asked again. A
+machine-wide answer goes to `config.yml` under the config root.
+
+The question is only ever asked when it can be answered and the answer would
+matter. A draft run does not ask, because it files nothing either way. A run
+with no terminal at all — CI, or anything else detached from one — reports the
+key to set instead of asking. A piped stdin is not that: the question goes to
+the terminal the command was started from, so a `--post` run piped into `tee`
+still asks. Either way an unanswered question files nothing: no tracking issue
+is created and the deferral replies that would link to it are not sent, rather
+than an issue being filed to a tracker nobody named.
 """
 
 # doc-group: publishing

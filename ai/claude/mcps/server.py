@@ -13,11 +13,17 @@ scan is a fact about the checkout rather than a question to ask the user.
 Which of them a client is offered comes from the registries — see
 ``ai/lib/tool_registry.py``. Carrying the marker makes a script probeable, not
 public: a hidden or unregistered one is skipped before it is ever run.
+
+The client owns this process, spawning it over stdio, so nothing outside can
+restart it when a tool is added or re-signatured. A poll watches what discovery
+reads and re-runs it when that changes, and the client is told with
+``notifications/tools/list_changed`` when the tool set differs as a result.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -26,6 +32,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 # MCP SDK imports are deferred to create_server() / main() so that the
 # discovery and extraction utilities can be tested without the SDK installed.
@@ -39,7 +46,7 @@ WORKBENCH_DIR = Path(__file__).resolve().parents[3]
 # project as the working directory, so the workbench's Python has to be named
 # before it can be imported.
 sys.path.insert(0, str(WORKBENCH_DIR / "ai" / "lib"))
-from tool_registry import RegistryEntry, load_registry_entries  # noqa: E402
+from tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
 
 COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
 
@@ -69,6 +76,12 @@ DECLARATION_SCAN_BYTES = 256 * 1024
 # How much of a tool's output an error message quotes back. Enough to recognise
 # a usage line or a stack trace, short enough not to bury the sentence above it.
 ERROR_EXCERPT_CHARS = 500
+
+# Seconds between fingerprints of what discovery reads. A poll that finds
+# nothing costs one stat per file in the scanned directories and nothing else,
+# so this is a bound on how stale a client's tool list gets rather than a cost
+# to trade against. Re-discovery only runs when the fingerprint moves.
+POLL_INTERVAL = 2.0
 
 
 # ── Tool Discovery ────────────────────────────────────────────────────────
@@ -277,6 +290,150 @@ def discover_tools(dirs: list[Path] | None = None,
     return tools
 
 
+# ── Re-discovery ──────────────────────────────────────────────────────────
+
+
+def _stamp(path: Path) -> tuple | None:
+    """What a file would have to change for discovery to answer differently.
+
+    Size and modification time cover an edited script and an edited registry.
+    The mode is here because ``chmod +x`` is the whole of what turns a file in
+    a scanned directory into a candidate, and it moves neither of the others.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_mode)
+
+
+def _dir_entries(d: Path) -> list[Path]:
+    try:
+        return sorted(d.iterdir())
+    except OSError:
+        return []
+
+
+def discovery_fingerprint(root: Path | None = None) -> tuple:
+    """A comparable value over every input ``discover_tools`` reads.
+
+    Every file in every scanned directory rather than only the candidates:
+    reading each one's source to decide whether it carries a marker is the
+    expensive half of discovery, and a fingerprint that ran it would cost as
+    much as the re-scan it exists to avoid. The directories themselves are
+    stamped too, so a script added or deleted is a change even when the file
+    that appeared is one this stamp would otherwise ignore.
+
+    The registries are inputs as much as the scripts are — an entry going
+    ``hidden`` withdraws a tool without touching a line of its script.
+    """
+    base = WORKBENCH_DIR if root is None else Path(root)
+    dirs = discover_tool_dirs(base)
+    watched = [*dirs, *(e for d in dirs for e in _dir_entries(d)), *registry_files(base)]
+    return tuple(sorted((str(path), _stamp(path)) for path in watched))
+
+
+@dataclass(frozen=True)
+class Discovery:
+    """A tool set and the fingerprint of the tree it was read from."""
+
+    tools: dict[str, dict]
+    fingerprint: tuple
+
+
+def discover_with_baseline() -> Discovery:
+    """Scan for tools and stamp the tree they came from.
+
+    The stamp is taken before the scan, not after. A baseline has to describe a
+    tree no newer than the tool set it is the baseline for: taken afterwards, a
+    tool that landed while discovery was running is already in the fingerprint,
+    so no poll ever sees that file appear and the client goes without the tool
+    for the life of the session — the process is spawned by the client, so
+    nothing outside can restart it either. Taken first, the same tool costs one
+    re-scan on the first poll and is then offered.
+    """
+    fingerprint = discovery_fingerprint()
+    return Discovery(tools=discover_tools(), fingerprint=fingerprint)
+
+
+def _why_gone(script: Path) -> str:
+    """Why a tool that used to answer no longer does."""
+    if not script.exists():
+        return "its script is gone"
+    return probe_tool(script).reason or "its registry entry no longer offers it"
+
+
+def _log_lost_tools(before: dict[str, dict], after: dict[str, dict]) -> None:
+    """Say what happened to a tool that was working and now is not.
+
+    At error level, and named: the rest of discovery warns about a script that
+    never worked, which a reader can dismiss as a tool somebody is still
+    writing. One that answered until this scan is a regression in something
+    already in use, and the client is about to stop offering it.
+    """
+    for name in sorted(before.keys() - after.keys()):
+        script = Path(before[name]["_script"])
+        logger.error("Tool %s is no longer offered: %s", name, _why_gone(script))
+
+
+async def watch_for_tool_changes(tools: dict[str, dict], notify, ready: asyncio.Event,
+                                 fingerprint: tuple,
+                                 interval: float = POLL_INTERVAL) -> None:
+    """Keep *tools* current and call *notify* whenever the set changes.
+
+    *tools* is mutated in place because the request handlers close over it —
+    rebinding here would leave them reading the snapshot taken at startup,
+    which is the whole of what this fixes. It is updated before *notify* runs,
+    so a ``tools/list`` racing the notification still answers with the new set.
+
+    *fingerprint* is the baseline *tools* was read against, and is passed in
+    rather than stamped here: this coroutine starts whenever the loop first
+    schedules it, which is after the handshake on a busy runner, and a baseline
+    taken then already holds every change since startup. ``discover_with_baseline``
+    is what pairs the two.
+
+    *ready* is set by the first request the server answers. A notification sent
+    before then would reach a client that has not finished initialising, and
+    the tool list it asks for afterwards is current anyway.
+
+    Discovery runs in a thread: it executes every offered script, and the event
+    loop owns the client's connection while it does. So does the report of what
+    was lost — naming a reason re-probes each vanished tool, one subprocess
+    apiece.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            fingerprint = await _poll_once(tools, notify, ready, fingerprint)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # One failed round costs one round. Letting it out instead kills the
+            # task, and nobody is holding it — the client would go on showing
+            # the list it had at startup for the rest of the session, with the
+            # traceback surfacing only if the interpreter got around to it.
+            logger.exception("Re-discovery failed, trying again in %ss", interval)
+
+
+async def _poll_once(tools: dict[str, dict], notify, ready: asyncio.Event,
+                     fingerprint: tuple) -> tuple:
+    """One turn of the poll, returning the fingerprint to compare next time."""
+    current = await asyncio.to_thread(discovery_fingerprint)
+    if current == fingerprint:
+        return current
+    rediscovered = await asyncio.to_thread(discover_tools)
+    if rediscovered == tools:
+        logger.debug("Something under the scanned directories changed, the tools did not")
+        return current
+    await asyncio.to_thread(_log_lost_tools, dict(tools), rediscovered)
+    tools.clear()
+    tools.update(rediscovered)
+    logger.info("Tools changed, now offering %d: %s", len(tools), ", ".join(sorted(tools)))
+    await ready.wait()
+    await notify()
+    return current
+
+
 # ── Argument Mapping ──────────────────────────────────────────────────────
 
 
@@ -302,8 +459,13 @@ def _args_to_cli(arguments: dict, input_schema: dict) -> list[str]:
 # ── JSON Extraction ───────────────────────────────────────────────────────
 
 
-def _extract_json(text: str) -> str | None:
-    """Extract JSON from mixed output (dashboard on stderr bleeds into stdout)."""
+def _extract_json(text: str) -> tuple[str, object] | None:
+    """Extract JSON from mixed output (dashboard on stderr bleeds into stdout).
+
+    Returns the matching substring paired with its already-parsed value, so a
+    caller that needs both is not left re-parsing what this function just
+    validated.
+    """
     text = text.strip()
     if not text:
         return None
@@ -311,8 +473,7 @@ def _extract_json(text: str) -> str | None:
     # Try the whole thing first
     if text.startswith("{") or text.startswith("["):
         try:
-            json.loads(text)
-            return text
+            return text, json.loads(text)
         except json.JSONDecodeError:
             pass
 
@@ -322,8 +483,7 @@ def _extract_json(text: str) -> str | None:
     for i in candidates:
         remainder = "\n".join(lines[i:])
         try:
-            json.loads(remainder)
-            return remainder
+            return remainder, json.loads(remainder)
         except json.JSONDecodeError:
             continue
 
@@ -342,11 +502,24 @@ def _first_chars(text: str) -> str:
 # ── MCP Server ────────────────────────────────────────────────────────────
 
 
-def create_server():
-    """Create the MCP server and discover tools.
+@dataclass(frozen=True)
+class RunningServer:
+    """The server, the tool set its handlers read, and its first-request signal.
 
-    Returns (server, tools_dict). Requires the ``mcp`` package.
+    ``tools`` is the live dict, not a copy — the handlers close over it and
+    ``watch_for_tool_changes`` writes into it. ``ready`` is what tells the
+    watcher a client is listening, and ``fingerprint`` is the baseline it
+    compares against, stamped with the scan that filled ``tools``.
     """
+
+    server: Any
+    tools: dict[str, dict]
+    ready: asyncio.Event
+    fingerprint: tuple
+
+
+def create_server() -> RunningServer:
+    """Create the MCP server and discover tools. Requires the ``mcp`` package."""
     from mcp.server.lowlevel import Server
     from mcp.types import (
         CallToolRequestParams,
@@ -357,14 +530,17 @@ def create_server():
         Tool,
     )
 
-    tools = discover_tools()
+    discovered = discover_with_baseline()
+    tools = discovered.tools
     server = Server("otto-workbench")
+    ready = asyncio.Event()
 
     # Both handlers take (ctx, params): the SDK calls them with the request
     # context first, and a handler that omits it raises TypeError inside the
     # runner, which reaches the client as an internal error with no tools and
     # no call ever succeeding.
     async def handle_list_tools(ctx, params):
+        ready.set()
         tool_list = []
         for name, schema in tools.items():
             tool_list.append(Tool(
@@ -376,6 +552,7 @@ def create_server():
         return ListToolsResult(tools=tool_list)
 
     async def handle_call_tool(ctx, params):
+        ready.set()
         name = params.name
         arguments = params.arguments or {}
 
@@ -412,8 +589,8 @@ def create_server():
                 isError=True,
             )
 
-        json_output = _extract_json(result.stdout)
-        parsed = json.loads(json_output) if json_output else None
+        extracted = _extract_json(result.stdout)
+        json_output, parsed = extracted if extracted else (None, None)
 
         if schema.get("output_schema") is not None:
             # A client validates the answer against the schema tools/list
@@ -446,29 +623,72 @@ def create_server():
     server.add_request_handler("tools/list", PaginatedRequestParams, handle_list_tools)
     server.add_request_handler("tools/call", CallToolRequestParams, handle_call_tool)
 
-    return server, tools
+    return RunningServer(server=server, tools=tools, ready=ready,
+                         fingerprint=discovered.fingerprint)
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────
 
 
+def tool_list_changed_frame():
+    """The ``notifications/tools/list_changed`` frame, ready to write.
+
+    ceiling: built here and written straight to the transport, because the
+    lowlevel ``Server`` keeps its ``ServerSession`` to itself — ``run()``
+    returns nothing and the per-request context the SDK hands a handler is
+    closed the moment that request finishes, so there is no session to ask.
+    Upgrade to ``session.send_tool_list_changed()`` if the SDK ever exposes the
+    session behind a connection.
+    """
+    from mcp.shared.message import SessionMessage
+    from mcp.types import JSONRPCNotification
+
+    return SessionMessage(message=JSONRPCNotification(
+        jsonrpc="2.0", method="notifications/tools/list_changed"))
+
+
 async def main():
+    import anyio
     from mcp.server.stdio import stdio_server
     from mcp.types import ServerCapabilities, ToolsCapability
 
-    server, tools = create_server()
-    logger.info("Starting otto-workbench MCP server with %d tools", len(tools))
+    running = create_server()
+    logger.info("Starting otto-workbench MCP server with %d tools", len(running.tools))
 
-    init_options = server.create_initialization_options(
+    init_options = running.server.create_initialization_options(
         notification_options=None,
         experimental_capabilities=None,
     )
     if init_options.capabilities is None:
         init_options.capabilities = ServerCapabilities()
-    init_options.capabilities.tools = ToolsCapability()
+    # listChanged is a promise, not a description: a client that never sees it
+    # has no reason to re-list, so the notification the watcher sends lands on
+    # something that ignores it.
+    init_options.capabilities.tools = ToolsCapability(listChanged=True)
 
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, init_options)
+
+        async def notify():
+            # The serve loop closes the write stream when the client leaves,
+            # and the watcher is cancelled a moment later — a notification
+            # already in flight when that happens is not worth a traceback.
+            try:
+                await write_stream.send(tool_list_changed_frame())
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError) as exc:
+                logger.debug("Could not announce the tool change: %s", exc)
+
+        watcher = asyncio.create_task(
+            watch_for_tool_changes(running.tools, notify, running.ready,
+                                   running.fingerprint))
+        try:
+            await running.server.run(read_stream, write_stream, init_options)
+        finally:
+            watcher.cancel()
+            # Awaited so the cancellation is retrieved rather than left for the
+            # interpreter to complain about at exit, and so a poll already
+            # inside a thread finishes before stdio goes away under it.
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
 
 
 if __name__ == "__main__":

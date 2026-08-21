@@ -98,12 +98,19 @@ def load_registry_entries(root: Path | str) -> dict[Path, RegistryEntry]:
     """
     base = Path(root)
     entries: dict[Path, RegistryEntry] = {}
-    for path in _registry_files(base):
+    for path in registry_files(base):
         entries.update(_bindir_entries(base, path))
     return entries
 
 
-def _registry_files(base: Path) -> list[Path]:
+def registry_files(root: Path | str) -> list[Path]:
+    """The registry files under *root*, in path order.
+
+    Public because the mapping is only as fresh as these files: a caller
+    watching for tool changes has to know which ones to watch, and deriving
+    that list a second time is how the two drift.
+    """
+    base = Path(root)
     return sorted({f for pattern in REGISTRY_GLOBS for f in base.glob(pattern) if f.is_file()})
 
 

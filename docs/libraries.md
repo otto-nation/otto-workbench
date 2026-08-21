@@ -180,6 +180,7 @@ into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 |----------|---------|
 | `wb_config_ensure_file [FILE]` | create FILE holding just the modeline, when it does not already exist. |
 | `wb_config_get KEY [DEFAULT]` | a dotted config key, project scope first. KEY must be a literal string. |
+| `wb_config_project_get DIR KEY` | a dotted config key from the project config at DIR, or nothing. DIR is a repo's work-tree root; KEY must be a literal string. |
 
 Loaded via `ui.sh`.
 

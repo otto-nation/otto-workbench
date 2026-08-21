@@ -8,6 +8,7 @@ description: "Issue trackers — how the provider resolves, and per-provider CLI
 
 - The SessionStart context line answers this: a configured repo shows `Issue tracker: {provider}` (e.g. `Issue tracker: github`); an unconfigured one shows `Issue tracker: not configured — ask before filing, then record the answer in issue_tracker.provider`. Use it — do not infer a tracker from a branch name, a CLI that happens to be installed, or another repo's convention
 - When it reads unconfigured, ask before filing, then record the answer in `issue_tracker.provider` — project `.workbench.yml` for one repo, `~/.config/workbench/config.yml` for all of them. Never pick one silently
+- For a repo other than the one this session is in, the Project Registry table in `~/.claude/machine/machine.md` names each registered repo's tracker in its `Issues` column, read from that repo's own `.workbench.yml` when the profile was written. A row reading `unset` is a repo that has never declared one — it is a question still owed, not a repo without a tracker
 - Only the section below matching the resolved provider applies. The others describe CLIs this repo does not file to
 
 ## Writing an issue (any tracker)

@@ -103,6 +103,69 @@ _make_project() {
   [ "$output" = "sonnet" ]
 }
 
+# ─── Reading one named repo's scope ──────────────────────────────────────────
+#
+# wb_config_project_get answers for a repo the caller names rather than the one
+# it is standing in, which is what a report covering every registered repo
+# needs. Each test below stays in the sandbox rather than the repo it reads, so
+# a result that leaked in from $PWD would show up as a failure here.
+
+@test "wb_config_project_get reads the named repo's own config" {
+  _make_project 'issue_tracker:
+  provider: github
+'
+  cd "$TMPDIR" || return 1
+  run wb_config_project_get "$TMPDIR/project" "issue_tracker.provider"
+  [ "$status" -eq 0 ]
+  [ "$output" = "github" ]
+}
+
+@test "wb_config_project_get ignores the global file" {
+  # The whole point of the by-path reader: a machine-wide answer is not the
+  # repo's declaration, and reporting it as one is the staleness to avoid.
+  printf 'issue_tracker:\n  provider: linear\n' > "$WORKBENCH_CONFIG_FILE"
+  _make_project 'review:
+  model: opus
+'
+  cd "$TMPDIR" || return 1
+  run wb_config_project_get "$TMPDIR/project" "issue_tracker.provider"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "wb_config_project_get prints nothing for a repo with no project config" {
+  mkdir -p "$TMPDIR/bare"
+  run wb_config_project_get "$TMPDIR/bare" "issue_tracker.provider"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "wb_config_project_get prints nothing for a directory that is gone" {
+  run wb_config_project_get "$TMPDIR/never-existed" "issue_tracker.provider"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "wb_config_project_get survives a malformed project config" {
+  _make_project 'issue_tracker:
+  provider: [unclosed
+'
+  cd "$TMPDIR" || return 1
+  run wb_config_project_get "$TMPDIR/project" "issue_tracker.provider"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "wb_config_project_get rejects a key that is not a literal path" {
+  _make_project 'issue_tracker:
+  provider: github
+'
+  cd "$TMPDIR" || return 1
+  run wb_config_project_get "$TMPDIR/project" 'issue_tracker.provider | ("x")'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid config key"* ]]
+}
+
 # ─── Seeding (SSOT guard) ────────────────────────────────────────────────────
 
 @test "wb_config_ensure_file creates the file holding just the modeline" {
@@ -158,6 +221,7 @@ print(workbench_config.$1, end='')
 
 @test "the config keys bash reads match ai/lib/workbench_config.py" {
   [ "$GITHUB_SSH_443_CONFIG_KEY" = "$(resolve_python GITHUB_SSH_443_KEY)" ]
+  [ "$ISSUE_PROVIDER_CONFIG_KEY" = "$(resolve_python ISSUE_PROVIDER_KEY)" ]
 }
 
 @test "lib/config.sh refuses to load without the constants" {

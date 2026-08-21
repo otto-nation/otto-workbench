@@ -173,7 +173,28 @@ while IFS= read -r repo_dir; do
   [[ $(find "$repo_dir" -maxdepth 2 -name '*.sh' 2>/dev/null | wc -l) -gt 3 ]] && \
     [[ -z "$stack" ]] && stack="bash"
   [[ -z "$stack" ]] && stack="—"
-  project_rows+=("| $name | $local_path | $stack | $mem |")
+  # Where the repo files its issues, read from the repo's own .workbench.yml
+  # every time the profile is written. The registry records no copy: it is
+  # machine-local and built from observed use, and a repo fact kept there would
+  # go stale the moment the repo edited its config. Reading at render time is
+  # what makes the column unable to disagree with the repo.
+  #
+  # A repo that has not declared one reads as "unset" rather than as a guess or
+  # as the "—" the Stack column above uses for none — an undeclared tracker is
+  # an answer still owed, and this table is where the set of repos owing one
+  # becomes visible. The same marker absorbs every way the read can come back
+  # unusable: a directory deleted since project_registered listed it, a config
+  # that is missing, unreadable, or malformed, and a value that could not
+  # occupy a table cell without breaking the row. Degrading one row beats
+  # failing the profile over a repo the reader was not asking about.
+  #
+  # ceiling: one yq fork per registered repo, on a table of tens of rows the
+  # Stop hook rebuilds at most once a day. Batch the reads into a single pass if
+  # the registry ever reaches a few hundred repos, or if profile generation
+  # shows up as something the user waits on.
+  issues=$(wb_config_project_get "$repo_dir" "$ISSUE_PROVIDER_CONFIG_KEY")
+  [[ "$issues" =~ ^[A-Za-z0-9._-]+$ ]] || issues="unset"
+  project_rows+=("| $name | $local_path | $stack | $issues | $mem |")
 done < <(project_registered | sort)
 
 # ── Write profile ─────────────────────────────────────────────────────────────
@@ -219,8 +240,8 @@ today=$(date +%Y-%m-%d)
 
   printf '## Project Registry\n\n'
   if [[ ${#project_rows[@]} -gt 0 ]]; then
-    printf '| Project | Path | Stack | Memory |\n'
-    printf '|---------|------|-------|--------|\n'
+    printf '| Project | Path | Stack | Issues | Memory |\n'
+    printf '|---------|------|-------|--------|--------|\n'
     for row in "${project_rows[@]}"; do
       printf '%s\n' "$row"
     done

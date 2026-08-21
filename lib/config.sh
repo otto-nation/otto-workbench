@@ -99,18 +99,26 @@ _wb_config_read() {
   if [[ -n "$value" && "$value" != "null" ]]; then printf '%s' "$value"; fi
 }
 
+# _wb_config_valid_key CALLER KEY — true when KEY is a literal dotted path,
+# reporting under CALLER's name when it is not.
+#
+# The key is interpolated into a yq expression, so this rejects anything else
+# rather than letting a built-up key become an expression. Shared by the two
+# readers so a key one accepts is never one the other refuses.
+_wb_config_valid_key() {
+  if [[ "$2" =~ ^[A-Za-z0-9_][A-Za-z0-9_.]*$ ]]; then
+    return 0
+  fi
+  echo "ERROR: $1: invalid config key: $2" >&2
+  return 1
+}
+
 # wb_config_get KEY [DEFAULT] — a dotted config key, project scope first. KEY
 # must be a literal string.
-#
-# The key is interpolated into a yq expression, so the guard below rejects
-# anything else rather than letting a built-up key become an expression.
 wb_config_get() {
   local key="$1" fallback="${2:-}" value project
 
-  if [[ ! "$key" =~ ^[A-Za-z0-9_][A-Za-z0-9_.]*$ ]]; then
-    echo "ERROR: wb_config_get: invalid config key: $key" >&2
-    return 1
-  fi
+  _wb_config_valid_key "wb_config_get" "$key" || return 1
 
   project="$(_wb_config_project_file)"
   if [[ -n "$project" ]]; then
@@ -122,5 +130,32 @@ wb_config_get() {
   if [[ -n "$value" ]]; then echo "$value"; return 0; fi
 
   if [[ -n "$fallback" ]]; then echo "$fallback"; fi
+  return 0
+}
+
+# wb_config_project_get DIR KEY — a dotted config key from the project config at
+# DIR, or nothing. DIR is a repo's work-tree root; KEY must be a literal string.
+#
+# One scope, named by path, for a caller reporting on repos other than the one
+# it is running in — the machine profile's project registry table is the first.
+# `wb_config_get` cannot answer that: it resolves the project scope from `$PWD`
+# and merges the global file underneath, so it would report what the calling
+# repo declared, or what the machine declared on a repo's behalf. Neither is the
+# repo's own answer, and printing one as though it were is the staleness that
+# reading at render time exists to avoid.
+#
+# There is no DEFAULT parameter for the same reason. A caller wanting one has to
+# spell out what an absent key means to it, rather than inheriting a guess.
+#
+# A directory that is gone, holds no config file, or holds an unparseable one
+# all read as nothing — the same "absent" `_wb_config_read` already gives a
+# malformed file. A caller rendering one row per repo therefore degrades to its
+# own marker for that row instead of failing the whole render.
+wb_config_project_get() {
+  local dir="$1" key="$2"
+
+  _wb_config_valid_key "wb_config_project_get" "$key" || return 1
+
+  _wb_config_read "${dir%/}/$WORKBENCH_PROJECT_CONFIG_NAME" "$key"
   return 0
 }

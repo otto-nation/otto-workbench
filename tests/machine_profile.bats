@@ -66,6 +66,69 @@ make_repo() {
   grep -q "| alpha | $TMPDIR/alpha |" "$TMPDIR/home/.claude/machine/machine.md"
 }
 
+# ─── The Issues column ───────────────────────────────────────────────────────
+#
+# Read from each repo's own .workbench.yml as the row is written, so the
+# registry — machine-local and built from observed use — holds no copy that
+# could disagree with the repo.
+
+# profile_row NAME — the registry row for the repo called NAME.
+profile_row() {
+  grep "^| $1 |" "$TMPDIR/home/.claude/machine/machine.md"
+}
+
+@test "the machine profile reads each repo's issue tracker from the repo itself" {
+  make_repo "$TMPDIR/alpha"
+  printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/alpha/.workbench.yml"
+  project_register "$TMPDIR/alpha"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  grep -q '^| Project | Path | Stack | Issues | Memory |$' "$TMPDIR/home/.claude/machine/machine.md"
+  [[ "$(profile_row alpha)" == *"| github |"* ]]
+}
+
+@test "the machine profile renders an undeclared issue tracker as unset" {
+  # Not a guess at Linear, and not the "—" the Stack column uses for none: an
+  # undeclared tracker is a question still owed an answer, and this table is
+  # where the repos owing one are meant to be visible.
+  make_repo "$TMPDIR/beta"
+  project_register "$TMPDIR/beta"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  [[ "$(profile_row beta)" == *"| unset |"* ]]
+}
+
+@test "the machine profile degrades an unreadable repo config to unset" {
+  # A config nobody can parse is one row's problem. The repo listed beside it is
+  # what proves the degrade is scoped rather than a render that gave up.
+  make_repo "$TMPDIR/gamma"
+  printf 'issue_tracker:\n  provider: [unclosed\n' > "$TMPDIR/gamma/.workbench.yml"
+  project_register "$TMPDIR/gamma"
+  make_repo "$TMPDIR/delta"
+  printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/delta/.workbench.yml"
+  project_register "$TMPDIR/delta"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  [[ "$(profile_row gamma)" == *"| unset |"* ]]
+  [[ "$(profile_row delta)" == *"| linear |"* ]]
+}
+
+@test "the machine profile keeps a value that cannot fill a table cell out of the row" {
+  # yq parses this fine, so the malformed-file path above never sees it — but
+  # the pipes would split the row into columns the header has no names for and
+  # garble every repo listed after it.
+  make_repo "$TMPDIR/epsilon"
+  printf 'issue_tracker:\n  provider: "a | b"\n' > "$TMPDIR/epsilon/.workbench.yml"
+  project_register "$TMPDIR/epsilon"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  [[ "$(profile_row epsilon)" == *"| unset |"* ]]
+}
+
 @test "the machine profile says so when nothing is registered" {
   # The heading used to be inside the conditional, so an empty list took the
   # whole section with it and the profile read as though the machine had no

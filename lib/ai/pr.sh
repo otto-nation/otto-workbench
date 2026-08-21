@@ -109,14 +109,17 @@ _ensure_gh_repo_access() {
 }
 
 # load_pr_context
-# Loads the AI command and resolves the current branch context, then verifies the
-# *effective* base — PR_BASE when the caller passed an explicit --base, otherwise the
-# resolved default branch — has a remote-tracking ref (resolve_default_branch can fall
-# back to a guessed name that doesn't exist locally, and an explicit --base is exactly
-# the escape hatch for that case, so it must not be refused on the guess's behalf).
+# Loads the AI command, resolves the current branch context and verifies the
+# effective base has a remote-tracking ref. Sets BRANCH and DEFAULT_BRANCH.
+# Returns 1 on failure.
+#
+# The effective base is PR_BASE when the caller passed an explicit --base,
+# otherwise the resolved default branch. resolve_default_branch can fall back to
+# a guessed name that doesn't exist locally, and an explicit --base is exactly
+# the escape hatch for that case, so it must not be refused on the guess's behalf.
+#
 # Must be called after parse_pr_flags (so PR_BASE is populated) and before
 # generate_pr_content or push_branch — load_pr does both in order.
-# Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure.
 load_pr_context() {
   load_ai_command || return 1
   load_gh_token || return 1
@@ -163,11 +166,12 @@ _set_pr_flag() {
 }
 
 # parse_pr_flags ARGS
-# Parses PR-specific flags from the CLI_ARGS string.
+# Parses PR-specific flags from the CLI_ARGS string. Sets SKIP_ISSUE, PR_DRAFT,
+# PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE. Returns 1 on unknown flag or
+# missing value.
+#
 # Uses eval to re-parse so quoted multi-word values work:
 #   --title "fix: clean empty markers" --body-file /tmp/body.txt
-# Sets SKIP_ISSUE, PR_DRAFT, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE.
-# Returns 1 on unknown flag or missing value.
 parse_pr_flags() {
   local args="$1"
   SKIP_ISSUE=false

@@ -61,10 +61,12 @@ if [[ -z "${WORKBENCH_CONFIG_HEADER:-}" ]]; then
 fi
 
 # wb_config_ensure_file [FILE] — create FILE holding just the modeline, when it
-# does not already exist. `yq -i` needs a file to write into, and seeding it
-# with the modeline rather than `{}` is what puts the schema in front of an
-# editor. yq carries the comment through every later write, and both readers
-# take a comment-only file as an empty mapping.
+# does not already exist.
+#
+# `yq -i` needs a file to write into, and seeding it with the modeline rather
+# than `{}` is what puts the schema in front of an editor. yq carries the
+# comment through every later write, and both readers take a comment-only file
+# as an empty mapping.
 wb_config_ensure_file() {
   local file="${1:-$WORKBENCH_CONFIG_FILE}"
   if [[ -f "$file" ]]; then return 0; fi
@@ -97,10 +99,11 @@ _wb_config_read() {
   if [[ -n "$value" && "$value" != "null" ]]; then printf '%s' "$value"; fi
 }
 
-# wb_config_get KEY [DEFAULT] — a dotted config key, project scope first.
-# KEY is interpolated into a yq expression, so it must be a literal path — the
-# guard below rejects anything else rather than letting a built-up key become
-# an expression.
+# wb_config_get KEY [DEFAULT] — a dotted config key, project scope first. KEY
+# must be a literal path.
+#
+# The key is interpolated into a yq expression, so the guard below rejects
+# anything else rather than letting a built-up key become an expression.
 wb_config_get() {
   local key="$1" fallback="${2:-}" value project
 

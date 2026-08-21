@@ -257,9 +257,10 @@ _state_has_new_items() {
 }
 
 # state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]
-# Loads saved selections from YAML, validates each against SCRIPT_DIR.
-# When AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in
-# the saved list — forces a fresh menu so the user can opt in (or deselect).
+# Loads saved selections from YAML, validates each against SCRIPT_DIR. When
+# AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in the
+# saved list — forces a fresh menu so the user can opt in (or deselect).
+#
 # Returns 0 (replaying) if valid saved selections found with no drift.
 # Returns 1 (fresh) and clears the list if interactive, no valid saves, or drift detected.
 state_load_selections() {

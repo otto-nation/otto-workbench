@@ -9,6 +9,8 @@ All shared code lives in `lib/`. Most modules are loaded through the `ui.sh` fac
 
 Each section below is the module's own header comment, rendered from `lib/` by [`generate-lib-reference`](../bin/local/generate-lib-reference) — so the prose describing a module lives beside the code it describes, and its function table is read out of the file rather than restated here.
 
+A function's Purpose cell is the first paragraph of its doc comment, in full. Rationale that belongs to the implementation rather than the contract goes below a blank comment line, where the reader who opens the file finds it and the table does not carry it.
+
 ## Loading
 
 Scripts source `lib/ui.sh` via `git rev-parse --show-toplevel` — depth-independent:

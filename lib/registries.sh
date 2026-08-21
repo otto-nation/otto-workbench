@@ -34,6 +34,7 @@ is_installed() { command -v "$1" >/dev/null 2>&1; }
 
 # collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
 # Populates the caller's array (via nameref) with deduplicated registry paths.
+#
 # SCAN_DIR: root directory to glob for */registry.yml, /*/*/registry.yml, and *.env.yml
 # BREW_DIR: directory to search for *.registry.yml stacks (defaults to SCAN_DIR/brew)
 collect_registries() {

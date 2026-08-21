@@ -2,6 +2,7 @@
 
 import atexit
 import contextlib
+import dataclasses
 import json
 import os
 import re
@@ -51,16 +52,25 @@ from review_prompt import (
 )
 
 
-def _lookup_returns(comment):
-    """Patch the marker lookup to report `comment`.
+def _lookup_returns(*comments):
+    """Patch the marker lookup to report `comments`, oldest first.
 
     Both the autouse default and the per-test override go through this one
     patch, so a test entering `_published(...)` inside the fixture's patch is
     plain `patch.object` nesting: the inner patch wins for its block and
     restores the fixture's on exit.
+
+    A `MarkerComment` with no id is the "PR has no summary yet" stand-in rather
+    than a comment, so it contributes the lookup's own outcome and no history.
     """
     import pr_comments
-    return patch.object(pr_comments, "find_marker_comment", return_value=comment)
+    newest = comments[-1]
+    history = pr_comments.MarkerHistory(
+        found=newest.found,
+        comments=tuple(c for c in comments if c.comment_id),
+        newest_other_at=newest.newest_other_at,
+    )
+    return patch.object(pr_comments, "find_marker_comments", return_value=history)
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +89,8 @@ def _no_published_summary():
 def _published(body: str):
     """Stub a prior summary comment with the given body."""
     import pr_comments
-    return _lookup_returns(pr_comments.MarkerComment(True, 11, body))
+    return _lookup_returns(pr_comments.MarkerComment(
+        True, 11, body, url="https://github.com/owner/repo/pull/1#issuecomment-11"))
 
 
 # ── _extract_json ───────────────────────────────────────────────────────────
@@ -4393,8 +4404,8 @@ class TestPublishedRowsSurviveTheEdit:
         """An unreadable listing must not be read as an empty published comment."""
         import pr_comments
         state = _make_state(self._fix())
-        with patch.object(pr_comments, "find_marker_comment",
-                          return_value=pr_comments.MarkerComment(found=False)), \
+        with patch.object(pr_comments, "find_marker_comments",
+                          return_value=pr_comments.MarkerHistory(found=False)), \
                 patch("pr_comments.post_issue_comment", return_value="https://url") as post:
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         assert "carried over" not in post.call_args[0][2]
@@ -4420,7 +4431,8 @@ class TestPublishedRowsSurviveTheEdit:
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         find.assert_called_once()
         assert post.call_args.kwargs["existing"] == pr_comments.MarkerComment(
-            True, 11, _published_summary(rt, ROUND_ONE_ROW))
+            True, 11, _published_summary(rt, ROUND_ONE_ROW),
+            url="https://github.com/owner/repo/pull/1#issuecomment-11")
 
 
 # ── rows a human rewrote, that local state can account for ─────────────────
@@ -4483,19 +4495,19 @@ class TestGeneratedActionCell:
             rt,
             "| [new work](https://github.com/owner/repo/pull/1#discussion_r222) "
             "| @kgn | `new.go:1` | Fixed in `bbbbbbb` |")
-        assert rt._hand_written_rows(published, fresh) == []
+        assert rt._hand_written_rows([published], fresh) == []
         assert rt._carried_over_rows(published, fresh) == [HAND_EDITED_ROW]
 
     def test_a_row_with_no_action_cell_is_re_rendered(self, rt):
         """A shape this renderer no longer produces is repaired, not frozen."""
         stub = "| [drop the guard](https://github.com/owner/repo/pull/1#discussion_r111) |"
         fresh = _published_summary(rt, ROUND_ONE_ROW)
-        assert rt._hand_written_rows(_published_summary(rt, stub), fresh) == []
+        assert rt._hand_written_rows([_published_summary(rt, stub)], fresh) == []
 
     def test_the_held_row_names_both_halves(self, rt):
         fresh = _published_summary(
             rt, ROUND_ONE_ROW.replace(_GENERATED_ACTION_CELL, "Conflicting reviewer feedback"))
-        held = rt._hand_written_rows(_published_summary(rt, HAND_EDITED_ROW), fresh)
+        held = rt._hand_written_rows([_published_summary(rt, HAND_EDITED_ROW)], fresh)
         assert [h.key for h in held] == ["#discussion_r111"]
         assert rt._row_action_cell(held[0].published) == _HAND_WRITTEN_ACTION_CELL
         assert rt._row_action_cell(held[0].replaced_by) == "Conflicting reviewer feedback"
@@ -4701,6 +4713,48 @@ class TestEveryItemReachesTheTable:
 _SUMMARY_POSTED_AT = "2026-01-02T00:00:00Z"
 _AFTER_THE_SUMMARY = "2026-01-03T00:00:00Z"
 _BEFORE_THE_SUMMARY = "2026-01-01T00:00:00Z"
+_ROUND_ONE_URL = "https://github.com/owner/repo/pull/1#issuecomment-11"
+
+
+def _round_one_marker(rt, *rows: str, **overrides):
+    """The summary a first round published, spoken over since it went up."""
+    import pr_comments
+    defaults = dict(
+        found=True, comment_id=11, body=_published_summary(rt, *rows),
+        created_at=_SUMMARY_POSTED_AT, newest_other_at=_AFTER_THE_SUMMARY,
+        url=_ROUND_ONE_URL,
+    )
+    defaults.update(overrides)
+    return pr_comments.MarkerComment(**defaults)
+
+
+_ROUND_TWO_OUTCOME = ThreadOutcome(
+    id="t2", summary="round two work", file="new.go", line=1,
+    action=ThreadAction.FIXED,
+)
+# What round one recorded, as a state file that still carries it into round two.
+_ROUND_ONE_OUTCOME = ThreadOutcome(
+    id="t1", summary="drop the guard", file="old.go", line=4,
+    action=ThreadAction.FIXED,
+)
+
+
+def _repost_over(rt, *rows: str, outcomes=(), threads=None, report=None):
+    """Render a second round's summary over a first round that was answered.
+
+    Returns the body posted. `rows` is what the first round published, and
+    `outcomes` what local state still holds beside round two's own fixed `t2`.
+    """
+    state = _make_state(FixSummary(
+        threads=[_ROUND_TWO_OUTCOME, *outcomes],
+        commit_status="no_changes", summary_deferred=True,
+    ))
+    with _lookup_returns(_round_one_marker(rt, *rows)), \
+            patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+        rt._render_deferred_summary(
+            state, report or PRReport(), "owner/repo", 1, threads or {})
+    assert "marker" not in post.call_args.kwargs
+    return post.call_args[0][2]
 
 
 class TestAnsweredSummariesArePostedAgain:
@@ -4716,7 +4770,8 @@ class TestAnsweredSummariesArePostedAgain:
     def _publish(self, rt, marker, activity_at=""):
         with _lookup_returns(marker), \
                 patch("pr_comments.post_issue_comment", return_value="https://url") as post:
-            rt._publish_summary("owner/repo", 1, lambda carried_over: "body",
+            rt._publish_summary("owner/repo", 1,
+                                lambda carried_over, scope, chain: "body",
                                 activity_at=activity_at)
         return post.call_args
 
@@ -4745,26 +4800,126 @@ class TestAnsweredSummariesArePostedAgain:
                              activity_at=_AFTER_THE_SUMMARY)
         assert call.kwargs["marker"] == rt._SUMMARY_MARKER
 
-    def test_the_fresh_comment_carries_what_the_old_one_held(self, rt):
-        """A repost that lost the earlier rounds would be worse than the edit."""
-        import pr_comments
-        state = _make_state(FixSummary(
-            threads=[ThreadOutcome(id="t2", summary="round two work", file="new.go",
-                                   line=1, action=ThreadAction.FIXED)],
-            commit_status="no_changes", summary_deferred=True,
-        ))
-        marker = pr_comments.MarkerComment(
-            True, 11, _published_summary(rt, ROUND_ONE_ROW),
-            created_at=_SUMMARY_POSTED_AT, newest_other_at=_AFTER_THE_SUMMARY,
+    def test_the_fresh_comment_describes_its_own_round(self, rt):
+        """The earlier round stays where it was posted, and is linked, not restated."""
+        body = _repost_over(rt, ROUND_ONE_ROW)
+        assert rt._SUMMARY_MARKER in body
+        assert "round two work" in body
+        assert "drop the guard" not in body
+        assert f"**Earlier rounds:** [1]({_ROUND_ONE_URL})" in body
+
+
+def _reviewed_thread(created_at, login="kgn", thread_id="t1"):
+    """A review thread whose only comment `login` left at `created_at`."""
+    return {thread_id: ReportThread(
+        id=thread_id, my_login="me",
+        comments=[{"databaseId": 111, "author": {"login": login},
+                   "createdAt": created_at}],
+    )}
+
+
+class TestASummaryDescribesItsOwnRound:
+    """A repost restating every round the PR ever had is complete and unreadable."""
+
+    def test_a_settled_quiet_thread_is_left_where_it_was_published(self, rt):
+        body = _repost_over(
+            rt, ROUND_ONE_ROW, outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
         )
-        with _lookup_returns(marker), \
+        assert "drop the guard" not in body
+        assert "1 thread settled in an earlier round" in body
+        assert "**1 fixed**" in body
+
+    def test_a_thread_spoken_on_since_comes_back(self, rt):
+        """The point of the scoping is the round's own activity, not silence."""
+        body = _repost_over(
+            rt, ROUND_ONE_ROW, outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_AFTER_THE_SUMMARY),
+        )
+        assert "drop the guard" in body
+        assert "settled in an earlier round" not in body
+
+    def test_our_own_reply_is_not_activity(self, rt):
+        """The fix pass replies before it publishes — counting those never settles."""
+        body = _repost_over(
+            rt, ROUND_ONE_ROW, outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_AFTER_THE_SUMMARY, login="me"),
+        )
+        assert "drop the guard" not in body
+
+    def test_an_open_question_is_always_in_the_newest_summary(self, rt):
+        """#714 — a reader who has to walk the chain to find it will not find it."""
+        outcome = dataclasses.replace(
+            _ROUND_ONE_OUTCOME, action=ThreadAction.NEEDS_HUMAN, reason="conflicting")
+        body = _repost_over(
+            rt, ROUND_ONE_ROW, outcomes=[outcome],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "drop the guard" in body
+        assert "1 need discussion" in body
+
+    def test_a_row_no_summary_comment_holds_is_written(self, rt):
+        """#712 read against the set: absent from the record, so never dropped."""
+        body = _repost_over(
+            rt, ROUND_ONE_ROW,
+            outcomes=[dataclasses.replace(_ROUND_ONE_OUTCOME, id="t9",
+                                          summary="never published")],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "never published" in body
+
+    def test_the_footer_links_every_earlier_summary(self, rt):
+        import pr_comments
+        second = pr_comments.MarkerComment(
+            True, 12, _published_summary(rt, ROUND_ONE_ROW),
+            created_at=_SUMMARY_POSTED_AT, newest_other_at=_AFTER_THE_SUMMARY,
+            url="https://github.com/owner/repo/pull/1#issuecomment-12",
+        )
+        state = _make_state(FixSummary(
+            threads=[_ROUND_TWO_OUTCOME], commit_status="no_changes",
+            summary_deferred=True))
+        with _lookup_returns(_round_one_marker(rt), second), \
                 patch("pr_comments.post_issue_comment", return_value="https://url") as post:
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
-        body = post.call_args[0][2]
-        assert "marker" not in post.call_args.kwargs
-        assert rt._SUMMARY_MARKER in body
+        assert (f"**Earlier rounds:** [1]({_ROUND_ONE_URL}) · "
+                f"[2]({second.url})") in post.call_args[0][2]
+
+    def test_a_first_summary_has_no_footer(self, rt):
+        cp = rt.CommitPushResult("bbbbbbb", CommitStatus.PUSHED, "")
+        with patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._post_fix_summary(
+                [CommentItem(id="t2", summary="round two work", file="new.go", line=1)],
+                [], [], cp, "owner/repo", 1, {},
+            )
+        assert "Earlier rounds" not in post.call_args[0][2]
+
+
+class TestAnEditKeepsItsTargetWhole:
+    """An edit replaces the comment, so scoping it would delete the round."""
+
+    def _edit(self, rt, *rows, outcomes=(), threads=None):
+        state = _make_state(FixSummary(
+            threads=[*outcomes], commit_status="no_changes", summary_deferred=True))
+        marker = _round_one_marker(rt, *rows, newest_other_at=_BEFORE_THE_SUMMARY)
+        with _lookup_returns(marker), \
+                patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+            rt._render_deferred_summary(
+                state, PRReport(), "owner/repo", 1, threads or {})
+        assert post.call_args.kwargs["marker"] == rt._SUMMARY_MARKER
+        return post.call_args[0][2]
+
+    def test_a_quiet_row_the_target_holds_is_re_rendered(self, rt):
+        """The --finish pass updating a --fix round's own status is this case."""
+        body = self._edit(
+            rt, ROUND_ONE_ROW, outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
         assert "drop the guard" in body
-        assert "round two work" in body
+        assert "settled in an earlier round" not in body
+        assert "carried over" not in body
+
+    def test_the_edited_comment_does_not_link_itself(self, rt):
+        assert "Earlier rounds" not in self._edit(rt, ROUND_ONE_ROW)
 
 
 class TestNewestReviewerActivity:

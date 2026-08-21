@@ -311,19 +311,28 @@ to read the body from stdin. Like every other write here it needs `--post`;
 without it the body is printed under `DRAFT (not published)` and nothing is
 sent. Use it instead of `gh api .../replies`, which bypasses the dedup entirely.
 
-**The summary is one comment, and it only grows:**
+**The summary is a chain of comments, one per round:**
 
-A review cycle runs several rounds against a single `Review Comments Addressed`
-comment, edited in place. It reports all five thread outcomes — fixed, already
-addressed, dismissed, deferred, and the ones still awaiting discussion — so a
-`needs_human` thread appears as open rather than not at all.
+A review cycle posts `Review Comments Addressed` comments as it goes. A round
+nobody has spoken over since the last one edits that comment in place; a round a
+reviewer has commented, reviewed, or replied below posts a new one, because an
+edit notifies nobody. Each comment reports all five thread outcomes — fixed,
+already addressed, dismissed, deferred, and the ones still awaiting discussion —
+so a `needs_human` thread appears as open rather than not at all.
 
-The replacement body is built from local state, which is per-target and
-per-worktree, and routinely absent for a round the comment already covers: `pr
-gc`, a recreated worktree, a later round run from another machine. So the
-published comment is read before the edit and any row this run cannot account
-for is carried forward verbatim, counted as `N carried over`, and logged. An
-edit never removes a row the comment already had.
+A new comment covers its own round: threads worked this round, threads a
+reviewer has spoken on since the last summary, and every open question. Threads
+settled in an earlier round and quiet since are left in the comment that
+published them and counted in a note; a footer links every earlier summary, so
+the newest comment is the entry point to the whole record.
+
+An edit is the case that can destroy a row, since it replaces a body. The
+replacement is built from local state, which is per-target and per-worktree, and
+routinely absent for a round the comment already covers: `pr gc`, a recreated
+worktree, a later round run from another machine. So the comment is read before
+the edit and any row this run cannot account for is carried forward verbatim,
+counted as `N carried over`, and logged. An edit never removes a row the comment
+already had.
 
 **`pr describe` is commit-aware:**
 

@@ -1105,12 +1105,15 @@ demonstrably acted on that thread, which is what put it in `fixed`, so it keeps
 the in-response reading and names no commit: the one the branch offers for that
 line predates the comment and cannot be what carried a fix made after it.
 
-### The summary comment is the record, not the state file
+### The summary comments are the record, not the state file
 
-The `Review Comments Addressed` comment is what a reviewer reads to confirm
-their feedback was accounted for, and it is the one place a whole cycle is
-tallied. A cycle keeps editing one comment rather than appending a summary per
-round, so every round has to leave it at least as complete as it found it.
+The `Review Comments Addressed` comments are what a reviewer reads to confirm
+their feedback was accounted for, and they are the one place a cycle is tallied.
+A round that still has the last word edits its own summary in place; a round a
+reviewer has spoken over posts a new one and links back to the earlier ones. The
+record is therefore the *set* of summary comments on the PR, and each rule below
+is read against that set rather than against one body — a row is safe when some
+comment on the PR still carries it, not only when the newest one does.
 
 Three things follow, and the first two were bugs —
 [#714](https://github.com/otto-nation/otto-workbench/issues/714) and
@@ -1118,10 +1121,12 @@ Three things follow, and the first two were bugs —
 
 **Every outcome is reported, including the ones nobody resolved.** A
 `needs_human` thread is the case that took the most operator judgment, so
-omitting it is the worst row to lose. It renders as open, with its reason. If
-the operator settled it outside the tool — answered the thread, fixed it by
-hand — `--finish` reconciles the snapshot against GitHub first and the row
-credits that work instead of reporting a discussion that already happened.
+omitting it is the worst row to lose. It renders as open, with its reason, in
+every summary a round posts — an open question a reader has to walk the comment
+chain to find is one they will not find. If the operator settled it outside the
+tool — answered the thread, fixed it by hand — `--finish` reconciles the
+snapshot against GitHub first and the row credits that work instead of reporting
+a discussion that already happened.
 
 **A decomposed comment item reconciles through the comment it came from.** An
 item split out of a top-level comment has a synthetic id and no review thread,
@@ -1140,15 +1145,18 @@ renders as open and still holds the summary back.
 **Rows the local state file cannot account for are carried forward.** State is
 per-target and per-worktree, and a round routinely runs without the state that
 covered an earlier one: `pr gc`, a pruned state directory, a recreated worktree,
-another machine. Building the replacement body purely from state then deletes
-rounds nobody can recover. So the published body is read first, matched row by
-row on the thread permalink, and anything unaccounted for is re-emitted
-verbatim, counted as `N carried over`, and warned about on the run.
+another machine. Overwriting a comment with a body built purely from state then
+deletes rounds nobody can recover. So an edit reads its target's body first,
+matches it row by row on the thread permalink, and re-emits anything
+unaccounted for verbatim, counted as `N carried over` and warned about on the
+run. Carrying forward is scoped to the comment being replaced, because that is
+the only comment an edit can destroy: a round that posts a new comment takes
+nothing away, so it has nothing to carry.
 
-The table therefore only grows. A row no later round reproduces is carried for
-the life of the PR, so a thread that legitimately stops appearing keeps its last
-rendered state rather than vanishing. That is the trade being made on purpose: a
-stale row a reviewer can still read beats a round nobody can recover.
+A comment therefore only grows for as long as rounds keep editing it. A row no
+later round reproduces keeps its last rendered state rather than vanishing from
+the comment holding it — a stale row a reviewer can still read beats a round
+nobody can recover.
 
 **An Action cell written by hand is never re-rendered.** Carrying rows forward
 protects a row state cannot account for; it cannot protect the Action cell,
@@ -1160,7 +1168,11 @@ and was overwritten the round state regained it. So each published row is asked
 a second question. If its Action cell opens with none of the wordings this
 renderer writes, a person wrote it: the published row is re-emitted in the
 position its entry would have taken, counted as `N hand-written`, and the run
-warns with the cell it kept and the cell it would have written instead.
+warns with the cell it kept and the cell it would have written instead. Every
+summary comment is searched, not just the newest — a cell edited on round one's
+comment is the usual case once round two has posted its own, and the newest
+occurrence of a row wins, so restoring a generated cell by hand hands the row
+back to the renderer.
 
 The header counts follow the cells. An entry whose row is held drops out of its
 own bucket, so a row reading `Superseded — …` no longer sits under a header
@@ -1177,9 +1189,22 @@ it writes the round's outcome somewhere the reader has already scrolled past.
 Each round compares the summary's `created_at` against the newest activity that
 is not ours — our own thread replies do not count, or the fix pass would trip
 the check on itself every round — and posts a fresh comment when it lost the
-last word. The fresh body carries the marker and every row the published one
-held, so the newest summary is always the complete one and the next round finds
-it; the superseded comment is left untouched as that round's record.
+last word. The fresh body carries the marker, so the next round finds it; the
+superseded comment is left untouched as that round's record.
+
+**A fresh summary describes the round that produced it**
+([#924](https://github.com/otto-nation/otto-workbench/issues/924)). Restating
+every thread the PR ever had made each new comment a complete record and an
+unreadable one — the reader could not tell this round's work from what was
+settled three rounds ago, and every reviewer was re-notified with mostly stale
+content. A row may be left where it was published only when all three hold: some
+summary comment on the PR already carries it, the comment this round is writing
+is not one of them, and no one but us has spoken on the thread since the newest
+summary went up. A thread nobody can date is written rather than skipped, since
+"cannot tell" must not read as "settled". The skipped rows are counted in a note
+under the table, and the round's own footer links every earlier summary comment
+in order, so a reader landing on the newest one can walk the chain back through
+the rounds it does not restate.
 
 ### Running from a different directory
 

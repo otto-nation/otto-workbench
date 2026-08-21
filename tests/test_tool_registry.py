@@ -136,6 +136,38 @@ def test_a_tree_with_no_registries_names_nothing(tmp_path):
     assert load_registry_entries(tmp_path) == {}
 
 
+def test_a_registry_that_will_not_parse_costs_only_its_own_tools(tmp_path, caplog):
+    """One file mid-edit must not take the other components' tools down with it."""
+    _write_registry(tmp_path, "broken/registry.yml", "- not\n- a mapping\n")
+    _write_registry(tmp_path, "bin/registry.yml", BINDIR)
+
+    with caplog.at_level("WARNING"):
+        entries = load_registry_entries(tmp_path)
+
+    assert set(entries) == {
+        tmp_path.resolve() / "bin" / name
+        for name in ("shown-tool", "inner-tool", "documented-tool")
+    }
+    assert "broken/registry.yml" in caplog.text
+
+
+def test_a_registry_shaped_like_something_else_names_nothing(tmp_path):
+    """meta and tools have to be the kinds of thing they are read as."""
+    _write_registry(tmp_path, "odd/registry.yml", """\
+        meta: bindir
+        tools: "shown-tool"
+    """)
+    _write_registry(tmp_path, "other/registry.yml", """\
+        meta:
+          validation: bindir
+          source: bin
+        tools:
+          - just a name
+    """)
+
+    assert load_registry_entries(tmp_path) == {}
+
+
 # ── visibility ───────────────────────────────────────────────────────────
 
 

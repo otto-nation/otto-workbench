@@ -23,11 +23,14 @@ the paths built below cannot drift from the files on disk.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from workbench_config import read_yaml
+from workbench_config import ConfigError, read_yaml
+
+logger = logging.getLogger(__name__)
 
 # The component registries, at the two depths lib/registries.sh globs. Brew
 # stacks and `*.env.yml` files are not scanned: neither describes a directory
@@ -105,14 +108,29 @@ def _registry_files(base: Path) -> list[Path]:
 
 
 def _bindir_entries(base: Path, path: Path) -> dict[Path, RegistryEntry]:
-    """The entries of one registry, keyed by the script each one names."""
-    document = read_yaml(path)
-    meta = document.get("meta") or {}
-    if meta.get("validation") != BINDIR_VALIDATION or not meta.get("source"):
+    """The entries of one registry, keyed by the script each one names.
+
+    A registry that will not parse, or that is not shaped like one, names
+    nothing. Its scripts are then unregistered rather than taking the whole
+    mapping down with them — every other component keeps its tools, and the two
+    callers each say so in their own terms: the server logs the skip per
+    script, and ``bin/local/validate-tool-schema`` fails the build.
+    """
+    try:
+        document = read_yaml(path)
+    except (ConfigError, OSError) as exc:
+        logger.warning("Registering nothing from %s: %s", path, exc)
+        return {}
+    meta = document.get("meta")
+    if not isinstance(meta, dict) or meta.get("validation") != BINDIR_VALIDATION:
+        return {}
+    if not meta.get("source"):
         return {}
     bindir = (base / meta["source"]).resolve()
+    tools = document.get("tools")
     return {bindir / tool["name"]: _entry(tool)
-            for tool in document.get("tools") or [] if tool.get("name")}
+            for tool in (tools if isinstance(tools, list) else [])
+            if isinstance(tool, dict) and tool.get("name")}
 
 
 def _entry(tool: dict) -> RegistryEntry:

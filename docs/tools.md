@@ -500,9 +500,9 @@ are not tools and are skipped without comment.
 The registries decide who sees it: an entry with `visibility: full` or `brief` is offered,
 one with `visibility: hidden` is not, and a script no registry entry names is not either.
 The filter runs before the probe, so a script a client will never see is also never run at
-startup. Today that leaves `pr` — `ci-check`, `pr-describe` and `pr-rebase` are registered
-hidden because they are what `pr ci`, `pr describe` and `pr rebase` run, and offering them
-beside `pr` asks a client to choose between a tool and its own internals.
+startup. Today only `pr` is offered — `ci-check`, `pr-describe`, and `pr-rebase` are
+registered hidden because they are what `pr ci`, `pr describe`, and `pr rebase` run, and
+offering them beside `pr` asks a client to choose between a tool and its own internals.
 
 The description a client reads is the registry's, not the script's: the registries own tool
 documentation, and a `full` entry's `when_to_use` and `usage` lines are appended to it —
@@ -510,7 +510,7 @@ they answer a caller's real questions, and a client has no access to the rule fi
 otherwise render into. A script's own `--tool-schema` description is written for its
 `--help` and has already drifted shorter.
 
-That stderr belongs to whichever MCP client spawned the server, so the same claims are
+Those warnings belong to whichever MCP client spawned the server, so the same claims are
 checked at build time by `bin/local/validate-tool-schema`. It imports this discovery —
 the directories, the candidate filter, the probe itself, and the registry lookup — and
 fails when a candidate in the checkout cannot answer or no registry entry names it, rather

@@ -1,0 +1,17 @@
+name: Install yq
+description: >-
+  Put a pinned mikefarah/yq on PATH. Three CI jobs read YAML with it — the
+  validators, the bats suite, and the pytest suite, whose ai/lib readers fall
+  back to yq wherever PyYAML is not importable.
+
+runs:
+  using: composite
+  steps:
+    - name: Install yq
+      shell: bash
+      env:
+        YQ_VERSION: v4.44.3
+      run: |
+        sudo wget -qO /usr/local/bin/yq \
+          "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+        sudo chmod +x /usr/local/bin/yq

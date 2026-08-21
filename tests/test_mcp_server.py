@@ -596,14 +596,14 @@ class _FixtureTool:
 
     name: str
     source: str
-    visibility: str = "brief"
+    visibility: Visibility = Visibility.BRIEF
 
 
 _FIXTURE_TOOLS = (
     _FixtureTool("echo-tool", _ECHO_TOOL),
     _FixtureTool("plain-tool", _PLAIN_TOOL),
     _FixtureTool("silent-tool", _SILENT_TOOL),
-    _FixtureTool("inner-tool", _INNER_TOOL, visibility="hidden"),
+    _FixtureTool("inner-tool", _INNER_TOOL, visibility=Visibility.HIDDEN),
 )
 
 # The registry the running server reads is the one on disk, so the fixture
@@ -623,7 +623,7 @@ def _fixture_registry() -> str:
     return _FIXTURE_REGISTRY_META + "".join(
         f"  - name: {tool.name}\n"
         f"    permission: false\n"
-        f"    visibility: {tool.visibility}\n"
+        f"    visibility: {tool.visibility.value}\n"
         f'    description: "The {tool.name} fixture"\n'
         for tool in _FIXTURE_TOOLS)
 
@@ -789,19 +789,19 @@ def _talk(script: Path, messages: list[dict]) -> _Exchange:
     a tool call runs a subprocess, so it is always the one still running.
     """
     expected = sum(1 for message in messages if "id" in message)
-    server = _ServerProcess(script)
+    proc = _ServerProcess(script)
     try:
-        server.send(messages)
-        frames = server.collect(expected)
+        proc.send(messages)
+        frames = proc.collect(expected)
         answered = sum(1 for frame in frames if "id" in frame)
         assert answered == expected, (
             f"{expected - answered} of {expected} replies never arrived — "
-            f"{server.status}; server stderr:\n{server.stderr}"
+            f"{proc.status}; server stderr:\n{proc.stderr}"
         )
-        server.finish()
-        return _Exchange(frames=frames, stderr=server.stderr)
+        proc.finish()
+        return _Exchange(frames=frames, stderr=proc.stderr)
     finally:
-        server.close()
+        proc.close()
 
 
 @pytest.fixture(scope="module")

@@ -46,12 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install yq
-        run: |
-          YQ_VERSION="v4.44.3"
-          sudo wget -qO /usr/local/bin/yq \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-          sudo chmod +x /usr/local/bin/yq
+      - uses: ./.github/actions/install-yq
 
       - name: Validate conventions
         run: bash bin/local/validate-all
@@ -79,12 +74,7 @@ jobs:
       - name: Install bats, parallel, and zsh
         run: sudo apt-get install -y bats parallel zsh
 
-      - name: Install yq
-        run: |
-          YQ_VERSION="v4.44.3"
-          sudo wget -qO /usr/local/bin/yq \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-          sudo chmod +x /usr/local/bin/yq
+      - uses: ./.github/actions/install-yq
 
       - name: Install task
         uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
@@ -123,12 +113,7 @@ jobs:
       # tests/test_tool_registry.py reads the registries through
       # ai/lib/workbench_config.py, which uses PyYAML when it is importable and
       # yq otherwise. pipx runs pytest in its own venv, so it is yq here.
-      - name: Install yq
-        run: |
-          YQ_VERSION="v4.44.3"
-          sudo wget -qO /usr/local/bin/yq \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-          sudo chmod +x /usr/local/bin/yq
+      - uses: ./.github/actions/install-yq
 
       # tests/test_mcp_server.py spawns the MCP server the way its launcher
       # does — `uv run --with mcp`. Without uv on PATH those cases skip

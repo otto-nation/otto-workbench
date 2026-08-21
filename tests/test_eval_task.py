@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import shutil
 import sys
@@ -70,26 +71,32 @@ class TestCreateTempRepo:
         (src / "bug.py").write_text("def f():\n    pass\n")
         return src
 
-    def test_builds_an_eval_branch_carrying_the_sources(self, tmp_path):
-        repo = Path(eval_task.create_temp_repo(str(self._case(tmp_path)), prefix="eval-test-"))
+    @classmethod
+    @contextlib.contextmanager
+    def _repo(cls, tmp_path: Path):
+        """Builds the fixture and guarantees cleanup, so each test only names its assertion."""
+        repo = Path(eval_task.create_temp_repo(str(cls._case(tmp_path)), prefix="eval-test-"))
         try:
+            yield repo
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_builds_an_eval_branch_carrying_the_sources(self, tmp_path):
+        with self._repo(tmp_path) as repo:
             assert (repo / "bug.py").read_text() == "def f():\n    pass\n"
             branch = proc.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
                               timeout=timeouts.LOCAL)
             assert branch.stdout.strip() == "eval"
-        finally:
-            shutil.rmtree(repo, ignore_errors=True)
 
     def test_the_inherited_git_env_does_not_reach_the_fixture(self, tmp_path, monkeypatch):
         """`clean_env` drops GIT_DIR; merging back over os.environ would restore it."""
         monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere.git"))
-        repo = Path(eval_task.create_temp_repo(str(self._case(tmp_path)), prefix="eval-test-"))
-        try:
+        with self._repo(tmp_path) as repo:
             assert (repo / ".git").is_dir()
-        finally:
-            shutil.rmtree(repo, ignore_errors=True)
 
     def test_a_failing_step_raises_with_gits_own_words(self, tmp_path):
+        """Calls the private `_git_step` directly, not `create_temp_repo`, to isolate
+        the error-message contract from the rest of the fixture build."""
         with pytest.raises(RuntimeError) as exc:
             eval_task._git_step(["git", "-C", str(tmp_path)], ["log"], eval_task.clean_env())
         assert "git log failed" in str(exc.value)

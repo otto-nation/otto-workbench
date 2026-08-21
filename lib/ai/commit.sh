@@ -118,6 +118,12 @@ _surface_note() {
   # $BREAKING_CHANGE_FOOTER, $NOT_BREAKING_FOOTER, and the $(sed ...) command
   # substitution below all expand — quoting the delimiter would silently
   # print the literal variable names instead.
+  #
+  # The sed stays rather than becoming lib/output.sh's `indent`: go-task sources
+  # this half through `sh -c`, so lib/ai/ deliberately reaches nothing behind
+  # lib/ui.sh. ShellCheck's SC2001 suggestion does not apply either — parameter
+  # expansion has no line anchor to replace `^` with.
+  # shellcheck disable=SC2001
   cat <<EOF
 
 

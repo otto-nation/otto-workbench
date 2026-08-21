@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import gh_client
 import log
 import proc
 import prompt
@@ -348,8 +349,8 @@ def _fetch_linear(issue_id: str) -> IssueContext:
 def _fetch_github(issue_id: str, repo: str) -> IssueContext:
     """Fetch a GitHub issue by number and repo."""
     link = f"{_GITHUB_BASE_URL}/{repo}/issues/{issue_id}"
-    context = _run_issue_cli(
-        ["gh", "issue", "view", issue_id, "--repo", repo, "--json", "title,body,comments"],
+    context = gh_client.out(
+        "issue", "view", issue_id, "--repo", repo, "--json", "title,body,comments",
     )
     if context:
         log.ok(f"Found GitHub issue: #{issue_id}")
@@ -472,12 +473,12 @@ def _create_github(
     repo: str, title: str, description: str,
 ) -> CreatedIssue | None:
     with _description_file(description) as desc_file:
-        output = _run_issue_cli([
-            "gh", "issue", "create",
+        output = gh_client.out(
+            "issue", "create",
             "--repo", repo,
             "--title", title,
             "--body-file", desc_file,
-        ])
+        )
         if not output:
             return None
         url = output.strip().splitlines()[-1].strip()
@@ -489,10 +490,8 @@ def _create_github(
 
 def _update_github(repo: str, issue_id: str, description: str) -> bool:
     num = issue_id.lstrip("#")
-    ok = _run_issue_cmd(
-        ["gh", "issue", "edit", num, "--repo", repo, "--body-file"],
-        description,
-    )
+    with _description_file(description) as desc_file:
+        ok = gh_client.ok("issue", "edit", num, "--repo", repo, "--body-file", desc_file)
     if ok:
         log.ok(f"Updated GitHub issue: {issue_id}")
     return ok

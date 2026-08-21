@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import gh_client
 import git_client
 import log
 import serde
@@ -27,7 +28,7 @@ from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from pr_state import ReviewStatus, now_iso
 from review_common import (
     FILE_STAT_FMT, FILENAME_PIPELINE_STATE, Diagnosis, DiagnosisKind, Effort, Mode,
-    PRIOR_SHA_RE, ReviewType, _run, plural,
+    PRIOR_SHA_RE, ReviewType, plural,
 )
 from review_dedup import _get_bot_login
 from review_findings import BOLD_FINDING_ID_RE
@@ -916,16 +917,15 @@ def fetch_pr_metadata(
     ``pin_sha`` is the commit a --recover run must complete against; ``wt_path``
     is a checkout of it. Both must be set for pinning to take effect.
     """
-    raw = _run([
-        "gh", "pr", "view", pr_number, "--repo", repo,
-        "--json", "title,body,headRefName,baseRefName,headRefOid,"
-                  "additions,deletions,changedFiles,files,"
-                  "isDraft,labels,author",
-    ])
-    if not raw:
+    data = gh_client.pr_view(
+        pr_number, "title", "body", "headRefName", "baseRefName", "headRefOid",
+        "additions", "deletions", "changedFiles", "files",
+        "isDraft", "labels", "author",
+        repo=repo,
+    )
+    if not data:
         log.error(f"failed to fetch PR #{pr_number} from {repo}")
         sys.exit(1)
-    data = json.loads(raw)
     head_sha = data["headRefOid"]
     additions = data["additions"]
     deletions = data["deletions"]
@@ -969,26 +969,26 @@ def fetch_pr_context(
 
     cmds = {
         "commits": [
-            "gh", "pr", "view", pr_number, "--repo", repo,
+            "pr", "view", pr_number, "--repo", repo,
             "--json", "commits",
             "--jq", '[.commits[] | .messageHeadline] | join("\\n")',
         ],
         "reviews": [
-            "gh", "api", f"repos/{repo}/pulls/{pr_number}/reviews",
+            "api", f"repos/{repo}/pulls/{pr_number}/reviews",
             "--jq", '[.[] | {user: .user.login, state, body}]',
         ],
         "review_comments": [
-            "gh", "api", f"repos/{repo}/pulls/{pr_number}/comments",
+            "api", f"repos/{repo}/pulls/{pr_number}/comments",
             "--jq", '[.[] | {id, path, line, body, user: .user.login, in_reply_to_id}]',
         ],
         "comments": [
-            "gh", "api", f"repos/{repo}/issues/{pr_number}/comments",
+            "api", f"repos/{repo}/issues/{pr_number}/comments",
             "--jq", '[.[] | {user: .user.login, body}]',
         ],
     }
     results = {}
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(_run, cmd, check=False): name for name, cmd in cmds.items()}
+        futures = {pool.submit(gh_client.out, *cmd): name for name, cmd in cmds.items()}
         for future in as_completed(futures):
             results[futures[future]] = future.result()
     return PRContext(

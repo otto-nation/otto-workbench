@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import functools
 import json
-import time
 from dataclasses import dataclass
 from pathlib import Path
+from time import sleep
 from typing import Any, Callable
 
 import log
@@ -182,7 +182,7 @@ def _with_retries(attempt_call: Callable[[], CmdResult], label: str) -> CmdResul
             f"{cause} on {label} (attempt {attempt + 1}/{ladder.attempts}), "
             f"waiting {wait:g}s: {_error_message(r)}"
         )
-        time.sleep(wait)
+        sleep(wait)
     return r
 
 
@@ -280,11 +280,20 @@ def _api_argv(
     headers: dict[str, str] | None,
     fields: dict[str, str] | None,
     raw_fields: dict[str, str] | None,
+    body_on_stdin: bool = False,
 ) -> tuple[str, ...]:
-    """The full `gh api` argv, in the order gh documents."""
+    """The full `gh api` argv, in the order gh documents.
+
+    *body_on_stdin* adds `--input -`. gh ignores whatever is on stdin without
+    it, so a caller that passes a body and forgets the flag sends an empty
+    request and reads GitHub's complaint about the missing field as a bug in
+    the payload it built.
+    """
     argv = ["api", endpoint]
     if method != "GET":
         argv += ["--method", method]
+    if body_on_stdin:
+        argv += ["--input", "-"]
     if paginate:
         argv.append("--paginate")
     if slurp:
@@ -316,14 +325,18 @@ def api(
     """One `gh api` call, retried when waiting is the remedy.
 
     *fields* are passed as `-F`, so gh types integers and booleans; *raw_fields*
-    are passed as `-f` and stay strings. *input_text* is fed to gh on stdin,
-    which is how a JSON body larger than a field list is sent.
+    are passed as `-f` and stay strings. *input_text* is fed to gh on stdin as
+    the whole request body, which is how a JSON document too nested for a field
+    list is sent — the callers that used to write it to a temporary file first.
 
     Retry is on by default because rate limiting is a property of the API
     rather than of any one caller. Pass ``retry=False`` where a second attempt
     would duplicate a side effect that the first one already had.
     """
-    argv = _api_argv(endpoint, method, jq, paginate, slurp, headers, fields, raw_fields)
+    argv = _api_argv(
+        endpoint, method, jq, paginate, slurp, headers, fields, raw_fields,
+        body_on_stdin=input_text is not None,
+    )
     call = functools.partial(run, *argv, input_text=input_text)
     return _with_retries(call, f"{method} {endpoint}") if retry else call()
 
@@ -354,7 +367,9 @@ def graphql(
     variable needs.
     """
     argv: list[str] = ["api", "graphql"]
-    if not input_text:
+    if input_text is not None:
+        argv += ["--input", "-"]
+    else:
         argv += ["-f", f"query={query}"]
     for key, value in (variables or {}).items():
         argv += ["-F", f"{key}={value}"]

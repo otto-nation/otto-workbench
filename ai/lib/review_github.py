@@ -1,7 +1,12 @@
-"""GitHub API primitives, retry logic, and PR metadata fetching.
+"""The review system's reads of a PR, and the GraphQL queries behind them.
 
-Low-level wrappers around ``gh api`` with rate-limit handling and
-exponential backoff.  Used by review_posting and review_dedup.
+PR metadata, the diff, the pending-review check, and the consolidated
+review-thread query. Used by review_posting and review_dedup.
+
+The transport is not here. ``gh_client`` owns running gh, the timeout tiers and
+the rate-limit ladder; this module owns what the review system asks for and how
+it reads the answer. Until #902 both lived here, which is how the retry ladder
+came to exist at one call site out of forty-five.
 """
 
 # doc-group: publishing
@@ -10,22 +15,14 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from dataclasses import dataclass, field
 
+import gh_client
 import log
 import proc
-import timeouts
-from proc import CmdResult
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
-
-MAX_RETRIES = 5
-RATE_LIMIT_WAIT = 60
-RATE_LIMIT_BACKOFF = 1.5
-RATE_LIMIT_MAX_WAIT = 300
-NON_RATE_LIMIT_DELAY = 5
 
 REVIEW_STATE_PENDING = "PENDING"
 
@@ -43,66 +40,13 @@ GQL_COMMITS_LIMIT = 100
 GQL_MAX_THREAD_PAGES = 20
 
 
-# ── Exceptions ──────────────────────────────────────────────────────────────
-
-
-class LineResolutionError(Exception):
-    """GitHub cannot resolve line positions for inline comments."""
-
-
-# ── Core API ────────────────────────────────────────────────────────────────
-
-def _gh_api(
-    endpoint: str, method: str = "GET", input_file: str | None = None,
-    headers: dict[str, str] | None = None,
-) -> CmdResult:
-    """Call gh api and return everything it said.
-
-    Both streams, not just stdout: gh writes an API error body to stdout but
-    reports a transport failure — the 5xx that is worth retrying — only on
-    stderr, and a wrapper returning `(returncode, stdout)` has nowhere to put
-    it.
-    """
-    cmd = ["gh", "api", endpoint]
-    if method != "GET":
-        cmd.extend(["--method", method])
-    if input_file:
-        cmd.extend(["--input", input_file])
-    for key, val in (headers or {}).items():
-        cmd.extend(["--header", f"{key}: {val}"])
-
-    return proc.run(cmd, timeout=timeouts.NETWORK)
-
-
-def _gh_graphql(query: str, variables: dict) -> CmdResult:
-    """Call gh api graphql and return everything it said.
-
-    The query string is passed as a raw field (-f); all variables are passed
-    as typed fields (-F) so gh auto-detects integers and booleans.
-    """
-    cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
-    for key, val in variables.items():
-        cmd.extend(["-F", f"{key}={val}"])
-    return proc.run(cmd, timeout=timeouts.NETWORK)
-
-
-def _fetch_json_list(endpoint: str) -> list:
-    r = _gh_api(endpoint)
-    if not r.ok:
-        return []
-    try:
-        return json.loads(r.stdout)
-    except (json.JSONDecodeError, TypeError):
-        return []
-
-
 # ── PR metadata ─────────────────────────────────────────────────────────────
 
 def _fetch_pr_metadata(repo: str, pr: str, pr_data: PRData | None = None) -> dict:
     """Fetch PR metadata (head SHA, head ref, base ref) in one call."""
     if pr_data is not None:
         return {"head_sha": pr_data.head_sha, "head_ref": pr_data.head_ref, "base_ref": pr_data.base_ref}
-    r = _gh_api(f"repos/{repo}/pulls/{pr}")
+    r = gh_client.api(f"repos/{repo}/pulls/{pr}")
     if not r.ok:
         log.error(proc.failure_message(f"Failed to fetch metadata for {repo}#{pr}", r))
         sys.exit(1)
@@ -121,7 +65,7 @@ def _fetch_pr_metadata(repo: str, pr: str, pr_data: PRData | None = None) -> dic
 def _get_diff(repo: str, pr: str) -> str:
     """Get the PR diff. Returns empty string if the diff is unavailable
     (e.g. PRs exceeding GitHub's 300-file limit)."""
-    r = _gh_api(
+    r = gh_client.api(
         f"repos/{repo}/pulls/{pr}",
         headers={"Accept": "application/vnd.github.v3.diff"},
     )
@@ -136,7 +80,7 @@ def _check_existing_pending(repo: str, pr: str, pr_data: PRData | None = None) -
     """Check for existing PENDING review and return its ID."""
     if pr_data is not None:
         return pr_data.pending_review_id
-    r = _gh_api(f"repos/{repo}/pulls/{pr}/reviews")
+    r = gh_client.api(f"repos/{repo}/pulls/{pr}/reviews")
     if not r.ok:
         # Warned rather than silent: a caller that reads None as "no pending
         # review" opens a second one, and the reason it could not look is the
@@ -158,7 +102,7 @@ def _count_new_commits(repo: str, pr: str, review_sha: str, pr_data: PRData | No
     """Count commits on the PR since the review SHA."""
     if pr_data is not None:
         return pr_data.new_commit_count(review_sha)
-    r = _gh_api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
+    r = gh_client.api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
     if not r.ok:
         # 0 is also the answer for "nothing new since the review", so the
         # warning is what tells those two apart.
@@ -173,92 +117,6 @@ def _count_new_commits(repo: str, pr: str, review_sha: str, pr_data: PRData | No
         if sha.startswith(review_sha) or review_sha.startswith(sha):
             return len(commits) - i - 1
     return len(commits)
-
-
-# ── Rate limiting & retries ─────────────────────────────────────────────────
-
-# Classification reads both streams. gh puts an API error body on stdout and
-# its own status line on stderr, so which one carries the evidence depends on
-# how the call failed — a 403 explains itself in the body, a 503 or a dropped
-# connection leaves the body empty.
-
-def _is_rate_limited(output: str) -> bool:
-    """Check if the API response indicates rate limiting."""
-    lower = output.lower()
-    return (
-        "secondary rate limit" in lower
-        or '"message": "forbidden"' in lower
-        or "abuse detection" in lower
-        or "retry later" in lower
-    )
-
-
-def _is_line_resolution_error(output: str) -> bool:
-    """Check if the API response indicates unresolvable line positions."""
-    return "line could not be resolved" in output.lower()
-
-
-def _api_error_message(r: CmdResult) -> str:
-    """The most specific account of a failed call the response supports.
-
-    GitHub's error body is the best of the three, when there is one: it names
-    the field that was rejected. Falling back to stderr rather than to a slice
-    of an empty stdout is the difference between naming HTTP 503 and printing
-    nothing after the colon.
-    """
-    try:
-        parsed = json.loads(r.stdout)
-        message = parsed.get("message", "")
-        errors = parsed.get("errors", [])
-    except (json.JSONDecodeError, AttributeError):
-        message, errors = "", []
-    if not message:
-        return (r.detail or r.combined_output.strip())[:proc.DETAIL_LIMIT]
-    if errors:
-        message += " — " + "; ".join(str(e) for e in errors)
-    return message
-
-
-def _handle_api_attempt(attempt: int, r: CmdResult) -> dict | None:
-    """Handle a single API attempt result. Returns parsed JSON on success, None to retry."""
-    if r.ok:
-        try:
-            return json.loads(r.stdout)
-        except json.JSONDecodeError:
-            log.error(f"Invalid JSON in response (attempt {attempt + 1}/{MAX_RETRIES})")
-            return None
-
-    said = r.combined_output
-    if _is_line_resolution_error(said):
-        raise LineResolutionError(said[:proc.DETAIL_LIMIT])
-
-    # A 5xx is the far end's, and waiting is the whole remedy — the same
-    # treatment a secondary rate limit gets, and the case that used to fall
-    # through to the flat 5-second delay because the evidence for it is on
-    # stderr, where nothing was looking.
-    if _is_rate_limited(said) or r.server_error:
-        cause = "Server error" if r.server_error else "Rate limited"
-        wait = int(min(RATE_LIMIT_WAIT * (RATE_LIMIT_BACKOFF ** attempt), RATE_LIMIT_MAX_WAIT))
-        log.warn(f"{cause} (attempt {attempt + 1}/{MAX_RETRIES}), waiting {wait}s: {_api_error_message(r)}")
-        time.sleep(wait)
-        return None
-
-    log.error(f"GitHub API error (attempt {attempt + 1}/{MAX_RETRIES}): {_api_error_message(r)}")
-    if attempt < MAX_RETRIES - 1:
-        time.sleep(NON_RATE_LIMIT_DELAY)
-    return None
-
-
-def _post_with_retries(endpoint: str, tmp_path: str) -> dict | None:
-    """Post to GitHub API with retry logic. Returns parsed response or None."""
-    for attempt in range(MAX_RETRIES):
-        r = _gh_api(endpoint, method="POST", input_file=tmp_path)
-        result = _handle_api_attempt(attempt, r)
-        if result is not None:
-            return result
-
-    log.error(f"Failed after {MAX_RETRIES} attempts")
-    return None
 
 
 # ── Review threads ─────────────────────────────────────────────────────────
@@ -319,7 +177,7 @@ def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict:
     variables: dict = {"owner": owner, "name": name, "pr": pr}
     if cursor:
         variables["endCursor"] = cursor
-    r = _gh_graphql(_THREADS_PAGE_QUERY, variables)
+    r = gh_client.graphql(_THREADS_PAGE_QUERY, variables=variables)
     if not r.ok:
         log.warn(proc.failure_message(
             "Failed to fetch a page of review threads (fetch) — the thread set is incomplete", r))
@@ -560,8 +418,8 @@ class PRData:
 def fetch_pr_data(repo: str, pr: str) -> PRData:
     """Fetch all PR review data in a single GraphQL query."""
     owner, name = repo.split("/", 1)
-    r = _gh_graphql(
-        _PR_DATA_QUERY, {"owner": owner, "name": name, "pr": int(pr)},
+    r = gh_client.graphql(
+        _PR_DATA_QUERY, variables={"owner": owner, "name": name, "pr": int(pr)},
     )
     if not r.ok:
         log.error(proc.failure_message(

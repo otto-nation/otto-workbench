@@ -28,6 +28,7 @@ from conftest import (
 )
 import pr_state
 import proc
+from proc import CmdResult
 from pr_comments import ThreadState
 from pr_state import (
     CommitStatus, FixSummary, PRIdentity, PRState, SupersessionKind,
@@ -652,8 +653,8 @@ class TestFormatGeneralComments:
 def _make_completed(returncode, stdout="", stderr=""):
     """Create a CompletedProcess with the given results.
 
-    For the call sites still on `subprocess` directly — `pr_comments`, which
-    the git client does not cover. Git goes through `_git_ran`.
+    For the gh call sites, which run through `proc` rather than a stub of the
+    client itself. Git goes through `_git_ran`.
     """
     import subprocess
     return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
@@ -1954,7 +1955,7 @@ class TestDeliverPrBody:
             raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
 
         draft = self._draft(rt, worktree)
-        with patch.object(rt.pc.subprocess, "run", boom):
+        with patch("proc.subprocess.run", boom):
             assert rt._deliver_pr_body(worktree, "owner/repo", 42) is True
         assert draft.exists(), "the undelivered rewrite must survive for --finish"
 
@@ -1965,15 +1966,15 @@ class TestDeliverPrBody:
         lived at the call site instead, this call would publish.
         """
         self._draft(rt, worktree)
-        with patch.object(rt.pc, "_gh_post", return_value=(1, "")) as post:
+        with patch.object(rt.pc, "_gh_post", return_value=CmdResult(1)) as post:
             rt._deliver_pr_body(worktree, "owner/repo", 42)
         post.assert_called_once()
 
     def test_post_sends_it_through_the_pulls_endpoint(self, rt, worktree, publishing_on):
         calls = []
         self._draft(rt, worktree)
-        with patch.object(
-            rt.pc.subprocess, "run",
+        with patch(
+            "proc.subprocess.run",
             lambda *a, **kw: calls.append(a[0]) or _make_completed(0),
         ):
             assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
@@ -2001,7 +2002,7 @@ class TestDeliverPrBody:
         def boom(*a, **kw):
             raise AssertionError(f"a subprocess ran with nothing to send: {a}")
 
-        with patch.object(rt.pc.subprocess, "run", boom):
+        with patch("proc.subprocess.run", boom):
             assert rt._deliver_pr_body(worktree, "owner/repo", 42) is False
 
     def test_an_empty_draft_is_discarded_rather_than_sent(self, rt, worktree,
@@ -3307,7 +3308,7 @@ class TestRunReply:
         body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
         fetch_pr, fetch_threads = self._patches(rt, [_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
-             patch.object(rt.pc.subprocess, "run") as run, \
+             patch("proc.subprocess.run") as run, \
              patch.object(rt.log, "info") as info:
             assert rt._run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
         run.assert_not_called()

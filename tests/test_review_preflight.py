@@ -153,11 +153,9 @@ PINNED_NUMSTAT = "10\t2\told.py\n5\t0\tshared.py\n"
 
 
 def _stub_run(monkeypatch, calls: list):
-    def fake_run(cmd, cwd=None, check=True):
-        calls.append((cmd, cwd))
-        if cmd[0] == "gh":
-            return json.dumps(PR_PAYLOAD)
-        raise AssertionError(f"unexpected command: {cmd}")
+    def fake_pr_view(pr, *fields, repo="", cwd=None):
+        calls.append((["gh", "pr", "view", pr, "--repo", repo], cwd))
+        return dict(PR_PAYLOAD)
 
     def fake_git_out(*args, cwd=None, default="", config=None):
         calls.append((["git", *args], cwd))
@@ -165,7 +163,7 @@ def _stub_run(monkeypatch, calls: list):
             return PINNED_NUMSTAT
         raise AssertionError(f"unexpected git command: {args}")
 
-    monkeypatch.setattr(rp, "_run", fake_run)
+    monkeypatch.setattr(rp.gh_client, "pr_view", fake_pr_view)
     monkeypatch.setattr(rp.git_client, "out", fake_git_out)
 
 

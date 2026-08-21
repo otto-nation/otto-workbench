@@ -1286,7 +1286,7 @@ def test_gc_preserves_recent_stray_files(cr, reviews_dir):
 # ── prune_merged_reviews ─────────────────────────────────────────────────────
 
 
-@patch("review_gc.subprocess.run")
+@patch("proc.subprocess.run")
 def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-42"
     d.mkdir()
@@ -1318,7 +1318,7 @@ def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
     assert not d.exists()
 
 
-@patch("review_gc.subprocess.run")
+@patch("proc.subprocess.run")
 def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-99"
     d.mkdir()
@@ -1348,7 +1348,7 @@ def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
     assert (d / "review.md").exists()
 
 
-@patch("review_gc.subprocess.run")
+@patch("proc.subprocess.run")
 def test_prune_keeps_recent_merged_pr(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-50"
     d.mkdir()
@@ -1363,7 +1363,7 @@ def test_prune_keeps_recent_merged_pr(mock_run, cr, reviews_dir):
     mock_run.assert_not_called()
 
 
-@patch("review_gc.subprocess.run")
+@patch("proc.subprocess.run")
 def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-51"
     d.mkdir()
@@ -1388,7 +1388,7 @@ def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
     assert d.exists(), "failed review within 30-day window should be retained"
 
 
-@patch("review_gc.subprocess.run")
+@patch("proc.subprocess.run")
 def test_prune_removes_old_failed_review(mock_run, cr, reviews_dir):
     d = reviews_dir / "my-repo-52"
     d.mkdir()

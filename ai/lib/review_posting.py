@@ -13,10 +13,10 @@ import argparse
 import json
 import re
 import sys
-import tempfile
 import time
 from pathlib import Path
 
+import gh_client
 import proc
 import review_dedup
 import review_format
@@ -24,10 +24,11 @@ import review_github
 from review_sections import ReviewSections
 
 import log
+from gh_client import LineResolutionError
 from pr_state import PostedAs, PostEvent, PostTracking
 from review_common import plural
 from review_findings import Finding
-from review_github import LineResolutionError, PRData
+from review_github import PRData
 from serde import to_dict as serde_to_dict
 
 
@@ -86,7 +87,7 @@ def _post_chunked_review(
     existing_id = review_github._check_existing_pending(repo, pr, pr_data)
     if existing_id:
         log.warn(f"Deleting existing PENDING review #{existing_id}")
-        review_github._gh_api(f"repos/{repo}/pulls/{pr}/reviews/{existing_id}", method="DELETE")
+        gh_client.api(f"repos/{repo}/pulls/{pr}/reviews/{existing_id}", method="DELETE")
 
     for i, chunk in enumerate(chunks):
         chunk_num = i + 1
@@ -110,16 +111,11 @@ def _post_chunked_review(
         else:
             log.info(f"Posting review ({len(chunk)} inline)...")
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", prefix="review-post-", delete=False
-        ) as tmp:
-            json.dump(payload, tmp, ensure_ascii=False)
-            tmp_path = tmp.name
-
-        try:
-            result = review_github._post_with_retries(f"repos/{repo}/pulls/{pr}/reviews", tmp_path)
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+        result = gh_client.api_json(
+            f"repos/{repo}/pulls/{pr}/reviews",
+            method="POST",
+            input_text=json.dumps(payload, ensure_ascii=False),
+        )
 
         if result is None:
             _handle_chunk_failure(chunk_num, total_chunks, results)
@@ -156,23 +152,15 @@ def post_review(repo: str, pr: str, payload: dict, submit: bool = False) -> dict
 
 def _submit_review(repo: str, pr: str, review_id: int) -> bool:
     """Submit a PENDING review with event=COMMENT. Returns True on success."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="review-submit-", delete=False
-    ) as tmp:
-        json.dump({"event": "COMMENT"}, tmp)
-        tmp_path = tmp.name
-
-    try:
-        result = review_github._post_with_retries(
-            f"repos/{repo}/pulls/{pr}/reviews/{review_id}/events",
-            tmp_path,
-        )
-        if result is None:
-            log.warn(f"Failed to submit review #{review_id} after {review_github.MAX_RETRIES} attempts")
-            return False
-        return True
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    result = gh_client.api_json(
+        f"repos/{repo}/pulls/{pr}/reviews/{review_id}/events",
+        method="POST",
+        input_text=json.dumps({"event": "COMMENT"}),
+    )
+    if result is None:
+        log.warn(f"Failed to submit review #{review_id}")
+        return False
+    return True
 
 
 # ── Post tracking ───────────────────────────────────────────────────────────
@@ -246,18 +234,11 @@ def _post_as_comment(
         sections=sections,
     )
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="review-comment-", delete=False,
-    ) as tmp:
-        json.dump({"body": body}, tmp, ensure_ascii=False)
-        tmp_path = tmp.name
-
-    try:
-        result = review_github._post_with_retries(
-            f"repos/{args.repo}/issues/{args.pr}/comments", tmp_path,
-        )
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    result = gh_client.api_json(
+        f"repos/{args.repo}/issues/{args.pr}/comments",
+        method="POST",
+        input_text=json.dumps({"body": body}, ensure_ascii=False),
+    )
 
     if result is None:
         log.error("Failed to post review as comment")
@@ -376,21 +357,15 @@ def _find_orphaned_chunks(bot_reviews: list[dict]) -> list[int]:
 
 def _mark_orphan_review(repo: str, pr: str, review_id: int) -> None:
     """Mark a single orphaned chunk review as duplicate."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="review-orphan-", delete=False,
-    ) as tmp:
-        json.dump({"body": "~~Duplicate — review reposted due to prior partial post.~~"}, tmp)
-        tmp_path = tmp.name
-    try:
-        r = review_github._gh_api(
-            f"repos/{repo}/pulls/{pr}/reviews/{review_id}",
-            method="PUT", input_file=tmp_path,
-        )
-        if not r.ok:
-            log.warn(proc.failure_message(
-                f"Failed to mark review #{review_id} as duplicate", r))
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    body = {"body": "~~Duplicate — review reposted due to prior partial post.~~"}
+    r = gh_client.api(
+        f"repos/{repo}/pulls/{pr}/reviews/{review_id}",
+        method="PUT",
+        input_text=json.dumps(body, ensure_ascii=False),
+    )
+    if not r.ok:
+        log.warn(proc.failure_message(
+            f"Failed to mark review #{review_id} as duplicate", r))
 
 
 def _mark_orphaned_reviews(repo: str, pr: str, orphaned_ids: list[int]) -> None:

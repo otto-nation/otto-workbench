@@ -77,7 +77,7 @@ def _git_stub(*, log_out=_CLEAN_LOG, diff="", grep_rc=0, pickaxe="",
 
 def _detect(**kwargs):
     """`detect` against a stubbed git, with the default branch already known."""
-    with patch.object(supersession.subprocess, "run",
+    with patch("proc.subprocess.run",
                       side_effect=_git_stub(**kwargs)):
         return supersession.detect(Path("/fake"), "owner/repo", base="origin/main")
 
@@ -185,7 +185,7 @@ class TestDetect:
 
     def test_the_findings_reach_the_trail(self):
         trail = MagicMock()
-        with patch.object(supersession.subprocess, "run",
+        with patch("proc.subprocess.run",
                           side_effect=_git_stub(log_out=_SKEWED_LOG)):
             supersession.detect(Path("/fake"), "owner/repo",
                                 base="origin/main", trail=trail)
@@ -197,7 +197,7 @@ class TestDetect:
         """The one caller that has already paid for it passes it; the rest don't."""
         with patch.object(supersession.pr_context, "default_branch",
                           return_value="trunk") as resolve, \
-             patch.object(supersession.subprocess, "run",
+             patch("proc.subprocess.run",
                           side_effect=_git_stub()):
             supersession.detect(Path("/fake"), "owner/repo")
         assert resolve.called
@@ -208,7 +208,7 @@ class TestDetect:
 
     def test_an_unresolvable_ref_leaves_the_sha_empty(self):
         """Empty is what keeps a verdict computed against nothing from being reused."""
-        with patch.object(supersession.subprocess, "run",
+        with patch("proc.subprocess.run",
                           return_value=_completed(1)):
             verdict = supersession.detect(Path("/fake"), "owner/repo",
                                           base="origin/main")
@@ -251,7 +251,7 @@ def _state_with(tmp_path, domain: SupersessionDomain) -> Path:
 
 def _detect_cached(target_dir, **kwargs):
     calls = kwargs.pop("calls", [])
-    with patch.object(supersession.subprocess, "run",
+    with patch("proc.subprocess.run",
                       side_effect=_git_stub(calls=calls, **kwargs)):
         return supersession.detect_cached(
             Path("/fake"), "owner/repo", target_dir, base="origin/main",
@@ -297,7 +297,7 @@ class TestDetectCached:
 
     def test_a_verdict_keyed_on_nothing_is_never_reused(self, tmp_path):
         """Empty SHAs are what an unresolvable ref stored — not a cache key."""
-        with patch.object(supersession.subprocess, "run",
+        with patch("proc.subprocess.run",
                           return_value=_completed(1)):
             verdict = supersession.detect_cached(
                 Path("/fake"), "owner/repo",
@@ -333,7 +333,7 @@ class TestDetectCached:
 
     def test_the_reuse_is_recorded_on_the_trail(self, tmp_path):
         trail = MagicMock()
-        with patch.object(supersession.subprocess, "run",
+        with patch("proc.subprocess.run",
                           side_effect=_git_stub()):
             supersession.detect_cached(
                 Path("/fake"), "owner/repo", self._stored(tmp_path),

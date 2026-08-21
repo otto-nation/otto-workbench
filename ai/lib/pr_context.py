@@ -80,6 +80,7 @@ from enum import Enum
 from pathlib import Path
 from typing import NoReturn
 
+import gh_client
 import log
 import pr_target
 import timeouts
@@ -612,14 +613,12 @@ def detect_repo(cwd: str | None = None) -> str:
     Single owner for repo detection: review_common and the review scripts call
     through here rather than running their own ``gh repo view``.
     """
-    r = subprocess.run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.NETWORK,
-    )
-    if r.returncode != 0 or not r.stdout.strip():
+    r = gh_client.run("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=cwd)
+    slug = r.stdout.strip()
+    if not r.ok or not slug:
         log.error(failure_message("Cannot determine repository via `gh repo view`", r))
         sys.exit(1)
-    return r.stdout.strip()
+    return slug
 
 
 def _current_branch(cwd: str | None = None) -> str:
@@ -686,43 +685,38 @@ def _parse_pr_input(pr_input: str) -> int:
     )
 
 
-def _pr_from_current(cwd: str | None = None) -> int | None:
-    r = subprocess.run(
-        ["gh", "pr", "view", "--json", "number", "-q", ".number"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.NETWORK,
-    )
-    if r.returncode != 0:
-        return None
+def _as_pr_number(said: str) -> int | None:
+    """A PR number gh printed, or None when it printed anything else.
+
+    An empty answer is the routine one: a branch with no PR yet 404s, and
+    `gh_client` returns that on the first attempt rather than retrying a 4xx.
+    """
     try:
-        return int(r.stdout.strip())
+        return int(said.strip())
     except ValueError:
         return None
+
+
+def _pr_from_current(cwd: str | None = None) -> int | None:
+    return _as_pr_number(gh_client.out("pr", "view", "--json", "number", "-q", ".number", cwd=cwd))
 
 
 def _pr_from_branch(repo: str, branch: str) -> int | None:
-    r = subprocess.run(
-        ["gh", "pr", "list", "--repo", repo, "--head", branch,
-         "--json", "number", "--jq", ".[0].number"],
-        capture_output=True, text=True, timeout=timeouts.NETWORK,
-    )
-    if r.returncode != 0:
-        return None
-    try:
-        return int(r.stdout.strip())
-    except ValueError:
-        return None
+    return _as_pr_number(gh_client.out(
+        "pr", "list", "--repo", repo, "--head", branch,
+        "--json", "number", "--jq", ".[0].number",
+    ))
 
 
 def _pr_head(repo: str, pr_number: int) -> PRHead:
     """The PR's head branch and head SHA, in one API call."""
-    r = subprocess.run(
-        ["gh", "pr", "view", str(pr_number), "--repo", repo,
-         "--json", "headRefName,headRefOid",
-         "-q", '.headRefName + " " + .headRefOid'],
-        capture_output=True, text=True, timeout=timeouts.NETWORK,
+    r = gh_client.run(
+        "pr", "view", str(pr_number), "--repo", repo,
+        "--json", "headRefName,headRefOid",
+        "-q", '.headRefName + " " + .headRefOid',
     )
     parts = r.stdout.split()
-    if r.returncode != 0 or len(parts) != 2:
+    if not r.ok or len(parts) != 2:
         return PRHead(reason=failure_message(
             f"`gh pr view` could not read the head of {repo}#{pr_number}", r))
     return PRHead(branch=parts[0], sha=parts[1])

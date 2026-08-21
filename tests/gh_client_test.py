@@ -52,9 +52,15 @@ def _stub_gh(tmp_path: Path, monkeypatch, body: str) -> Path:
 
 @pytest.fixture
 def no_sleep(monkeypatch) -> list[float]:
-    """Collect the ladder's waits instead of serving them."""
+    """Collect the ladder's waits instead of serving them.
+
+    The client holds its own `sleep` name so this replaces only the waits it
+    asks for. Patching `time.sleep` itself would also catch the millisecond
+    polling `subprocess` does while waiting on a bounded child, which lands a
+    stray 0.001 in the middle of the ladder.
+    """
     slept: list[float] = []
-    monkeypatch.setattr(gh_client.time, "sleep", slept.append)
+    monkeypatch.setattr(gh_client, "sleep", slept.append)
     return slept
 
 
@@ -310,6 +316,44 @@ def test_paginate_and_slurp_both_reach_the_argv():
 def test_a_jq_expression_reaches_the_argv():
     argv = gh_client._api_argv("user", "GET", ".login", False, False, None, None, None)
     assert argv[-2:] == ("--jq", ".login")
+
+
+def test_a_body_on_stdin_names_itself_in_the_argv():
+    """gh ignores stdin without `--input -`, and sends an empty body instead."""
+    argv = gh_client._api_argv(
+        "repos/o/r/pulls/1/reviews", "POST", "", False, False, None, None, None,
+        body_on_stdin=True,
+    )
+    assert argv == ("api", "repos/o/r/pulls/1/reviews", "--method", "POST", "--input", "-")
+
+
+# ── Request bodies ──────────────────────────────────────────────────────────
+
+
+def test_api_sends_its_body_on_stdin(tmp_path, monkeypatch):
+    calls = _stub_gh(tmp_path, monkeypatch, "cat")
+    r = gh_client.api(
+        "repos/o/r/pulls/1/reviews", method="POST", input_text='{"event": "COMMENT"}',
+    )
+    assert r.stdout == '{"event": "COMMENT"}'
+    assert "--input -" in calls.read_text()
+
+
+def test_api_without_a_body_asks_gh_to_read_nothing(tmp_path, monkeypatch):
+    calls = _stub_gh(tmp_path, monkeypatch, "echo '{}'")
+    gh_client.api("user")
+    assert "--input" not in calls.read_text()
+
+
+def test_graphql_sends_a_whole_document_on_stdin(tmp_path, monkeypatch):
+    """A mutation with a nested variable does not fit gh's -f/-F field list."""
+    calls = _stub_gh(tmp_path, monkeypatch, "cat")
+    document = '{"query": "mutation { x }", "variables": {"input": {"a": 1}}}'
+    r = gh_client.graphql("", input_text=document)
+    assert r.stdout == document
+    said = calls.read_text()
+    assert "--input -" in said
+    assert "query=" not in said
 
 
 # ── Reads ───────────────────────────────────────────────────────────────────

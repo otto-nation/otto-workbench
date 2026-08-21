@@ -30,16 +30,15 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+import gh_client
 import log
 import pr_state
 import pr_target
 import run_lock
-import timeouts
 import workbench_paths
 from pr_state import PRClosure, PRCloseState, ReviewStatus
 from review_common import (
@@ -277,23 +276,17 @@ def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
     Which field carries it belongs to `PRCloseState`, so this reads the one the
     state names instead of choosing between `mergedAt` and `closedAt` itself.
     """
-    try:
-        r = subprocess.run(
-            ["gh", "pr", "view", str(pr_number), "--repo", repo,
-             "--json", pr_state.GH_STATE_JSON_FIELDS],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-    except Exception as exc:
-        log.warn(f"GC: could not run gh for {repo}#{pr_number} ({exc}) — leaving it in place")
-        return None
-    if r.returncode != 0:
+    r = gh_client.run(
+        "pr", "view", str(pr_number), "--repo", repo,
+        "--json", pr_state.GH_STATE_JSON_FIELDS,
+    )
+    if not r.ok:
         # The answer stays None — the artifacts are kept either way — but a gh
         # that cannot answer is not a PR that is still open, and the sweep now
         # runs unattended on a schedule. Unlogged, an expired token would read
         # as "nothing was ever ready to prune" for as long as it took anyone to
         # look.
-        stderr_lines = (r.stderr or "").strip().splitlines()
-        detail = stderr_lines[0] if stderr_lines else f"exit {r.returncode}"
+        detail = r.detail or f"exit {r.returncode}"
         log.warn(f"GC: gh could not report {repo}#{pr_number} ({detail}) — leaving it in place")
         return None
     try:

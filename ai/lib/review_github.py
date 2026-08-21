@@ -5,8 +5,8 @@ review-thread query. Used by review_posting and review_dedup.
 
 The transport is not here. ``gh_client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
-it reads the answer. Until #902 both lived here, which is how the retry ladder
-came to exist at one call site out of forty-five.
+it reads the answer. Nothing here decides how a call is made, so a change to
+retry or to a bound is made once, in the client, for every caller.
 """
 
 # doc-group: publishing

@@ -246,10 +246,11 @@ def _merged_pr_mentioning(repo: str, symbol: str) -> str:
     A search that outruns its bound therefore degrades to silence rather than
     raising through a preflight the reader only asked for a hint from.
     """
-    return gh_client.out(
-        "api", f"search/issues?q=repo:{repo}+{symbol}+is:merged",
-        "--jq", '.items[0] // empty | "#\\(.number) \\(.title)"',
+    r = gh_client.api(
+        f"search/issues?q=repo:{repo}+{symbol}+is:merged",
+        jq='.items[0] // empty | "#\\(.number) \\(.title)"',
     )
+    return r.stdout.strip()
 
 
 def detect(

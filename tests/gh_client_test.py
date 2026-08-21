@@ -388,9 +388,21 @@ def test_login_reads_the_authenticated_user(tmp_path, monkeypatch):
     assert "api user --jq .login" in calls.read_text()
 
 
-def test_login_is_empty_when_gh_is_unauthenticated(tmp_path, monkeypatch):
+def test_login_is_empty_when_gh_is_unauthenticated(tmp_path, monkeypatch, no_sleep):
+    """Unauthenticated is an answer, so it comes back without a wait."""
     _stub_gh(tmp_path, monkeypatch, "echo 'gh auth login required' >&2; exit 1")
     assert gh_client.login() == ""
+    assert no_sleep == []
+
+
+def test_login_waits_out_a_throttle(tmp_path, monkeypatch, no_sleep):
+    """It resolves against the API, so it earns the ladder every read gets."""
+    _stub_gh(tmp_path, monkeypatch, """
+echo 'You have exceeded a secondary rate limit'
+exit 1
+""")
+    assert gh_client.login() == ""
+    assert len(no_sleep) == gh_client.RATE_LIMIT_LADDER.attempts - 1
 
 
 def test_repo_slug_reads_owner_and_name(tmp_path, monkeypatch):
@@ -398,6 +410,18 @@ def test_repo_slug_reads_owner_and_name(tmp_path, monkeypatch):
     assert gh_client.repo_slug() == "otto-nation/otto-workbench"
 
 
-def test_repo_slug_is_empty_outside_a_repo(tmp_path, monkeypatch):
+def test_repo_slug_is_empty_outside_a_repo(tmp_path, monkeypatch, no_sleep):
+    """Not a GitHub repository is an answer too — no ladder, no wait."""
     _stub_gh(tmp_path, monkeypatch, "echo 'no git remote found' >&2; exit 1")
     assert gh_client.repo_slug() == ""
+    assert no_sleep == []
+
+
+def test_repo_slug_waits_out_a_throttle(tmp_path, monkeypatch, no_sleep):
+    """A throttle must not be reported as "not a GitHub repository"."""
+    _stub_gh(tmp_path, monkeypatch, """
+echo 'You have exceeded a secondary rate limit'
+exit 1
+""")
+    assert gh_client.repo_slug() == ""
+    assert len(no_sleep) == gh_client.RATE_LIMIT_LADDER.attempts - 1

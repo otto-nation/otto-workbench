@@ -9,9 +9,14 @@ surfaced everywhere else as "no data" — indistinguishable from an empty result
 
 The runner is `run`, and `out`, `ok`, `lines` and `json_out` are the shapes
 callers actually wanted from it. `api` and `graphql` sit above them for the
-`gh api` surface, which is most of the traffic and the only part that needs
-retry. Below all of it are the reads that appeared at two or more call sites; a
-read used once belongs at its call site, spelled out with `run`.
+`gh api` surface, which is most of the traffic. Below all of it are the reads
+that appeared at two or more call sites; a read used once belongs at its call
+site, spelled out with `run`.
+
+Retry is a property of talking to the API, so it lives with the calls that do:
+`api`, `graphql`, and the reads above that resolve against GitHub rather than
+against a local checkout. A caller driving an artifact download or reading
+gh's own configuration gets no ladder, and should not.
 
 The publishing gate is deliberately not here. `pr_comments` gates its writes on
 `publishing.enabled()` at the call site and keeps doing so — a second implicit
@@ -406,15 +411,27 @@ def pr_view(
     return json_out(*argv, cwd=cwd, default={}) or {}
 
 
-def login(cwd: str | Path | None = None) -> str:
-    """The authenticated user's GitHub login, or "" when gh cannot say."""
-    return out("api", "user", "--jq", ".login", cwd=cwd)
+def login() -> str:
+    """The authenticated user's GitHub login, or "" when gh cannot say.
+
+    Takes no *cwd*: `gh api user` asks who the token belongs to, which no
+    repository can change the answer to.
+    """
+    r = api("user", jq=".login")
+    return r.stdout.strip() if r.ok else ""
 
 
 def repo_slug(cwd: str | Path | None = None) -> str:
     """``owner/repo`` for the repository at *cwd*, or "" when gh cannot say.
 
     The failure is the caller's to report: `pr_context.detect_repo` exits on it
-    with the command quoted, while the review scripts fall back to a flag.
+    with the command quoted, while the review scripts fall back to a flag. It
+    is worth retrying first, though — this resolves against the API like `api`
+    does, and reporting "not a GitHub repository" because of a throttle sends
+    the caller after a fault that is not there.
     """
-    return out("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd)
+    call = functools.partial(
+        run, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd,
+    )
+    r = _with_retries(call, "repo view")
+    return r.stdout.strip() if r.ok else ""

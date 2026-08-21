@@ -380,6 +380,9 @@ def _check_pending_review(repo: str, pr_number: str, force: bool) -> None:
         f"repos/{repo}/pulls/{pr_number}/reviews",
         jq=f'[.[] | select(.user.login == "{gh_user}" and .state == "PENDING")] | first // empty',
     )
+    # `first // empty` prints nothing when no review matches, so gh's stdout is
+    # empty and `api_json` falls back to its default. Anything other than a dict
+    # therefore means "no pending review", not a review with no id.
     pending_id = pending.get("id") if isinstance(pending, dict) else None
     if pending_id is None:
         return

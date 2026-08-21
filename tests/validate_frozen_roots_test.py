@@ -66,6 +66,25 @@ class Opts:
 """) == []
 
 
+def test_a_lambda_body_is_clean(tmp_path):
+    """A lambda defers its call exactly as a `def` does."""
+    assert _check(tmp_path, """
+import workbench_paths
+
+GET_DIR = lambda: workbench_paths.state_dir() / "usage"
+""") == []
+
+
+def test_a_lambda_default_is_flagged(tmp_path):
+    """Only the body is deferred — a parameter default evaluates at import."""
+    violations = _check(tmp_path, """
+import workbench_paths
+
+GET_DIR = lambda root=workbench_paths.state_dir(): root
+""")
+    assert [v.root for v in violations] == ["workbench_paths.state_dir"]
+
+
 def test_file_without_the_module_is_skipped(tmp_path):
     assert _check(tmp_path, 'ROOT = state_dir() / "usage"\n') == []
 

@@ -995,7 +995,11 @@ depends on nothing but `proc`: five silent minutes reads as a hang.
 
 Retry defaults to on, since rate limiting is a property of the API and not of any one
 caller. `retry=False` is for a call whose second attempt would repeat a side effect the
-first one already had — submitting a review, for instance.
+first one already had — submitting a review, for instance. The reads carry the ladder
+too, for the same reason: `login()` reporting nobody, or `repo_slug()` reporting "not a
+GitHub repository", because of a throttle sends the caller after a fault that is not
+there. What does *not* get a ladder is anything that is not talking to the API —
+`out`, `ok`, `lines` and `json_out` run once and answer.
 
 Timeouts follow the argv, as they do for git. `--paginate`, `--log-failed`,
 `run download` and an endpoint ending in `/logs` are transfers; everything else is one

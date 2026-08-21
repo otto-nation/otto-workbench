@@ -22,9 +22,10 @@ The fix is always the same shape — a function:
         return workbench_paths.state_dir() / LEDGER_DIRNAME
 
 Assignments inside a function body are fine: they resolve when the function
-runs, which is the behaviour this check exists to preserve.  A bare directory
-*name* (`LEDGER_DIRNAME = "usage"`) is fine too — a name is not a path, and
-sharing one is how two modules agree on a subtree.
+runs, which is the behaviour this check exists to preserve.  So is a call
+inside a lambda body, or handed to `default_factory`, for the same reason.  A
+bare directory *name* (`LEDGER_DIRNAME = "usage"`) is fine too — a name is not
+a path, and sharing one is how two modules agree on a subtree.
 
 Exit code: 0 if all files pass, 1 if any have violations.
 """
@@ -54,8 +55,6 @@ ROOTS = frozenset({
 
 SEARCH_DIRS = ('ai', 'bin')
 SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
-
-SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
 
 @dataclass(frozen=True)
@@ -95,6 +94,23 @@ def _called_root(func, local_roots: set[str]) -> str | None:
     return None
 
 
+def _eager_calls(node):
+    """Every call in *node* that runs when *node* is evaluated.
+
+    A lambda's body is not one of them — `GET = lambda: state_dir()` defers the
+    call exactly as a `def` does — but its parameter defaults are, so those are
+    descended into and the body is not.
+    """
+    if isinstance(node, ast.Call):
+        yield node
+    if isinstance(node, ast.Lambda):
+        children = [d for d in node.args.defaults + node.args.kw_defaults if d]
+    else:
+        children = ast.iter_child_nodes(node)
+    for child in children:
+        yield from _eager_calls(child)
+
+
 def _resolver_called(node, local_roots: set[str]) -> str | None:
     """The root resolver *node* calls, or None if it reaches no root.
 
@@ -102,8 +118,7 @@ def _resolver_called(node, local_roots: set[str]) -> str | None:
     `state_dir() / "usage"`, `Path(str(trail_dir()))` — is caught: what freezes
     the value is the call happening at import, not where it sits in the term.
     """
-    calls = (n for n in ast.walk(node) if isinstance(n, ast.Call))
-    named = (_called_root(c.func, local_roots) for c in calls)
+    named = (_called_root(c.func, local_roots) for c in _eager_calls(node))
     return next((n for n in named if n is not None), None)
 
 
@@ -132,7 +147,7 @@ def _module_level_assignments(tree):
 
 
 def check_file(filepath: str) -> list[Violation]:
-    with open(filepath) as f:
+    with open(filepath, encoding='utf-8') as f:
         source = f.read()
     if MODULE not in source:
         return []

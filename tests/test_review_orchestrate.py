@@ -577,76 +577,23 @@ class TestPriorDisposition:
         )
 
 
-class TestUnaccountedPriorFindings:
-    def test_empty_prior(self, ro):
-        assert ro.unaccounted_prior_findings("", "<!-- sid:abc -->") == []
+class TestParsePriorFindings:
+    """Reconciliation's view of the prior review — see test_review_prior.py."""
 
-    def test_sid_marker_carries_finding_forward(self, ro):
-        review = (
-            "## Must fix\n"
-            "- **[M1]** <!-- sid:deadbeef --> **`other.go:1`** — reworded\n"
-        )
-        sid = ro.compute_stable_id("handler.go", "missing error check")
-        review = review.replace("deadbeef", sid)
-        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
-
-    def test_verbatim_carry_forward_without_marker(self, ro):
-        # Synthesis retypes carried findings and drops the marker; the ID the
-        # line hashes to is what survives.
-        review = (
-            "## Must fix\n"
-            "- **[M2]** **`handler.go:42`** — missing error check\n"
-        )
-        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
-
-    def test_ledger_entry_accounts_for_fixed_finding(self, ro):
-        review = (
-            "## Summary\nAll prior findings addressed.\n"
-            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
-            "- **[M1]** `handler.go` — Fixed\n"
-        )
-        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
-
-    def test_ledger_matches_reworded_finding_by_path(self, ro):
-        review = (
-            "## Must fix\n"
-            "- **[M4]** **`handler.go:42`** — db.Query() error is discarded\n"
-            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
-            "- **[M1]** `handler.go` — Still open\n"
-        )
-        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
-
-    def test_reports_finding_the_review_dropped(self, ro):
-        review = "## Must fix\n- **[M1]** **`other.go:7`** — unrelated issue\n"
-        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == [
-            "M1 `handler.go`",
-        ]
-
-    def test_ledger_entry_may_carry_a_line_number(self, ro):
-        review = (
-            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
-            "- **[M1]** `handler.go:42` — Fixed\n"
-        )
-        assert ro.unaccounted_prior_findings(PRIOR_ONE_FINDING, review) == []
-
-    def test_one_ledger_entry_does_not_cover_a_sibling_in_the_same_file(self, ro):
+    def test_a_findings_quotation_below_its_first_line_travels_with_it(self, ro):
         prior = (
             PRIOR_ONE_FINDING
-            + "- **[M2]** **`handler.go:88`** — unchecked type assertion\n"
+            + "  The call reads `rows, _ := db.Query(sql)` today.\n"
+            + "- **[M2]** **`cache.go:9`** — stale entry\n"
         )
-        review = (
-            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
-            "- **[M1]** `handler.go` — Fixed\n"
-        )
-        assert ro.unaccounted_prior_findings(prior, review) == ["M2 `handler.go`"]
+        first, second = ro._parse_prior_findings(prior)
+        assert "rows, _ := db.Query(sql)" in first.text
+        assert "rows, _ := db.Query(sql)" not in second.text
 
-    def test_reports_only_the_unaccounted_one(self, ro):
-        prior = PRIOR_ONE_FINDING + "- **[M2]** **`cache.go:9`** — stale entry\n"
-        review = (
-            f"## {ro.SECTION_PRIOR_FINDINGS}\n"
-            "- **[M1]** `handler.go` — Fixed\n"
-        )
-        assert ro.unaccounted_prior_findings(prior, review) == ["M2 `cache.go`"]
+    def test_a_findings_text_stops_at_the_next_section(self, ro):
+        prior = PRIOR_ONE_FINDING + "\n## Verdict\nRequest changes.\n"
+        first = ro._parse_prior_findings(prior)[0]
+        assert "Request changes" not in first.text
 
 
 # ── 1. _mechanical_verdict ───────────────────────────────────────────────────
@@ -3000,15 +2947,15 @@ class TestPostProcessFindings:
         assert "- **[M1]** **`handler.go:4`** — real problem" in result
         assert "revisit once [removed] lands" in result
 
-    def test_ledger_suppresses_the_unaccounted_warning(self, ro, tmp_path, capsys):
+    def test_strips_the_prior_findings_ledger(self, ro, tmp_path):
         review = tmp_path / "review.md"
         review.write_text(
             "## Summary\nPrior finding fixed.\n"
             f"## {ro.SECTION_PRIOR_FINDINGS}\n"
             "- **[M1]** `handler.go` — Fixed\n"
         )
-        ro.post_process_findings(str(review), prior_review=PRIOR_ONE_FINDING)
-        assert "not accounted for" not in capsys.readouterr().err
+        ro.post_process_findings(str(review))
+        assert ro.SECTION_PRIOR_FINDINGS not in review.read_text()
 
 
 # ── reconcile_dropped_findings ──────────────────────────────────────────────

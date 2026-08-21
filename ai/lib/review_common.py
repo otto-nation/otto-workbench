@@ -587,6 +587,7 @@ FILENAME_SESSION = "session.jsonl"
 FILENAME_META = "meta.json"
 FILENAME_PIPELINE_STATE = "pipeline.json"
 FILENAME_PROMPT_STATS = "prompt-stats.json"
+FILENAME_PRIOR_FINDINGS = "prior-findings.json"
 
 FILENAME_POST_SESSION = "post.jsonl"
 REVIEW_EXT = ".md"

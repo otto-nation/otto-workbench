@@ -53,6 +53,7 @@ from review_preflight import (
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
     group_files,
 )
+from review_prior import record_prior_findings
 from review_prompt import (
     _is_incremental, _scope_prior_review,
     build_prompt,
@@ -235,7 +236,9 @@ def _build_mechanical_fallback(
 
 
 def _post_process_review(job: ReviewJob) -> None:
-    job.verification = post_process_findings(job.review_file, job.wt_path, job.prior_review)
+    # Reconciliation reads the ledger, which post-processing then strips.
+    record_prior_findings(job.review_file, job.prior_review, job.wt_path)
+    job.verification = post_process_findings(job.review_file, job.wt_path)
 
 
 def _write_mechanical_fallback(

@@ -336,3 +336,185 @@ _refute_identity_rejection() {
   grep -q 'includeIf' "$GIT_CONFIG_TEMPLATE"
   grep -q 'identities' "$GIT_CONFIG_TEMPLATE"
 }
+
+# ── GitHub SSH over port 443 ────────────────────────────────────────────────
+
+# _ssh_443_setup [KEY_VALUE] — point the step at a temp ~/.ssh and a temp
+# global config holding KEY_VALUE, from a directory that is not a git repo.
+#
+# The cd matters: wb_config_get reads project scope first, and inside this
+# repo that is .workbench.yml — a file the test does not control.
+_ssh_443_setup() {
+  SSH_DIR="$TMPDIR/ssh"
+  SSH_CONFIG_FILE="$SSH_DIR/config"
+  SSH_KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
+  mkdir -p "$SSH_DIR"
+
+  WORKBENCH_CONFIG_FILE="$TMPDIR/config.yml"
+  if [[ -n "${1:-}" ]]; then
+    printf 'github:\n  ssh_over_443: %s\n' "$1" > "$WORKBENCH_CONFIG_FILE"
+  fi
+
+  mkdir -p "$TMPDIR/not-a-repo"
+  cd "$TMPDIR/not-a-repo" || return 1
+}
+
+# _ssh_443_user_config — an ~/.ssh/config shaped like a real one: includes that
+# must stay at the top, then a catch-all Host block.
+_ssh_443_user_config() {
+  cat > "$SSH_CONFIG_FILE" <<'EOF'
+Include ~/.orbstack/ssh/config
+
+Host myserver
+  User me
+
+Host *
+  UseKeychain yes
+EOF
+}
+
+@test "ssh_443 block lands ahead of the first Host block" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+
+  step_github_ssh_443
+
+  local block_line host_line
+  block_line=$(grep -n 'Hostname ssh.github.com' "$SSH_CONFIG_FILE" | cut -d: -f1)
+  host_line=$(grep -n '^Host myserver' "$SSH_CONFIG_FILE" | cut -d: -f1)
+  [ "$block_line" -lt "$host_line" ]
+}
+
+@test "ssh_443 block lands after the Include lines" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+
+  step_github_ssh_443
+
+  local include_line block_line
+  include_line=$(grep -n '^Include' "$SSH_CONFIG_FILE" | cut -d: -f1)
+  block_line=$(grep -n 'Hostname ssh.github.com' "$SSH_CONFIG_FILE" | cut -d: -f1)
+  [ "$include_line" -lt "$block_line" ]
+}
+
+@test "ssh_443 preserves the user's own entries" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+
+  step_github_ssh_443
+
+  grep -q '^Include ~/.orbstack/ssh/config' "$SSH_CONFIG_FILE"
+  grep -q '^Host myserver' "$SSH_CONFIG_FILE"
+  grep -q '  UseKeychain yes' "$SSH_CONFIG_FILE"
+}
+
+@test "ssh_443 appends when the config has no Host block" {
+  _ssh_443_setup true
+  printf 'Include ~/.colima/ssh_config\n' > "$SSH_CONFIG_FILE"
+
+  step_github_ssh_443
+
+  grep -q '^Include ~/.colima/ssh_config' "$SSH_CONFIG_FILE"
+  grep -q 'Hostname ssh.github.com' "$SSH_CONFIG_FILE"
+}
+
+@test "ssh_443 creates the config when there is none" {
+  _ssh_443_setup true
+
+  step_github_ssh_443
+
+  [ -f "$SSH_CONFIG_FILE" ]
+  grep -q 'Port 443' "$SSH_CONFIG_FILE"
+}
+
+@test "ssh_443 is idempotent" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+
+  step_github_ssh_443
+  step_github_ssh_443
+
+  local count
+  count=$(grep -c 'Hostname ssh.github.com' "$SSH_CONFIG_FILE")
+  [ "$count" -eq 1 ]
+}
+
+@test "ssh_443 leaves the config alone when the key is unset" {
+  _ssh_443_setup
+  _ssh_443_user_config
+
+  step_github_ssh_443
+
+  run grep 'ssh.github.com' "$SSH_CONFIG_FILE"
+  [ "$status" -ne 0 ]
+}
+
+@test "ssh_443 removes its block when the key flips to false" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+  step_github_ssh_443
+
+  printf 'github:\n  ssh_over_443: false\n' > "$WORKBENCH_CONFIG_FILE"
+  step_github_ssh_443
+
+  run grep 'ssh.github.com' "$SSH_CONFIG_FILE"
+  [ "$status" -ne 0 ]
+}
+
+@test "ssh_443 removal leaves the rest of the config intact" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+  step_github_ssh_443
+
+  printf 'github:\n  ssh_over_443: false\n' > "$WORKBENCH_CONFIG_FILE"
+  step_github_ssh_443
+
+  grep -q '^Include ~/.orbstack/ssh/config' "$SSH_CONFIG_FILE"
+  grep -q '^Host myserver' "$SSH_CONFIG_FILE"
+  grep -q '  UseKeychain yes' "$SSH_CONFIG_FILE"
+}
+
+@test "ssh_443 writes the config with owner-only permissions" {
+  _ssh_443_setup true
+  _ssh_443_user_config
+
+  step_github_ssh_443
+
+  [ "$(file_mode "$SSH_CONFIG_FILE")" = "600" ]
+}
+
+@test "ssh_443 copies the github.com host keys under the 443 name" {
+  _ssh_443_setup true
+  printf 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY\n' > "$SSH_KNOWN_HOSTS_FILE"
+
+  step_github_ssh_443
+
+  grep -q '^\[ssh.github.com\]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY$' \
+    "$SSH_KNOWN_HOSTS_FILE"
+}
+
+@test "ssh_443 does not duplicate an existing 443 known_hosts entry" {
+  _ssh_443_setup true
+  {
+    printf 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY\n'
+    printf '[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY\n'
+  } > "$SSH_KNOWN_HOSTS_FILE"
+
+  step_github_ssh_443
+
+  local count
+  count=$(grep -c 'ssh.github.com' "$SSH_KNOWN_HOSTS_FILE")
+  [ "$count" -eq 1 ]
+}
+
+@test "ssh_443 warns instead of guessing when github.com is unknown" {
+  _ssh_443_setup true
+  printf 'gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAOTHERKEY\n' > "$SSH_KNOWN_HOSTS_FILE"
+
+  run step_github_ssh_443
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no github.com entry"* ]]
+  run grep 'ssh.github.com' "$SSH_KNOWN_HOSTS_FILE"
+  [ "$status" -ne 0 ]
+}

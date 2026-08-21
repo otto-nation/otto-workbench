@@ -156,6 +156,10 @@ print(workbench_config.$1, end='')
   [ "$WORKBENCH_CONFIG_HEADER" = "$(resolve_python CONFIG_HEADER)" ]
 }
 
+@test "the config keys bash reads match ai/lib/workbench_config.py" {
+  [ "$GITHUB_SSH_443_CONFIG_KEY" = "$(resolve_python GITHUB_SSH_443_KEY)" ]
+}
+
 @test "lib/config.sh refuses to load without the constants" {
   run bash -c ". '$REPO_ROOT/lib/config.sh'"
   [ "$status" -eq 1 ]

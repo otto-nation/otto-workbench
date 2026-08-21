@@ -60,6 +60,8 @@ Two-layer architecture:
 
 `~/.gitconfig` includes `git/gitconfig.shared` via a `[include]` stanza. `git config --global` writes to `~/.gitconfig` as expected. Global hooks live in [`git/hooks/`](../git/hooks/) and are symlinked to `~/.git-hooks/`.
 
+The component also owns one marker-delimited block in `~/.ssh/config`, written only when `github.ssh_over_443` is set — a third ownership mode, since the surrounding file is the user's and is never read. Flipping the key back removes the block. See [Troubleshooting](troubleshooting.md#ssh-connect-to-host-githubcom-port-22-connection-refused) for when to reach for it.
+
 ### Secrets
 
 Secrets are split between two files — use the right one:

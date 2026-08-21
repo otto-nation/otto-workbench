@@ -79,6 +79,7 @@ These are owned by the workbench and updated every time you sync. Do not edit di
 | `~/.config/starship.toml` | `zsh/starship.toml` | copied |
 | `~/.gitconfig` | includes `git/gitconfig.shared` | include stanza |
 | `~/.git-hooks/*` | `git/hooks/` | symlinked |
+| `~/.ssh/config` | `git/steps.sh` | marker-delimited block, only when `github.ssh_over_443` is set — the rest of the file is yours |
 | `~/.config/task/{Taskfile.yml,lib/}` | `Taskfile.global.yml`, `lib/` | symlinked |
 | `~/.claude/*` | `ai/claude/` | mixed (merge/copy/symlink) |
 
@@ -88,7 +89,7 @@ These are created once (from templates or by first-time setup) and never modifie
 
 | File | Purpose | Bootstrap |
 |------|---------|-----------|
-| `~/.config/workbench/config.yml` | Reuse level, review pipeline, issue tracker — see [libraries.md](docs/libraries.md#configsh) | `bin/migrations/20260814-unify-workbench-config.sh` |
+| `~/.config/workbench/config.yml` | Reuse level, review pipeline, issue tracker, GitHub SSH route — see [libraries.md](docs/libraries.md#configsh) | `bin/migrations/20260814-unify-workbench-config.sh` |
 | `~/.gitconfig` | Git identity, GPG, credentials | `git/gitconfig.template` |
 | `~/.env.local` | Shell secrets, API keys, env overrides | `zsh/.env.local.template` |
 | `~/.config/task/taskfile.env` | AI automation tokens (`GH_TOKEN`, `AI_COMMAND`) | `task --global ai:setup` |

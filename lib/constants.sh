@@ -49,6 +49,9 @@ BASHRC_FILE="$HOME/.bashrc"
 ENV_LOCAL_FILE="$HOME/.env.local"
 GITCONFIG_FILE="$HOME/.gitconfig"
 GIT_HOOKS_DIR="$HOME/.git-hooks"
+SSH_DIR="$HOME/.ssh"
+SSH_CONFIG_FILE="$SSH_DIR/config"
+SSH_KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
 
 # ─── XDG-style config and local dirs ─────────────────────────────────────────
 LOCAL_BIN_DIR="$HOME/.local/bin"
@@ -119,6 +122,11 @@ WORKBENCH_CONFIG_SCHEMA_URL="$WORKBENCH_REPO_RAW_URL/$WORKBENCH_CONFIG_SCHEMA_NA
 # The modeline a config file is born with, so an editor's YAML language server
 # validates the file against that schema as the user hand-edits it.
 WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHEMA_URL"
+
+# The dotted config keys bash reads. Spelled here for the same reason the file
+# names above are: workbench_config.py holds the other spelling, and
+# tests/config.bats fails when a pair drifts.
+GITHUB_SSH_443_CONFIG_KEY="github.ssh_over_443"
 
 # ─── Review state ─────────────────────────────────────────────────────────────
 # The shell half of two joins the Python side also spells out — this file for

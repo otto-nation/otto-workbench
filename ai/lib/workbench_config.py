@@ -77,6 +77,10 @@ GENERATOR_PATH = "bin/local/generate-config-schema"
 REUSE_LEVEL_KEY = "reuse.level"
 REUSE_DEFAULT_KEY = "reuse.default"
 ISSUE_PROVIDER_KEY = "issue_tracker.provider"
+# Read from bash rather than written: git/steps.sh asks for this one through
+# wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
+# cross-validates the pair.
+GITHUB_SSH_443_KEY = "github.ssh_over_443"
 
 _YQ_TIMEOUT = 10
 
@@ -159,10 +163,24 @@ class ReuseConfig:
 
 
 @dataclass(frozen=True)
+class GitHubConfig:
+    """How this machine reaches GitHub.
+
+    ``ssh_over_443`` moves git's SSH traffic to ``ssh.github.com:443``, the
+    endpoint GitHub publishes for networks that block or throttle outbound
+    TCP/22. Same service, same host keys, one more hop through their edge — so
+    it is off by default and turned on per machine, not per repo.
+    """
+
+    ssh_over_443: bool = False
+
+
+@dataclass(frozen=True)
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
+    github: GitHubConfig = field(default_factory=GitHubConfig)
 
 
 def schema_json() -> str:

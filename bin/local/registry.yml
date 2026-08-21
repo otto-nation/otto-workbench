@@ -62,7 +62,7 @@ tools:
   - name: validate-permissions
     permission: false
     visibility: brief
-    description: "Validates that every Bash permission rule can match a command — no literal * inside a :* prefix, no unexpanded ~"
+    description: "Validates that every Bash permission rule can match a command, and that no untracked settings file duplicates a tracked grant or re-grants a gated one — --fix prunes the duplicates"
 
   - name: validate-ceiling
     permission: false

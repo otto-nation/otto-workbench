@@ -3,6 +3,7 @@
 import importlib.machinery
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -128,6 +129,231 @@ def test_a_settings_file_with_no_permissions_block_is_clean(tmp_path):
     assert vp.check_file(str(path)) == []
 
 
+# ── local grant drift ────────────────────────────────────────────────────
+# The tracked project file grants three bin directories and gates two scripts
+# that reach credentials; these stand in for it so the tests do not move when
+# the real file gains a directory.
+
+TRACKED = vp.TrackedRules(allow=["bin/*", "ai/claude/bin/*"], ask=["bin/get-secret:*"])
+
+# A grant `TRACKED` already covers via `Bash(bin/*)` — shared across the tests
+# below so they read as one known-covered example rather than a fresh literal.
+COVERED_GRANT = "Bash(bin/local/validate-all)"
+
+
+def _local(tmp_path, *rules, bucket="allow"):
+    path = tmp_path / vp.LOCAL_SETTINGS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"permissions": {bucket: list(rules)}}, indent=2))
+    return str(path)
+
+
+def _covered(tmp_path, *allow):
+    return [(g.rule, g.tracked) for g in vp.drift_in(_local(tmp_path, *allow), TRACKED).covered]
+
+
+def _overrides(tmp_path, *allow):
+    return [(g.rule, g.tracked) for g in vp.drift_in(_local(tmp_path, *allow), TRACKED).overrides]
+
+
+def test_a_grant_under_a_granted_directory_is_covered(tmp_path):
+    assert _covered(tmp_path, COVERED_GRANT) == [
+        (COVERED_GRANT, "Bash(bin/*)")
+    ]
+
+
+def test_a_grant_carrying_arguments_is_covered(tmp_path):
+    """The tracked wildcard ends in `*`, so the whole invocation is inside it."""
+    assert _covered(tmp_path, "Bash(ai/claude/bin/pr --tool-schema)") == [
+        ("Bash(ai/claude/bin/pr --tool-schema)", "Bash(ai/claude/bin/*)")
+    ]
+
+
+def test_a_local_wildcard_under_a_granted_directory_is_covered(tmp_path):
+    """Every command it can match starts with `bin/`, so the tracked rule has it."""
+    assert _covered(tmp_path, "Bash(bin/local/validate-ceiling *)") == [
+        ("Bash(bin/local/validate-ceiling *)", "Bash(bin/*)")
+    ]
+
+
+def test_a_one_off_grant_has_no_tracked_home(tmp_path):
+    """Nothing tracked speaks for these, and nagging trains the warning away."""
+    assert _covered(tmp_path, "Bash(sh /tmp/probe.sh)", "Bash(uv run *)",
+                    "Bash(ps ax *)", "Bash(printenv)") == []
+
+
+def test_a_non_bash_grant_is_left_alone(tmp_path):
+    """The tracked file grants Bash rules only, so a domain has nowhere to go."""
+    assert _covered(tmp_path, "WebFetch(domain:example.com)", "Read(//Users/x/.ssh/**)") == []
+
+
+def test_a_local_rule_broader_than_the_tracked_one_is_not_flagged(tmp_path):
+    """It grants commands the tracked rule does not, so it is not a duplicate."""
+    assert _covered(tmp_path, "Bash(bin*)", "Bash(*)", "Bash(b:*)") == []
+
+
+def test_a_local_prefix_rule_is_not_judged_against_an_exact_tracked_rule(tmp_path):
+    """`Bash(env:*)` reaches `env -i sh`, which `Bash(env)` never grants."""
+    tracked = vp.TrackedRules(allow=["env"])
+    assert vp.drift_in(_local(tmp_path, "Bash(env:*)"), tracked).covered == []
+
+
+def test_an_exactly_repeated_tracked_rule_is_covered(tmp_path):
+    tracked = vp.TrackedRules(allow=["env"])
+    assert [g.rule for g in vp.drift_in(_local(tmp_path, "Bash(env)"), tracked).covered] == [
+        "Bash(env)"
+    ]
+
+
+def test_a_local_allow_over_a_gated_script_is_an_override(tmp_path):
+    assert _overrides(tmp_path, "Bash(bin/get-secret --name prod/db)") == [
+        ("Bash(bin/get-secret --name prod/db)", "Bash(bin/get-secret:*)")
+    ]
+
+
+def test_an_override_outranks_the_covered_warning(tmp_path):
+    """`Bash(bin/*)` covers it too — the credential gate is the finding that counts."""
+    drift = vp.drift_in(_local(tmp_path, "Bash(bin/get-secret:*)"), TRACKED)
+    assert [g.rule for g in drift.overrides] == ["Bash(bin/get-secret:*)"]
+    assert drift.covered == []
+
+
+def test_a_local_wildcard_reaching_a_gated_script_is_an_override(tmp_path):
+    """The wildcard matches `bin/get-secret` itself, so the ask rule is bypassed."""
+    assert [r for r, _ in _overrides(tmp_path, "Bash(bin/get-*)")] == ["Bash(bin/get-*)"]
+
+
+def test_a_grant_beside_a_gated_script_is_not_an_override(tmp_path):
+    """A sibling script the ask rule's prefix does not spell is nobody's gate."""
+    assert _overrides(tmp_path, COVERED_GRANT, "Bash(sh /tmp/probe.sh)") == []
+
+
+def test_the_ask_prefix_reaches_every_command_it_spells(tmp_path):
+    """`Bash(bin/get-secret:*)` is startsWith, so it gates `bin/get-secrets-report`
+    as well — the local allow really would drop the prompt for it."""
+    assert [r for r, _ in _overrides(tmp_path, "Bash(bin/get-secrets-report)")] == [
+        "Bash(bin/get-secrets-report)"
+    ]
+
+
+def test_only_the_allow_bucket_drifts(tmp_path):
+    """A local `ask` or `deny` narrows the tracked grant rather than duplicating it."""
+    path = _local(tmp_path, COVERED_GRANT, bucket="ask")
+    assert vp.drift_in(path, TRACKED).empty
+
+
+def test_a_repeated_local_grant_is_reported_once(tmp_path):
+    path = _local(tmp_path, "Bash(bin/x)", "Bash(bin/x)")
+    assert len(vp.drift_in(path, TRACKED).covered) == 1
+
+
+def test_a_covered_grant_carries_the_line_it_is_written_on(tmp_path):
+    path = _local(tmp_path, "Bash(sh /tmp/probe.sh)", "Bash(bin/x)")
+    assert [g.line for g in vp.drift_in(path, TRACKED).covered] == [5]
+
+
+def test_a_repo_with_no_tracked_settings_file_makes_no_grants(tmp_path):
+    assert vp.tracked_rules(str(tmp_path)) == vp.TrackedRules()
+
+
+def test_the_tracked_rules_are_read_from_the_project_file():
+    """The file owns the list — the granted directories are not hardcoded here."""
+    tracked = vp.tracked_rules(str(REPO_ROOT))
+    assert "bin/*" in tracked.allow
+    assert "bin/get-secret:*" in tracked.ask
+
+
+# ── container discovery ──────────────────────────────────────────────────
+
+
+_GIT_TIMEOUT = 10  # seconds; a hang here should fail the test, not stall the suite
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True,
+                   timeout=_GIT_TIMEOUT)
+
+
+def _seed_repo(path):
+    """A one-commit repo, with an identity so the commit does not need the user's."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-b", "main", "-q", str(path)], check=True,
+                   capture_output=True, timeout=_GIT_TIMEOUT)
+    _git(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty",
+         "--no-verify", "-m", "init")
+    return path
+
+
+@pytest.fixture
+def container(tmp_path):
+    """The bare-repo worktree layout: worktrees as peers of a bare `.git`."""
+    seed = _seed_repo(tmp_path / "seed")
+    root = tmp_path / "container"
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")], check=True,
+                   capture_output=True, timeout=_GIT_TIMEOUT)
+    _git(root / ".git", "worktree", "add", "-q", str(root / "main"), "main")
+    return root
+
+
+def test_a_normal_clone_has_no_container(tmp_path):
+    """CI runs here: the shared git dir's parent is the checkout itself."""
+    assert vp.container_dir(str(_seed_repo(tmp_path / "clone"))) is None
+
+
+def test_a_directory_outside_git_has_no_container(tmp_path):
+    assert vp.container_dir(str(tmp_path)) is None
+
+
+def test_a_worktree_finds_its_bare_repo_container(container):
+    found = vp.container_dir(str(container / "main"))
+    assert found == str(Path(container).resolve())
+
+
+def test_a_worktree_finds_its_container_under_an_inherited_git_dir(container, monkeypatch):
+    """The pre-push hook exports GIT_DIR, and git reads it ahead of `-C`: with
+    one set, `rev-parse --show-toplevel` asked at the container answers the
+    container, the no-working-tree guard holds, and the container is skipped in
+    exactly the run that had to see it."""
+    monkeypatch.setenv("GIT_DIR", str(container / "main" / ".git"))
+    assert vp.container_dir(str(container / "main")) == str(Path(container).resolve())
+
+
+def test_a_linked_worktree_of_a_normal_clone_has_no_container(tmp_path):
+    """The parent there is somebody's checkout, and its .claude/ is tracked."""
+    seed = _seed_repo(tmp_path / "seed")
+    _git(seed, "worktree", "add", "-q", str(tmp_path / "feature"), "-b", "feature")
+    assert vp.container_dir(str(tmp_path / "feature")) is None
+
+
+def test_the_container_settings_file_is_discovered(container):
+    claude = container / ".claude"
+    claude.mkdir()
+    (claude / vp.LOCAL_SETTINGS).write_text(json.dumps({"permissions": {"allow": ["Bash(x)"]}}))
+    assert vp.discover_container_settings(str(container)) == [
+        str(claude / vp.LOCAL_SETTINGS)
+    ]
+
+
+def test_a_container_with_no_claude_directory_contributes_nothing(container):
+    assert vp.discover_container_settings(str(container)) == []
+
+
+def test_no_container_contributes_nothing():
+    assert vp.discover_container_settings(None) == []
+
+
+def test_the_container_file_is_local_but_a_worktree_file_is_not(container):
+    tracked = container / "main" / ".claude" / "settings.json"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("{}")
+    local = container / ".claude" / vp.LOCAL_SETTINGS
+    local.parent.mkdir()
+    local.write_text("{}")
+
+    assert vp._is_local(str(local), vp._at_container(str(local), str(container)))
+    assert not vp._is_local(str(tracked), vp._at_container(str(tracked), str(container)))
+
+
 # ── discovery and CLI ────────────────────────────────────────────────────
 
 
@@ -164,3 +390,192 @@ def test_main_exits_1_on_a_dead_rule(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "Bash(bin/local/*:*)" in err
     assert "use Bash(bin/local/*)" in err
+
+
+def test_main_exits_1_on_a_covered_grant(tmp_path, monkeypatch, capsys):
+    """A warning could not reach anyone: validate-all discards a green run's output."""
+    path = _local(tmp_path, COVERED_GRANT)
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", path])
+    with pytest.raises(SystemExit) as exc:
+        vp.main()
+    assert exc.value.code == 1
+    assert COVERED_GRANT in capsys.readouterr().err
+
+
+def test_the_failure_names_the_command_that_fixes_it(tmp_path, monkeypatch, capsys):
+    """validate-all does not pass --fix, so the message has to spell it out."""
+    path = _local(tmp_path, COVERED_GRANT)
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--quiet", path])
+    with pytest.raises(SystemExit):
+        vp.main()
+    assert vp.FIX_COMMAND in capsys.readouterr().err
+
+
+def test_main_exits_1_on_a_grant_that_re_grants_a_gated_script(tmp_path, monkeypatch, capsys):
+    path = _local(tmp_path, "Bash(bin/get-secret --name prod/db)")
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--quiet", path])
+    with pytest.raises(SystemExit) as exc:
+        vp.main()
+    assert exc.value.code == 1
+    assert "Bash(bin/get-secret:*)" in capsys.readouterr().err
+
+
+def test_main_reaches_the_container_file_above_the_worktree(container, monkeypatch, capsys):
+    """End to end from a worktree: discovery, the drift check, and the advice.
+
+    The grant is unreachable by any walk rooted in the worktree, and the fix it
+    is given cannot be to edit a tracked file the container has no room for.
+    """
+    worktree = container / "main"
+    (worktree / ".claude").mkdir(parents=True)
+    (worktree / vp.TRACKED_SETTINGS).write_text(
+        json.dumps({"permissions": {"allow": ["Bash(bin/*)"]}})
+    )
+    _local(container / ".claude", COVERED_GRANT)
+
+    monkeypatch.setattr(vp, "_WORKBENCH_DIR", str(worktree))
+    monkeypatch.setattr(sys, "argv", ["validate-permissions"])
+    with pytest.raises(SystemExit):
+        vp.main()
+
+    err = capsys.readouterr().err
+    assert COVERED_GRANT in err
+    assert "run the session from a worktree" in err
+
+
+# ── --fix ────────────────────────────────────────────────────────────────
+
+
+def _fix(path, monkeypatch, *flags):
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", *flags, str(path)])
+    vp.main()
+    return json.loads(Path(path).read_text())
+
+
+def test_fix_deletes_a_covered_grant(tmp_path, monkeypatch, capsys):
+    path = _local(tmp_path, COVERED_GRANT, "Bash(sh /tmp/probe.sh)")
+    assert _fix(path, monkeypatch)["permissions"]["allow"] == ["Bash(sh /tmp/probe.sh)"]
+
+
+def test_fix_leaves_every_one_off_alone(tmp_path, monkeypatch, capsys):
+    """Same discriminator as the check: no tracked home, no business being pruned."""
+    one_offs = ["Bash(sh /tmp/probe.sh)", "Bash(uv run *)", "WebFetch(domain:example.com)"]
+    path = _local(tmp_path, *one_offs)
+    assert _fix(path, monkeypatch)["permissions"]["allow"] == one_offs
+
+
+def test_fix_never_prunes_an_override(tmp_path, monkeypatch, capsys):
+    """Deleting it would restore an ask gate on credentials — a human's call."""
+    gated = "Bash(bin/get-secret --name prod/db)"
+    path = _local(tmp_path, gated)
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", str(path)])
+    with pytest.raises(SystemExit) as exc:
+        vp.main()
+    assert exc.value.code == 1
+    assert json.loads(Path(path).read_text())["permissions"]["allow"] == [gated]
+
+
+def test_fix_removes_nothing_the_tracked_rules_do_not_already_grant(tmp_path, monkeypatch,
+                                                                   capsys):
+    """The no-op proof: every pruned rule's commands are matched by a tracked rule."""
+    drifting = [COVERED_GRANT, "Bash(bin/local/compose-docs --check)",
+                "Bash(ai/claude/bin/pr --tool-schema)", "Bash(bin/local/validate-ceiling *)"]
+    path = _local(tmp_path, *drifting, "Bash(sh /tmp/probe.sh)")
+    before = set(json.loads(Path(path).read_text())["permissions"]["allow"])
+
+    after = set(_fix(path, monkeypatch)["permissions"]["allow"])
+
+    assert before - after == set(drifting)
+    for rule in before - after:
+        body = vp.BASH_RULE.match(rule).group(1)
+        assert any(vp._covered_by(body, tracked) for tracked in TRACKED.allow)
+
+
+def test_fix_preserves_the_rest_of_the_file(tmp_path, monkeypatch, capsys):
+    path = tmp_path / vp.LOCAL_SETTINGS
+    path.write_text(json.dumps({
+        "statusLine": {"command": "x"},
+        "permissions": {
+            "allow": [COVERED_GRANT, "Bash(sh /tmp/probe.sh)"],
+            "deny": ["Bash(rm -rf /)"],
+            "ask": ["Bash(bin/x)"],
+        },
+    }, indent=2))
+
+    fixed = _fix(path, monkeypatch)
+
+    assert fixed["statusLine"] == {"command": "x"}
+    assert fixed["permissions"]["deny"] == ["Bash(rm -rf /)"]
+    assert fixed["permissions"]["ask"] == ["Bash(bin/x)"]
+    assert fixed["permissions"]["allow"] == ["Bash(sh /tmp/probe.sh)"]
+
+
+def test_fix_leaves_a_non_ascii_rule_written_the_way_it_was(tmp_path, monkeypatch, capsys):
+    """Escaping an em dash to \\uXXXX would rewrite entries the run is not
+    touching, turning a one-line deletion into a whole-file diff."""
+    kept = "Bash(perl -pe 's/a — b/c/' f)"
+    path = _local(tmp_path, COVERED_GRANT, kept)
+
+    _fix(path, monkeypatch)
+
+    assert "—" in Path(path).read_text()
+    assert "\\u2014" not in Path(path).read_text()
+
+
+def test_fix_keeps_an_emptied_allow_bucket(tmp_path, monkeypatch, capsys):
+    """Claude Code appends to that list on the next approval; dropping the key
+    would be a larger edit to a file this script does not own."""
+    path = _local(tmp_path, COVERED_GRANT)
+    assert _fix(path, monkeypatch)["permissions"]["allow"] == []
+
+
+def test_fix_is_idempotent(tmp_path, monkeypatch, capsys):
+    path = _local(tmp_path, COVERED_GRANT, "Bash(sh /tmp/probe.sh)")
+    once = _fix(path, monkeypatch)
+    first_text = Path(path).read_text()
+
+    assert _fix(path, monkeypatch) == once
+    assert Path(path).read_text() == first_text
+
+
+def test_a_fixed_file_passes_on_the_next_run(tmp_path, monkeypatch, capsys):
+    path = _local(tmp_path, COVERED_GRANT, "Bash(sh /tmp/probe.sh)")
+    _fix(path, monkeypatch)
+
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", str(path)])
+    vp.main()
+    assert "every permission rule is live" in capsys.readouterr().out
+
+
+def test_fix_never_writes_to_the_tracked_settings_file(tmp_path, monkeypatch, capsys):
+    """Drift is only ever computed for untracked files, so pruning cannot reach it."""
+    path = _settings(tmp_path, {"permissions": {"allow": [COVERED_GRANT]}})
+    before = path.read_text()
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", str(path)])
+    vp.main()
+    assert path.read_text() == before
+
+
+def test_fix_prunes_the_container_file_above_the_worktree(container, monkeypatch, capsys):
+    """The file the drift grows in is the one no worktree-rooted walk can reach."""
+    worktree = container / "main"
+    (worktree / ".claude").mkdir(parents=True)
+    (worktree / vp.TRACKED_SETTINGS).write_text(
+        json.dumps({"permissions": {"allow": ["Bash(bin/*)"]}})
+    )
+    local = Path(_local(container / ".claude", "Bash(bin/x)", "Bash(sh /tmp/probe.sh)"))
+
+    monkeypatch.setattr(vp, "_WORKBENCH_DIR", str(worktree))
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix"])
+    vp.main()
+
+    assert json.loads(local.read_text())["permissions"]["allow"] == ["Bash(sh /tmp/probe.sh)"]
+    assert "every permission rule is live" in capsys.readouterr().out
+
+
+def test_a_tracked_settings_file_is_never_checked_for_drift(tmp_path, monkeypatch, capsys):
+    """Only untracked files drift — the tracked file is where grants belong."""
+    path = _settings(tmp_path, {"permissions": {"allow": [COVERED_GRANT]}})
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", str(path)])
+    vp.main()
+    assert "already grants this" not in capsys.readouterr().err

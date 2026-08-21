@@ -169,11 +169,16 @@ project_granted_dirs() {
   done
 }
 
+# The pass line, not the exit status. Auto-discovery also reaches the untracked
+# settings files — including the bare-repo container's, above every worktree —
+# whose contents are this machine's state and can change between one test run
+# and the next. A tick beside the tracked file says discovery reached it and it
+# is clean, which is what this test is named for; the machine's own drift is
+# `--fix`'s business, not this suite's.
 @test "validate-permissions checks the tracked project settings file" {
   run "$REPO_ROOT/bin/local/validate-permissions"
-  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
-  [[ "$output" == *".claude/settings.json"* ]] || {
-    echo "discovery did not reach .claude/settings.json:"
+  [[ "$output" == *"✓ .claude/settings.json"* ]] || {
+    echo "no clean discovery of .claude/settings.json:"
     echo "$output"
     return 1
   }

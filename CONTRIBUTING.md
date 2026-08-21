@@ -101,9 +101,39 @@ names the one that matches.
 A grant that lands in `.claude/settings.local.json` is a bug report: some rule
 that should have matched did not. Move it into one of the tracked files rather
 than leaving it there, where nothing reviews it and the next worktree starts
-without it. `bin/local/validate-permissions` checks every tracked settings file
-for rules that can never match; `tests/claude_settings.bats` holds the project
-file to directories the repo actually ships.
+without it. `bin/local/validate-permissions` checks every settings file for
+rules that can never match; `tests/claude_settings.bats` holds the project file
+to directories the repo actually ships.
+
+The same validator reports the drift itself. It reads the tracked project file
+for the grants it already makes, then looks at the untracked ones — every
+`settings.local.json` in the tree, plus the `.claude/` in the bare-repo
+container above the worktrees, which no walk rooted in a worktree can reach.
+Two classes fail, and a grant with no tracked home — a `WebFetch` domain, a
+`/tmp` scratch script — is left alone by both.
+
+| Class | Fix |
+|---|---|
+| A local `allow` a tracked `allow` already makes | `bin/local/validate-permissions --fix` deletes it |
+| A local `allow` reaching an `ask`-gated script | a human deletes it, or decides the gate is wrong |
+
+Both fail rather than warn, because a warning could not reach anyone here:
+`validate-all` captures each validator's output and prints it only when that
+validator exits non-zero, so on a green run the text is discarded before the
+pre-push hook or CI renders it. Failing is what makes the finding visible, and
+`--fix` is what keeps that defensible — the file regrows, so pruning it is a
+command rather than an afternoon.
+
+`--fix` prunes the first class only, and only from untracked files. Every entry
+it removes is one a tracked rule already matches for every command the local
+rule can match, so the set of commands the file permits is the same before and
+after. An `ask` override is never pruned: deleting it restores a deliberate gate
+on credential access, which is a person's call, not a script's.
+
+At the container there is nothing to move a grant into: it holds no working
+tree, so nothing there can be committed. Run the session from a worktree, where
+the tracked `.claude/settings.json` applies and an approved grant has somewhere
+to live.
 
 ## Environment Variables
 

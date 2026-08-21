@@ -186,7 +186,7 @@ def test_discover_finds_extensionless_python_scripts():
 
 def _tree_with_skipped_dirs(tmp_path):
     """A searched root holding one real script and one script per skipped dir."""
-    root = tmp_path / vwg.SEARCH_DIRS[0] / "lib"
+    root = tmp_path / vwg.SEARCH_DIRS[0]
     root.mkdir(parents=True)
     (root / "real.py").write_text("x = 1\n")
     for skipped in vwg.SKIP_DIRS:

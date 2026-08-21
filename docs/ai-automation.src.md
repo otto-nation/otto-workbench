@@ -1128,9 +1128,101 @@ message prints nothing at all and the caller is left reporting a bare exit code
 with no reason attached. `ai_backend_claude` logs whichever stream carried the
 detail, and the exit code alone when neither did.
 
+An expired timeout is the same kind of answer. `proc.run` converts it into a
+`CmdResult` carrying `proc.TIMEOUT_RETURNCODE` (124, the shell convention) with the
+bound and the command quoted on stderr, and whatever the process managed to write
+before it was killed preserved on both streams. Raising instead would need a handler
+at each of the call sites that has none; as a result code it degrades through
+`out`/`ok`/`lines` exactly as any other failure does. The code is contract rather
+than an implementation detail — the eval scorers tell a timed-out case from a failed
+one by it.
+
 `proc` is stdlib-only on purpose — it is the module the rest of `ai/lib` should be
 free to depend on. The name is not `cmd` because `ai/lib` goes on `sys.path` ahead
 of the standard library, where a `cmd` module would shadow the one `pdb` imports.
+
+### One table of timeouts
+
+`ai/` decided how long a subprocess may run in 22 places and four different ways:
+module-scoped constants, bare literals, a caller-supplied argument, and — for most of
+the git client — nothing at all. The same operation got a different bound depending
+on which file called it; one `gh api` round trip was 30s in `review_github`, 10s in
+`pr-rebase`, and 10s in `retro-scan`. No principle separated those numbers.
+
+Leaving the choice with callers is what produced the spread, so
+[`ai/lib/timeouts.py`](../ai/lib/timeouts.py) takes it away from them. A caller picks
+a tier that describes its operation; it does not pick a number. The axis is not how
+long the work takes but **what bounds its cost**.
+
+| Tier | For | Why |
+|---|---|---|
+| `QUICK` | A `--value-flags` probe, a session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
+| `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
+| `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
+| `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
+| `UNBOUNDED` | `worktree add`, `commit`, `push` | A bound would be wrong, not merely large — see below. |
+
+Operation-bounded work costs the same whatever the repository holds, so exceeding the
+bound means something is genuinely wrong and a tight bound is a hang detector.
+Data-bounded and user-bounded work costs whatever the input costs: `git worktree add`
+materializes every file in the tree, and `commit`/`push` run hooks belonging to
+whatever repository is being operated on — routinely a secret scan, a linter, or a
+full test suite. A fixed bound there silently converts a large repo, or a thorough
+hook, into a broken tool.
+
+`UNBOUNDED` is a named `None` rather than an omitted argument so that running
+unbounded stays a decision on the record: `proc.run` requires `timeout=`, and
+`bin/local/validate-timeouts` rejects both a numeric literal and a bare `None` on any
+`timeout=` argument under `ai/`. `ai/claude/mcps/server.py` is exempt — it runs under
+`uv run` with `ai/lib` nowhere on `sys.path`, so it cannot import the table.
+
+Two numbers deliberately stay outside it. `ci-check --wait-timeout` and
+`eval_task.EVAL_CASE_BUDGET` are deadlines for work that could reasonably keep going,
+not bounds on a subprocess that should already have answered; they say how long
+something is *worth*, which is a different question.
+
+### One way to run git
+
+`ai/` invoked `git` as a literal argv head in 131 places, and each one re-decided the
+same four things: `-C` or `cwd=`, whether to capture, whether a non-zero exit is a
+failure or an answer, and what to do with stderr. That spread is why a fix applied to
+one call site was never a fix for the other hundred and thirty.
+
+[`ai/lib/git_client.py`](../ai/lib/git_client.py) sits directly on `proc` and depends
+on nothing else. The runner is `run`; the other three are the shapes callers actually
+wanted from it.
+
+| Call | What it gives you |
+|---|---|
+| `run(*args, cwd=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
+| `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
+| `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
+| `lines(*args)` | Stdout split into non-empty lines. |
+
+There is no `timeout` parameter. The bound follows from the subcommand the same way
+`core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push` run
+`UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so the
+knowledge lives with the client that owns it rather than at each of the forty-five
+call sites, one of which used to pass a number of its own.
+
+`config={"key": "value"}` becomes `-c key=value` ahead of the subcommand. `diff`,
+`ls-files` and `status` get `core.quotePath=false` by default: git escapes a
+non-ASCII path in that output unless told otherwise, and an escaped name is not a
+pathspec a later `git add` can resolve — so a fix touching such a file was staged as
+nothing and reported as applied. Applying the flag to the subcommand rather than to
+each caller is what stops the next call site from forgetting it.
+
+Under those four sit the reads that appeared at two or more call sites — `head_sha`,
+`current_branch`, `is_dirty`, `commit_exists`. A read used once belongs at its call
+site, spelled out with `run`. Writes are not modelled beyond `run`: committing and
+pushing gets an owner of its own, with the publishing gate over it, rather than a
+convenience wrapper here that would turn four gate-less push sites into five.
+
+Not everything has moved across yet. `pr_context`, `review-threads`, `pr-rebase`,
+`mcps/server` and `eval_task` still invoke git as literal argv — the first four
+because a behaviour fix is open on them and a refactor underneath it would collide,
+`eval_task` because its calls need `env=`, which `proc.run` does not take. A new call
+site should still go through the client.
 
 ## Guidelines & Rules
 

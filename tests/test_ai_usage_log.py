@@ -96,9 +96,8 @@ class TestUnwrap:
 class TestRecord:
     @pytest.fixture
     def ledger(self, tmp_path, monkeypatch):
-        d = tmp_path / "usage"
-        monkeypatch.setattr(ai_usage, "LEDGER_DIR", d)
-        return d
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+        return tmp_path / ai_usage.LEDGER_DIRNAME
 
     def _record(self, aul, monkeypatch, path, extra=()):
         argv = [

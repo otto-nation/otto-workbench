@@ -17,6 +17,7 @@ from pathlib import Path
 import log
 import publishing
 import serde
+import timeouts
 from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
 from review_common import plural
 from review_github import PRData, fetch_review_threads
@@ -177,7 +178,7 @@ def _gh_rest(endpoint: str) -> tuple[int, str]:
     """Call gh api REST endpoint. Returns (exit_code, stdout)."""
     result = subprocess.run(
         ["gh", "api", endpoint],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     return result.returncode, result.stdout
 
@@ -190,7 +191,7 @@ def _paginated_json(endpoint: str) -> tuple[int, str]:
     """
     result = subprocess.run(
         ["gh", "api", "--paginate", "--slurp", endpoint],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.TRANSFER,
     )
     return result.returncode, result.stdout
 
@@ -209,7 +210,7 @@ def _gh_post(endpoint: str, body: str, method: str = "POST") -> tuple[int, str]:
     payload = json.dumps({"body": body})
     result = subprocess.run(
         ["gh", "api", endpoint, "--method", method, "--input", "-"],
-        input=payload, capture_output=True, text=True,
+        input=payload, capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     if result.returncode != 0 and result.stderr.strip():
         log.error(f"gh api error: {result.stderr.strip()}")
@@ -478,7 +479,7 @@ def resolve_thread(thread_id: str) -> bool:
     })
     result = subprocess.run(
         ["gh", "api", "graphql", "--input", "-"],
-        input=query, capture_output=True, text=True,
+        input=query, capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     return result.returncode == 0
 

@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+import proc
+import timeouts
 from ai_usage import SessionUsage
 from eval_scoring import ScoringResult
 
@@ -85,6 +86,19 @@ def _copy_into(src_dir: Path, dest_dir: Path) -> None:
             shutil.copy2(item, dest)
 
 
+def _git_step(git: list[str], step: list[str], env: dict[str, str]) -> None:
+    """Run one step of the fixture build, raising with git's own account of a failure.
+
+    `UNBOUNDED` rather than a tier: `init`, `commit` and `fetch` run whatever
+    hooks the machine's git config installs, and they operate on a copy as large
+    as the case. A bound here would turn a big case, or a thorough hook, into a
+    fixture that cannot be built.
+    """
+    r = proc.run(git + step, env=env, timeout=timeouts.UNBOUNDED)
+    if not r.ok:
+        raise RuntimeError(proc.failure_message(f"git {' '.join(step)} failed", r))
+
+
 def create_temp_repo(src_dir: str, prefix: str = "eval-") -> str:
     """Copy a case's sources into a throwaway git repo with an `eval` branch."""
     tmpdir = tempfile.mkdtemp(prefix=prefix)
@@ -100,13 +114,13 @@ def create_temp_repo(src_dir: str, prefix: str = "eval-") -> str:
         ["checkout", "-b", "eval"],
     ]
     for step in steps:
-        subprocess.run(git + step, capture_output=True, check=True, env=env)
+        _git_step(git, step, env)
 
     _copy_into(Path(src_dir), Path(tmpdir))
 
     for step in (["add", "-A"], ["commit", "-m", "add buggy code"],
                  ["remote", "add", "origin", tmpdir], ["fetch", "origin"]):
-        subprocess.run(git + step, capture_output=True, check=True, env=env)
+        _git_step(git, step, env)
 
     return tmpdir
 

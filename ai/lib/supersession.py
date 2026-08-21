@@ -31,6 +31,7 @@ import git_client
 import log
 import pr_context
 import pr_state
+import timeouts
 from pr_state import SupersessionKind, SupersessionSignal
 from trail import Trail
 
@@ -170,18 +171,32 @@ def _superseding_prs(repo: str, symbols: list[str]) -> list[SupersessionSignal]:
     """
     found = []
     for symbol in symbols[:_PREFLIGHT_SEARCH_LIMIT]:
-        result = subprocess.run(
-            ["gh", "api", f"search/issues?q=repo:{repo}+{symbol}+is:merged",
-             "--jq", '.items[0] // empty | "#\\(.number) \\(.title)"'],
-            capture_output=True, text=True,
-        )
-        title = result.stdout.strip()
-        if result.returncode == 0 and title:
+        title = _merged_pr_mentioning(repo, symbol)
+        if title:
             found.append(SupersessionSignal(
                 SupersessionKind.SUPERSEDING_PR,
                 f"a merged PR mentioning `{symbol}`: {title}",
             ))
     return found
+
+
+def _merged_pr_mentioning(repo: str, symbol: str) -> str:
+    """The first merged PR mentioning `symbol`, as `#N title`, or empty.
+
+    A supersession signal is advisory — it tells a reader what to look at
+    before starting, and every caller treats its absence as "nothing found".
+    A search that outruns its bound therefore degrades to silence rather than
+    raising through a preflight the reader only asked for a hint from.
+    """
+    try:
+        result = subprocess.run(
+            ["gh", "api", f"search/issues?q=repo:{repo}+{symbol}+is:merged",
+             "--jq", '.items[0] // empty | "#\\(.number) \\(.title)"'],
+            capture_output=True, text=True, timeout=timeouts.NETWORK,
+        )
+    except subprocess.TimeoutExpired:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def detect(

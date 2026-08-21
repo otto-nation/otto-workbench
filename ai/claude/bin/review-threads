@@ -40,6 +40,7 @@ from pr_comments import ThreadState
 from pr_state import CommitStatus
 import review_common
 import review_issue
+import timeouts
 from review_common import Diagnosis
 from pr_thread_models import (
     ClassificationResult,
@@ -1502,6 +1503,7 @@ def _commit_timestamp(wt_path: Path, sha: str) -> float:
     keeps the author date it was first written at, which would place work
     landed in response to a review before the review that asked for it.
     """
+
     try:
         return float(git_client.out("show", "-s", "--format=%ct", sha, cwd=wt_path))
     except ValueError:

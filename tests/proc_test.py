@@ -5,6 +5,7 @@ is the whole point — a wrapper that drops stderr leaves every renderer with
 nothing to print and every classifier reading the wrong stream.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -114,6 +115,29 @@ class TestRun:
 
     def test_feeds_input_to_the_command(self):
         assert proc.run(["cat"], input_text="hello", timeout=timeouts.QUICK).stdout == "hello"
+
+    def test_env_is_handed_to_the_command(self):
+        r = proc.run(["sh", "-c", "echo $MARKER"], env={"MARKER": "set"},
+                     timeout=timeouts.QUICK)
+        assert r.stdout.strip() == "set"
+
+    def test_env_replaces_rather_than_extends(self):
+        """The point of passing one is being able to take a variable away."""
+        os.environ["PROC_TEST_LEAK"] = "inherited"
+        try:
+            r = proc.run(["sh", "-c", "echo ${PROC_TEST_LEAK:-gone}"], env={},
+                         timeout=timeouts.QUICK)
+        finally:
+            del os.environ["PROC_TEST_LEAK"]
+        assert r.stdout.strip() == "gone"
+
+    def test_the_parent_environment_is_inherited_by_default(self):
+        os.environ["PROC_TEST_KEEP"] = "kept"
+        try:
+            r = proc.run(["sh", "-c", "echo ${PROC_TEST_KEEP:-gone}"], timeout=timeouts.QUICK)
+        finally:
+            del os.environ["PROC_TEST_KEEP"]
+        assert r.stdout.strip() == "kept"
 
     def test_a_bound_is_required(self):
         """An omitted bound reads as nobody having thought about one."""

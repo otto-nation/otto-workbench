@@ -1173,8 +1173,12 @@ hook, into a broken tool.
 `UNBOUNDED` is a named `None` rather than an omitted argument so that running
 unbounded stays a decision on the record: `proc.run` requires `timeout=`, and
 `bin/local/validate-timeouts` rejects both a numeric literal and a bare `None` on any
-`timeout=` argument under `ai/`. `ai/claude/mcps/server.py` is exempt — it runs under
-`uv run` with `ai/lib` nowhere on `sys.path`, so it cannot import the table.
+`timeout=` argument under `ai/`. It also rejects a `proc.run` or `subprocess.run` call
+that writes no `timeout=` at all — reading only the bounds that were written down left
+the omission invisible, which is the case the table exists to eliminate, since a call
+with no bound is indistinguishable from nobody having thought about one.
+`ai/claude/mcps/server.py` is exempt — it runs under `uv run` with `ai/lib` nowhere on
+`sys.path`, so it cannot import the table.
 
 Two numbers deliberately stay outside it. `ci-check --wait-timeout` and
 `eval_task.EVAL_CASE_BUDGET` are deadlines for work that could reasonably keep going,
@@ -1221,8 +1225,8 @@ convenience wrapper here that would turn four gate-less push sites into five.
 Not everything has moved across yet. `pr_context`, `pr-rebase`, `mcps/server` and
 `eval_task` still invoke git as literal argv — the first three because a behaviour fix
 is open on them and a refactor underneath it would collide, `eval_task` because its
-calls need `env=`, which `proc.run` does not take. A new call site should still go
-through the client.
+calls need `env=`, which the client does not take — it runs them through `proc.run`,
+which does. A new call site should still go through the client.
 
 One consequence of the move is worth knowing before migrating the rest: the client
 passes the worktree as `cwd` rather than as `git -C`. A root that does not exist used

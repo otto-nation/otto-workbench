@@ -30,6 +30,7 @@ import git_client
 import log
 import pr_context
 import pr_state
+import timeouts
 from pr_state import DescribeSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
@@ -83,7 +84,7 @@ def _fetch_pr_body(repo: str, pr_number: int) -> tuple[str, str] | None:
     r = subprocess.run(
         ["gh", "pr", "view", str(pr_number), "--repo", repo,
          "--json", "title,body"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     if r.returncode != 0:
         log.error(f"gh pr view failed: {r.stderr.strip()}")
@@ -170,7 +171,7 @@ def _usable_revision(text: str) -> bool:
 def _apply_body(repo: str, pr_number: int, body: str) -> bool:
     r = subprocess.run(
         ["gh", "pr", "edit", str(pr_number), "--repo", repo, "--body-file", "-"],
-        input=body, capture_output=True, text=True,
+        input=body, capture_output=True, text=True, timeout=timeouts.NETWORK,
     )
     if r.returncode != 0:
         log.error(f"gh pr edit failed: {r.stderr.strip()}")

@@ -21,6 +21,7 @@ import ai_usage
 import git_client
 import log
 import serde
+import timeouts
 import workbench_paths
 from ai_usage import SessionUsage, parse_session_log
 from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict, now_iso
@@ -753,7 +754,7 @@ def restore_preserved(path: str, prior: str) -> None:
 # ── Subprocess ───────────────────────────────────────────────────────────────
 
 def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL)
     if check and r.returncode != 0:
         return ""
     return r.stdout.strip()

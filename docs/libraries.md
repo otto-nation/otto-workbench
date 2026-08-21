@@ -241,7 +241,7 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 | `resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF` | Merges two directory layers into an associative array: basename -> source_path. User dir wins for same-named files. A .disabled sentinel in user dir suppresses both. RESULT_NAMEREF must be a declared associative array in the caller. |
 | `is_disabled USER_DIR NAME` | returns 0 if a .disabled sentinel exists. |
 | `install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]` | Writes a thin dispatcher script that execs the hook from the current worktree. Unlike symlinks, dispatchers resolve at runtime — so worktrees always run their own branch's version of the hook, not main's. |
-| `apply_config_patch FILE OLD NEW` | Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched or if FILE does not exist. Assumes OLD and NEW do not contain the \| character. Called by component migrations.sh files via run_component_migrations. |
+| `apply_config_patch FILE OLD NEW` | Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched or if FILE does not exist. Assumes OLD and NEW do not contain the \| character. |
 
 Loaded via `ui.sh`.
 

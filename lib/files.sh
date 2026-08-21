@@ -283,7 +283,9 @@ install_hook_dispatcher() {
 # apply_config_patch FILE OLD NEW
 # Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched
 # or if FILE does not exist. Assumes OLD and NEW do not contain the | character.
-# Called by component migrations.sh files via run_component_migrations.
+#
+# Called by the migrations under <component>/migrations/, which
+# run_component_migrations discovers and runs.
 apply_config_patch() {
   local file="$1" old="$2" new="$3"
   [[ -f "$file" ]] || return 0

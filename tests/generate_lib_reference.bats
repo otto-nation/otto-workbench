@@ -73,7 +73,7 @@ EOF
 prompt_commit() { :; }
 EOF
   run _lib_doc_rows "$LIB_DIR/prompts.sh"
-  [[ "$output" == *"SURFACE_NOTE is rendered after the rules."* ]]
+  [ "$output" = "$(printf 'prompt_commit DIFF [RETRY_PREAMBLE] [SURFACE_NOTE]\tthe commit prompt. RETRY_PREAMBLE is prepended to it. SURFACE_NOTE is rendered after the rules.')" ]
 }
 
 @test "doc rows stop the purpose at the rationale below the paragraph" {

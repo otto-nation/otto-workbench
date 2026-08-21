@@ -143,6 +143,7 @@ _lib_doc_rows() {
     /^[[:space:]]*#/ {
       line = $0
       sub(/^[[:space:]]*#[[:space:]]?/, "", line)
+      sub(/[[:space:]]+$/, "", line)
       if (line ~ /^shellcheck/) next
       if (!in_block) { in_block = 1; n = 0 }
       block[++n] = line

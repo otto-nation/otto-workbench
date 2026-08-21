@@ -100,7 +100,7 @@ _wb_config_read() {
 }
 
 # wb_config_get KEY [DEFAULT] — a dotted config key, project scope first. KEY
-# must be a literal path.
+# must be a literal string.
 #
 # The key is interpolated into a yq expression, so the guard below rejects
 # anything else rather than letting a built-up key become an expression.

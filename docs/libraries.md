@@ -197,6 +197,30 @@ No public functions — constants only. Sources `roots.sh`.
 
 Loaded via `ui.sh`.
 
+### conventions.sh
+
+Git convention constants — single source of truth for commit and PR formatting.
+
+Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`,
+`BREAKING_CHANGE_FOOTER`, `BREAKING_CHANGE_FOOTER_ALT`, `NOT_BREAKING_FOOTER`,
+`BREAKING_FOOTER_RE`, `DECLARED_FOOTER_RE`. To add a commit type, append it to
+`COMMIT_TYPES` — no other change is needed.
+
+The footer helpers answer one question — "does this message declare a breaking
+change" — for all three readers that ask it: the pre-push gate
+(`bin/local/check-surface-compat`), the local commit validator
+(`validate_commit_msg`), and the reword path that carries an existing footer
+onto a regenerated message. POSIX only: the file is sourced by `/bin/sh` on the
+go-task path, so no `[[`, no `<<<`, no pattern-replacement expansion.
+
+Sourced directly by `lib/ai/core.sh` and the git generation scripts
+(`git/bin/generate-changelog`, `git/bin/local/generate-git-rules`).
+
+| Function | Purpose |
+|----------|---------|
+| `has_breaking_footer MSG` | true when MSG declares a breaking change in its body. |
+| `declared_footers MSG` | every declaration footer line in MSG, in order. |
+
 ### files.sh
 
 File operations with idempotency: symlinks, copies, directory operations,
@@ -587,30 +611,6 @@ state_file_exists           # returns 0 if state file exists
 Loaded via `ui.sh`.
 
 ## Registry & Config Modules
-
-### conventions.sh
-
-Git convention constants — single source of truth for commit and PR formatting.
-
-Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`,
-`BREAKING_CHANGE_FOOTER`, `BREAKING_CHANGE_FOOTER_ALT`, `NOT_BREAKING_FOOTER`,
-`BREAKING_FOOTER_RE`, `DECLARED_FOOTER_RE`. To add a commit type, append it to
-`COMMIT_TYPES` — no other change is needed.
-
-The footer helpers answer one question — "does this message declare a breaking
-change" — for all three readers that ask it: the pre-push gate
-(`bin/local/check-surface-compat`), the local commit validator
-(`validate_commit_msg`), and the reword path that carries an existing footer
-onto a regenerated message. POSIX only: the file is sourced by `/bin/sh` on the
-go-task path, so no `[[`, no `<<<`, no pattern-replacement expansion.
-
-Sourced directly by `lib/ai/core.sh` and the git generation scripts
-(`git/bin/generate-changelog`, `git/bin/local/generate-git-rules`).
-
-| Function | Purpose |
-|----------|---------|
-| `has_breaking_footer MSG` | true when MSG declares a breaking change in its body. |
-| `declared_footers MSG` | every declaration footer line in MSG, in order. |
 
 ### registries.sh
 

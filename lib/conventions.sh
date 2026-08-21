@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# doc-group: registry
 # Git convention constants — single source of truth for commit and PR formatting.
 #
 # Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`,

@@ -374,20 +374,35 @@ async def watch_for_tool_changes(tools: dict[str, dict], notify, ready: asyncio.
     fingerprint = await asyncio.to_thread(discovery_fingerprint)
     while True:
         await asyncio.sleep(interval)
-        current = await asyncio.to_thread(discovery_fingerprint)
-        if current == fingerprint:
-            continue
-        fingerprint = current
-        rediscovered = await asyncio.to_thread(discover_tools)
-        if rediscovered == tools:
-            logger.debug("Something under the scanned directories changed, the tools did not")
-            continue
-        await asyncio.to_thread(_log_lost_tools, dict(tools), rediscovered)
-        tools.clear()
-        tools.update(rediscovered)
-        logger.info("Tools changed, now offering %d: %s", len(tools), ", ".join(sorted(tools)))
-        await ready.wait()
-        await notify()
+        try:
+            fingerprint = await _poll_once(tools, notify, ready, fingerprint)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # One failed round costs one round. Letting it out instead kills the
+            # task, and nobody is holding it — the client would go on showing
+            # the list it had at startup for the rest of the session, with the
+            # traceback surfacing only if the interpreter got around to it.
+            logger.exception("Re-discovery failed, trying again in %ss", interval)
+
+
+async def _poll_once(tools: dict[str, dict], notify, ready: asyncio.Event,
+                     fingerprint: tuple) -> tuple:
+    """One turn of the poll, returning the fingerprint to compare next time."""
+    current = await asyncio.to_thread(discovery_fingerprint)
+    if current == fingerprint:
+        return current
+    rediscovered = await asyncio.to_thread(discover_tools)
+    if rediscovered == tools:
+        logger.debug("Something under the scanned directories changed, the tools did not")
+        return current
+    await asyncio.to_thread(_log_lost_tools, dict(tools), rediscovered)
+    tools.clear()
+    tools.update(rediscovered)
+    logger.info("Tools changed, now offering %d: %s", len(tools), ", ".join(sorted(tools)))
+    await ready.wait()
+    await notify()
+    return current
 
 
 # ── Argument Mapping ──────────────────────────────────────────────────────

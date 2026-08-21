@@ -599,9 +599,10 @@ class _Recorder:
     watcher polling on a zero interval settles instead of cycling.
     """
 
-    def __init__(self, fingerprints, tool_sets):
+    def __init__(self, fingerprints, tool_sets, failures=0):
         self.fingerprints = list(fingerprints)
         self.tool_sets = list(tool_sets)
+        self.failures = failures
         self.polls = 0
         self.scans = 0
         self.announcements = 0
@@ -615,6 +616,8 @@ class _Recorder:
 
     def discover(self, dirs=None, registry=None):
         self.scans += 1
+        if self.scans <= self.failures:
+            raise OSError("a scan that could not finish")
         return self._next(self.tool_sets)
 
     async def notify(self):
@@ -643,8 +646,8 @@ class TestWatchForToolChanges:
     """The poll that makes a merged tool usable without a client restart."""
 
     def _run(self, monkeypatch, fingerprints, tool_sets, tools,
-             done=None, ready_now=True):
-        recorder = _Recorder(fingerprints, tool_sets)
+             done=None, ready_now=True, failures=0):
+        recorder = _Recorder(fingerprints, tool_sets, failures=failures)
         monkeypatch.setattr(server, "discovery_fingerprint", recorder.fingerprint)
         monkeypatch.setattr(server, "discover_tools", recorder.discover)
         ready = asyncio.Event()
@@ -694,6 +697,23 @@ class TestWatchForToolChanges:
 
         assert recorder.scans == 1
         assert recorder.announcements == 0
+
+    def test_a_failed_round_costs_only_that_round(self, monkeypatch, caplog):
+        """Letting the failure out kills the poll, and nobody is holding the task.
+
+        The client would then show its startup list for the rest of the session
+        with nothing said about why.
+        """
+        tools = {"a": _schema("a")}
+        grown = {"a": _schema("a"), "b": _schema("b")}
+
+        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
+            recorder = self._run(monkeypatch, ["before", "after"], [grown], tools,
+                                 failures=1, done=lambda r: r.announcements)
+
+        assert set(tools) == {"a", "b"}
+        assert recorder.announcements == 1
+        assert "a scan that could not finish" in caplog.text
 
     def test_nothing_is_announced_before_a_client_has_spoken(self, monkeypatch):
         """A notification ahead of the handshake reaches a client not yet listening."""
@@ -965,7 +985,11 @@ class _ServerProcess:
             self._replies.put(line)
 
     def _pump_stderr(self) -> None:
-        self._stderr.append(self._proc.stderr.read())
+        # A line at a time rather than one read() to EOF: the server that goes
+        # quiet without dying is the failure hardest to explain, and its log is
+        # the explanation. Reading to EOF would hand back nothing until it exits.
+        for line in self._proc.stderr:
+            self._stderr.append(line)
 
     @property
     def stderr(self) -> str:
@@ -976,7 +1000,7 @@ class _ServerProcess:
     def status(self) -> str:
         """Why the server can no longer be expected to answer."""
         if self._stdout_reader.is_alive():
-            return f"it went quiet for {TRANSPORT_TIMEOUT}s"
+            return "it is still running and said nothing"
         return f"it exited {self._proc.wait(timeout=READER_JOIN_TIMEOUT)}"
 
     def send(self, messages: list[dict]) -> None:
@@ -1248,12 +1272,16 @@ class TestRediscovery:
 
             announced = proc.await_notification(
                 "notifications/tools/list_changed", REDISCOVERY_TIMEOUT)
-            assert announced is not None, (
-                f"the tool change was never announced — {proc.status}; "
-                f"server stderr:\n{proc.stderr}")
-
             proc.send([_list(SECOND_LIST_ID)])
-            relisted = _tools_of(proc.collect(1), SECOND_LIST_ID)
-            assert "later-tool" in {tool["name"] for tool in relisted}
+            relisted = sorted(tool["name"] for tool in _tools_of(
+                proc.collect(1), SECOND_LIST_ID))
+
+            # The list is asked for either way, so a failure says which half
+            # broke: a tool discovery never picked up, or one it did pick up and
+            # never announced.
+            evidence = (f"{proc.status}; a list asked for afterwards holds "
+                        f"{relisted}; server stderr:\n{proc.stderr}")
+            assert announced is not None, f"the tool change was never announced — {evidence}"
+            assert "later-tool" in relisted, f"the new tool never arrived — {evidence}"
         finally:
             proc.close()

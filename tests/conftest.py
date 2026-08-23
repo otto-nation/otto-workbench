@@ -281,6 +281,52 @@ def worktree(tmp_path) -> Path:
     return init_worktree(tmp_path)
 
 
+GIT_TIMEOUT = 10  # seconds; a hang here should fail the test, not stall the suite
+
+
+def git_in(cwd, *args) -> None:
+    """Run a git command in *cwd*, failing the test if it errors or hangs."""
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True,
+                   timeout=GIT_TIMEOUT)
+
+
+def seed_repo(path) -> Path:
+    """A one-commit repo at *path*, with an identity of its own.
+
+    `init_worktree` above configures none, which is right for a test that never
+    commits. This one does, so it passes `-c user.name`/`-c user.email` rather
+    than writing them into a config the repo-config guard watches.
+    """
+    init_worktree(path)
+    git_in(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty",
+           "--no-verify", "-m", "init")
+    return Path(path)
+
+
+@pytest.fixture
+def container(tmp_path) -> Path:
+    """The bare-repo worktree layout: worktrees as peers of a bare `.git`.
+
+    What `wt-init` produces and what several checks have to reason about, since
+    a `.claude/` written at the container sits above every worktree's walk. The
+    returned directory holds the bare `.git` and a `main` worktree; add more
+    with `add_worktree`.
+    """
+    seed = seed_repo(tmp_path / "seed")
+    root = tmp_path / "container"
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")], check=True,
+                   capture_output=True, timeout=GIT_TIMEOUT)
+    git_in(root / ".git", "worktree", "add", "-q", str(root / "main"), "main")
+    return root
+
+
+def add_worktree(container: Path, branch: str) -> Path:
+    """A second worktree of the container's bare repo, on a new branch."""
+    path = Path(container) / branch
+    git_in(Path(container) / ".git", "worktree", "add", "-q", str(path), "-b", branch)
+    return path
+
+
 def synthetic_review(
     meta: str = "generator: test",
     summary: str = "Synthesized.",

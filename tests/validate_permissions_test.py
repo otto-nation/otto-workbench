@@ -11,11 +11,11 @@ to be tested through would be an unused import standing in for a test seam.
 import importlib.machinery
 import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import git_in, seed_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-permissions"
@@ -277,38 +277,9 @@ def test_the_tracked_rules_are_read_from_the_project_file():
 # ── container discovery ──────────────────────────────────────────────────
 
 
-_GIT_TIMEOUT = 10  # seconds; a hang here should fail the test, not stall the suite
-
-
-def _git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True,
-                   timeout=_GIT_TIMEOUT)
-
-
-def _seed_repo(path):
-    """A one-commit repo, with an identity so the commit does not need the user's."""
-    path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-b", "main", "-q", str(path)], check=True,
-                   capture_output=True, timeout=_GIT_TIMEOUT)
-    _git(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty",
-         "--no-verify", "-m", "init")
-    return path
-
-
-@pytest.fixture
-def container(tmp_path):
-    """The bare-repo worktree layout: worktrees as peers of a bare `.git`."""
-    seed = _seed_repo(tmp_path / "seed")
-    root = tmp_path / "container"
-    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")], check=True,
-                   capture_output=True, timeout=_GIT_TIMEOUT)
-    _git(root / ".git", "worktree", "add", "-q", str(root / "main"), "main")
-    return root
-
-
 def test_a_normal_clone_has_no_container(tmp_path):
     """CI runs here: the shared git dir's parent is the checkout itself."""
-    assert vp.container_dir(str(_seed_repo(tmp_path / "clone"))) is None
+    assert vp.container_dir(str(seed_repo(tmp_path / "clone"))) is None
 
 
 def test_a_directory_outside_git_has_no_container(tmp_path):
@@ -331,8 +302,8 @@ def test_a_worktree_finds_its_container_under_an_inherited_git_dir(container, mo
 
 def test_a_linked_worktree_of_a_normal_clone_has_no_container(tmp_path):
     """The parent there is somebody's checkout, and its .claude/ is tracked."""
-    seed = _seed_repo(tmp_path / "seed")
-    _git(seed, "worktree", "add", "-q", str(tmp_path / "feature"), "-b", "feature")
+    seed = seed_repo(tmp_path / "seed")
+    git_in(seed, "worktree", "add", "-q", str(tmp_path / "feature"), "-b", "feature")
     assert vp.container_dir(str(tmp_path / "feature")) is None
 
 

@@ -115,7 +115,7 @@ Two classes fail, and a grant with no tracked home — a `WebFetch` domain, a
 | Class | Fix |
 |---|---|
 | A local `allow` a tracked `allow` already makes | `bin/local/validate-permissions --fix` deletes it |
-| A local `allow` reaching an `ask`-gated script | a human deletes it, or decides the gate is wrong |
+| A local `allow` reaching an `ask`-gated command | a human deletes it, or decides the gate is wrong |
 
 Both fail rather than warn, because a warning could not reach anyone here:
 `validate-all` captures each validator's output and prints it only when that
@@ -150,8 +150,8 @@ use for.
 
 | Class | Fix |
 |---|---|
-| A local `allow` reaching an `ask`-gated command | a human deletes it |
-| A local `allow` another rule already makes | `--prune` deletes it |
+| A local `allow` reaching an `ask`-gated command | a human deletes it, or decides the gate is wrong |
+| A local `allow` another rule already makes | `otto-workbench permissions sweep --prune` deletes it |
 | A local `allow` naming a directory that is gone | a human deletes it |
 
 Coverage is measured against two files there, not one. Per the paragraphs above

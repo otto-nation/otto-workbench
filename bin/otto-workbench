@@ -10,9 +10,10 @@
 #   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
 #   sync                  Re-apply all workbench configuration to ~/
 #   ai <subcmd>           Manage AI tools — scaffold projects, sync config, manage overrides
+#   discover [regenerate] Show installed components, scripts, and launchd agents
+#   projects <subcmd>     The repos on this machine that use the workbench
 #   permissions <subcmd>  Claude Code permission-grant drift across registered repos
 #   maintenance <subcmd>  Scheduled pull, sync, and cleanup via launchd
-#   state [regenerate]    Show or re-detect installed component state
 #   changelog             Show recent changes from conventional commits
 #
 # What install does:
@@ -1326,20 +1327,20 @@ Commands:
 $(commands_usage)
 
 Run 'otto-workbench install --help' for install options.
-Run 'otto-workbench ai' or 'otto-workbench maintenance' for subcommands.
+Run a command taking <subcmd> with no arguments to list its subcommands.
 EOF
 }
 
 case "${1:-}" in
-  install)    shift; cmd_install "$@" ;;
-  sync)       cmd_sync ;;
-  ai)         shift; cmd_ai "$@" ;;
-  discover)   shift; cmd_discover "$@" ;;
-  projects)   shift; cmd_projects "$@" ;;
+  install)     shift; cmd_install "$@" ;;
+  sync)        cmd_sync ;;
+  ai)          shift; cmd_ai "$@" ;;
+  discover)    shift; cmd_discover "$@" ;;
+  projects)    shift; cmd_projects "$@" ;;
   permissions) shift; cmd_permissions "$@" ;;
   maintenance) shift; cmd_maintenance "$@" ;;
-  changelog)  shift; cmd_changelog "$@" ;;
-  -h|--help) usage; exit 0 ;;
+  changelog)   shift; cmd_changelog "$@" ;;
+  -h|--help)   usage; exit 0 ;;
   *)
     usage >&2
     exit 1

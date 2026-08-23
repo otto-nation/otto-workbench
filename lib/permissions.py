@@ -51,8 +51,10 @@ import dataclasses
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 _LIB_DIR = os.path.dirname(os.path.realpath(__file__))
 if _LIB_DIR not in sys.path:
@@ -97,6 +99,19 @@ class TrackedRules:
 
     allow: list[str] = dataclasses.field(default_factory=list)
     ask: list[str] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass(frozen=True)
+class Settings:
+    """One settings file, read and parsed once.
+
+    Both halves of the read travel together because every check needs both: the
+    rules come from the parsed object and the line number a finding is reported
+    at comes from the raw lines.
+    """
+
+    lines: list[str] = dataclasses.field(default_factory=list)
+    permissions: dict = dataclasses.field(default_factory=dict)
 
 
 # ── Matching ────────────────────────────────────────────────────────────────
@@ -182,8 +197,8 @@ def line_of(lines: list[str], rule: str) -> int:
     return next(found, 0)
 
 
-def rules_of(filepath: str) -> TrackedRules:
-    """The allow and ask bodies a settings file declares, or none if unreadable.
+def read_settings(filepath: str) -> Settings | None:
+    """Read and parse one settings file, or None if it cannot be read.
 
     Unreadable covers both halves of the same answer: a file that is not there
     makes no grants, and one holding invalid JSON makes none this can prove.
@@ -192,11 +207,21 @@ def rules_of(filepath: str) -> TrackedRules:
     checkout with a half-written settings file in it.
     """
     try:
-        with open(filepath) as f:
-            permissions = json.load(f).get('permissions') or {}
+        with open(filepath, encoding='utf-8') as f:
+            text = f.read()
+        permissions = json.loads(text).get('permissions') or {}
     except (OSError, ValueError):
+        return None
+    return Settings(text.splitlines(), permissions)
+
+
+def rules_of(filepath: str) -> TrackedRules:
+    """The allow and ask bodies a settings file declares, or none if unreadable."""
+    settings = read_settings(filepath)
+    if settings is None:
         return TrackedRules()
-    return TrackedRules(bodies(permissions, 'allow'), bodies(permissions, 'ask'))
+    return TrackedRules(bodies(settings.permissions, 'allow'),
+                        bodies(settings.permissions, 'ask'))
 
 
 def tracked_rules(repo_root: str) -> TrackedRules:
@@ -222,8 +247,8 @@ def machine_rules(home: str) -> TrackedRules:
     return rules_of(os.path.join(home, TRACKED_SETTINGS))
 
 
-def drift_in(filepath: str, tracked: TrackedRules) -> Drift:
-    """Return the grants in an untracked settings file that have a tracked home.
+def drift_of(settings: Settings, tracked: TrackedRules) -> Drift:
+    """Return the grants in an already-read settings file with a tracked home.
 
     Only a grant with a tracked home is reportable.  The tracked rules are the
     owner of that list — the directories they grant are read from them, never
@@ -231,24 +256,33 @@ def drift_in(filepath: str, tracked: TrackedRules) -> Drift:
     move to, so it stays silent.  Flagging every local entry would make the
     check noise, which costs more than the entries it would catch.
     """
-    with open(filepath) as f:
-        text = f.read()
-
-    lines = text.splitlines()
-    permissions = json.loads(text).get('permissions') or {}
-
     overrides: list[Grant] = []
     covered: list[Grant] = []
-    for body in dict.fromkeys(bodies(permissions, 'allow')):
+    for body in dict.fromkeys(bodies(settings.permissions, 'allow')):
         rule = f'Bash({body})'
         gated = next((t for t in tracked.ask if re_grants(body, t)), None)
         home = gated or next((t for t in tracked.allow if covered_by(body, t)), None)
         if home is None:
             continue
-        grant = Grant(rule, f'Bash({home})', line_of(lines, rule))
+        grant = Grant(rule, f'Bash({home})', line_of(settings.lines, rule))
         (overrides if gated else covered).append(grant)
 
     return Drift(overrides, covered)
+
+
+def drift_in(filepath: str, tracked: TrackedRules) -> Drift:
+    """Read a settings file and return the grants in it with a tracked home.
+
+    The path-taking half of `drift_of`, for the caller that reads one file and
+    asks one question of it.  It raises what reading the file raises, which is
+    what this repo's own gate wants: a settings file it cannot parse is a
+    failure, not an empty answer.  A caller asking several questions of the same
+    file reads it once with `read_settings` and calls `drift_of` instead.
+    """
+    with open(filepath, encoding='utf-8') as f:
+        text = f.read()
+    settings = Settings(text.splitlines(), json.loads(text).get('permissions') or {})
+    return drift_of(settings, tracked)
 
 
 def prune(filepath: str, grants: list[Grant]) -> None:
@@ -262,30 +296,52 @@ def prune(filepath: str, grants: list[Grant]) -> None:
 
     Everything else in the file survives: other top-level keys, the other
     buckets, and every grant with no tracked home are written back unchanged.
+
+    Raises whatever reading the file raises.  The caller read it once already to
+    find the grants, but Claude Code appends to `settings.local.json` live and
+    the sweep runs across repos somebody is working in, so the content here is
+    not the content that was classified.
     """
-    with open(filepath) as f:
+    with open(filepath, encoding='utf-8') as f:
         settings = json.load(f)
 
     doomed = {grant.rule for grant in grants}
-    permissions = settings['permissions']
+    permissions = settings.get('permissions') or {}
     # An emptied bucket keeps its key rather than being dropped.  `allow` is
     # Claude Code's own and it appends to that list on the next approval, so
     # leaving the key is the smaller edit to a file this script does not own.
-    permissions['allow'] = [rule for rule in permissions['allow'] if rule not in doomed]
+    permissions['allow'] = [rule for rule in permissions.get('allow') or []
+                            if rule not in doomed]
+    settings['permissions'] = permissions
 
+    # Written beside the target and renamed over it, because the sweep prunes
+    # unattended across every registered repo: an interrupted write straight to
+    # `filepath` would leave a settings file that Claude Code can no longer
+    # parse, in a repo the user never asked this to touch.  `os.replace` is
+    # atomic within a filesystem, and the temp file is a sibling to stay on one.
+    #
     # `ensure_ascii=False` keeps a rule containing an em dash or any other
     # non-ASCII character written the way Claude Code writes it.  Escaping it to
     # \uXXXX would rewrite entries this run is not touching, turning a one-line
     # deletion into a diff across the whole file.
-    with open(filepath, 'w') as f:
-        f.write(json.dumps(settings, indent=2, ensure_ascii=False) + '\n')
+    body = json.dumps(settings, indent=2, ensure_ascii=False) + '\n'
+    directory = os.path.dirname(filepath) or '.'
+    handle, temp = tempfile.mkstemp(dir=directory, prefix='.settings-', suffix='.json')
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as f:
+            f.write(body)
+        shutil.copymode(filepath, temp)
+        os.replace(temp, filepath)
+    except OSError:
+        os.unlink(temp)
+        raise
 
 
 # ── Discovery ───────────────────────────────────────────────────────────────
 
 def declares_bash_rules(path: str) -> bool:
     try:
-        with open(path, errors='replace') as f:
+        with open(path, encoding='utf-8', errors='replace') as f:
             return 'Bash(' in f.read()
     except OSError:
         return False

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Report Claude Code permission-grant drift across every registered repo.
 
 Usage: python3 lib/permission_sweep.py [--prune] [--verbose]
@@ -52,7 +51,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import json
 import os
 import re
 import sys
@@ -67,9 +65,10 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
 import workbench_projects  # noqa: E402
 from ansi import BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 from permissions import (  # noqa: E402
-    Drift, Grant, TrackedRules,
+    Drift, Grant, Settings, TrackedRules,
     at_container, bodies, container_dir, discover_container_settings,
-    discover_settings, drift_in, is_local, line_of, machine_rules, prune, tracked_rules,
+    discover_settings, drift_of, is_local, line_of, machine_rules, prune, read_settings,
+    tracked_rules,
 )
 
 # A rule body is a command line, so an absolute path inside it ends at
@@ -179,40 +178,22 @@ def _named_directory(body: str) -> str | None:
     return None
 
 
-def stale_in(filepath: str, skip: set[str]) -> list[Stale]:
+def stale_of(settings: Settings, skip: set[str]) -> list[Stale]:
     """Every allow grant in the file that names a directory that is gone.
 
     `skip` holds the rules already classified as covered or as an override.
     Those have a named home and a named fix; saying they are also stale would
     only make the report harder to act on.
     """
-    try:
-        with open(filepath) as f:
-            text = f.read()
-        permissions = json.loads(text).get('permissions') or {}
-    except (OSError, ValueError):
-        return []
-
-    lines = text.splitlines()
     found: list[Stale] = []
-    for body in dict.fromkeys(bodies(permissions, 'allow')):
+    for body in dict.fromkeys(bodies(settings.permissions, 'allow')):
         rule = f'Bash({body})'
         if rule in skip:
             continue
         missing = _named_directory(body)
         if missing is not None:
-            found.append(Stale(rule, missing, line_of(lines, rule)))
+            found.append(Stale(rule, missing, line_of(settings.lines, rule)))
     return found
-
-
-def _grant_count(filepath: str) -> int:
-    """How many Bash allow rules the file declares, for the per-file total."""
-    try:
-        with open(filepath) as f:
-            permissions = json.load(f).get('permissions') or {}
-    except (OSError, ValueError):
-        return 0
-    return len(bodies(permissions, 'allow'))
 
 
 # ── Sweeping ────────────────────────────────────────────────────────────────
@@ -231,22 +212,33 @@ def local_settings_files(repo_root: str) -> list[str]:
 
 def scan_file(filepath: str, tracked: TrackedRules, machine: TrackedRules,
               do_prune: bool) -> FileReport:
-    """Classify one untracked settings file, pruning the covered class if asked."""
-    grants = _grant_count(filepath)
-    try:
-        drift = _merge(drift_in(filepath, tracked), drift_in(filepath, machine))
-    except (OSError, ValueError):
-        # A settings file that cannot be read is not a finding this owns. The
-        # sweep visits repos nobody asked it to touch, and one half-written
-        # JSON file there must not cost the reader every other repo behind it.
-        return FileReport(filepath, grants)
+    """Classify one untracked settings file, pruning the covered class if asked.
 
-    stale = stale_in(filepath, {g.rule for g in drift.overrides + drift.covered})
+    Read once, asked three questions.  A settings file that cannot be read is
+    not a finding this owns: the sweep visits repos nobody asked it to touch,
+    and one half-written JSON file there must not cost the reader every other
+    repo behind it.
+    """
+    settings = read_settings(filepath)
+    if settings is None:
+        return FileReport(filepath)
+
+    grants = len(bodies(settings.permissions, 'allow'))
+    drift = _merge(drift_of(settings, tracked), drift_of(settings, machine))
+    stale = stale_of(settings, {g.rule for g in drift.overrides + drift.covered})
+    unpruned = FileReport(filepath, grants, drift.overrides, drift.covered, stale)
 
     if not (do_prune and drift.covered):
-        return FileReport(filepath, grants, drift.overrides, drift.covered, stale)
+        return unpruned
 
-    prune(filepath, drift.covered)
+    try:
+        prune(filepath, drift.covered)
+    except (OSError, ValueError):
+        # Claude Code appends to settings.local.json live, so a file classified
+        # a moment ago can be mid-write now. Reporting the grants as covered but
+        # not pruned is the honest answer, and the next run prunes them.
+        return unpruned
+
     return FileReport(filepath, grants, drift.overrides, [], stale, drift.covered)
 
 
@@ -280,6 +272,16 @@ def _tilde(path: str) -> str:
     return '~' + path[len(home):] if path.startswith(home + os.sep) else path
 
 
+def _detailed(entries: list, verbose: bool) -> list:
+    """The entries to print one line each for: all of them, or none.
+
+    Selecting the list is what keeps each caller below flat.  Wrapping the loops
+    in `if verbose:` instead would put them three levels deep, which is one more
+    than `bin/validate-nesting` allows.
+    """
+    return entries if verbose else []
+
+
 def _report_file(report: FileReport, repo_root: str, verbose: bool) -> None:
     where = os.path.relpath(report.path, repo_root)
     if where.startswith(os.pardir):
@@ -288,22 +290,23 @@ def _report_file(report: FileReport, repo_root: str, verbose: bool) -> None:
 
     if report.pruned:
         print(f'      {GREEN}✓{NC} pruned {len(report.pruned)} grant(s) another rule already makes')
-        for grant in report.pruned if verbose else []:
+        for grant in _detailed(report.pruned, verbose):
             print(f'          {DIM}{grant.rule} — covered by {grant.tracked}{NC}')
     if report.overrides:
         print(f'      {RED}✗{NC} {len(report.overrides)} re-grant(s) an ask-gated command '
               f'{DIM}— delete by hand{NC}')
+        # Never abridged: this is the class a person has to read and act on.
         for grant in report.overrides:
             where_line = f'line {grant.line}: ' if grant.line else ''
             print(f'          {where_line}{grant.rule} {DIM}over {grant.tracked}{NC}')
     if report.covered:
         print(f'      {YELLOW}⚠{NC}  {len(report.covered)} grant(s) another rule already makes')
-        for grant in report.covered if verbose else []:
+        for grant in _detailed(report.covered, verbose):
             where_line = f'line {grant.line}: ' if grant.line else ''
             print(f'          {where_line}{grant.rule} {DIM}covered by {grant.tracked}{NC}')
     if report.stale:
         print(f'      {YELLOW}⚠{NC}  {len(report.stale)} grant(s) name a directory that is gone')
-        for entry in report.stale if verbose else []:
+        for entry in _detailed(report.stale, verbose):
             where_line = f'line {entry.line}: ' if entry.line else ''
             print(f'          {where_line}{entry.rule} {DIM}→ {_tilde(entry.missing)}{NC}')
 

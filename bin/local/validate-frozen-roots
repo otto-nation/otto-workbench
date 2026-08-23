@@ -70,9 +70,10 @@ class Violation:
 def _imported_roots(tree) -> set[str]:
     """Root resolvers pulled into this module's namespace by `from` import.
 
-    `import workbench_paths` needs no bookkeeping — those calls carry the module
-    name at the call site. A `from workbench_paths import state_dir` does not,
-    so the local name (or its alias) has to be remembered to recognise the call.
+    A `from workbench_paths import state_dir` leaves nothing at the call site to
+    say where `state_dir` came from, so the local name (or its alias) has to be
+    remembered to recognise the call. `_module_names` does the same job for the
+    other import form.
     """
     names = set()
     for node in ast.walk(tree):
@@ -82,43 +83,67 @@ def _imported_roots(tree) -> set[str]:
     return names
 
 
-def _called_root(func, local_roots: set[str]) -> str | None:
+def _module_names(tree) -> set[str]:
+    """Local names bound to the module by a plain `import`, aliases included.
+
+    `import workbench_paths as wp` writes `wp.state_dir()` at the call site, so
+    matching the module's own name would miss it — and an alias freezes a root
+    exactly as hard as the spelled-out name does.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        names |= {a.asname or a.name for a in node.names if a.name == MODULE}
+    return names
+
+
+def _called_root(func, local_roots: set[str], module_names: set[str]) -> str | None:
     """The root resolver a call's *func* names, as written at the call site."""
     if isinstance(func, ast.Name):
         return func.id if func.id in local_roots else None
     if not isinstance(func, ast.Attribute) or func.attr not in ROOTS:
         return None
     owner = func.value
-    if isinstance(owner, ast.Name) and owner.id == MODULE:
-        return f'{MODULE}.{func.attr}'
+    if isinstance(owner, ast.Name) and owner.id in module_names:
+        return f'{owner.id}.{func.attr}'
     return None
 
 
-def _eager_calls(node):
-    """Every call in *node* that runs when *node* is evaluated.
+def _eager_children(node):
+    """The children of *node* that are evaluated when *node* is.
 
-    A lambda's body is not one of them — `GET = lambda: state_dir()` defers the
-    call exactly as a `def` does — but its parameter defaults are, so those are
-    descended into and the body is not.
+    Only a lambda differs from "all of them": its body runs later, so a
+    `GET = lambda: state_dir()` defers the call exactly as a `def` does, while
+    its parameter defaults still run now. A lambda invoked where it is written
+    defers nothing, so the call it sits under hands its body back too.
     """
+    if isinstance(node, ast.Lambda):
+        return [d for d in node.args.defaults + node.args.kw_defaults if d]
+    children = list(ast.iter_child_nodes(node))
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Lambda):
+        children.append(node.func.body)
+    return children
+
+
+def _eager_calls(node):
+    """Every call in *node* that runs when *node* is evaluated."""
     if isinstance(node, ast.Call):
         yield node
-    if isinstance(node, ast.Lambda):
-        children = [d for d in node.args.defaults + node.args.kw_defaults if d]
-    else:
-        children = ast.iter_child_nodes(node)
-    for child in children:
+    for child in _eager_children(node):
         yield from _eager_calls(child)
 
 
-def _resolver_called(node, local_roots: set[str]) -> str | None:
+def _resolver_called(node, local_roots: set[str], module_names: set[str]) -> str | None:
     """The root resolver *node* calls, or None if it reaches no root.
 
     Walks the whole subtree, so a root buried in an expression —
     `state_dir() / "usage"`, `Path(str(trail_dir()))` — is caught: what freezes
     the value is the call happening at import, not where it sits in the term.
     """
-    named = (_called_root(c.func, local_roots) for c in _eager_calls(node))
+    named = (
+        _called_root(c.func, local_roots, module_names) for c in _eager_calls(node)
+    )
     return next((n for n in named if n is not None), None)
 
 
@@ -159,11 +184,12 @@ def check_file(filepath: str) -> list[Violation]:
               file=sys.stderr)
         return []
     local_roots = _imported_roots(tree)
+    module_names = _module_names(tree)
     found = []
     for node in _module_level_assignments(tree):
         if node.value is None:
             continue
-        root = _resolver_called(node.value, local_roots)
+        root = _resolver_called(node.value, local_roots, module_names)
         if root is None:
             continue
         names = _assigned_names(node) or ['<unnamed>']

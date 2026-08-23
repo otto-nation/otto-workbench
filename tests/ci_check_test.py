@@ -677,10 +677,7 @@ def test_commits_behind_main_returns_zero_on_error():
 
 
 def test_commits_behind_main_returns_zero_on_non_numeric():
-    mock = MagicMock()
-    mock.returncode = 0
-    mock.stdout = "null\n"
-    with patch("ci_check.subprocess.run", return_value=mock):
+    with patch("gh_client.api", return_value=CmdResult(0, "null\n")):
         result = ci_check._commits_behind_main("owner/repo", "feat/auth")
     assert result == 0
 

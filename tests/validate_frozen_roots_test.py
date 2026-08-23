@@ -137,6 +137,26 @@ ROOT = cd() / "vertex-quota"
     assert [v.root for v in violations] == ["cd"]
 
 
+def test_an_aliased_module_is_flagged(tmp_path):
+    """`import ... as wp` renames the module, not what the call freezes."""
+    violations = _check(tmp_path, """
+import workbench_paths as wp
+
+ROOT = wp.state_dir() / "usage"
+""")
+    assert [v.root for v in violations] == ["wp.state_dir"]
+
+
+def test_an_immediately_invoked_lambda_is_flagged(tmp_path):
+    """A lambda called where it is written defers nothing."""
+    violations = _check(tmp_path, """
+import workbench_paths
+
+ROOT = (lambda: workbench_paths.state_dir())()
+""")
+    assert [v.root for v in violations] == ["workbench_paths.state_dir"]
+
+
 def test_a_class_attribute_is_flagged(tmp_path):
     """A class body runs at import exactly as the module body does."""
     violations = _check(tmp_path, """

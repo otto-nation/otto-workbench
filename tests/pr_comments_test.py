@@ -787,7 +787,7 @@ def test_find_marker_comments_keeps_every_round_oldest_first():
         {"id": 11, "body": "unrelated"},
         {"id": 12, "body": f"{MARKER}\nround two"},
     ])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    with _listing(listing):
         history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
     assert [c.comment_id for c in history.comments] == [10, 12]
     assert history.bodies == [f"{MARKER}\nround one", f"{MARKER}\nround two"]
@@ -799,14 +799,14 @@ def test_find_marker_comments_carries_each_comments_url():
     listing = _pages([
         {"id": 10, "body": MARKER, "html_url": "https://gh/pull/1#issuecomment-10"},
     ])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    with _listing(listing):
         history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
     assert history.comments[0].url == "https://gh/pull/1#issuecomment-10"
 
 
 def test_find_marker_comments_reports_an_unread_listing_as_no_history():
     """`found` distinguishes it from a PR that genuinely has no summary yet."""
-    with patch.object(pr_comments, "_paginated_json", return_value=(1, "")):
+    with _listing(None):
         history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
     assert history == pr_comments.MarkerHistory(found=False)
     assert history.newest == pr_comments.MarkerComment(found=False)

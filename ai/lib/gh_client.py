@@ -29,6 +29,8 @@ announced. Whether a *failed* call is worth logging remains the caller's
 decision, as it is there.
 """
 
+# doc-group: platform
+
 from __future__ import annotations
 
 import functools

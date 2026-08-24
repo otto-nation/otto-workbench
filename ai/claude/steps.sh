@@ -203,6 +203,16 @@ step_claude_settings() {
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "$label" || true
 }
 
+# step_claude_container_settings — copies each repo's tracked grants into the
+# bare-repo container above its worktrees.
+# Claude Code roots a project at the directory the session was launched in, and
+# in a bare-repo layout that is the container, which holds no working tree — so
+# a repo's tracked .claude/settings.json never loads and its own scripts prompt.
+# Quiet unless something changed; lib/permission_mirror.py owns the decisions.
+step_claude_container_settings() {
+  python3 "$LIB_SRC_DIR/permission_mirror.py"
+}
+
 # step_claude_skills — symlinks each skill directory into ~/.claude/skills/.
 # Supports user overrides: user/ai/claude/skills/<name>/ replaces the default,
 # user/ai/claude/skills/<name>.disabled suppresses it entirely.
@@ -380,6 +390,7 @@ register_claude_steps() {
   register_step "Install claude-code"     step_install_claude
   register_step "Tool context"            step_generate_tools
   register_step "Claude Code settings"    step_claude_settings
+  register_step "Container grants"        step_claude_container_settings
   register_step "Claude Code guidelines"  step_claude_guidelines
   register_step "Claude Code rules"       step_claude_rules
   register_step "MCP servers"             step_claude_mcps
@@ -474,6 +485,7 @@ sync_claude() {
 
   sync_header "Claude settings"
   step_claude_settings
+  step_claude_container_settings
 
   sync_header "Claude guidelines + rules"
   step_claude_guidelines

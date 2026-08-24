@@ -34,6 +34,12 @@ The second is never pruned.  Removing it restores a deliberate gate on
 credential access, and `ask` outranks `allow` precisely so that a person sees
 the call; deciding to drop that gate is not a script's to make.
 
+A file that carries the gate itself is not in that class.  `ask` outranking
+`allow` is what makes the override a fault in the first place, and a settings
+file declaring both has kept the gate rather than opened it — so the `ask`
+rules read for the second class come from the tracked file *and* from the file
+under inspection.
+
 A grant with no tracked home — a one-afternoon WebFetch domain, a /tmp scratch
 script — is nobody's bug and is left alone by both classes.
 
@@ -70,6 +76,11 @@ RULE_BUCKETS = ('allow', 'deny', 'ask')
 # Claude Code writes an approved one-off into.
 TRACKED_SETTINGS = os.path.join('.claude', 'settings.json')
 LOCAL_SETTINGS = 'settings.local.json'
+
+# The key the workbench stamps on a settings file it generates, recording what
+# it wrote so the next run can tell its own entries from a user's.
+# `ai/claude/sync-settings.jq` writes the same key into ~/.claude/settings.json.
+MANIFEST_KEY = '_workbench'
 
 
 @dataclasses.dataclass(frozen=True)
@@ -160,6 +171,21 @@ def covered_by(local: str, tracked: str) -> bool:
     if not (exact_local or open_ended):
         return False
     return matches(tracked, required_prefix(local))
+
+
+def gate_kept(gated: str, own_ask: list[str]) -> bool:
+    """Does a file's own `ask` bucket still gate everything a tracked ask does?
+
+    `gated` is the tracked ask rule's body and `own_ask` the ask bodies declared
+    by the file being inspected.
+
+    Whichever way Claude Code resolves two settings files, a file that declares
+    the gate beside the grant has not removed it: the ask rule sits at the same
+    precedence as the allow next to it, and `ask` beats `allow` within a set.
+    Coverage has to run the whole way — a local ask naming one invocation does
+    not stand in for a tracked prefix rule gating every command it spells.
+    """
+    return any(covered_by(gated, own) for own in own_ask)
 
 
 def re_grants(local: str, gated: str) -> bool:
@@ -255,12 +281,18 @@ def drift_of(settings: Settings, tracked: TrackedRules) -> Drift:
     repeated here — and a grant naming something outside them has nowhere to
     move to, so it stays silent.  Flagging every local entry would make the
     check noise, which costs more than the entries it would catch.
+
+    A tracked `ask` rule the file re-declares for itself is not an override —
+    see `gate_kept`.  The grant may still be reported as covered, which it is:
+    deleting it leaves both the tracked allow and the gate standing.
     """
+    own_ask = bodies(settings.permissions, 'ask')
     overrides: list[Grant] = []
     covered: list[Grant] = []
     for body in dict.fromkeys(bodies(settings.permissions, 'allow')):
         rule = f'Bash({body})'
-        gated = next((t for t in tracked.ask if re_grants(body, t)), None)
+        gated = next((t for t in tracked.ask
+                      if re_grants(body, t) and not gate_kept(t, own_ask)), None)
         home = gated or next((t for t in tracked.allow if covered_by(body, t)), None)
         if home is None:
             continue
@@ -313,24 +345,34 @@ def prune(filepath: str, grants: list[Grant]) -> None:
     permissions['allow'] = [rule for rule in permissions.get('allow') or []
                             if rule not in doomed]
     settings['permissions'] = permissions
+    write_json(filepath, settings)
 
-    # Written beside the target and renamed over it, because the sweep prunes
-    # unattended across every registered repo: an interrupted write straight to
-    # `filepath` would leave a settings file that Claude Code can no longer
-    # parse, in a repo the user never asked this to touch.  `os.replace` is
-    # atomic within a filesystem, and the temp file is a sibling to stay on one.
-    #
-    # `ensure_ascii=False` keeps a rule containing an em dash or any other
-    # non-ASCII character written the way Claude Code writes it.  Escaping it to
-    # \uXXXX would rewrite entries this run is not touching, turning a one-line
-    # deletion into a diff across the whole file.
+
+def write_json(filepath: str, settings: dict) -> None:
+    """Write a settings object to a path, replacing any file already there.
+
+    Written beside the target and renamed over it, because both callers write
+    unattended across repos the user did not ask them to touch: an interrupted
+    write straight to `filepath` would leave a settings file Claude Code can no
+    longer parse.  `os.replace` is atomic within a filesystem, and the temp file
+    is a sibling to stay on one.
+
+    `ensure_ascii=False` keeps a rule containing an em dash or any other
+    non-ASCII character written the way Claude Code writes it.  Escaping it to
+    \\uXXXX would rewrite entries the run is not touching, turning a one-line
+    deletion into a diff across the whole file.
+
+    An existing file's mode is carried over; a new one keeps the private mode
+    `mkstemp` gives it.
+    """
     body = json.dumps(settings, indent=2, ensure_ascii=False) + '\n'
     directory = os.path.dirname(filepath) or '.'
     handle, temp = tempfile.mkstemp(dir=directory, prefix='.settings-', suffix='.json')
     try:
         with os.fdopen(handle, 'w', encoding='utf-8') as f:
             f.write(body)
-        shutil.copymode(filepath, temp)
+        if os.path.exists(filepath):
+            shutil.copymode(filepath, temp)
         os.replace(temp, filepath)
     except OSError:
         os.unlink(temp)
@@ -438,6 +480,56 @@ def at_container(path: str, container: str | None) -> bool:
     return os.path.dirname(os.path.realpath(path)) == os.path.join(container, '.claude')
 
 
+def manifest(path: str) -> dict | None:
+    """The `_workbench` stamp a generated settings file carries, if it has one.
+
+    None whenever there is nothing this can vouch for: the file is unreadable,
+    holds invalid JSON, is valid JSON that is not an object, or carries no
+    stamp.  Every one of those is a file the workbench did not write in the
+    shape it writes, and telling them apart would give a caller nothing to do
+    differently.
+    """
+    try:
+        with open(path, encoding='utf-8') as f:
+            found = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(found, dict):
+        return None
+    stamp = found.get(MANIFEST_KEY)
+    return stamp if isinstance(stamp, dict) else None
+
+
+def is_managed(path: str) -> bool:
+    """Was this settings file generated by the workbench rather than written by hand?
+
+    A generated file carries the `MANIFEST_KEY` stamp naming what the workbench
+    put in it.  That is what separates the mirror written at a bare-repo
+    container from a grant somebody approved there: the mirror's rules were
+    reviewed in the tracked file they were copied from, so they are not drift.
+
+    Unreadable or invalid answers no, which keeps the file in the class that
+    gets checked — a settings file this cannot parse is not one it can vouch
+    for.
+
+    ceiling: the stamp is a plain key, so a hand-written `_workbench` at a
+    container would escape the drift check.  The file is already writable by
+    whoever runs the session and this is a hygiene gate rather than a security
+    boundary.  Upgrade to comparing the file's rules against the tracked source
+    it names if a hand-written stamp ever turns up in a sweep.
+    """
+    return manifest(path) is not None
+
+
 def is_local(path: str, in_container: bool) -> bool:
-    """Is this an untracked settings file — one whose grants nobody reviews?"""
-    return os.path.basename(path) == LOCAL_SETTINGS or in_container
+    """Is this an untracked settings file — one whose grants nobody reviews?
+
+    `settings.local.json` always is, wherever it sits: Claude Code appends an
+    approved one-off to it and nothing reads the result back.  A settings file
+    at a bare-repo container is too by default, because the container holds no
+    working tree and nothing there can be tracked — unless the workbench
+    generated it, which gives its grants the tracked owner the location cannot.
+    """
+    if os.path.basename(path) == LOCAL_SETTINGS:
+        return True
+    return in_container and not is_managed(path)

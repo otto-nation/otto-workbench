@@ -91,6 +91,11 @@ tools:
         scope: "Machine"
         when: "Clearing the dead-weight class after reading the report"
         detail: "Deletes only grants a tracked or machine-wide rule already makes, which is a no-op on effective permissions. Ask-overrides and stale paths are never touched."
+      - name: "permissions mirror"
+        description: "Copy a repo's tracked grants into the bare-repo container above its worktrees"
+        scope: "Machine"
+        when: "A repo's own scripts keep prompting in a session launched from the container"
+        detail: "Claude Code roots a project at the launch directory, and a bare-repo container holds no working tree, so a repo's tracked .claude/settings.json never loads there. This copies its allow and ask rules into a generated .claude/settings.json at the container, stamped so a later run can replace them without touching grants added by hand. Idempotent, and run by `otto-workbench ai sync`."
 
   - name: mem-analyze
     permission: true

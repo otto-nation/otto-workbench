@@ -247,6 +247,34 @@ def test_the_ask_prefix_reaches_every_command_it_spells(tmp_path):
     ]
 
 
+def _both_buckets(tmp_path, allow, ask):
+    path = tmp_path / perms.LOCAL_SETTINGS
+    path.write_text(json.dumps({"permissions": {"allow": [allow], "ask": [ask]}}, indent=2))
+    return vp.drift_in(str(path), TRACKED)
+
+
+def test_a_file_declaring_the_gate_itself_is_not_an_override(tmp_path):
+    """`ask` outranks `allow`, so a file carrying both has kept the gate."""
+    drift = _both_buckets(tmp_path, "Bash(bin/get-secret --name prod/db)",
+                          "Bash(bin/get-secret:*)")
+    assert drift.overrides == []
+
+
+def test_the_kept_gate_leaves_the_grant_merely_covered(tmp_path):
+    """`Bash(bin/*)` still grants it, so deleting it changes nothing."""
+    drift = _both_buckets(tmp_path, "Bash(bin/get-secret --name prod/db)",
+                          "Bash(bin/get-secret:*)")
+    assert [g.tracked for g in drift.covered] == ["Bash(bin/*)"]
+
+
+def test_a_narrower_local_ask_does_not_excuse_the_override(tmp_path):
+    """It gates one invocation; the tracked prefix gates every command it spells,
+    `bin/get-secrets-report` among them."""
+    drift = _both_buckets(tmp_path, "Bash(bin/get-*)",
+                          "Bash(bin/get-secret --name prod/db)")
+    assert [g.rule for g in drift.overrides] == ["Bash(bin/get-*)"]
+
+
 def test_only_the_allow_bucket_drifts(tmp_path):
     """A local `ask` or `deny` narrows the tracked grant rather than duplicating it."""
     path = _local(tmp_path, COVERED_GRANT, bucket="ask")
@@ -336,6 +364,45 @@ def test_the_container_file_is_local_but_a_worktree_file_is_not(container):
     assert not perms.is_local(str(tracked), perms.at_container(str(tracked), str(container)))
 
 
+def _container_settings(container, name, body):
+    path = container / ".claude" / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(body, indent=2))
+    return path
+
+
+def test_a_generated_container_file_is_not_local(container):
+    """Its rules were reviewed in the tracked file they were copied from."""
+    path = _container_settings(container, "settings.json", {
+        "permissions": {"allow": ["Bash(bin/*)"]},
+        perms.MANIFEST_KEY: {"permissions": {"allow": ["Bash(bin/*)"]}},
+    })
+    assert not perms.is_local(str(path), perms.at_container(str(path), str(container)))
+
+
+def test_a_hand_written_container_file_is_still_local(container):
+    """No stamp, no tracked owner — this is the grant #871 exists to catch."""
+    path = _container_settings(container, "settings.json",
+                               {"permissions": {"allow": ["Bash(bin/x)"]}})
+    assert perms.is_local(str(path), perms.at_container(str(path), str(container)))
+
+
+def test_a_stamp_does_not_excuse_settings_local_json(container):
+    """Claude Code owns that filename and appends to it; the stamp is not its."""
+    path = _container_settings(container, perms.LOCAL_SETTINGS, {
+        "permissions": {"allow": ["Bash(bin/x)"]},
+        perms.MANIFEST_KEY: {"permissions": {"allow": ["Bash(bin/x)"]}},
+    })
+    assert perms.is_local(str(path), perms.at_container(str(path), str(container)))
+
+
+def test_an_unparsable_container_file_stays_in_the_checked_class(container):
+    path = container / ".claude" / "settings.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("{ not json")
+    assert perms.is_local(str(path), perms.at_container(str(path), str(container)))
+
+
 # ── discovery and CLI ────────────────────────────────────────────────────
 
 
@@ -406,7 +473,8 @@ def test_main_reaches_the_container_file_above_the_worktree(container, monkeypat
     """End to end from a worktree: discovery, the drift check, and the advice.
 
     The grant is unreachable by any walk rooted in the worktree, and the fix it
-    is given cannot be to edit a tracked file the container has no room for.
+    is given cannot be to edit a tracked file the container has no room for —
+    the mirror is what carries the tracked rules there.
     """
     worktree = container / "main"
     (worktree / ".claude").mkdir(parents=True)
@@ -422,7 +490,30 @@ def test_main_reaches_the_container_file_above_the_worktree(container, monkeypat
 
     err = capsys.readouterr().err
     assert COVERED_GRANT in err
-    assert "run the session from a worktree" in err
+    assert vp.MIRROR_COMMAND in err
+
+
+def test_main_passes_a_generated_container_file(container, monkeypatch, capsys):
+    """The gate has to accept the mirror, or pre-push fails on the fix itself.
+
+    Every rule in it duplicates the tracked file — which is the point — so
+    without the stamp each one reports as drift and the validator exits 1.
+    """
+    worktree = container / "main"
+    (worktree / ".claude").mkdir(parents=True)
+    (worktree / vp.TRACKED_SETTINGS).write_text(json.dumps({"permissions": {
+        "allow": ["Bash(bin/*)"], "ask": ["Bash(bin/get-secret:*)"],
+    }}))
+    _container_settings(container, "settings.json", {
+        "permissions": {"allow": ["Bash(bin/*)"], "ask": ["Bash(bin/get-secret:*)"]},
+        perms.MANIFEST_KEY: {"permissions": {"allow": ["Bash(bin/*)"]}},
+    })
+
+    monkeypatch.setattr(vp, "_WORKBENCH_DIR", str(worktree))
+    monkeypatch.setattr(sys, "argv", ["validate-permissions"])
+    vp.main()
+
+    assert "every permission rule is live" in capsys.readouterr().out
 
 
 # ── --fix ────────────────────────────────────────────────────────────────

@@ -49,6 +49,12 @@ When no files are given, discovers every settings JSON in the repo that
 declares Bash rules, plus the untracked ones in the bare-repo container above
 a linked worktree, which no walk rooted in the worktree can reach.
 
+The container's own `settings.json` is the exception: `otto-workbench
+permissions mirror` generates it from the tracked file, so its rules were
+reviewed where the tracked file was and it is checked for dead rules but not
+for drift.  A grant reaching the container despite the mirror is drift, which
+is what the finding at the end of this file says to regenerate.
+
 Exit code: 0 if every rule is live and every grant is in the right file,
 1 otherwise.
 """
@@ -71,6 +77,10 @@ from permissions import (  # noqa: E402
 # Named in the failure message: validate-all does not pass --fix, so the human
 # reading a failed pre-push has to be told exactly what to type.
 FIX_COMMAND = 'bin/local/validate-permissions --fix'
+
+# Named alongside it when the finding is at the container: pruning the grant
+# only helps until the next prompt, and the mirror is what stops it recurring.
+MIRROR_COMMAND = 'otto-workbench permissions mirror'
 
 TILDE = 'the Bash matcher never expands ~, so only a literally tilde-spelled command matches'
 LITERAL_STAR = ':* is prefix matching, so the * inside the prefix never globs'
@@ -179,10 +189,11 @@ def _report_covered(relpath: str, grants: list[Grant], in_container: bool) -> No
     print(f'        {DIM}run `{FIX_COMMAND}` to delete them{NC}', file=sys.stderr)
     if in_container:
         # The container holds no working tree, so there is no tracked file
-        # there to move a grant into — the cure is to run the session where the
-        # tracked file applies, not to edit a file that cannot exist.
-        print(f'        {DIM}the container keeps no tracked file, so run the session from a '
-              f'worktree, where {TRACKED_SETTINGS} applies{NC}', file=sys.stderr)
+        # there to move a grant into. The mirror is what carries the tracked
+        # rules up to it, so a grant landing here anyway means the mirror is
+        # missing or stale — regenerating it is the cure, not an edit by hand.
+        print(f'        {DIM}the container keeps no tracked file — run `{MIRROR_COMMAND}` so '
+              f'{TRACKED_SETTINGS} reaches sessions rooted there{NC}', file=sys.stderr)
 
 
 def _report_pruned(relpath: str, grants: list[Grant], quiet: bool) -> None:

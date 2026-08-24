@@ -39,6 +39,7 @@ import pr_state
 import proc
 import run_lock
 import publishing
+import push
 from pr_comments_state import ThreadRecord, ThreadState
 from pr_fix import CommitStatus
 import review_common
@@ -927,36 +928,67 @@ class CommitPushResult:
 
 
 # A real commit the remote does not have. `push_failed` is git refusing;
-# `push_held` is us refusing, because the gate was shut when the pass ran.
-# Either way the SHA is local-only, so nothing may cite it outward yet — the
-# commit link would 404 for the reviewer reading it.
-_UNPUSHED_STATUSES = frozenset({CommitStatus.PUSH_FAILED, CommitStatus.PUSH_HELD})
+# `push_held` is us refusing, because the gate was shut when the pass ran;
+# `push_lost` is git reporting a push the remote did not keep. All three leave
+# the SHA local-only, so nothing may cite it outward yet — the commit link would
+# 404 for the reviewer reading it.
+_UNPUSHED_STATUSES = frozenset({
+    CommitStatus.PUSH_FAILED, CommitStatus.PUSH_HELD, CommitStatus.PUSH_LOST,
+})
+
+_PUSH_STATUS = {
+    push.PushStatus.PUSHED: CommitStatus.PUSHED,
+    push.PushStatus.HELD: CommitStatus.PUSH_HELD,
+    push.PushStatus.REFUSED: CommitStatus.PUSH_FAILED,
+    push.PushStatus.LOST: CommitStatus.PUSH_LOST,
+    # An unverified push has almost certainly landed — the remote could not be
+    # asked, not answered no. Recording it as pushed would be a claim the run
+    # cannot make, and everything downstream cites the SHA outward.
+    push.PushStatus.UNVERIFIED: CommitStatus.PUSH_LOST,
+}
 
 
 def _commit_unpushed(status: str) -> bool:
     return status in _UNPUSHED_STATUSES
 
 
-def _hold_push(wt_path: Path, sha: str | None) -> CommitPushResult:
-    """Keep a commit local because the gate is shut."""
-    publishing.draft("push", f"git -C '{wt_path}' push")
-    return CommitPushResult(sha, CommitStatus.PUSH_HELD, "")
+def _push_commit(wt_path: Path, trail: Trail | None) -> push.PushResult:
+    """Push through the owner, consulting the gate, and say what happened.
+
+    The owner reads full HEAD for itself rather than taking the short SHA the
+    pass carries: `ls-remote` answers in full SHAs, and comparing one against an
+    abbreviation reports every push as lost.
+    """
+    result = push.push(wt_path, gated=True, trail=trail)
+    push.report(result, wt_path)
+    return result
+
+
+def _pushed(sha: str | None, result: push.PushResult) -> CommitPushResult:
+    """What the pass records for a push the owner has already reported."""
+    return CommitPushResult(
+        sha, _PUSH_STATUS[result.status], "" if result.ok else result.output.strip(),
+    )
 
 
 def _report_diverged_push(
-    wt_path: Path, sha: str | None, err: str, trail: Trail | None,
+    wt_path: Path, result: push.PushResult, trail: Trail | None,
 ) -> None:
-    """Say a push was rejected, the same way from every path that pushes.
+    """Add the force-push advice when a refusal was a divergence.
 
     The recovery is a force-push, which this deliberately prints rather than
-    runs — a force-push is the user's call, not the pass's.
+    runs — a force-push is the user's call, not the pass's. The owner has
+    already said the push was refused, so this only adds what to do about it.
     """
+    if result.refusal is not push.Refusal.DIVERGED:
+        return
     log.error(
         f"push failed — branch has diverged. Run:\n"
         f"  git -C '{wt_path}' push --force-with-lease"
     )
     if trail:
-        trail.error("push", "push failed", data={"sha": sha, "error": err[:500]})
+        trail.error("push", "push failed",
+                    data={"sha": result.sha, "error": result.output[:500]})
 
 
 def _commit_regen_and_retry_push(
@@ -993,11 +1025,12 @@ def _commit_regen_and_retry_push(
         return None
 
     sha = _get_head_sha(wt_path)
-    if not git_client.ok("push", cwd=wt_path):
+    result = _push_commit(wt_path, trail)
+    if not result.ok:
         return None
 
     log.info("Pushed fixes (with regenerated files)")
-    return CommitPushResult(sha, CommitStatus.PUSHED, "")
+    return _pushed(sha, result)
 
 
 def _commit_and_push(
@@ -1029,24 +1062,22 @@ def _commit_and_push(
 
     # The commit is ungated on purpose: it is local, undoable, and it is what
     # makes the work reviewable at all. The push is the outward act, so it waits
-    # for the same permission every reply and comment waits for.
-    if not publishing.enabled():
-        return _hold_push(wt_path, sha)
-
-    push = git_client.run("push", cwd=wt_path)
-    if push.ok:
-        log.info("Pushed fixes")
-        return CommitPushResult(sha, CommitStatus.PUSHED, "")
+    # for the same permission every reply and comment waits for — which is what
+    # the owner's `gated` argument asks.
+    result = _push_commit(wt_path, trail)
+    if result.status is not push.PushStatus.REFUSED:
+        return _pushed(sha, result)
 
     # Pre-push hooks may regenerate files (e.g. proto → .pb.go, OpenAPI specs),
     # leaving uncommitted changes that cause the push to fail. Commit and retry.
+    # Only a refusal can be that: a push the remote dropped left nothing behind
+    # to commit, and the owner has already retried it once.
     retried = _commit_regen_and_retry_push(wt_path, trail)
     if retried:
         return retried
 
-    err = push.stderr.strip()
-    _report_diverged_push(wt_path, sha, err, trail)
-    return CommitPushResult(sha, CommitStatus.PUSH_FAILED, err)
+    _report_diverged_push(wt_path, result, trail)
+    return _pushed(sha, result)
 
 
 def _commit_fixes(
@@ -2266,14 +2297,12 @@ def _push_held_commit(
         fix.commit_status = CommitStatus.PUSHED
         return
 
-    if not publishing.enabled():
-        publishing.draft("push", f"git -C '{wt_path}' push")
+    result = _push_commit(wt_path, trail)
+    if result.status is push.PushStatus.HELD:
         return
-
-    push = git_client.run("push", cwd=wt_path)
-    if not push.ok:
-        _report_diverged_push(wt_path, fix.commit_sha, push.stderr.strip(), trail)
-        fix.commit_status = CommitStatus.PUSH_FAILED
+    if not result.ok:
+        _report_diverged_push(wt_path, result, trail)
+        fix.commit_status = _PUSH_STATUS[result.status]
         return
 
     log.info(f"Pushed held fixes ({fix.commit_sha})")
@@ -2571,7 +2600,7 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
         return "Fix applied (commit failed — pre-commit hook?)"
     if cp.status == CommitStatus.RECONCILED:
         return _RECONCILED_STATUS_TEXT
-    # Both callers refuse to render an unpushed commit, so these two are not
+    # Both callers refuse to render an unpushed commit, so these three are not
     # reachable today. They are spelled out anyway: the fallback below reads as
     # "not done yet", which would be a false claim about a commit that exists
     # and is only waiting to be published.
@@ -2579,6 +2608,8 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
         return "Fix committed locally (push held pending discussion)"
     if cp.status == CommitStatus.PUSH_FAILED:
         return "Fix committed locally (push failed)"
+    if cp.status == CommitStatus.PUSH_LOST:
+        return "Fix committed locally (push reported success, remote does not have it)"
     return "Fix pending"
 
 
@@ -4072,8 +4103,23 @@ def _get_head_sha(wt_path: Path) -> str:
 
 
 def _is_pushed(wt_path: Path, sha: str) -> bool:
-    """Check if a commit has been pushed to the remote tracking branch."""
-    return bool(git_client.out("branch", "-r", "--contains", sha, cwd=wt_path))
+    """Whether the remote holds *sha*, asked of the remote itself.
+
+    `git branch -r --contains` reads the local remote-tracking ref, which a push
+    git reported and the remote dropped leaves pointing at the commit that never
+    arrived — so it answers yes for exactly the failure this guards against, and
+    the reply it unblocks cites a commit link that 404s.
+
+    Ancestry, not equality: a commit from an earlier round is on the remote once
+    a later one carrying it is, so the question is whether the remote's tip
+    descends from *sha*. A remote that cannot be reached, or whose tip is a
+    commit this worktree does not have, answers no — every caller reads that as
+    "still pending", which defers a reply rather than publishing a dead link.
+    """
+    tip = push.remote_head(wt_path, git_client.current_branch(cwd=wt_path))
+    if not tip:
+        return False
+    return git_client.ok("merge-base", "--is-ancestor", sha, tip, cwd=wt_path)
 
 
 def _rewritten_away(wt_path: Path, sha: str) -> bool:
@@ -4206,20 +4252,15 @@ def _recover_agent_commit(
     if _is_pushed(wt_path, head_after):
         return CommitPushResult(head_after, CommitStatus.PUSHED, "")
 
-    if not publishing.enabled():
-        return _hold_push(wt_path, head_after)
-
-    push = git_client.run("push", cwd=wt_path)
-    if push.ok:
+    result = _push_commit(wt_path, trail)
+    if result.ok:
         log.info("Pushed agent-committed fixes")
-        return CommitPushResult(head_after, CommitStatus.PUSHED, "")
-
-    err = push.stderr.strip()
-    log.error("push failed after agent commit")
-    if trail:
-        trail.error("push", "push failed after agent commit",
-                    data={"sha": head_after, "error": err[:500]})
-    return CommitPushResult(head_after, CommitStatus.PUSH_FAILED, err)
+    elif result.status is not push.PushStatus.HELD:
+        log.error("push failed after agent commit")
+        if trail:
+            trail.error("push", "push failed after agent commit",
+                        data={"sha": head_after, "error": result.output[:500]})
+    return _pushed(head_after, result)
 
 
 def _build_thread_outcomes(

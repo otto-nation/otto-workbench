@@ -269,13 +269,19 @@ def push(
     is passed through to `git push` — `--force-with-lease` for a rebase, or an
     explicit remote and refspec for a first push. `gated` consults the
     publishing gate and is required of every caller.
-    """
-    sha = sha or git_client.head_sha(cwd=wt_path)
-    branch = branch or git_client.current_branch(cwd=wt_path)
 
+    The gate is asked before the two local reads, not after: it answers whether
+    anything may happen at all, and a held run should leave the repository
+    untouched rather than shell out twice to describe a push it will not make.
+    That is why a held result carries only what the caller passed in — no caller
+    reads a SHA off one, and the gate's own draft names the command instead.
+    """
     if gated and not publishing.enabled():
         publishing.draft("push", f"git -C '{wt_path}' push")
         return PushResult(PushStatus.HELD, sha, branch)
+
+    sha = sha or git_client.head_sha(cwd=wt_path)
+    branch = branch or git_client.current_branch(cwd=wt_path)
 
     r = git_client.run("push", *args, cwd=wt_path)
     if not r.ok:

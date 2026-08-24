@@ -40,6 +40,11 @@ done
 """
 
 
+def _never_runs(*cmd, **kwargs):
+    """A `git_client.run` that fails the test if anything reaches it."""
+    raise AssertionError(f"git ran when it should not have: {cmd}")
+
+
 def _commit(wt: Path, message: str) -> str:
     """An empty commit in *wt*, returning its SHA."""
     result = git_client.run(
@@ -155,8 +160,23 @@ def test_gated_push_is_held_and_attempts_nothing(pushable):
     sha = _commit(wt, "work")
     result = push.push(wt, gated=True)
     assert result.status is push.PushStatus.HELD
-    assert result.sha == sha
     assert push.remote_head(wt, "main") != sha
+
+
+def test_a_held_push_reads_nothing_from_the_repository(pushable, monkeypatch):
+    """The gate is asked first, so a held run does not shell out at all.
+
+    It carries only what the caller passed in — callers that report a SHA for a
+    held commit have one of their own, and the draft names the command rather
+    than the commit.
+    """
+    wt, _ = pushable
+    _commit(wt, "work")
+    monkeypatch.setattr(push.git_client, "run", _never_runs)
+    result = push.push(wt, gated=True)
+    assert result.status is push.PushStatus.HELD
+    assert result.sha == ""
+    assert push.push(wt, gated=True, sha="abc1234").sha == "abc1234"
 
 
 # ── the refusal classifier ──────────────────────────────────────────────────

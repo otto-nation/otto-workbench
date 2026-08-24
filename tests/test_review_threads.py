@@ -669,12 +669,34 @@ def _git_ran(returncode, stdout="", stderr=""):
     return proc.CmdResult(returncode, stdout, stderr)
 
 
+def _answering_the_owner(mock_run, sha="abc1234"):
+    """Wrap a `git_client.run` stub so the push owner's verification is answered.
+
+    Every push here goes through `push.push`, which finishes by asking the
+    remote what it holds. A stub's catch-all answers that with the empty string
+    — a branch the remote does not have — so every push would read as lost
+    whatever the test was setting up, and the owner would retry it. Passing the
+    SHA the stub commits makes the push land; passing a different one is how a
+    test asks for the lost path.
+    """
+    def run(*cmd, **kwargs):
+        if cmd[:1] == ("ls-remote",):
+            return _git_ran(0, stdout=f"{sha}\trefs/heads/topic\n" if sha else "")
+        return mock_run(*cmd, **kwargs)
+    return run
+
+
 class TestCommitAndPush:
     """Test _commit_and_push returns correct CommitPushResult for each failure mode."""
 
-    def _commit(self, rt, mock_run, dirty=True):
-        """Run _commit_and_push with a stubbed git and a known worktree state."""
-        with patch.object(rt.git_client, "run", side_effect=mock_run), \
+    def _commit(self, rt, mock_run, dirty=True, remote_sha="abc1234"):
+        """Run _commit_and_push with a stubbed git and a known worktree state.
+
+        `remote_sha` is what the remote answers the push owner with. It defaults
+        to the SHA these stubs commit, so a push reads as landed.
+        """
+        with patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(mock_run, remote_sha)), \
                 patch.object(rt.review_common, "has_uncommitted_changes",
                              return_value=dirty):
             return rt._commit_and_push(Path("/fake"), 1, 0)
@@ -747,6 +769,27 @@ class TestCommitAndPush:
         assert result.sha == "abc1234"
         assert result.error == ""
 
+    def test_a_push_the_remote_never_took_is_push_lost(self, rt, publishing_on):
+        """git said the push succeeded and the remote does not hold the commit.
+
+        Recorded apart from `push_failed`: nothing failed as far as the terminal
+        went, and a reply citing this SHA would point at a commit no one can
+        open. The owner retries once before settling on this.
+        """
+        pushes = []
+
+        def mock_run(*cmd, **kwargs):
+            if "rev-parse" in cmd:
+                return _git_ran(0, stdout="abc1234\n")
+            if "push" in cmd:
+                pushes.append(cmd)
+            return _git_ran(0)
+
+        result = self._commit(rt, mock_run, remote_sha="0000000")
+        assert result.status == "push_lost"
+        assert result.sha == "abc1234"
+        assert len(pushes) == 2
+
     def test_draft_commits_but_holds_the_push(self, rt):
         """The commit is local and undoable; the push is the outward act."""
         calls = []
@@ -779,16 +822,31 @@ class TestGetHeadSha:
 
 
 class TestIsPushed:
-    def test_sha_on_remote(self, rt):
+    """The question is put to the remote, and it is about ancestry."""
+
+    @staticmethod
+    def _ask(rt, tip="def5678", ancestor=True):
+        def mock_run(*cmd, **kwargs):
+            if cmd[:1] == ("merge-base",):
+                return _git_ran(0 if ancestor else 1)
+            return _git_ran(0, stdout="topic\n")
+
         with patch.object(rt.git_client, "run",
-                          return_value=_git_ran(0, stdout="  origin/main\n")):
-            assert rt._is_pushed(Path("/fake"), "abc1234") is True
+                          side_effect=_answering_the_owner(mock_run, tip)):
+            return rt._is_pushed(Path("/fake"), "abc1234")
 
-    def test_sha_not_on_remote(self, rt):
-        with patch.object(rt.git_client, "run", return_value=_git_ran(0, stdout="")):
-            assert rt._is_pushed(Path("/fake"), "abc1234") is False
+    def test_the_remote_tip_descends_from_the_sha(self, rt):
+        """A later round's commit carries the earlier ones out with it."""
+        assert self._ask(rt) is True
 
-    def test_command_failure_returns_false(self, rt):
+    def test_a_tip_that_does_not_contain_it(self, rt):
+        assert self._ask(rt, ancestor=False) is False
+
+    def test_a_branch_the_remote_does_not_have(self, rt):
+        assert self._ask(rt, tip="") is False
+
+    def test_an_unreachable_remote_reads_as_pending(self, rt):
+        """Deferring a reply is the safe answer; publishing a dead link is not."""
         with patch.object(rt.git_client, "run", return_value=_git_ran(1)):
             assert rt._is_pushed(Path("/fake"), "abc1234") is False
 
@@ -837,7 +895,10 @@ class TestRecoverAgentCommit:
         """head changed, not yet on remote, push succeeds → pushed."""
         with patch.object(rt, "_get_head_sha", return_value="def5678"), \
              patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.git_client, "run", return_value=_git_ran(0)):
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="def5678\n"),
+                              "def5678")):
             result = rt._recover_agent_commit(Path("/fake"), "abc1234")
         assert result.status == "pushed"
         assert result.sha == "def5678"
@@ -1855,10 +1916,23 @@ class TestPushHeldCommit:
     def test_pushes_and_marks_it_pushed(self, rt, publishing_on):
         state = self._state()
         with patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.git_client, "run", return_value=_git_ran(0)) as run:
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))) as run:
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "pushed"
-        assert run.call_args[0] == ("push",)
+        assert ("push",) in [call.args for call in run.call_args_list]
+
+    def test_a_push_the_remote_never_took_is_push_lost(self, rt, publishing_on):
+        """The held commit was released and still did not arrive."""
+        state = self._state()
+        with patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"),
+                              "0000000")):
+            rt._push_held_commit(state, Path("/fake"))
+        assert state.fix.commit_status == "push_lost"
 
     def test_a_draft_finish_still_holds_it(self, rt):
         """--finish without --post is not the human saying go."""

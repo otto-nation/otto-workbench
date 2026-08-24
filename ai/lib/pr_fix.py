@@ -48,6 +48,11 @@ class CommitStatus(StrEnum):
     PUSH_FAILED = "push_failed"
     # Committed locally; the push was withheld.
     PUSH_HELD = "push_held"
+    # Committed locally; git reported the push and the remote does not hold it.
+    # Kept apart from `push_failed` because the operator sees a clean push and
+    # would otherwise be told a push failed that, as far as their terminal went,
+    # did not.
+    PUSH_LOST = "push_lost"
     # Render-time only, never persisted: HEAD has moved past the snapshot, but
     # the commit that moved it is not one a reviewer can open, so the summary
     # says the work was handled without naming a SHA for it.

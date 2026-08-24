@@ -81,6 +81,12 @@ _default_branch() {
 # [branch] onto one whitespace-separated line: a path containing a space is
 # truncated by a naive split, and one containing a bracket reads as a branch
 # tag. A registered worktree whose directory is gone is skipped, not returned.
+#
+# BRANCH is matched against the "branch refs/heads/$branch" line with `case`,
+# a glob match rather than a literal comparison. This is safe only because git
+# ref names cannot contain glob metacharacters (`*`, `?`, `[`) — a caller that
+# ever sources BRANCH from something other than a git ref would need to quote
+# or escape it first.
 _worktree_on() {
   local branch="$1" line path=""
   while IFS= read -r line; do

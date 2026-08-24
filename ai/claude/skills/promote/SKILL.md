@@ -140,8 +140,9 @@ The memory is stale, redundant, or already covered by an existing artifact.
 **Goal:** Write a promotion report with concrete, actionable proposals.
 
 Write `PROMOTE.md` to the workbench memory directory (`ai/memory/PROMOTE.md` relative
-to the workbench root). Determine the workbench path from the `OTTO_WORKBENCH`
-environment variable, or default to `~/git/personal/otto-nation/otto-workbench/main`.
+to the workbench root). Determine the workbench path from the `WORKBENCH_DIR`
+environment variable if a caller has set one, or default to
+`~/git/personal/otto-nation/otto-workbench/main`.
 
 The trailing `main` is the worktree, not the directory above it: that one is the
 bare-repo container, where a report is tracked by nothing and reached by no review.

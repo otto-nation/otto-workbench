@@ -27,17 +27,12 @@ git rev-parse --show-toplevel
 resolve-worktree
 ```
 
-`architecture.md` is a tracked project file, so it belongs in a working tree. Take the
-first of these that prints a path: `git rev-parse` when the session is already in a
-worktree, `resolve-worktree` when it is rooted at a bare-repo container, which has no
-working tree of its own.
-
-`resolve-worktree` exiting 2 means this is not a container either — with no repo root
-printed above it, there is no project here and nothing to refresh. Any other non-zero
-exit means the container names no worktree to write into: say so and stop. Never fall
-back to the current directory. A container holds no work tree, so an `architecture.md`
-written there is covered by no `.gitignore` rule, reaches no review, and is seen by no
-CI check — the only way it is ever found is by hand.
+`architecture.md` is a tracked project file, so it belongs in a working tree. See
+`ai/claude/skills/analyze-project/SKILL.md` step 1a for the full contract behind these
+two commands — which one wins, what each `resolve-worktree` exit code means, and why
+this never falls back to the current directory. A container holds no work tree, so an
+`architecture.md` written there is covered by no `.gitignore` rule, reaches no review,
+and is seen by no CI check — the only way it is ever found is by hand.
 
 `cd` to the resolved path and run every step below from there.
 

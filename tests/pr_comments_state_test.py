@@ -120,7 +120,8 @@ def _write(path: Path, threads: dict) -> None:
     pytest.param({"state": "half-fixed"}, id="unknown-lifecycle-state"),
     pytest.param("addressed", id="entry-is-not-an-object"),
     pytest.param([], id="entry-is-a-list"),
-], )
+    pytest.param(None, id="entry-is-null"),
+])
 def test_one_unreadable_thread_does_not_discard_the_others(tmp_path, corrupt):
     """The reason this file does not use `serde.load_file`'s own recovery.
     Discarding the whole ledger would re-triage every thread on the PR to
@@ -134,14 +135,21 @@ def test_one_unreadable_thread_does_not_discard_the_others(tmp_path, corrupt):
     assert loaded.threads["T_bad"] == ThreadRecord()
 
 
-def test_an_unreadable_thread_says_so(tmp_path, capsys):
+@pytest.mark.parametrize("corrupt,expected", [
+    pytest.param({"state": "half-fixed"}, "unreadable thread entry", id="unreadable"),
+    pytest.param(None, "thread entry is null", id="null"),
+])
+def test_an_unreadable_thread_says_so(tmp_path, capsys, corrupt, expected):
     """A run that quietly re-asks about a thread the operator already decided
-    is indistinguishable from one that had nothing cached."""
+    is indistinguishable from one that had nothing cached.
+
+    A null needs its own line because `serde.from_dict` reads one as "every
+    field omitted" and would rebuild the blank record without a word."""
     path = tmp_path / "state.json"
-    _write(path, {"T_bad": {"state": "half-fixed"}})
+    _write(path, {"T_bad": corrupt})
 
     load_state(path)
-    assert "unreadable thread entry" in capsys.readouterr().err
+    assert expected in capsys.readouterr().err
 
 
 def test_a_thread_missing_optional_fields_keeps_what_it_has(tmp_path):

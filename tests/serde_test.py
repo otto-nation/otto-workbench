@@ -45,7 +45,12 @@ class Container:
 
 @dataclass
 class Tagged:
-    """A type stored in more than one shape, which owns its own hydration."""
+    """A type stored in more than one shape, which owns its own hydration.
+
+    The `raw is None` arm is the shape every hook needs: `serde` hands a null
+    straight through, so a hook that fell to `str(raw)` would answer
+    `Tagged(value="None")` — a wrong value, invented silently.
+    """
 
     value: str = ""
 
@@ -53,6 +58,8 @@ class Tagged:
     def _from_raw(cls, raw):
         if isinstance(raw, cls):
             return raw
+        if raw is None:
+            return cls()
         if isinstance(raw, dict):
             return from_dict(cls, raw)
         return cls(value=str(raw))
@@ -63,6 +70,11 @@ class Keyed:
     counts: dict[int, str] = field(default_factory=dict)
     tagged: Tagged = field(default_factory=Tagged)
     tags: dict[int, Tagged] = field(default_factory=dict)
+
+
+@dataclass
+class TaggedList:
+    items: list[Tagged] = field(default_factory=list)
 
 
 @dataclass
@@ -228,20 +240,25 @@ class TestFromRawHook:
         obj = from_dict(Keyed, {"tags": {"1": "legacy", "2": {"value": "typed"}}})
         assert obj.tags == {1: Tagged(value="legacy"), 2: Tagged(value="typed")}
 
-    def test_a_null_direct_field_yields_the_field_default_not_the_hook(self):
-        """`_from_raw` has no null form of its own: `Tagged._from_raw(None)`
-        would happily coerce it to `Tagged(value="None")` via `str(raw)`, a
-        wrong value with no warning. `None` must be routed to the field
-        default before it reaches the hook, exactly like a missing key."""
+    def test_a_null_direct_field_reaches_the_hook(self):
+        """The hook owns every raw form of its type, a null included. Routing
+        that one to the field default instead would read the same here and
+        differently under a container — see the test below, which is the case
+        that matters."""
         obj = from_dict(Keyed, {"tagged": None})
         assert obj.tagged == Tagged()
 
-    def test_a_null_under_a_dict_hint_yields_the_field_default_not_the_hook(self):
-        """Same guard, reached through `dict[int, Tagged]` instead of a bare
-        field — a null value must drop the whole field to its default rather
-        than calling the hook on `None`."""
-        obj = from_dict(Keyed, {"tags": {"1": None}})
-        assert obj.tags == {}
+    def test_a_null_under_a_dict_hint_costs_only_its_own_entry(self):
+        """Regression: `serde` used to drop a null element to the field default
+        before the hook saw it, so one null took the whole map with it. A
+        `dict[K, T]` whose values carry unreproducible state — the review-thread
+        ledger — lost every entry's triage to recover from one."""
+        obj = from_dict(Keyed, {"tags": {"1": None, "2": "legacy"}})
+        assert obj.tags == {1: Tagged(), 2: Tagged(value="legacy")}
+
+    def test_a_null_in_a_list_costs_only_its_own_element(self):
+        obj = from_dict(TaggedList, {"items": [None, "legacy"]})
+        assert obj.items == [Tagged(), Tagged(value="legacy")]
 
 
 class TestNullOnAField:

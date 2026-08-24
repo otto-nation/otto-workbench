@@ -556,7 +556,7 @@ def render_dashboard(
 
     counts = {state: 0 for state in ThreadState}
     for t in threads.values():
-        counts[t.state] = counts.get(t.state, 0) + 1
+        counts[t.state] += 1
     total = len(threads)
 
     lines.append(f"Threads: {total} total")

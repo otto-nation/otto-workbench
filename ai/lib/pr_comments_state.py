@@ -87,9 +87,17 @@ class ThreadRecord:
         The warning is what keeps that from being silent. A run that quietly
         re-asks the model about a thread the operator already decided looks
         exactly like a run that had nothing cached.
+
+        A `null` entry is named rather than left to `serde.from_dict`, which
+        reads one as "every field omitted" and would rebuild it as a blank
+        record without saying so. It is corruption here: a thread the file
+        records but holds nothing about.
         """
         if isinstance(raw, cls):
             return raw
+        if raw is None:
+            log.warn("thread entry is null — re-triaging it")
+            return cls()
         try:
             return serde.from_dict(cls, raw)
         except (TypeError, ValueError) as exc:

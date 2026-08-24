@@ -715,3 +715,101 @@ EOF
   run grep 'ssh.github.com' "$SSH_KNOWN_HOSTS_FILE"
   [ "$status" -ne 0 ]
 }
+
+# ── worktrunk pre-switch hook ────────────────────────────────────────────────
+
+# The line the step installs. Spelled out here rather than read from the step,
+# so a change to the template has to be made in both places on purpose.
+WORKTRUNK_HOOK_LINE='fetch-default = "wt-fetch-default {{ default_branch }}"'
+
+# The line issue #936 was about: `worktree_path_of_branch` renders empty when no
+# worktree holds the default branch, `git -C ''` runs in the caller's working
+# directory instead, and `|| true` hides whatever it did there.
+WORKTRUNK_STALE_LINE='fetch-default = "git fetch origin {{ default_branch }} && git -C {{ worktree_path_of_branch(default_branch) }} merge --ff-only origin/{{ default_branch }} || true"'
+
+# _worktrunk_setup — point the step at a scratch config, and put a `wt` on PATH
+# because the step backs off entirely when worktrunk is not installed.
+_worktrunk_setup() {
+  WORKTRUNK_CONFIG_FILE="$TMPDIR/worktrunk/config.toml"
+  mkdir -p "$TMPDIR/worktrunk" "$TMPDIR/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$TMPDIR/bin/wt"
+  chmod +x "$TMPDIR/bin/wt"
+  PATH="$TMPDIR/bin:$PATH"
+}
+
+@test "pre_switch adds the hook and its section to a config with neither" {
+  _worktrunk_setup
+  printf 'worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"\n' > "$WORKTRUNK_CONFIG_FILE"
+
+  step_worktrunk_pre_switch_fetch
+
+  grep -q '^\[pre-switch\]' "$WORKTRUNK_CONFIG_FILE"
+  grep -qxF "$WORKTRUNK_HOOK_LINE" "$WORKTRUNK_CONFIG_FILE"
+  grep -q '^worktree-path' "$WORKTRUNK_CONFIG_FILE"
+}
+
+@test "pre_switch appends under an existing pre-switch section" {
+  _worktrunk_setup
+  printf '[pre-switch]\nother = "true"\n' > "$WORKTRUNK_CONFIG_FILE"
+
+  step_worktrunk_pre_switch_fetch
+
+  grep -qxF "$WORKTRUNK_HOOK_LINE" "$WORKTRUNK_CONFIG_FILE"
+  grep -q '^other = "true"' "$WORKTRUNK_CONFIG_FILE"
+  [ "$(grep -c '^\[pre-switch\]' "$WORKTRUNK_CONFIG_FILE")" -eq 1 ]
+}
+
+@test "pre_switch is idempotent" {
+  _worktrunk_setup
+  : > "$WORKTRUNK_CONFIG_FILE"
+
+  step_worktrunk_pre_switch_fetch
+  step_worktrunk_pre_switch_fetch
+
+  [ "$(grep -c '^fetch-default' "$WORKTRUNK_CONFIG_FILE")" -eq 1 ]
+}
+
+@test "pre_switch rewrites the hook that no-ops in bare layouts" {
+  _worktrunk_setup
+  printf '[pre-switch]\n%s\n' "$WORKTRUNK_STALE_LINE" > "$WORKTRUNK_CONFIG_FILE"
+
+  step_worktrunk_pre_switch_fetch
+
+  grep -qxF "$WORKTRUNK_HOOK_LINE" "$WORKTRUNK_CONFIG_FILE"
+  run grep -q 'worktree_path_of_branch' "$WORKTRUNK_CONFIG_FILE"
+  [ "$status" -ne 0 ]
+  [ "$(grep -c '^fetch-default' "$WORKTRUNK_CONFIG_FILE")" -eq 1 ]
+}
+
+@test "pre_switch refresh keeps the rest of the config" {
+  _worktrunk_setup
+  printf 'worktree-path = "custom"\n\n[pre-switch]\n%s\nother = "true"\n' \
+    "$WORKTRUNK_STALE_LINE" > "$WORKTRUNK_CONFIG_FILE"
+
+  step_worktrunk_pre_switch_fetch
+
+  grep -q '^worktree-path = "custom"' "$WORKTRUNK_CONFIG_FILE"
+  grep -q '^other = "true"' "$WORKTRUNK_CONFIG_FILE"
+  grep -qxF "$WORKTRUNK_HOOK_LINE" "$WORKTRUNK_CONFIG_FILE"
+}
+
+@test "pre_switch skips when the worktrunk config is missing" {
+  _worktrunk_setup
+  rm -f "$WORKTRUNK_CONFIG_FILE"
+
+  run step_worktrunk_pre_switch_fetch
+
+  [ "$status" -eq 0 ]
+  [ ! -f "$WORKTRUNK_CONFIG_FILE" ]
+}
+
+@test "pre_switch installs a command that exists" {
+  _worktrunk_setup
+  : > "$WORKTRUNK_CONFIG_FILE"
+
+  step_worktrunk_pre_switch_fetch
+
+  local command_name
+  command_name=$(sed -n 's/^fetch-default = "\([^ ]*\).*/\1/p' "$WORKTRUNK_CONFIG_FILE")
+  [ -x "$REPO_ROOT/git/bin/$command_name" ]
+}

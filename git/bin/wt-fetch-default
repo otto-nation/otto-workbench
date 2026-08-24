@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Bring the local default branch up to date with origin's.
+#
+# Usage: wt-fetch-default <branch>
+#
+# Run from the worktrunk pre-switch hook that git/steps.sh installs. `wt switch
+# --create` bases a new branch on the *local* default branch ref, so that ref has
+# to be current before the switch or every branch starts life behind origin.
+#
+# There are two layouts and the ref moves differently in each:
+#
+#   - a worktree holds the branch — the ref is that worktree's HEAD, so it only
+#     moves by fast-forwarding there
+#   - nothing holds it, the normal state of a bare-repo container whose primary
+#     worktree has been switched to a feature branch — `git fetch origin <b>:<b>`
+#     then moves the ref with no checkout at all, and without a leading `+` it
+#     refuses to rewrite history when the two have diverged
+#
+# Which layout applies is asked of git rather than of worktrunk's
+# `worktree_path_of_branch()`. That renders an empty string when no worktree
+# holds the branch, and `git -C '' merge --ff-only ...` is not an error — it runs
+# in the caller's working directory and fast-forwards whatever unrelated branch
+# happens to be checked out there.
+#
+# Exit: 0 when the branch is current, non-zero when it could not be advanced.
+# A pre-switch hook that exits non-zero aborts the switch, which is the point: a
+# branch silently cut from a stale base is worse than a switch that refused.
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <branch>
+
+Bring the local default branch up to date with origin's, so a branch created
+from it starts at the current remote HEAD.
+
+Fast-forwards the worktree holding BRANCH when there is one, and moves the ref
+directly when there is not. Exits non-zero when BRANCH could not be advanced,
+which aborts the worktrunk switch that called it.
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+# _abort MESSAGE — say why the default branch is not current, and stop.
+#
+# The second line names the escape hatch because the caller is usually a hook:
+# worktrunk aborts the switch on a non-zero pre-switch hook, and someone who
+# knows the base is fine can say so.
+_abort() {
+  err "$1"
+  err "Refusing to branch from a stale '$branch' — re-run with --no-hooks to skip this check."
+  exit 1
+}
+
+branch="${1:-}"
+if [[ -z "$branch" ]]; then
+  err "Usage: $(basename "$0") <branch>"
+  exit 2
+fi
+
+# The worktree holding BRANCH, empty when none does. `git worktree list
+# --porcelain` names a worktree on one line and the branch it holds on a later
+# one, so the path is carried forward to the line that matches. A bare repo's
+# own entry names no branch and so never matches, which is correct — there is
+# nothing there to merge into.
+worktree=$(git worktree list --porcelain | awk -v ref="refs/heads/$branch" '
+  /^worktree / { path = substr($0, 10) }
+  $0 == "branch " ref { print path; exit }
+')
+
+if [[ -n "$worktree" ]]; then
+  git fetch origin "$branch" \
+    || _abort "Could not fetch origin/$branch."
+  git -C "$worktree" merge --ff-only "origin/$branch" \
+    || _abort "'$branch' at $worktree could not fast-forward to origin/$branch."
+  exit 0
+fi
+
+# One call does both refs: fetching into refs/heads/<branch> from a configured
+# remote updates that remote's tracking ref alongside it.
+git fetch origin "$branch:$branch" \
+  || _abort "Could not fast-forward '$branch' to origin/$branch."

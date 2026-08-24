@@ -159,6 +159,18 @@ If a push failed this way before the block was in place, `otto-workbench sync gi
 git ls-remote origin <branch>   # compare against git rev-parse HEAD
 ```
 
+## "Refusing to branch from a stale 'main'"
+
+`wt switch --create` runs a `fetch-default` pre-switch hook that `otto-workbench sync git` installs, and worktrunk aborts the switch when a pre-switch hook fails. The hook is [`git/bin/wt-fetch-default`](../git/bin/wt-fetch-default), whose one job is to bring the default branch up to date before the new branch is cut from it — `wt` bases a new branch on the *local* default branch ref, so a stale ref means a branch that starts life behind `origin`.
+
+It moves that ref two different ways, and the message names which one failed:
+
+- **`Could not fetch origin/main.`** — a worktree holds the default branch, but the fetch that precedes the fast-forward itself failed: a network outage, an auth problem, or `origin` being unreachable. Diagnose the fetch directly (see Git Failure Debugging) before retrying.
+- **`could not fast-forward to origin/main`, with a worktree path** — a worktree holds the default branch and would not fast-forward. Either it carries commits `origin` does not have, or uncommitted changes conflict with what is coming in. Deal with them in that worktree.
+- **`Could not fast-forward 'main' to origin/main`, with no path** — no worktree holds the branch, so the ref was moved directly with `git fetch origin main:main`, and git refused because the two have diverged. Inspect with `git log --oneline origin/main..main` and reset the local branch once you are satisfied nothing is lost.
+
+`wt switch --create <branch> --no-hooks` skips the check when you already know the base is fine. Prefer fixing the default branch: the abort exists because a branch cut from a stale base surfaces much later as a three-dot diff full of reversions.
+
 ## "refusing to commit with a placeholder identity"
 
 The commit identity is a test value. Rejected names are `test`, `your name`, and `unknown` (case-insensitive); rejected emails are `test@…` and anything at `test.com`, `example.com`, `example.org`, or `localhost`. Only repos whose `origin` remote points at GitHub, GitLab, or Bitbucket are checked, so throwaway repos built by test suites are unaffected.

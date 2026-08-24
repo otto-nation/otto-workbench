@@ -106,7 +106,7 @@ COMMANDS_PROJECTS=(
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS_PERMISSIONS=(
   "sweep [--prune] [--verbose]"   "Report local permission-grant drift in every registered repo"
-  "mirror [--dry-run] [--verbose]" "Write each bare-repo container the grants its tracked file makes"
+  "mirror [--dry-run] [--verbose]" "Copy a repo's tracked grants into its bare-repo container"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
@@ -706,9 +706,9 @@ sweep reports three classes: a grant re-granting an ask-gated command, a grant
 some other rule already makes, and a grant naming a directory that is gone. Only
 the second is ever deleted, and only under --prune.
 
-mirror is the other direction — it writes a container the grants its tracked
-project file already makes, so the prompts sweep cleans up after are never
-answered in the first place. \`otto-workbench ai sync\` runs it.
+mirror is the other direction — it copies a repo's tracked grants into that
+container, so the prompts sweep cleans up after are never answered in the first
+place. \`otto-workbench ai sync\` runs it.
 
 Commands:
 $(commands_usage COMMANDS_PERMISSIONS)

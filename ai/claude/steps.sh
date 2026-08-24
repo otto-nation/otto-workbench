@@ -203,8 +203,8 @@ step_claude_settings() {
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "$label" || true
 }
 
-# step_claude_container_settings — writes each bare-repo container the grants
-# its tracked project settings file makes.
+# step_claude_container_settings — copies each repo's tracked grants into the
+# bare-repo container above its worktrees.
 # Claude Code roots a project at the directory the session was launched in, and
 # in a bare-repo layout that is the container, which holds no working tree — so
 # a repo's tracked .claude/settings.json never loads and its own scripts prompt.

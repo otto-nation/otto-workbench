@@ -58,11 +58,12 @@ print(json.dumps({"permissions": {"allow": rules}}, indent=2))
 
 # ─── Dispatch ────────────────────────────────────────────────────────────────
 
-@test "permissions --help prints usage and names its subcommand" {
+@test "permissions --help prints usage and names both subcommands" {
   run "$REPO_ROOT/bin/otto-workbench" permissions --help
   [ "$status" -eq 0 ]
   [[ "$output" == *"Usage: otto-workbench permissions"* ]]
   [[ "$output" == *"sweep"* ]]
+  [[ "$output" == *"mirror"* ]]
 }
 
 @test "permissions with no subcommand sweeps" {
@@ -91,6 +92,12 @@ print(json.dumps({"permissions": {"allow": rules}}, indent=2))
 
 @test "an unknown flag is rejected by the sweep, not swallowed" {
   run "$REPO_ROOT/bin/otto-workbench" permissions sweep --nonsense
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--nonsense"* ]]
+}
+
+@test "an unknown flag is rejected by the mirror too" {
+  run "$REPO_ROOT/bin/otto-workbench" permissions mirror --nonsense
   [ "$status" -ne 0 ]
   [[ "$output" == *"--nonsense"* ]]
 }
@@ -140,4 +147,30 @@ print(json.dumps({"permissions": {"allow": rules}}, indent=2))
   [ "$status" -ne 0 ]
   run grep -c "printenv" "$local_settings"
   [ "$status" -eq 0 ]
+}
+
+# ─── The mirror, end to end ──────────────────────────────────────────────────
+
+@test "the mirror copies a tracked grant up to the container" {
+  make_worktree_layout "$TMPDIR/container"
+  write_settings "$TMPDIR/container/main/.claude/settings.json" "Bash(bin/*)"
+  echo "$TMPDIR/container/main" > "$REGISTRY"
+
+  run "$REPO_ROOT/bin/otto-workbench" permissions mirror
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"wrote"* ]]
+
+  run grep -c 'Bash(bin/\*)' "$TMPDIR/container/.claude/settings.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "the mirror's --dry-run reports the write without making it" {
+  make_worktree_layout "$TMPDIR/container"
+  write_settings "$TMPDIR/container/main/.claude/settings.json" "Bash(bin/*)"
+  echo "$TMPDIR/container/main" > "$REGISTRY"
+
+  run "$REPO_ROOT/bin/otto-workbench" permissions mirror --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would write"* ]]
+  [ ! -f "$TMPDIR/container/.claude/settings.json" ]
 }

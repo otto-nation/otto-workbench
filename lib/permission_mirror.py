@@ -1,4 +1,4 @@
-"""Give a bare-repo container the grants its tracked project file makes.
+"""Copy a repo's tracked grants into the bare-repo container above its worktrees.
 
 Usage: python3 lib/permission_mirror.py [--dry-run] [--verbose]
        otto-workbench permissions mirror [--dry-run] [--verbose]
@@ -66,8 +66,10 @@ from permissions import (  # noqa: E402
 # bucket nothing has asked it to.
 MIRRORED = ('allow', 'ask')
 
-# Where a mirror is written, relative to the container.
-MIRROR_SETTINGS = os.path.join('.claude', 'settings.json')
+# Where a mirror is written, relative to the container. The same path as the
+# tracked file it copies, and for the same reason: this is the one name Claude
+# Code loads project settings from. Only the root it hangs off differs.
+MIRROR_SETTINGS = TRACKED_SETTINGS
 
 NO_SOURCE = 'no registered worktree is on the branch its HEAD names'
 
@@ -154,12 +156,32 @@ def read_json(filepath: str) -> dict | None:
     return found if isinstance(found, dict) else None
 
 
+def mergeable(existing: dict) -> bool:
+    """Is a settings object in the shape a mirror can be merged into?
+
+    Both keys the merge reads have to be objects: `permissions`, whose buckets
+    it rewrites, and the `MANIFEST_KEY` stamp, which says which of those entries
+    the last run put there.  A file where either is something else was not
+    written by any run of this, and rewriting it would have to guess at what a
+    user meant — so the caller leaves it alone and reports it instead.
+    """
+    return all(isinstance(existing.get(key, {}), dict)
+               for key in ('permissions', MANIFEST_KEY))
+
+
+def _bucket(permissions: dict, bucket: str) -> list[str]:
+    """One bucket's rules, or none when it is absent or not a list."""
+    rules = permissions.get(bucket)
+    return rules if isinstance(rules, list) else []
+
+
 def mirror_body(tracked: TrackedRules, source: str, existing: dict | None) -> dict:
     """The settings object a container should hold, given what it holds now.
 
     `tracked` is the source worktree's rules, `source` the path they were read
     from — recorded in the file so a reader can find the one to edit — and
     `existing` whatever is already at the target, or None for a first write.
+    A non-None `existing` has to satisfy `mergeable`.
 
     A user's own additions survive: an entry the previous stamp does not claim
     is kept, and the managed rules go in front of it.  That is the contract
@@ -167,15 +189,16 @@ def mirror_body(tracked: TrackedRules, source: str, existing: dict | None) -> di
     generated settings files on a machine behave the same way.
     """
     existing = existing or {}
-    was = (existing.get(MANIFEST_KEY) or {}).get('permissions') or {}
-    held = existing.get('permissions') or {}
+    was = existing.get(MANIFEST_KEY, {}).get('permissions')
+    was = was if isinstance(was, dict) else {}
+    held = existing.get('permissions', {})
     managed = _managed(tracked)
 
     permissions = dict(held)
     for bucket in MIRRORED:
         mine = managed[bucket]
-        theirs = [rule for rule in held.get(bucket) or []
-                  if rule not in (was.get(bucket) or []) and rule not in mine]
+        theirs = [rule for rule in _bucket(held, bucket)
+                  if rule not in _bucket(was, bucket) and rule not in mine]
         permissions[bucket] = mine + theirs
 
     return {**existing,
@@ -190,9 +213,10 @@ def write_mirror(container: str, repo_root: str, dry_run: bool = False) -> Resul
     the tracked file every run and written only when it differs from what is
     already there, so a repeat run touches nothing and reports nothing.
 
-    A file already at the target that cannot be parsed is left alone and
-    reported.  It may hold grants somebody approved, and overwriting it to
-    install rules that only remove prompts is not a trade worth making blind.
+    A file already at the target that cannot be parsed, or that `mergeable`
+    rejects, is left alone and reported.  It may hold grants somebody approved,
+    and overwriting it to install rules that only remove prompts is not a trade
+    worth making blind.
     """
     source = os.path.join(repo_root, TRACKED_SETTINGS)
     tracked = rules_of(source)
@@ -201,6 +225,9 @@ def write_mirror(container: str, repo_root: str, dry_run: bool = False) -> Resul
 
     if existing is None and os.path.exists(target):
         return Result(container, source, skipped=f'{MIRROR_SETTINGS} is not readable JSON')
+    if existing is not None and not mergeable(existing):
+        return Result(container, source,
+                      skipped=f'{MIRROR_SETTINGS} is not in a shape this can merge into')
     if existing is None and not any(getattr(tracked, b) for b in MIRRORED):
         # Nothing to say and nothing said: most repos keep no tracked grants at
         # all, so an empty mirror everywhere would be the report's whole output.
@@ -262,8 +289,12 @@ def report(results: list[Result], dry_run: bool, verbose: bool) -> None:
     for result in [r for r in results if not r.ok]:
         print(f'  {YELLOW}⚠{NC}  {_tilde(result.container)} {DIM}— {result.skipped}{NC}')
 
-    if verbose and not any(r.changed for r in results):
-        print(f'  {CYAN}{len(results)}{NC} container(s), every mirror already current')
+    # Counts only the containers that were actually looked at and found current.
+    # A skipped one is already reported above, and folding it in here would say
+    # a mirror is current when nothing was written to compare against.
+    current = [r for r in results if r.ok and not r.changed]
+    if verbose and current and not any(r.changed for r in results):
+        print(f'  {CYAN}{len(current)}{NC} container(s), every mirror already current')
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -271,8 +302,8 @@ def report(results: list[Result], dry_run: bool, verbose: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='otto-workbench permissions mirror',
-        description='Write each bare-repo container the grants its tracked project file '
-                    'makes, so a session rooted there is not asked for them one at a time.')
+        description="Copy each repo's tracked grants into the bare-repo container above its "
+                    'worktrees, so a session rooted there is not asked for them one at a time.')
     parser.add_argument('--dry-run', action='store_true',
                         help='Report what would be written without writing it')
     parser.add_argument('--verbose', action='store_true',

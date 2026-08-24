@@ -171,7 +171,8 @@ Three things about that file are worth knowing before editing it:
 - **One worktree speaks for the container.** A container holds many worktrees on
   many branches, any of them mid-edit; the one on the branch the shared
   repository's HEAD names is the reviewed copy, and it is the only one that
-  writes. A container with no registered worktree there is reported and skipped.
+  writes. A container with no worktree of its own on that branch is reported
+  and skipped.
 
 Because those rules were reviewed in the tracked file they were copied from, the
 mirror is not drift, and `validate-permissions` checks it for dead rules only. A

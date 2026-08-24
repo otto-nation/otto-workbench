@@ -1,7 +1,7 @@
 """Tests for lib/permission_mirror.py — the grants written to a container.
 
-The matcher, the coverage test, and the `_workbench` stamp are
-`lib/permissions.py`' and are covered by tests/validate_permissions_test.py.
+The matcher, the coverage test, and the `_workbench` stamp belong to
+`lib/permissions.py` and are covered by tests/validate_permissions_test.py.
 What is new here is the mirror's own three: choosing which worktree of a
 container speaks for it, merging a generated file with whatever is already
 there, and producing a file this repo's own gate accepts.

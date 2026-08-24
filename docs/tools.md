@@ -119,6 +119,7 @@ otto-workbench [--workbench-dir <path>] <command>
 | `otto-workbench projects prune` | Machine | Drop registry entries whose directory is gone |
 | `otto-workbench permissions sweep` | Machine | Report Claude Code permission-grant drift in every registered repo |
 | `otto-workbench permissions sweep --prune` | Machine | Delete the local grants another rule already makes |
+| `otto-workbench permissions mirror` | Machine | Write each bare-repo container the grants its tracked project file makes |
 
 ### `task`
 

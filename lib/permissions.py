@@ -345,24 +345,34 @@ def prune(filepath: str, grants: list[Grant]) -> None:
     permissions['allow'] = [rule for rule in permissions.get('allow') or []
                             if rule not in doomed]
     settings['permissions'] = permissions
+    write_json(filepath, settings)
 
-    # Written beside the target and renamed over it, because the sweep prunes
-    # unattended across every registered repo: an interrupted write straight to
-    # `filepath` would leave a settings file that Claude Code can no longer
-    # parse, in a repo the user never asked this to touch.  `os.replace` is
-    # atomic within a filesystem, and the temp file is a sibling to stay on one.
-    #
-    # `ensure_ascii=False` keeps a rule containing an em dash or any other
-    # non-ASCII character written the way Claude Code writes it.  Escaping it to
-    # \uXXXX would rewrite entries this run is not touching, turning a one-line
-    # deletion into a diff across the whole file.
+
+def write_json(filepath: str, settings: dict) -> None:
+    """Write a settings object to a path, replacing any file already there.
+
+    Written beside the target and renamed over it, because both callers write
+    unattended across repos the user did not ask them to touch: an interrupted
+    write straight to `filepath` would leave a settings file Claude Code can no
+    longer parse.  `os.replace` is atomic within a filesystem, and the temp file
+    is a sibling to stay on one.
+
+    `ensure_ascii=False` keeps a rule containing an em dash or any other
+    non-ASCII character written the way Claude Code writes it.  Escaping it to
+    \\uXXXX would rewrite entries the run is not touching, turning a one-line
+    deletion into a diff across the whole file.
+
+    An existing file's mode is carried over; a new one keeps the private mode
+    `mkstemp` gives it.
+    """
     body = json.dumps(settings, indent=2, ensure_ascii=False) + '\n'
     directory = os.path.dirname(filepath) or '.'
     handle, temp = tempfile.mkstemp(dir=directory, prefix='.settings-', suffix='.json')
     try:
         with os.fdopen(handle, 'w', encoding='utf-8') as f:
             f.write(body)
-        shutil.copymode(filepath, temp)
+        if os.path.exists(filepath):
+            shutil.copymode(filepath, temp)
         os.replace(temp, filepath)
     except OSError:
         os.unlink(temp)

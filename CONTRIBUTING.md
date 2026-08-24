@@ -143,10 +143,40 @@ rule can match, so the set of commands the file permits is the same before and
 after. An `ask` override is never pruned: deleting it restores a deliberate gate
 on credential access, which is a person's call, not a script's.
 
+### Reaching the container
+
 At the container there is nothing to move a grant into: it holds no working
-tree, so nothing there can be committed. Run the session from a worktree, where
-the tracked `.claude/settings.json` applies and an approved grant has somewhere
-to live.
+tree, so nothing there can be committed. That is also why grants land there in
+the first place. Claude Code roots a project at the directory the session was
+launched in, and in a bare-repo layout that is usually the container — so the
+tracked `.claude/settings.json` a worktree carries never loads, every script in
+a granted directory prompts, and each approved one-off is an exact full command
+string that the next invocation with a different argument does not match.
+
+`otto-workbench permissions mirror` closes that gap from the other side. It
+copies the tracked file's `allow` and `ask` rules into a generated
+`.claude/settings.json` at the container, so a session rooted there starts with
+the grants the repo already reviewed. `otto-workbench ai sync` runs it, and it
+is idempotent, so a stale mirror is one sync away from current.
+
+Three things about that file are worth knowing before editing it:
+
+- **It is generated.** A `_workbench` key records what the mirror wrote, so the
+  next run replaces its own entries and leaves anything added by hand in place.
+  Edit the tracked file and re-run; an edit to the mirror survives only until
+  then.
+- **Both buckets travel.** Copying `allow` without `ask` would deliver the grant
+  on `bin/get-secret` and drop the prompt guarding it — a worse outcome than the
+  prompts the mirror exists to remove.
+- **One worktree speaks for the container.** A container holds many worktrees on
+  many branches, any of them mid-edit; the one on the branch the shared
+  repository's HEAD names is the reviewed copy, and it is the only one that
+  writes. A container with no registered worktree there is reported and skipped.
+
+Because those rules were reviewed in the tracked file they were copied from, the
+mirror is not drift, and `validate-permissions` checks it for dead rules only. A
+grant reaching the container anyway means the mirror is missing or stale — the
+finding says to regenerate it.
 
 ### The rest of the machine
 

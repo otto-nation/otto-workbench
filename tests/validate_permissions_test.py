@@ -473,7 +473,8 @@ def test_main_reaches_the_container_file_above_the_worktree(container, monkeypat
     """End to end from a worktree: discovery, the drift check, and the advice.
 
     The grant is unreachable by any walk rooted in the worktree, and the fix it
-    is given cannot be to edit a tracked file the container has no room for.
+    is given cannot be to edit a tracked file the container has no room for —
+    the mirror is what carries the tracked rules there.
     """
     worktree = container / "main"
     (worktree / ".claude").mkdir(parents=True)
@@ -489,7 +490,7 @@ def test_main_reaches_the_container_file_above_the_worktree(container, monkeypat
 
     err = capsys.readouterr().err
     assert COVERED_GRANT in err
-    assert "run the session from a worktree" in err
+    assert vp.MIRROR_COMMAND in err
 
 
 def test_main_passes_a_generated_container_file(container, monkeypatch, capsys):

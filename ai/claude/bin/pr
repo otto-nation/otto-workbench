@@ -20,18 +20,13 @@ BIN_DIR = Path(__file__).resolve().parent
 SCRIPT = Path(__file__).name
 sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 
-import ci_failures
-import pr_comments
 import pr_context
 import pr_domains
 import pr_state
-import push_status
 import schema_gen
-import rebase_status
 import review_gc
 import log
 import proc
-import review_common
 import review_listing
 import supersession
 import timeouts
@@ -368,7 +363,14 @@ def _is_pr_target(target: str | None) -> bool:
 
 
 def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
-    """Render unified status dashboard from cached state."""
+    """Render unified status dashboard from cached state.
+
+    The dashboard is a fold over the domain registry, not a list of renderers:
+    a domain prints what it says about itself, in the order `PRState` declares
+    it, and one that says nothing takes up no room. Push is the exception that
+    is refreshed rather than read — it is a local git question, so `pr status`
+    answers it now instead of reporting whatever the last write happened to see.
+    """
     wt = ctx.require_worktree()
     state = pr_state.load_state(ctx.target_dir)
 
@@ -377,30 +379,24 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     repo = state.identity.repo if state else ctx.repo
 
     lines = [f"## PR Status — {repo} {pr_label} ({branch})", ""]
+    push = pr_domains.PushDomain.observed(wt, branch, updated_at=pr_state.now_iso())
 
     if not state:
         lines.append("No status data yet. Run: pr ci, pr review, or pr comments")
         lines.append("")
-        lines += push_status.render_status(wt, branch)
+        lines += push.render_status()
         print("\n".join(lines), file=sys.stderr)
         return 0
 
-    lines += ci_failures.render_status(state.ci)
-    lines.append("")
-    lines += review_common.render_status(state.review)
-    lines.append("")
-    lines += pr_comments.render_status(state.comments)
-    lines.append("")
-    lines += pr_comments.render_triage_status(state.triage)
-    lines.append("")
-    lines += pr_comments.render_fix_status(state.fix)
-    lines.append("")
-    lines += rebase_status.render_status(state.rebase)
-    lines.append("")
-    unpushed = push_status.detect_unpushed(wt, branch)
-    lines += push_status.render_status(wt, branch, ahead=unpushed)
-    lines.append("")
-    lines.append(_merge_readiness(state, unpushed=unpushed))
+    # Held in memory only: the dashboard is a read, and persisting a domain the
+    # command did not act on would date the file by looking at it.
+    state.push = push
+    for domain in pr_state.domains_of(state):
+        rendered = domain.render_status()
+        if rendered:
+            lines += rendered
+            lines.append("")
+    lines.append(_merge_readiness(state))
 
     print("\n".join(lines), file=sys.stderr)
 
@@ -409,46 +405,20 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return 0
 
 
-def _merge_readiness(state: pr_state.PRState, *, unpushed: int | None = 0) -> str:
-    ci_green = state.ci.conclusion == "success" if state.ci.updated_at else None
-    has_must_fix = state.review.finding_counts.get("M", 0) > 0 if state.review.updated_at else None
-    has_blockers = bool(state.comments.blocking_reviewers) if state.comments.updated_at else None
-    review_incomplete = state.review.status in ("partial", "error") if state.review.updated_at else False
-    # A summary or reply queue the fix pass rendered and never sent. The PR reads
-    # as un-reviewed until --finish drains it, so merging leaves reviewers with no
-    # record of the work.
-    closeout_owed = pr_comments.closeout_debt(state.fix).owed
+def _merge_readiness(state: pr_state.PRState) -> str:
+    """The merge-readiness line, folded from what each domain says of itself.
 
-    pushed = unpushed == 0
-
-    if (ci_green is True and has_must_fix is False and has_blockers is False
-            and pushed and not review_incomplete and not closeout_owed):
+    Unchecked domains are named last and as one clause, because "we did not
+    look" is a different claim from "we looked and it is wrong" and reading a
+    list of blockers should not require telling them apart mid-sentence.
+    """
+    answer = pr_state.merge_readiness(state)
+    issues = list(answer.blockers)
+    if answer.unchecked:
+        issues.append(f"not checked: {', '.join(answer.unchecked)}")
+    if not issues:
         return "**Merge readiness**: ready"
-    issues = []
-    if ci_green is False:
-        issues.append("CI failing")
-    if has_must_fix is True:
-        issues.append("must-fix findings")
-    if has_blockers is True:
-        issues.append("blocking reviewers")
-    if not pushed:
-        count = unpushed if unpushed is not None else None
-        desc = f"{count} unpushed commit(s)" if count else "branch not pushed"
-        issues.append(desc)
-    if review_incomplete:
-        issues.append("review incomplete")
-    if closeout_owed:
-        issues.append(f"closeout not delivered (run: {pr_comments.CLOSEOUT_COMMAND})")
-    if ci_green is None or has_must_fix is None or has_blockers is None:
-        unchecked = []
-        if ci_green is None:
-            unchecked.append("CI")
-        if has_must_fix is None:
-            unchecked.append("review")
-        if has_blockers is None:
-            unchecked.append("comments")
-        issues.append(f"not checked: {', '.join(unchecked)}")
-    return f"**Merge readiness**: blocked — {'; '.join(issues)}" if issues else "**Merge readiness**: ready"
+    return f"**Merge readiness**: blocked — {'; '.join(issues)}"
 
 
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,

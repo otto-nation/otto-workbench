@@ -31,6 +31,8 @@ from pr_domains import (
     DescribeSummary,
     Domain,
     FixSummary,
+    PushDomain,
+    Readiness,
     RebaseSummary,
     ReviewSummary,
     SupersessionDomain,
@@ -123,15 +125,26 @@ class PendingComment:
 
 @dataclass
 class PRState:
-    """Unified PR state — envelope over domain summaries."""
+    """Unified PR state — envelope over domain summaries.
+
+    The domain fields are declared in the order ``pr status`` prints them.
+    Nothing enforces that and nothing breaks if it drifts, but the dashboard and
+    the merge-readiness fold both iterate the registry derived from these
+    annotations, so the declaration order *is* the display order — reordering
+    here is how the dashboard is reordered.
+
+    ``describe`` and ``supersession`` render nothing, so they sit after the ones
+    that do rather than interrupting them.
+    """
     identity: PRIdentity
     ci: CIDomain = field(default_factory=CIDomain)
     review: ReviewSummary = field(default_factory=ReviewSummary)
     comments: CommentsSummary = field(default_factory=CommentsSummary)
     triage: TriageSummary = field(default_factory=TriageSummary)
-    rebase: RebaseSummary = field(default_factory=RebaseSummary)
-    describe: DescribeSummary = field(default_factory=DescribeSummary)
     fix: FixSummary = field(default_factory=FixSummary)
+    rebase: RebaseSummary = field(default_factory=RebaseSummary)
+    push: PushDomain = field(default_factory=PushDomain)
+    describe: DescribeSummary = field(default_factory=DescribeSummary)
     supersession: SupersessionDomain = field(default_factory=SupersessionDomain)
     pending_comments: list[PendingComment] = field(default_factory=list)
     created_at: str = ""
@@ -361,6 +374,32 @@ def _domain_names() -> dict[type[Domain], str]:
             )
         names[cls] = name
     return names
+
+
+def domains_of(state: PRState) -> list[Domain]:
+    """Every domain this state holds, in the order PRState declares them.
+
+    The one way to walk a state's domains. Every consumer that used to hand-list
+    them — the dashboard, the merge-readiness fold — reads this instead, so a
+    domain added to PRState is picked up by all of them and by none of them
+    selectively.
+    """
+    return [getattr(state, name) for name in _domains()]
+
+
+def merge_readiness(state: PRState) -> Readiness:
+    """Every domain's answer to whether the PR may merge, folded into one.
+
+    Order follows the registry, so blockers arrive grouped by the domain that
+    raised them and in the order the dashboard printed those domains above.
+    """
+    blockers: list[str] = []
+    unchecked: list[str] = []
+    for domain in domains_of(state):
+        answer = domain.readiness()
+        blockers.extend(answer.blockers)
+        unchecked.extend(answer.unchecked)
+    return Readiness(blockers=tuple(blockers), unchecked=tuple(unchecked))
 
 
 def apply(state: PRState, domain: Domain) -> None:

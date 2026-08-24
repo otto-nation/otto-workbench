@@ -43,7 +43,7 @@ import workbench_paths  # noqa: E402
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
 from conftest import assert_no_worktree_exit, make_ctx, seed_review  # noqa: E402
-from pr_comments import CLOSEOUT_COMMAND  # noqa: E402
+from pr_domains import CLOSEOUT_COMMAND  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
@@ -1440,6 +1440,58 @@ def test_status_header_names_the_repo_from_the_context_without_state(worktree, c
     with patch("pr_cli.pr_state.load_state", return_value=None):
         assert pr_cli.cmd_status([], ctx) == 0
     assert "## PR Status — acme/widget (no PR) (feat/x)" in capsys.readouterr().err
+
+
+def _status_state(target_dir):
+    """A state with two domains written and the rest untouched."""
+    state = pr_state.new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
+                               worktree_root="/wt")
+    pr_state.apply(state, pr_domains.CIDomain(conclusion="success", updated_at="t"))
+    pr_state.apply(state, pr_domains.CommentsSummary(total_threads=2, updated_at="t"))
+    pr_state.save_state(target_dir, state)
+    return state
+
+
+def test_status_prints_only_the_domains_that_have_something_to_say(worktree, capsys):
+    """A silent domain takes up no room — no heading, and no blank line either.
+
+    The dashboard is a fold over the registry rather than a hand-kept list of
+    renderers, so the way a domain stays off it is by rendering nothing.
+    """
+    target = worktree / "target"
+    _status_state(target)
+    ctx = make_ctx(repo="acme/widget", branch="feat/x", worktree_root=worktree,
+                   target_dir=target)
+
+    with patch("pr_domains.git_client.run", return_value=proc.CmdResult(0, "0\n")):
+        assert pr_cli.cmd_status([], ctx) == 0
+
+    err = capsys.readouterr().err
+    assert "**CI**" in err
+    assert "**Comments**" in err
+    # DescribeSummary and SupersessionDomain render nothing at all.
+    assert "**Describe**" not in err
+    assert "\n\n\n" not in err
+
+
+def test_status_refreshes_push_without_writing_it_to_state(worktree, capsys):
+    """Push is a local git question, so the dashboard asks it now.
+
+    Reading state must not date it: the refreshed answer is reported and
+    discarded, leaving the file as whatever last wrote it left behind.
+    """
+    target = worktree / "target"
+    _status_state(target)
+    ctx = make_ctx(repo="acme/widget", branch="feat/x", worktree_root=worktree,
+                   target_dir=target)
+
+    with patch("pr_domains.git_client.run", return_value=proc.CmdResult(0, "2\n")):
+        assert pr_cli.cmd_status([], ctx) == 0
+
+    captured = capsys.readouterr()
+    assert "**Push**: 2 commit(s) not pushed" in captured.err
+    assert "2 unpushed commit(s)" in captured.err
+    assert pr_state.load_state(target).push == pr_domains.PushDomain()
 
 
 def test_cmd_fix_without_a_worktree_exits_with_guidance(capsys):

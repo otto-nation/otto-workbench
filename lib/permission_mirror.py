@@ -97,6 +97,12 @@ def head_branch(container: str) -> str | None:
     and so the one whose worktree holds the tracked file worth copying.  Read
     from the repository rather than from `origin`, so a container with no remote
     — a local experiment, a test fixture — still answers.
+
+    This is one of two spellings of that rule; `bin/resolve-worktree` is the
+    bash one, used to redirect a session launched at the container.  They have
+    to agree: a session redirected to a worktree this did not mirror from is a
+    session missing the grants the mirror exists to deliver.
+    `tests/container_source.bats` fails if they diverge.
     """
     ref = git(container, 'symbolic-ref', '--quiet', 'HEAD')
     return ref.rsplit('/', 1)[-1] if ref else None

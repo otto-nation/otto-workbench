@@ -106,16 +106,18 @@ resolve-worktree [<path>]
 |------|-------------|
 | `-h`, `--help` | Show help |
 
-`<path>` defaults to the current directory. The default branch is `origin/HEAD` when the remote published one, `master` when it exists and `main` does not, and `main` otherwise.
+`<path>` defaults to the current directory. The default branch is the one the container's own `HEAD` names — git guarantees that ref exists, it needs no remote, and it is what `git clone` reads to pick the branch a new checkout lands on. `refs/remotes/origin/HEAD` is deliberately not consulted: `git clone --bare` creates no remote-tracking refs, so reading it would mean guessing between `master` and `main` for most containers.
 
 | Exit | Meaning |
 |------|---------|
 | `0` | Resolved; the worktree path is on stdout |
-| `1` | A bare repo, but no worktree holds the default branch |
+| `1` | A bare repo, but no worktree holds the default branch (or its `HEAD` is detached) |
 | `2` | Not a bare repository — nothing to resolve |
 | `64` | Usage error |
 
-Exit `2` is the ordinary answer for an everyday repo, a worktree, or a directory outside any repo, so callers treat it as "carry on here" rather than a failure. This is the one owner of that resolution: the [`claude` shell wrapper](architecture.md#shell-zsh), the ceiling-debt Stop hook, and the anatomy generator all call it.
+Exit `2` is the ordinary answer for an everyday repo, a worktree, or a directory outside any repo, so callers treat it as "carry on here" rather than a failure. This is the one owner of that resolution in bash: the [`claude` shell wrapper](architecture.md#shell-zsh), the ceiling-debt Stop hook, and the anatomy generator all call it.
+
+[`lib/permission_mirror.py`](libraries.md) applies the same rule in Python to pick the worktree a container's [permission mirror](../CONTRIBUTING.md#permission-grants) is copied from. The two must agree — a session redirected to a worktree the mirror never wrote from is a session missing the grants the mirror exists to deliver, with nothing to say so — and `tests/container_source.bats` fails if they diverge.
 
 ### `lint-sweep`
 

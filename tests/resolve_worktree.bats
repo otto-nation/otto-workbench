@@ -63,7 +63,7 @@ _make_container() {
   [ "$output" = "$CONTAINER/main" ]
 }
 
-@test "falls back to master when main does not exist" {
+@test "resolves a container whose default branch is master" {
   _make_seed master
   _make_container master
 
@@ -72,7 +72,25 @@ _make_container() {
   [ "$output" = "$CONTAINER/master" ]
 }
 
-@test "prefers the branch origin/HEAD names over the main fallback" {
+@test "takes the branch HEAD names, not a main/master guess" {
+  # `main` exists and holds a worktree, so a resolver guessing at the common
+  # names would answer it. HEAD says trunk.
+  _make_seed main
+  mkdir -p "$CONTAINER"
+  git clone -q --bare "$SEED" "$CONTAINER/.git"
+  git -C "$CONTAINER" branch trunk main
+  git -C "$CONTAINER" worktree add -q "$CONTAINER/main" main
+  git -C "$CONTAINER" worktree add -q "$CONTAINER/trunk" trunk
+  git -C "$CONTAINER" symbolic-ref HEAD refs/heads/trunk
+
+  run "$SCRIPT" "$CONTAINER"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$CONTAINER/trunk" ]
+}
+
+@test "ignores origin/HEAD when it disagrees with HEAD" {
+  # The rule this replaced read origin/HEAD and would answer trunk here. Only
+  # HEAD decides, so a remote's published default does not move the redirect.
   _make_seed main
   mkdir -p "$CONTAINER"
   git clone -q --bare "$SEED" "$CONTAINER/.git"
@@ -83,7 +101,21 @@ _make_container() {
 
   run "$SCRIPT" "$CONTAINER"
   [ "$status" -eq 0 ]
-  [ "$output" = "$CONTAINER/trunk" ]
+  [ "$output" = "$CONTAINER/main" ]
+}
+
+@test "reports a container whose HEAD is detached" {
+  _make_seed main
+  _make_container main
+  # Written directly: git refuses `symbolic-ref --delete HEAD`, and
+  # `checkout --detach` needs a working tree a bare repo does not have.
+  local sha
+  sha="$(git -C "$CONTAINER" rev-parse main)"
+  printf '%s\n' "$sha" > "$CONTAINER/.git/HEAD"
+
+  run "$SCRIPT" "$CONTAINER"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"detached HEAD"* ]]
 }
 
 @test "ignores worktrees on other branches" {

@@ -1423,6 +1423,48 @@ Stdlib only, deliberately. This is the module everything else in `ai/lib`
 should be free to depend on, and pulling in `log`, `ai_usage`, or
 `workbench_paths` from here would make that impossible.
 
+### push.py
+
+The owner of every push this workbench issues, and the only thing that
+checks one landed.
+
+`git` opens the connection to the remote before running `pre-push` and sends the
+packfile only once the hook returns, so the socket sits idle for the hook's whole
+run. With gates taking minutes, a remote can close it and the push is lost — git
+having already reported the parts it did do. An SSH keepalive removes that one
+cause and not the class: a transient drop, a remote-side rejection buried in
+output, or a hook exiting zero without pushing all end the same way, with a
+branch that has no PR and no surviving reason why.
+
+So a push is not finished when git exits. It is finished when the remote is asked
+what it holds. That question is `git ls-remote`, it costs one round trip, and its
+absence is the whole reason the failure was silent instead of loud.
+
+Five outcomes, because "nothing was pushed" and "the push was lost" are different
+problems and reporting both as a failed push is what made them indistinguishable:
+
+| `PushStatus` | What happened |
+|---|---|
+| `PUSHED` | git exited zero and the remote holds the commit |
+| `HELD` | the publishing gate was shut — nothing was attempted |
+| `REFUSED` | git exited non-zero — nothing left the machine |
+| `LOST` | git exited zero and the remote does not hold the commit |
+| `UNVERIFIED` | the remote could not be asked |
+
+`UNVERIFIED` is a warning rather than an error, and it is why `remote_head`
+distinguishes "no such ref" from "could not ask": collapsing them would report an
+unreachable remote as a branch that was never pushed.
+
+This module pushes, verifies, and reports. It does not commit, and it does not
+perform the hook-regenerated-files recovery that `review-threads` and `pr-rebase`
+each own — those sit above it, which is what keeps this module's answer to "did
+it land" independent of any caller's idea of how to fix it.
+
+`gated` is required and has no default. Only `pr comments` opens the publishing
+gate; `pr ci`, `pr rebase` and the review fix pass never do, so a gate-by-default
+owner would silently stop three entrypoints pushing, and a `False` default would
+let the next call site inherit the wrong answer by omitting the argument.
+
 ### run_lock.py
 
 Advisory whole-run lock, scoped to what a run targets.

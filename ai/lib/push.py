@@ -122,6 +122,8 @@ _DIVERGED_MARKERS = (
     "non-fast-forward",
     "fetch first",
     "stale info",
+    "updates were rejected",
+    "behind its remote",
 )
 
 _TRANSPORT_MARKERS = (
@@ -290,6 +292,24 @@ def push(
     return _retry_lost(wt_path, result, remote, args, trail)
 
 
+_HOOK_OUTPUT_LINES = 20
+
+
+def output_tail(output: str, *, indent: str = "") -> str:
+    """The last few meaningful lines of what git and its hooks printed.
+
+    A pre-push hook that fails is often a whole test suite, and the line naming
+    which gate failed is at the end of it. Printing all of it buries the report
+    that follows; printing the tail keeps the part that identifies the failure.
+
+    Blank lines go because a hook splits itself across both streams and
+    `combined_output` joins them — an empty stream would otherwise contribute a
+    gap that reads as missing output.
+    """
+    lines = [line.rstrip() for line in output.splitlines() if line.strip()]
+    return "\n".join(f"{indent}{line}" for line in lines[-_HOOK_OUTPUT_LINES:])
+
+
 def report(result: PushResult, wt_path: str | Path) -> None:
     """Say what happened, in the terms the reader has to act on."""
     if result.status is PushStatus.PUSHED:
@@ -309,7 +329,7 @@ def report(result: PushResult, wt_path: str | Path) -> None:
 
     if result.status is PushStatus.REFUSED:
         log.error(f"push refused ({result.refusal}) — nothing reached the remote")
-        for line in result.output.splitlines():
+        for line in output_tail(result.output).splitlines():
             log.dim(line)
         return
 

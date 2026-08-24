@@ -167,6 +167,8 @@ def test_gated_push_is_held_and_attempts_nothing(pushable):
     ("Updates were rejected because the remote contains work.\nfetch first",
      push.Refusal.DIVERGED),
     ("! [rejected] main -> main (stale info)", push.Refusal.DIVERGED),
+    ("Updates were rejected because the tip is behind its remote counterpart.",
+     push.Refusal.DIVERGED),
     ("ssh: Could not resolve host: github.com", push.Refusal.TRANSPORT),
     ("fatal: Could not read from remote repository.", push.Refusal.TRANSPORT),
     ("Permission denied (publickey).", push.Refusal.TRANSPORT),
@@ -293,6 +295,65 @@ def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
 
     assert result.status is push.PushStatus.LOST
     assert result.retry is push.Retry.DIRTY
+
+
+# ── the report ──────────────────────────────────────────────────────────────
+
+
+def test_output_tail_keeps_only_the_tail_of_a_long_gate_dump():
+    tail = push.output_tail("\n".join(str(n) for n in range(50))).splitlines()
+    assert len(tail) == push._HOOK_OUTPUT_LINES
+    assert tail[-1] == "49"
+
+
+def test_output_tail_indents_every_line_when_asked():
+    assert push.output_tail("a\nb", indent="  ") == "  a\n  b"
+
+
+def test_output_tail_drops_the_blank_a_missing_stream_leaves():
+    """`combined_output` joins two streams; an empty one must not print."""
+    assert push.output_tail("\n✗ Pytest failed\n\n") == "✗ Pytest failed"
+
+
+def test_refused_report_trims_a_whole_test_suite_to_its_tail(capsys):
+    """A failing pre-push prints its entire suite; the tail is what named it."""
+    output = "\n".join(f"line {n}" for n in range(200))
+    result = push.PushResult(
+        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=push.Refusal.HOOK, output=output,
+    )
+    push.report(result, "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert "line 199" in printed
+    assert "line 0" not in printed
+    assert printed.count("line ") == push._HOOK_OUTPUT_LINES
+
+
+def test_lost_report_names_the_branch_the_commit_and_the_remote(capsys):
+    result = push.PushResult(
+        push.PushStatus.LOST, sha="1a2b3c4d5e", branch="feat/x",
+        remote_sha="9f8e7d6c5b", retry=push.Retry.ATTEMPTED,
+    )
+    push.report(result, "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert "the remote did not move" in printed
+    assert "feat/x" in printed
+    assert "1a2b3c4" in printed
+    assert "9f8e7d6" in printed
+    assert "Retried once" in printed
+
+
+def test_lost_report_says_when_the_remote_holds_no_such_ref(capsys):
+    result = push.PushResult(
+        push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x", remote_sha="",
+    )
+    push.report(result, "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert "no such ref" in printed
+    assert "Not retried." in printed
 
 
 def test_every_retry_state_has_a_report_line():

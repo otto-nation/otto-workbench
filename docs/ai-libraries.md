@@ -417,8 +417,9 @@ is still open at both points, so the hold applies to both.
 
 Typed domain objects for PR review thread processing.
 
-Persistence-oriented structures live in pr_domains.py; these model the
-runtime pipeline: triage, classification, tracking, and fix-pass results.
+Persistence-oriented structures live in pr_domains.py and pr_comments_fix.py;
+these model the runtime pipeline: triage, classification, tracking, and
+fix-pass results.
 
 ### publishing.py
 
@@ -596,6 +597,25 @@ CI failure lifecycle tracking.
 Handles failure classification, progression tracking, and rendering for the
 ci-failures skill. State persistence is delegated to pr_domains.CIDomain.
 
+### pr_comments_fix.py
+
+The comment fix pass's record, and the vocabulary it is written in.
+
+This is the one fix pass that already records per-item outcomes as state, and it
+records them in its own terms: a thread, a reviewer, an action from a set only
+reviewer comments have. ``pr_fix`` holds the generic shape all three passes are
+converging on; everything here is the comment-shaped instance of it, kept
+whole because a state file in flight carries a cycle's accumulated thread
+outcomes — a deferred issue url, an undelivered summary — that renaming the
+field would silently drop.
+
+The module is above ``pr_domains`` rather than inside it: ``FixSummary`` is a
+:class:`~pr_domains.Domain` and needs the base class, while the generic record
+that base class carries has to be declared below it. Splitting on that line
+keeps the imports one-way and puts the transitional half in a file of its own,
+which is what the shared fix engine deletes when the comment pass starts writing
+``CommentsSummary.fix`` instead.
+
 ### pr_context.py
 
 Shared PR context resolution.
@@ -683,8 +703,15 @@ report is silent by declaring nothing rather than by being left off a list.
 ``pr status`` folds over the registry for both, which is what stops the
 dashboard and the registry from disagreeing.
 
+Every domain also carries a :class:`~pr_fix.FixRecord`, declared on the base
+class for the same reason: a domain that gains a fix pass gains somewhere to
+record it without a field being added anywhere. ``pr_fix`` holds that record and
+the vocabulary it is written in, and imports nothing back.
+
 ``pr_state`` holds the envelope over these, the registry and the state file
-I/O, and imports this module — never the other way round.
+I/O, and imports this module — never the other way round. So does
+``pr_comments_fix``, which holds the one fix record that predates the generic
+one and is still written in the comment pass's own terms.
 
 #### Rebase refusals
 
@@ -732,6 +759,29 @@ except the manual resolution the command exists to avoid. The waiver is the
 resume path passing `force=True` into the same parameter `--force` sets, so
 there is one waiver mechanism rather than two.
 
+### pr_fix.py
+
+What a fix pass did, in terms no one domain owns.
+
+Three fix passes run in this workbench — reviewer comments, CI failures, and
+review findings — and each one records its result differently: one writes typed
+thread outcomes into state, one writes checkbox counts, one rewrites checkboxes
+inside the review markdown. The types here are the shape all three settle on. A
+pass records one :class:`ItemOutcome` per item it was handed and one
+:class:`FixRecord` per run, and every domain carries a record because
+:class:`~pr_domains.Domain` declares the field — so a domain that gains a fix
+pass gains somewhere to record it by declaring nothing.
+
+This module is below the domains rather than beside them: ``pr_domains`` imports
+it, and it imports nothing from ``ai/lib`` in return. That is what lets the
+record hang off the base class without the domains and the vocabulary they are
+written in forming a cycle.
+
+Nothing writes a record yet. The engine that will is the shared fix pipeline,
+which replaces the three orchestrations that exist today; this module is the
+type it writes into, landed ahead of it so the passes have one target to
+converge on rather than three to reconcile afterwards.
+
 ### pr_state.py
 
 Unified PR state framework.
@@ -743,8 +793,9 @@ section; ``pr status`` reads the whole thing without network calls.
 State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
 run's target — see ``pr_target.target_dir``, which owns that path.
 
-The domains this is an envelope over live in ``pr_domains``, which this module
-imports and which never imports this one.
+The domains this is an envelope over live in ``pr_domains`` — and one of them,
+the comment pass's fix record, in ``pr_comments_fix``. This module imports both;
+neither imports it.
 
 ### pr_target.py
 

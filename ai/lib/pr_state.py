@@ -7,8 +7,9 @@ section; ``pr status`` reads the whole thing without network calls.
 State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
 run's target — see ``pr_target.target_dir``, which owns that path.
 
-The domains this is an envelope over live in ``pr_domains``, which this module
-imports and which never imports this one.
+The domains this is an envelope over live in ``pr_domains`` — and one of them,
+the comment pass's fix record, in ``pr_comments_fix``. This module imports both;
+neither imports it.
 """
 
 # doc-group: pr-state
@@ -25,12 +26,12 @@ from typing import get_type_hints
 # _domains() resolves PRState's annotations at runtime, so every domain class it
 # names has to be bound in this module's namespace — an unused-looking import
 # here is a registry entry.
+from pr_comments_fix import FixSummary
 from pr_domains import (
     CIDomain,
     CommentsSummary,
     DescribeSummary,
     Domain,
-    FixSummary,
     PushDomain,
     Readiness,
     RebaseSummary,

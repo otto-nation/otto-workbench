@@ -2235,11 +2235,14 @@ def _follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
     if recorded and replays.get(recorded) == "" and _commit_unpushed(fix.commit_status):
         log.warn(
             f"Fix commit {recorded} is no longer on this branch and no single "
-            "commit on it carries that change — the closeout stays held. If the "
-            "work landed as a different change — a squash, a reworked fix — "
-            "re-run `pr comments --fix --post` to re-triage against HEAD; "
-            f"if it was dropped, restore it with `git cherry-pick {recorded}` "
-            "while the orphaned object is still there — a gc reclaims it"
+            "commit on it carries that change — the closeout stays held. This "
+            "also fires when the change now appears twice (a duplicated "
+            "cherry-pick, an apply-revert-reapply) — check history for that "
+            "before restoring anything. If the work landed as a different "
+            "change — a squash, a reworked fix — re-run "
+            "`pr comments --fix --post` to re-triage against HEAD; if it was "
+            f"dropped, restore it with `git cherry-pick {recorded}` while the "
+            "orphaned object is still there — a gc reclaims it"
         )
 
 

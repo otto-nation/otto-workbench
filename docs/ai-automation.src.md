@@ -765,60 +765,6 @@ to come back as a non-zero exit that `out` and `ok` degraded away; it now raises
 an absent worktree is a broken caller, not a question git declined to answer — but a
 call site that was quietly relying on the old degradation will start failing loudly.
 
-### One way to run gh
-
-The same spread, with sharper consequences. `ai/` invoked `gh` as a literal argv head
-in 45 places across 13 files: eight had no timeout at all, four returned
-`(exit_code, stdout)` and threw away the stderr explaining a 5xx, and retry existed at
-exactly one site — which is why a secondary rate limit surfaced everywhere else as an
-empty result, indistinguishable from a repository with nothing to report.
-
-[`ai/lib/gh_client.py`](../ai/lib/gh_client.py) is shaped like `git_client` where the
-two commands are alike, and differs where gh is not git.
-
-| Call | What it gives you |
-|---|---|
-| `run(*args, cwd=, input_text=)` | The full `CmdResult`. Never raises on a non-zero exit, and never raises when gh is missing — both arrive as a result the caller reads the same way. |
-| `out` / `ok` / `lines` | As in `git_client`: stripped stdout with a default, a clean-exit boolean, non-empty lines. |
-| `json_out(*args, default=)` | Stdout parsed as JSON. A failed call and unparseable output are the same answer, because gh writes an error page in both cases. |
-| `api(endpoint, ...)` | One `gh api` call, retried when waiting is the remedy. `api_json` parses its stdout. |
-| `graphql(query, variables=)` | One GraphQL call, on the same retry terms. |
-| `pr_view(pr, *fields, repo=)` | The named fields of a PR as a dict, or empty when gh cannot answer. |
-| `login()` / `repo_slug()` | The authenticated user, and `owner/repo` for a directory. |
-
-Retry is the part worth stating plainly, because retrying the wrong failure is how the
-previous ladder cost twenty seconds per 404. **A 4xx that is not a throttle is an
-answer, not a failure to wait out** — a branch with no PR yet, an issue that was
-deleted — and it returns on the first attempt. Only three things earn a wait: a
-throttle, a 5xx, and a timeout. A throttle takes the long ladder GitHub's own guidance
-asks for (five attempts, 60s growing to a 300s cap), and the other two take a short one
-(three attempts, 2s to 8s) so a caller in front of a user does not appear wedged. Both
-announce each wait — `gh_client` depends on `log` for this reason, where `git_client`
-depends on nothing but `proc`: five silent minutes reads as a hang.
-
-Retry defaults to on, since rate limiting is a property of the API and not of any one
-caller. `retry=False` is for a call whose second attempt would repeat a side effect the
-first one already had — submitting a review, for instance. The reads carry the ladder
-too, for the same reason: `login()` reporting nobody, or `repo_slug()` reporting "not a
-GitHub repository", because of a throttle sends the caller after a fault that is not
-there. What does *not* get a ladder is anything that is not talking to the API —
-`out`, `ok`, `lines` and `json_out` run once and answer.
-
-Timeouts follow the argv, as they do for git. `--paginate`, `--log-failed`,
-`run download` and an endpoint ending in `/logs` are transfers; everything else is one
-round trip at `NETWORK`.
-
-Two behaviours exist because a caller kept getting them wrong. `input_text` adds
-`--input -` on its own, because gh silently ignores stdin without the flag and the
-caller then reads GitHub's complaint about a missing field as a bug in the payload it
-built. And a rejected inline-comment position raises `LineResolutionError` rather than
-returning: the request was understood and the diff moved underneath it, so the caller
-has to re-anchor, and no number of attempts will change the answer.
-
-The publishing gate is deliberately not here. `pr_comments` gates its writes on
-`publishing.enabled()` at the call site and keeps doing so — a second implicit gate
-inside the transport would make a policy decision invisible to the code that owns it.
-
 ## Guidelines & Rules
 
 The workbench installs a layered rule system into Claude Code:

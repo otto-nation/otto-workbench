@@ -96,6 +96,16 @@ tools:
         scope: "Machine"
         when: "A repo's own scripts keep prompting in a session launched from the container"
         detail: "Claude Code roots a project at the launch directory, and a bare-repo container holds no working tree, so a repo's tracked .claude/settings.json never loads there. This copies its allow and ask rules into a generated .claude/settings.json at the container, stamped so a later run can replace them without touching grants added by hand. Idempotent, and run by `otto-workbench ai sync`."
+      - name: "config set KEY VALUE"
+        description: "Write one key into the machine-wide config, checked against the key surface"
+        scope: "Machine"
+        when: "Recording a setting — an issue tracker, a reuse level — rather than hand-editing config.yml"
+        detail: "Refuses a key neither this checkout nor the installed workbench reads, so a stale worktree cannot silently record a name the config moved off. The config file is shared by every repo on the machine and an unknown key is dropped on read, which is why the refusal happens at write time."
+      - name: "config set KEY VALUE --project"
+        description: "Write one key into the current repo's .workbench.yml instead"
+        scope: "Project"
+        when: "The answer belongs to this repo and should be committed with it"
+        detail: "Same key check. The file is committed, so a key nothing reads travels to everyone who clones."
 
   - name: mem-analyze
     permission: true

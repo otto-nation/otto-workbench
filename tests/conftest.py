@@ -4,6 +4,7 @@ import importlib.util
 import itertools
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,33 @@ def _isolate_workbench_config(tmp_path, monkeypatch):
     write one into this root.
     """
     monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "workbench-config"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_installed_schema(monkeypatch):
+    """Run every test on a machine with no workbench installed.
+
+    ``check_key`` judges a config write against the schema of the *installed*
+    workbench as well as this checkout's, which is the half that catches a
+    stale writer. Unsandboxed, that makes the result depend on which commit
+    ``~/.local/bin/otto-workbench`` points at — a developer whose install
+    predates a key added here would watch this checkout's own tests refuse it.
+    Hiding the launcher is how CI sees it too, and it leaves
+    ``installed_schema_path`` itself real, so the tests covering resolution can
+    say what they mean by patching the same lookup.
+
+    Only the launcher is hidden. ``shutil.which`` answers for yq and for git on
+    the paths under test, and a fixture that blanked those would be testing a
+    machine nobody has.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import workbench_config
+
+    real_which = shutil.which
+    monkeypatch.setattr(workbench_config.shutil, "which", lambda name, *a, **kw: (
+        None if name == workbench_config.INSTALLED_LAUNCHER else real_which(name, *a, **kw)
+    ))
 
 
 @pytest.fixture(autouse=True)

@@ -631,3 +631,128 @@ def test_set_project_value_does_not_touch_the_global_config(roots):
     config_root, project = roots
     wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     assert not (config_root / wc.CONFIG_NAME).exists()
+
+
+# ── The key guard ───────────────────────────────────────────────────────────
+#
+# Both config files are shared — the global one by every repo on the machine,
+# the project one by everyone who clones — and `serde` drops a key it does not
+# know, so a write under the wrong name is lost with no error at either end.
+# `check_key` is what turns that into a refusal at write time.
+
+
+@pytest.fixture
+def stale_install(tmp_path, monkeypatch):
+    """Point ``check_key`` at an installed schema that lacks ``issue_tracker``.
+
+    The incident with the two checkouts swapped: there the writing checkout was
+    the stale one, and here it is this checkout that knows the key the install
+    does not. The mechanism under test is the same either way — a write is
+    judged by the surface the machine reads, not by the one in front of it —
+    and it is the only direction a test can build, since the local surface is
+    whatever this checkout ships.
+    """
+    schema = json.loads(wc.schema_json())
+    tracker = schema["properties"].pop("issue_tracker")
+    schema["properties"]["review"]["properties"]["issue_tracker"] = tracker
+    path = tmp_path / "installed" / wc.SCHEMA_PATH
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(schema))
+    monkeypatch.setattr(wc, "installed_schema_path", lambda: path)
+    return path
+
+
+def test_set_value_refuses_a_key_the_config_does_not_define(roots):
+    config_root, _ = roots
+    with pytest.raises(wc.ConfigKeyError) as exc:
+        wc.set_value("reuse.levl", "ultra")
+    assert "reuse.levl" in str(exc.value)
+    assert not (config_root / wc.CONFIG_NAME).exists()
+
+
+def test_set_value_refuses_the_shape_the_key_moved_off(roots):
+    """The literal key the incident wrote, judged by the surface it moved to."""
+    with pytest.raises(wc.ConfigKeyError):
+        wc.set_value("review.issue_tracker.provider", "github")
+
+
+def test_a_refused_key_is_a_config_error_too(roots):
+    """A caller that only handles the general failure still catches this one."""
+    assert issubclass(wc.ConfigKeyError, wc.ConfigError)
+    with pytest.raises(wc.ConfigError):
+        wc.set_value("nonsense", "x")
+
+
+def test_set_project_value_refuses_the_same_keys(roots):
+    """A repo file is committed, so a dead key travels to everyone who clones."""
+    _, project = roots
+    with pytest.raises(wc.ConfigKeyError):
+        wc.set_project_value("issue_tracker.provdier", "github", project)
+    assert not (project / wc.PROJECT_CONFIG_NAME).exists()
+
+
+def test_a_key_the_installed_workbench_does_not_read_is_refused(roots, stale_install):
+    config_root, _ = roots
+    with pytest.raises(wc.ConfigKeyError) as exc:
+        wc.set_value(wc.ISSUE_PROVIDER_KEY, "github")
+    assert str(stale_install) in str(exc.value)
+    assert not (config_root / wc.CONFIG_NAME).exists()
+
+
+def test_a_key_both_surfaces_read_is_written(roots, stale_install):
+    """The installed surface refuses keys; it does not refuse writing."""
+    wc.set_value("reuse.level", "ultra")
+    assert wc.load_config().reuse.level is wc.ReuseLevel.ULTRA
+
+
+def test_no_installed_workbench_leaves_the_local_surface(roots, monkeypatch):
+    """CI and a fresh clone have no install, and still have to be able to write."""
+    monkeypatch.setattr(wc, "installed_schema_path", lambda: None)
+    wc.set_value(wc.ISSUE_PROVIDER_KEY, "github")
+    assert wc.load_config().issue_tracker.provider is wc.IssueProvider.GITHUB
+
+
+def test_an_unreadable_installed_schema_leaves_the_local_surface(roots, tmp_path, monkeypatch):
+    """One broken file must not make the config unwritable machine-wide."""
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json")
+    monkeypatch.setattr(wc, "installed_schema_path", lambda: broken)
+    wc.set_value(wc.ISSUE_PROVIDER_KEY, "github")
+    assert wc.load_config().issue_tracker.provider is wc.IssueProvider.GITHUB
+
+
+def test_an_enum_keyed_section_is_writable_by_its_declared_keys(roots):
+    """`review.phases.<phase>` is a dict, so the guard reads propertyNames."""
+    wc.set_value(f"review.phases.{Phase.SCOUT}.model", "sonnet")
+    assert wc.load_config().review.phases[Phase.SCOUT].model == "sonnet"
+    with pytest.raises(wc.ConfigKeyError):
+        wc.set_value("review.phases.nosuchphase.model", "sonnet")
+
+
+def test_check_key_says_which_surface_refused(stale_install):
+    assert wc.check_key("reuse.level").ok
+    here = wc.check_key("reuse.levl")
+    assert not here.ok
+    assert here.verdict is wc.KeyVerdict.UNKNOWN_HERE
+    assert "WorkbenchConfig defines" in here.reason
+    installed = wc.check_key(wc.ISSUE_PROVIDER_KEY)
+    assert not installed.ok
+    assert installed.verdict is wc.KeyVerdict.UNKNOWN_INSTALLED
+    assert "the two disagree about where the value lives" in installed.reason
+    assert wc.check_key("reuse.level").reason == ""
+
+
+def test_installed_schema_path_resolves_through_the_launcher(tmp_path, monkeypatch):
+    """The PATH symlink is the whole mechanism — a worktree cannot fake it."""
+    installed = tmp_path / "checkout"
+    (installed / "bin").mkdir(parents=True)
+    (installed / "bin" / wc.INSTALLED_LAUNCHER).write_text("#!/bin/sh\n")
+    (installed / wc.SCHEMA_PATH).write_text("{}")
+    monkeypatch.setattr(wc.shutil, "which",
+                        lambda name: str(installed / "bin" / name))
+    assert wc.installed_schema_path() == installed / wc.SCHEMA_PATH
+
+
+def test_installed_schema_path_is_none_without_an_install(monkeypatch):
+    monkeypatch.setattr(wc.shutil, "which", lambda name: None)
+    assert wc.installed_schema_path() is None

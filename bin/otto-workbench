@@ -10,6 +10,7 @@
 #   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
 #   sync                  Re-apply all workbench configuration to ~/
 #   ai <subcmd>           Manage AI tools — scaffold projects, sync config, manage overrides
+#   config <subcmd>       Write a workbench config key, checked against the key surface
 #   discover [regenerate] Show installed components, scripts, and launchd agents
 #   projects <subcmd>     The repos on this machine that use the workbench
 #   permissions <subcmd>  Claude Code permission grants across the registered repos
@@ -88,6 +89,7 @@ COMMANDS=(
   "install [--all] [COMPONENT ...]"  "Bootstrap the workbench (first-time setup)"
   "sync"                              "Re-apply all workbench configuration to ~/"
   "ai <subcmd>"                       "Manage AI tools — scaffold projects, sync config, manage overrides"
+  "config <subcmd>"                   "Write a workbench config key, checked against the key surface"
   "discover [regenerate]"             "Show installed components, scripts, and launchd agents"
   "projects <subcmd>"                 "The repos on this machine that use the workbench"
   "permissions <subcmd>"              "Claude Code permission grants across the registered repos"
@@ -114,6 +116,11 @@ COMMANDS_AI=(
   "init [--force] [--analyze]"        "Scaffold .claude/ in the current git repo"
   "sync"                              "Sync machine-level AI config (settings, rules, MCPs, skills, agents)"
   "override <type> [name] [flags]"    "Manage user overrides (agents, skills, rules)"
+)
+
+# shellcheck disable=SC2034  # used by commands_usage() via nameref
+COMMANDS_CONFIG=(
+  "set KEY VALUE [--project]"  "Write KEY — globally, or into this repo's file"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
@@ -739,6 +746,44 @@ cmd_permissions() {
   esac
 }
 
+# ─── Workbench config ────────────────────────────────────────────────────────
+#
+# The guard is the point, not the write: lib/config_cli.py refuses a key the
+# workbench does not read, and running it by its installed name is what makes
+# "the workbench" mean the current one rather than whichever worktree the
+# caller happens to be standing in.
+
+_config_usage() {
+  cat <<EOF
+Usage: otto-workbench config <command>
+
+Write one hand-authorable config key — the global $WORKBENCH_CONFIG_NAME, or a repo's
+$WORKBENCH_PROJECT_CONFIG_NAME with --project.
+
+A key the workbench does not read is refused rather than written. Both files
+are shared — the global one by every repo on this machine, a project one by
+everybody who clones the repo — and an unrecognised key is dropped on the way
+back in, so a write nothing checks loses the value without saying so.
+
+Commands:
+$(commands_usage COMMANDS_CONFIG)
+EOF
+}
+
+cmd_config_set() {
+  python3 "$WORKBENCH_DIR/lib/config_cli.py" set "$@"
+}
+
+cmd_config() {
+  local subcmd="${1:-}"
+  shift || true
+  case "$subcmd" in
+    set)       cmd_config_set "$@" ;;
+    -h|--help) _config_usage; return 0 ;;
+    *)         _config_usage >&2; return 1 ;;
+  esac
+}
+
 # ─── Maintenance ─────────────────────────────────────────────────────────────
 
 _MAINTENANCE_DEFAULT_INTERVAL=43200  # 12 hours
@@ -1345,6 +1390,7 @@ case "${1:-}" in
   install)     shift; cmd_install "$@" ;;
   sync)        cmd_sync ;;
   ai)          shift; cmd_ai "$@" ;;
+  config)      shift; cmd_config "$@" ;;
   discover)    shift; cmd_discover "$@" ;;
   projects)    shift; cmd_projects "$@" ;;
   permissions) shift; cmd_permissions "$@" ;;

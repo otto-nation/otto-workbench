@@ -327,7 +327,25 @@ def init_worktree(path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-b", "main", "-q", str(path)],
                    check=True, capture_output=True)
+    disown_hooks(path)
     return path
+
+
+def disown_hooks(git_dir) -> None:
+    """Detach *git_dir* from whatever hooks the machine installs globally.
+
+    `core.hooksPath` is global on a workbench machine, so a repo `git init`
+    creates here inherits the developer's real `pre-commit` — an identity
+    assertion plus a `gitleaks` subprocess on every commit. That makes the suite
+    depend on machine state it does not own: the hook is free to change under
+    it, a machine without gitleaks fails every commit in a temp repo, and under
+    `pytest-xdist` each worker pays for its own scan.
+
+    The same override the bats helpers use, so both suites disown hooks the one
+    way. A test that wants a hook writes its own `core.hooksPath` afterwards.
+    """
+    subprocess.run(["git", "-C", str(git_dir), "config", "core.hooksPath", "/dev/null"],
+                   check=True, capture_output=True)
 
 
 @pytest.fixture
@@ -371,6 +389,7 @@ def container(tmp_path) -> Path:
     root = tmp_path / "container"
     subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")], check=True,
                    capture_output=True, timeout=GIT_TIMEOUT)
+    disown_hooks(root / ".git")
     git_in(root / ".git", "worktree", "add", "-q", str(root / "main"), "main")
     return root
 

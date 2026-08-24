@@ -9,16 +9,33 @@
 # top level. That fold writes the new path, which leaves the machines that ran
 # the old one holding a key nothing reads; this moves theirs across.
 #
-# Not adoption-sensitive: this rewrites keys inside config.yml, and config.yml
-# is a _LEGACY_CONFIG_ENTRIES name that adoption re-seeds whole. A re-seeded
-# file arrives with whatever shape it already had, and another pass lifts it.
+# adoption-sensitive: config.yml is a _LEGACY_CONFIG_ENTRIES name, so adoption
+# writes a pre-split machine's copy — legacy shape and all — into the config
+# root, and that can happen after this has already been recorded. The version
+# dated 20260819 asserted the re-seeded file would get another pass without
+# asking for one; this marker is the request.
+#
+# Deferred rather than recorded while config.yml is absent. Adoption is not the
+# only way the file arrives late: wb_config_ensure_file seeds it, /reuse writes
+# to it, and a session or a hand edit can create it at any point. The 20260819
+# version returned 0 on a machine that had no config.yml at all, was recorded
+# for good, and had nothing left to lift when a session wrote the legacy shape
+# into a new config.yml half an hour later — five days of sessions then read
+# "Issue tracker: not configured" from the key this exists to move.
+#
+# Dated after that version so _prune_stale_migration_state drops the state entry
+# it left behind and this one runs — see docs/execution-flow.md § Migrations.
 
-migration_20260819_lift_issue_tracker_key() {
-  [[ -f "$WORKBENCH_CONFIG_FILE" ]] || return 0
+migration_20260824_lift_issue_tracker_key() {
+  [[ -f "$WORKBENCH_CONFIG_FILE" ]] || return "$MIGRATION_DEFERRED"
 
   local legacy
   legacy="$(yq '.review.issue_tracker // ""' "$WORKBENCH_CONFIG_FILE")" || return 1
-  [[ -n "$legacy" ]] || return 0
+  # NOOP rather than deferred: the file is here and holds no legacy key, and
+  # nothing writes .review.issue_tracker any more — the fold that used to now
+  # writes the top-level path. A copy of the old shape can still arrive by
+  # adoption, which the marker above covers by forgetting this entry outright.
+  [[ -n "$legacy" ]] || return "$MIGRATION_NOOP"
 
   info "Lifting review.issue_tracker to the top level of config.yml"
 

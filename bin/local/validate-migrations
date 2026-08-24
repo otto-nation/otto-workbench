@@ -14,6 +14,12 @@
 #   - The scope marker and the function signature agree — a project-scoped
 #     migration reads the repo path the framework hands it, and one without the
 #     marker reads no argument, because the framework calls it with none
+#   - A guard that returns because the target is absent says which of the two
+#     absences it is: MIGRATION_DEFERRED (retry when the target appears) or
+#     MIGRATION_NOOP (retired for good). A bare `return 0` there is the shape
+#     that records a migration as applied against a file it never saw
+#   - MIGRATION_DEFERRED is returned only from such a guard — a deferred status
+#     is never recorded, so one reachable any other way re-runs forever
 #
 # Exit code: 0 if all checks pass (or no migrations found), 1 if any fail.
 
@@ -215,6 +221,86 @@ _migration_fn_reads_arg() {
   ' "$1"
 }
 
+# _migration_returns FILE FN — print "LINENO<TAB>ABSENT<TAB>VALUE" for every
+# `return` in FN's own body. ABSENT is 1 when the return is reached because a
+# path the migration tests does not exist, 0 otherwise; VALUE is the returned
+# token with quoting and `${}` stripped, so `"$MIGRATION_NOOP"` prints as
+# MIGRATION_NOOP.
+#
+# The two absences a migration can meet look identical in the source and mean
+# opposite things. A target already in the shape the migration produces is done
+# with, and a target that has not been created yet is not — `bin/20260819-lift-
+# issue-tracker-key.sh` returned 0 on a machine whose config.yml did not exist,
+# was recorded, and had nothing left to lift when a session wrote the file half
+# an hour later. Naming the status is what separates them, so a bare `return 0`
+# under an absent-path guard is the shape this exists to catch.
+#
+# Body bounding is `_migration_fn_reads_arg`'s: nested definitions are followed
+# for their braces and skipped for their text, so a helper's own guards are its
+# own business. Lines come through `expandable` rather than `code` because the
+# returned value is usually a double-quoted expansion, which `code` strips.
+#
+# ceiling: three guard shapes are recognised — `[[ -f x ]] || return`,
+# `[[ ! -f x ]] && return`, and a `return` on the line after `if [[ ! -f x ]]`.
+# A return reached through an `else`, or from under a condition combining a path
+# test with something else, reads as not-absent and is left alone. Upgrade when a
+# migration needs one of those shapes to defer, rather than restructuring its
+# guard into one of the three.
+_migration_returns() {
+  awk -v fn="$2" "$_AWK_LINE_HELPERS"'
+    function path_test(line) { return (line ~ /\[\[[^]]*-[efdLsr][ \t]/) }
+    function negated(line,   head) {
+      head = line
+      sub(/-[efdLsr][ \t].*$/, "", head)
+      return (head ~ /![ \t]*$/)
+    }
+    function absent_here(line) {
+      if (!path_test(line)) return -1
+      if (line ~ /\]\][ \t]*\|\|/) return negated(line) ? 0 : 1
+      if (line ~ /\]\][ \t]*&&/) return negated(line) ? 1 : 0
+      return -1
+    }
+    function ret_value(line,   v) {
+      v = line
+      sub(/^.*[ \t;&|(]return[ \t]*/, "", v)
+      if (v == line) sub(/^return[ \t]*/, "", v)
+      sub(/[ \t;&|)].*$/, "", v)
+      gsub(/["${}]/, "", v)
+      return v
+    }
+    function scan(line,   a) {
+      if (line ~ /(^|[ \t;&|(])return([ \t]|;|$)/) {
+        a = absent_here(line)
+        if (a < 0) a = (pending >= 0) ? pending : 0
+        printf "%d\t%d\t%s\n", NR, a, ret_value(line)
+        pending = -1
+        return
+      }
+      if (line ~ /^[ \t]*(if|elif)[ \t]/ && path_test(line) && absent_here(line) < 0) {
+        pending = negated(line) ? 1 : 0
+        return
+      }
+      if (line ~ /[^ \t]/) pending = -1
+    }
+    BEGIN { definition = "^[ \t]*" fn "[ \t]*\\(\\)"; nested = -1; pending = -1 }
+    { if (heredoc_body($0)) next }
+    !inside && !closed && $0 ~ definition { inside = 1; depth = 0; nested = -1; own = 1 }
+    inside {
+      isdef = (!own && $0 ~ /^[ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)|function[ \t]+[A-Za-z_])/)
+      if (nested < 0 && !isdef) scan(expandable($0))
+      stripped = code($0)
+      note_heredoc($0)
+      before = depth
+      depth += delta(stripped)
+      if (isdef && nested < 0 && depth > before) nested = before
+      if (nested >= 0 && depth <= nested) nested = -1
+      if (opens(stripped) > 0) opened = 1
+      if (opened && depth <= 0) { inside = 0; closed = 1 }
+      own = 0
+    }
+  ' "$1"
+}
+
 _validate_migration() {
   local migration="$1" display="$2"
   local basename_m
@@ -273,6 +359,37 @@ _validate_migration() {
     _fail "$display: ${expected_fn}() reads a positional argument but the file carries no '# project-scoped:' header — the framework calls it with none"
   else
     _pass "$display: scope marker matches the function's arguments"
+  fi
+
+  # An absent target is two different answers wearing one shape, and only the
+  # returned status tells them apart: MIGRATION_NOOP retires the migration,
+  # MIGRATION_DEFERRED leaves it to be asked again once the target exists. A
+  # bare `return 0` there picks the first by accident and announces work that
+  # did not happen. The reverse rule keeps the deferred status reachable only
+  # from such a guard — nothing records it, so one returned on a condition that
+  # never resolves re-runs on every sync for the life of the file.
+  local return_hits lineno absent value bad_guard="" bad_defer=""
+  return_hits="$(_migration_returns "$migration" "$expected_fn")"
+  while IFS=$'\t' read -r lineno absent value; do
+    [[ -z "$lineno" ]] && continue
+    if [[ "$absent" == 1 && "$value" == 0 ]]; then
+      bad_guard="${bad_guard:-$lineno}"
+    fi
+    if [[ "$value" == MIGRATION_DEFERRED && "$absent" != 1 ]]; then
+      bad_defer="${bad_defer:-$lineno}"
+    fi
+  done <<< "$return_hits"
+
+  if [[ -n "$bad_guard" ]]; then
+    _fail "$display:$bad_guard: returning 0 because the target does not exist records the migration as applied against a file it never saw — return MIGRATION_DEFERRED to be asked again once it exists, or MIGRATION_NOOP to be retired"
+  else
+    _pass "$display: absent-target guards name the status they return"
+  fi
+
+  if [[ -n "$bad_defer" ]]; then
+    _fail "$display:$bad_defer: MIGRATION_DEFERRED is only for a target that does not exist yet — nothing records it, so one returned from any other condition runs again on every sync"
+  else
+    _pass "$display: MIGRATION_DEFERRED is guarded by an absent target"
   fi
 
   # Nothing may run at file scope — the framework sources the file for its

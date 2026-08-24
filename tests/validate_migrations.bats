@@ -415,6 +415,207 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# ── Absent-target guards ────────────────────────────────────────────────────
+#
+# A migration meets two absences that look the same in the source: a target
+# already in the shape it produces, and a target that does not exist yet. Only
+# the returned status separates them, and `return 0` picks "retired for good"
+# by accident — which is how the 20260819 lift was recorded against a config.yml
+# that a session created half an hour later.
+
+@test "a bare return 0 under an absent-file guard fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  [[ -f "$SOME_FILE" ]] || return 0
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"records the migration as applied against a file it never saw"* ]]
+}
+
+@test "an absent-file guard returning MIGRATION_DEFERRED passes" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  [[ -f "$SOME_FILE" ]] || return "$MIGRATION_DEFERRED"
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "an absent-file guard returning MIGRATION_NOOP passes" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  [[ -f "$SOME_FILE" ]] || return "$MIGRATION_NOOP"
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "a negated test returning 0 with && fails the same way" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  [[ ! -d "$SOME_DIR" ]] && return 0
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"records the migration as applied against a file it never saw"* ]]
+}
+
+@test "a return 0 on the line after an if testing for absence fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  if [[ ! -f "$OLD_FILE" ]]; then
+    return 0
+  fi
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"records the migration as applied against a file it never saw"* ]]
+}
+
+@test "returning 0 because the target is present is not an absent-target guard" {
+  # The mirror image of the guarded shape: this returns when the file is there,
+  # which is the migration having already run, not a target that never arrived.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  [[ -f "$NEW_FILE" ]] && return 0
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "a non-path test returning 0 is left alone" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  local value="x"
+  [[ -n "$value" ]] || return 0
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "an absent-file guard returning 1 is a failure, not a silent record" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  [[ -f "$SOME_FILE" ]] || return 1
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "an absent-file guard inside a nested helper is not the migration's own" {
+  # 20260814-unify-workbench-config.sh has this shape: its folders return to the
+  # migration function, not to the framework, so their 0 is an ordinary return.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+_fold() {
+  [[ -f "$1" ]] || return 0
+  echo "folding"
+}
+migration_20260417_test() {
+  _fold /one
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+# ── Deferred reachability ───────────────────────────────────────────────────
+#
+# Nothing records a deferred migration, so the status has to stay pinned to a
+# condition that resolves on its own. One returned on any other condition runs
+# again on every sync for as long as the file exists.
+
+@test "MIGRATION_DEFERRED outside an absent-target guard fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  local value
+  value="$(cat /some/file)"
+  [[ -n "$value" ]] || return "$MIGRATION_DEFERRED"
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"only for a target that does not exist yet"* ]]
+}
+
+@test "MIGRATION_DEFERRED returned when the target is present fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  [[ -f "$NEW_FILE" ]] && return "$MIGRATION_DEFERRED"
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"only for a target that does not exist yet"* ]]
+}
+
+@test "MIGRATION_DEFERRED under an if testing for absence passes" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  if [[ ! -e "$SOME_PATH" ]]; then
+    return "${MIGRATION_DEFERRED}"
+  fi
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
 # ── Duplicate detection ─────────────────────────────────────────────────────
 
 @test "duplicate filename across components fails" {

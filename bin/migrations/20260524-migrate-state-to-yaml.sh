@@ -5,8 +5,13 @@
 # on the next interactive install or via `otto-workbench discover regenerate`.
 
 migration_20260524_migrate_state_to_yaml() {
-  [[ -f "$INSTALL_YML_FILE" ]] && return 0
-  [[ -f "$INSTALLED_STATE_FILE" ]] || return 0
+  # Already in the target shape, and a YAML state file is never converted back.
+  [[ -f "$INSTALL_YML_FILE" ]] && return "$MIGRATION_NOOP"
+  # Neither file exists, so there is nothing to convert yet. In practice
+  # 20260422-generate-initial-state writes install.yml earlier in the same run
+  # and the guard above catches it on the next sync; deferring is what keeps
+  # this from being recorded against the gap between the two.
+  [[ -f "$INSTALLED_STATE_FILE" ]] || return "$MIGRATION_DEFERRED"
 
   info "Migrating installation state to YAML"
 

@@ -4,8 +4,10 @@
 # Migration files live in `<component>/migrations/YYYYMMDD-slug.sh` and define a
 # single idempotent function named `migration_YYYYMMDD_slug` — dashes replaced
 # with underscores. Such a function returns 0 when it changed something,
-# `MIGRATION_NOOP` when it found nothing to do, and anything else to fail and
-# be retried on the next sync.
+# `MIGRATION_NOOP` when it found nothing to do, `MIGRATION_DEFERRED` when the
+# target it converts does not exist yet, and anything else to fail. The first
+# two are recorded and never revisited; the last two are retried on the next
+# sync, the deferred one silently.
 #
 # State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state
 # root](#rootssh). One line per applied migration, or one line per repo — the
@@ -87,6 +89,40 @@ readonly _PROJECT_SCOPED_MARKER='^# project-scoped:'
 # agree on a number for the same reason, that nothing was wrong and nothing
 # changed. Neither reads the other's.
 readonly MIGRATION_NOOP=3
+
+# The status a migration returns to say there is nothing to convert *yet*.
+#
+# This and MIGRATION_NOOP both mean the migration changed nothing, and what
+# separates them is whether the answer can change later. A target already in the
+# shape the migration produces will still be in it next sync, so NOOP is
+# recorded and never revisited. A target that does not exist has no shape at
+# all, and the file that will hold it is often one the same machine writes
+# afterwards — config.yml, ~/.gitconfig and ~/.env.local are all created by a
+# component step that runs after migrations do, and any of them can also be
+# written by a session, by adoption, or by hand.
+#
+# Recording that as done is how a migration spends its single attempt on an
+# absent file. 20260819-lift-issue-tracker-key ran against a machine with no
+# config.yml, returned 0, and was recorded; a session wrote the legacy
+# `review.issue_tracker` shape into a new config.yml half an hour later, and
+# nothing was left to lift it. Every session for the next five days read
+# "Issue tracker: not configured" from a key the migration exists to move. The
+# framework recorded "visited" and the migration meant "converted", and the
+# guard that made it a safe no-op was also what burned its only attempt.
+#
+# So a deferred target is not recorded, and the next sync tries it again. The
+# one thing that must not follow is a migration re-running noisily forever:
+# this status is silent — no success line, no warning, no tally — and
+# bin/local/validate-migrations only lets it be returned from a guard testing
+# whether a path exists, so a migration cannot defer for a reason that never
+# resolves into one of the other three answers. It is the machine-scoped twin of
+# what _migration_targets already does for a project-scoped migration on a
+# machine with no repos: nothing recorded, nothing said, and the next sync looks
+# again.
+#
+# 4 is simply the next free status. Like MIGRATION_NOOP it is deliberately
+# non-zero, so a migration that never heard of it cannot return it by accident.
+readonly MIGRATION_DEFERRED=4
 
 # What separates a state key from the repo it was applied to.
 #
@@ -205,6 +241,10 @@ _migration_targets() {
 # exactly like one that did work — it has been visited, and visiting it again
 # would find the same nothing — but it is not counted, so a run that changed
 # nothing can say nothing.
+#
+# A target answering MIGRATION_DEFERRED is neither recorded nor counted nor
+# warned about: what it converts does not exist yet, so there is no answer to
+# keep, and the next sync asks again.
 _run_migration_targets() {
   local fn_name="$1" basename_m="$2" base_key="$3" state_file="$4"
   shift 4
@@ -221,6 +261,14 @@ _run_migration_targets() {
     # migration rather than handing its function an empty string it never
     # asked for, and keeps the repo out of the state key it records.
     "$fn_name" ${target:+"$target"} || status=$?
+    # Deferred: there is nothing to convert yet, so nothing is recorded and the
+    # next sync asks again. Ahead of the failure check because this is a
+    # non-zero status that is not a failure, and silent because a migration may
+    # answer it on every sync for as long as its target stays absent — anything
+    # printed here would be printed forever.
+    if (( status == MIGRATION_DEFERRED )); then
+      continue
+    fi
     if (( status != 0 && status != MIGRATION_NOOP )); then
       warn "Migration failed: $basename_m${target:+ in $target} — will retry on next run"
       continue
@@ -247,6 +295,10 @@ _run_migration_targets() {
 # will not change on a later sync — but it is not announced, and the count in
 # the line printed for a project-scoped migration is repos changed rather than
 # repos visited.
+#
+# A migration that returns MIGRATION_DEFERRED found no target at all. That is
+# not recorded and not announced, so the next sync runs it again against a file
+# that may exist by then.
 run_component_migrations() {
   local dir="$1"
   local migrations_dir="$dir/migrations"
@@ -290,10 +342,10 @@ run_component_migrations() {
 
     _run_migration_targets "$fn_name" "$basename_m" "$base_key" "$state_file" "${targets[@]}"
 
-    # Nothing changed: either every target found its work already done, or every
-    # target failed and has warned for itself. Neither is worth announcing, and
-    # neither belongs in a tally — `skipped` means "recorded before this sync
-    # began", which is the one thing these targets are not.
+    # Nothing changed: every target found its work already done, found nothing
+    # to do it to yet, or failed and has warned for itself. None of the three is
+    # worth announcing, and none belongs in a tally — `skipped` means "recorded
+    # before this sync began", which is the one thing these targets are not.
     if (( _MIGRATION_CHANGED == 0 )); then
       continue
     fi

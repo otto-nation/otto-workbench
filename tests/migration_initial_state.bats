@@ -16,6 +16,11 @@ setup() {
   # shellcheck source=/dev/null
   source "$REPO_ROOT/lib/ui.sh"
 
+  # For MIGRATION_NOOP — the migration returns the framework's own status, so
+  # the numbers stay owned by lib/migrations.sh
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/lib/migrations.sh"
+
   # Source the migration file
   # shellcheck source=/dev/null
   source "$REPO_ROOT/bin/migrations/20260422-generate-initial-state.sh"
@@ -140,7 +145,8 @@ teardown() {
 @test "skips when YAML state file already exists" {
   state_record "docker"
 
-  migration_20260422_generate_initial_state
+  run migration_20260422_generate_initial_state
+  [[ "$status" -eq "$MIGRATION_NOOP" ]]
 
   # Migration was a no-op — only "docker" should be present
   run state_is_installed "docker"
@@ -155,7 +161,8 @@ teardown() {
   mkdir -p "$(dirname "$INSTALLED_STATE_FILE")"
   echo "something" > "$INSTALLED_STATE_FILE"
 
-  migration_20260422_generate_initial_state
+  run migration_20260422_generate_initial_state
+  [[ "$status" -eq "$MIGRATION_NOOP" ]]
 
   # Migration was a no-op — YAML file should not exist
   [[ ! -f "$INSTALL_YML_FILE" ]]

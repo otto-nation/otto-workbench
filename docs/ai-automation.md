@@ -396,6 +396,21 @@ demonstrably acted on that thread, which is what put it in `fixed`, so it keeps
 the in-response reading and names no commit: the one the branch offers for that
 line predates the comment and cannot be what carried a fix made after it.
 
+### A rebase renames the held commit, it does not unpublish it
+
+A fix pass that holds its push records the SHA it committed, and the run that
+clears the hold often comes *after* a rebase — `pr rebase --fix` is what a
+supersession warning tells the operator to run. The rewrite leaves that SHA
+resolvable as an object and contained by no branch, the one shape "has this been
+pushed?" answers wrong
+([#952](https://github.com/otto-nation/otto-workbench/issues/952)). So `--finish`
+follows the rename first, matching an orphan to its replay on patch id — every
+pass commits under one static subject, so content is the only field that tells
+two of them apart — and cites the branch's own history from there. Nothing
+clears on a guess: a commit still on the branch is unpushed for the ordinary
+reason, and an orphan with no replay, or with two, holds too and says how to
+recover. Re-running `--fix` is not the way; it discards reviewed replies.
+
 ### The summary comments are the record, not the state file
 
 The `Review Comments Addressed` comments are what a reviewer reads to confirm

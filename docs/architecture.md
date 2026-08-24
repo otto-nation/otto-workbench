@@ -49,6 +49,8 @@ Order is significant — later layers can reference earlier ones. The [`loader.z
 
 `~/.zshrc` is copied from [`zsh/.zshrc`](../zsh/.zshrc) on first install. It sets up oh-my-zsh (lazy-loaded), arch-aware Homebrew, and modular config loading.
 
+One snippet in the `tools/` layer changes where a command runs rather than what is on `PATH`. [`tools/claude.zsh`](../zsh/config.d/tools/claude.zsh) wraps `claude` so a session started at a bare-repo container launches in a worktree instead. The container holds the bare `.git` and the worktrees as peers but no working tree of its own, so a session rooted there sees no `CLAUDE.md`, no `.claude/` rules, and no source. The wrapper asks [`resolve-worktree`](tools.md#resolve-worktree) which worktree the container stands in for, prints where it is going, and launches there in a subshell — your own shell stays where it was. An ordinary repo, a worktree, and a directory outside any repo are all launched untouched, and a container with no worktree to resolve is reported rather than guessed at. `command claude` bypasses the wrapper, which is how a deliberate container-rooted session is still possible.
+
 ### Git
 
 Two-layer architecture:

@@ -44,7 +44,7 @@ teardown() {
 
 # _init_repo_at DIR — makes DIR a git repo with one commit covering everything present
 _init_repo_at() {
-  git -C "$1" init -q
+  git -C "$1" init -q --initial-branch=main
   git -C "$1" config user.email test@example.com
   git -C "$1" config user.name Test
   git -C "$1" add -A
@@ -193,4 +193,36 @@ _make_dirs() {
   run bash "$GEN_ANATOMY" "$REPO"
   [ "$status" -eq 0 ]
   [ ! -e "$REPO/.claude/anatomy.md" ]
+}
+
+# ── Bare-repo containers ─────────────────────────────────────────────────────
+# The container holds .claude/ but no source; the worktree beside it holds the
+# source. resolve-worktree is what joins the two, so it has to be on PATH.
+
+@test "indexes the resolved worktree when run at a bare container" {
+  printf '# a thing\ncode\n' > "$REPO/a.sh"
+  _init_repo
+
+  local container="$TMPDIR/container"
+  mkdir -p "$container/.claude"
+  git clone -q --bare "$REPO" "$container/.git"
+  git -C "$container" worktree add -q "$container/main" main
+
+  PATH="$REPO_ROOT/bin:$PATH" run bash "$GEN_ANATOMY" "$container"
+  [ "$status" -eq 0 ]
+  [ -f "$container/.claude/anatomy.md" ]
+  [[ "$(cat "$container/.claude/anatomy.md")" == *"a.sh"* ]]
+}
+
+@test "exits quietly at a bare container with no worktree to index" {
+  printf '# a thing\ncode\n' > "$REPO/a.sh"
+  _init_repo
+
+  local container="$TMPDIR/container"
+  mkdir -p "$container/.claude"
+  git clone -q --bare "$REPO" "$container/.git"
+
+  PATH="$REPO_ROOT/bin:$PATH" run bash "$GEN_ANATOMY" "$container"
+  [ "$status" -eq 0 ]
+  [ ! -e "$container/.claude/anatomy.md" ]
 }

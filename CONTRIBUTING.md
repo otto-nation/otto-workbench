@@ -181,8 +181,16 @@ finding says to regenerate it.
 
 So if a session launched from the container is prompting for this repo's own
 scripts, run `otto-workbench permissions mirror` and start it again. There is
-nothing to move by hand and no reason to prefer a worktree-rooted session: once
-the mirror is there, both root at the same grants.
+nothing to move by hand: once the mirror is there, a container-rooted session
+and a worktree-rooted one start from the same grants.
+
+Fewer sessions root there now. The `claude` shell wrapper in
+[`zsh/config.d/tools/claude.zsh`](zsh/config.d/tools/claude.zsh) sends a launch
+from the container into the worktree its default branch is checked out into, and
+says so on the way. The mirror still matters — `command claude` bypasses the
+wrapper, and a shell without the workbench's zsh config has no wrapper at all —
+but the container is now where a session passes through rather than where it
+settles.
 
 ### The rest of the machine
 

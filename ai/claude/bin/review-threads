@@ -2158,6 +2158,7 @@ def _finish_deferred_work(
     if state is None:
         return
     threads_by_id = {t.id: t for t in report.threads}
+    _follow_history_rewrite(state, wt_path)
     _push_held_commit(state, wt_path, trail)
     if state.fix.pr_body_pending:
         state.fix.pr_body_pending = _deliver_pr_body(
@@ -2174,6 +2175,71 @@ def _finish_deferred_work(
         state, report, ctx.repo, ctx.pr_number, threads_by_id,
     )
     pr_state.save_state(ctx.target_dir, state)
+
+
+def _follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
+    """Re-point the snapshot at the commits a rewrite left in place of its own.
+
+    A fix pass that holds its push records the SHA it committed, and the run
+    that clears the hold is often the one *after* a rebase — `pr rebase --fix`
+    is what a supersession warning tells the operator to run. That rebase
+    rewrites every commit on the branch and force-pushes, so the recorded SHA
+    ends up orphaned: still resolvable, contained by no branch, and therefore
+    read as unpushed by every gate in the closeout. The work is on the remote;
+    only its name changed, and holding the replies and the summary over a name
+    leaves the operator with no way forward that does not discard reviewed
+    drafts.
+
+    So the rename is followed here, before anything asks whether a commit is
+    published. Downstream is unchanged and answers correctly either way: a
+    replay that reached the remote clears the hold, and one still sitting local
+    is unpushed for the ordinary reason and keeps holding.
+
+    Nothing is cleared when the rename cannot be followed. An orphan with no
+    replay keeps the SHA it was recorded with, the hold stands, and the warning
+    below names the two ways out — which is the honest answer to a state this
+    cannot read, and the one thing worse than blocking would be publishing on a
+    guess.
+    """
+    fix = state.fix
+    recorded = fix.commit_sha
+    # Keyed by recorded SHA, so a branch whose threads all cite one commit asks
+    # git once. "" is a cached answer too: it means orphaned with no replay.
+    replays: dict[str, str] = {}
+
+    def followed(sha: str) -> str:
+        if not sha:
+            return sha
+        if sha not in replays:
+            replays[sha] = (
+                _replayed_commit(wt_path, sha) if _rewritten_away(wt_path, sha) else sha
+            )
+        return replays[sha] or sha
+
+    fix.commit_sha = followed(fix.commit_sha)
+    # The snapshot HEAD moves with the rest. It is the base of the "what landed
+    # outside the fix pass" range, and a base git cannot resolve makes that
+    # range empty — which reads as "nothing landed since", the one answer that
+    # is never true after a rebase.
+    fix.head_sha = followed(fix.head_sha)
+    for thread in fix.threads:
+        thread.commit_sha = followed(thread.commit_sha)
+        thread.read_sha = followed(thread.read_sha)
+
+    moved = sum(1 for sha, replay in replays.items() if replay and replay != sha)
+    if moved:
+        log.info(
+            f"Followed {moved} rewritten commit(s) — the fix snapshot now cites "
+            "the history on the branch"
+        )
+    if recorded and replays.get(recorded) == "" and _commit_unpushed(fix.commit_status):
+        log.warn(
+            f"Fix commit {recorded} is no longer on this branch and nothing on "
+            "it replays that commit — the closeout stays held. If the work "
+            "landed under another commit (a squash, a reword), re-run "
+            "`pr comments --fix --post` to re-triage against the current HEAD; "
+            f"if it was dropped, restore it with `git cherry-pick {recorded}`"
+        )
 
 
 def _push_held_commit(
@@ -4004,6 +4070,59 @@ def _get_head_sha(wt_path: Path) -> str:
 def _is_pushed(wt_path: Path, sha: str) -> bool:
     """Check if a commit has been pushed to the remote tracking branch."""
     return bool(git_client.out("branch", "-r", "--contains", sha, cwd=wt_path))
+
+
+def _rewritten_away(wt_path: Path, sha: str) -> bool:
+    """Whether HEAD's history no longer reaches *sha* — a rewrite orphaned it.
+
+    Existence is the wrong question here, and asking it is the bug this answers.
+    A rebase writes new commits and leaves the originals in the object database,
+    so `cat-file` and `branch -r --contains` disagree in the worst possible way:
+    the recorded SHA still resolves, and no branch anywhere contains it.
+
+    Ancestry separates the two readings. Exit 1 is the orphan — reachable as an
+    object, unreachable as history. Exit 0 means the commit is still on the
+    branch and its absence from the remote is a genuine unpushed commit, which
+    must keep holding the closeout. Any other exit is git declining to answer
+    (an unresolvable SHA, a damaged object) and is read as "no evidence of a
+    rewrite" on purpose: a question git could not answer must never be the
+    reason a hold clears.
+    """
+    return git_client.run(
+        "merge-base", "--is-ancestor", sha, "HEAD", cwd=wt_path,
+    ).returncode == 1
+
+
+def _replayed_commit(wt_path: Path, sha: str) -> str:
+    """The commit now on the branch that replays *sha*, or "" when none does.
+
+    A rebase copies each commit's author date and subject verbatim and changes
+    only the SHA and the parent — conflict resolution included, since the
+    resolution edits the tree and not the header. That pair therefore names the
+    replay of an orphan, and nothing else on the branch: two commits sharing a
+    subject would still have to share an author timestamp to the second.
+
+    Searched from the orphan's own merge base rather than from the upstream
+    branch, because the rewrite may have moved the branch onto a newer base and
+    the old one is the only commit both histories still agree on.
+
+    A reword, a squash, or a dropped commit produces no match, and that is the
+    honest answer: the recorded commit's work is not on the branch under any
+    name this can vouch for.
+    """
+    identity = git_client.out(
+        "show", "--no-patch", "--format=%at%x00%s", sha, cwd=wt_path,
+    )
+    base = git_client.out("merge-base", sha, "HEAD", cwd=wt_path)
+    if not identity or not base:
+        return ""
+    for line in git_client.lines(
+        "log", "--format=%h%x00%at%x00%s", f"{base}..HEAD", cwd=wt_path,
+    ):
+        short, _, rest = line.partition("\x00")
+        if rest == identity:
+            return short
+    return ""
 
 
 def _unrecovered_commit(

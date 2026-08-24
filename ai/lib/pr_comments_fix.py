@@ -91,10 +91,15 @@ class ThreadOutcome:
         carries `thread_id` where the dataclass now declares `id`. Copying
         rather than popping leaves the caller's dict alone — `apply_state_update`
         is handed a payload it does not expect this function to rewrite.
+
+        `serde` hands a `null` here too rather than dropping the field, so a
+        list holding one keeps the outcomes beside it. An entry recording
+        nothing reconstructs as the default — DEFERRED, which reads as work
+        still owed rather than as a thread this pass claimed.
         """
         if isinstance(raw, cls):
             return raw
-        data = dict(raw)
+        data = dict(raw or {})
         if "thread_id" in data and "id" not in data:
             data["id"] = data.pop("thread_id")
         return _serde_from_dict(cls, data)

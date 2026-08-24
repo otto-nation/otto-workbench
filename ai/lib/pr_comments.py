@@ -1,7 +1,8 @@
 """PR comments lifecycle tracking.
 
-Handles thread lifecycle state computation, local state persistence,
-and GitHub data fetching for the pr-comments skill.
+Handles thread lifecycle state computation and GitHub data fetching for the
+pr-comments skill. The ledger those threads are recorded in, and the file it
+lives in, belong to `pr_comments_state`.
 
 A thread's lifecycle state is what decides whether the run may report itself
 done. `--post` is a request, not a guarantee: if triage routes any thread to
@@ -48,63 +49,17 @@ import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import StrEnum
-from pathlib import Path
 
 import gh_client
 import log
 import publishing
-import serde
+from pr_comments_state import ThreadRecord, ThreadState
 from proc import CmdResult
 from review_common import plural
 from review_github import PRData, fetch_review_threads
 
 
-# ── State file I/O ─────────────────────────────────────────────────────────
-
-def empty_state(repo: str, pr_number: int, my_login: str) -> dict:
-    """Create a fresh state object."""
-    return {
-        "repo": repo,
-        "pr_number": pr_number,
-        "last_run": datetime.now(timezone.utc).isoformat(),
-        "my_login": my_login,
-        "threads": {},
-    }
-
-
-def load_state(path: Path) -> dict | None:
-    """Load state from file. Returns None if file doesn't exist."""
-    if not path.exists():
-        return None
-    with open(path) as f:
-        return json.load(f)
-
-
-def save_state(path: Path, state: dict) -> None:
-    """Save state to file, creating parent directories."""
-    state["last_run"] = datetime.now(timezone.utc).isoformat()
-    serde.write_json(path, state)
-
-
 # ── Thread lifecycle states ────────────────────────────────────────────────
-
-
-class ThreadState(StrEnum):
-    NEW = "new"
-    ADDRESSED = "addressed"
-    VERIFIED = "verified"
-    CONTESTED = "contested"
-    RESOLVED = "resolved"
-    AMBIGUOUS = "ambiguous"
-
-
-STATE_NEW = ThreadState.NEW
-STATE_ADDRESSED = ThreadState.ADDRESSED
-STATE_VERIFIED = ThreadState.VERIFIED
-STATE_CONTESTED = ThreadState.CONTESTED
-STATE_RESOLVED = ThreadState.RESOLVED
-STATE_AMBIGUOUS = ThreadState.AMBIGUOUS
 
 _ACK_WORDS = {"done", "lgtm", "looks good", "thanks", "thank you", "fixed", "nice", "great", "sounds good", "perfect", "agreed", "makes sense"}
 _ACK_EMOJI = {"👍", "✅", ":thumbsup:", ":white_check_mark:"}
@@ -162,10 +117,10 @@ def compute_thread_state(
     Returns one of: new, addressed, verified, contested, resolved, ambiguous.
     """
     if is_resolved:
-        return STATE_RESOLVED
+        return ThreadState.RESOLVED
 
     if not comments:
-        return STATE_NEW
+        return ThreadState.NEW
 
     my_login_lower = my_login.lower()
     last_comment = comments[-1]
@@ -176,18 +131,18 @@ def compute_thread_state(
     )
 
     if not has_my_reply:
-        return STATE_NEW
+        return ThreadState.NEW
 
     if last_comment_is_mine(comments, my_login):
-        return STATE_ADDRESSED
+        return ThreadState.ADDRESSED
 
     # Reviewer replied after me — classify the reply
     body = last_comment.get("body", "")
     if _is_acknowledgment(body):
-        return STATE_VERIFIED
+        return ThreadState.VERIFIED
     if _is_pushback(body):
-        return STATE_CONTESTED
-    return STATE_AMBIGUOUS
+        return ThreadState.CONTESTED
+    return ThreadState.AMBIGUOUS
 
 
 # ── GitHub data fetching ───────────────────────────────────────────────────
@@ -523,11 +478,17 @@ def resolve_thread(thread_id: str) -> bool:
 
 def sync_threads(
     threads: list[dict],
-    prior_threads: dict,
+    prior_threads: dict[str, ThreadRecord],
     my_login: str,
-) -> dict:
-    """Sync GitHub thread data with local state. Returns updated threads dict."""
-    result = {}
+) -> dict[str, ThreadRecord]:
+    """Fold what GitHub says about each thread into what the last run recorded.
+
+    Everything GitHub owns is taken fresh. The three triage fields are carried
+    over from `prior_threads`, because nothing re-derives them — except on a
+    thread that has been replied to since the decision was made, where carrying
+    them would attach a verdict to a conversation it never read.
+    """
+    result: dict[str, ThreadRecord] = {}
     for thread in threads:
         tid = thread["id"]
         comments = thread.get("comments", {}).get("nodes", [])
@@ -538,30 +499,23 @@ def sync_threads(
         first_comment = comments[0] if comments else {}
         reviewer = (first_comment.get("author") or {}).get("login", "")
 
-        prior = prior_threads.get(tid, {})
-        prior_last_seen = prior.get("last_seen_reply_id")
+        prior = prior_threads.get(tid) or ThreadRecord()
+        has_new_replies = (
+            prior.last_seen_reply_id is not None
+            and last_comment_id != prior.last_seen_reply_id
+        )
+        decided = ThreadRecord() if has_new_replies else prior
 
-        has_new_replies = prior_last_seen is not None and last_comment_id != prior_last_seen
-
-        if has_new_replies:
-            classification = None
-            summary = None
-            decided_at = None
-        else:
-            classification = prior.get("classification")
-            summary = prior.get("summary")
-            decided_at = prior.get("decided_at")
-
-        result[tid] = {
-            "state": state,
-            "reviewer": reviewer,
-            "last_seen_reply_id": last_comment_id,
-            "file": thread.get("path"),
-            "line": thread.get("line"),
-            "classification": classification,
-            "summary": summary,
-            "decided_at": decided_at,
-        }
+        result[tid] = ThreadRecord(
+            state=state,
+            reviewer=reviewer,
+            last_seen_reply_id=last_comment_id,
+            file=thread.get("path") or "",
+            line=thread.get("line"),
+            classification=decided.classification,
+            summary=decided.summary,
+            decided_at=decided.decided_at,
+        )
     return result
 
 
@@ -585,7 +539,7 @@ def _relative_time(iso_str: str) -> str:
 
 def render_dashboard(
     pr_number: int,
-    threads: dict,
+    threads: dict[str, ThreadRecord],
     verdicts: list[dict],
     issue_comments: list[dict],
     review_body_comments: list[dict] | None = None,
@@ -600,25 +554,24 @@ def render_dashboard(
         lines.append(f"  @{v['user']} — {v['state']} ({time_str})")
     lines.append("")
 
-    counts = {STATE_RESOLVED: 0, STATE_ADDRESSED: 0, STATE_CONTESTED: 0,
-              STATE_NEW: 0, STATE_VERIFIED: 0, STATE_AMBIGUOUS: 0}
+    counts = {state: 0 for state in ThreadState}
     for t in threads.values():
-        counts[t["state"]] = counts.get(t["state"], 0) + 1
+        counts[t.state] += 1
     total = len(threads)
 
     lines.append(f"Threads: {total} total")
-    if counts[STATE_RESOLVED]:
-        lines.append(f"  ✓ {counts[STATE_RESOLVED]} resolved")
-    if counts[STATE_VERIFIED]:
-        lines.append(f"  ✓ {counts[STATE_VERIFIED]} verified (ready to resolve)")
-    if counts[STATE_ADDRESSED]:
-        lines.append(f"  ⏳ {counts[STATE_ADDRESSED]} addressed (awaiting reviewer)")
-    if counts[STATE_CONTESTED]:
-        lines.append(f"  ⚠ {counts[STATE_CONTESTED]} contested (reviewer pushed back)")
-    if counts[STATE_AMBIGUOUS]:
-        lines.append(f"  ? {counts[STATE_AMBIGUOUS]} ambiguous (needs your input)")
-    if counts[STATE_NEW]:
-        lines.append(f"  → {counts[STATE_NEW]} new (unaddressed)")
+    if counts[ThreadState.RESOLVED]:
+        lines.append(f"  ✓ {counts[ThreadState.RESOLVED]} resolved")
+    if counts[ThreadState.VERIFIED]:
+        lines.append(f"  ✓ {counts[ThreadState.VERIFIED]} verified (ready to resolve)")
+    if counts[ThreadState.ADDRESSED]:
+        lines.append(f"  ⏳ {counts[ThreadState.ADDRESSED]} addressed (awaiting reviewer)")
+    if counts[ThreadState.CONTESTED]:
+        lines.append(f"  ⚠ {counts[ThreadState.CONTESTED]} contested (reviewer pushed back)")
+    if counts[ThreadState.AMBIGUOUS]:
+        lines.append(f"  ? {counts[ThreadState.AMBIGUOUS]} ambiguous (needs your input)")
+    if counts[ThreadState.NEW]:
+        lines.append(f"  → {counts[ThreadState.NEW]} new (unaddressed)")
 
     lines.extend(_dashboard_raw_comments(review_body_comments, issue_comments))
     lines.append("")

@@ -29,7 +29,7 @@ from conftest import (
 import pr_state
 import proc
 from proc import CmdResult
-from pr_comments import ThreadState
+from pr_comments_state import ThreadState
 from pr_comments_fix import FixSummary, ThreadAction, ThreadOutcome
 from pr_domains import SupersessionKind
 from pr_fix import CommitStatus

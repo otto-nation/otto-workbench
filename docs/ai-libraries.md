@@ -374,8 +374,9 @@ Everything that leaves the machine — review comments, replies, summaries, trac
 
 PR comments lifecycle tracking.
 
-Handles thread lifecycle state computation, local state persistence,
-and GitHub data fetching for the pr-comments skill.
+Handles thread lifecycle state computation and GitHub data fetching for the
+pr-comments skill. The ledger those threads are recorded in, and the file it
+lives in, belong to `pr_comments_state`.
 
 A thread's lifecycle state is what decides whether the run may report itself
 done. `--post` is a request, not a guarantee: if triage routes any thread to
@@ -615,6 +616,29 @@ that base class carries has to be declared below it. Splitting on that line
 keeps the imports one-way and puts the transitional half in a file of its own,
 which is what the shared fix engine deletes when the comment pass starts writing
 ``CommentsSummary.fix`` instead.
+
+### pr_comments_state.py
+
+The review-thread ledger, and the one state file that is not a snapshot.
+
+``ignore/pr-comments/state.json`` records where every review thread on a PR
+stood at the end of the last run. Most of what it holds — the lifecycle state,
+the reviewer, the last reply seen, the file and line — is re-fetched from the
+API on every run, so losing it costs nothing. Three fields are not:
+``classification``, ``summary`` and ``decided_at`` are triage decisions made
+locally, and no API call reproduces them.
+
+That asymmetry is why this file recovers differently from every other one behind
+:func:`serde.load_file`. The shared reader discards a file it cannot parse and
+lets the next write rebuild it, which is unconditionally safe for a cache. Here
+it would silently re-triage every thread on the PR to recover from one bad
+entry, so the tolerance sits one level down: :meth:`ThreadRecord._from_raw`
+takes the loss per entry, and the threads either side of a corrupt one keep
+their decisions.
+
+Imports ``log`` and ``serde`` and nothing else in ``ai/lib``, so the vocabulary
+the thread pipeline is written in sits below the code that fetches, renders and
+triages it.
 
 ### pr_context.py
 

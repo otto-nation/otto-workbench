@@ -50,12 +50,16 @@ def from_dict(cls, data: dict):
     - `dict[int, V]` and `dict[SomeEnum, V]` keys are restored from the strings
       JSON makes of them; an unknown enum key raises rather than lingering
     - A nested dataclass defining `_from_raw` reconstructs itself through it,
-      which is how a type stored in more than one shape stays readable
+      which is how a type stored in more than one shape stays readable. The
+      hook is handed the raw value whatever it is, `null` included — a type
+      that owns its own reconstruction owns that case too
     - An explicit `null` on a field with no null form of its own (enum, scalar,
       list, tuple, dict) is treated as a missing key, falling back to the
       field's default. A `null` nested inside a list or dict element propagates
       the same way, dropping the whole field to its default rather than keeping
-      a `None` alongside real values
+      a `None` alongside real values — unless the element type defines
+      `_from_raw`, which decides for itself and so contains the loss to the one
+      element
     - A value whose type does not match its hint is restored where the
       conversion recovers the written value (`"3"` for an `int`, `3` for a
       `str`) and treated as a missing key where it would invent one (`"many"`
@@ -86,10 +90,15 @@ def from_dict(cls, data: dict):
 def load_file(cls, path: Path):
     """Reconstruct a dataclass from a JSON file, or None if there isn't a usable one.
 
-    A missing file and an unreadable one both come back as None. Every caller
-    owns a regenerable cache — nothing in these files is authoritative — so
-    discarding one that will not parse is always a correct recovery, and the
-    warning is what keeps that from being silent.
+    A missing file and an unreadable one both come back as None. What these
+    files hold is a cache of what some API already said, so discarding one that
+    will not parse costs a re-fetch and nothing else, and the warning is what
+    keeps that from being silent.
+
+    A file holding anything that cannot be re-fetched needs its tolerance one
+    level down instead, on the type that owns the unreproducible part — see
+    `pr_comments_state.ThreadRecord._from_raw`, whose per-entry recovery keeps a
+    single damaged thread from discarding every thread's triage.
 
     ValueError covers JSONDecodeError and UnicodeDecodeError, which subclass it,
     along with an unknown enum value and a non-numeric key under a dict[int, V].
@@ -170,9 +179,15 @@ class HintKind(StrEnum):
 
 
 # The kinds that read a `None` as something other than "field omitted". Every
-# other kind — enum, scalar, list, tuple, dict, and the `_from_raw` hook, which
-# has no null form of its own — takes the shared rule in `_coerce`.
-_NULL_AWARE = frozenset({HintKind.OPTIONAL, HintKind.DATACLASS})
+# other kind — enum, scalar, list, tuple, dict — takes the shared rule in
+# `_coerce`.
+#
+# FROM_RAW is here because the hook's contract is that the type reads every raw
+# form of itself, and a null is a raw form. Withholding it was what let one
+# `null` inside a `dict[str, T]` drop the whole field: `_coerce` raised before
+# the hook could take the loss for its own entry, and `from_dict` fell back to
+# the default for every entry beside it.
+_NULL_AWARE = frozenset({HintKind.OPTIONAL, HintKind.DATACLASS, HintKind.FROM_RAW})
 
 
 def classify(hint) -> tuple[HintKind, tuple]:
@@ -238,14 +253,12 @@ def _coerce(hint, value):
     """Coerce a raw value to match its type hint."""
     kind, args = classify(hint)
 
-    # Every kind but the two that own a null reads one the way it reads a
+    # Every kind but the null-aware ones reads a null the way it reads a
     # missing key: use the field's default. Only a hand-edited or
     # partially-written file produces one, since `to_dict` emits real values;
     # the alternative is a `None` sitting behind an `int` hint until a reader
     # does arithmetic on it. A field with no default still raises TypeError
-    # from `cls(**kwargs)`, exactly as an absent key does. For a `_from_raw`
-    # type that means the hook never sees a null it would have to invent a
-    # value for.
+    # from `cls(**kwargs)`, exactly as an absent key does.
     if value is None and kind not in _NULL_AWARE:
         raise _Omitted
 

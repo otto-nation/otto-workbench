@@ -16,14 +16,14 @@ import pr_state
 from pr_domains import (
     CIDomain,
     CommentsSummary, TriageSummary, RebaseSummary,
-    CommitStatus, FixSummary, ThreadAction, ThreadOutcome,
+    CommitStatus, FixSummary, PushDomain, ThreadAction, ThreadOutcome,
     ReviewSummary, ReviewVerdict, ReviewStatus,
     SupersessionDomain, SupersessionKind, SupersessionSignal,
 )
 from pr_state import (
     PRIdentity, PRCloseState, PRClosure,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
-    apply, _domains,
+    apply, _domains, domains_of, merge_readiness,
     state_to_dict, state_from_dict,
     load_or_init, apply_state_update,
     STATE_VERSION,
@@ -672,6 +672,36 @@ def test_apply_routes_every_domain_to_its_own_field(name, cls):
 
     assert getattr(state, name).updated_at == "marker"
     assert [n for n in _domains() if getattr(state, n).updated_at] == [name]
+
+
+def test_domains_of_yields_every_registered_domain_in_declaration_order():
+    """Declaration order is display order — `pr status` prints this sequence."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+
+    assert [type(d) for d in domains_of(state)] == list(_domains().values())
+
+
+def test_merge_readiness_gathers_blockers_and_unchecked_from_every_domain():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, CIDomain(conclusion="failure", updated_at="t"))
+    apply(state, CommentsSummary(blocking_reviewers=["alice"], updated_at="t"))
+
+    answer = merge_readiness(state)
+
+    assert answer.blockers == ("CI failing", "blocking reviewers")
+    # Review never ran, and no other domain reports on whether it may merge.
+    assert answer.unchecked == ("review",)
+
+
+def test_merge_readiness_is_empty_when_every_domain_is_clean():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, CIDomain(conclusion="success", updated_at="t"))
+    apply(state, ReviewSummary(finding_counts={"S": 1}, updated_at="t"))
+    apply(state, CommentsSummary(updated_at="t"))
+    apply(state, PushDomain(ahead=0, updated_at="t"))
+
+    assert merge_readiness(state).blockers == ()
+    assert merge_readiness(state).unchecked == ()
 
 
 def test_apply_rejects_a_type_no_field_holds():

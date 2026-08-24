@@ -6585,10 +6585,9 @@ class TestUndeliveredDeferredIssueReachesTheState:
 
     def test_a_tracker_with_no_team_key_is_recorded(self, rt, worktree, publishing_on):
         """A branch with no ABC-123 and no configured team files nothing either."""
-        import pr_comments
         fix = self._finalize(rt, worktree, self._provider("linear"))
         assert fix.deferred_issue_pending is True
-        assert pr_comments.closeout_debt(fix).owed is True
+        assert fix.closeout_debt().owed is True
 
     def test_a_draft_run_with_no_team_key_owes_nothing(self, rt, worktree):
         """Nothing was attempted, so the missing key cost the run nothing."""

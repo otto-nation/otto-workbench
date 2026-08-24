@@ -49,7 +49,7 @@ import serde
 import timeouts
 import workbench_paths
 from ai_usage import SessionUsage, parse_session_log
-from pr_domains import ReviewStatus, ReviewSummary, ReviewVerdict
+from pr_domains import ReviewStatus, ReviewVerdict
 from pr_state import now_iso
 
 
@@ -1170,42 +1170,3 @@ def json_summary(repo: str, pr_number: str, review_file: str) -> str:
     """Build a REVIEW_SUMMARY:{json} string for a review."""
     data = build_review_summary(repo, pr_number, review_file)
     return f"REVIEW_SUMMARY:{json.dumps(data)}"
-
-
-# ── Status rendering ─────────────────────────────────────────────────────
-
-
-def _verdict_display(verdict: str) -> str:
-    try:
-        return ReviewVerdict(verdict).prose
-    except ValueError:
-        return verdict
-
-
-def render_status(rev: ReviewSummary) -> list[str]:
-    """Render review state as status lines for the pr dashboard."""
-    if not rev.updated_at:
-        return ["**Review**: not run yet"]
-    suffixes = []
-    if rev.status == ReviewStatus.PARTIAL.value:
-        detail = f" — {rev.failure_detail}" if rev.failure_detail else ""
-        suffixes.append(f"[PARTIAL{detail}]")
-    elif rev.status == ReviewStatus.ERROR.value:
-        detail = f" — {rev.failure_detail}" if rev.failure_detail else ""
-        suffixes.append(f"[ERROR{detail}]")
-    if rev.verdict == ReviewVerdict.DISAPPROVE.value:
-        suffixes.append("[DISAPPROVED]")
-    suffix = " " + " ".join(suffixes) if suffixes else ""
-    # The dashboard shows the verdict the way the review states it, not the way
-    # state serializes it. An unrecognised value is shown as stored rather than
-    # dropped, so state written by an older version still reads.
-    verdict_part = f": {_verdict_display(rev.verdict)}" if rev.verdict else ""
-    lines = [f"**Review** ({rev.review_type}){verdict_part}{suffix}"]
-    if rev.finding_counts:
-        parts = [f"{sev}: {count}" for sev, count in sorted(rev.finding_counts.items())]
-        lines.append(f"  findings: {', '.join(parts)}")
-    if rev.cost_usd:
-        lines.append(f"  cost: ${rev.cost_usd:.2f}")
-    if rev.status in (ReviewStatus.PARTIAL.value, ReviewStatus.ERROR.value):
-        lines.append("  recover: pr review --recover")
-    return lines

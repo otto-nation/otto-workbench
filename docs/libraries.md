@@ -654,6 +654,29 @@ state_file_exists           # returns 0 if state file exists
 
 Loaded via `ui.sh`.
 
+### worktree.sh
+
+Where a project artifact goes.
+
+A file that lives inside a repository — `.claude/anatomy.md`, `.mcp.json`, a
+`CLAUDE.md` — belongs in a working tree. A bare-repo container has none: it
+holds the bare `.git` plus each checkout as a peer, so a file written at the
+container root is tracked by nothing, covered by no `.gitignore` rule, and
+reached by no review or CI check. The only way one is ever found is by hand.
+
+Every writer therefore resolves its tree before writing rather than trusting
+the current directory, and does it the same way:
+
+```bash
+root="$(project_root)" || rc=$?
+```
+
+| Function | Purpose |
+|----------|---------|
+| `project_root [DIR]` | prints the working tree DIR belongs in, for a caller about to write a file that lives inside a repository. DIR defaults to the current directory. Exits 0 with the path, 1 when DIR is a bare-repo container naming no worktree to write into, 2 when DIR is in no repository at all, and 64 when DIR does not exist. |
+
+Loaded via `ui.sh`.
+
 ## Registry & Config Modules
 
 ### registries.sh

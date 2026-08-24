@@ -450,19 +450,31 @@ EOF
   title "AI init"
   echo
 
-  local project_root
-  project_root="$(git rev-parse --show-toplevel 2>/dev/null)" || true
-  if [[ -z "$project_root" ]]; then
+  # The scaffold is a tree of tracked files, so it goes in a working tree. A
+  # shell sitting in a bare-repo container has none of its own, and project_root
+  # names the worktree the container stands in for.
+  #
+  # Both unresolved cases warn and return rather than failing: this step is one
+  # part of a longer init, and "no tree here to scaffold" has always been a skip.
+  # A single-purpose writer like serena-mcp has nothing left to do and exits 1.
+  local root rc=0
+  root="$(project_root)" || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
     echo
     warn "Not in a git repo — skipping project scaffold and anatomy"
     return
   fi
+  if [[ "$rc" -ne 0 ]]; then
+    echo
+    warn "No worktree resolved for $PWD — skipping project scaffold and anatomy"
+    return
+  fi
 
-  cd "$project_root"
+  cd "$root"
 
   # Scaffolding a repo is as clear a statement that it uses the workbench as
   # there is, and the root is already resolved here.
-  project_register "$project_root" || true
+  project_register "$root" || true
 
   local did_scaffold=false
   if [[ -d ".claude" ]] && [[ -z "$force_flag" ]]; then

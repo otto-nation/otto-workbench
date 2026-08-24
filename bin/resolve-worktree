@@ -15,9 +15,12 @@
 #         2  DIR is not a bare repository — nothing to resolve
 #         64 usage error
 #
-# The single owner of this resolution in bash. The zsh `claude` wrapper, the
-# ceiling-debt Stop hook, and the anatomy generator all call this rather than
-# each deriving the default branch and scanning the worktree list again.
+# The single owner of this resolution in bash, rather than each caller deriving
+# the default branch and scanning the worktree list again. The zsh `claude`
+# wrapper calls it directly, because redirecting a launch is the whole of what it
+# wants. Everything that resolves a tree in order to *write* a project artifact
+# into it goes through lib/worktree.sh's project_root instead, which asks a
+# working tree to name itself first and only falls back to this.
 #
 # lib/permission_mirror.py answers the same question in Python, for the mirror
 # it writes into the container. The two must pick the same worktree: a session

@@ -20,7 +20,28 @@ or when `<!-- last-reviewed -->` is more than 14 days old and active work is ong
 
 ## Steps
 
-### 1. Read current state
+### 1. Resolve the project root
+
+```bash
+git rev-parse --show-toplevel
+resolve-worktree
+```
+
+`architecture.md` is a tracked project file, so it belongs in a working tree. Take the
+first of these that prints a path: `git rev-parse` when the session is already in a
+worktree, `resolve-worktree` when it is rooted at a bare-repo container, which has no
+working tree of its own.
+
+`resolve-worktree` exiting 2 means this is not a container either — with no repo root
+printed above it, there is no project here and nothing to refresh. Any other non-zero
+exit means the container names no worktree to write into: say so and stop. Never fall
+back to the current directory. A container holds no work tree, so an `architecture.md`
+written there is covered by no `.gitignore` rule, reaches no review, and is seen by no
+CI check — the only way it is ever found is by hand.
+
+`cd` to the resolved path and run every step below from there.
+
+### 2. Read current state
 
 ```bash
 # Find the current project's architecture.md
@@ -39,7 +60,7 @@ Note:
 - Which sections exist (Service Stack, Known Constraints, Conventions)
 - What's already documented so you don't duplicate it
 
-### 2. Read memory topic files
+### 3. Read memory topic files
 
 For each file in the project's memory directory, read it and look for entries that describe:
 - Software identity or API facts (what something actually is, not what was assumed)
@@ -48,7 +69,7 @@ For each file in the project's memory directory, read it and look for entries th
 
 These may belong in architecture.md rather than (or in addition to) memory.
 
-### 3. Read recent sessions
+### 4. Read recent sessions
 
 Read the 5 most recent session `.jsonl` files. For each file, scan for:
 - Wrong-software discoveries: "not Synapse", "actually Conduit", "wrong API", "turned out"
@@ -58,7 +79,7 @@ Read the 5 most recent session `.jsonl` files. For each file, scan for:
 
 Read ONLY the context around matches — lines where `type` is `"human"` or `"assistant"`.
 
-### 4. Build a proposed diff
+### 5. Build a proposed diff
 
 For each finding NOT already in architecture.md:
 
@@ -77,13 +98,13 @@ Present all proposed additions before writing anything. For each one, confirm be
 - Add entries already present (even if worded differently)
 - Add session-behavior facts (preferences, decisions) — those belong in memory/
 
-### 5. Apply confirmed additions
+### 6. Apply confirmed additions
 
 After user confirmation for each addition:
 1. Insert the bullet or table row in the correct section
 2. Update `<!-- last-reviewed: YYYY-MM-DD -->` to today at the top of the file
 
-### 6. Summary
+### 7. Summary
 
 Print:
 - How many candidates were found
@@ -101,4 +122,6 @@ Print:
 
 ## Output location
 
-`.claude/architecture.md` in the project root (committed, human-maintained).
+`.claude/architecture.md` in the project root (committed, human-maintained) — the root
+step 1 resolves, which for a session rooted at a bare-repo container is the worktree
+that container stands in for, never the container.

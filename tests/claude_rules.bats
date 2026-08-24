@@ -25,6 +25,18 @@ _run_rules() {
   HOME="$TMPDIR" NO_COLOR=1 run "$CLAUDE_RULES" "$@"
 }
 
+# _make_repo DIR — a real repo with one commit at DIR.
+#
+# A `mkdir DIR/.git` stand-in is not enough: the root these commands write into
+# comes from git itself, so a directory that only looks like a repo is not one.
+_make_repo() {
+  mkdir -p "$1"
+  git -C "$1" init -q
+  git -C "$1" config user.email test@example.com
+  git -C "$1" config user.name Test
+  git -C "$1" commit -q --allow-empty -m init
+}
+
 # ── _normalize_domain ────────────────────────────────────────────────────────
 
 @test "_normalize_domain: ts maps to typescript" {
@@ -180,7 +192,7 @@ EOF
 
 @test "project add: appends rule to CLAUDE.md" {
   local repo="$TMPDIR/myrepo"
-  mkdir -p "$repo/.git"
+  _make_repo "$repo"
   cat > "$repo/CLAUDE.md" <<'EOF'
 # My Project
 
@@ -196,7 +208,7 @@ EOF
 
 @test "project add: creates Conventions section if missing" {
   local repo="$TMPDIR/myrepo"
-  mkdir -p "$repo/.git"
+  _make_repo "$repo"
   echo "# My Project" > "$repo/CLAUDE.md"
   cd "$repo"
   _run_rules project add "first convention"
@@ -207,7 +219,7 @@ EOF
 
 @test "project add: fails without CLAUDE.md" {
   local repo="$TMPDIR/myrepo"
-  mkdir -p "$repo/.git"
+  _make_repo "$repo"
   cd "$repo"
   _run_rules project add "some rule"
   [ "$status" -ne 0 ]
@@ -223,10 +235,42 @@ EOF
 
 @test "project show: displays CLAUDE.md content" {
   local repo="$TMPDIR/myrepo"
-  mkdir -p "$repo/.git"
+  _make_repo "$repo"
   echo "# Test Content" > "$repo/CLAUDE.md"
   cd "$repo"
   _run_rules project show
   [ "$status" -eq 0 ]
   [[ "$output" == *"Test Content"* ]]
+}
+
+@test "project add: writes the worktree's CLAUDE.md from a bare container" {
+  local seed="$TMPDIR/seed" container="$TMPDIR/container"
+  mkdir -p "$seed"
+  printf '# Seed\n\n## Conventions\n\n- existing rule\n' > "$seed/CLAUDE.md"
+  make_container_seed "$seed"
+  make_worktree_container "$container" "$seed"
+
+  # A container holds the bare .git and the checkouts as peers, so the only
+  # .git *directory* above the worktree is the container's own. Walking up for
+  # one lands there, where a CLAUDE.md is tracked by nothing and read by no
+  # session.
+  cd "$container"
+  _run_rules project add "new rule"
+  [ "$status" -eq 0 ]
+  grep -q "new rule" "$container/main/CLAUDE.md"
+  [ ! -e "$container/CLAUDE.md" ]
+}
+
+@test "project add: fails rather than write into a container with no worktree" {
+  local seed="$TMPDIR/seed" container="$TMPDIR/container"
+  mkdir -p "$seed"
+  printf '# Seed\n\n## Conventions\n\n- existing rule\n' > "$seed/CLAUDE.md"
+  make_container_seed "$seed"
+  make_empty_container "$container" "$seed"
+
+  cd "$container"
+  _run_rules project add "new rule"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"No worktree resolved"* ]]
+  [ ! -e "$container/CLAUDE.md" ]
 }

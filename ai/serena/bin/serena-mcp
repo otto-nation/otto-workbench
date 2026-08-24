@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# serena-mcp — scaffolds Serena MCP into a project's .mcp.json.
+#
+# Both files it touches are tracked project files, so it resolves the working
+# tree they belong to before writing rather than trusting the current directory.
+# A shell sitting in a bare-repo container has no working tree, and a .mcp.json
+# written there is read by nothing and covered by no .gitignore, review, or CI
+# check — see lib/worktree.sh and _scaffold_root() below.
+
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
@@ -7,13 +15,11 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS=(
-  "init"    "Add Serena to .mcp.json in the current directory (creates if missing)"
+  "init"    "Add Serena to .mcp.json in the current project (creates if missing)"
   "status"  "Show whether Serena is configured in the current project"
 )
 
-MCP_FILE=".mcp.json"
 MCP_NAME="serena"
-GITIGNORE_FILE=".gitignore"
 SERENA_IGNORES=(".serena/")
 
 # The canonical Serena MCP server entry — single source of truth.
@@ -23,6 +29,30 @@ SERENA_ENTRY='{
 }'
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+# _scaffold_root — prints the directory .mcp.json and .gitignore belong in, or
+# fails with the reason on stderr.
+#
+# project_root's 2 — no repository here at all — is not an error for this one:
+# scaffolding a plain directory is a real thing to want, so it stands. Its 1 is
+# fatal, and is the case this wrapper exists for: a container whose default
+# branch has no checkout, where falling through to the current directory would
+# write both files into the container itself.
+_scaffold_root() {
+  local root rc=0
+
+  root="$(project_root)" || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    pwd -P
+    return 0
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    err "No worktree resolved for $(pwd -P) — nothing scaffolded"
+    return 1
+  fi
+
+  printf '%s\n' "$root"
+}
 
 # _ensure_gitignore — appends Serena entries to .gitignore if missing.
 _ensure_gitignore() {
@@ -67,7 +97,7 @@ cmd_init() {
 
 cmd_status() {
   if [[ ! -f "$MCP_FILE" ]]; then
-    info "No $MCP_FILE found in current directory"
+    info "No $MCP_FILE found"
     return
   fi
 
@@ -91,11 +121,22 @@ $(commands_usage)
 
 Serena is a heavyweight MCP server that starts LSP servers for code intelligence.
 This script keeps it project-scoped so it only runs where explicitly enabled.
+
+Both files are written to the working tree the current directory belongs to, so
+a shell in a bare-repo container scaffolds the worktree rather than the container.
 EOF
 }
 
 main() {
-  local command="${1:-}"
+  local command="${1:-}" root
+
+  case "$command" in
+    init|status)
+      root="$(_scaffold_root)" || exit 1
+      MCP_FILE="$root/.mcp.json"
+      GITIGNORE_FILE="$root/.gitignore"
+      ;;
+  esac
 
   case "$command" in
     init)   cmd_init ;;

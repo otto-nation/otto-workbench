@@ -275,18 +275,28 @@ cmd_open() {
 
 # ─── Project commands ────────────────────────────────────────────────────────
 
-# _find_repo_root — walk up from cwd to find a git repo root with CLAUDE.md
+# _find_repo_root — the working tree whose CLAUDE.md these commands read and
+# append to, or exit 1 with the reason.
+#
+# project_root rather than a walk up from cwd looking for a .git directory: in
+# the bare-repo layout only the container has one, because every checkout under
+# it holds a .git *file*. Such a walk therefore skips the worktree it started in
+# and answers the container — where a CLAUDE.md is tracked by nothing and read
+# by no session.
 _find_repo_root() {
-  local dir="$PWD"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -d "$dir/.git" ]]; then
-      echo "$dir"
-      return
-    fi
-    dir="$(dirname "$dir")"
-  done
-  err "Not inside a git repository"
-  exit 1
+  local root rc=0
+
+  root="$(project_root)" || rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    err "Not inside a git repository"
+    exit 1
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    err "No worktree resolved for $PWD — its CLAUDE.md is not reachable from here"
+    exit 1
+  fi
+
+  printf '%s\n' "$root"
 }
 
 cmd_project_add() {

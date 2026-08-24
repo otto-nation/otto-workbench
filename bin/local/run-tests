@@ -8,15 +8,23 @@
 # here now, and all three call this.
 #
 # Output is the runner's own, unfiltered: pre-push parses the TAP stream for its
-# slow-test report, so nothing may sit between bats and its caller.
+# slow-test report, so nothing may sit between bats and its caller. Verbosity is
+# left at each runner's default — CI used to pass pytest -v, which under xdist
+# prints five thousand PASSED lines interleaved across a dozen workers and says
+# nothing the failure output does not. A caller that wants it back passes it
+# after --.
 #
 # Usage: bin/local/run-tests [--bats|--pytest] [-- RUNNER_ARGS...]
 # Exit code: 0 when every suite it ran passed, 1 otherwise.
 
 set -e
 
-WORKBENCH_DIR="${WORKBENCH_DIR:-$(git rev-parse --show-toplevel)}"
-# shellcheck source=/dev/null
+_SELF="${BASH_SOURCE[0]}"
+# Path arithmetic rather than `git rev-parse --show-toplevel`: the pre-push hook
+# runs this with GIT_DIR exported, and with one set git skips discovery and
+# answers the caller's cwd instead of the repo root. See lib/ui.sh's header.
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=../../lib/ui.sh
 . "$WORKBENCH_DIR/lib/ui.sh"
 
 # Both suites are bound by disk contention rather than CPU — every case builds a

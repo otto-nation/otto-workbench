@@ -179,6 +179,11 @@ mirror is not drift, and `validate-permissions` checks it for dead rules only. A
 grant reaching the container anyway means the mirror is missing or stale — the
 finding says to regenerate it.
 
+So if a session launched from the container is prompting for this repo's own
+scripts, run `otto-workbench permissions mirror` and start it again. There is
+nothing to move by hand and no reason to prefer a worktree-rooted session: once
+the mirror is there, both root at the same grants.
+
 ### The rest of the machine
 
 The validator only ever sees this repo, because the two things that run it are

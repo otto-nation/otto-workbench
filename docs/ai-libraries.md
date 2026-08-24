@@ -1455,10 +1455,15 @@ problems and reporting both as a failed push is what made them indistinguishable
 distinguishes "no such ref" from "could not ask": collapsing them would report an
 unreachable remote as a branch that was never pushed.
 
-This module pushes, verifies, and reports. It does not commit, and it does not
-perform the hook-regenerated-files recovery that `review-threads` and `pr-rebase`
-each own — those sit above it, which is what keeps this module's answer to "did
-it land" independent of any caller's idea of how to fix it.
+A lost push is retried exactly once, and only when HEAD still holds the pushed
+commit and the tree is clean. The retry passes `--no-verify`, so it costs the
+transfer rather than the gates; that is not a gate bypass, because the gates
+already passed for this exact commit, and the guard is what keeps that true.
+
+This module pushes, verifies, retries, and reports. It does not commit, and it
+does not perform the hook-regenerated-files recovery that `review-threads` and
+`pr-rebase` each own — those sit above it, which is what keeps this module's
+answer to "did it land" independent of any caller's idea of how to fix it.
 
 `gated` is required and has no default. Only `pr comments` opens the publishing
 gate; `pr ci`, `pr rebase` and the review fix pass never do, so a gate-by-default

@@ -28,10 +28,15 @@ problems and reporting both as a failed push is what made them indistinguishable
 distinguishes "no such ref" from "could not ask": collapsing them would report an
 unreachable remote as a branch that was never pushed.
 
-This module pushes, verifies, and reports. It does not commit, and it does not
-perform the hook-regenerated-files recovery that `review-threads` and `pr-rebase`
-each own — those sit above it, which is what keeps this module's answer to "did
-it land" independent of any caller's idea of how to fix it.
+A lost push is retried exactly once, and only when HEAD still holds the pushed
+commit and the tree is clean. The retry passes `--no-verify`, so it costs the
+transfer rather than the gates; that is not a gate bypass, because the gates
+already passed for this exact commit, and the guard is what keeps that true.
+
+This module pushes, verifies, retries, and reports. It does not commit, and it
+does not perform the hook-regenerated-files recovery that `review-threads` and
+`pr-rebase` each own — those sit above it, which is what keeps this module's
+answer to "did it land" independent of any caller's idea of how to fix it.
 
 `gated` is required and has no default. Only `pr comments` opens the publishing
 gate; `pr ci`, `pr rebase` and the review fix pass never do, so a gate-by-default
@@ -43,6 +48,7 @@ let the next call site inherit the wrong answer by omitting the argument.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -79,6 +85,15 @@ class Refusal(StrEnum):
     OTHER = "other"
 
 
+class Retry(StrEnum):
+    """Whether the one retry ran, and what stopped it when it did not."""
+
+    NONE = "none"
+    ATTEMPTED = "attempted"
+    HEAD_MOVED = "head_moved"
+    DIRTY = "dirty"
+
+
 @dataclass(frozen=True)
 class PushResult:
     """What a push did, and what the remote says about it.
@@ -94,6 +109,7 @@ class PushResult:
     remote_sha: str = ""
     refusal: Refusal | None = None
     output: str = ""
+    retry: Retry = Retry.NONE
 
     @property
     def ok(self) -> bool:
@@ -120,6 +136,16 @@ _TRANSPORT_MARKERS = (
 )
 
 _PUSH_REFUSED = "failed to push some refs"
+
+# What the LOST report says about the retry. A message claiming an attempt that
+# never ran is the same class of wrong reporting this module exists to remove,
+# so every state names itself and a test asserts the map covers the enum.
+_RETRY_NOTE = {
+    Retry.ATTEMPTED: "Retried once without the gates; the remote still does not hold it.",
+    Retry.HEAD_MOVED: "HEAD moved since the push; not retried.",
+    Retry.DIRTY: "The worktree is dirty; not retried.",
+    Retry.NONE: "Not retried.",
+}
 
 
 def classify(output: str) -> Refusal:
@@ -175,6 +201,56 @@ def _verify(
     return PushResult(PushStatus.LOST, sha, branch, remote_sha=held, output=output)
 
 
+def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
+    """Why a retry would be unsafe, or None when it is safe.
+
+    `--no-verify` is what makes the retry cheap, and it is only defensible
+    because the gates already passed for this exact commit. Both halves of that
+    sentence have to still be true: HEAD must be the commit they approved, and
+    the tree must be the one they validated. This repo's own pre-push
+    regenerates files, so the dirty check is not hypothetical.
+    """
+    if git_client.head_sha(cwd=wt_path) != sha:
+        return Retry.HEAD_MOVED
+    if git_client.is_dirty(cwd=wt_path):
+        return Retry.DIRTY
+    return None
+
+
+def _retry_lost(
+    wt_path: str | Path,
+    lost: PushResult,
+    remote: str,
+    args: Sequence[str],
+    trail: Trail | None,
+) -> PushResult:
+    """One more attempt at a push that vanished, then the final answer.
+
+    Bounded at a single retry on purpose: a second one answers no question the
+    first did not, and the point of verifying was to stop spending minutes
+    learning what one round trip already reported.
+    """
+    blocked = _retry_block(wt_path, lost.sha)
+    if blocked:
+        return dataclasses.replace(lost, retry=blocked)
+
+    if trail:
+        trail.warn("push", "push did not land — retrying without the gates",
+                   data={"sha": lost.sha, "branch": lost.branch})
+    log.warn("push did not land — retrying once without the gates")
+
+    r = git_client.run("push", "--no-verify", *args, cwd=wt_path)
+    if not r.ok:
+        output = r.combined_output
+        return dataclasses.replace(
+            lost, status=PushStatus.REFUSED, refusal=classify(output),
+            output=output, retry=Retry.ATTEMPTED,
+        )
+
+    verified = _verify(wt_path, lost.sha, lost.branch, remote, r.combined_output)
+    return dataclasses.replace(verified, retry=Retry.ATTEMPTED)
+
+
 def push(
     wt_path: str | Path,
     *,
@@ -208,7 +284,10 @@ def push(
         return PushResult(PushStatus.REFUSED, sha, branch,
                           refusal=classify(output), output=output)
 
-    return _verify(wt_path, sha, branch, remote, r.combined_output)
+    result = _verify(wt_path, sha, branch, remote, r.combined_output)
+    if result.status is not PushStatus.LOST:
+        return result
+    return _retry_lost(wt_path, result, remote, args, trail)
 
 
 def report(result: PushResult, wt_path: str | Path) -> None:
@@ -238,4 +317,5 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     log.dim(f"branch:   {result.branch}")
     log.dim(f"expected: {result.sha[:7]}")
     log.dim(f"origin:   {result.remote_sha[:7] or 'no such ref'}")
+    log.dim(_RETRY_NOTE[result.retry])
     log.dim(f"Re-run: git -C '{wt_path}' push")

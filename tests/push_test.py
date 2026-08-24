@@ -183,3 +183,119 @@ def test_a_hook_rejection_outranks_nothing_it_shares_words_with():
     output = ("fatal: Could not read from remote repository.\n"
               "error: failed to push some refs to 'origin'")
     assert push.classify(output) is push.Refusal.TRANSPORT
+
+
+# ── the retry ───────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def count_pushes(monkeypatch) -> list[tuple[str, ...]]:
+    """Record every `git push` the owner issues, and let them all through."""
+    seen: list[tuple[str, ...]] = []
+    real_run = git_client.run
+
+    def counting(*args, **kwargs):
+        if args and args[0] == "push":
+            seen.append(args)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(git_client, "run", counting)
+    return seen
+
+
+def test_lost_push_retries_once_and_recovers(pushable, monkeypatch):
+    """The retry skips the gates, so a transient loss costs seconds."""
+    wt, remote = pushable
+    sha = _commit(wt, "work")
+    hook = _lose_pushes(remote)
+    seen: list[tuple[str, ...]] = []
+    real_run = git_client.run
+
+    def heal_after_first(*args, **kwargs):
+        if args and args[0] == "push":
+            seen.append(args)
+            # Drop the losing hook once the first push has been recorded, so the
+            # retry lands — which is what a transient drop looks like.
+            if len(seen) == 1:
+                result = real_run(*args, **kwargs)
+                hook.unlink()
+                return result
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(git_client, "run", heal_after_first)
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.PUSHED
+    assert result.retry is push.Retry.ATTEMPTED
+    assert result.remote_sha == sha
+    assert "--no-verify" in seen[1]
+
+
+def test_retry_is_bounded_at_one(pushable, count_pushes):
+    """A remote that always loses the push must not loop."""
+    wt, remote = pushable
+    _commit(wt, "work")
+    _lose_pushes(remote)
+
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.LOST
+    assert result.retry is push.Retry.ATTEMPTED
+    assert len(count_pushes) == 2
+
+
+def test_a_landed_push_is_not_retried(pushable, count_pushes):
+    wt, _ = pushable
+    _commit(wt, "work")
+
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.PUSHED
+    assert result.retry is push.Retry.NONE
+    assert len(count_pushes) == 1
+
+
+def test_retry_blocked_when_head_moved(pushable, monkeypatch):
+    """The gates approved a commit that is no longer HEAD."""
+    wt, remote = pushable
+    sha = _commit(wt, "work")
+    _lose_pushes(remote)
+    real_run = git_client.run
+
+    def move_head(*args, **kwargs):
+        result = real_run(*args, **kwargs)
+        if args and args[0] == "push":
+            _commit(wt, "later work")
+        return result
+
+    monkeypatch.setattr(git_client, "run", move_head)
+    result = push.push(wt, gated=False, sha=sha)
+
+    assert result.status is push.PushStatus.LOST
+    assert result.retry is push.Retry.HEAD_MOVED
+
+
+def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
+    """This repo's pre-push regenerates files; a dirty tree is not what it saw."""
+    wt, remote = pushable
+    _commit(wt, "work")
+    _lose_pushes(remote)
+    real_run = git_client.run
+
+    def dirty(*args, **kwargs):
+        result = real_run(*args, **kwargs)
+        if args and args[0] == "push":
+            (wt / "regenerated.txt").write_text("hook output\n")
+        return result
+
+    monkeypatch.setattr(git_client, "run", dirty)
+    result = push.push(wt, gated=False)
+
+    assert result.status is push.PushStatus.LOST
+    assert result.retry is push.Retry.DIRTY
+
+
+def test_every_retry_state_has_a_report_line():
+    """A LOST report claiming a retry that never ran is the wrong-reporting
+    failure this module exists to remove."""
+    assert set(push._RETRY_NOTE) == set(push.Retry)

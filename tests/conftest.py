@@ -11,10 +11,27 @@ from pathlib import Path
 
 import pytest
 
-_GIT_HOOK_VARS = (
-    "GIT_DIR", "GIT_WORK_TREE",
-    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LIB_DIR = str(REPO_ROOT / "ai" / "lib")
+
+
+def _load_lib(name: str):
+    """Import `lib/<name>.py` without putting `lib/` on `sys.path`.
+
+    `lib/` holds modules named for what they wrap rather than for this repo, so
+    adding it to the path would let one of them answer an unrelated import.
+    """
+    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "lib" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Which variables redirect git at another repository is one fact, and
+# lib/gitenv.py owns it — lib/gitenv.sh and every gate under bin/local/ already
+# read the same list. A hand-copy here stood a variable short of it, so a
+# leaked GIT_INDEX_FILE would have staged a test's files into the real index.
+_GIT_HOOK_VARS = _load_lib("gitenv").GIT_ENV_OVERRIDES
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -59,10 +76,6 @@ def _clear_review_env():
     for key in _review_env_keys():
         del os.environ[key]
     os.environ.update(saved)
-
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 
 
 @pytest.fixture(autouse=True)
@@ -216,25 +229,54 @@ def _config_bytes(path: Path) -> bytes | None:
     return path.read_bytes() if path.exists() else None
 
 
+def _restore_config(path: Path, before: bytes | None) -> None:
+    """Put the snapshotted bytes back, so a caught leak is not also a repair job.
+
+    Whole-file rather than a surgical undo of the offending keys: git rewrites
+    the file wholesale, and reconstructing a partial merge would have to model
+    multi-valued keys and includes to be safe. An external write that landed
+    inside the same test's window is rolled back along with the leak — worktrunk
+    restamps its markers on the next hook, and the alternative is leaving a
+    poisoned identity in a config every worktree of the repo shares.
+    """
+    if before is None:
+        path.unlink(missing_ok=True)
+        return
+    path.write_bytes(before)
+
+
 def _assert_config_unchanged(path: Path, before: bytes | None, after: bytes | None):
-    """Raise unless every change to `path` belongs to an external section."""
+    """Restore `path` and raise unless every change to it is externally owned.
+
+    The write is not necessarily the running test's. The snapshot is per test,
+    so whatever lands in that window is what gets reported — which for a leak
+    out of another process, or out of a subprocess that outlived the test that
+    spawned it, names an arbitrary test. The message says so rather than
+    accusing the one it interrupted.
+    """
     if after == before:
         return
     guarded_before, guarded_after = _guarded_lines(before), _guarded_lines(after)
-    assert guarded_after == guarded_before, (
-        f"test wrote git config into the real repo: {path}\n"
-        f"{_describe_config_change(guarded_before or [], guarded_after or [])}"
+    if guarded_after == guarded_before:
+        return
+    _restore_config(path, before)
+    raise AssertionError(
+        f"git config of the repo under test changed mid-test: {path}\n"
+        f"{_describe_config_change(guarded_before or [], guarded_after or [])}\n"
+        f"The file has been restored. The writer is whatever ran during this "
+        f"test, which need not be this test."
     )
 
 
 @pytest.fixture(autouse=True)
 def _guard_repo_config():
-    """Fail the test that writes git config into the repo under test.
+    """Catch and undo a write of git config into the repo under test.
 
     Tests build throwaway repos under tmp_path, but a stray GIT_DIR or a
     relative cwd sends `git config` to the real repo instead. Because worktrees
-    share one config file, the damage is repo-wide and permanent: every later
-    commit inherits the test identity.
+    share one config file, the damage would otherwise be repo-wide and
+    permanent: every later commit inherits the test identity. The snapshot is
+    what puts it back, so the failure is a report rather than a repair job.
 
     The state in `_EXTERNAL_STATE` and `_EXTERNAL_KEYS` is exempt: it is written
     concurrently by tooling this process does not control — worktrunk restamps

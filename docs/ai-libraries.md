@@ -1524,14 +1524,17 @@ literal and a bare `None` on any `timeout=` argument under `ai/`, and rejects a
 `proc.run` or `subprocess.run` call that writes no `timeout=` at all. Reading
 only the bounds that were written down left the omission invisible, which is the
 case this table exists to eliminate — a call with no bound is indistinguishable
-from nobody having thought about one. `ai/claude/mcps/server.py` is exempt: it
-runs under `uv run` with `ai/lib` nowhere on `sys.path`, so it cannot import the
-table.
+from nobody having thought about one. Nothing under `ai/` is exempt.
+`ai/claude/mcps/server.py` was, on the reading that running under
+`uv run --no-project` put `ai/lib` out of its reach — but it puts that directory
+on `sys.path` itself, which is how it imports `tool_registry`, so `timeouts`
+came along with it and the exemption only meant the file went unchecked.
 
-Two numbers deliberately stay outside it. `ci-check --wait-timeout` and
-`eval_task.EVAL_CASE_BUDGET` are deadlines for work that could reasonably keep
-going, not bounds on a subprocess that should already have answered; they say
-how long something is *worth*, which is a different question.
+Three numbers deliberately stay outside it. `ci-check --wait-timeout`,
+`eval_task.EVAL_CASE_BUDGET` and the MCP server's `TOOL_CALL_BUDGET` are
+deadlines for work that could reasonably keep going, not bounds on a subprocess
+that should already have answered; they say how long something is *worth*, which
+is a different question.
 
 Stdlib-only and importing nothing, so that `proc`, `git_client`, and everything
 built on them can depend on it without a cycle.

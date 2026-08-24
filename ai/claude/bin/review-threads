@@ -32,13 +32,14 @@ import ai_backend
 import git_client
 import pr_comments as pc
 import pr_comments_fix
+import pr_comments_state as pcs
 import pr_context
 import pr_domains
 import pr_state
 import proc
 import run_lock
 import publishing
-from pr_comments import ThreadState
+from pr_comments_state import ThreadRecord, ThreadState
 from pr_fix import CommitStatus
 import review_common
 import review_issue
@@ -140,16 +141,17 @@ def _parses_as_json(text: str) -> bool:
     return True
 
 
-def _resolve_verified_threads(threads_raw: list, threads: dict) -> int:
+def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord]) -> int:
     """Resolve all verified threads on GitHub. Returns count resolved."""
     resolved = 0
     for thread_data in threads_raw:
         tid = thread_data["id"]
-        if threads.get(tid, {}).get("state") != pc.STATE_VERIFIED:
+        record = threads.get(tid)
+        if record is None or record.state != ThreadState.VERIFIED:
             continue
         if not pc.resolve_thread(tid):
             continue
-        threads[tid]["state"] = pc.STATE_RESOLVED
+        threads[tid] = dataclasses.replace(record, state=ThreadState.RESOLVED)
         resolved += 1
     return resolved
 
@@ -4580,8 +4582,8 @@ def _run_threads(trail, args, ctx) -> None:
     state_path = toplevel / "ignore" / "pr-comments" / "state.json"
 
     # Load prior state
-    prior_state = pc.load_state(state_path)
-    prior_threads = prior_state.get("threads", {}) if prior_state else {}
+    prior_state = pcs.load_state(state_path)
+    prior_threads = prior_state.threads if prior_state else {}
 
     # Fetch from GitHub (served from pr_data, no extra API calls)
     threads_raw = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
@@ -4595,7 +4597,7 @@ def _run_threads(trail, args, ctx) -> None:
 
     # Sync
     threads = pc.sync_threads(threads_raw, prior_threads, my_login)
-    synced_resolved = sum(1 for t in threads.values() if t.get("state") == pc.STATE_RESOLVED)
+    synced_resolved = sum(1 for t in threads.values() if t.state == ThreadState.RESOLVED)
     synced_open = len(threads) - synced_resolved
     trail.info("sync_threads", f"{synced_resolved} resolved, {synced_open} open",
                data={"resolved": synced_resolved, "open": synced_open, "total": len(threads)})
@@ -4607,9 +4609,9 @@ def _run_threads(trail, args, ctx) -> None:
             log.info(f"Resolved {resolved_count} verified threads")
 
     # Save state
-    state = pc.empty_state(repo, pr_number, my_login)
-    state["threads"] = threads
-    pc.save_state(state_path, state)
+    pcs.save_state(state_path, pcs.CommentsState(
+        repo=repo, pr_number=pr_number, my_login=my_login, threads=threads,
+    ))
 
     # Dashboard to stderr
     dashboard = pc.render_dashboard(
@@ -4622,13 +4624,13 @@ def _run_threads(trail, args, ctx) -> None:
     report_threads = []
     for thread_data in threads_raw:
         tid = thread_data["id"]
-        t = threads.get(tid, {})
+        t = threads.get(tid) or ThreadRecord()
         comments = thread_data.get("comments", {}).get("nodes", [])
         report_threads.append(ReportThread(
             id=tid,
-            state=ThreadState(t.get("state", "new")),
-            classification=t.get("classification"),
-            reviewer=t.get("reviewer", ""),
+            state=t.state,
+            classification=t.classification,
+            reviewer=t.reviewer,
             comments=comments,
             is_resolved=thread_data.get("isResolved", False),
             file=thread_data.get("path", ""),

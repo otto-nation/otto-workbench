@@ -86,10 +86,15 @@ def from_dict(cls, data: dict):
 def load_file(cls, path: Path):
     """Reconstruct a dataclass from a JSON file, or None if there isn't a usable one.
 
-    A missing file and an unreadable one both come back as None. Every caller
-    owns a regenerable cache — nothing in these files is authoritative — so
-    discarding one that will not parse is always a correct recovery, and the
-    warning is what keeps that from being silent.
+    A missing file and an unreadable one both come back as None. What these
+    files hold is a cache of what some API already said, so discarding one that
+    will not parse costs a re-fetch and nothing else, and the warning is what
+    keeps that from being silent.
+
+    A file holding anything that cannot be re-fetched needs its tolerance one
+    level down instead, on the type that owns the unreproducible part — see
+    `pr_comments_state.ThreadRecord._from_raw`, whose per-entry recovery keeps a
+    single damaged thread from discarding every thread's triage.
 
     ValueError covers JSONDecodeError and UnicodeDecodeError, which subclass it,
     along with an unknown enum value and a non-numeric key under a dict[int, V].

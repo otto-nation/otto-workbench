@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import serde
-from pr_comments import ThreadState
+from pr_comments_state import ThreadState
 from pr_comments_fix import ThreadAction, ThreadOutcome
 
 

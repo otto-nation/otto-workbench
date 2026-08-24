@@ -2,7 +2,6 @@
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -21,10 +20,9 @@ import publishing
 import review_issue
 from proc import CmdResult
 from pr_comments import (
-    load_state, save_state, empty_state, compute_thread_state, sync_threads,
-    fetch_threads, render_dashboard,
-    STATE_NEW, STATE_ADDRESSED, STATE_VERIFIED, STATE_RESOLVED,
+    compute_thread_state, sync_threads, fetch_threads, render_dashboard,
 )
+from pr_comments_state import ThreadRecord, ThreadState
 
 
 # ── fetch_threads ───────────────────────────────────────────────────────────
@@ -85,70 +83,6 @@ def test_fetch_issue_comments_passes_the_exclusion_on_to_pr_data(
     got = pr_comments.fetch_issue_comments(
         "owner/repo", 42, "me", pr_data, include_self=include_self)
     assert got == [{"user": expected}]
-
-
-def test_empty_state_has_required_fields():
-    state = empty_state("otto-nation/maximum", 142, "isaacg-otto")
-    assert state["repo"] == "otto-nation/maximum"
-    assert state["pr_number"] == 142
-    assert state["my_login"] == "isaacg-otto"
-    assert state["threads"] == {}
-    assert "last_run" in state
-
-
-def test_load_state_missing_file():
-    state = load_state(Path("/nonexistent/state.json"))
-    assert state is None
-
-
-def test_save_and_load_roundtrip():
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "state.json"
-        state = empty_state("otto-nation/maximum", 142, "isaacg-otto")
-        state["threads"]["12345"] = {
-            "state": "new",
-            "classification": None,
-            "reviewer": "alice",
-            "file": "handler.go",
-            "line": 42,
-            "summary": None,
-            "decided_at": None,
-            "last_seen_reply_id": None,
-        }
-        save_state(path, state)
-        loaded = load_state(path)
-        assert loaded == state
-
-
-def test_save_creates_parent_directories():
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "nested" / "dir" / "state.json"
-        state = empty_state("repo", 1, "user")
-        save_state(path, state)
-        assert path.exists()
-
-
-def test_save_never_exposes_a_truncated_file(monkeypatch):
-    """Regression: this save was the one copy of the write-and-rename pattern
-    that had drifted into a plain `open(path, "w")`, which truncates the target
-    before the first byte lands. A failed write left the thread lifecycle state
-    half-written — the corruption the read side then has to discard."""
-    import serde
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "state.json"
-        save_state(path, empty_state("owner/repo", 1, "user"))
-
-        def _explode(obj, fp, **kwargs):
-            fp.write('{"partial":')
-            raise OSError("disk full")
-
-        monkeypatch.setattr(serde.json, "dump", _explode)
-        with pytest.raises(OSError):
-            save_state(path, empty_state("owner/repo", 2, "user"))
-
-        assert load_state(path)["pr_number"] == 1
-        assert list(Path(tmp).glob("*.tmp")) == []
 
 
 def _make_comments(*entries):
@@ -297,21 +231,19 @@ def test_sync_clears_summary_on_new_replies():
         )},
     }]
     prior_threads = {
-        "T_abc": {
-            "state": STATE_ADDRESSED,
-            "classification": "suggestion",
-            "reviewer": "alice",
-            "file": None,
-            "line": None,
-            "summary": "Old summary",
-            "decided_at": "2026-06-14T15:00:00Z",
-            "last_seen_reply_id": 1001,
-        },
+        "T_abc": ThreadRecord(
+            state=ThreadState.ADDRESSED,
+            classification="suggestion",
+            reviewer="alice",
+            summary="Old summary",
+            decided_at="2026-06-14T15:00:00Z",
+            last_seen_reply_id=1001,
+        ),
     }
     result = sync_threads(threads, prior_threads, "isaacg")
-    assert result["T_abc"]["classification"] is None
-    assert result["T_abc"]["summary"] is None
-    assert result["T_abc"]["decided_at"] is None
+    assert result["T_abc"].classification is None
+    assert result["T_abc"].summary is None
+    assert result["T_abc"].decided_at is None
 
 
 def test_sync_new_thread_no_prior_state():
@@ -323,9 +255,9 @@ def test_sync_new_thread_no_prior_state():
     prior_threads = {}
     result = sync_threads(threads, prior_threads, "isaacg")
     assert "T_abc" in result
-    assert result["T_abc"]["state"] == STATE_NEW
-    assert result["T_abc"]["reviewer"] == "alice"
-    assert result["T_abc"]["last_seen_reply_id"] == 1000
+    assert result["T_abc"].state == ThreadState.NEW
+    assert result["T_abc"].reviewer == "alice"
+    assert result["T_abc"].last_seen_reply_id == 1000
 
 
 def test_sync_keeps_cached_classification():
@@ -335,20 +267,20 @@ def test_sync_keeps_cached_classification():
         "comments": {"nodes": _make_comments(("alice", "Fix this"))},
     }]
     prior_threads = {
-        "T_abc": {
-            "state": STATE_NEW,
-            "classification": "suggestion",
-            "reviewer": "alice",
-            "file": "handler.go",
-            "line": 42,
-            "summary": "Fix the handler",
-            "decided_at": "2026-06-14T15:00:00Z",
-            "last_seen_reply_id": 1000,
-        },
+        "T_abc": ThreadRecord(
+            state=ThreadState.NEW,
+            classification="suggestion",
+            reviewer="alice",
+            file="handler.go",
+            line=42,
+            summary="Fix the handler",
+            decided_at="2026-06-14T15:00:00Z",
+            last_seen_reply_id=1000,
+        ),
     }
     result = sync_threads(threads, prior_threads, "isaacg")
-    assert result["T_abc"]["classification"] == "suggestion"
-    assert result["T_abc"]["summary"] == "Fix the handler"
+    assert result["T_abc"].classification == "suggestion"
+    assert result["T_abc"].summary == "Fix the handler"
 
 
 def test_sync_detects_new_reply_updates_state():
@@ -361,20 +293,16 @@ def test_sync_detects_new_reply_updates_state():
         )},
     }]
     prior_threads = {
-        "T_abc": {
-            "state": STATE_NEW,
-            "classification": "suggestion",
-            "reviewer": "alice",
-            "file": None,
-            "line": None,
-            "summary": None,
-            "decided_at": None,
-            "last_seen_reply_id": 1000,
-        },
+        "T_abc": ThreadRecord(
+            state=ThreadState.NEW,
+            classification="suggestion",
+            reviewer="alice",
+            last_seen_reply_id=1000,
+        ),
     }
     result = sync_threads(threads, prior_threads, "isaacg")
-    assert result["T_abc"]["state"] == STATE_ADDRESSED
-    assert result["T_abc"]["last_seen_reply_id"] == 1001
+    assert result["T_abc"].state == ThreadState.ADDRESSED
+    assert result["T_abc"].last_seen_reply_id == 1001
 
 
 def test_sync_resolved_on_github_overrides():
@@ -384,16 +312,15 @@ def test_sync_resolved_on_github_overrides():
         "comments": {"nodes": _make_comments(("alice", "Fix this"))},
     }]
     prior_threads = {
-        "T_abc": {"state": STATE_NEW, "last_seen_reply_id": 1000,
-                  "classification": None, "reviewer": "alice",
-                  "file": None, "line": None, "summary": None, "decided_at": None},
+        "T_abc": ThreadRecord(
+            state=ThreadState.NEW, last_seen_reply_id=1000, reviewer="alice"),
     }
     result = sync_threads(threads, prior_threads, "isaacg")
-    assert result["T_abc"]["state"] == STATE_RESOLVED
+    assert result["T_abc"].state == ThreadState.RESOLVED
 
 
 def test_dashboard_shows_review_body_comments():
-    threads = {"T_1": {"state": STATE_NEW}}
+    threads = {"T_1": ThreadRecord(state=ThreadState.NEW)}
     verdicts = [{"user": "alice", "state": "COMMENTED", "submitted_at": "2026-01-01T00:00:00Z"}]
     review_body = [
         {"id": 1, "user": "alice", "body": "Overlaps with #2284", "state": "COMMENTED"},
@@ -404,14 +331,14 @@ def test_dashboard_shows_review_body_comments():
 
 
 def test_dashboard_omits_review_body_when_empty():
-    threads = {"T_1": {"state": STATE_NEW}}
+    threads = {"T_1": ThreadRecord(state=ThreadState.NEW)}
     verdicts = []
     dashboard = render_dashboard(42, threads, verdicts, [], review_body_comments=[])
     assert "review-level" not in dashboard
 
 
 def test_dashboard_backward_compatible_without_review_body():
-    threads = {"T_1": {"state": STATE_NEW}}
+    threads = {"T_1": ThreadRecord(state=ThreadState.NEW)}
     verdicts = []
     dashboard = render_dashboard(42, threads, verdicts, [])
     assert "review-level" not in dashboard

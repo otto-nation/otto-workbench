@@ -417,7 +417,7 @@ is still open at both points, so the hold applies to both.
 
 Typed domain objects for PR review thread processing.
 
-Persistence-oriented structures live in pr_state.py; these model the
+Persistence-oriented structures live in pr_domains.py; these model the
 runtime pipeline: triage, classification, tracking, and fix-pass results.
 
 ### publishing.py

@@ -194,9 +194,7 @@ fi
 
 _step "Running tests"
 _bats_start=$SECONDS
-_bats_jobs_flag=()
-command -v parallel >/dev/null 2>&1 && _bats_jobs_flag=(--jobs 8)
-_bats_output=$(bats "$REPO_ROOT/tests/" --recursive --timing "${_bats_jobs_flag[@]}" 2>&1) || {
+_bats_output=$("$REPO_ROOT/bin/local/run-tests" --bats 2>&1) || {
   printf "${RED}✗${NC}\n" >&2
   echo "$_bats_output" | grep -E '^(not ok |# )'
   err "Tests failed"
@@ -236,7 +234,7 @@ if ! command -v pytest >/dev/null 2>&1; then
 else
   _step "Running pytest"
   _pytest_start=$SECONDS
-  _pytest_output=$(pytest "$REPO_ROOT/tests/" --tb=short -q 2>&1) || {
+  _pytest_output=$("$REPO_ROOT/bin/local/run-tests" --pytest -- --tb=short -q 2>&1) || {
     printf "${RED}✗${NC}\n" >&2
     echo "$_pytest_output"
     err "Pytest failed"

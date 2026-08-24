@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# run-tests — run the bats and pytest suites with the repo's parallelism settings.
+#
+# The three callers that run the suites — Taskfile.yml, the pre-push hook, and
+# CI — used to spell the invocation out themselves, and drifted: pre-push passed
+# --jobs 8, CI passed --jobs 4, and the Taskfile passed nothing at all, so
+# `task test` took 318s for the suite pre-push finished in 92s. The flags live
+# here now, and all three call this.
+#
+# Output is the runner's own, unfiltered: pre-push parses the TAP stream for its
+# slow-test report, so nothing may sit between bats and its caller. Verbosity is
+# left at each runner's default — CI used to pass pytest -v, which under xdist
+# prints five thousand PASSED lines interleaved across a dozen workers and says
+# nothing the failure output does not. A caller that wants it back passes it
+# after --.
+#
+# Usage: bin/local/run-tests [--bats|--pytest] [-- RUNNER_ARGS...]
+# Exit code: 0 when every suite it ran passed, 1 otherwise.
+
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+# Path arithmetic rather than `git rev-parse --show-toplevel`: the pre-push hook
+# runs this with GIT_DIR exported, and with one set git skips discovery and
+# answers the caller's cwd instead of the repo root. See lib/ui.sh's header.
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=../../lib/ui.sh
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+# Same GIT_DIR, one rung lower. A test that inherits it runs its `git -C <tmp>`
+# calls against the real repo instead: a suite caught here staged 2400 temp
+# files into the workbench's own index and wrote a placeholder identity to its
+# config. tests/test_helper.bash clears these per test as well — this is the
+# belt to that suspenders, since the hook is the only caller that sets them and
+# this is the one place every hook-run suite passes through.
+unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
+# Both suites are bound by disk contention rather than CPU — every case builds a
+# temp tree and shells out to git — so throughput plateaus well below the core
+# count. Measured on an 18-core machine: bats runs the suite in 318s at --jobs 1,
+# 92s at 8, 80s at 12, and 83s at 16.
+#
+# ceiling: one cap for both runners, derived from bats' curve. Upgrade to a
+# per-runner cap if pytest's own measured plateau lands somewhere other than 12.
+TEST_JOBS_CAP=12
+
+# test_jobs — how many test processes to run at once.
+#
+# Cores, capped. TEST_JOBS overrides it for a caller that knows better — a
+# shared runner that should not take the whole box, or a bisect that wants the
+# serial ordering back with TEST_JOBS=1.
+test_jobs() {
+  local cores
+  cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || cores=1
+  local jobs=$(( cores < TEST_JOBS_CAP ? cores : TEST_JOBS_CAP ))
+  echo "${TEST_JOBS:-$jobs}"
+}
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--bats|--pytest] [-- RUNNER_ARGS...]
+
+Run the test suites with the repo's parallelism settings. With no suite flag,
+runs bats and then pytest, stopping at the first failure.
+
+Options:
+  --bats          Run only the bats suite
+  --pytest        Run only the pytest suite
+  --              Pass every remaining argument through to the runner
+  -h, --help      Show this help
+
+Environment:
+  TEST_JOBS       Parallel test processes (default: cores, capped at $TEST_JOBS_CAP)
+EOF
+}
+
+# run_bats ARGS... — the bats suite, TAP on stdout.
+#
+# --timing is not optional: the pre-push hook reads the per-test durations out
+# of this stream to report the ones over its threshold.
+run_bats() {
+  local jobs
+  jobs=$(test_jobs)
+  local jobs_flag=()
+  # bats farms tests out through GNU parallel and silently runs them serially
+  # without it, so the flag is only worth passing when parallel is installed.
+  command -v parallel >/dev/null 2>&1 && jobs_flag=(--jobs "$jobs")
+  bats "$WORKBENCH_DIR/tests/" --recursive --timing "${jobs_flag[@]}" "$@"
+}
+
+# run_pytest ARGS... — the pytest suite.
+#
+# xdist is a soft dependency: this repo installs no Python packages of its own,
+# so a checkout whose pytest has no xdist plugin still runs the suite, just
+# serially. -p xdist is probed rather than assumed for that reason.
+run_pytest() {
+  local jobs
+  jobs=$(test_jobs)
+  local jobs_flag=()
+  pytest -VV 2>/dev/null | grep -q xdist && jobs_flag=(-n "$jobs")
+  pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "$@"
+}
+
+main() {
+  local suite=all
+  local -a runner_args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage; exit 0 ;;
+      --bats) suite=bats ;;
+      --pytest) suite=pytest ;;
+      --) shift; runner_args=("$@"); break ;;
+      *) err "Unknown option: $1"; usage >&2; exit 1 ;;
+    esac
+    shift
+  done
+
+  if [[ "$suite" == all && ${#runner_args[@]} -gt 0 ]]; then
+    err "Pass-through arguments need a suite: --bats or --pytest"
+    exit 1
+  fi
+
+  [[ "$suite" == pytest ]] || run_bats "${runner_args[@]+"${runner_args[@]}"}"
+  [[ "$suite" == bats ]] || run_pytest "${runner_args[@]+"${runner_args[@]}"}"
+}
+
+main "$@"

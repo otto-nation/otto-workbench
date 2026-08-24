@@ -1107,7 +1107,17 @@ class _ServerProcess:
         self._proc.wait(timeout=TRANSPORT_TIMEOUT)
 
     def close(self) -> None:
-        self._proc.kill()
+        # Ask before killing. The server is a grandchild — `uv run` execs it
+        # under itself — so a kill() reaches the launcher and leaves the server
+        # holding both pipes open; the reader joins below then burn their whole
+        # timeout on every single case. Closing stdin is the shutdown the server
+        # is written to act on, and both pipes reach EOF when it exits.
+        if not self._proc.stdin.closed:
+            self._proc.stdin.close()
+        try:
+            self._proc.wait(timeout=READER_JOIN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
         self._stdout_reader.join(timeout=READER_JOIN_TIMEOUT)
         self._stderr_reader.join(timeout=READER_JOIN_TIMEOUT)
         for pipe in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
@@ -1323,9 +1333,16 @@ class TestRediscovery:
             # The list is asked for either way, so a failure says which half
             # broke: a tool discovery never picked up, or one it did pick up and
             # never announced.
-            evidence = (f"{proc.status}; a list asked for afterwards holds "
+            #
+            # Built on demand rather than up front: reading proc.stderr joins
+            # the reader thread, which on a passing run is still following a
+            # live server and costs the join its full timeout for a message
+            # nobody reads.
+            def evidence() -> str:
+                return (f"{proc.status}; a list asked for afterwards holds "
                         f"{relisted}; server stderr:\n{proc.stderr}")
-            assert announced is not None, f"the tool change was never announced — {evidence}"
-            assert "later-tool" in relisted, f"the new tool never arrived — {evidence}"
+
+            assert announced is not None, f"the tool change was never announced — {evidence()}"
+            assert "later-tool" in relisted, f"the new tool never arrived — {evidence()}"
         finally:
             proc.close()

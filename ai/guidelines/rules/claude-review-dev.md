@@ -126,7 +126,7 @@ messages on stderr.
 1. Create the external script in `ai/claude/bin/`
 2. Add argparse subparser in `pr`
 3. Add `cmd_<name>` wrapper that delegates via `subprocess.run()`
-4. If the subcommand has persistent state: add a `Domain` subclass to `pr_state.py`
+4. If the subcommand has persistent state: add a `Domain` subclass to `pr_domains.py`
    and a field for it on `PRState` — see State management below
 5. Add `_render_<name>_section()` to `pr` for the `cmd_status` dashboard
 6. Register in `ai/claude/registry.yml`
@@ -137,19 +137,21 @@ messages on stderr.
 - State file: `<state_dir()>/pr/<repo-key>-<branch-slug>/state.json` — keyed on
   the run's target, not on the checkout it was invoked from. Resolve it once via
   `pr_context.resolve()` and read `ctx.target_dir`; never rebuild the path
-- Lib module: `ai/lib/pr_state.py`
-- Each domain is a `pr_state.Domain` subclass (e.g., `CIDomain`, `RebaseSummary`)
+- Lib modules: `ai/lib/pr_domains.py` holds the domains; `ai/lib/pr_state.py` holds
+  the envelope over them, the registry and the state file I/O, and imports the
+  first — never the other way round
+- Each domain is a `pr_domains.Domain` subclass (e.g., `CIDomain`, `RebaseSummary`)
   serialized via generic `serde.to_dict()`/`serde.from_dict()`
-- **Adding a domain is one edit**: subclass `Domain` and add a field for it on
-  `PRState`. The registry, the `apply` routing, and the `apply_state_update`
-  domain name are all derived from that field's annotation
+- **Adding a domain is two lines in two files**: subclass `Domain` in `pr_domains`
+  and add a field for it on `PRState`. The registry, the `apply` routing, and the
+  `apply_state_update` domain name are all derived from that field's annotation
 - Updated via `pr_state.apply(state, summary)` + `pr_state.save_state()`.
   `apply` routes by type to the field annotated with it
 - A write replaces the stored domain. A domain that must accumulate across
   rounds overrides `merge_into` to fold the prior value in (see `FixSummary`)
 - Scripts own their state updates — Python scripts import `pr_state` directly
 - **Every reader goes through `pr_state.load_state()`** — never `json.load` on
-  `state.json`. The dataclasses in `pr_state.py` are the schema; a raw-dict
+  `state.json`. The dataclasses in `pr_domains.py` are the schema; a raw-dict
   reader duplicates it and silently blanks when a field is renamed
 - `load_state()` returns `None` for a missing file and an unreadable one alike,
   warning on the latter. Callers degrade; they do not need to tell them apart

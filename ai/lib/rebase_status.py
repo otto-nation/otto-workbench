@@ -54,7 +54,7 @@ there is one waiver mechanism rather than two.
 
 from __future__ import annotations
 
-from pr_state import RebaseStatus, RebaseSummary
+from pr_domains import RebaseStatus, RebaseSummary
 
 
 # Every status `pr rebase` refuses on, and the phrase the dashboard reports it

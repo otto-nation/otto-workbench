@@ -20,6 +20,7 @@ pr_describe_cli = importlib.util.module_from_spec(_spec)
 pr_describe_cli.__file__ = _path
 _spec.loader.exec_module(pr_describe_cli)
 
+import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
 
 from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
@@ -109,7 +110,7 @@ def test_applying_the_body_sends_it_on_stdin():
 def test_unchanged_head_skips_the_ai_call(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(worktree))
-    pr_state.apply(state, pr_state.DescribeSummary(head_sha="aaaa111"))
+    pr_state.apply(state, pr_domains.DescribeSummary(head_sha="aaaa111"))
     pr_state.save_state(worktree / "target", state)
 
     rc, edits, prompt = _run(_ctx(worktree))
@@ -121,7 +122,7 @@ def test_unchanged_head_skips_the_ai_call(worktree):
 def test_moved_head_earns_a_fresh_pass(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(worktree))
-    pr_state.apply(state, pr_state.DescribeSummary(head_sha="old0000"))
+    pr_state.apply(state, pr_domains.DescribeSummary(head_sha="old0000"))
     pr_state.save_state(worktree / "target", state)
 
     rc, edits, prompt = _run(_ctx(worktree))
@@ -133,7 +134,7 @@ def test_moved_head_earns_a_fresh_pass(worktree):
 def test_force_overrides_the_head_check(worktree):
     state = pr_state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(worktree))
-    pr_state.apply(state, pr_state.DescribeSummary(head_sha="aaaa111"))
+    pr_state.apply(state, pr_domains.DescribeSummary(head_sha="aaaa111"))
     pr_state.save_state(worktree / "target", state)
 
     rc, edits, prompt = _run(_ctx(worktree), force=True)

@@ -18,7 +18,7 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 import workbench_paths
-from pr_state import ReviewStatus, ReviewVerdict
+from pr_domains import ReviewStatus, ReviewVerdict
 from review_common import (
     FILENAME_POST_SESSION, ReviewEntryKind, count_severities, find_review_file,
     iter_review_entries, json_summary, parse_review_verdict,

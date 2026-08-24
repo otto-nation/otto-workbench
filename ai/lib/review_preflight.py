@@ -25,7 +25,8 @@ import log
 import serde
 import workbench_config
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
-from pr_state import ReviewStatus, now_iso
+from pr_domains import ReviewStatus
+from pr_state import now_iso
 from review_common import (
     FILE_STAT_FMT, FILENAME_PIPELINE_STATE, Diagnosis, DiagnosisKind, Effort, Mode,
     PRIOR_SHA_RE, ReviewType, plural,

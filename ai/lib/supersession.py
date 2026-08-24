@@ -89,8 +89,9 @@ import gh_client
 import git_client
 import log
 import pr_context
+import pr_domains
 import pr_state
-from pr_state import SupersessionKind, SupersessionSignal
+from pr_domains import SupersessionKind, SupersessionSignal
 from trail import Trail
 
 # Author-vs-committer drift on the first commit, in days, before the branch is
@@ -335,7 +336,7 @@ def detect_cached(
     verdict = detect(wt_path, repo, base, trail)
 
     if state:
-        pr_state.apply(state, pr_state.SupersessionDomain(
+        pr_state.apply(state, pr_domains.SupersessionDomain(
             updated_at=pr_state.now_iso(),
             head_sha=verdict.head_sha,
             base_sha=verdict.base_sha,

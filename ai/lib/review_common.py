@@ -49,7 +49,8 @@ import serde
 import timeouts
 import workbench_paths
 from ai_usage import SessionUsage, parse_session_log
-from pr_state import ReviewStatus, ReviewSummary, ReviewVerdict, now_iso
+from pr_domains import ReviewStatus, ReviewSummary, ReviewVerdict
+from pr_state import now_iso
 
 
 # ── Severity ─────────────────────────────────────────────────────────────────

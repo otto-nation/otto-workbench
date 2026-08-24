@@ -15,7 +15,7 @@ from ci_failures import (
     extract_failure_context, extract_headline, LogMarker, LOG_MARKERS,
     _MAX_CONTEXT_CHARS,
 )
-from pr_state import CIDomain
+from pr_domains import CIDomain
 
 
 def test_failure_item_fields():

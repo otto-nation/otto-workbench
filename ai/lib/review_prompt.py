@@ -18,7 +18,7 @@ from string import Template
 
 import json
 import log
-from pr_state import ReviewVerdict
+from pr_domains import ReviewVerdict
 from review_common import (
     EFFORT_PRESETS, Effort,
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,

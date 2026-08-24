@@ -30,7 +30,7 @@ import git_client
 import log
 import pr_context
 import pr_state
-from pr_state import DescribeSummary
+from pr_domains import DescribeSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 

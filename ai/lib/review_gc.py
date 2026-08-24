@@ -40,7 +40,8 @@ import pr_state
 import pr_target
 import run_lock
 import workbench_paths
-from pr_state import PRClosure, PRCloseState, ReviewStatus
+from pr_domains import ReviewStatus
+from pr_state import PRClosure, PRCloseState
 from review_common import (
     FILENAME_PIPELINE_STATE,
     FILENAME_PROMPT_STATS,

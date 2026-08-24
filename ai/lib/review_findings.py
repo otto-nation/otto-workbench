@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import log
-from pr_state import ReviewVerdict
+from pr_domains import ReviewVerdict
 from review_common import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, PriorDisposition,

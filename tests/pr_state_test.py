@@ -13,12 +13,15 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 import pr_state
-from pr_state import (
-    PRIdentity, CIDomain, PRCloseState, PRClosure,
-    ReviewSummary, ReviewVerdict, ReviewStatus,
+from pr_domains import (
+    CIDomain,
     CommentsSummary, TriageSummary, RebaseSummary,
-    ThreadAction, ThreadOutcome, FixSummary, CommitStatus,
+    CommitStatus, FixSummary, ThreadAction, ThreadOutcome,
+    ReviewSummary, ReviewVerdict, ReviewStatus,
     SupersessionDomain, SupersessionKind, SupersessionSignal,
+)
+from pr_state import (
+    PRIdentity, PRCloseState, PRClosure,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
     apply, _domains,
     state_to_dict, state_from_dict,

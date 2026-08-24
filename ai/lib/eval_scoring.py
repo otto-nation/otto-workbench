@@ -7,16 +7,9 @@ every task shares.
 
 `eval-models --compare` diffs a run against the baselines in `eval/results/` and
 exits `2` on a regression. The gate is deliberately narrow, because a gate that
-flaps gets disabled:
-
-| Metric | Gate |
-|---|---|
-| billed input tokens | fail past 15% growth |
-| output tokens | fail past 15% growth |
-| recall, precision, severity accuracy | fail on any drop past the noise threshold |
-| false positives | fail past +0.5 per case |
-| cache-read ratio | fail below 60% |
-| cost, duration | reported, never gated |
+flaps gets disabled: token growth, quality drops and false positives fail past
+the thresholds declared below, the cache-read ratio fails below its floor, and
+cost and duration are reported but never gated.
 
 Tokens are gated and cost is not because tokens are what a change controls; the
 dollar figure also moves with model prices, and duration moves with machine

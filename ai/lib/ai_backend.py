@@ -6,18 +6,11 @@ correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
 Every entry point takes a required `cwd`, because a backend CLI inherits the
 launching process's working directory unless it is told otherwise. An agent
 given write access would then edit whichever worktree the session happened to
-start in rather than the one being operated on:
-
-```python
-ai_backend.prompt(text, cwd=str(wt_path), task="conflict-resolve")
-ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, cwd=str(wt_path)))
-```
-
-`add_dirs` is not a substitute — it maps to `--add-dir`, which widens the set of
-directories the agent may touch and has no way to narrow it. `prompt()` rejects
-the call at the signature, `invoke_agent`/`invoke_fix` raise on an empty or
-non-existent `cwd`, and `TestAgentCallSitesPassCwd` fails the build on a new
-call site that omits it.
+start in rather than the one being operated on. `add_dirs` is not a substitute —
+it maps to `--add-dir`, which widens the set of directories the agent may touch
+and has no way to narrow it. `prompt()` rejects the call at the signature,
+`invoke_agent`/`invoke_fix` raise on an empty or non-existent `cwd`, and a test
+fails the build on a new call site that omits it.
 
 Every call made through here appends one record to the usage ledger, so what a
 run cost is answerable without instrumenting the call site — see `ai_usage`.

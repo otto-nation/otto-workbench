@@ -24,15 +24,11 @@ actually predicts the right answer is **what bounds the cost**:
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
 | `UNBOUNDED` | `worktree add`, `commit`, `push` | A bound would be wrong, not merely large. |
 
-Operation-bounded work — `git rev-parse`, one `gh api` round trip, a `yq` parse
-— costs the same whatever the repository holds. Exceeding the bound means
-something is genuinely wrong: a hang, a dead socket, a deadlock. A timeout is a
-hang detector here, and a tight one is correct.
-
-Data-bounded and user-bounded work — `git worktree add`, `fetch --unshallow`,
-`gh api --paginate`, `git commit`, `git push` — costs whatever the input costs.
-Exceeding the bound is indistinguishable from "the repository is large" or
-"this repo's pre-commit hook runs a test suite". A fixed timeout there silently
+For the first three tiers the cost is the same whatever the repository holds, so
+a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —
+and a timeout is a hang detector. For the last two the cost is whatever the input
+costs, and a breach is indistinguishable from "the repository is large" or "this
+repo's pre-commit hook runs a test suite". A fixed timeout there silently
 converts a large repo into a broken tool, which is why `UNBOUNDED` exists and is
 spelled out rather than omitted.
 

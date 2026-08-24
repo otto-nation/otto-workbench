@@ -929,18 +929,11 @@ correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
 Every entry point takes a required `cwd`, because a backend CLI inherits the
 launching process's working directory unless it is told otherwise. An agent
 given write access would then edit whichever worktree the session happened to
-start in rather than the one being operated on:
-
-```python
-ai_backend.prompt(text, cwd=str(wt_path), task="conflict-resolve")
-ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, cwd=str(wt_path)))
-```
-
-`add_dirs` is not a substitute — it maps to `--add-dir`, which widens the set of
-directories the agent may touch and has no way to narrow it. `prompt()` rejects
-the call at the signature, `invoke_agent`/`invoke_fix` raise on an empty or
-non-existent `cwd`, and `TestAgentCallSitesPassCwd` fails the build on a new
-call site that omits it.
+start in rather than the one being operated on. `add_dirs` is not a substitute —
+it maps to `--add-dir`, which widens the set of directories the agent may touch
+and has no way to narrow it. `prompt()` rejects the call at the signature,
+`invoke_agent`/`invoke_fix` raise on an empty or non-existent `cwd`, and a test
+fails the build on a new call site that omits it.
 
 Every call made through here appends one record to the usage ledger, so what a
 run cost is answerable without instrumenting the call site — see `ai_usage`.
@@ -1019,11 +1012,10 @@ A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
 row cannot be told apart from.
 
-`otto-log stats` reads the ledger back: calls, cost, billed input (input + cache
-read + cache write), output tokens, cache-read share of billed input, and median
-duration. `--by model` shows cost only, because the CLI reports cost per model
-but tokens per session — leaving the token columns blank beats counting one
-session's tokens against every model it used.
+`otto-log stats` reads the ledger back. Its `--by model` breakdown shows cost
+only, because the CLI reports cost per model but tokens per session — leaving the
+token columns blank beats counting one session's tokens against every model it
+used.
 
 ### vertex_quota.py
 
@@ -1052,16 +1044,9 @@ every task shares.
 
 `eval-models --compare` diffs a run against the baselines in `eval/results/` and
 exits `2` on a regression. The gate is deliberately narrow, because a gate that
-flaps gets disabled:
-
-| Metric | Gate |
-|---|---|
-| billed input tokens | fail past 15% growth |
-| output tokens | fail past 15% growth |
-| recall, precision, severity accuracy | fail on any drop past the noise threshold |
-| false positives | fail past +0.5 per case |
-| cache-read ratio | fail below 60% |
-| cost, duration | reported, never gated |
+flaps gets disabled: token growth, quality drops and false positives fail past
+the thresholds declared below, the cache-read ratio fails below its floor, and
+cost and duration are reported but never gated.
 
 Tokens are gated and cost is not because tokens are what a change controls; the
 dollar figure also moves with model prices, and duration moves with machine
@@ -1132,157 +1117,41 @@ against a skill that no longer says what the copy says. That is the point:
 before this, there was no way to tell whether a change to a `SKILL.md` made the
 skill better or worse.
 
-#### A `skill` manifest's fields
-
-`manifest.json` adds four fields on top of the `name`/`task`/`description`/`tags`
-every task shares:
-
-| Field | Meaning |
-|---|---|
-| `skill` | Directory name under `ai/claude/skills/` whose `SKILL.md` body is injected as the driving instructions |
-| `prompt` | The user's request — the other half of the prompt, standing in for the human side of the turn |
-| `requires` | Token groups that must each match a trace line, in order — group *i* must land on a strictly later line than group *i − 1* |
-| `forbids` | Token groups that must match no trace line at all; any single hit zeroes precision |
-| `false_positives_max` | The `forbids` budget, same meaning as a `review` manifest's field of the same name — defaults to `0` |
-
-`requires` and `forbids` each hold a list *of* groups, so a lone group is
-`[["--fix"]]` and not `["--fix"]` — the prose here names groups by their tokens
-alone, one level shallower than a manifest writes them. The shallow form is
-rejected when the case loads, as is an empty group: either would match nothing,
-which for a `forbids` group is a gate that never fires and never says so.
-
 A group matches a trace line when every one of its tokens **equals one of that
-line's argv elements** — so `["pr", "rebase", "--fix"]` matches
-`pr rebase --fix --branch main`, and a group never has to spell out the flags it
-doesn't care about. Tokens within a group are unordered; the groups in `requires`
-are ordered relative to each other.
+line's argv elements**. Whole elements, not substrings, and that is
+load-bearing: the substring rule this replaced matched a `["git", "push"]` group
+against the `git remote get-url --push origin` the Claude Code harness issues at
+startup, zeroing precision on sessions that never pushed, and let
+`["pr", "rebase"]` match the very `pr-rebase` script the skill forbids. For
+matching only, an argv element is also split on its first `=`, so `--track=T-3`
+and `--track T-3` grade the same — neither `--push` nor `pr-rebase` contains one,
+so the split cannot reopen either case above.
 
-Whole elements, not substrings, so a flag and its longer forms are distinct:
-`["pr", "--track"]` does not match `pr comments --finish --track-all`. That is
-why `pr-comments-draft-only`, which forbids every tracking form, has to forbid
-`["pr", "--track"]` and `["pr", "--track-all"]` by name. A command name and a
-lookalike are distinct too: `["pr", "rebase"]` does not match
-`pr-rebase --branch eval`, because `pr-rebase` is a single element and neither
-token equals it.
+Two things follow when authoring a case. A group is a *subset* of the line, so a
+`requires` group is evidence of what ran and never of what did not — pair it with
+a `forbids` group for each way the case could pass without being satisfied. And
+the trace records the harness's own startup commands alongside the model's, so a
+`forbids` group naming a git subcommand the harness issues for itself scores
+precision 0.0 on a fully compliant session; forbid the operation the skill must
+not perform (`["git", "push"]`, `["git", "rebase"]`) rather than the family it
+belongs to.
 
-Both distinctions are load-bearing, because the substring rule this replaced got
-both wrong. At session startup the Claude Code harness issues
-`git remote get-url --push origin`; a `forbids: ["git", "push"]` group matched
-that as a substring and zeroed precision on sessions that never pushed. And
-`pr-rebase-conflicts-need-approval` could bank a full pass on a call to the very
-backing script the skill forbids, because `["pr", "rebase"]` sat inside the word
-`pr-rebase`. That case still forbids `["pr-rebase"]`, and it is still the group
-that makes such a call *score* — but it now guards against a real violation
-rather than patching a matcher artifact.
-
-A flag written joined to its value is still two tokens. For matching only, an
-argv element containing an `=` also counts as the two halves around its *first*
-`=`, so `["--track", "T-3"]` matches `--track T-3` and `--track=T-3` alike, and a
-group naming the literal `--track=T-3` matches too. A session that joined the
-flag to its value did not do anything different from one that didn't, and the
-grade should not say otherwise. The split cannot undo either distinction above:
-neither `--push` nor `pr-rebase` contains an `=`, so neither gains a token from
-it.
-
-#### Authoring a case
-
-Four things follow from the matching rules.
-
-**1. Name in `forbids` every way the case could be passed without being
-satisfied.** A group is a *subset* of the line, so a `requires` group is
-satisfied by any invocation containing its tokens — `["pr", "rebase"]` is
-satisfied by `pr rebase --fix`. A `requires` group is evidence of what ran, never
-of what did not, and it says nothing at all about the *other* lines in the trace.
-`pr-rebase-conflicts-need-approval` pairs its `requires: ["pr", "rebase"]` with a
-separate `forbids: ["--fix"]` for the first reason; `pr-rebase-clean` forbids
-`["git", "rebase"]` for the second, since `requires: ["pr", "rebase", "--fix"]`
-is met just as well by a session that rebased by hand first and then called the
-dispatcher.
-
-**2. A group naming a binary matches the stub's *name*, not its path.** The shim
-records `argv[0]` as the bare name it was generated under, discarding the temp
-`bin/` directory it actually ran from. That is what makes
-`forbids: ["pr-rebase"]` a workable group at all.
-
-**3. Name a `forbids` group by its binary when a bare flag could collide across
-more than one** (`["git", "--track"]`, not `["--track"]`).
-
-**4. Do not name a git subcommand the Claude Code harness issues for itself.**
-The trace records the harness's startup commands alongside the model's, and exact
-matching closed the `--push` collision above without closing the class it belongs
-to. Six groups fire on the real startup prefix, each of which would score
-precision 0.0 on a fully compliant session: `["git", "config"]`,
-`["git", "remote"]`, `["git", "-c"]`, `["git", "status"]`, `["git", "log"]`,
-`["git", "ls-files"]`. Forbidding a git operation the skill must not perform —
-`["git", "push"]`, `["git", "rebase"]` — is safe; those are not in the prefix.
-
-#### Stubbing the CLIs
-
-`responses.json` stubs the CLIs the skill drives, one top-level key per binary
-name:
-
-| Field | Meaning |
-|---|---|
-| `on_no_match` | `"fail"` (the default) exits `97` on an unmatched call; `"passthrough"` execs the real binary instead. Those two spellings are the only accepted values — anything else is rejected when the case loads, rather than read as `"fail"` |
-| `rules` | An ordered list; the first rule whose `match` tokens all match an argv element of the call wins — identical matching to a manifest group, `=` splitting included, so a rule and a group mean the same thing on the same line. To stub a binary purely so its calls are traced, give it `[]` |
-| `match` | Required on every rule, and held to the same shape as a manifest group: a non-empty list of strings. An empty one could never fire, and under `passthrough` that is silent — the call it meant to intercept reaches the real binary |
-| `stdout` / `stderr` | Literal text to emit |
-| `stdout_file` | A path resolved relative to the case directory (not the fixture repo), read and used as `stdout` instead |
-| `exit` | The exit code to return, default `0` |
-
-Each shim's default policy is fail-closed, so a fixture gap cannot read as a
-pass. A case opts a binary into `on_no_match: "passthrough"` instead when it
-wants the real one — both `pr-rebase` cases do this for `git`, because the
-fixture is a real repo and `git status` should work there; only the rules that
-matter are intercepted, and the attempt is still traced either way. A binary left
-unstubbed is not intercepted at all: the real one on `PATH` runs, and no trace
-line is ever recorded for it. So a binary named as the leading token of any
-`requires` or `forbids` group needs an entry here — otherwise the real binary
-runs uncontrolled and untraced, and the group can never be satisfied or violated.
-
-A minimal worked example — a case asserting that a `deploy` skill calls
-`infra apply --yes` and never touches `terraform` directly:
-
-```json
-// manifest.json
-{
-  "name": "deploy-approved",
-  "task": "skill",
-  "skill": "deploy",
-  "prompt": "Deploy this to staging.",
-  "requires": [["infra", "apply", "--yes"]],
-  "forbids": [["terraform"]],
-  "false_positives_max": 0
-}
-```
-
-```json
-// responses.json
-{
-  "infra": {
-    "on_no_match": "fail",
-    "rules": [
-      {"match": ["apply", "--yes"], "stdout": "{\\"status\\": \\"ok\\"}", "exit": 0}
-    ]
-  },
-  "terraform": {"on_no_match": "fail", "rules": []}
-}
-```
-
-#### What the trace cannot see
+The CLIs the skill drives are stubbed by `responses.json`, one key per binary
+name, fail-closed by default so a fixture gap cannot read as a pass. A case opts
+a binary into `on_no_match: "passthrough"` when it wants the real one — both
+`pr-rebase` cases do this for `git`, because the fixture is a real repo and
+`git status` should work there. A binary left out entirely is not intercepted at
+all and no trace line is recorded for it, so a binary named as the leading token
+of any group needs an entry here or the group can never be satisfied or violated.
 
 Two limits worth naming. The trace cannot see obligations that are text-only,
 such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
 regenerate those files by hand. And each case drives a single *user* turn, with
-the user's side of the conversation encoded in the scenario prompt — which covers
-both sides of the `pr-comments` approval gate as two cases, but does not exercise
-a real multi-turn exchange.
-
-Within that one user turn the session can still take several tool-call turns of
-its own: `SKILL_MAX_TURNS` (20) caps how many, and `SKILL_MAX_BUDGET` (1.0, in
-dollars) caps what the run can spend before the harness stops it. A case whose
-scenario needs more of either hits the cap silently rather than completing, so
-keep fixtures resolvable well inside both.
+the user's side encoded in the scenario prompt — which covers both sides of the
+`pr-comments` approval gate as two cases, but does not exercise a real multi-turn
+exchange. Within that turn `SKILL_MAX_TURNS` and `SKILL_MAX_BUDGET` cap the
+tool-call turns and the spend; a scenario needing more of either hits the cap
+silently rather than completing.
 
 ### eval_task.py
 
@@ -1341,8 +1210,8 @@ used once belongs at its call site, spelled out with `run`.
 There is no `timeout` parameter. The bound follows from the subcommand the same
 way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`
 run `UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so
-the knowledge lives with the client that owns it rather than at each of the
-forty-five call sites, one of which used to pass a number of its own.
+the knowledge lives with the client that owns it rather than at every call site,
+one of which used to pass a number of its own.
 
 `config={"key": "value"}` becomes `-c key=value` ahead of the subcommand.
 `diff`, `ls-files` and `status` get `core.quotePath=false` by default: git
@@ -1352,19 +1221,14 @@ file was staged as nothing and reported as applied. Applying the flag to the
 subcommand rather than to each caller is what stops the next call site from
 forgetting it.
 
-Not everything has moved across yet. `pr_context`, `pr-rebase`, `mcps/server`
-and `eval_task` still invoke git as literal argv — the first three because a
-behaviour fix is open on them and a refactor underneath it would collide,
-`eval_task` because its calls need `env=`, which this client does not take and
-`proc.run` does. A new call site should still go through the client.
-
-One consequence of the move is worth knowing before migrating the rest: the
-client passes the worktree as `cwd` rather than as `git -C`. A root that does not
-exist used to come back as a non-zero exit that `out` and `ok` degraded away; it
-now raises `FileNotFoundError` out of Python before git is reached. That is the
-better answer — an absent worktree is a broken caller, not a question git
-declined to answer — but a call site quietly relying on the old degradation will
-start failing loudly.
+Callers that still invoke git as literal argv are migrating across; a new one
+should go through the client. The one difference to know before moving a call
+site is that the client passes the worktree as `cwd` rather than as `git -C`, so
+a root that does not exist raises `FileNotFoundError` out of Python before git is
+reached rather than coming back as a non-zero exit that `out` and `ok` degrade
+away. An absent worktree is a broken caller, not a question git declined to
+answer — but a call site relying on the old degradation will start failing
+loudly.
 
 `out` returning `default` on a non-zero exit is the one place here that
 discards a failure, and it is deliberate: it is what the wrappers it replaces
@@ -1415,21 +1279,20 @@ So `run(cmd)` returns a frozen `CmdResult` carrying `returncode`, `stdout` and
 
 `failure_message(action, r)` renders a failure without asserting a cause the
 code has not established: it names the action, appends whatever the command
-said, and calls out a 5xx separately because that is the one case where the
-answer is to wait rather than to change anything. It decides that from
-`server_error`, so the rendered message and a classifier reading the same result
-can never disagree about which stream the evidence was on. It accepts a raw
-`subprocess.CompletedProcess` too, so a call site still running `subprocess.run`
-directly can report a failure without converting first.
+said, and calls out a 5xx separately, deciding that from `server_error` so the
+message and a classifier reading the same result cannot disagree about which
+stream the evidence was on. It accepts a raw `subprocess.CompletedProcess` too,
+so a call site still running `subprocess.run` directly can report a failure
+without converting first.
 
 An expired timeout is the same kind of answer. `run` converts it into a
-`CmdResult` carrying `TIMEOUT_RETURNCODE` (124, the shell convention) with the
-bound and the command quoted on stderr, and whatever the process managed to
-write before it was killed preserved on both streams. Raising instead would need
-a handler at each of the call sites that has none; as a result code it degrades
-through `out`/`ok`/`lines` exactly as any other failure does. The code is
-contract rather than an implementation detail — the eval scorers tell a
-timed-out case from a failed one by it.
+`CmdResult` carrying `TIMEOUT_RETURNCODE` — the shell convention — with the bound
+and the command quoted on stderr, and whatever the process wrote before it was
+killed preserved on both streams. Raising instead would need a handler at each of
+the call sites that has none; as a result code it degrades through
+`out`/`ok`/`lines` exactly as any other failure does, and it is contract rather
+than an implementation detail: the eval scorers tell a timed-out case from a
+failed one by it.
 
 Named `proc` rather than `cmd`: `ai/lib` goes on `sys.path` ahead of the
 standard library, and a module called `cmd` there would shadow the stdlib
@@ -1527,15 +1390,11 @@ actually predicts the right answer is **what bounds the cost**:
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
 | `UNBOUNDED` | `worktree add`, `commit`, `push` | A bound would be wrong, not merely large. |
 
-Operation-bounded work — `git rev-parse`, one `gh api` round trip, a `yq` parse
-— costs the same whatever the repository holds. Exceeding the bound means
-something is genuinely wrong: a hang, a dead socket, a deadlock. A timeout is a
-hang detector here, and a tight one is correct.
-
-Data-bounded and user-bounded work — `git worktree add`, `fetch --unshallow`,
-`gh api --paginate`, `git commit`, `git push` — costs whatever the input costs.
-Exceeding the bound is indistinguishable from "the repository is large" or
-"this repo's pre-commit hook runs a test suite". A fixed timeout there silently
+For the first three tiers the cost is the same whatever the repository holds, so
+a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —
+and a timeout is a hang detector. For the last two the cost is whatever the input
+costs, and a breach is indistinguishable from "the repository is large" or "this
+repo's pre-commit hook runs a test suite". A fixed timeout there silently
 converts a large repo into a broken tool, which is why `UNBOUNDED` exists and is
 spelled out rather than omitted.
 
@@ -1596,18 +1455,11 @@ recovered from it faithfully — and declaring it also enrolls a script in MCP
 discovery, which is not a side effect an arity probe should carry.
 
 A delegate of ``pr`` that builds a plain ``argparse.ArgumentParser`` has to opt
-in:
-
-```python
-parser = argparse.ArgumentParser(...)
-tool_parser.handle_value_flags(parser)   # before parse_args
-args = parser.parse_args()
-```
-
-Skip the call and the parser rejects ``--value-flags`` as unknown, the probe
-exits non-zero, and ``pr`` falls back to its arity-blind scan — no error, just
-the occasional flag value classified as the command's target. ``claude-review``
-and ``review-threads`` opt in this way; the rest inherit it from ``ToolParser``.
+in, by calling ``handle_value_flags(parser)`` before ``parse_args``. Skip it and
+the parser rejects ``--value-flags`` as unknown, the probe exits non-zero, and
+``pr`` falls back to its arity-blind scan — no error, just the occasional flag
+value classified as the command's target. A ``ToolParser`` script answers the
+flag without opting in.
 
 One constraint comes with the protocol: every *option* the parser declares must
 consume exactly one value. A flat list of option strings cannot express

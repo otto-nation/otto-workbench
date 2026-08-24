@@ -18,11 +18,10 @@ A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
 row cannot be told apart from.
 
-`otto-log stats` reads the ledger back: calls, cost, billed input (input + cache
-read + cache write), output tokens, cache-read share of billed input, and median
-duration. `--by model` shows cost only, because the CLI reports cost per model
-but tokens per session — leaving the token columns blank beats counting one
-session's tokens against every model it used.
+`otto-log stats` reads the ledger back. Its `--by model` breakdown shows cost
+only, because the CLI reports cost per model but tokens per session — leaving the
+token columns blank beats counting one session's tokens against every model it
+used.
 """
 
 # doc-group: backend

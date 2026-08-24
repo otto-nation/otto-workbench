@@ -36,18 +36,11 @@ recovered from it faithfully — and declaring it also enrolls a script in MCP
 discovery, which is not a side effect an arity probe should carry.
 
 A delegate of ``pr`` that builds a plain ``argparse.ArgumentParser`` has to opt
-in:
-
-```python
-parser = argparse.ArgumentParser(...)
-tool_parser.handle_value_flags(parser)   # before parse_args
-args = parser.parse_args()
-```
-
-Skip the call and the parser rejects ``--value-flags`` as unknown, the probe
-exits non-zero, and ``pr`` falls back to its arity-blind scan — no error, just
-the occasional flag value classified as the command's target. ``claude-review``
-and ``review-threads`` opt in this way; the rest inherit it from ``ToolParser``.
+in, by calling ``handle_value_flags(parser)`` before ``parse_args``. Skip it and
+the parser rejects ``--value-flags`` as unknown, the probe exits non-zero, and
+``pr`` falls back to its arity-blind scan — no error, just the occasional flag
+value classified as the command's target. A ``ToolParser`` script answers the
+flag without opting in.
 
 One constraint comes with the protocol: every *option* the parser declares must
 consume exactly one value. A flat list of option strings cannot express

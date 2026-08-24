@@ -37,7 +37,12 @@ def _reject_commits_from(hooks: Path) -> Path:
 
 
 def _commit_in(repo: Path) -> subprocess.CompletedProcess:
-    """Commit a file, reporting the outcome rather than raising on rejection."""
+    """Commit a file, reporting the outcome rather than raising on rejection.
+
+    The commit is spelled out rather than run through `git_in` because `git_in`
+    raises on a non-zero exit, and a rejected commit is the result half these
+    tests are asserting on. The staging step above has no such reason.
+    """
     (repo / "f.txt").write_text("one")
     git_in(repo, "add", "--", "f.txt")
     return subprocess.run(

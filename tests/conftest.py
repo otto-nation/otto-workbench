@@ -534,6 +534,44 @@ def _isolate_state_root(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _disown_git_hooks(monkeypatch):
+    """Detach every git command in every test from the machine's hooks.
+
+    `core.hooksPath` is global on a workbench machine, so a repo created under
+    `tmp_path` inherits the developer's real `pre-commit` — an identity
+    assertion plus a `gitleaks` subprocess on each commit. The suite would then
+    depend on machine state it does not own: the hook is free to change under
+    it, a machine without gitleaks fails every commit in a temp repo, and under
+    `pytest-xdist` each worker pays for its own scan.
+
+    Set through git's own environment config rather than written into each repo,
+    for the reason `_isolate_state_root` above sets an env var: a subprocess
+    inherits it, so a repo built by a tool under test is covered too, and no new
+    test has to remember to opt in. Git reads these as if they were `-c`, which
+    outranks the repo-local `core.hooksPath` a few suites set for themselves —
+    those point at empty directories to disable hooks, so /dev/null is what they
+    were asking for anyway. A test that needs a hook to fire drops these keys.
+    """
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", os.devnull)
+
+
+@pytest.fixture
+def live_git_hooks(monkeypatch):
+    """Lift the hook sandbox, for a test whose subject is a hook firing.
+
+    An opt-out has to remove the keys rather than write a louder value, since
+    git reads them as `-c` and nothing a repo config says outranks that. The
+    machine's global config goes with them, so what runs is the hook the test
+    installed and never the developer's.
+    """
+    for key in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+
+
+@pytest.fixture(autouse=True)
 def _drafts_only(monkeypatch):
     """Close the publishing gate for every test.
 

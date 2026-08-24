@@ -24,13 +24,19 @@ from conftest import init_worktree  # noqa: E402
 
 
 def _commit(path: Path, name: str = "f.txt", content: str = "one") -> str:
-    """Write a file and commit it, returning the resulting SHA."""
+    """Write a file and commit it, returning the resulting SHA.
+
+    `git_client.run` never raises on a non-zero exit, so a rejected commit would
+    otherwise reach the test as `head_sha`'s empty-repo answer and fail whatever
+    assertion came next — naming a SHA lookup rather than the commit.
+    """
     (path / name).write_text(content)
     git_client.run("add", "--", name, cwd=path)
-    git_client.run(
+    result = git_client.run(
         "commit", "-m", f"add {name}", cwd=path,
         config={"user.email": "t@example.com", "user.name": "T"},
     )
+    assert result.ok, f"commit failed: {result.stderr or result.stdout}"
     return git_client.head_sha(cwd=path)
 
 

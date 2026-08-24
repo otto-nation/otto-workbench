@@ -6,6 +6,22 @@ spellings, and this module is the single place that reconciles them.
 
 Lives below the review layer so ai_backend can depend on it without inverting
 the dependency.
+
+Every AI call made through the workbench appends one record to a monthly JSONL
+file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and
+the task that made the call. Python entry points record automatically through
+`ai_backend`; the two shell paths that cannot use it — `run-auto-task`, which
+needs slash commands, and `AI_COMMAND`, which is pluggable — go through
+`ai-usage-log`.
+
+A call that reports no usage records nothing rather than a zero row. An
+unmeasured call is then visibly absent instead of looking free, which a zeroed
+row cannot be told apart from.
+
+`otto-log stats` reads the ledger back. Its `--by model` breakdown shows cost
+only, because the CLI reports cost per model but tokens per session — leaving the
+token columns blank beats counting one session's tokens against every model it
+used.
 """
 
 # doc-group: backend

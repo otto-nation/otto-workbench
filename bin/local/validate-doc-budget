@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Validate that a hand-written guide stays a guide.
+#
+# Module behaviour is documented on the module, and the generated reference in
+# docs/ai-libraries.md is where it lands. A hand-written guide has no generator
+# holding it to that, so it regrows: the behaviour gets written a second time in
+# the guide, and the two copies drift.
+#
+# Two rules catch the regrowth at write time rather than at review time:
+#
+#   A `####` heading is the shape of module behaviour written in the wrong
+#   place. Every section that had to be moved out of docs/ai-automation.src.md
+#   was one, and none of what a guide legitimately holds needs to nest that
+#   deep. A `####` inside a fenced code block is a comment, not a heading, and
+#   is ignored.
+#
+#   The line budget is the backstop for prose that grows without adding a
+#   heading. Exceeding it is not a formatting problem — it means a section
+#   describing one module belongs in that module's docstring.
+#
+# A doc opts in by carrying `<!-- doc-budget: N -->`, so this names no file and
+# a new guide is covered the moment it declares one. Docs with no marker are
+# generated references or pages with no reason to be bounded, and are skipped.
+#
+# Usage: bin/local/validate-doc-budget [--quiet]
+# Exit codes: 0 if every budgeted doc is within its rules; 1 if one is not, or
+#             if no doc declares a budget at all; 2 on a usage error.
+
+set -euo pipefail
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$_SELF")/../.." && pwd)}"
+# shellcheck source=../../lib/ui.sh
+. "$REPO_ROOT/lib/ui.sh"
+
+DOCS_DIR="${DOCS_DIR:-$REPO_ROOT/docs}"
+
+BUDGET_RE='^[[:space:]]*<!--[[:space:]]+doc-budget:[[:space:]]+([0-9]+)[[:space:]]+-->[[:space:]]*$'
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Check that each docs/*.src.md declaring a line budget stays within it and holds
+no '####' heading.
+
+Options:
+  --quiet     Suppress output on success
+  -h, --help  Show this help
+
+Environment:
+  DOCS_DIR    Directory holding the .src.md sources (default: docs/)
+EOF
+}
+
+QUIET=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) QUIET=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) err "Unknown argument: $1"; usage >&2; exit 2 ;;
+  esac
+done
+
+# _budget SRC — the budget the doc declares, or empty when it declares none.
+_budget() {
+  local line
+  while IFS= read -r line; do
+    if [[ "$line" =~ $BUDGET_RE ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return 0; fi
+  done < "$1"
+  return 0
+}
+
+# _deep_headings SRC — every '####' heading, as "line:text", fences excluded.
+_deep_headings() {
+  awk '
+    /^[[:space:]]*```/ { fence = !fence; next }
+    !fence && /^####/  { printf "%d:%s\n", NR, $0 }
+  ' "$1"
+}
+
+errors=0
+docs=0
+
+for src in "$DOCS_DIR"/*.src.md; do
+  [[ -f "$src" ]] || continue
+  budget="$(_budget "$src")"
+  [[ -n "$budget" ]] || continue
+  docs=$((docs + 1))
+  rel="${src#"$REPO_ROOT"/}"
+
+  # awk, not `wc -l`: a file with no trailing newline has one fewer newline than
+  # it has lines, and the budget comparison is exact.
+  lines="$(awk 'END { print NR }' "$src")"
+  if (( lines > budget )); then
+    err "$rel: $lines lines, over its budget of $budget"
+    echo "  A section describing one module's behaviour belongs in that module's" >&2
+    echo "  docstring, where docs/ai-libraries.md renders it. Raise the budget only" >&2
+    echo "  when the growth is genuinely guide-shaped." >&2
+    errors=$((errors + 1))
+  fi
+
+  while IFS= read -r heading; do
+    err "$rel:${heading%%:*}: '####' heading — ${heading#*:}"
+    echo "  A guide does not nest that deep. Move the section to the docstring of" >&2
+    echo "  the module it describes, or flatten it into the section above." >&2
+    errors=$((errors + 1))
+  done < <(_deep_headings "$src")
+done
+
+if (( docs == 0 )); then
+  err "No .src.md in $DOCS_DIR declares a budget — add '<!-- doc-budget: N -->' to the guide"
+  exit 1
+fi
+
+if (( errors > 0 )); then
+  exit 1
+fi
+
+$QUIET || success "every budgeted source doc is within its rules ($docs checked)"

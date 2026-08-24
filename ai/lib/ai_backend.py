@@ -2,6 +2,18 @@
 
 Dispatches preflight(), prompt(), invoke_agent(), and invoke_fix() to the
 correct backend (Claude Code CLI or Pi CLI) based on AI_BACKEND env var.
+
+Every entry point takes a required `cwd`, because a backend CLI inherits the
+launching process's working directory unless it is told otherwise. An agent
+given write access would then edit whichever worktree the session happened to
+start in rather than the one being operated on. `add_dirs` is not a substitute —
+it maps to `--add-dir`, which widens the set of directories the agent may touch
+and has no way to narrow it. `prompt()` rejects the call at the signature,
+`invoke_agent`/`invoke_fix` raise on an empty or non-existent `cwd`, and a test
+fails the build on a new call site that omits it.
+
+Every call made through here appends one record to the usage ledger, so what a
+run cost is answerable without instrumenting the call site — see `ai_usage`.
 """
 
 # doc-group: backend

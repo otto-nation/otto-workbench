@@ -2,13 +2,57 @@
 
 A skill is a procedure a session follows, not a subprocess, so there is no
 artifact to diff. What there is, is the sequence of shell commands it issued —
-and both skills covered here state their constraints as commands not to issue.
-So the trace is the oracle: stubs on PATH record every call, and the manifest
-declares which groups of tokens must appear, in order, and which must not.
+and both skills covered here, `pr-comments` and `pr-rebase`, state their
+constraints as commands not to issue ("never pass `--post` before the user has
+seen the drafts", "never run raw `git push --force-with-lease`").
+
+So the trace is the oracle. The harness puts recording shims on `PATH`, injects
+the live `SKILL.md` body as the prompt, and scores what the session ran:
+`requires` groups must appear **in order**, `forbids` groups must not appear at
+all. Any violation drops precision to zero — a constraint is not something you
+get partial credit for breaking.
 
 The SKILL.md is read live from `ai/claude/skills/`, never copied into a case.
 The file is the single source of truth; a copy would let the eval keep passing
-against a skill that no longer says what the copy says.
+against a skill that no longer says what the copy says. That is the point:
+before this, there was no way to tell whether a change to a `SKILL.md` made the
+skill better or worse.
+
+A group matches a trace line when every one of its tokens **equals one of that
+line's argv elements**. Whole elements, not substrings, and that is
+load-bearing: the substring rule this replaced matched a `["git", "push"]` group
+against the `git remote get-url --push origin` the Claude Code harness issues at
+startup, zeroing precision on sessions that never pushed, and let
+`["pr", "rebase"]` match the very `pr-rebase` script the skill forbids. For
+matching only, an argv element is also split on its first `=`, so `--track=T-3`
+and `--track T-3` grade the same — neither `--push` nor `pr-rebase` contains one,
+so the split cannot reopen either case above.
+
+Two things follow when authoring a case. A group is a *subset* of the line, so a
+`requires` group is evidence of what ran and never of what did not — pair it with
+a `forbids` group for each way the case could pass without being satisfied. And
+the trace records the harness's own startup commands alongside the model's, so a
+`forbids` group naming a git subcommand the harness issues for itself scores
+precision 0.0 on a fully compliant session; forbid the operation the skill must
+not perform (`["git", "push"]`, `["git", "rebase"]`) rather than the family it
+belongs to.
+
+The CLIs the skill drives are stubbed by `responses.json`, one key per binary
+name, fail-closed by default so a fixture gap cannot read as a pass. A case opts
+a binary into `on_no_match: "passthrough"` when it wants the real one — both
+`pr-rebase` cases do this for `git`, because the fixture is a real repo and
+`git status` should work there. A binary left out entirely is not intercepted at
+all and no trace line is recorded for it, so a binary named as the leading token
+of any group needs an entry here or the group can never be satisfied or violated.
+
+Two limits worth naming. The trace cannot see obligations that are text-only,
+such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
+regenerate those files by hand. And each case drives a single *user* turn, with
+the user's side encoded in the scenario prompt — which covers both sides of the
+`pr-comments` approval gate as two cases, but does not exercise a real multi-turn
+exchange. Within that turn `SKILL_MAX_TURNS` and `SKILL_MAX_BUDGET` cap the
+tool-call turns and the spend; a scenario needing more of either hits the cap
+silently rather than completing.
 """
 
 # doc-group: eval

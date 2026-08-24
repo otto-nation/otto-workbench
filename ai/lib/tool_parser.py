@@ -1,18 +1,53 @@
 """ToolParser — drop-in argparse replacement with self-description.
 
-Scripts that use ToolParser automatically support ``--tool-schema``,
-which emits a JSON document describing the tool's name, description,
-input schema (derived from argparse actions), and output schema
-(explicitly annotated).
+Two hidden flags let one script read another's argparse parser rather than keep
+a mirror of it. Both are answered here, and any script built on ``ToolParser``
+supports both for free.
+
+``--tool-schema`` emits a JSON document describing the tool's name, description,
+input schema (derived from argparse actions), and output schema (explicitly
+annotated). It is how the MCP server discovers tools — it probes every
+executable in the workbench's component ``bin/`` directories, plus any
+``tool_dirs`` adds — and it is what a skill's ``output_schema`` cites.
 
 MCP discovery only probes scripts whose source names ``ToolParser`` or
 ``--tool-schema`` (see ``ai/claude/mcps/server.py``). A tool that implements
-the protocol some other way will not be discovered.
+the protocol some other way will not be discovered. Naming the flag in a script
+under one of those directories is therefore a claim, and
+``bin/local/validate-tool-schema`` holds the build to it: it probes every
+candidate discovery would and fails when one cannot answer.
+``bin/local/validate-skills`` asserts the converse for the tool a skill's
+``output_schema`` names — that one must implement the protocol whether or not it
+carries a marker, or the skill cites a contract nothing publishes.
 
-This module also provides ``handle_value_flags``, a lighter probe that answers
-which of a parser's options take a value.  ToolParser scripts inherit it;
-plain-``argparse`` scripts opt in with one call.  See its docstring for why the
-arity question is not answered out of ``--tool-schema``.
+The output schema is generated from the tool's dataclass by ``schema_gen``,
+which describes what ``serde`` will accept for each field rather than deciding
+that for itself.
+
+``--value-flags`` prints one option string per line: every option of that parser
+that consumes a following value. ``pr`` asks a delegate this before deciding
+whether a bare token is the command's target or some other flag's argument.
+Without it, ``pr comments --reply 3777767789`` reads the reply ID as a PR number
+and swallows it.
+
+The two stay separate on purpose. ``--tool-schema`` is keyed by ``dest``, drops
+``help=SUPPRESS`` actions, and loses option aliases, so arity cannot be
+recovered from it faithfully — and declaring it also enrolls a script in MCP
+discovery, which is not a side effect an arity probe should carry.
+
+A delegate of ``pr`` that builds a plain ``argparse.ArgumentParser`` has to opt
+in, by calling ``handle_value_flags(parser)`` before ``parse_args``. Skip it and
+the parser rejects ``--value-flags`` as unknown, the probe exits non-zero, and
+``pr`` falls back to its arity-blind scan — no error, just the occasional flag
+value classified as the command's target. A ``ToolParser`` script answers the
+flag without opting in.
+
+One constraint comes with the protocol: every *option* the parser declares must
+consume exactly one value. A flat list of option strings cannot express
+``nargs='?'``, ``'+'``, ``'*'``, or an int above 1, so the probe refuses to
+answer rather than report a wrong arity — it names the offending option on
+stderr, exits 2, and ``pr`` reprints the message before degrading. Positionals
+are unconstrained (``claude-review`` declares ``args`` with ``nargs='*'``).
 
 Argparse introspection that reaches past the public API is collected here —
 ``value_taking_options`` and ``subparsers`` — so a caller never has to.

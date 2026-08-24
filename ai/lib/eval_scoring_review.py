@@ -3,6 +3,18 @@
 Everything here is specific to reviewing code. The runner, the fixture repo, and
 the aggregation over runs live in `eval_task` and `eval_scoring` and know nothing
 about findings.
+
+A finding counts as matched when its path, severity, and description all line up
+and its line range *overlaps* the manifest's `line_range` — not when its start
+line falls inside the window. Reviewers routinely anchor a range at the
+enclosing declaration, and containment scored those as a miss and a false
+positive at once, penalising a correct finding twice.
+
+A manifest's `false_positives_max` is a noise budget: findings outside every
+expectation are counted, and a run over the budget is marked `(over budget)`
+next to its FP count. It annotates rather than fails — `--compare` gates on
+movement away from the baseline, so an absolute bar here would fire on cases
+that have never met it.
 """
 
 # doc-group: eval

@@ -4,6 +4,22 @@ Task-agnostic: what a run *is* and how it is scored belongs to the task
 (`eval_scoring_review`, `eval_scoring_cifix`, ...). What lives here is the shape
 of a score, the statistics over repeated runs, and the baseline diff — the parts
 every task shares.
+
+`eval-models --compare` diffs a run against the baselines in `eval/results/` and
+exits `2` on a regression. The gate is deliberately narrow, because a gate that
+flaps gets disabled: token growth, quality drops and false positives fail past
+the thresholds declared below, the cache-read ratio fails below its floor, and
+cost and duration are reported but never gated.
+
+Tokens are gated and cost is not because tokens are what a change controls; the
+dollar figure also moves with model prices, and duration moves with machine
+load. The cache-read floor is an absolute minimum rather than a delta: a
+prompt-prefix change that silently disables caching shows up as the ratio
+collapsing, and the value it collapsed from is not the interesting number.
+
+A baseline written before a metric existed leaves it ungated rather than
+failing, so an older baseline still loads. The comparison table marks every
+metric `pass`, `fail`, or `ungated` — including the ones that cannot fail.
 """
 
 # doc-group: eval

@@ -94,6 +94,11 @@ tools:
     visibility: brief
     description: "Validates that a source doc renders every module group its source set declares"
 
+  - name: validate-doc-budget
+    permission: false
+    visibility: brief
+    description: "Validates that a doc declaring a line budget stays within it and holds no '####' heading"
+
   - name: validate-tracked-ignored
     permission: false
     visibility: brief

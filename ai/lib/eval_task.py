@@ -4,6 +4,22 @@ An eval case is a corpus directory with a manifest. The manifest's `task` field
 picks how the case is run and scored; everything here is what is common to all
 tasks — the fixture repo, the run options, the artifacts a run leaves behind.
 
+The field is optional and defaults to `review`, so a manifest written before
+tasks existed keeps working.
+
+| Task | What the case holds | How it is scored |
+|---|---|---|
+| `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
+| `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
+| `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
+
+Every case needs a `src/` directory: it is copied into the throwaway git repo
+that becomes the run's `cwd`, and a case without one is skipped.
+
+`EVAL_CASE_BUDGET` bounds a single case's run. It is a deadline on work that
+could reasonably keep going rather than a bound on a subprocess that should
+already have answered, which is why it sits outside the `timeouts` table.
+
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 """

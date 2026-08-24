@@ -115,7 +115,7 @@ The `fix_pass` object contains:
 | `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection |
 | `deferred` | Threads the agent could not auto-fix in the current pass |
 | `commit_sha` | Short SHA of the fix commit, or null |
-| `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, or `push_held` |
+| `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, `push_lost`, or `push_unverified` |
 | `replies_posted` | Count of per-thread replies posted to GitHub |
 | `summary_url` | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |
 | `summary_deferred` | `true` when summary was deferred because `needs_human` threads exist. Together with `replies_pending` this is what `pr status` reads to report `⚠ closeout owed` and block merge readiness until `--finish --post` drains it |
@@ -158,6 +158,18 @@ so an amend or a reword is followed too — before deciding whether anything is
 owed. When it reports the fix commit as carried by no commit on the branch, or
 by two, the hold is real and the message names the two ways out. Do not reach for `--fix` to unstick a closeout otherwise: it
 re-triages from scratch and discards the replies already reviewed.
+
+**If `commit_status` is `push_lost`:** git reported the push and the remote does
+not hold the commit, so the operator's terminal showed a clean push while the
+branch never moved. The fixes exist only in the worktree. Say that plainly, do
+not report anything as landed on the PR, and have the user re-run the push
+before anything cites the SHA — a commit link to it would 404.
+
+**If `commit_status` is `push_unverified`:** git reported the push and the remote
+could not be reached to confirm it. The commit is very likely there, but "very
+likely" is not something to hand a reviewer, so nothing may cite the SHA this
+round. Say the push is unconfirmed rather than failed, and have the user re-run
+it — a second push of a commit the remote already holds is a no-op.
 
 **If `needs_human` and `deferred` are both empty and no unseen comments:**
 done — no further action needed.

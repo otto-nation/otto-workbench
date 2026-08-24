@@ -22,6 +22,7 @@ ci_check.__file__ = _ci_check_path
 _spec.loader.exec_module(ci_check)
 sys.modules.setdefault("ci_check", ci_check)
 
+import push  # noqa: E402
 from proc import CmdResult  # noqa: E402
 
 
@@ -1063,8 +1064,20 @@ def test_ci_fix_pass_with_a_checked_box_is_not_retried(tmp_path):
 # ── _commit_and_push ──────────────────────────────────────────────────────
 
 
-def _run_commit_and_push(dirty):
-    """Run _commit_and_push against a stubbed git. Returns (sha, git argv list)."""
+_LANDED = push.PushResult(
+    push.PushStatus.PUSHED, sha="abc1234", branch="feat/x", remote_sha="abc1234",
+)
+
+
+def _run_commit_and_push(dirty, result=_LANDED):
+    """Run _commit_and_push against a stubbed git and push owner.
+
+    The owner is stubbed rather than left to the fake git below, because it
+    verifies with a second git call whose canned answer would decide the
+    outcome — making every assertion here depend on the stub's shape.
+
+    Returns (sha, git argv list, the `push.push` mock).
+    """
     calls = []
 
     def fake_run(*args, **kwargs):
@@ -1072,20 +1085,43 @@ def _run_commit_and_push(dirty):
         return CmdResult(0, "abc1234\n" if "rev-parse" in args else "")
 
     with patch.object(ci_check.git_client, "run", side_effect=fake_run), \
+         patch.object(ci_check.push, "push", return_value=result) as mock_push, \
          patch.object(ci_check.review_common, "has_uncommitted_changes",
                       return_value=dirty):
         sha = ci_check._commit_and_push(Path("/fake"), 1, 0)
-    return sha, calls
+    return sha, calls, mock_push
 
 
 def test_commit_and_push_skips_a_clean_worktree():
-    sha, calls = _run_commit_and_push(dirty=False)
+    sha, calls, mock_push = _run_commit_and_push(dirty=False)
     assert sha is None
     assert calls == []
+    mock_push.assert_not_called()
 
 
 def test_commit_and_push_stages_untracked_files():
     """A fix that only adds files must land in the commit, not be dropped by -u."""
-    sha, calls = _run_commit_and_push(dirty=True)
+    sha, calls, _ = _run_commit_and_push(dirty=True)
     assert sha == "abc1234"
     assert calls[0][-2:] == ["add", "-A"]
+
+
+def test_commit_and_push_reports_a_push_that_never_landed(capsys):
+    """git exits zero, so the old `Push failed` warning never fired."""
+    lost = push.PushResult(
+        push.PushStatus.LOST, sha="abc1234ff", branch="feat/x",
+        remote_sha="9999999aa",
+    )
+    sha, _, _ = _run_commit_and_push(dirty=True, result=lost)
+
+    printed = capsys.readouterr().err
+    assert "the remote did not move" in printed
+    assert "9999999" in printed
+    # The commit is real whatever the remote did, and the caller records it.
+    assert sha == "abc1234"
+
+
+def test_commit_and_push_pushes_ungated():
+    """`pr ci` never opens the publishing gate; a gated call would draft."""
+    _, _, mock_push = _run_commit_and_push(dirty=True)
+    assert mock_push.call_args.kwargs["gated"] is False

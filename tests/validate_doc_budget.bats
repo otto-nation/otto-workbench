@@ -30,6 +30,14 @@ _pad() {
   for ((i = 0; i < $2; i++)); do echo "filler" >> "$FIXTURE/$1"; done
 }
 
+# _raise_budget DOC — put a fixture doc's line budget out of reach. For the
+# tests whose subject is the heading rule: a real guide sitting on its budget
+# would otherwise fail them for the other reason the moment it grew.
+_raise_budget() {
+  sed -E 's/doc-budget: [0-9]+/doc-budget: 99999/' "$FIXTURE/$1" > "$TMPDIR/raised"
+  mv "$TMPDIR/raised" "$FIXTURE/$1"
+}
+
 @test "the workbench docs are within their budgets" {
   run "$VALIDATOR"
   [ "$status" -eq 0 ]
@@ -90,6 +98,7 @@ _pad() {
 
 @test "fails on a '####' heading in a budgeted doc" {
   _copy_docs
+  _raise_budget ai-automation.src.md
   echo '#### A skill manifest'"'"'s fields' >> "$FIXTURE/ai-automation.src.md"
 
   DOCS_DIR="$FIXTURE" run "$VALIDATOR"
@@ -100,6 +109,7 @@ _pad() {
 
 @test "reports the line a '####' heading is on" {
   _copy_docs
+  _raise_budget ai-automation.src.md
   echo '#### Stubbing the CLIs' >> "$FIXTURE/ai-automation.src.md"
   # Not `lines`: bats overwrites that with the output array when `run` returns.
   heading_line="$(wc -l < "$FIXTURE/ai-automation.src.md" | tr -d ' ')"
@@ -111,6 +121,7 @@ _pad() {
 
 @test "ignores a '####' inside a fenced code block" {
   _copy_docs
+  _raise_budget ai-automation.src.md
   # A shell comment in a bash fence, not a heading — the guide already carries
   # one of these, and a naive scan would fail the file it is meant to protect.
   printf '\n```bash\n#### not a heading\n```\n' >> "$FIXTURE/ai-automation.src.md"
@@ -121,6 +132,7 @@ _pad() {
 
 @test "counts every '####' rather than stopping at the first" {
   _copy_docs
+  _raise_budget ai-automation.src.md
   echo '#### One' >> "$FIXTURE/ai-automation.src.md"
   echo '#### Two' >> "$FIXTURE/ai-automation.src.md"
 

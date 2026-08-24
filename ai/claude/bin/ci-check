@@ -37,6 +37,7 @@ import pr_context
 import pr_domains
 import pr_state
 import proc
+import push
 import run_lock
 import review_common
 import log
@@ -656,11 +657,10 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
         raise RuntimeError("Committed the fixes but could not read the new HEAD")
     log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
 
-    r = git_client.run("push", cwd=wt_path)
-    if r.ok:
-        log.info("Pushed fixes")
-    else:
-        log.warn(f"Push failed: {r.detail}")
+    # The sha is returned whatever the push did: the commit exists locally, and
+    # the caller's report of what this run fixed is about the commit, not the
+    # remote. The owner is what says out loud whether the remote has it.
+    push.report(push.push(wt_path, gated=False), wt_path)
 
     return sha
 

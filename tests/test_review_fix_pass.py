@@ -9,6 +9,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import push
 import review_common
 import review_findings
 import review_fix
@@ -558,22 +559,30 @@ class TestHasUncommittedChanges:
 
 
 class TestPushFixes:
+    """The advice each refusal earns.
+
+    The classifier itself moved to the push owner and is tested in
+    `push_test.py`; what these assert is that the pass still says the right
+    thing about each outcome the owner hands it — including the one it could
+    not see before, a push that git reported as a success.
+    """
+
     def _make_job(self, tmp_path):
         job = MagicMock()
         job.wt_path = str(tmp_path / "worktree")
         return job
 
-    def _push_result(self, stderr, stdout=""):
-        return CmdResult(1, stdout, stderr)
-
-    def _rev_parse_result(self, sha):
-        return CmdResult(0, f"{sha}\n")
+    def _refused(self, refusal, output, sha="9bc3f64ab"):
+        return push.PushResult(
+            push.PushStatus.REFUSED, sha=sha, branch="feat/x",
+            refusal=refusal, output=output,
+        )
 
     @patch("review_fix.log")
-    @patch("review_fix.git_client.run")
-    def test_diverged_push_suggests_force_with_lease(self, mock_run, mock_log, tmp_path):
-        mock_run.return_value = self._push_result(
-            "! [rejected] main -> main (non-fast-forward)"
+    @patch("review_fix.push.push")
+    def test_diverged_push_suggests_force_with_lease(self, mock_push, mock_log, tmp_path):
+        mock_push.return_value = self._refused(
+            push.Refusal.DIVERGED, "! [rejected] main -> main (non-fast-forward)"
         )
         review_fix._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
@@ -581,32 +590,28 @@ class TestPushFixes:
         assert "--force-with-lease" in msg
 
     @patch("review_fix.log")
-    @patch("review_fix.git_client.run")
-    def test_hook_failure_does_not_suggest_force_push(self, mock_run, mock_log, tmp_path):
+    @patch("review_fix.push.push")
+    def test_hook_failure_does_not_suggest_force_push(self, mock_push, mock_log, tmp_path):
         """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
-        mock_run.side_effect = [
-            self._push_result(
-                "SC2164 (warning): Use 'cd ... || exit'\nerror: failed to push some refs"
-            ),
-            self._rev_parse_result("9bc3f64"),
-        ]
+        mock_push.return_value = self._refused(
+            push.Refusal.HOOK,
+            "SC2164 (warning): Use 'cd ... || exit'\nerror: failed to push some refs",
+        )
         review_fix._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
         assert "--force-with-lease" not in msg
 
     @patch("review_fix.log")
-    @patch("review_fix.git_client.run")
+    @patch("review_fix.push.push")
     def test_hook_rejection_names_the_gate_the_commit_and_the_repair(
-        self, mock_run, mock_log, tmp_path,
+        self, mock_push, mock_log, tmp_path,
     ):
         """The fixes are committed but failed the repo's own checks — say so."""
-        mock_run.side_effect = [
-            self._push_result(
-                "✗ Pytest failed\nerror: failed to push some refs to 'github.com:o/r.git'",
-                stdout="FAILED tests/test_review_threads.py::TestRunReply::test_errors",
-            ),
-            self._rev_parse_result("9bc3f64"),
-        ]
+        mock_push.return_value = self._refused(
+            push.Refusal.HOOK,
+            "FAILED tests/test_review_threads.py::TestRunReply::test_errors\n"
+            "✗ Pytest failed\nerror: failed to push some refs to 'github.com:o/r.git'",
+        )
         review_fix._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
         assert "pre-push checks" in msg
@@ -616,15 +621,16 @@ class TestPushFixes:
         assert "Repair, then: git -C" in msg
 
     @patch("review_fix.log")
-    @patch("review_fix.git_client.run")
+    @patch("review_fix.push.push")
     def test_transport_failure_is_not_reported_as_a_failed_gate(
-        self, mock_run, mock_log, tmp_path,
+        self, mock_push, mock_log, tmp_path,
     ):
         """Nothing is wrong with the commit when the network is what broke."""
-        mock_run.return_value = self._push_result(
+        mock_push.return_value = self._refused(
+            push.Refusal.TRANSPORT,
             "ssh: Could not resolve hostname github.com\n"
             "fatal: Could not read from remote repository.\n"
-            "error: failed to push some refs to 'github.com:o/r.git'"
+            "error: failed to push some refs to 'github.com:o/r.git'",
         )
         review_fix._push_fixes(self._make_job(tmp_path))
         msg = mock_log.error.call_args[0][0]
@@ -632,72 +638,37 @@ class TestPushFixes:
         assert "committed locally but not pushed" in msg
 
     @patch("review_fix.log")
-    @patch("review_fix.git_client.run")
-    def test_successful_push_logs_no_error(self, mock_run, mock_log, tmp_path):
-        mock_run.return_value = CmdResult(0)
+    @patch("review_fix.push.push")
+    def test_successful_push_logs_no_error(self, mock_push, mock_log, tmp_path):
+        mock_push.return_value = push.PushResult(
+            push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x",
+            remote_sha="9bc3f64ab",
+        )
         review_fix._push_fixes(self._make_job(tmp_path))
         mock_log.error.assert_not_called()
 
-
-class TestIsLocalHookRejection:
-    """Which push failures came from the local gate rather than the remote."""
-
-    def test_claims_a_bare_refusal_with_no_rejected_ref(self):
-        assert review_fix._is_local_hook_rejection(
-            "✗ Pytest failed\nerror: failed to push some refs to 'github.com:o/r.git'"
+    @patch("review_fix.push.push")
+    def test_a_push_that_never_landed_is_reported(self, mock_push, tmp_path, capsys):
+        """git exited zero, so the old code called this a success and moved on."""
+        mock_push.return_value = push.PushResult(
+            push.PushStatus.LOST, sha="9bc3f64ab", branch="feat/x",
+            remote_sha="1111111aa",
         )
+        review_fix._push_fixes(self._make_job(tmp_path))
+        printed = capsys.readouterr().err
+        assert "the remote did not move" in printed
+        assert "9bc3f64" in printed
+        assert "1111111" in printed
 
-    def test_disclaims_a_rejected_ref(self):
-        """A per-ref rejection means git reached the remote and it said no."""
-        assert not review_fix._is_local_hook_rejection(
-            "! [rejected] main -> main (fetch first)\nerror: failed to push some refs"
+    @patch("review_fix.push.push")
+    def test_the_pass_pushes_ungated(self, mock_push, tmp_path):
+        """The fix pass has no publishing gate; a gated call would draft instead."""
+        mock_push.return_value = push.PushResult(
+            push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x",
+            remote_sha="9bc3f64ab",
         )
-
-    def test_disclaims_an_auth_failure(self):
-        assert not review_fix._is_local_hook_rejection(
-            "fatal: Authentication failed for 'https://github.com/o/r.git/'\n"
-            "error: failed to push some refs"
-        )
-
-    def test_disclaims_output_that_never_refused_the_push(self):
-        assert not review_fix._is_local_hook_rejection("Everything up-to-date")
-
-
-class TestHookOutput:
-
-    def test_merges_both_streams_so_the_failing_gate_survives(self):
-        result = CmdResult(1, "running pytest", "✗ Pytest failed")
-        out = review_fix._hook_output(result)
-        assert "running pytest" in out
-        assert "✗ Pytest failed" in out
-
-    def test_indents_every_line_under_the_error(self):
-        result = CmdResult(1, "a\nb")
-        assert review_fix._hook_output(result) == "  a\n  b"
-
-    def test_keeps_only_the_tail_of_a_long_gate_dump(self):
-        result = CmdResult(1, "\n".join(str(n) for n in range(50)))
-        lines = review_fix._hook_output(result).splitlines()
-        assert len(lines) == review_fix._HOOK_OUTPUT_LINES
-        assert lines[-1] == "  49"
-
-    def test_survives_a_stream_git_left_empty(self):
-        result = CmdResult(1, stderr="✗ Pytest failed")
-        assert review_fix._hook_output(result) == "  ✗ Pytest failed"
-
-
-class TestHeadSha:
-
-    @patch("review_fix.git_client.run")
-    def test_returns_the_short_sha(self, mock_run):
-        mock_run.return_value = CmdResult(0, "9bc3f64\n")
-        assert review_fix._head_sha("/wt") == "9bc3f64"
-
-    @patch("review_fix.git_client.run")
-    def test_falls_back_to_head_when_rev_parse_fails(self, mock_run):
-        """The repair instruction still reads correctly without a SHA."""
-        mock_run.return_value = CmdResult(128, "", "fatal")
-        assert review_fix._head_sha("/wt") == "HEAD"
+        review_fix._push_fixes(self._make_job(tmp_path))
+        assert mock_push.call_args.kwargs["gated"] is False
 
 
 class TestReconcileCheckboxes:

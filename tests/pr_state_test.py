@@ -199,7 +199,7 @@ def test_commit_status_wire_values_are_the_strings_state_files_hold():
     """The enum is for the code. Changing a value breaks every saved state file."""
     assert [s.value for s in CommitStatus] == [
         "pushed", "no_changes", "commit_failed", "push_failed", "push_held",
-        "reconciled",
+        "push_lost", "push_unverified", "reconciled",
     ]
 
 

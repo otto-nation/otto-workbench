@@ -50,6 +50,7 @@ import log
 import pr_context
 import pr_domains
 import pr_state
+import push
 import timeouts
 from pr_domains import RebaseStatus, RebaseSummary
 from tool_parser import ToolParser
@@ -2101,24 +2102,18 @@ def _resolve_target_ref(
 # ── Push helper ─────────────────────────────────────────────────────────────
 
 
-def _push(cwd: str) -> subprocess.CompletedProcess:
-    """Run the force-push, capturing output so hook failures can be parsed."""
-    return subprocess.run(
-        ["git", "push", "--force-with-lease"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
-    )
+def _push(cwd: str) -> push.PushResult:
+    """Force-push, confirm the remote moved, and say what happened.
 
+    The owner captures output so the hook's check errors can be fed to the AI
+    fix, which means nothing reaches the terminal unless it is reported here.
 
-def _report_push(r: subprocess.CompletedProcess) -> tuple[int, str]:
-    """Echo a push result and hand back its (exit code, combined output).
-
-    _push captures output so the hook's check errors can be fed to the AI fix,
-    which means nothing reaches the terminal unless it is logged here.
+    `--force-with-lease` stays on the owner's retry of a lost push: if the
+    remote genuinely moved under us, the lease failing is the right answer.
     """
-    output = (r.stdout + r.stderr).strip()
-    if output:
-        log.dim(output)
-    return r.returncode, output
+    result = push.push(cwd, gated=False, args=("--force-with-lease",), trail=_trail)
+    push.report(result, cwd)
+    return result
 
 
 def _hook_modified(cwd: str) -> list[str]:
@@ -2159,13 +2154,13 @@ def _commit_regenerated(cwd: str) -> bool:
     return True
 
 
-def _retry_push(cwd: str, step: str) -> tuple[int, str] | None:
+def _retry_push(cwd: str, step: str) -> push.PushResult | None:
     """Push again after a recovery step, refusing to push an unvalidated tree.
 
     Pre-push hooks run against the worktree, not against the commits being
     pushed, so a dirty tree lets them pass on code that is in no commit — a
     green hook then says nothing about the pushed HEAD. Returns the retry's
-    (exit code, output), or None when the tree was dirty and nothing was pushed.
+    result, or None when the tree was dirty and nothing was pushed.
     """
     dirty = _uncommitted(cwd)
     if dirty:
@@ -2176,27 +2171,27 @@ def _retry_push(cwd: str, step: str) -> tuple[int, str] | None:
         return None
 
     log.info("Retrying force-push...")
-    return _report_push(_push(cwd))
+    return _push(cwd)
 
 
-def _recover_regenerated(cwd: str, rc: int, push_output: str) -> tuple[int, str] | None:
+def _recover_regenerated(
+    cwd: str, failed: push.PushResult,
+) -> push.PushResult | None:
     """Commit hook-regenerated files and retry. None once the retry has pushed.
 
     Hands back the failure the next recovery step has to work from: the retry's
     own error when it ran, the caller's otherwise.
     """
     if not _commit_regenerated(cwd):
-        return rc, push_output
+        return failed
 
     retry = _retry_push(cwd, "force_push")
     if retry is None:
-        return rc, push_output
-
-    retry_rc, retry_output = retry
-    if retry_rc == 0:
+        return failed
+    if retry.ok:
         return None
     # Re-read the error: the second run's checks are what step 2 must fix.
-    return retry_rc, retry_output or push_output
+    return retry if retry.output.strip() else failed
 
 
 def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
@@ -2213,29 +2208,38 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
     Either retry is abandoned when its recovery step left the worktree dirty:
     the branch stays unpushed and the original failure is returned, rather than
     pushing a HEAD the hooks never saw.
+
+    Returns 0 when the remote holds the branch and 1 when it does not. Git's own
+    exit code is not the answer, because a push git reports as successful can
+    still leave the remote where it was.
     """
-    r = _push(cwd)
-    if r.returncode == 0:
+    result = _push(cwd)
+    if result.ok:
         return 0
 
-    rc, push_output = _report_push(r)
+    # The ladder below repairs a tree the pre-push hooks rejected. A push the
+    # remote dropped is not that: nothing in the worktree is wrong, the owner
+    # has already retried it once, and handing it to the AI fix would ask an
+    # agent to repair code that passed every check.
+    if result.status is not push.PushStatus.REFUSED:
+        return 1
 
     # Recovery 1: commit regenerated files (hook modified tracked files)
     # A dirty tree abandons this retry but not step 2, whose whole-tree stage is
     # exactly what sweeps up the untracked leftover `git add -u` cannot reach.
-    recovered = _recover_regenerated(cwd, rc, push_output)
+    recovered = _recover_regenerated(cwd, result)
     if recovered is None:
         return 0
-    rc, push_output = recovered
 
     # Recovery 2: AI-fix resolved files based on check errors
+    push_output = recovered.output.strip()
     if resolved_files and push_output:
         log.info("Attempting to fix pre-push check failures...")
         if _fix_push_failures(cwd, push_output, resolved_files):
             retry = _retry_push(cwd, "fix_push_failures")
-            return rc if retry is None else retry[0]
+            return 0 if retry is not None and retry.ok else 1
 
-    return rc
+    return 1
 
 
 # ── Subcommands ─────────────────────────────────────────────────────────────

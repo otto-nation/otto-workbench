@@ -88,7 +88,11 @@ _UNBOUNDED = frozenset({"worktree", "commit", "push"})
 
 # Data-proportional like the above, but over a socket that can genuinely stall,
 # so a generous bound still catches a failure that waiting will not fix.
-_TRANSFER = frozenset({"fetch"})
+#
+# `ls-remote` is the smallest of these by payload and still belongs here: it is
+# how `push` confirms a push landed, so a bound tight enough to expire on a slow
+# remote would report a landed push as unverified.
+_TRANSFER = frozenset({"fetch", "ls-remote"})
 
 
 def _timeout_for(args: tuple[str, ...]) -> float | None:

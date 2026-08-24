@@ -25,6 +25,8 @@ from pathlib import Path
 import git_client
 import log
 import proc
+import push
+from push import PushStatus, Refusal
 from review_agent import diagnose_missing_output
 from review_common import (
     Phase,
@@ -83,93 +85,39 @@ def _commit_fixes(
     _push_fixes(job)
 
 
-_DIVERGED_MARKERS = (
-    "non-fast-forward",
-    "fetch first",
-    "updates were rejected",
-    "behind its remote",
-)
-
-
-def _is_diverged(stderr: str) -> bool:
-    """Whether a push rejection came from divergence rather than a hook."""
-    lowered = stderr.lower()
-    return any(marker in lowered for marker in _DIVERGED_MARKERS)
-
-
-_TRANSPORT_MARKERS = (
-    "could not read from remote repository",
-    "could not resolve host",
-    "connection refused",
-    "connection timed out",
-    "authentication failed",
-    "permission denied",
-    "repository not found",
-)
-
-_PUSH_REFUSED = "failed to push some refs"
-
-
-def _is_local_hook_rejection(stderr: str) -> bool:
-    """Whether the pre-push hook killed the push before git reached the remote.
-
-    A failing hook aborts the push locally, so git prints the generic
-    "failed to push some refs" with no per-ref "! [rejected]" line and none of
-    the transport or auth diagnostics a real network failure carries.
-    """
-    lowered = stderr.lower()
-    if _PUSH_REFUSED not in lowered or "! [rejected]" in lowered:
-        return False
-    return not any(marker in lowered for marker in _TRANSPORT_MARKERS)
-
-
-_HOOK_OUTPUT_LINES = 20
-
-
-def _hook_output(result: proc.CmdResult) -> str:
-    """The tail of what the hook printed, indented under the error.
-
-    The hook splits itself across both streams — check names on stdout, the
-    failure summary on stderr — so reporting one alone loses which gate failed.
-    """
-    merged = f"{result.stdout or ''}\n{result.stderr or ''}"
-    lines = [line.rstrip() for line in merged.splitlines() if line.strip()]
-    return "\n".join(f"  {line}" for line in lines[-_HOOK_OUTPUT_LINES:])
-
-
-def _head_sha(wt_path: str) -> str:
-    """Short SHA of the commit left stranded locally, for the repair message."""
-    return git_client.head_sha(cwd=wt_path, short=True) or "HEAD"
-
-
 def _push_fixes(job: ReviewJob):
-    """Push committed fixes to the remote."""
-    result = git_client.run("push", cwd=job.wt_path)
-    if result.ok:
-        log.info("Pushed fixes")
+    """Push committed fixes, and confirm they reached the remote.
+
+    The owner classifies the failure and answers whether the commit landed; the
+    advice for each kind of refusal stays here, because what to do about a
+    diverged branch differs by the pass that hit it.
+    """
+    result = push.push(job.wt_path, gated=False)
+
+    if result.status is not PushStatus.REFUSED:
+        push.report(result, job.wt_path)
         return
 
-    stderr = result.stderr.strip()
-    if _is_diverged(stderr):
+    if result.refusal is Refusal.DIVERGED:
         log.error(
             f"push failed — branch diverged. Run:\n"
             f"  git -C '{job.wt_path}' push --force-with-lease\n"
-            f"stderr: {stderr}"
+            f"stderr: {result.output.strip()}"
         )
         return
 
-    if _is_local_hook_rejection(stderr):
+    if result.refusal is Refusal.HOOK:
         log.error(
             f"fixes failed this repo's pre-push checks — commit "
-            f"{_head_sha(job.wt_path)} is local only and needs repair.\n\n"
-            f"{_hook_output(result)}\n\n"
+            f"{result.sha[:7] or 'HEAD'} is local only and needs repair.\n\n"
+            f"{push.output_tail(result.output, indent='  ')}\n\n"
             f"  Repair, then: git -C '{job.wt_path}' push"
         )
         return
 
     log.error(
         f"push failed — fixes are committed locally but not pushed:\n"
-        f"stderr: {stderr}"
+        f"stderr: {result.output.strip()}"
     )
 
 

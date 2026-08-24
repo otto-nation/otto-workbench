@@ -45,18 +45,18 @@ is still open at both points, so the hold applies to both.
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
+import gh_client
 import log
 import publishing
 import serde
-import timeouts
 from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
+from proc import CmdResult
 from review_common import plural
 from review_github import PRData, fetch_review_threads
 
@@ -212,47 +212,34 @@ def fetch_threads(
     return fetch_review_threads(f"{owner}/{repo_name}", pr_number)
 
 
-def _gh_rest(endpoint: str) -> tuple[int, str]:
-    """Call gh api REST endpoint. Returns (exit_code, stdout)."""
-    result = subprocess.run(
-        ["gh", "api", endpoint],
-        capture_output=True, text=True, timeout=timeouts.NETWORK,
-    )
-    return result.returncode, result.stdout
-
-
-def _paginated_json(endpoint: str) -> tuple[int, str]:
-    """Call a gh api REST endpoint across all pages. Returns (exit_code, stdout).
-
-    --slurp wraps the pages in an outer array, so the result is a list of pages
-    rather than a flat list of items.
-    """
-    result = subprocess.run(
-        ["gh", "api", "--paginate", "--slurp", endpoint],
-        capture_output=True, text=True, timeout=timeouts.TRANSFER,
-    )
-    return result.returncode, result.stdout
-
-
 # ── GitHub writes ────────────────────────────────────────────────────────────
 
-def _gh_post(endpoint: str, body: str, method: str = "POST") -> tuple[int, str]:
-    """Send a JSON body to a gh api REST endpoint. Returns (exit_code, stdout).
+def _gh_post(endpoint: str, body: str, method: str = "POST") -> CmdResult:
+    """Send *body* as a JSON `{"body": …}` payload to a gh api REST endpoint.
 
-    A draft reports failure rather than success: every "posted" counter
-    downstream reads this exit code, and nothing was posted.
+    The publishing gate lives here rather than in `gh_client`: it is a policy
+    this module owns, and a transport that consulted it would gate every read
+    in `ai/` on a flag about writes. A draft reports failure rather than
+    success, because every "posted" counter downstream reads this result and
+    nothing was posted.
     """
     if not publishing.enabled():
         publishing.draft(endpoint, body)
-        return 1, ""
-    payload = json.dumps({"body": body})
-    result = subprocess.run(
-        ["gh", "api", endpoint, "--method", method, "--input", "-"],
-        input=payload, capture_output=True, text=True, timeout=timeouts.NETWORK,
-    )
-    if result.returncode != 0 and result.stderr.strip():
-        log.error(f"gh api error: {result.stderr.strip()}")
-    return result.returncode, result.stdout
+        return CmdResult(returncode=1, stderr=f"{endpoint} not published — publishing is off")
+    r = gh_client.api(endpoint, method=method, input_text=json.dumps({"body": body}))
+    if not r.ok and r.detail:
+        log.error(f"gh api error: {r.detail}")
+    return r
+
+
+def _posted_url(r: CmdResult) -> str | None:
+    """The `html_url` GitHub answered a write with, or None if it did not."""
+    if not r.ok:
+        return None
+    try:
+        return json.loads(r.stdout).get("html_url")
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return None
 
 
 def post_thread_reply(
@@ -260,8 +247,7 @@ def post_thread_reply(
 ) -> bool:
     """Post a reply to a review thread comment. Returns True on success."""
     endpoint = f"repos/{repo}/pulls/{pr_number}/comments/{comment_database_id}/replies"
-    code, _ = _gh_post(endpoint, body)
-    return code == 0
+    return _gh_post(endpoint, body).ok
 
 
 def patch_thread_reply(repo: str, comment_database_id: int, body: str) -> bool:
@@ -274,10 +260,9 @@ def patch_thread_reply(repo: str, comment_database_id: int, body: str) -> bool:
     endpoint, this one is not PR-scoped — review comments are addressed by
     database ID alone.
     """
-    code, _ = _gh_post(
+    return _gh_post(
         f"repos/{repo}/pulls/comments/{comment_database_id}", body, method="PATCH",
-    )
-    return code == 0
+    ).ok
 
 
 def update_pr_body(repo: str, pr_number: int, body: str) -> bool:
@@ -289,8 +274,7 @@ def update_pr_body(repo: str, pr_number: int, body: str) -> bool:
     endpoint's `body` field *is* the description, which is why the shared
     `{"body": …}` payload fits it unchanged.
     """
-    code, _ = _gh_post(f"repos/{repo}/pulls/{pr_number}", body, method="PATCH")
-    return code == 0
+    return _gh_post(f"repos/{repo}/pulls/{pr_number}", body, method="PATCH").ok
 
 
 @dataclass(frozen=True)
@@ -381,13 +365,7 @@ def post_issue_comment(
             # comment may exist. Posting a duplicate beats dropping the update.
             log.error("could not list PR comments — posting a new one instead of editing")
     endpoint = f"repos/{repo}/issues/{pr_number}/comments"
-    code, out = _gh_post(endpoint, body)
-    if code != 0:
-        return None
-    try:
-        return json.loads(out).get("html_url")
-    except (json.JSONDecodeError, TypeError):
-        return None
+    return _posted_url(_gh_post(endpoint, body))
 
 
 def find_marker_comment(repo: str, pr_number: int, marker: str) -> MarkerComment:
@@ -407,13 +385,10 @@ def find_marker_comments(repo: str, pr_number: int, marker: str) -> MarkerHistor
     a caller that needs both would otherwise list the PR twice and let the two
     reads disagree about which comment is which.
     """
-    code, out = _paginated_json(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
-    if code != 0:
-        return MarkerHistory()
-    try:
-        pages = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return MarkerHistory()
+    pages = gh_client.api_json(
+        f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
+        paginate=True, slurp=True,
+    )
     if not isinstance(pages, list):
         return MarkerHistory()
     comments = [c for page in pages for c in page] if pages and isinstance(pages[0], list) else pages
@@ -435,15 +410,9 @@ def find_marker_comments(repo: str, pr_number: int, marker: str) -> MarkerHistor
 
 def _patch_issue_comment(repo: str, comment_id: int, body: str) -> str | None:
     """Edit an existing issue comment in place. Returns the comment URL or None."""
-    code, out = _gh_post(
+    return _posted_url(_gh_post(
         f"repos/{repo}/issues/comments/{comment_id}", body, method="PATCH",
-    )
-    if code != 0:
-        return None
-    try:
-        return json.loads(out).get("html_url")
-    except (json.JSONDecodeError, TypeError):
-        return None
+    ))
 
 
 def fetch_reviewer_verdicts(
@@ -454,13 +423,7 @@ def fetch_reviewer_verdicts(
     if pr_data is not None:
         return pr_data.reviewer_verdicts()
 
-    code, out = _gh_rest(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100")
-    if code != 0:
-        return []
-    try:
-        reviews = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return []
+    reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100", default=[])
     by_user: dict[str, dict] = {}
     for r in reviews:
         user = r.get("user", {}).get("login", "")
@@ -491,13 +454,7 @@ def fetch_issue_comments(
         # the sentinel has one home and one contract.
         return pr_data.non_self_issue_comments("" if include_self else my_login)
 
-    code, out = _gh_rest(f"repos/{repo}/issues/{pr_number}/comments?per_page=100")
-    if code != 0:
-        return []
-    try:
-        comments = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return []
+    comments = gh_client.api_json(f"repos/{repo}/issues/{pr_number}/comments?per_page=100", default=[])
     result = []
     my_login_lower = my_login.lower()
     for c in comments:
@@ -528,13 +485,7 @@ def fetch_review_body_comments(
     if pr_data is not None:
         return pr_data.review_body_comments(my_login)
 
-    code, out = _gh_rest(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100")
-    if code != 0:
-        return []
-    try:
-        reviews = json.loads(out)
-    except (json.JSONDecodeError, TypeError):
-        return []
+    reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100", default=[])
     result = []
     my_login_lower = my_login.lower()
     for r in reviews:
@@ -562,15 +513,11 @@ def resolve_thread(thread_id: str) -> bool:
     if not publishing.enabled():
         publishing.draft(f"resolve thread {thread_id}")
         return False
-    query = json.dumps({
+    document = json.dumps({
         "query": GRAPHQL_RESOLVE,
         "variables": {"threadId": thread_id},
     })
-    result = subprocess.run(
-        ["gh", "api", "graphql", "--input", "-"],
-        input=query, capture_output=True, text=True, timeout=timeouts.NETWORK,
-    )
-    return result.returncode == 0
+    return gh_client.graphql("", input_text=document).ok
 
 
 # ── State sync ─────────────────────────────────────────────────────────────

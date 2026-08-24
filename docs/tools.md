@@ -61,6 +61,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-cli-flags` | Validates CLI flag conventions — no --repo alias, --pr/--branch mutual exclusivity |
 | `validate-worktree-guards` | Validates that ctx.worktree_root is never dereferenced without a guard or require_worktree() |
 | `validate-timeouts` | Validates that every subprocess timeout comes from the ai/lib/timeouts.py tiers |
+| `validate-frozen-roots` | Validates that no module freezes a workbench root into an import-time constant |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
 | `validate-permissions` | Validates that every Bash permission rule can match a command, and that no untracked settings file duplicates a tracked grant or re-grants a gated one — --fix prunes the duplicates |
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |

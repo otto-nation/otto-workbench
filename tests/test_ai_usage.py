@@ -193,10 +193,9 @@ def test_merge_empty_returns_zero_usage():
 
 @pytest.fixture
 def ledger(tmp_path, monkeypatch):
-    d = tmp_path / "usage"
-    monkeypatch.setattr(ai_usage, "LEDGER_DIR", d)
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(ai_usage, "_warned", False)
-    return d
+    return tmp_path / ai_usage.LEDGER_DIRNAME
 
 
 def _records(ledger_dir):
@@ -286,7 +285,7 @@ def test_record_carries_per_model_cost(ledger):
 def test_record_never_raises_when_dir_unwritable(tmp_path, monkeypatch, capsys):
     blocked = tmp_path / "blocked"
     blocked.write_text("not a directory")
-    monkeypatch.setattr(ai_usage, "LEDGER_DIR", blocked / "usage")
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(blocked))
     monkeypatch.setattr(ai_usage, "_warned", False)
     ai_usage.record(
         script="s", entry_point="prompt", backend="claude", model=None,
@@ -298,7 +297,7 @@ def test_record_never_raises_when_dir_unwritable(tmp_path, monkeypatch, capsys):
 def test_record_warns_only_once_per_process(tmp_path, monkeypatch, capsys):
     blocked = tmp_path / "blocked"
     blocked.write_text("not a directory")
-    monkeypatch.setattr(ai_usage, "LEDGER_DIR", blocked / "usage")
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(blocked))
     monkeypatch.setattr(ai_usage, "_warned", False)
     for _ in range(3):
         ai_usage.record(

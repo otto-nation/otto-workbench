@@ -575,7 +575,7 @@ Two definitions outside `lib/` express the same chain, and
 #### Trails
 
 Every AI script appends to `trail_dir()`, in a file named for the emitting
-event's UTC month. The layout mirrors `ai_usage.LEDGER_DIR`: rotation falls out
+event's UTC month. The layout mirrors `ai_usage.ledger_dir`: rotation falls out
 of the filename, `--since` drops whole files without opening them, and nothing
 needs a pruning job. `_emit` takes an `fcntl.flock` on the open handle inside
 the module's thread lock — one file now takes appends from concurrent

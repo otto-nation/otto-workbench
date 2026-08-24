@@ -419,29 +419,17 @@ def rp():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_trail_root(tmp_path, monkeypatch):
+def _isolate_state_root(tmp_path, monkeypatch):
     """Point the whole state root at a temp dir for the duration of every test.
 
-    Every trail writer appends under this root, so an unsandboxed run would
-    interleave test records with the developer's real history. The environment
-    is set rather than an attribute patched because that is the only form a
-    tool invoked as a subprocess inherits, and because `state_dir()` resolves
-    per call instead of freezing at import.
+    Every trail writer and the usage ledger append under this root, so an
+    unsandboxed run would interleave test records with the developer's real
+    history. The environment is set rather than an attribute patched because
+    that is the only form a tool invoked as a subprocess inherits, and because
+    every root resolves per call instead of freezing at import — one setenv
+    therefore sandboxes every consumer, present and future.
     """
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-
-
-@pytest.fixture(autouse=True)
-def _isolate_usage_ledger(tmp_path, monkeypatch):
-    """Point the global usage ledger at a temp dir for the duration of every test.
-
-    ai_backend records usage on every entry point, so any test that reaches the real
-    dispatch layer would otherwise append junk rows to the developer's own ledger.
-    """
-    if LIB_DIR not in sys.path:
-        sys.path.insert(0, LIB_DIR)
-    import ai_usage
-    monkeypatch.setattr(ai_usage, "LEDGER_DIR", tmp_path / "usage-ledger")
 
 
 @pytest.fixture(autouse=True)

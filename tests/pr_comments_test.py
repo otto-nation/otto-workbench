@@ -18,6 +18,7 @@ import pr_comments
 import pr_state
 import publishing
 import review_issue
+from proc import CmdResult
 from pr_comments import (
     load_state, save_state, empty_state, compute_thread_state, sync_threads,
     fetch_threads, render_dashboard, render_status, render_triage_status,
@@ -45,15 +46,15 @@ def test_fetch_threads_prefers_prefetched_pr_data():
 
 # ── fetch_issue_comments ────────────────────────────────────────────────────
 
-_ISSUE_COMMENTS = json.dumps([
+_ISSUE_COMMENTS = [
     {"id": 1, "user": {"login": "me"}, "body": "Applied: drop the retry"},
     {"id": 2, "user": {"login": "kgn"}, "body": "drop the retry"},
     {"id": 3, "user": {"login": "bot", "type": "Bot"}, "body": "coverage fell"},
-])
+]
 
 
 def _rest_listing():
-    return patch.object(pr_comments, "_gh_rest", return_value=(0, _ISSUE_COMMENTS))
+    return patch.object(pr_comments.gh_client, "api_json", return_value=_ISSUE_COMMENTS)
 
 
 def test_fetch_issue_comments_drops_our_own_by_default():
@@ -653,8 +654,13 @@ def test_render_fix_status_names_the_description_alongside_the_rest():
 MARKER = "<!-- pr-comments:summary -->"
 
 
+def _posted(url: str = "u") -> CmdResult:
+    """What `_gh_post` answers a successful write with."""
+    return CmdResult(returncode=0, stdout=json.dumps({"html_url": url}))
+
+
 def test_post_issue_comment_posts_new_without_marker():
-    with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post, \
+    with patch.object(pr_comments, "_gh_post", return_value=_posted()) as post, \
          patch.object(pr_comments, "find_marker_comment",
                       autospec=True) as find:
         url = pr_comments.post_issue_comment("owner/repo", 1, "body")
@@ -664,8 +670,12 @@ def test_post_issue_comment_posts_new_without_marker():
 
 
 def _pages(*pages):
-    """Encode gh api --paginate --slurp output: an outer array of pages."""
-    return json.dumps(list(pages))
+    """Decoded gh api --paginate --slurp output: an outer array of pages."""
+    return list(pages)
+
+
+def _listing(value):
+    return patch.object(pr_comments.gh_client, "api_json", return_value=value)
 
 
 def test_post_issue_comment_edits_existing_marked_comment():
@@ -674,7 +684,7 @@ def test_post_issue_comment_edits_existing_marked_comment():
         {"id": 10, "body": "unrelated"},
         {"id": 11, "body": f"{MARKER}\nround one"},
     ])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)), \
+    with _listing(listing), \
          patch.object(pr_comments, "_patch_issue_comment", return_value="u2") as patch_fn, \
          patch.object(pr_comments, "_gh_post") as post:
         url = pr_comments.post_issue_comment("owner/repo", 1, "round two", marker=MARKER)
@@ -685,8 +695,8 @@ def test_post_issue_comment_edits_existing_marked_comment():
 
 def test_post_issue_comment_posts_new_when_marker_absent():
     listing = _pages([{"id": 10, "body": "unrelated"}])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)), \
-         patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post:
+    with _listing(listing), \
+         patch.object(pr_comments, "_gh_post", return_value=_posted()) as post:
         url = pr_comments.post_issue_comment("owner/repo", 1, "body", marker=MARKER)
     assert url == "u"
     post.assert_called_once()
@@ -701,7 +711,7 @@ def test_find_marker_comment_prefers_latest():
         {"id": 10, "body": f"{MARKER}\nold"},
         {"id": 11, "body": f"{MARKER}\nnew"},
     ])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    with _listing(listing):
         found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
     assert found == _found(11, f"{MARKER}\nnew")
 
@@ -712,7 +722,7 @@ def test_find_marker_comment_spans_pages():
         [{"id": 10, "body": f"{MARKER}\nround one"}],
         [{"id": 11, "body": "unrelated"}],
     )
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    with _listing(listing):
         found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
     assert found == _found(10, f"{MARKER}\nround one")
 
@@ -723,7 +733,7 @@ def test_find_marker_comment_carries_the_timeline():
         {"id": 10, "body": f"{MARKER}\nround one", "created_at": "2026-01-01T00:00:00Z"},
         {"id": 11, "body": "not so fast", "created_at": "2026-01-02T00:00:00Z"},
     ])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    with _listing(listing):
         found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
     assert found.created_at == "2026-01-01T00:00:00Z"
     assert found.newest_other_at == "2026-01-02T00:00:00Z"
@@ -735,7 +745,7 @@ def test_find_marker_comment_does_not_read_an_older_summary_as_an_answer():
         {"id": 10, "body": f"{MARKER}\nround one", "created_at": "2026-01-01T00:00:00Z"},
         {"id": 11, "body": f"{MARKER}\nround two", "created_at": "2026-01-03T00:00:00Z"},
     ])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    with _listing(listing):
         found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
     assert found.comment_id == 11
     assert found.newest_other_at == ""
@@ -743,16 +753,15 @@ def test_find_marker_comment_does_not_read_an_older_summary_as_an_answer():
 
 def test_find_marker_comment_accepts_flat_listing():
     """A single unslurped page must still be readable."""
-    listing = json.dumps([{"id": 12, "body": f"{MARKER}\nonly"}])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    listing = [{"id": 12, "body": f"{MARKER}\nonly"}]
+    with _listing(listing):
         found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
     assert found == _found(12, f"{MARKER}\nonly")
 
 
 @pytest.mark.parametrize("payload", [
-    (1, ""),
-    (0, "not json"),
-    (0, '{"message": "Not Found"}'),
+    None,
+    {"message": "Not Found"},
 ])
 def test_find_marker_comment_reports_lookup_failure(payload):
     """A failed listing must be distinguishable from an empty one.
@@ -760,13 +769,13 @@ def test_find_marker_comment_reports_lookup_failure(payload):
     A caller reconciling against the published body reads an empty `body` as
     "the comment said nothing", so `found` has to carry the difference.
     """
-    with patch.object(pr_comments, "_paginated_json", return_value=payload):
+    with _listing(payload):
         assert pr_comments.find_marker_comment("owner/repo", 1, MARKER) == \
             pr_comments.MarkerComment(found=False)
 
 
 def test_find_marker_comment_reports_empty_listing():
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, "[]")):
+    with _listing([]):
         assert pr_comments.find_marker_comment("owner/repo", 1, MARKER) == \
             pr_comments.MarkerComment(found=True)
 
@@ -778,7 +787,7 @@ def test_find_marker_comments_keeps_every_round_oldest_first():
         {"id": 11, "body": "unrelated"},
         {"id": 12, "body": f"{MARKER}\nround two"},
     ])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    with _listing(listing):
         history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
     assert [c.comment_id for c in history.comments] == [10, 12]
     assert history.bodies == [f"{MARKER}\nround one", f"{MARKER}\nround two"]
@@ -790,14 +799,14 @@ def test_find_marker_comments_carries_each_comments_url():
     listing = _pages([
         {"id": 10, "body": MARKER, "html_url": "https://gh/pull/1#issuecomment-10"},
     ])
-    with patch.object(pr_comments, "_paginated_json", return_value=(0, listing)):
+    with _listing(listing):
         history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
     assert history.comments[0].url == "https://gh/pull/1#issuecomment-10"
 
 
 def test_find_marker_comments_reports_an_unread_listing_as_no_history():
     """`found` distinguishes it from a PR that genuinely has no summary yet."""
-    with patch.object(pr_comments, "_paginated_json", return_value=(1, "")):
+    with _listing(None):
         history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
     assert history == pr_comments.MarkerHistory(found=False)
     assert history.newest == pr_comments.MarkerComment(found=False)
@@ -813,7 +822,7 @@ def test_marker_history_newest_stands_in_for_an_unmarked_pr():
 
 def test_post_issue_comment_reuses_a_supplied_lookup():
     """A caller that already read the comment must not pay for the listing twice."""
-    with patch.object(pr_comments, "_paginated_json") as listing, \
+    with patch.object(pr_comments.gh_client, "api_json") as listing, \
          patch.object(pr_comments, "_patch_issue_comment", return_value="u2") as patch_fn:
         url = pr_comments.post_issue_comment(
             "owner/repo", 1, "round two", marker=MARKER,
@@ -826,8 +835,8 @@ def test_post_issue_comment_reuses_a_supplied_lookup():
 
 def test_post_issue_comment_logs_when_lookup_fails():
     """Falling back to a new comment on lookup failure must not be silent."""
-    with patch.object(pr_comments, "_paginated_json", return_value=(1, "")), \
-         patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')), \
+    with _listing(None), \
+         patch.object(pr_comments, "_gh_post", return_value=_posted()), \
          patch.object(pr_comments.log, "error") as err:
         url = pr_comments.post_issue_comment("owner/repo", 1, "body", marker=MARKER)
     assert url == "u"
@@ -835,26 +844,26 @@ def test_post_issue_comment_logs_when_lookup_fails():
 
 
 def test_patch_issue_comment_uses_patch_method():
-    with patch.object(pr_comments, "_gh_post", return_value=(0, '{"html_url": "u"}')) as post:
+    with patch.object(pr_comments, "_gh_post", return_value=_posted()) as post:
         assert pr_comments._patch_issue_comment("owner/repo", 11, "body") == "u"
     assert post.call_args.kwargs["method"] == "PATCH"
     assert post.call_args[0][0] == "repos/owner/repo/issues/comments/11"
 
 
 def test_patch_thread_reply_uses_patch_method():
-    with patch.object(pr_comments, "_gh_post", return_value=(0, "")) as post:
+    with patch.object(pr_comments, "_gh_post", return_value=CmdResult(0)) as post:
         assert pr_comments.patch_thread_reply("owner/repo", 99, "body") is True
     assert post.call_args.kwargs["method"] == "PATCH"
     assert post.call_args[0][0] == "repos/owner/repo/pulls/comments/99"
 
 
 def test_patch_thread_reply_reports_failure():
-    with patch.object(pr_comments, "_gh_post", return_value=(1, "")):
+    with patch.object(pr_comments, "_gh_post", return_value=CmdResult(1)):
         assert pr_comments.patch_thread_reply("owner/repo", 99, "body") is False
 
 
 def test_update_pr_body_patches_the_pull_endpoint():
-    with patch.object(pr_comments, "_gh_post", return_value=(0, "")) as post:
+    with patch.object(pr_comments, "_gh_post", return_value=CmdResult(0)) as post:
         assert pr_comments.update_pr_body("owner/repo", 7, "new body") is True
     assert post.call_args.kwargs["method"] == "PATCH"
     assert post.call_args[0][0] == "repos/owner/repo/pulls/7"
@@ -862,7 +871,7 @@ def test_update_pr_body_patches_the_pull_endpoint():
 
 
 def test_update_pr_body_reports_failure():
-    with patch.object(pr_comments, "_gh_post", return_value=(1, "")):
+    with patch.object(pr_comments, "_gh_post", return_value=CmdResult(1)):
         assert pr_comments.update_pr_body("owner/repo", 7, "new body") is False
 
 
@@ -874,7 +883,7 @@ def no_subprocess(monkeypatch):
     """Any external call in draft mode is a bug, so make one impossible to miss."""
     def boom(*a, **kw):
         raise AssertionError(f"a subprocess ran in draft mode: {a}")
-    monkeypatch.setattr(pr_comments.subprocess, "run", boom)
+    monkeypatch.setattr("proc.subprocess.run", boom)
     monkeypatch.setattr(review_issue.proc, "run", boom)
 
 
@@ -909,7 +918,7 @@ class TestPublishingGate:
     def test_enable_opens_the_gate(self, monkeypatch):
         calls = []
         monkeypatch.setattr(
-            pr_comments.subprocess, "run",
+            "proc.subprocess.run",
             lambda *a, **kw: calls.append(a) or SimpleNamespace(
                 returncode=0, stdout='{"html_url": "u"}', stderr="",
             ),

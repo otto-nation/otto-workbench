@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 
+import gh_client
 import git_client
 import log
 import pr_context
 import proc
-import timeouts
 
 
 WORKTREE_FALLBACK_DIR = ".worktrees"
@@ -104,16 +103,7 @@ def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
 
 
 def switch_to_pr_branch(pr_number: int | str, repo: str, repo_dir: str) -> WorktreeResult | None:
-    try:
-        gh_result = subprocess.run(
-            ["gh", "pr", "view", str(pr_number), "--repo", repo,
-             "--json", "headRefName", "--jq", ".headRefName"],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-        pr_head = gh_result.stdout.strip()
-    except Exception:
-        pr_head = ""
-
+    pr_head = gh_client.pr_view(pr_number, "headRefName", repo=repo).get("headRefName", "")
     if not pr_head:
         return None
 

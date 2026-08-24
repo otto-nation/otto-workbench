@@ -21,9 +21,8 @@ from pathlib import Path
 _BIN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_BIN_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(_BIN_DIR))
+import gh_client  # noqa: E402
 import git_client  # noqa: E402
-import proc  # noqa: E402
-import timeouts  # noqa: E402
 import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402
@@ -184,37 +183,19 @@ query($owner: String!, $name: String!) {{
 """
 
 
-def _is_rate_limited(stderr: str) -> bool:
-    lower = stderr.lower()
-    return "rate limit" in lower or "abuse" in lower
-
-
-def _log_api_error(label: str, stderr: str) -> None:
-    if _is_rate_limited(stderr):
-        log.warn(f"GitHub API rate limited for {label}")
-    else:
-        log.warn(f"gh api failed for {label}: {stderr.strip()}")
-
-
 def _gh_api(endpoint: str, repo: str) -> list[dict]:
     """Every page of a REST endpoint, or an empty list if it could not be read.
 
-    `--paginate` walks as many round trips as the repo's history needs, so the
-    bound is the transfer tier rather than the single-request one.
+    The scan reports what it could not read rather than returning a short list
+    quietly — an empty answer here is indistinguishable from a repo with no
+    review comments, which is the shape a rate-limited scan would take.
     """
-    try:
-        result = proc.run(
-            ["gh", "api", "--paginate", f"repos/{repo}/{endpoint}"],
-            timeout=timeouts.TRANSFER,
-        )
-    except FileNotFoundError as e:
-        log.warn(f"gh api error for {repo}/{endpoint}: {e}")
-        return []
-    if not result.ok:
-        _log_api_error(f"{repo}/{endpoint}", result.stderr)
+    r = gh_client.api(f"repos/{repo}/{endpoint}", paginate=True)
+    if not r.ok:
+        log.warn(f"gh api failed for {repo}/{endpoint}: {r.detail}")
         return []
     try:
-        return json.loads(result.stdout)
+        return json.loads(r.stdout)
     except json.JSONDecodeError as e:
         log.warn(f"gh api error for {repo}/{endpoint}: {e}")
         return []
@@ -312,22 +293,12 @@ def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
         if since_ts > 0 else "2020-01-01T00:00:00Z"
     )
     owner, name = repo.split("/", 1)
-    cmd = [
-        "gh", "api", "graphql",
-        "-f", f"query={_RETRO_QUERY}",
-        "-F", f"owner={owner}",
-        "-F", f"name={name}",
-    ]
-    try:
-        result = proc.run(cmd, timeout=timeouts.NETWORK)
-    except FileNotFoundError as e:
-        log.warn(f"GraphQL error for {repo}: {e}")
-        return _fetch_repo_review_data_rest(repo, since_ts)
-    if not result.ok:
-        _log_api_error(repo, result.stderr)
+    r = gh_client.graphql(_RETRO_QUERY, variables={"owner": owner, "name": name})
+    if not r.ok:
+        log.warn(f"GraphQL failed for {repo}: {r.detail}")
         return _fetch_repo_review_data_rest(repo, since_ts)
     try:
-        data = json.loads(result.stdout)
+        data = json.loads(r.stdout)
     except json.JSONDecodeError as e:
         log.warn(f"GraphQL error for {repo}: {e}")
         return _fetch_repo_review_data_rest(repo, since_ts)
@@ -640,20 +611,6 @@ def format_report(scan_data: dict) -> str:
     return "\n".join(lines)
 
 
-def _get_github_login() -> str:
-    try:
-        result = proc.run(
-            ["gh", "api", "user", "--jq", ".login"], timeout=timeouts.NETWORK,
-        )
-    except FileNotFoundError:
-        log.warn("gh CLI not found")
-        return ""
-    if result.ok:
-        return result.stdout.strip()
-    log.warn(f"gh api user failed: {result.detail}")
-    return ""
-
-
 def _best_matching_bullet(comment_body: str, rule: dict) -> str:
     comment_kw = _extract_keywords(comment_body)
     best_bullet = ""
@@ -942,7 +899,7 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
         log.info("No previous retro found — scanning all available PRs")
     trail.info("check_state", f"last retro timestamp: {last_retro_ts}")
 
-    git_user = _get_github_login()
+    git_user = gh_client.login()
     if not git_user:
         trail.warn("github_login", "could not determine GitHub login — comment directions will be inaccurate")
 

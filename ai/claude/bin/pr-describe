@@ -18,7 +18,6 @@ Usage:
 """
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -26,11 +25,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import agent_retry
 import ai_backend
+import gh_client
 import git_client
 import log
 import pr_context
 import pr_state
-import timeouts
 from pr_state import DescribeSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
@@ -81,13 +80,11 @@ def _load_template(wt_path: Path) -> tuple[str, str]:
 
 def _fetch_pr_body(repo: str, pr_number: int) -> tuple[str, str] | None:
     """Return (title, body) for the PR, or None when gh cannot answer."""
-    r = subprocess.run(
-        ["gh", "pr", "view", str(pr_number), "--repo", repo,
-         "--json", "title,body"],
-        capture_output=True, text=True, timeout=timeouts.NETWORK,
+    r = gh_client.run(
+        "pr", "view", str(pr_number), "--repo", repo, "--json", "title,body",
     )
-    if r.returncode != 0:
-        log.error(f"gh pr view failed: {r.stderr.strip()}")
+    if not r.ok:
+        log.error(f"gh pr view failed: {r.detail}")
         return None
     try:
         data = json.loads(r.stdout)
@@ -169,12 +166,12 @@ def _usable_revision(text: str) -> bool:
 
 
 def _apply_body(repo: str, pr_number: int, body: str) -> bool:
-    r = subprocess.run(
-        ["gh", "pr", "edit", str(pr_number), "--repo", repo, "--body-file", "-"],
-        input=body, capture_output=True, text=True, timeout=timeouts.NETWORK,
+    r = gh_client.run(
+        "pr", "edit", str(pr_number), "--repo", repo, "--body-file", "-",
+        input_text=body,
     )
-    if r.returncode != 0:
-        log.error(f"gh pr edit failed: {r.stderr.strip()}")
+    if not r.ok:
+        log.error(f"gh pr edit failed: {r.detail}")
         return False
     return True
 

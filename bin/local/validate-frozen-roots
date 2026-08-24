@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""Validate that no module freezes a workbench root into an import-time constant.
+
+Usage: bin/local/validate-frozen-roots [--quiet] [file...]
+
+`ai/lib/workbench_paths.py` resolves every root per call, and says in its own
+header why: the environment is routinely re-pointed after import — by tests, and
+by callers that move a root before invoking a subprocess — so a module-level
+
+    LEDGER_DIR = workbench_paths.state_dir() / "usage"
+
+captures whichever value happened to be live when the first importer loaded the
+module and never sees the change.  The failure is silent on both sides: the
+writer keeps appending under the stale root, and the reader finds an empty
+directory it cannot distinguish from having nothing to report.  Every test that
+re-points a root then has to patch each frozen constant by name, which is a list
+that only grows and is only ever discovered by a test that mysteriously fails.
+
+The fix is always the same shape — a function:
+
+    def ledger_dir() -> Path:
+        return workbench_paths.state_dir() / LEDGER_DIRNAME
+
+Assignments inside a function body are fine: they resolve when the function
+runs, which is the behaviour this check exists to preserve.  So is a call
+inside a lambda body, or handed to `default_factory`, for the same reason.  A
+bare directory *name* (`LEDGER_DIRNAME = "usage"`) is fine too — a name is not
+a path, and sharing one is how two modules agree on a subtree.
+
+Exit code: 0 if all files pass, 1 if any have violations.
+"""
+
+import argparse
+import ast
+import os
+import sys
+from dataclasses import dataclass
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
+MODULE = 'workbench_paths'
+
+# The root resolvers. Each returns a path built from the live environment, so a
+# call to any of them belongs inside a function, not at module scope.
+ROOTS = frozenset({
+    'config_dir',
+    'state_dir',
+    'cache_dir',
+    'trail_dir',
+    'reviews_dir',
+    'projects_registry',
+})
+
+SEARCH_DIRS = ('ai', 'bin')
+SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
+
+
+@dataclass(frozen=True)
+class Violation:
+    line: int
+    name: str
+    root: str
+
+
+# ── AST analysis ─────────────────────────────────────────────────────────────
+
+
+def _imported_roots(tree) -> set[str]:
+    """Root resolvers pulled into this module's namespace by `from` import.
+
+    A `from workbench_paths import state_dir` leaves nothing at the call site to
+    say where `state_dir` came from, so the local name (or its alias) has to be
+    remembered to recognise the call. `_module_names` does the same job for the
+    other import form.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.module != MODULE:
+            continue
+        names |= {a.asname or a.name for a in node.names if a.name in ROOTS}
+    return names
+
+
+def _module_names(tree) -> set[str]:
+    """Local names bound to the module by a plain `import`, aliases included.
+
+    `import workbench_paths as wp` writes `wp.state_dir()` at the call site, so
+    matching the module's own name would miss it — and an alias freezes a root
+    exactly as hard as the spelled-out name does.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        names |= {a.asname or a.name for a in node.names if a.name == MODULE}
+    return names
+
+
+def _called_root(func, local_roots: set[str], module_names: set[str]) -> str | None:
+    """The root resolver a call's *func* names, as written at the call site."""
+    if isinstance(func, ast.Name):
+        return func.id if func.id in local_roots else None
+    if not isinstance(func, ast.Attribute) or func.attr not in ROOTS:
+        return None
+    owner = func.value
+    if isinstance(owner, ast.Name) and owner.id in module_names:
+        return f'{owner.id}.{func.attr}'
+    return None
+
+
+def _eager_children(node):
+    """The children of *node* that are evaluated when *node* is.
+
+    Only a lambda differs from "all of them": its body runs later, so a
+    `GET = lambda: state_dir()` defers the call exactly as a `def` does, while
+    its parameter defaults still run now. A lambda invoked where it is written
+    defers nothing, so the call it sits under hands its body back too.
+    """
+    if isinstance(node, ast.Lambda):
+        return [d for d in node.args.defaults + node.args.kw_defaults if d]
+    children = list(ast.iter_child_nodes(node))
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Lambda):
+        children.append(node.func.body)
+    return children
+
+
+def _eager_calls(node):
+    """Every call in *node* that runs when *node* is evaluated."""
+    if isinstance(node, ast.Call):
+        yield node
+    for child in _eager_children(node):
+        yield from _eager_calls(child)
+
+
+def _resolver_called(node, local_roots: set[str], module_names: set[str]) -> str | None:
+    """The root resolver *node* calls, or None if it reaches no root.
+
+    Walks the whole subtree, so a root buried in an expression —
+    `state_dir() / "usage"`, `Path(str(trail_dir()))` — is caught: what freezes
+    the value is the call happening at import, not where it sits in the term.
+    """
+    named = (
+        _called_root(c.func, local_roots, module_names) for c in _eager_calls(node)
+    )
+    return next((n for n in named if n is not None), None)
+
+
+def _assigned_names(node) -> list[str]:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    return [n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)]
+
+
+def _module_level_assignments(tree):
+    """Every assignment that runs at import — module scope and class bodies.
+
+    A class body executes at import just as the module body does, so a root
+    frozen into a class attribute is frozen exactly as hard as one at the top
+    level. Function bodies are not descended into: that is where a root call
+    belongs.
+    """
+    found = []
+    pending = list(tree.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.ClassDef):
+            pending += node.body
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            found.append(node)
+    return found
+
+
+def check_file(filepath: str) -> list[Violation]:
+    with open(filepath, encoding='utf-8') as f:
+        source = f.read()
+    if MODULE not in source:
+        return []
+    try:
+        tree = ast.parse(source, filename=filepath)
+    except SyntaxError as exc:
+        # Silence here would read as "clean" for a file this check never saw.
+        print(f'{RED}!{NC} {filepath}: unparseable, not checked ({exc})',
+              file=sys.stderr)
+        return []
+    local_roots = _imported_roots(tree)
+    module_names = _module_names(tree)
+    found = []
+    for node in _module_level_assignments(tree):
+        if node.value is None:
+            continue
+        root = _resolver_called(node.value, local_roots, module_names)
+        if root is None:
+            continue
+        names = _assigned_names(node) or ['<unnamed>']
+        found.append(Violation(line=node.lineno, name=names[0], root=root))
+    return sorted(found, key=lambda v: v.line)
+
+
+# ── Discovery ────────────────────────────────────────────────────────────────
+
+
+def _is_python(path: str) -> bool:
+    if path.endswith('.py'):
+        return True
+    if os.path.splitext(path)[1] or not os.access(path, os.X_OK):
+        return False
+    try:
+        with open(path, 'rb') as f:
+            first = f.readline()
+    except OSError:
+        return False
+    return first.startswith(b'#!') and b'python' in first
+
+
+def discover_scripts(repo_root: str) -> list[str]:
+    found = []
+    roots = [os.path.join(repo_root, d) for d in SEARCH_DIRS]
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            paths = [os.path.join(dirpath, f) for f in filenames]
+            found += [p for p in paths if _is_python(p)]
+    return sorted(found)
+
+
+# ── Reporting ────────────────────────────────────────────────────────────────
+
+
+def _report_violations(relpath: str, violations: list[Violation]) -> None:
+    print(f'{RED}✗{NC} {relpath}: a workbench root is frozen at import',
+          file=sys.stderr)
+    for v in violations:
+        print(f'    line {v.line}: {v.name} = {v.root}(...) '
+              f'{DIM}— move the call into a function{NC}', file=sys.stderr)
+    print(f'    {DIM}why the roots resolve per call is in '
+          f'ai/lib/{MODULE}.py{NC}', file=sys.stderr)
+
+
+def _print_summary(files_checked: int, errors: int) -> None:
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, '
+              'every workbench root resolves per call')
+    else:
+        print(f'{RED}✗{NC} {errors} of {files_checked} files freeze a workbench '
+              'root into an import-time constant', file=sys.stderr)
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate that no module freezes a workbench root at import.')
+    parser.add_argument('--quiet', action='store_true',
+                        help='Only show failures and summary')
+    parser.add_argument('files', nargs='*',
+                        help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = _WORKBENCH_DIR
+    files = args.files or discover_scripts(repo_root)
+
+    errors = 0
+    for filepath in files:
+        violations = check_file(filepath)
+        relpath = os.path.relpath(filepath, repo_root)
+        errors += 1 if violations else 0
+        if violations:
+            _report_violations(relpath, violations)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    _print_summary(len(files), errors)
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

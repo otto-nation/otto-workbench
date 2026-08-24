@@ -279,9 +279,9 @@ class TestStatsTable:
 class TestStatsCommand:
     @pytest.fixture
     def ledger(self, tmp_path, monkeypatch):
-        d = tmp_path / "usage"
+        monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+        d = tmp_path / ai_usage.LEDGER_DIRNAME
         d.mkdir()
-        monkeypatch.setattr(ai_usage, "LEDGER_DIR", d)
         return d
 
     def _write(self, ledger, *records):

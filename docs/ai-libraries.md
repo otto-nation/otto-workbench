@@ -486,10 +486,15 @@ than an issue being filed to a tracker nobody named.
 
 ### review_github.py
 
-GitHub API primitives, retry logic, and PR metadata fetching.
+The review system's reads of a PR, and the GraphQL queries behind them.
 
-Low-level wrappers around ``gh api`` with rate-limit handling and
-exponential backoff.  Used by review_posting and review_dedup.
+PR metadata, the diff, the pending-review check, and the consolidated
+review-thread query. Used by review_posting and review_dedup.
+
+The transport is not here. ``gh_client`` owns running gh, the timeout tiers and
+the rate-limit ladder; this module owns what the review system asks for and how
+it reads the answer. Nothing here decides how a call is made, so a change to
+retry or to a bound is made once, in the client, for every caller.
 
 ### review_issue.py
 
@@ -1056,6 +1061,38 @@ that adding a task does not make every other task's dependencies load.
 ## Platform
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
+
+### gh_client.py
+
+One way to run gh, and the reads every caller was hand-rolling.
+
+`ai/` invoked `gh` as a literal argv head in 45 places across 13 files, and the
+knowledge of how to do it well was spread so thin that most sites had none of
+it. Eight had no timeout at all. Four returned `(exit_code, stdout)`, so the
+stderr explaining a 5xx was discarded before any caller could render it. Retry
+existed at one site out of forty-five, which is why a secondary rate limit
+surfaced everywhere else as "no data" — indistinguishable from an empty result.
+
+The runner is `run`, and `out`, `ok`, `lines` and `json_out` are the shapes
+callers actually wanted from it. `api` and `graphql` sit above them for the
+`gh api` surface, which is most of the traffic. Below all of it are the reads
+that appeared at two or more call sites; a read used once belongs at its call
+site, spelled out with `run`.
+
+Retry is a property of talking to the API, so it lives with the calls that do:
+`api`, `graphql`, and the reads above that resolve against GitHub rather than
+against a local checkout. A caller driving an artifact download or reading
+gh's own configuration gets no ladder, and should not.
+
+The publishing gate is deliberately not here. `pr_comments` gates its writes on
+`publishing.enabled()` at the call site and keeps doing so — a second implicit
+gate inside the transport would make a policy decision invisible to the code
+that owns it.
+
+Unlike `git_client`, this depends on `log` as well as `proc`: a rate-limit
+ladder that waits five minutes in silence reads as a hang, so the waiting is
+announced. Whether a *failed* call is worth logging remains the caller's
+decision, as it is there.
 
 ### git_client.py
 

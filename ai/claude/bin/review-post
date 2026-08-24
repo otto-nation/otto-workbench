@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 from trail import Trail, add_trail_args  # noqa: E402
+import gh_client as _gh  # noqa: E402
 import review_common as _rc  # noqa: E402
 import review_dedup as _rd  # noqa: E402
 import review_findings as _rfi  # noqa: E402
@@ -45,13 +46,11 @@ from review_format import (  # noqa: E402
     _format_path_ref, _format_finding_line, _resolve_path, _hunk_end,
     _build_permalink,
 )
+from gh_client import LineResolutionError  # noqa: E402
 from review_github import (  # noqa: E402
     PRData, fetch_pr_data,
     _fetch_pr_metadata, _get_diff,
-    _gh_api, _check_existing_pending, _fetch_json_list,
-    _is_rate_limited, _is_line_resolution_error,
-    _handle_api_attempt, _post_with_retries, _count_new_commits,
-    LineResolutionError,
+    _check_existing_pending, _count_new_commits,
 )
 from review_dedup import (  # noqa: E402
     _word_set, _jaccard, _extract_body_findings, _fetch_bot_comments,
@@ -69,7 +68,7 @@ from review_sections import ReviewSections  # noqa: E402
 
 SCRIPT = Path(__file__).name
 
-_SUBMODULES = (_rc, _rd, _rfi, _rfmt, _rg, _rp, _rs)
+_SUBMODULES = (_gh, _rc, _rd, _rfi, _rfmt, _rg, _rp, _rs)
 
 
 class _ProxyModule(type(sys.modules[__name__])):

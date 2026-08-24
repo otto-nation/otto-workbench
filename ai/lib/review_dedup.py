@@ -12,7 +12,7 @@ import functools
 import json
 import re
 
-import review_github
+import gh_client
 from review_github import PRData, GQL_REVIEWS_LIMIT
 
 from review_format import CLASS_SKIPPED
@@ -65,13 +65,7 @@ def _extract_body_findings(body: str) -> list[dict]:
 @functools.lru_cache(maxsize=1)
 def _get_bot_login() -> str:
     """Return the authenticated GitHub user's login, or empty string on failure."""
-    r = review_github._gh_api("user")
-    if not r.ok:
-        return ""
-    try:
-        return json.loads(r.stdout).get("login", "")
-    except (json.JSONDecodeError, TypeError):
-        return ""
+    return gh_client.login()
 
 
 # ── Bot comment collection ──────────────────────────────────────────────────
@@ -79,7 +73,7 @@ def _get_bot_login() -> str:
 def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[dict]:
     if pr_data is not None:
         return pr_data.bot_inline_comments(bot_user)
-    all_comments = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/comments")
+    all_comments = gh_client.api_json(f"repos/{repo}/pulls/{pr}/comments", default=[])
     return [
         {"path": c.get("path", ""), "body": c.get("body", "")}
         for c in all_comments
@@ -91,7 +85,7 @@ def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData 
     if pr_data is not None:
         bodies = pr_data.bot_review_bodies(bot_user)
     else:
-        all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=[])
         bodies = [
             r.get("body", "") for r in all_reviews
             if r.get("user", {}).get("login") == bot_user
@@ -184,11 +178,11 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list
       }}
     }}
     """
-    result = review_github._gh_graphql(
-        query, {"owner": owner, "name": name, "pr": int(pr)},
+    result = gh_client.graphql(
+        query, variables={"owner": owner, "name": name, "pr": int(pr)},
     )
     if not result.ok:
-        all_reviews = review_github._fetch_json_list(f"repos/{repo}/pulls/{pr}/reviews")
+        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=[])
         return [
             {"id": r["id"], "body": r.get("body", ""), "state": r.get("state", "")}
             for r in all_reviews

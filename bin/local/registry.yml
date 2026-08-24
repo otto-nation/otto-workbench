@@ -54,6 +54,11 @@ tools:
     visibility: brief
     description: "Validates that every subprocess timeout comes from the ai/lib/timeouts.py tiers"
 
+  - name: validate-frozen-roots
+    permission: false
+    visibility: brief
+    description: "Validates that no module freezes a workbench root into an import-time constant"
+
   - name: validate-stat-portability
     permission: false
     visibility: brief

@@ -20,9 +20,20 @@ from pathlib import Path
 import log
 import workbench_paths
 
-# One file per month: rotation falls out of the filename, --since can select files
-# without reading them, and nothing needs a pruning job.
-LEDGER_DIR = workbench_paths.state_dir() / "usage"
+LEDGER_DIRNAME = "usage"
+
+
+def ledger_dir() -> Path:
+    """Where the usage ledger lives: ``<state>/usage/YYYY-MM.jsonl``.
+
+    One file per month, so rotation falls out of the filename, ``--since`` can
+    select files without reading them, and nothing needs a pruning job.
+
+    Resolved per call rather than at import, for the reason `workbench_paths`
+    gives: the state root is routinely re-pointed after this module loads, and
+    a constant would capture whichever value was live for the first importer.
+    """
+    return workbench_paths.state_dir() / LEDGER_DIRNAME
 
 
 @dataclass(frozen=True)
@@ -176,9 +187,10 @@ def record(
     for key, value in (("task", task), ("repo", repo), ("pr", pr)):
         if value:
             rec[key] = value
+    ledger = ledger_dir()
     try:
-        LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-        path = LEDGER_DIR / f"{datetime.now(timezone.utc):%Y-%m}.jsonl"
+        ledger.mkdir(parents=True, exist_ok=True)
+        path = ledger / f"{datetime.now(timezone.utc):%Y-%m}.jsonl"
         # One write of one sub-PIPE_BUF line: concurrent pipeline agents append to
         # this file, and a single append-mode write is atomic at this size.
         with path.open("a", encoding="utf-8") as fh:
@@ -186,7 +198,7 @@ def record(
     except (OSError, TypeError, ValueError):
         if not _warned:
             _warned = True
-            log.warn(f"usage ledger unavailable at {LEDGER_DIR} — telemetry not recorded")
+            log.warn(f"usage ledger unavailable at {ledger} — telemetry not recorded")
 
 
 def _ledger_record(line: str, cutoff_ts: str) -> dict | None:
@@ -220,7 +232,7 @@ def read_ledger(since: datetime | None = None) -> list[dict]:
     """
     out: list[dict] = []
     try:
-        files = sorted(LEDGER_DIR.glob("*.jsonl"))
+        files = sorted(ledger_dir().glob("*.jsonl"))
     except OSError:
         return out
     cutoff_ts = f"{since:%Y-%m-%dT%H:%M:%SZ}" if since else ""

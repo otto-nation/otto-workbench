@@ -28,21 +28,13 @@ from proc import CmdResult  # noqa: E402
 # ── _fetch_latest_run_ids ─────────────────────────────────────────────────
 
 
-def _mock_gh_run_list(runs):
-    """Return a mock subprocess result with the given run list as JSON."""
-    mock = MagicMock()
-    mock.returncode = 0
-    mock.stdout = json.dumps(runs)
-    return mock
-
-
 def test_deduplicates_rerun_of_same_workflow():
     """A re-run of the same workflow should supersede the original."""
     runs = [
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI"},
         {"databaseId": 100, "headSha": "abc", "workflowName": "CI"},
     ]
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+    with patch("gh_client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200]
 
@@ -53,7 +45,7 @@ def test_keeps_distinct_workflows():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy"},
     ]
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+    with patch("gh_client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200, 201]
 
@@ -65,7 +57,7 @@ def test_rerun_with_multiple_workflows():
         {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy"},
         {"databaseId": 100, "headSha": "abc", "workflowName": "CI"},
     ]
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+    with patch("gh_client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [300, 201]
 
@@ -76,13 +68,13 @@ def test_filters_to_latest_sha():
         {"databaseId": 300, "headSha": "def", "workflowName": "CI"},
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI"},
     ]
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+    with patch("gh_client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [300]
 
 
 def test_empty_run_list():
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list([])):
+    with patch("gh_client.json_out", return_value=[]):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == []
 
@@ -93,7 +85,7 @@ def test_filters_skipped_runs():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Dependabot", "conclusion": "skipped"},
     ]
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+    with patch("gh_client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200]
 
@@ -104,7 +96,7 @@ def test_filters_cancelled_runs():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Old CI", "conclusion": "cancelled"},
     ]
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+    with patch("gh_client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200]
 
@@ -115,7 +107,7 @@ def test_all_skipped_returns_empty():
         {"databaseId": 200, "headSha": "abc", "workflowName": "A", "conclusion": "skipped"},
         {"databaseId": 201, "headSha": "abc", "workflowName": "B", "conclusion": "cancelled"},
     ]
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+    with patch("gh_client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == []
 
@@ -126,7 +118,7 @@ def test_in_progress_runs_kept():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": None},
         {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy", "conclusion": "skipped"},
     ]
-    with patch("ci_check.subprocess.run", return_value=_mock_gh_run_list(runs)):
+    with patch("gh_client.json_out", return_value=runs):
         result = ci_check._fetch_latest_run_ids("owner/repo", "main")
     assert result == [200]
 
@@ -673,28 +665,19 @@ def test_parse_run_does_not_enrich_lint_with_uninformative_annotations():
 
 
 def test_commits_behind_main_returns_count():
-    mock = MagicMock()
-    mock.returncode = 0
-    mock.stdout = "15\n"
-    with patch("ci_check.subprocess.run", return_value=mock):
+    with patch("gh_client.api", return_value=CmdResult(0, "15\n")):
         result = ci_check._commits_behind_main("owner/repo", "feat/auth")
     assert result == 15
 
 
 def test_commits_behind_main_returns_zero_on_error():
-    mock = MagicMock()
-    mock.returncode = 1
-    mock.stdout = ""
-    with patch("ci_check.subprocess.run", return_value=mock):
+    with patch("gh_client.api", return_value=CmdResult(1)):
         result = ci_check._commits_behind_main("owner/repo", "feat/auth")
     assert result == 0
 
 
 def test_commits_behind_main_returns_zero_on_non_numeric():
-    mock = MagicMock()
-    mock.returncode = 0
-    mock.stdout = "null\n"
-    with patch("ci_check.subprocess.run", return_value=mock):
+    with patch("gh_client.api", return_value=CmdResult(0, "null\n")):
         result = ci_check._commits_behind_main("owner/repo", "feat/auth")
     assert result == 0
 

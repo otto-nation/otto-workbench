@@ -82,15 +82,14 @@ the exit code and the override flag, and nothing else.
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import gh_client
 import git_client
 import log
 import pr_context
 import pr_state
-import timeouts
 from pr_state import SupersessionKind, SupersessionSignal
 from trail import Trail
 
@@ -247,15 +246,11 @@ def _merged_pr_mentioning(repo: str, symbol: str) -> str:
     A search that outruns its bound therefore degrades to silence rather than
     raising through a preflight the reader only asked for a hint from.
     """
-    try:
-        result = subprocess.run(
-            ["gh", "api", f"search/issues?q=repo:{repo}+{symbol}+is:merged",
-             "--jq", '.items[0] // empty | "#\\(.number) \\(.title)"'],
-            capture_output=True, text=True, timeout=timeouts.NETWORK,
-        )
-    except subprocess.TimeoutExpired:
-        return ""
-    return result.stdout.strip() if result.returncode == 0 else ""
+    r = gh_client.api(
+        f"search/issues?q=repo:{repo}+{symbol}+is:merged",
+        jq='.items[0] // empty | "#\\(.number) \\(.title)"',
+    )
+    return r.stdout.strip()
 
 
 def detect(

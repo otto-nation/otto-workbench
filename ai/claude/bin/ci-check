@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import agent_retry
 import ai_backend
 import ci_failures as ci
+import gh_client
 import git_client
 import pr_context
 import pr_state
@@ -66,18 +67,11 @@ def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
     SHA.  gh run list returns newest first, so we deduplicate by workflow
     name to keep only the most recent run of each workflow.
     """
-    result = subprocess.run(
-        ["gh", "run", "list", "--repo", repo, "--branch", branch,
-         "--limit", "20", "--json",
-         "databaseId,headSha,workflowName,conclusion"],
-        capture_output=True, text=True, timeout=timeouts.NETWORK,
+    runs = gh_client.json_out(
+        "run", "list", "--repo", repo, "--branch", branch,
+        "--limit", "20", "--json", "databaseId,headSha,workflowName,conclusion",
+        default=[],
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return []
-    try:
-        runs = json.loads(result.stdout)
-    except (json.JSONDecodeError, TypeError):
-        return []
     if not runs:
         return []
     latest_sha = runs[0]["headSha"]
@@ -98,54 +92,29 @@ def _fetch_latest_run_ids(repo: str, branch: str) -> list[int]:
 
 def _fetch_run_data(repo: str, run_id: int) -> dict | None:
     """Fetch run metadata and job results."""
-    result = subprocess.run(
-        ["gh", "run", "view", str(run_id), "--repo", repo,
-         "--json", "databaseId,number,headSha,status,conclusion,jobs"],
-        capture_output=True, text=True, timeout=timeouts.NETWORK,
+    return gh_client.json_out(
+        "run", "view", str(run_id), "--repo", repo,
+        "--json", "databaseId,number,headSha,status,conclusion,jobs",
     )
-    if result.returncode != 0:
-        return None
-    try:
-        return json.loads(result.stdout)
-    except (json.JSONDecodeError, TypeError):
-        return None
 
 
 def _fetch_annotations(repo: str, job_id: int) -> list[dict]:
     """Fetch annotations for a check run (job)."""
-    result = subprocess.run(
-        ["gh", "api", f"repos/{repo}/check-runs/{job_id}/annotations",
-         "--paginate"],
-        capture_output=True, text=True, timeout=timeouts.TRANSFER,
+    return gh_client.api_json(
+        f"repos/{repo}/check-runs/{job_id}/annotations", paginate=True, default=[],
     )
-    if result.returncode != 0:
-        return []
-    try:
-        return json.loads(result.stdout)
-    except (json.JSONDecodeError, TypeError):
-        return []
 
 
 def _fetch_job_logs(repo: str, job_id: int) -> str:
     """Fetch logs for a single job via API. Smaller and faster than per-run."""
-    result = subprocess.run(
-        ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"],
-        capture_output=True, text=True, timeout=timeouts.TRANSFER,
-    )
-    if result.returncode != 0:
-        return ""
-    return result.stdout
+    r = gh_client.api(f"repos/{repo}/actions/jobs/{job_id}/logs")
+    return r.stdout if r.ok else ""
 
 
 def _fetch_failed_logs(repo: str, run_id: int) -> str:
     """Fetch logs for failed steps. Returns raw log text."""
-    result = subprocess.run(
-        ["gh", "run", "view", str(run_id), "--repo", repo, "--log-failed"],
-        capture_output=True, text=True, timeout=timeouts.TRANSFER,
-    )
-    if result.returncode != 0:
-        return ""
-    return result.stdout
+    r = gh_client.run("run", "view", str(run_id), "--repo", repo, "--log-failed")
+    return r.stdout if r.ok else ""
 
 
 def _build_failure_id(annotation: dict, job_name: str) -> str:
@@ -295,12 +264,10 @@ def _fetch_test_artifact(repo: str, run_id: int, job_name: str) -> str:
 
     tmpdir = tempfile.mkdtemp(prefix="ci-artifact-")
     try:
-        result = subprocess.run(
-            ["gh", "run", "download", str(run_id), "--repo", repo,
-             "--name", artifact_name, "--dir", tmpdir],
-            capture_output=True, text=True, timeout=timeouts.TRANSFER,
-        )
-        if result.returncode != 0:
+        if not gh_client.ok(
+            "run", "download", str(run_id), "--repo", repo,
+            "--name", artifact_name, "--dir", tmpdir,
+        ):
             return ""
         return _parse_test_artifact(tmpdir)
     finally:
@@ -466,13 +433,9 @@ def _serialize_failures(
 
 def _commits_behind_main(repo: str, branch: str) -> int:
     """Count commits on origin/main not reachable from the branch."""
-    result = subprocess.run(
-        ["gh", "api", f"repos/{repo}/compare/{branch}...main",
-         "--jq", ".ahead_by"],
-        capture_output=True, text=True, timeout=timeouts.NETWORK,
-    )
-    val = result.stdout.strip()
-    return int(val) if result.returncode == 0 and val.isdigit() else 0
+    r = gh_client.api(f"repos/{repo}/compare/{branch}...main", jq=".ahead_by")
+    val = r.stdout.strip()
+    return int(val) if r.ok and val.isdigit() else 0
 
 
 def _run_ci(trail, args, ctx) -> dict:

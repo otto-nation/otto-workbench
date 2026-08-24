@@ -19,10 +19,9 @@ import ai_usage
 
 @pytest.fixture
 def ledger(tmp_path, monkeypatch):
-    d = tmp_path / "usage"
-    monkeypatch.setattr(ai_usage, "LEDGER_DIR", d)
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(ai_usage, "_warned", False)
-    return d
+    return tmp_path / ai_usage.LEDGER_DIRNAME
 
 
 def _records(ledger_dir):

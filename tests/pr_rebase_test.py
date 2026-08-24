@@ -2469,9 +2469,13 @@ def _completed(cmd, returncode=0, stdout=""):
 
 
 def _gh_response(payload: str, returncode: int = 0):
-    """Patch _try_run to answer the gh call with *payload*."""
-    return mock.patch.object(
-        pr_rebase_cli, "_try_run",
+    """Patch the transport so the gh call answers with *payload*.
+
+    Stubbed under `gh_client` rather than at it, so the argv the client builds
+    and the tier it picks are both still observable from the call.
+    """
+    return mock.patch(
+        "proc.subprocess.run",
         return_value=_completed(["gh"], returncode=returncode, stdout=payload),
     )
 
@@ -2494,7 +2498,7 @@ def test_merged_pr_reports_a_merged_pull_request():
 
     cmd = mock_try.call_args[0][0]
     assert cmd[:4] == ["gh", "pr", "view", str(_LANDED_PR)]
-    assert cmd[-2:] == ["--repo", "owner/repo"]
+    assert cmd[4:6] == ["--repo", "owner/repo"]
 
 
 def test_merged_pr_falls_back_to_the_branch_without_a_pr_number():
@@ -2550,8 +2554,8 @@ def test_merged_pr_stays_silent_unless_github_says_merged(payload, returncode):
 
 
 def test_merged_pr_survives_gh_being_absent():
-    """_try_run returns None when gh cannot be launched — not an exception."""
-    with mock.patch.object(pr_rebase_cli, "_try_run", return_value=None):
+    """The client answers a missing gh with a result, not an exception."""
+    with mock.patch("proc.subprocess.run", side_effect=FileNotFoundError):
         assert pr_rebase_cli._merged_pr("/fake", _landed_ctx()) is None
 
 
@@ -2566,7 +2570,7 @@ def test_pr_base_branch_reads_the_base_github_reports():
 
     cmd = mock_try.call_args[0][0]
     assert cmd[:4] == ["gh", "pr", "view", str(_LANDED_PR)]
-    assert cmd[-2:] == ["--repo", "owner/repo"]
+    assert cmd[4:6] == ["--repo", "owner/repo"]
 
 
 def test_pr_base_branch_omits_repo_when_the_context_has_none():
@@ -2581,10 +2585,10 @@ def test_pr_base_branch_omits_repo_when_the_context_has_none():
 
 def test_pr_base_branch_stays_quiet_without_a_pr_number():
     """Probing by branch name would spend a round trip to learn nothing."""
-    with mock.patch.object(pr_rebase_cli, "_try_run") as mock_try:
+    with mock.patch("proc.subprocess.run") as mock_gh:
         assert pr_rebase_cli._pr_base_branch("/fake", _landed_ctx(pr_number=None)) is None
 
-    mock_try.assert_not_called()
+    mock_gh.assert_not_called()
 
 
 @pytest.mark.parametrize("payload,returncode", [
@@ -2599,7 +2603,7 @@ def test_pr_base_branch_degrades_when_gh_cannot_answer(payload, returncode):
 
 
 def test_pr_base_branch_survives_gh_being_absent():
-    with mock.patch.object(pr_rebase_cli, "_try_run", return_value=None):
+    with mock.patch("proc.subprocess.run", side_effect=FileNotFoundError):
         assert pr_rebase_cli._pr_base_branch("/fake", _landed_ctx()) is None
 
 

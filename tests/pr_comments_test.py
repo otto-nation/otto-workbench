@@ -25,6 +25,9 @@ from pr_comments import (
 from pr_comments_state import ThreadRecord, ThreadState
 
 
+REPO = "owner/repo"
+
+
 # ── fetch_threads ───────────────────────────────────────────────────────────
 
 def test_fetch_threads_uses_the_paginated_fetcher():
@@ -56,7 +59,7 @@ def _rest_listing():
 
 def test_fetch_issue_comments_drops_our_own_by_default():
     with _rest_listing():
-        got = pr_comments.fetch_issue_comments("owner/repo", 42, "me")
+        got = pr_comments.fetch_issue_comments(REPO, 42, "me")
     assert [c["user"] for c in got] == ["kgn"]
 
 
@@ -64,14 +67,14 @@ def test_fetch_issue_comments_keeps_our_own_when_asked():
     """`include_self` is the contract `review-threads` reads its reply through."""
     with _rest_listing():
         got = pr_comments.fetch_issue_comments(
-            "owner/repo", 42, "me", include_self=True)
+            REPO, 42, "me", include_self=True)
     assert [c["user"] for c in got] == ["me", "kgn"]
 
 
 def test_fetch_issue_comments_drops_bots_either_way():
     with _rest_listing():
         got = pr_comments.fetch_issue_comments(
-            "owner/repo", 42, "me", include_self=True)
+            REPO, 42, "me", include_self=True)
     assert "bot" not in [c["user"] for c in got]
 
 
@@ -81,7 +84,7 @@ def test_fetch_issue_comments_passes_the_exclusion_on_to_pr_data(
     """Prefetched data takes the same filter, so both paths answer alike."""
     pr_data = SimpleNamespace(non_self_issue_comments=lambda login: [{"user": login}])
     got = pr_comments.fetch_issue_comments(
-        "owner/repo", 42, "me", pr_data, include_self=include_self)
+        REPO, 42, "me", pr_data, include_self=include_self)
     assert got == [{"user": expected}]
 
 
@@ -359,7 +362,7 @@ def test_post_issue_comment_posts_new_without_marker():
     with patch.object(pr_comments, "_gh_post", return_value=_posted()) as post, \
          patch.object(pr_comments, "find_marker_comment",
                       autospec=True) as find:
-        url = pr_comments.post_issue_comment("owner/repo", 1, "body")
+        url = pr_comments.post_issue_comment(REPO, 1, "body")
     assert url == "u"
     post.assert_called_once()
     find.assert_not_called()
@@ -383,9 +386,9 @@ def test_post_issue_comment_edits_existing_marked_comment():
     with _listing(listing), \
          patch.object(pr_comments, "_patch_issue_comment", return_value="u2") as patch_fn, \
          patch.object(pr_comments, "_gh_post") as post:
-        url = pr_comments.post_issue_comment("owner/repo", 1, "round two", marker=MARKER)
+        url = pr_comments.post_issue_comment(REPO, 1, "round two", marker=MARKER)
     assert url == "u2"
-    patch_fn.assert_called_once_with("owner/repo", 11, "round two")
+    patch_fn.assert_called_once_with(REPO, 11, "round two")
     post.assert_not_called()
 
 
@@ -393,7 +396,7 @@ def test_post_issue_comment_posts_new_when_marker_absent():
     listing = _pages([{"id": 10, "body": "unrelated"}])
     with _listing(listing), \
          patch.object(pr_comments, "_gh_post", return_value=_posted()) as post:
-        url = pr_comments.post_issue_comment("owner/repo", 1, "body", marker=MARKER)
+        url = pr_comments.post_issue_comment(REPO, 1, "body", marker=MARKER)
     assert url == "u"
     post.assert_called_once()
 
@@ -408,7 +411,7 @@ def test_find_marker_comment_prefers_latest():
         {"id": 11, "body": f"{MARKER}\nnew"},
     ])
     with _listing(listing):
-        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
     assert found == _found(11, f"{MARKER}\nnew")
 
 
@@ -419,7 +422,7 @@ def test_find_marker_comment_spans_pages():
         [{"id": 11, "body": "unrelated"}],
     )
     with _listing(listing):
-        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
     assert found == _found(10, f"{MARKER}\nround one")
 
 
@@ -430,7 +433,7 @@ def test_find_marker_comment_carries_the_timeline():
         {"id": 11, "body": "not so fast", "created_at": "2026-01-02T00:00:00Z"},
     ])
     with _listing(listing):
-        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
     assert found.created_at == "2026-01-01T00:00:00Z"
     assert found.newest_other_at == "2026-01-02T00:00:00Z"
 
@@ -442,7 +445,7 @@ def test_find_marker_comment_does_not_read_an_older_summary_as_an_answer():
         {"id": 11, "body": f"{MARKER}\nround two", "created_at": "2026-01-03T00:00:00Z"},
     ])
     with _listing(listing):
-        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
     assert found.comment_id == 11
     assert found.newest_other_at == ""
 
@@ -451,7 +454,7 @@ def test_find_marker_comment_accepts_flat_listing():
     """A single unslurped page must still be readable."""
     listing = [{"id": 12, "body": f"{MARKER}\nonly"}]
     with _listing(listing):
-        found = pr_comments.find_marker_comment("owner/repo", 1, MARKER)
+        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
     assert found == _found(12, f"{MARKER}\nonly")
 
 
@@ -466,13 +469,13 @@ def test_find_marker_comment_reports_lookup_failure(payload):
     "the comment said nothing", so `found` has to carry the difference.
     """
     with _listing(payload):
-        assert pr_comments.find_marker_comment("owner/repo", 1, MARKER) == \
+        assert pr_comments.find_marker_comment(REPO, 1, MARKER) == \
             pr_comments.MarkerComment(found=False)
 
 
 def test_find_marker_comment_reports_empty_listing():
     with _listing([]):
-        assert pr_comments.find_marker_comment("owner/repo", 1, MARKER) == \
+        assert pr_comments.find_marker_comment(REPO, 1, MARKER) == \
             pr_comments.MarkerComment(found=True)
 
 
@@ -484,7 +487,7 @@ def test_find_marker_comments_keeps_every_round_oldest_first():
         {"id": 12, "body": f"{MARKER}\nround two"},
     ])
     with _listing(listing):
-        history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
+        history = pr_comments.find_marker_comments(REPO, 1, MARKER)
     assert [c.comment_id for c in history.comments] == [10, 12]
     assert history.bodies == [f"{MARKER}\nround one", f"{MARKER}\nround two"]
     assert history.newest.comment_id == 12
@@ -496,14 +499,14 @@ def test_find_marker_comments_carries_each_comments_url():
         {"id": 10, "body": MARKER, "html_url": "https://gh/pull/1#issuecomment-10"},
     ])
     with _listing(listing):
-        history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
+        history = pr_comments.find_marker_comments(REPO, 1, MARKER)
     assert history.comments[0].url == "https://gh/pull/1#issuecomment-10"
 
 
 def test_find_marker_comments_reports_an_unread_listing_as_no_history():
     """`found` distinguishes it from a PR that genuinely has no summary yet."""
     with _listing(None):
-        history = pr_comments.find_marker_comments("owner/repo", 1, MARKER)
+        history = pr_comments.find_marker_comments(REPO, 1, MARKER)
     assert history == pr_comments.MarkerHistory(found=False)
     assert history.newest == pr_comments.MarkerComment(found=False)
 
@@ -521,12 +524,12 @@ def test_post_issue_comment_reuses_a_supplied_lookup():
     with patch.object(pr_comments.gh_client, "api_json") as listing, \
          patch.object(pr_comments, "_patch_issue_comment", return_value="u2") as patch_fn:
         url = pr_comments.post_issue_comment(
-            "owner/repo", 1, "round two", marker=MARKER,
+            REPO, 1, "round two", marker=MARKER,
             existing=_found(11, f"{MARKER}\nround one"),
         )
     assert url == "u2"
     listing.assert_not_called()
-    patch_fn.assert_called_once_with("owner/repo", 11, "round two")
+    patch_fn.assert_called_once_with(REPO, 11, "round two")
 
 
 def test_post_issue_comment_logs_when_lookup_fails():
@@ -534,41 +537,41 @@ def test_post_issue_comment_logs_when_lookup_fails():
     with _listing(None), \
          patch.object(pr_comments, "_gh_post", return_value=_posted()), \
          patch.object(pr_comments.log, "error") as err:
-        url = pr_comments.post_issue_comment("owner/repo", 1, "body", marker=MARKER)
+        url = pr_comments.post_issue_comment(REPO, 1, "body", marker=MARKER)
     assert url == "u"
     err.assert_called_once()
 
 
 def test_patch_issue_comment_uses_patch_method():
     with patch.object(pr_comments, "_gh_post", return_value=_posted()) as post:
-        assert pr_comments._patch_issue_comment("owner/repo", 11, "body") == "u"
+        assert pr_comments._patch_issue_comment(REPO, 11, "body") == "u"
     assert post.call_args.kwargs["method"] == "PATCH"
-    assert post.call_args[0][0] == "repos/owner/repo/issues/comments/11"
+    assert post.call_args[0][0] == f"repos/{REPO}/issues/comments/11"
 
 
 def test_patch_thread_reply_uses_patch_method():
     with patch.object(pr_comments, "_gh_post", return_value=CmdResult(0)) as post:
-        assert pr_comments.patch_thread_reply("owner/repo", 99, "body") is True
+        assert pr_comments.patch_thread_reply(REPO, 99, "body") is True
     assert post.call_args.kwargs["method"] == "PATCH"
-    assert post.call_args[0][0] == "repos/owner/repo/pulls/comments/99"
+    assert post.call_args[0][0] == f"repos/{REPO}/pulls/comments/99"
 
 
 def test_patch_thread_reply_reports_failure():
     with patch.object(pr_comments, "_gh_post", return_value=CmdResult(1)):
-        assert pr_comments.patch_thread_reply("owner/repo", 99, "body") is False
+        assert pr_comments.patch_thread_reply(REPO, 99, "body") is False
 
 
 def test_update_pr_body_patches_the_pull_endpoint():
     with patch.object(pr_comments, "_gh_post", return_value=CmdResult(0)) as post:
-        assert pr_comments.update_pr_body("owner/repo", 7, "new body") is True
+        assert pr_comments.update_pr_body(REPO, 7, "new body") is True
     assert post.call_args.kwargs["method"] == "PATCH"
-    assert post.call_args[0][0] == "repos/owner/repo/pulls/7"
+    assert post.call_args[0][0] == f"repos/{REPO}/pulls/7"
     assert post.call_args[0][1] == "new body"
 
 
 def test_update_pr_body_reports_failure():
     with patch.object(pr_comments, "_gh_post", return_value=CmdResult(1)):
-        assert pr_comments.update_pr_body("owner/repo", 7, "new body") is False
+        assert pr_comments.update_pr_body(REPO, 7, "new body") is False
 
 
 # ── Publishing gate ──────────────────────────────────────────────────────────

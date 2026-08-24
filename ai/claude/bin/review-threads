@@ -1053,6 +1053,11 @@ def _commit_and_push(
 
     result = git_client.run("commit", "-m", msg, cwd=wt_path)
     if not result.ok:
+        # The gate above answers "dirty" when git could not read the worktree,
+        # so an empty commit here is that reading resolving itself, not a
+        # commit something rejected.
+        if review_common.committed_nothing(result):
+            return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
         err = result.stderr.strip()
         log.error(f"commit failed: {err}")
         if trail:

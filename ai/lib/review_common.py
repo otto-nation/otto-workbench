@@ -51,6 +51,7 @@ import workbench_paths
 from ai_usage import SessionUsage, parse_session_log
 from pr_domains import ReviewStatus, ReviewVerdict
 from pr_state import now_iso
+from proc import CmdResult
 
 
 # ── Severity ─────────────────────────────────────────────────────────────────
@@ -787,13 +788,41 @@ def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
 
 
 def has_uncommitted_changes(wt_path: str | Path) -> bool:
-    """Whether a worktree has unstaged, staged, or untracked changes.
+    """Whether a worktree has unstaged, staged, or untracked changes, or git
+    could not say.
 
     The name the review commands share for the fix pass's commit gate; the
-    check itself, and why it reads porcelain rather than `diff --quiet`, lives
-    in `git_client.is_dirty`.
+    check itself, why it reads porcelain rather than `diff --quiet`, and why an
+    unreadable worktree answers "yes", all live in `git_client.is_dirty`.
+
+    Opening the gate on an unreadable worktree is what `committed_nothing`
+    below is for: a caller that gets this far and finds git had nothing to
+    commit after all learns it from the commit, which is the read that cannot
+    be wrong about it.
     """
     return git_client.is_dirty(wt_path)
+
+
+# git prints these on stdout, with exit 1, when a commit resolves to an empty
+# change. `--allow-empty` is not the answer: an empty commit is noise on the
+# branch, and the pass has nothing to say in it.
+_EMPTY_COMMIT_MARKERS = (
+    "nothing to commit",
+    "nothing added to commit",
+    "no changes added to commit",
+)
+
+
+def committed_nothing(result: CmdResult) -> bool:
+    """Whether a failed `git commit` failed only because nothing was staged.
+
+    The other half of the commit gate above. `has_uncommitted_changes` answers
+    "dirty" when git could not read the worktree, so a fix pass reaching the
+    commit no longer proves there was work: git declining an empty commit is
+    the expected end of that path, not a failure to report or raise on.
+    """
+    text = f"{result.stdout}\n{result.stderr}".lower()
+    return any(marker in text for marker in _EMPTY_COMMIT_MARKERS)
 
 
 # ── Review file helpers ─────────────────────────────────────────────────────

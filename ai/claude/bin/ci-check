@@ -649,6 +649,12 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
         msg += f"\n\n{fixed} fixed, {skipped} skipped"
     committed = git_client.run("commit", "-m", msg, cwd=wt_path)
     if not committed.ok:
+        # The gate above answers "dirty" when git could not read the worktree,
+        # so an empty commit here is that reading resolving itself, not a
+        # failure: the tree really was clean and there is nothing to push.
+        if review_common.committed_nothing(committed):
+            log.info("No changes to commit")
+            return None
         raise RuntimeError(proc.failure_message("Failed to commit fixes", committed))
     sha = git_client.head_sha(cwd=wt_path)
     if not sha:

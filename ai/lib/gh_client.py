@@ -23,10 +23,10 @@ The publishing gate is deliberately not here. `pr_comments` gates its writes on
 gate inside the transport would make a policy decision invisible to the code
 that owns it.
 
-Unlike `git_client`, this depends on `log` as well as `proc`: a rate-limit
-ladder that waits five minutes in silence reads as a hang, so the waiting is
-announced. Whether a *failed* call is worth logging remains the caller's
-decision, as it is there.
+Like `git_client`, this depends on `log` as well as `proc`, and for more of its
+surface than that one does: a rate-limit ladder that waits five minutes in
+silence reads as a hang, so the waiting is announced. Whether a *failed* call is
+worth logging remains the caller's decision, as it is there.
 """
 
 # doc-group: platform

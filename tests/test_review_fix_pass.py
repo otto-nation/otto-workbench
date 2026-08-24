@@ -557,6 +557,46 @@ class TestHasUncommittedChanges:
         (git_wt / "src.py").write_text("edited\n")
         assert review_common.has_uncommitted_changes(Path(git_wt)) is True
 
+    def test_a_worktree_git_cannot_read_is_dirty(self, git_wt):
+        """Regression: the gate may not answer "nothing to commit" on a failed read.
+
+        A `status` that never completed says nothing about the tree. Read as
+        clean, the fix pass returns before staging and reports the agent's
+        edits as applied while they sit uncommitted in the worktree.
+        """
+        (git_wt / "src.py").write_text("edited\n")
+        (git_wt / ".git" / "index").write_bytes(b"not an index")
+        assert review_common.has_uncommitted_changes(git_wt) is True
+
+
+class TestCommittedNothing:
+    """The other half of the gate, which opens on a worktree git cannot read.
+
+    Against a real `git commit` for the same reason as the class above: which
+    failures mean "the change was empty" is git's vocabulary, not this repo's.
+    """
+
+    def test_an_empty_commit_is_not_a_rejection(self, git_wt):
+        result = review_fix.git_client.run("commit", "-m", "x", cwd=git_wt)
+        assert not result.ok
+        assert review_common.committed_nothing(result) is True
+
+    def test_staged_but_unchanged_content_is_not_a_rejection(self, git_wt):
+        """`add` of an unmodified file stages nothing, so the commit is empty."""
+        _git(git_wt, "add", "src.py")
+        result = review_fix.git_client.run("commit", "-m", "x", cwd=git_wt)
+        assert not result.ok
+        assert review_common.committed_nothing(result) is True
+
+    def test_a_hook_rejection_is_a_rejection(self, git_wt, tmp_path, live_git_hooks):
+        """`live_git_hooks` is what lets the hook run — the suite disowns them."""
+        _install_failing_pre_commit(tmp_path)
+        (git_wt / "src.py").write_text("edited\n")
+        _git(git_wt, "add", "src.py")
+        result = review_fix.git_client.run("commit", "-m", "x", cwd=git_wt)
+        assert not result.ok
+        assert review_common.committed_nothing(result) is False
+
 
 class TestPushFixes:
     """The advice each refusal earns.

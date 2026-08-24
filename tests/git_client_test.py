@@ -211,6 +211,39 @@ def test_is_dirty_sees_a_staged_change(repo):
     assert git_client.is_dirty(cwd=repo)
 
 
+def test_is_dirty_reads_an_unreadable_worktree_as_dirty(repo, capsys):
+    """Regression: a `status` that failed is not a `status` that came back empty.
+
+    The index is corrupted rather than the call mocked — what git does with a
+    worktree it cannot read is the behaviour the answer rests on. Callers gate
+    `git reset --hard` and the fix pass's commit on it, so "don't know" has to
+    arrive as dirty and has to say so.
+    """
+    _commit(repo)
+    (repo / ".git" / "index").write_bytes(b"not an index")
+    assert git_client.is_dirty(cwd=repo)
+    assert "treating it as dirty" in capsys.readouterr().err
+
+
+def test_is_dirty_reads_a_path_that_is_not_a_repo_as_dirty(tmp_path):
+    """The same answer git's own "not a git repository" has to produce."""
+    assert git_client.is_dirty(cwd=tmp_path)
+
+
+def test_is_dirty_reads_a_killed_status_as_dirty(repo, monkeypatch):
+    """The shape the failure took under load: no output on either stream.
+
+    A `status` killed by a SIGPIPE or an expired bound leaves exactly what a
+    clean tree leaves, so only the exit code tells them apart — which is why
+    this read cannot go through `out`.
+    """
+    _commit(repo)
+    monkeypatch.setattr(
+        proc, "run", lambda *a, **kw: proc.CmdResult(proc.TIMEOUT_RETURNCODE, "", ""),
+    )
+    assert git_client.is_dirty(cwd=repo)
+
+
 def test_commit_exists_distinguishes_a_real_sha(repo):
     sha = _commit(repo)
     assert git_client.commit_exists(sha, cwd=repo)

@@ -1099,6 +1099,30 @@ def test_commit_and_push_skips_a_clean_worktree():
     mock_push.assert_not_called()
 
 
+def test_commit_and_push_accepts_an_empty_commit_after_an_unreadable_status():
+    """The gate answers "dirty" when git could not read the worktree.
+
+    Getting here therefore no longer proves there was work, so git declining an
+    empty commit is that ambiguity resolving — not a failure worth aborting the
+    run over, and nothing to push.
+    """
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(list(args))
+        if "commit" in args:
+            return CmdResult(1, "On branch main\nnothing to commit, working tree clean\n")
+        return CmdResult(0, "")
+
+    with patch.object(ci_check.git_client, "run", side_effect=fake_run), \
+         patch.object(ci_check.review_common, "has_uncommitted_changes",
+                      return_value=True):
+        sha = ci_check._commit_and_push(Path("/fake"), 1, 0)
+
+    assert sha is None
+    assert not any("push" in call for call in calls)
+
+
 def test_commit_and_push_stages_untracked_files():
     """A fix that only adds files must land in the commit, not be dropped by -u."""
     sha, calls, _ = _run_commit_and_push(dirty=True)

@@ -46,14 +46,20 @@ loudly.
 discards a failure, and it is deliberate: it is what the wrappers it replaces
 already did, because most of these reads are questions with a reasonable
 "don't know" answer. When the exit code or stderr matters — and for a write it
-always does — call `run` and read the `CmdResult`.
+always does — call `run` and read the `CmdResult`. A yes/no read whose caller
+gates destructive or discarding work on the answer belongs in that second group
+too: through `out` its "don't know" is spelled the same way as its "no", which
+is how `is_dirty` used to report a killed `status` as a clean tree.
 
 Writes are not modelled beyond `run`. Committing and pushing gets an owner of
 its own, with the publishing gate over it, rather than a convenience wrapper
 here that would turn four gate-less push sites into five.
 
-Depends on `proc` and nothing else. Whether a failed read is worth logging is
-the caller's decision, and most of them have already decided it is not.
+Depends on `proc`, and on `log` for the one read that has to announce a failure
+it absorbs: `is_dirty` answering "dirty" because git never answered would
+otherwise be indistinguishable from a genuinely dirty tree. Whether any other
+failed read is worth logging stays the caller's decision, and most of them have
+already decided it is not.
 """
 
 # doc-group: platform
@@ -62,6 +68,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import log
 import proc
 import timeouts
 from proc import CmdResult
@@ -182,13 +189,27 @@ def current_branch(cwd: str | Path | None = None) -> str:
 
 
 def is_dirty(cwd: str | Path | None = None) -> bool:
-    """Whether the tree has staged, unstaged, or untracked changes.
+    """Whether the tree has staged, unstaged, or untracked changes, reading a
+    `status` that failed as dirty.
 
     Porcelain rather than `diff --quiet`: an agent that only adds files —
     tests, fixtures — leaves the tracked diff empty, and a diff-only gate then
     skips the commit while the caller still reports the work as done.
+
+    `run` rather than `out` so the exit code survives. Callers gate destructive
+    or discarding work on this answer — one hard-resets the worktree when it
+    reads clean, another concludes the fix pass has nothing to commit — so a
+    `status` killed by a SIGPIPE, a timeout, or a locked index must not be
+    spelled the same way as an empty one. Over-reporting costs a skipped reset
+    or a commit git then declines as empty; under-reporting costs the work.
     """
-    return bool(out("status", "--porcelain", cwd=cwd))
+    r = run("status", "--porcelain", cwd=cwd)
+    if r.ok:
+        return bool(r.stdout.strip())
+    log.warn(proc.failure_message(
+        f"Could not read the state of {cwd or '.'} — treating it as dirty", r,
+    ))
+    return True
 
 
 def commit_exists(sha: str, cwd: str | Path | None = None) -> bool:

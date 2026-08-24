@@ -73,6 +73,42 @@ make_git_repo_with_org() {
   git -C "$dir" remote add origin "git@github.com:${org}/${repo}.git"
 }
 
+# make_container_seed DIR — commits whatever DIR already holds as one commit on
+# `main`, and adds a `feat` branch. The repo a bare-repo container is cloned from.
+#
+# --initial-branch is pinned rather than inherited from init.defaultBranch,
+# because which branch a container calls default is the thing under test: a
+# runner whose git still defaults to master would fail here in setup rather than
+# in an assertion.
+make_container_seed() {
+  local dir="$1"
+  mkdir -p "$dir"
+  git -C "$dir" init -q --initial-branch=main
+  git -C "$dir" config user.email test@example.com
+  git -C "$dir" config user.name Test
+  git -C "$dir" add -A
+  git -C "$dir" commit -qm init
+  git -C "$dir" branch feat
+}
+
+# make_empty_container CONTAINER SEED — a bare clone of SEED at CONTAINER/.git
+# and nothing else: a container whose default branch has no checkout, which is
+# the case every writer of a project artifact has to refuse rather than fall
+# through on.
+make_empty_container() {
+  local container="$1" seed="$2"
+  mkdir -p "$container"
+  git clone -q --bare "$seed" "$container/.git"
+}
+
+# make_worktree_container CONTAINER SEED — the layout wt-init produces: the bare
+# clone of SEED at CONTAINER/.git with the `main` worktree checked out beside it.
+make_worktree_container() {
+  local container="$1" seed="$2"
+  make_empty_container "$container" "$seed"
+  git -C "$container" worktree add -q "$container/main" main
+}
+
 # make_fake_binary DIR NAME — creates an executable stub in DIR/NAME.
 make_fake_binary() {
   local dir="$1"

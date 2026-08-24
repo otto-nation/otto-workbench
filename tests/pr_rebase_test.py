@@ -3233,14 +3233,61 @@ def test_main_threads_one_ref_into_both_commands():
 
 # ── _force_push ────────────────────────────────────────────────────────────
 
+_HEAD_SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+
+
+def _answering_the_owner(fake_run):
+    """Wrap a subprocess stub so the push owner's questions get real answers.
+
+    `_push` goes through `push.push`, which reads HEAD and then asks the remote
+    what it holds. A stub's catch-all answers both with the empty string, and
+    an empty remote head compares equal to an empty local sha — so every push
+    would read as landed whatever the test was setting up.
+    """
+    def run(cmd, **kwargs):
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=f"{_HEAD_SHA}\n", stderr="")
+        if cmd == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="isaac/feat/x\n", stderr="")
+        if cmd[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout=f"{_HEAD_SHA}\trefs/heads/isaac/feat/x\n", stderr="")
+        return fake_run(cmd, **kwargs)
+    return run
+
 
 def test_force_push_succeeds_first_try():
     """Push succeeds on first attempt — returns 0."""
     def fake_run(cmd, **kwargs):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
         assert pr_rebase_cli._force_push("/fake") == 0
+
+
+def test_force_push_that_never_landed_skips_the_recovery_ladder(capsys):
+    """git exits zero and the remote still holds something else.
+
+    The ladder repairs a tree the hooks rejected. Here the hooks passed and the
+    push evaporated, so running the AI fix over it would ask an agent to repair
+    code that has nothing wrong with it.
+    """
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
+         mock.patch.object(pr_rebase_cli.push, "remote_head", return_value="9f8e7d6c5b"), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures") as mock_fix:
+        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
+
+    assert rc == 1
+    mock_fix.assert_not_called()
+    printed = capsys.readouterr().err
+    assert "the remote did not move" in printed
+    assert "9f8e7d6" in printed
 
 
 def test_force_push_fails_no_modified_files():
@@ -3255,7 +3302,7 @@ def test_force_push_fails_no_modified_files():
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
         rc = pr_rebase_cli._force_push("/fake")
 
     assert rc == 1
@@ -3283,7 +3330,7 @@ def test_force_push_retries_after_regenerated_files():
             committed[0] = True
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
         rc = pr_rebase_cli._force_push("/fake")
 
     assert rc == 0
@@ -3308,14 +3355,18 @@ def test_force_push_commit_fails_returns_original_error():
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="commit error")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
         rc = pr_rebase_cli._force_push("/fake")
 
     assert rc == 1
 
 
 def test_force_push_retry_also_fails():
-    """Push fails, retry after commit also fails — returns retry's error code."""
+    """Push fails, retry after commit also fails — the branch is unpushed.
+
+    Git's own exit code is not passed through: the owner answers whether the
+    remote holds the branch, and a git exit of 0 is not that answer.
+    """
     push_count = [0]
     committed = [False]
 
@@ -3332,10 +3383,11 @@ def test_force_push_retry_also_fails():
             committed[0] = True
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run):
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
         rc = pr_rebase_cli._force_push("/fake")
 
-    assert rc == 128
+    assert rc == 1
+    assert push_count[0] == 2
 
 
 def test_force_push_refuses_to_retry_a_dirty_tree_after_the_ai_fix():
@@ -3360,7 +3412,7 @@ def test_force_push_refuses_to_retry_a_dirty_tree_after_the_ai_fix():
             )
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True):
         rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
 
@@ -3381,7 +3433,7 @@ def _regeneration_leaves_untracked(push_count):
                    else "?? docs/new-page.md\n")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-    return fake_run
+    return _answering_the_owner(fake_run)
 
 
 def test_force_push_refuses_to_retry_a_dirty_tree_after_regeneration():
@@ -3404,7 +3456,8 @@ def test_force_push_dirty_after_regeneration_still_reaches_the_ai_fix():
     """
     push_count = [0]
 
-    with mock.patch("subprocess.run", side_effect=_regeneration_leaves_untracked(push_count)), \
+    with mock.patch("subprocess.run",
+                    side_effect=_regeneration_leaves_untracked(push_count)), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
         pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
 
@@ -3437,7 +3490,7 @@ def test_force_push_regenerated_files_fall_through_to_ai_fix():
             committed[0] = True
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
         rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
 
@@ -3467,7 +3520,7 @@ def test_force_push_ai_fix_sees_the_retry_error():
             committed[0] = True
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
         pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
 
@@ -3841,7 +3894,7 @@ def test_force_push_tries_ai_fix_on_check_failure():
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
         rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
 
@@ -3861,7 +3914,7 @@ def test_force_push_ai_fix_fails_returns_error():
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=False):
         rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
 
@@ -3877,7 +3930,7 @@ def test_force_push_logs_the_final_retry_error():
             )
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True), \
          mock.patch.object(pr_rebase_cli.log, "dim") as mock_dim:
         rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
@@ -3896,7 +3949,7 @@ def test_force_push_no_resolved_files_skips_ai_fix():
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures") as mock_fix:
         rc = pr_rebase_cli._force_push("/fake")
 

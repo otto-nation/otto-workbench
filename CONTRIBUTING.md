@@ -18,13 +18,26 @@ Required to run the full test and lint suite:
 |------|---------|
 | [bats-core](https://bats-core.readthedocs.io) | `brew install bats-core` |
 | [ShellCheck](https://www.shellcheck.net) | `brew install shellcheck` |
+| [GNU parallel](https://www.gnu.org/software/parallel/) | `brew install parallel` |
+| [pytest-xdist](https://pytest-xdist.readthedocs.io) | `pipx inject pytest pytest-xdist` |
+
+The last two are what make the suites run in parallel. Neither is required — without
+them `bin/local/run-tests` falls back to a serial run of the affected suite, which takes
+several minutes rather than well under one.
 
 ## Running Tests
 
 ```bash
-task test   # run full bats suite
-task lint   # ShellCheck all shell scripts
+task test          # run both suites (bats, then pytest)
+task test:pytest   # run only the pytest suite
+task lint          # ShellCheck all shell scripts
 ```
+
+Both go through `bin/local/run-tests`, which owns the parallelism settings for the whole
+repo — the Taskfile, the pre-push hook, and CI all call it rather than spelling the flags
+out themselves. It sizes the run from the core count; set `TEST_JOBS` to override, and
+`TEST_JOBS=1` to get the serial ordering back when bisecting a test that only fails under
+concurrency.
 
 Tests live in `tests/`. Each file targets a single library function or script behaviour. The shared helper `tests/test_helper.bash` provides `source_lib`, `make_ai_config`, `make_fake_binary`, and `make_git_remote`.
 

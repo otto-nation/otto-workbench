@@ -9,6 +9,11 @@ meta:
   source: bin/local
 
 tools:
+  - name: run-tests
+    permission: false
+    visibility: brief
+    description: "Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI"
+
   - name: validate-all
     permission: false
     visibility: brief

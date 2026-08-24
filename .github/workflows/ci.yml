@@ -86,7 +86,7 @@ jobs:
         run: task --list
 
       - name: Run bats tests
-        run: bats tests/ --recursive --timing --jobs 4
+        run: bin/local/run-tests --bats
 
       - name: Check tests did not pollute repo config
         run: |
@@ -107,8 +107,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # xdist is what makes the suite parallel; bin/local/run-tests probes for
+      # it and falls back to a serial run when it is absent, so the version is
+      # pinned here the same way pytest itself is.
       - name: Install pytest
-        run: pipx install pytest==8.3.5
+        run: |
+          pipx install pytest==8.3.5
+          pipx inject pytest pytest-xdist==3.8.0
 
       # tests/test_tool_registry.py reads the registries through
       # ai/lib/workbench_config.py, which uses PyYAML when it is importable and
@@ -121,7 +126,7 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Run pytest
-        run: pytest tests/ -v
+        run: bin/local/run-tests --pytest
 
   surface-compat:
     name: Surface Compatibility

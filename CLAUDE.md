@@ -9,9 +9,10 @@ bash, zsh, python (the `ai/` subsystem — `ai/lib/` and most of `ai/claude/bin/
 ## Commands
 
 ```bash
-bats tests/                    # run all bats tests
+bin/local/run-tests            # run both suites in parallel (what the Taskfile, pre-push, and CI call)
+bin/local/run-tests --bats     # run only the bats suite
+bin/local/run-tests --pytest   # run only the pytest suite
 bats tests/<file>.bats         # run one bats suite
-pytest tests/                  # run all Python tests
 pytest tests/<file>.py         # run one Python suite
 shellcheck <file>.sh           # lint a script
 bin/local/validate-all               # run every validator
@@ -26,14 +27,22 @@ npm --prefix site test         # run the site's remark plugin tests
 npm --prefix site run build    # static-export the site to site/out (what CI's Site job runs)
 ```
 
-Pre-push and CI run three gates independently — `bin/local/validate-all`, `bats tests/`,
-and `pytest tests/`. Passing one is not passing the gate.
+Pre-push and CI run three gates independently — `bin/local/validate-all`,
+`bin/local/run-tests --bats`, and `bin/local/run-tests --pytest`. Passing one is not
+passing the gate. The runner owns the parallelism for both suites, so a whole-suite run
+goes through it rather than spelling `--jobs`/`-n` out again; a single file still goes
+straight to `bats`/`pytest`.
 
 There is no virtualenv and no Python dependency manager here — `pyproject.toml` only sets
 pytest's `testpaths`, and nothing is installed from it. Run `pytest` and `bats` as bare
 commands off `PATH`, the way the Taskfile, CI, and the pre-push hook do. `uv run pytest`
 and `.venv/bin/python -m pytest` reach nothing the bare command does not, and neither is
 allow-listed, so they only add a permission prompt.
+
+`pytest-xdist` is the one Python package the suite wants but does not require:
+`bin/local/run-tests` passes `-n` when it is importable and runs serially when it is not.
+Install it into the same pipx venv as pytest — `pipx inject pytest pytest-xdist` — to get
+the parallel run locally. CI installs it explicitly.
 
 ## Conventions
 

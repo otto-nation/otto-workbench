@@ -3,6 +3,25 @@
 
 bats_require_minimum_version 1.5.0
 
+# The 60x40 tree three cases below assert against, generated once.
+#
+# Building it costs about two seconds in file creation alone and another in
+# `git add`, and the three cases that want it read three different parts of one
+# document rather than exercising three generator runs — so they share a run.
+# The per-test REPO is untouched: cases that need their own fixture still get a
+# clean one from setup().
+setup_file() {
+  load 'test_helper'
+  BIG_TMPDIR="$BATS_FILE_TMPDIR/big"
+  BIG_REPO="$BIG_TMPDIR/repo"
+  mkdir -p "$BIG_REPO/.claude"
+  _make_dirs_in "$BIG_REPO" 60 40
+  _init_repo_at "$BIG_REPO"
+  bash "$REPO_ROOT/ai/claude/skills/anatomy/generate-anatomy.sh" "$BIG_REPO" >/dev/null
+  BIG_ANATOMY="$BIG_REPO/.claude/anatomy.md"
+  export BIG_REPO BIG_ANATOMY
+}
+
 setup() {
   load 'test_helper'
   common_setup
@@ -19,26 +38,36 @@ teardown() {
   common_teardown
 }
 
-# _init_repo — makes $REPO a git repo with one commit covering everything present
-_init_repo() {
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email test@example.com
-  git -C "$REPO" config user.name Test
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+# _init_repo_at DIR — makes DIR a git repo with one commit covering everything present
+_init_repo_at() {
+  git -C "$1" init -q
+  git -C "$1" config user.email test@example.com
+  git -C "$1" config user.name Test
+  git -C "$1" add -A
+  git -C "$1" commit -qm init
 }
 
-# _make_dirs COUNT FILES_PER_DIR — creates COUNT dirs of FILES_PER_DIR files each
-_make_dirs() {
-  local count="$1" per="$2" i j
+# _init_repo — _init_repo_at against the per-test $REPO.
+_init_repo() {
+  _init_repo_at "$REPO"
+}
+
+# _make_dirs_in DIR COUNT FILES_PER_DIR — creates COUNT dirs of FILES_PER_DIR files each
+_make_dirs_in() {
+  local root="$1" count="$2" per="$3" i j
   for ((i = 0; i < count; i++)); do
     local dir
-    dir="$(printf '%s/area-%03d' "$REPO" "$i")"
+    dir="$(printf '%s/area-%03d' "$root" "$i")"
     mkdir -p "$dir"
     for ((j = 0; j < per; j++)); do
       printf '# area %03d file %d\ncode\n' "$i" "$j" > "$(printf '%s/f%02d.sh' "$dir" "$j")"
     done
   done
+}
+
+# _make_dirs COUNT FILES_PER_DIR — _make_dirs_in against the per-test $REPO.
+_make_dirs() {
+  _make_dirs_in "$REPO" "$1" "$2"
 }
 
 @test "generates an index with per-file rows and descriptions" {
@@ -75,15 +104,10 @@ _make_dirs() {
   [ "$output" -eq 0 ]
 }
 
+# 60 dirs x 40 files = 2400 files, past the 2000-file detail budget. The three
+# cases below read the shared run from setup_file.
 @test "repos over MAX_FILES still list every directory" {
-  # 60 dirs x 40 files = 2400 files, past the 2000-file detail budget.
-  _make_dirs 60 40
-  _init_repo
-
-  run bash "$GEN_ANATOMY" "$REPO"
-  [ "$status" -eq 0 ]
-
-  grep -q '## Directory Index' "$REPO/.claude/anatomy.md"
+  grep -q '## Directory Index' "$BIG_ANATOMY"
 
   # Every area must appear, whether detailed or indexed. Before the Directory
   # Index existed, the alphabetical truncation dropped the tail outright.
@@ -91,7 +115,7 @@ _make_dirs() {
   for ((i = 0; i < 60; i++)); do
     local area
     area="$(printf 'area-%03d' "$i")"
-    grep -q "$area/" "$REPO/.claude/anatomy.md" || { echo "missing: $area"; missing=1; }
+    grep -q "$area/" "$BIG_ANATOMY" || { echo "missing: $area"; missing=1; }
   done
   [ "$missing" -eq 0 ]
 }
@@ -115,27 +139,15 @@ _make_dirs() {
 }
 
 @test "header reports detailed and indexed counts separately" {
-  _make_dirs 60 40
-  _init_repo
-
-  run bash "$GEN_ANATOMY" "$REPO"
-  [ "$status" -eq 0 ]
-
-  run head -2 "$REPO/.claude/anatomy.md"
+  run head -2 "$BIG_ANATOMY"
   [[ "$output" == *"files: 2400"* ]]
   [[ "$output" == *"detailed:"* ]]
   [[ "$output" == *"indexed:"* ]]
 }
 
 @test "directory index rows carry file and line totals" {
-  _make_dirs 60 40
-  _init_repo
-
-  run bash "$GEN_ANATOMY" "$REPO"
-  [ "$status" -eq 0 ]
-
   # Each generated file is 2 lines, so an indexed area-NNN row reads "| 40 | 80 |".
-  grep -qE '^\| area-[0-9]{3}/ \| 40 \| 80 \| 320 \|$' "$REPO/.claude/anatomy.md"
+  grep -qE '^\| area-[0-9]{3}/ \| 40 \| 80 \| 320 \|$' "$BIG_ANATOMY"
 }
 
 @test "skips binary extensions and lockfiles" {

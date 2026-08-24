@@ -332,6 +332,11 @@ in the second and not the first are attributed to it. Without that first
 snapshot the pass cannot tell its own work from whatever was already sitting in
 the worktree, and it both commits and takes credit for the difference.
 
+A snapshot git could not take stops the pass rather than reading as an empty
+one. Everything outside the difference goes uncommitted, so an unreadable
+worktree spelled the same way as an unchanged one is how a pass reports success
+having left the agent's fixes behind.
+
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
 

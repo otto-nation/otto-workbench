@@ -13,7 +13,7 @@ import push
 import review_common
 import review_findings
 import review_fix
-from proc import CmdResult
+from proc import TIMEOUT_RETURNCODE, CmdResult
 from review_common import Diagnosis, DiagnosisKind, Effort, Phase
 from review_findings import Finding
 
@@ -821,12 +821,33 @@ class TestChangedSourceFiles:
         assert "--exclude-standard" in mock_run.call_args_list[1].args
 
     @patch("review_fix.git_client.run")
-    def test_diff_failure_still_reports_untracked(self, mock_run):
+    def test_a_failed_diff_is_not_a_partial_snapshot(self, mock_run):
+        """Half a snapshot omits the tracked edits, silently and permanently.
+
+        The untracked half answering is not a reason to keep going: every path
+        the failed half would have named is a path the pass never commits.
+        """
         mock_run.side_effect = [
             CmdResult(128),
             CmdResult(0, "tests/new.bats\n"),
         ]
-        assert review_fix._changed_source_files("/wt") == {"tests/new.bats"}
+        assert review_fix._changed_source_files("/wt") is None
+
+    @patch("review_fix.git_client.run")
+    def test_a_failed_untracked_listing_is_not_a_partial_snapshot(self, mock_run):
+        mock_run.side_effect = [
+            CmdResult(0, "src/auth.go\n"),
+            CmdResult(128),
+        ]
+        assert review_fix._changed_source_files("/wt") is None
+
+    @patch("review_fix.git_client.run")
+    def test_a_killed_snapshot_is_not_an_empty_one(self, mock_run):
+        mock_run.side_effect = [CmdResult(TIMEOUT_RETURNCODE, "", "")]
+        assert review_fix._changed_source_files("/wt") is None
+
+    def test_a_path_that_is_not_a_repo_has_no_snapshot(self, tmp_path):
+        assert review_fix._changed_source_files(str(tmp_path)) is None
 
     def test_gitignored_paths_are_in_neither_snapshot(self, git_wt):
         (git_wt / "build.cache").write_text("artifact\n")
@@ -924,7 +945,16 @@ class TestRunFixPassRetry:
         review_file.write_text(self.REVIEW_CONTENT)
         job = MagicMock()
         job.review_file = str(review_file)
-        job.wt_path = str(tmp_path)
+        # A real repo with a commit behind it: the pass takes a snapshot of the
+        # worktree before it invokes the agent and refuses to run when it cannot,
+        # so a bare tmp_path no longer stands in for a worktree.
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        _git(wt, "init", "-q", "-b", "main")
+        _git(wt, "-c", "user.email=t@t", "-c", "user.name=t",
+             "-c", "commit.gpgsign=false",
+             "commit", "-q", "--allow-empty", "--no-verify", "-m", "initial")
+        job.wt_path = str(wt)
         job.model = None
         job.effort = Effort.MEDIUM
         return job
@@ -1083,6 +1113,102 @@ class TestRunFixPassOnADirtyWorktree:
         assert "- [ ] **[M1]**" in review
         assert "- [x] **[M2]**" in review
         mock_push.assert_called_once()
+
+
+class TestRunFixPassWhenTheSnapshotFails:
+    """A snapshot git could not take must never read as an unchanged worktree.
+
+    The difference between the two snapshots is the only list of paths the pass
+    commits, so an empty one is indistinguishable from a pass that did nothing —
+    which is how a `git status` killed by a SIGPIPE or a locked index ends with
+    the agent's fixes discarded and the run reported as a success.
+    """
+
+    REVIEW_CONTENT = (
+        "## Must fix\n"
+        "- [ ] **[M1]** `helper.py:1` — Missing helper\n"
+    )
+
+    def _make_job(self, git_wt, tmp_path):
+        review_file = tmp_path / "review.md"
+        review_file.write_text(self.REVIEW_CONTENT)
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(git_wt)
+        job.model = None
+        job.effort = Effort.MEDIUM
+        return job
+
+    @staticmethod
+    def _corrupt_index(git_wt):
+        """Make every later read of the worktree's state fail, as a lock would."""
+        (git_wt / ".git" / "index").write_bytes(b"garbage")
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_an_unreadable_worktree_stops_the_pass_before_the_agent_runs(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path, capsys,
+    ):
+        """Refusing here costs nothing: the agent has not done any work yet.
+
+        With no baseline the pass cannot tell its own edits from what was
+        already in the worktree, so running the agent only produces work it
+        would have to either commit wholesale or throw away.
+        """
+        self._corrupt_index(git_wt)
+        review_fix.run_fix_pass(self._make_job(git_wt, tmp_path))
+
+        mock_invoke.assert_not_called()
+        mock_push.assert_not_called()
+        assert "skipping fix pass" in capsys.readouterr().err
+
+    @patch("review_fix._push_fixes")
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_the_agents_work_is_not_dropped_when_the_second_snapshot_fails(
+        self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path, capsys,
+    ):
+        """The regression: edits survive in the worktree and the run says so."""
+        def agent_run(*args, **kwargs):
+            (git_wt / "helper.py").write_text("def helper(): pass\n")
+            self._corrupt_index(git_wt)
+
+        mock_invoke.side_effect = agent_run
+        job = self._make_job(git_wt, tmp_path)
+        review_fix.run_fix_pass(job)
+
+        assert (git_wt / "helper.py").read_text() == "def helper(): pass\n"
+        assert _git(git_wt, "log", "--oneline").strip().count("\n") == 0
+        mock_push.assert_not_called()
+
+        err = capsys.readouterr().err
+        assert "nothing was committed or pushed" in err
+        assert str(git_wt) in err
+
+    @patch("review_fix._push_fixes")
+    @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
+    @patch("review_phases.invoke_agent")
+    @patch("review_fix.build_prompt", return_value="prompt")
+    def test_the_retrys_work_is_not_dropped_when_the_snapshot_fails(
+        self, mock_prompt, mock_invoke, mock_diag, mock_push, git_wt, tmp_path,
+        capsys,
+    ):
+        """The retry path re-reads the worktree, so it can fail the same way."""
+        def agent_run(*args, **kwargs):
+            if mock_invoke.call_count < 2:
+                return
+            (git_wt / "helper.py").write_text("def helper(): pass\n")
+            self._corrupt_index(git_wt)
+
+        mock_invoke.side_effect = agent_run
+        review_fix.run_fix_pass(self._make_job(git_wt, tmp_path))
+
+        assert mock_invoke.call_count == 2
+        assert (git_wt / "helper.py").read_text() == "def helper(): pass\n"
+        assert _git(git_wt, "log", "--oneline").strip().count("\n") == 0
+        mock_push.assert_not_called()
+        assert "nothing was committed or pushed" in capsys.readouterr().err
 
 
 class TestSnapshotDiffStagesEveryShapeOfChange:

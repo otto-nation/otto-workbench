@@ -10,6 +10,11 @@ in the second and not the first are attributed to it. Without that first
 snapshot the pass cannot tell its own work from whatever was already sitting in
 the worktree, and it both commits and takes credit for the difference.
 
+A snapshot git could not take stops the pass rather than reading as an empty
+one. Everything outside the difference goes uncommitted, so an unreadable
+worktree spelled the same way as an unchanged one is how a pass reports success
+having left the agent's fixes behind.
+
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
 """
@@ -121,20 +126,61 @@ def _push_fixes(job: ReviewJob):
     )
 
 
-def _changed_source_files(wt_path: str) -> set[str]:
-    """Return set of changed files (staged, unstaged, and untracked).
+def _changed_source_files(wt_path: str) -> set[str] | None:
+    """The changed files (staged, unstaged, and untracked), or None when git
+    could not list them.
 
     Called on both sides of the fix agent's run. `--exclude-standard` keeps
     gitignored paths out of either snapshot, so they cannot reach the
     difference and cannot be staged from it.
+
+    `run` rather than `lines`, which returns `[]` on a non-zero exit: a path
+    missing from a snapshot is a path the pass never commits, so a read that
+    failed must not be spelled the same way as a worktree with nothing in it.
+    One failed half is enough to return None — a partial snapshot is the same
+    silent omission in a smaller size.
     """
     changed: set[str] = set()
     # Untracked files count: a fix that only adds a test file still fixed the
     # finding, and diff-only detection would report it as skipped.
     for args in (("diff", "HEAD", "--name-only"),
                  ("ls-files", "--others", "--exclude-standard")):
-        changed.update(git_client.lines(*args, cwd=wt_path))
+        r = git_client.run(*args, cwd=wt_path)
+        if not r.ok:
+            log.warn(proc.failure_message(
+                f"Could not list what changed in {wt_path}", r,
+            ))
+            return None
+        changed.update(line for line in r.stdout.splitlines() if line)
     return changed
+
+
+def _agent_changed(wt_path: str, before: set[str]) -> set[str] | None:
+    """What the agent added to the worktree's dirty set, or None when the
+    second snapshot could not be taken.
+
+    None is not an empty delta. An empty one says the agent changed nothing and
+    there is nothing to commit; None says the pass cannot name what the agent
+    changed, which is the case where committing nothing loses work.
+    """
+    after = _changed_source_files(wt_path)
+    return None if after is None else after - before
+
+
+def _report_unattributable(wt_path: str) -> None:
+    """Report a fix pass whose work could not be attributed, and where it is.
+
+    Staging everything is not the fallback: `_commit_fixes` stages by name so
+    that a build artifact or unrelated work in progress never rides along in a
+    commit the pass then pushes, and a snapshot that failed is exactly when
+    that list is unavailable. The edits are still in the worktree, so the
+    honest end of this path is to say so and commit nothing.
+    """
+    log.error(
+        f"could not read what the fix pass changed in {wt_path} — nothing was "
+        f"committed or pushed. Any fixes it made are still in the worktree:\n"
+        f"  git -C '{wt_path}' status"
+    )
 
 
 @dataclass
@@ -254,6 +300,20 @@ def _fix_pass_made_progress(result: FixPassResult) -> bool:
     return any(f.skip_reason for f in result.skipped)
 
 
+def _should_retry(result: FixPassResult, fix_log: str) -> bool:
+    """Whether a pass that changed nothing is worth running a second time.
+
+    Diagnosing the session log is what produces the message, so the warning
+    belongs here rather than at the call site: a pass that made no progress
+    says so whether or not the reason is one a retry could clear.
+    """
+    if _fix_pass_made_progress(result) or result.skipped_count == 0:
+        return False
+    diagnosis = diagnose_missing_output(fix_log)
+    log.warn(f"Fix pass made no progress ({diagnosis.message})")
+    return _is_retryable(diagnosis)
+
+
 def run_fix_pass(job: ReviewJob):
     if not _has_output(job.review_file):
         log.warn("No review file to fix — skipping fix pass")
@@ -286,10 +346,21 @@ def run_fix_pass(job: ReviewJob):
     # hash across the snapshot once fix passes routinely run against trees that
     # are dirty in the very files the review has findings on.
     before_changed = _changed_source_files(job.wt_path)
+    if before_changed is None:
+        # Refused before the agent runs, so nothing is lost by refusing: with no
+        # baseline the pass cannot tell its own work from what was already here,
+        # and it would either commit the worktree wholesale or commit none of it.
+        log.error(
+            f"could not read the state of {job.wt_path} — skipping fix pass"
+        )
+        return
     runner.invoke(prompt, max_turns)
     log.blank()
 
-    agent_changed = _changed_source_files(job.wt_path) - before_changed
+    agent_changed = _agent_changed(job.wt_path, before_changed)
+    if agent_changed is None:
+        _report_unattributable(job.wt_path)
+        return
     _reconcile_checkboxes(job.review_file, agent_changed)
 
     after_text = Path(job.review_file).read_text()
@@ -298,28 +369,28 @@ def run_fix_pass(job: ReviewJob):
 
     result = _diff_findings(before_findings, after_findings)
 
-    if not _fix_pass_made_progress(result) and result.skipped_count > 0:
-        diagnosis = diagnose_missing_output(fix_log)
-        log.warn(f"Fix pass made no progress ({diagnosis.message})")
-        if _is_retryable(diagnosis):
-            retry_turns = _fix_retry_budget(max_turns)
-            retry_prompt = _FIX_RETRY_HINT + build_prompt(
-                TEMPLATE_FIX, job, max_turns=retry_turns,
-            )
-            log.info(f"Retrying fix pass (max_turns={retry_turns})...")
-            prior_log = preserve_log(fix_log)
-            log.blank()
-            runner.invoke(retry_prompt, retry_turns)
-            restore_preserved(fix_log, prior_log)
-            log.blank()
-            # Still measured against the pre-pass snapshot: the retry's work and
-            # the first attempt's are both the agent's, and both must commit.
-            agent_changed = _changed_source_files(job.wt_path) - before_changed
-            _reconcile_checkboxes(job.review_file, agent_changed)
-            after_text = Path(job.review_file).read_text()
-            after_findings = parse_findings(after_text)
-            extract_skip_reasons(after_findings)
-            result = _diff_findings(before_findings, after_findings)
+    if _should_retry(result, fix_log):
+        retry_turns = _fix_retry_budget(max_turns)
+        retry_prompt = _FIX_RETRY_HINT + build_prompt(
+            TEMPLATE_FIX, job, max_turns=retry_turns,
+        )
+        log.info(f"Retrying fix pass (max_turns={retry_turns})...")
+        prior_log = preserve_log(fix_log)
+        log.blank()
+        runner.invoke(retry_prompt, retry_turns)
+        restore_preserved(fix_log, prior_log)
+        log.blank()
+        # Still measured against the pre-pass snapshot: the retry's work and
+        # the first attempt's are both the agent's, and both must commit.
+        agent_changed = _agent_changed(job.wt_path, before_changed)
+        if agent_changed is None:
+            _report_unattributable(job.wt_path)
+            return
+        _reconcile_checkboxes(job.review_file, agent_changed)
+        after_text = Path(job.review_file).read_text()
+        after_findings = parse_findings(after_text)
+        extract_skip_reasons(after_findings)
+        result = _diff_findings(before_findings, after_findings)
 
     summary = _format_fix_summary(result)
     if summary:

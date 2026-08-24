@@ -154,6 +154,10 @@ class FixRecord:
         merged = {item.id: item for item in prior.items if item.id}
         # Entries without an id cannot be de-duplicated; keep them side by side
         # rather than collapsing every one onto the "" key.
+        # ceiling: an id-less outcome is kept for every round it appears in, so a
+        # long review cycle accumulates one entry per round with no way to tell
+        # the repeats apart. Fix that by giving the pass's items ids — cap this
+        # list only if a pass turns out to have items it genuinely cannot key.
         anonymous = [item for item in prior.items if not item.id]
         for item in self.items:
             if item.id:

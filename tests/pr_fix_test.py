@@ -47,7 +47,7 @@ def test_fix_outcome_adds_only_what_no_thread_has():
 def test_fix_outcome_serializes_as_its_string():
     item = pr_fix.ItemOutcome(id="i1", outcome=pr_fix.FixOutcome.DECLINED)
     assert serde.to_dict(item)["outcome"] == "declined"
-    assert serde.from_dict(pr_fix.ItemOutcome, {"outcome": "declined"}) == item.__class__(
+    assert serde.from_dict(pr_fix.ItemOutcome, {"outcome": "declined"}) == pr_fix.ItemOutcome(
         outcome=pr_fix.FixOutcome.DECLINED,
     )
 
@@ -89,10 +89,7 @@ def test_a_later_round_supersedes_the_same_item():
         items=[pr_fix.ItemOutcome(id="a", outcome=pr_fix.FixOutcome.FIXED)],
         updated_at="t2",
     )
-    prior = pr_fix.FixRecord(
-        items=[pr_fix.ItemOutcome(id="a", outcome=pr_fix.FixOutcome.DEFERRED)],
-    )
-    merged = later.merge_into(prior)
+    merged = later.merge_into(_record("a"))
     assert [(i.id, i.outcome) for i in merged.items] == [
         ("a", pr_fix.FixOutcome.FIXED),
     ]
@@ -134,6 +131,28 @@ def test_a_domain_write_folds_the_record_rather_than_replacing_it():
     merged = written.merge_into(prior)
     assert merged.conclusion == "success"
     assert [item.id for item in merged.fix.items] == ["a"]
+
+
+def test_a_record_survives_the_state_file():
+    """`commit_status` is the field a round trip is most likely to lose.
+
+    It is the one `Optional[Enum]` on the record, and None is also what an
+    unwritten record holds — so a serde gap here would read back as "no pass has
+    run" rather than as an error, on every domain at once.
+    """
+    state = pr_state.new_state(
+        repo="o/r", pr_number=1, branch="b", head_sha="def5678", worktree_root="/tmp/wt",
+    )
+    state.ci.fix = pr_fix.FixRecord(
+        items=[pr_fix.ItemOutcome(id="i1", outcome=pr_fix.FixOutcome.SKIPPED)],
+        commit_sha="abc1234",
+        commit_status=pr_fix.CommitStatus.PUSH_HELD,
+        head_sha="def5678",
+        updated_at="2026-07-14T00:00:00+00:00",
+    )
+    restored = pr_state.state_from_dict(pr_state.state_to_dict(state))
+    assert restored.ci.fix == state.ci.fix
+    assert restored.review.fix == pr_fix.FixRecord()
 
 
 @pytest.mark.parametrize("name,cls", sorted(pr_state._domains().items()))

@@ -9,7 +9,43 @@ hundred and thirty.
 
 The runner is `run`, and `out`, `ok` and `lines` are the three shapes callers
 actually wanted from it. Below them sit the reads that appeared at two or more
-call sites; a read used once belongs at its call site, spelled out with `run`.
+call sites — `head_sha`, `current_branch`, `is_dirty`, `commit_exists`; a read
+used once belongs at its call site, spelled out with `run`.
+
+| Call | What it gives you |
+|---|---|
+| `run(*args, cwd=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
+| `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
+| `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
+| `lines(*args)` | Stdout split into non-empty lines. |
+
+There is no `timeout` parameter. The bound follows from the subcommand the same
+way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`
+run `UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so
+the knowledge lives with the client that owns it rather than at each of the
+forty-five call sites, one of which used to pass a number of its own.
+
+`config={"key": "value"}` becomes `-c key=value` ahead of the subcommand.
+`diff`, `ls-files` and `status` get `core.quotePath=false` by default: git
+escapes a non-ASCII path in that output unless told otherwise, and an escaped
+name is not a pathspec a later `git add` can resolve — so a fix touching such a
+file was staged as nothing and reported as applied. Applying the flag to the
+subcommand rather than to each caller is what stops the next call site from
+forgetting it.
+
+Not everything has moved across yet. `pr_context`, `pr-rebase`, `mcps/server`
+and `eval_task` still invoke git as literal argv — the first three because a
+behaviour fix is open on them and a refactor underneath it would collide,
+`eval_task` because its calls need `env=`, which this client does not take and
+`proc.run` does. A new call site should still go through the client.
+
+One consequence of the move is worth knowing before migrating the rest: the
+client passes the worktree as `cwd` rather than as `git -C`. A root that does not
+exist used to come back as a non-zero exit that `out` and `ok` degraded away; it
+now raises `FileNotFoundError` out of Python before git is reached. That is the
+better answer — an absent worktree is a broken caller, not a question git
+declined to answer — but a call site quietly relying on the old degradation will
+start failing loudly.
 
 `out` returning `default` on a non-zero exit is the one place here that
 discards a failure, and it is deliberate: it is what the wrappers it replaces

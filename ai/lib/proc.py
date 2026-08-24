@@ -9,6 +9,39 @@ message. Widening the tuple is not the fix: a caller reading fields by
 name keeps working when a fourth thing needs carrying, and does not have to
 learn the order.
 
+`gh api` is the sharp case: it writes an API error body to stdout and its own
+status line (`gh: ... (HTTP 503)`) to stderr, so a 404 is legible from stdout
+while a 5xx or a dropped connection leaves stdout empty. A classifier reading
+stdout alone calls that a success with no output.
+
+So `run(cmd)` returns a frozen `CmdResult` carrying `returncode`, `stdout` and
+`stderr`, and a caller reads what it needs by name:
+
+| Read | What it gives you |
+|---|---|
+| `r.ok` | The command exited cleanly. |
+| `r.detail` | `stderr` folded onto one line — what to quote in an error. |
+| `r.combined_output` | Both streams, for classifying a failure by what it said. |
+| `r.server_error` | The failure was a 5xx, so the remedy is to wait and retry. |
+
+`failure_message(action, r)` renders a failure without asserting a cause the
+code has not established: it names the action, appends whatever the command
+said, and calls out a 5xx separately because that is the one case where the
+answer is to wait rather than to change anything. It decides that from
+`server_error`, so the rendered message and a classifier reading the same result
+can never disagree about which stream the evidence was on. It accepts a raw
+`subprocess.CompletedProcess` too, so a call site still running `subprocess.run`
+directly can report a failure without converting first.
+
+An expired timeout is the same kind of answer. `run` converts it into a
+`CmdResult` carrying `TIMEOUT_RETURNCODE` (124, the shell convention) with the
+bound and the command quoted on stderr, and whatever the process managed to
+write before it was killed preserved on both streams. Raising instead would need
+a handler at each of the call sites that has none; as a result code it degrades
+through `out`/`ok`/`lines` exactly as any other failure does. The code is
+contract rather than an implementation detail — the eval scorers tell a
+timed-out case from a failed one by it.
+
 Named `proc` rather than `cmd`: `ai/lib` goes on `sys.path` ahead of the
 standard library, and a module called `cmd` there would shadow the stdlib
 `cmd` that `pdb` imports.

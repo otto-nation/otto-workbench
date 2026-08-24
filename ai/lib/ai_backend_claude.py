@@ -2,6 +2,12 @@
 
 Implements preflight(), prompt(), invoke_agent(), and invoke_fix() by
 building `claude -p` commands and running them as subprocesses.
+
+A failure is logged from whichever stream carried the detail, and from the exit
+code alone when neither did. `claude -p` reports some failures on stdout with an
+empty stderr — a usage limit is the common one — so a stderr-only error message
+prints nothing at all and leaves the caller reporting a bare exit code with no
+reason attached.
 """
 
 # doc-group: backend

@@ -6,7 +6,12 @@ getting there, which is the thing the CI ratchet gates on.
 
 Each case ships a `reference-fix/` overlay: the same relative paths, already
 corrected. It is not used at eval time; it exists so the test suite can prove the
-case is solvable and the oracle is not vacuous, without spending a token.
+case is solvable and the oracle is not vacuous, without spending a token. An
+oracle that cannot fail, or cannot be satisfied, measures nothing.
+
+Because CI failures are usually environment-shaped, these cases put stub
+binaries on `PATH` rather than depending on what the host happens to have
+installed, so they fail the same way everywhere.
 """
 
 # doc-group: eval

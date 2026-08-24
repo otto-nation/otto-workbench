@@ -68,6 +68,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
 | `validate-docs-composed` | Validates that every composed doc matches what its docs/*.src.md composes to |
 | `validate-doc-reference` | Validates that a source doc renders every module group its source set declares |
+| `validate-doc-budget` | Validates that a doc declaring a line budget stays within it and holds no '####' heading |
 | `validate-tracked-ignored` | Validates that no tracked file lives under a path .gitignore claims to ignore |
 | `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
 | `generate-doc-reference` | Renders a module reference from the doc blocks of a source set's own modules |

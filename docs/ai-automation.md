@@ -4,6 +4,8 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
+<!-- doc-budget: 400 -->
+
 # AI Automation
 
 Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
@@ -259,16 +261,8 @@ Override per-project with `.taskfile/taskfile.env` in a project root.
 
 ### Usage ledger
 
-Every AI call made through the workbench appends one record to a monthly JSONL
-file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and the
-task that made the call. Python entry points record automatically via
-`ai_backend`; the two shell paths that cannot use it (`run-auto-task`, which needs
-slash commands, and `AI_COMMAND`, which is pluggable) go through `ai-usage-log`.
-
-A call that reports no usage records nothing rather than a zero row, so an
-unmeasured call is visibly absent instead of looking free.
-
-Query it with `otto-log stats`:
+Every AI call made through the workbench records what it cost. Query the ledger
+with `otto-log stats`:
 
 ```bash
 otto-log stats                      # last 7 days, grouped by script
@@ -277,11 +271,8 @@ otto-log stats --by task            # or: script, model, day
 otto-log stats --by day --json      # one JSON object per row
 ```
 
-Columns are calls, cost, billed input (input + cache read + cache write), output
-tokens, cache-read share of billed input, and median duration. `--by model`
-shows cost only: the CLI reports cost per model but tokens per session, so the
-token columns are left blank rather than counting one session against every
-model it used.
+What is recorded, and what each column means, is documented on
+[`ai_usage.py`](ai-libraries.md#ai_usagepy).
 
 ### Evaluating AI quality
 
@@ -296,233 +287,28 @@ eval-models --compare                          # diff against eval/results/ base
 eval-models --save-baselines                   # record new baselines
 ```
 
-A manifest's `task` field picks how its case is run and scored — `review` when the
-field is absent, so older manifests keep working. Each task pairs a runner with a
-scorer in `ai/lib/eval_scoring_<task>.py`; the runner, the fixture repo, and the
-statistics over repeated runs are shared and know nothing about any one task.
+A manifest's `task` field picks how its case is run and scored, and each task
+pairs a runner with a scorer in `ai/lib/eval_scoring_<task>.py`. What a case of
+each task holds is documented on [`eval_task.py`](ai-libraries.md#eval_taskpy);
+how each is scored, on the task's own module —
+[`review`](ai-libraries.md#eval_scoring_reviewpy),
+[`ci-fix`](ai-libraries.md#eval_scoring_cifixpy),
+[`skill`](ai-libraries.md#eval_scoring_skillpy). The runner, the fixture repo,
+and the statistics over repeated runs are shared and know nothing about any one
+task.
 
-| Task | What the case holds | How it is scored |
-|---|---|---|
-| `review` | Source with planted defects, plus the findings expected of a reviewer | Recall, precision, and severity accuracy against those expectations |
-| `ci-fix` | A repo whose check fails, plus a `verify` command | Binary — the check passes after the fix agent runs, or it does not |
-| `skill` | A scenario, the `SKILL.md` to drive it with, and stubbed CLIs | The command trace — required calls in order, forbidden calls absent |
+Landing a case costs a full eval run. `bin/local/validate-eval-baselines` fails
+any corpus entry that no baseline in `eval/results/` covers, and
+`bin/local/validate-all` discovers it by glob — so a new case is red on pre-push
+and in CI from the moment it lands until a baseline records it. That baseline has
+to come from a run over the whole corpus: `--save-baselines` rebuilds each
+model's file wholesale from the entries of the run it is handed, so
+`--entry <new-case> --save-baselines` writes a file holding that one entry and
+drops every other. There is no filtered top-up.
 
-A `review` finding counts as matched when its path, severity, and description all
-line up and its line range *overlaps* the manifest's `line_range` — not when its
-start line falls inside the window. Reviewers routinely anchor a range at the
-enclosing declaration, and containment scored those as a miss and a false positive
-at once, penalising a correct finding twice.
-
-A `review` manifest's `false_positives_max` is a noise budget: findings outside every
-expectation are counted, and a run over the budget is marked `(over budget)` next to
-its FP count. It annotates rather than fails — `--compare` gates on movement away from
-the baseline, so an absolute bar here would fire on cases that have never met it.
-
-A `ci-fix` case also ships a `reference-fix/` overlay: the same relative paths,
-already corrected. The harness never reads it. The test suite does, to prove the
-case fails before the fix and passes after it — an oracle that cannot fail, or
-cannot be satisfied, measures nothing. Because CI failures are usually
-environment-shaped, these cases put stub binaries on `PATH` rather than depending
-on what the host happens to have installed, so they fail the same way everywhere.
-
-A `skill` case grades a procedure rather than an artifact. `pr-comments` and
-`pr-rebase` run inside a Claude session, and their whole effect is the sequence
-of shell commands they issue — which is also how both state their constraints
-("never pass `--post` before the user has seen the drafts", "never run raw
-`git push --force-with-lease`"). So the harness puts recording shims on `PATH`,
-injects the live `SKILL.md` body as the prompt, and scores the trace: `requires`
-groups must appear **in order**, `forbids` groups must not appear at all. Any
-violation drops precision to zero — a constraint is not something you get
-partial credit for breaking.
-
-Each shim's default policy is fail-closed: a call matching no rule in its
-`responses.json` entry exits `97` loudly, so a fixture gap cannot read as a
-pass. A case opts a binary into `on_no_match: "passthrough"` instead when it
-wants the real one — both `pr-rebase` cases do this for `git`, because the
-fixture is a real repo and `git status` should work there; only the rules that
-matter are intercepted, and the attempt is still traced either way. A binary
-left unstubbed is not intercepted at all: the real one on `PATH` runs, and no
-trace line is ever recorded for it.
-
-The `SKILL.md` is read from `ai/claude/skills/`, never copied into a case, so
-editing a skill changes its eval with no corpus edit. That is the point: before
-this, there was no way to tell whether a change to a `SKILL.md` made the skill
-better or worse.
-
-Two limits worth naming. The trace cannot see obligations that are text-only,
-such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
-regenerate those files by hand. And each case drives a single *user* turn, with
-the user's side of the conversation encoded in the scenario prompt — which
-covers both sides of the `pr-comments` approval gate as two cases, but does not
-exercise a real multi-turn exchange. Within that one user turn the session can
-still take several tool-call turns of its own: `SKILL_MAX_TURNS` (20) caps how
-many, and `SKILL_MAX_BUDGET` (1.0, in dollars) caps what the run can spend
-before the harness stops it. A case whose scenario needs more of either hits
-the cap silently rather than completing, so keep fixtures resolvable well
-inside both.
-
-#### A `skill` manifest's fields
-
-`manifest.json` adds four fields on top of the `name`/`task`/`description`/`tags`
-every task shares:
-
-| Field | Meaning |
-|---|---|
-| `skill` | Directory name under `ai/claude/skills/` whose `SKILL.md` body is injected as the driving instructions |
-| `prompt` | The user's request — the other half of the prompt, standing in for the human side of the turn |
-| `requires` | Token groups that must each match a trace line, in order — group *i* must land on a strictly later line than group *i − 1* |
-| `forbids` | Token groups that must match no trace line at all; any single hit zeroes precision |
-| `false_positives_max` | The `forbids` budget, same meaning as a `review` manifest's field of the same name — defaults to `0` |
-
-`requires` and `forbids` each hold a list *of* groups, so a lone group is
-`[["--fix"]]` and not `["--fix"]` — the prose below names groups by their
-tokens alone, one level shallower than a manifest writes them. The shallow
-form is rejected when the case loads, as is an empty group: either would
-match nothing, which for a `forbids` group is a gate that never fires and
-never says so.
-
-A group matches a trace line when every one of its tokens **equals one of that
-line's argv elements** — so `["pr", "rebase", "--fix"]` matches
-`pr rebase --fix --branch main`, and a group never has to spell out the flags
-it doesn't care about. Tokens within a group are unordered; the groups in
-`requires` are ordered relative to each other.
-
-Whole elements, not substrings, so a flag and its longer forms are distinct:
-`["pr", "--track"]` does not match `pr comments --finish --track-all`. That is
-why `pr-comments-draft-only`, which forbids every tracking form, has to forbid
-`["pr", "--track"]` and `["pr", "--track-all"]` by name. A command name and a
-lookalike are distinct too: `["pr", "rebase"]` does not match
-`pr-rebase --branch eval`, because `pr-rebase` is a single element and neither
-token equals it.
-
-Both distinctions are load-bearing, because the substring rule this replaced
-got both wrong. At session startup the Claude Code harness issues
-`git remote get-url --push origin`; a `forbids: ["git", "push"]` group matched
-that as a substring and zeroed precision on sessions that never pushed. And
-`pr-rebase-conflicts-need-approval` could bank a full pass on a call to the
-very backing script the skill forbids, because `["pr", "rebase"]` sat inside
-the word `pr-rebase`. That case still forbids `["pr-rebase"]`, and it is still
-the group that makes such a call *score* — but it now guards against a real
-violation rather than patching a matcher artifact.
-
-A flag written joined to its value is still two tokens. For matching only, an
-argv element containing an `=` also counts as the two halves around its *first*
-`=`, so `["--track", "T-3"]` matches `--track T-3` and `--track=T-3` alike, and
-a group naming the literal `--track=T-3` matches too. A session that joined the
-flag to its value did not do anything different from one that didn't, and the
-grade should not say otherwise. The split cannot undo either distinction above:
-neither `--push` nor `pr-rebase` contains an `=`, so neither gains a token from
-it.
-
-Four things follow for anyone authoring a case.
-
-**1. Name in `forbids` every way the case could be passed without being
-satisfied.** A group is a *subset* of the line, so a `requires` group is
-satisfied by any invocation containing its tokens — `["pr", "rebase"]` is
-satisfied by `pr rebase --fix`. A `requires` group is evidence of what ran,
-never of what did not, and it says nothing at all about the *other* lines in
-the trace. `pr-rebase-conflicts-need-approval` pairs its
-`requires: ["pr", "rebase"]` with a separate `forbids: ["--fix"]` for the first
-reason; `pr-rebase-clean` forbids `["git", "rebase"]` for the second, since
-`requires: ["pr", "rebase", "--fix"]` is met just as well by a session that
-rebased by hand first and then called the dispatcher.
-
-**2. A group naming a binary matches the stub's *name*, not its path.** The
-shim records `argv[0]` as the bare name it was generated under, discarding the
-temp `bin/` directory it actually ran from. That is what makes
-`forbids: ["pr-rebase"]` a workable group at all.
-
-**3. Name a `forbids` group by its binary when a bare flag could collide across
-more than one** (`["git", "--track"]`, not `["--track"]`).
-
-**4. Do not name a git subcommand the Claude Code harness issues for itself.** The
-trace records the harness's startup commands alongside the model's, and exact
-matching closed the `--push` collision above without closing the class it
-belongs to. Six groups fire on the real startup prefix, each of which would
-score precision 0.0 on a fully compliant session: `["git", "config"]`,
-`["git", "remote"]`, `["git", "-c"]`, `["git", "status"]`, `["git", "log"]`,
-`["git", "ls-files"]`. Forbidding a git operation the skill must not perform —
-`["git", "push"]`, `["git", "rebase"]` — is safe; those are not in the prefix.
-
-`responses.json` stubs the CLIs the skill drives, one top-level key per binary
-name:
-
-| Field | Meaning |
-|---|---|
-| `on_no_match` | `"fail"` (the default) exits `97` on an unmatched call; `"passthrough"` execs the real binary instead. Those two spellings are the only accepted values — anything else is rejected when the case loads, rather than read as `"fail"` |
-| `rules` | An ordered list; the first rule whose `match` tokens all match an argv element of the call wins — identical matching to a manifest group, `=` splitting included, so a rule and a group mean the same thing on the same line. To stub a binary purely so its calls are traced, give it `[]` |
-| `match` | Required on every rule, and held to the same shape as a manifest group: a non-empty list of strings. An empty one could never fire, and under `passthrough` that is silent — the call it meant to intercept reaches the real binary |
-| `stdout` / `stderr` | Literal text to emit |
-| `stdout_file` | A path resolved relative to the case directory (not the fixture repo), read and used as `stdout` instead |
-| `exit` | The exit code to return, default `0` |
-
-A binary named as the leading token of any `requires` or `forbids` group needs
-an entry here — with no shim on `PATH` the real binary runs, uncontrolled and
-untraced, and the group can never be satisfied or violated. Every case also
-needs a `src/` directory: `eval-models` copies it into the throwaway git repo
-that becomes the session's `cwd`, and skips any case that has none.
-
-A minimal worked example — a case asserting that a `deploy` skill calls
-`infra apply --yes` and never touches `terraform` directly:
-
-```json
-// manifest.json
-{
-  "name": "deploy-approved",
-  "task": "skill",
-  "skill": "deploy",
-  "prompt": "Deploy this to staging.",
-  "requires": [["infra", "apply", "--yes"]],
-  "forbids": [["terraform"]],
-  "false_positives_max": 0
-}
-```
-
-```json
-// responses.json
-{
-  "infra": {
-    "on_no_match": "fail",
-    "rules": [
-      {"match": ["apply", "--yes"], "stdout": "{\"status\": \"ok\"}", "exit": 0}
-    ]
-  },
-  "terraform": {"on_no_match": "fail", "rules": []}
-}
-```
-
-Landing the case costs a full eval run. `bin/local/validate-eval-baselines`
-fails any corpus entry that no baseline in `eval/results/` covers, and
-`bin/local/validate-all` discovers it by glob — so a new case is red on
-pre-push and in CI from the moment it lands until a baseline records it. That
-baseline has to come from a run over the whole corpus: `_save_baselines`
-rebuilds each model's file wholesale from the entries of the run it is handed,
-so `--entry <new-case> --save-baselines` writes a file holding that one entry
-and drops every other. There is no filtered top-up.
-
-### What the eval gates on
-
-`--compare` diffs a run against the baselines in `eval/results/` and exits `2` on a
-regression. The gate is deliberately narrow — a gate that flaps gets disabled:
-
-| Metric | Gate |
-|---|---|
-| billed input tokens | fail past 15% growth |
-| output tokens | fail past 15% growth |
-| recall, precision, severity accuracy | fail on any drop past the noise threshold |
-| false positives | fail past +0.5 per case |
-| cache-read ratio | fail below 60% |
-| cost, duration | reported, never gated |
-
-Tokens are gated and cost is not because tokens are what the change controls; the
-dollar figure also moves with model prices, and duration moves with machine load.
-The cache-read floor is an absolute minimum rather than a delta: a prompt-prefix
-change that silently disables caching shows up as the ratio collapsing, and the
-value it collapsed from is not the interesting number.
-
-Baselines written before a metric existed leave it ungated rather than failing, so
-an older baseline still loads. The comparison table marks every metric `pass`,
-`fail`, or `ungated` — including the ones that cannot fail.
+`--compare` diffs a run against those baselines and exits `2` on a regression.
+Which metrics that gate covers, and which are reported but never gated, is
+documented on [`eval_scoring.py`](ai-libraries.md#eval_scoringpy).
 
 The [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on
 demand. It is not a pull-request check: each run spends real money on real model
@@ -720,63 +506,18 @@ task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue
 task --global REPO_DIR=/path/to/worktree commit
 ```
 
-### Pinning the AI subprocess's cwd
+A related hazard exists one level down, for the AI subprocess rather than the
+shell task: a backend CLI inherits the launching process's working directory
+unless it is told otherwise. Every `ai_backend` entry point therefore takes a
+required `cwd` — see [`ai_backend.py`](ai-libraries.md#ai_backendpy).
 
-A related hazard exists one level down, for the AI subprocess rather than the shell
-task. A backend CLI inherits the launching process's working directory unless it is
-told otherwise, so an agent given write access would edit whichever worktree the
-session happened to start in rather than the one being operated on. Every
-`ai_backend` entry point therefore takes a required `cwd`:
+### How `pr` decides what a bare token is
 
-```python
-ai_backend.prompt(text, cwd=str(wt_path), task="conflict-resolve")
-ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt=p, cwd=str(wt_path)))
-```
-
-`add_dirs` is not a substitute — it maps to `--add-dir`, which widens the set of
-directories the agent may touch and has no way to narrow it. `prompt()` rejects the
-call at the signature, `invoke_agent`/`invoke_fix` raise on an empty or non-existent
-`cwd`, and `TestAgentCallSitesPassCwd` fails the build on a new call site that omits
+`pr` asks a delegate for `--value-flags` — the hidden arity probe answered by
+[`tool_parser.py`](ai-libraries.md#tool_parserpy) — before deciding whether a
+bare token is the command's target or some other flag's argument. Without it,
+`pr comments --reply 3777767789` reads the reply ID as a PR number and swallows
 it.
-
-### Hidden CLI probes: `--tool-schema` and `--value-flags`
-
-Two hidden flags let one script read another's argparse parser rather than keep a
-mirror of it. Both are answered by [`ai/lib/tool_parser.py`](../ai/lib/tool_parser.py),
-and any script built on `ToolParser` supports both for free.
-
-`--tool-schema` prints the tool's JSON contract — name, description, an input schema
-derived from the argparse actions, and an annotated output schema. It is how the MCP
-server discovers tools — it probes every executable in the workbench's component `bin/`
-directories, plus any `tool_dirs` adds (see [`tools.md`](tools.md#otto-mcp-server)) — and
-it is what the skill reference above cites for `ci-check` and `pr-rebase`.
-
-Naming the flag in a script under one of those directories is therefore a claim, and
-`bin/local/validate-tool-schema` holds the build to it: it probes every candidate
-discovery would and fails when one cannot answer. `bin/local/validate-skills` asserts the
-converse for the tool a skill's `output_schema` names — that one must implement the
-protocol whether or not it carries a marker, or the skill cites a contract nothing
-publishes.
-
-The output schema is generated from the tool's dataclass by
-[`ai/lib/schema_gen.py`](../ai/lib/schema_gen.py), which describes what
-[`serde`](../ai/lib/serde.py) will accept for each field rather than deciding that
-for itself: `serde.classify` sorts a type hint into a `HintKind`, and both the
-reader and the schema emitter dispatch on that one answer. A new kind fails a test
-in every module that has to handle it, which is what keeps the published contract
-from drifting from the reader.
-
-One case needs the dataclass's help. A class that reads more than one stored shape
-through `_from_raw` — a legacy string, a renamed key — is the only thing that knows
-what those shapes are, so it also defines `_raw_schema(object_schema)`, returning
-the widened fragment. Without it the published schema would call a document invalid
-that `serde` reads without complaint; a test fails any `_from_raw` class in
-`ai/lib/` that does not define one.
-
-`--value-flags` prints one option string per line: every option of that parser that
-consumes a following value. `pr` asks a delegate this before deciding whether a bare
-token is the command's target or some other flag's argument. Without it,
-`pr comments --reply 3777767789` reads the reply ID as a PR number and swallows it.
 
 A subcommand with no delegate has no parser to probe, and one of them needs none.
 `pr create` shells out to `task pr:create`, whose flags are parsed in bash by
@@ -794,173 +535,20 @@ of their subparsers — the same function the probe answers with — and fails t
 the day one of them declares an option that consumes a value, naming the two ways out:
 list the command as taking no target, or give it a delegate to ask.
 
-The two stay separate on purpose. `--tool-schema` is keyed by `dest`, drops
-`help=SUPPRESS` actions, and loses option aliases, so arity cannot be recovered from
-it faithfully — and declaring it also enrolls a script in MCP discovery, which is not
-a side effect an arity probe should carry.
+### Three shared foundations under `ai/`
 
-A delegate of `pr` that builds a plain `argparse.ArgumentParser` has to opt in:
+Three modules exist because the same decision was being re-made at every call
+site, and the spread was the bug. Each owns its own reference page:
 
-```python
-parser = argparse.ArgumentParser(...)
-tool_parser.handle_value_flags(parser)   # before parse_args
-args = parser.parse_args()
-```
-
-Skip the call and the parser rejects `--value-flags` as unknown, the probe exits
-non-zero, and `pr` falls back to its arity-blind scan — no error, just the occasional
-flag value classified as the command's target. `claude-review` and `review-threads`
-opt in this way; the rest inherit it from `ToolParser`.
-
-One constraint comes with the protocol: every *option* the parser declares must
-consume exactly one value. A flat list of option strings cannot express `nargs='?'`,
-`'+'`, `'*'`, or an int above 1, so the probe refuses to answer rather than report a
-wrong arity — it names the offending option on stderr, exits 2, and `pr` reprints the
-message before degrading. Positionals are unconstrained (`claude-review` declares
-`args` with `nargs='*'`).
-
-### What a failed command is allowed to say
-
-A wrapper that returns `(returncode, stdout)` has no slot for stderr, and stderr is
-where a command explains itself. Everything downstream inherits that gap: the
-renderer has no cause to print, and a classifier reading stdout alone misses a
-failure the command reported on the other stream. `gh api` is the sharp case — it
-writes an API error body to stdout and its own status line (`gh: ... (HTTP 503)`) to
-stderr, so a 404 is legible from stdout while a 5xx or a dropped connection leaves
-stdout empty.
-
-[`ai/lib/proc.py`](../ai/lib/proc.py) is the answer: `proc.run(cmd)` returns a frozen
-`CmdResult` carrying `returncode`, `stdout`, and `stderr`, and a caller reads what it
-needs by name rather than by position.
-
-| Read | What it gives you |
-|---|---|
-| `r.ok` | The command exited cleanly. |
-| `r.detail` | `stderr` folded onto one line — what to quote in an error. |
-| `r.combined_output` | Both streams, for classifying a failure by what it said. |
-| `r.server_error` | The failure was a 5xx, so the remedy is to wait and retry. |
-
-`proc.failure_message(action, r)` renders a failure without asserting a cause the
-code has not established: it names the action, appends whatever the command said,
-and calls out a 5xx separately because that is the one case where the answer is to
-wait rather than to change anything. It decides that from `server_error`, so the
-rendered message and the classifier can never disagree about which stream the
-evidence was on. It accepts a raw `subprocess.CompletedProcess` too, so the call
-sites still running `subprocess.run` directly can report a failure without
-converting first.
-
-The AI backend owes the same thing. `claude -p` reports some failures on stdout
-with an empty stderr — a usage limit is the common one — so a stderr-only error
-message prints nothing at all and the caller is left reporting a bare exit code
-with no reason attached. `ai_backend_claude` logs whichever stream carried the
-detail, and the exit code alone when neither did.
-
-An expired timeout is the same kind of answer. `proc.run` converts it into a
-`CmdResult` carrying `proc.TIMEOUT_RETURNCODE` (124, the shell convention) with the
-bound and the command quoted on stderr, and whatever the process managed to write
-before it was killed preserved on both streams. Raising instead would need a handler
-at each of the call sites that has none; as a result code it degrades through
-`out`/`ok`/`lines` exactly as any other failure does. The code is contract rather
-than an implementation detail — the eval scorers tell a timed-out case from a failed
-one by it.
-
-`proc` is stdlib-only on purpose — it is the module the rest of `ai/lib` should be
-free to depend on. The name is not `cmd` because `ai/lib` goes on `sys.path` ahead
-of the standard library, where a `cmd` module would shadow the one `pdb` imports.
-
-### One table of timeouts
-
-`ai/` decided how long a subprocess may run in 22 places and four different ways:
-module-scoped constants, bare literals, a caller-supplied argument, and — for most of
-the git client — nothing at all. The same operation got a different bound depending
-on which file called it; one `gh api` round trip was 30s in `review_github`, 10s in
-`pr-rebase`, and 10s in `retro-scan`. No principle separated those numbers.
-
-Leaving the choice with callers is what produced the spread, so
-[`ai/lib/timeouts.py`](../ai/lib/timeouts.py) takes it away from them. A caller picks
-a tier that describes its operation; it does not pick a number. The axis is not how
-long the work takes but **what bounds its cost**.
-
-| Tier | For | Why |
+| Module | Takes over | Reference |
 |---|---|---|
-| `QUICK` | A `--value-flags` probe, a session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
-| `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
-| `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
-| `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
-| `UNBOUNDED` | `worktree add`, `commit`, `push` | A bound would be wrong, not merely large — see below. |
+| `proc` | Running a subprocess, and what a failure is allowed to say — stderr included. | [`proc.py`](ai-libraries.md#procpy) |
+| `timeouts` | How long a subprocess may run, chosen as a tier rather than a number. | [`timeouts.py`](ai-libraries.md#timeoutspy) |
+| `git_client` | Invoking `git` — `cwd`, capture, non-zero handling, and per-subcommand config. | [`git_client.py`](ai-libraries.md#git_clientpy) |
 
-Operation-bounded work costs the same whatever the repository holds, so exceeding the
-bound means something is genuinely wrong and a tight bound is a hang detector.
-Data-bounded and user-bounded work costs whatever the input costs: `git worktree add`
-materializes every file in the tree, and `commit`/`push` run hooks belonging to
-whatever repository is being operated on — routinely a secret scan, a linter, or a
-full test suite. A fixed bound there silently converts a large repo, or a thorough
-hook, into a broken tool.
-
-`UNBOUNDED` is a named `None` rather than an omitted argument so that running
-unbounded stays a decision on the record: `proc.run` requires `timeout=`, and
-`bin/local/validate-timeouts` rejects both a numeric literal and a bare `None` on any
-`timeout=` argument under `ai/`. It also rejects a `proc.run` or `subprocess.run` call
-that writes no `timeout=` at all — reading only the bounds that were written down left
-the omission invisible, which is the case the table exists to eliminate, since a call
-with no bound is indistinguishable from nobody having thought about one.
-`ai/claude/mcps/server.py` is exempt — it runs under `uv run` with `ai/lib` nowhere on
-`sys.path`, so it cannot import the table.
-
-Two numbers deliberately stay outside it. `ci-check --wait-timeout` and
-`eval_task.EVAL_CASE_BUDGET` are deadlines for work that could reasonably keep going,
-not bounds on a subprocess that should already have answered; they say how long
-something is *worth*, which is a different question.
-
-### One way to run git
-
-`ai/` invoked `git` as a literal argv head in 131 places, and each one re-decided the
-same four things: `-C` or `cwd=`, whether to capture, whether a non-zero exit is a
-failure or an answer, and what to do with stderr. That spread is why a fix applied to
-one call site was never a fix for the other hundred and thirty.
-
-[`ai/lib/git_client.py`](../ai/lib/git_client.py) sits directly on `proc` and depends
-on nothing else. The runner is `run`; the other three are the shapes callers actually
-wanted from it.
-
-| Call | What it gives you |
-|---|---|
-| `run(*args, cwd=, config=)` | The full `CmdResult`. Never raises on a non-zero exit — `diff --quiet`, `cat-file -e` and `rev-parse --verify` all answer a question with theirs. |
-| `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
-| `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
-| `lines(*args)` | Stdout split into non-empty lines. |
-
-There is no `timeout` parameter. The bound follows from the subcommand the same way
-`core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push` run
-`UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so the
-knowledge lives with the client that owns it rather than at each of the forty-five
-call sites, one of which used to pass a number of its own.
-
-`config={"key": "value"}` becomes `-c key=value` ahead of the subcommand. `diff`,
-`ls-files` and `status` get `core.quotePath=false` by default: git escapes a
-non-ASCII path in that output unless told otherwise, and an escaped name is not a
-pathspec a later `git add` can resolve — so a fix touching such a file was staged as
-nothing and reported as applied. Applying the flag to the subcommand rather than to
-each caller is what stops the next call site from forgetting it.
-
-Under those four sit the reads that appeared at two or more call sites — `head_sha`,
-`current_branch`, `is_dirty`, `commit_exists`. A read used once belongs at its call
-site, spelled out with `run`. Writes are not modelled beyond `run`: committing and
-pushing gets an owner of its own, with the publishing gate over it, rather than a
-convenience wrapper here that would turn four gate-less push sites into five.
-
-Not everything has moved across yet. `pr_context`, `pr-rebase`, `mcps/server` and
-`eval_task` still invoke git as literal argv — the first three because a behaviour fix
-is open on them and a refactor underneath it would collide, `eval_task` because its
-calls need `env=`, which the client does not take — it runs them through `proc.run`,
-which does. A new call site should still go through the client.
-
-One consequence of the move is worth knowing before migrating the rest: the client
-passes the worktree as `cwd` rather than as `git -C`. A root that does not exist used
-to come back as a non-zero exit that `out` and `ok` degraded away; it now raises
-`FileNotFoundError` out of Python before git is reached. That is the better answer —
-an absent worktree is a broken caller, not a question git declined to answer — but a
-call site that was quietly relying on the old degradation will start failing loudly.
+They stack: `git_client` sits on `proc`, which requires a `timeouts` tier on
+every call. `bin/local/validate-timeouts` enforces the last of those across
+`ai/`, so a new subprocess call cannot skip the question.
 
 ## Guidelines & Rules
 

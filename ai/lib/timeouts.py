@@ -16,6 +16,14 @@ number.
 The tempting axis for those tiers is how long the work takes. The axis that
 actually predicts the right answer is **what bounds the cost**:
 
+| Tier | For | Why |
+|---|---|---|
+| `QUICK` | A `--value-flags` probe, a session hook reading one file | Should answer instantly; a breach is a wedged process, never real work. |
+| `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
+| `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
+| `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
+| `UNBOUNDED` | `worktree add`, `commit`, `push` | A bound would be wrong, not merely large. |
+
 Operation-bounded work — `git rev-parse`, one `gh api` round trip, a `yq` parse
 — costs the same whatever the repository holds. Exceeding the bound means
 something is genuinely wrong: a hang, a dead socket, a deadlock. A timeout is a
@@ -27,6 +35,20 @@ Exceeding the bound is indistinguishable from "the repository is large" or
 "this repo's pre-commit hook runs a test suite". A fixed timeout there silently
 converts a large repo into a broken tool, which is why `UNBOUNDED` exists and is
 spelled out rather than omitted.
+
+`bin/local/validate-timeouts` holds the table's monopoly: it rejects a numeric
+literal and a bare `None` on any `timeout=` argument under `ai/`, and rejects a
+`proc.run` or `subprocess.run` call that writes no `timeout=` at all. Reading
+only the bounds that were written down left the omission invisible, which is the
+case this table exists to eliminate — a call with no bound is indistinguishable
+from nobody having thought about one. `ai/claude/mcps/server.py` is exempt: it
+runs under `uv run` with `ai/lib` nowhere on `sys.path`, so it cannot import the
+table.
+
+Two numbers deliberately stay outside it. `ci-check --wait-timeout` and
+`eval_task.EVAL_CASE_BUDGET` are deadlines for work that could reasonably keep
+going, not bounds on a subprocess that should already have answered; they say
+how long something is *worth*, which is a different question.
 
 Stdlib-only and importing nothing, so that `proc`, `git_client`, and everything
 built on them can depend on it without a cycle.

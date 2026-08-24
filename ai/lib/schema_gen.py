@@ -4,7 +4,19 @@ Produces JSON Schema from dataclass definitions, describing the documents
 `serde` will accept for them. `serde.classify` owns what a type hint means;
 this module only decides how each kind is written down, so the schema a model
 reads and the reader that accepts the model's answer cannot disagree about
-which shapes are legal.
+which shapes are legal. Both dispatch on `classify`'s one answer, so a new
+`HintKind` fails a test in every module that has to handle it.
+
+One case needs the dataclass's help. A class that reads more than one stored
+shape through `_from_raw` — a legacy string, a renamed key — is the only thing
+that knows what those shapes are, so it also defines
+`_raw_schema(object_schema)`, returning the widened fragment. Without it the
+published schema would call a document invalid that `serde` reads without
+complaint; a test fails any `_from_raw` class in `ai/lib/` that does not define
+one.
+
+This is what fills the output schema half of a tool's `--tool-schema` contract —
+see `tool_parser`.
 """
 
 # doc-group: platform

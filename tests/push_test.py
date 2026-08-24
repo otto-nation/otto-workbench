@@ -106,6 +106,23 @@ def test_remote_head_distinguishes_absent_from_unaskable(pushable):
     assert push.remote_head(wt, "main") is None
 
 
+def test_remote_head_is_not_fooled_by_a_branch_ending_in_the_same_name(pushable):
+    """An `ls-remote` pattern matches any ref whose tail spells it.
+
+    `alt/main` answers a query for `main`, and git sorts its output — which is
+    why the impostor is named to sort ahead of the real branch. Reading the
+    first line would hand back a SHA belonging to something else, reporting a
+    landed push as lost or, worse, the reverse.
+    """
+    wt, _ = pushable
+    on_main = git_client.head_sha(cwd=wt)
+    git_in(wt, "checkout", "-q", "-b", "alt/main")
+    _commit(wt, "the impostor")
+    git_in(wt, "push", "-q", "origin", "alt/main")
+
+    assert push.remote_head(wt, "main") == on_main
+
+
 # ── the five outcomes ───────────────────────────────────────────────────────
 
 

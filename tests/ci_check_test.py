@@ -1076,7 +1076,7 @@ def _run_commit_and_push(dirty, result=_LANDED):
     verifies with a second git call whose canned answer would decide the
     outcome — making every assertion here depend on the stub's shape.
 
-    Returns (sha, git argv list, push kwargs).
+    Returns (sha, git argv list, the `push.push` mock).
     """
     calls = []
 

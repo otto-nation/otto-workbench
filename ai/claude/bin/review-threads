@@ -927,13 +927,15 @@ class CommitPushResult:
     claim: CommitClaim = CommitClaim.PASS
 
 
-# A real commit the remote does not have. `push_failed` is git refusing;
+# A commit that may not be citable outward. `push_failed` is git refusing;
 # `push_held` is us refusing, because the gate was shut when the pass ran;
-# `push_lost` is git reporting a push the remote did not keep. All three leave
-# the SHA local-only, so nothing may cite it outward yet — the commit link would
-# 404 for the reviewer reading it.
+# `push_lost` is git reporting a push the remote did not keep; `push_unverified`
+# is a push nobody could confirm either way. All four leave the SHA unsafe to
+# cite — a commit link that 404s for the reviewer reading it is worse than a
+# reply deferred a round.
 _UNPUSHED_STATUSES = frozenset({
     CommitStatus.PUSH_FAILED, CommitStatus.PUSH_HELD, CommitStatus.PUSH_LOST,
+    CommitStatus.PUSH_UNVERIFIED,
 })
 
 _PUSH_STATUS = {
@@ -941,10 +943,11 @@ _PUSH_STATUS = {
     push.PushStatus.HELD: CommitStatus.PUSH_HELD,
     push.PushStatus.REFUSED: CommitStatus.PUSH_FAILED,
     push.PushStatus.LOST: CommitStatus.PUSH_LOST,
-    # An unverified push has almost certainly landed — the remote could not be
-    # asked, not answered no. Recording it as pushed would be a claim the run
-    # cannot make, and everything downstream cites the SHA outward.
-    push.PushStatus.UNVERIFIED: CommitStatus.PUSH_LOST,
+    # Its own status rather than folded into `push_lost`: an unverified push has
+    # almost certainly landed, and rendering it as a remote that does not hold
+    # the commit is as unfounded as rendering it as pushed. The run cannot make
+    # either claim, so it makes neither.
+    push.PushStatus.UNVERIFIED: CommitStatus.PUSH_UNVERIFIED,
 }
 
 
@@ -2600,7 +2603,7 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
         return "Fix applied (commit failed — pre-commit hook?)"
     if cp.status == CommitStatus.RECONCILED:
         return _RECONCILED_STATUS_TEXT
-    # Both callers refuse to render an unpushed commit, so these three are not
+    # Both callers refuse to render an unpushed commit, so these four are not
     # reachable today. They are spelled out anyway: the fallback below reads as
     # "not done yet", which would be a false claim about a commit that exists
     # and is only waiting to be published.
@@ -2610,6 +2613,8 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
         return "Fix committed locally (push failed)"
     if cp.status == CommitStatus.PUSH_LOST:
         return "Fix committed locally (push reported success, remote does not have it)"
+    if cp.status == CommitStatus.PUSH_UNVERIFIED:
+        return "Fix committed and pushed (could not reach the remote to confirm)"
     return "Fix pending"
 
 
@@ -2948,6 +2953,7 @@ _GENERATED_ACTION_PREFIXES = (
     "Fixed in ",
     "Fix applied",
     "Fix committed locally",
+    "Fix committed and pushed",
     "Fix pending",
     "Deferred",
     "Already addressed",

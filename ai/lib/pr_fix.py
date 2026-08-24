@@ -53,6 +53,12 @@ class CommitStatus(StrEnum):
     # would otherwise be told a push failed that, as far as their terminal went,
     # did not.
     PUSH_LOST = "push_lost"
+    # Committed locally; the push was reported and the remote could not be asked
+    # whether it arrived. Almost certainly on the remote, which is why it is not
+    # `push_lost` — that names a remote that answered, and answered no. Treated
+    # as unpushed everywhere it matters, because "probably" is not a SHA a
+    # reviewer can be handed.
+    PUSH_UNVERIFIED = "push_unverified"
     # Render-time only, never persisted: HEAD has moved past the snapshot, but
     # the commit that moved it is not one a reviewer can open, so the summary
     # says the work was handled without naming a SHA for it.

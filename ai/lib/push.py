@@ -184,12 +184,22 @@ def remote_head(
     remote-tracking ref, which a lost push leaves pointing at the commit that
     never arrived — so it answers "landed" for exactly the failure being looked
     for.
+
+    An `ls-remote` pattern matches any ref whose trailing path components spell
+    it, so asking for `main` also answers with `refs/heads/topic/main` — and
+    since git sorts its output, the impostor can come first. The full refname
+    narrows the query and comparing it again reads the one line that is actually
+    an answer to the question.
     """
-    r = git_client.run("ls-remote", "--heads", remote, branch, cwd=wt_path)
+    ref = f"refs/heads/{branch}"
+    r = git_client.run("ls-remote", "--heads", remote, ref, cwd=wt_path)
     if not r.ok:
         return None
-    line = r.stdout.strip()
-    return line.split()[0] if line else ""
+    for line in r.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        if name.strip() == ref:
+            return sha.strip()
+    return ""
 
 
 def _verify(

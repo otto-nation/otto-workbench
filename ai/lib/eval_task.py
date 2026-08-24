@@ -111,6 +111,16 @@ def _git_step(git: list[str], step: list[str], env: dict[str, str]) -> None:
     hooks the machine's git config installs, and they operate on a copy as large
     as the case. A bound here would turn a big case, or a thorough hook, into a
     fixture that cannot be built.
+
+    When git gave no account — a loaded machine kills these steps outright, and
+    a killed process writes nothing — `proc.failure_message` names the signal
+    instead, so a fixture that could not be built is not read as a repo git
+    objected to.
+
+    `proc.run` rather than `git_client`: the client has no `env` parameter, and
+    the whole point here is running with the inherited `GIT_DIR` and friends
+    stripped. It also derives its bound from the subcommand, which would put
+    `init` and `checkout` on `LOCAL`.
     """
     r = proc.run(git + step, env=env, timeout=timeouts.UNBOUNDED)
     if not r.ok:

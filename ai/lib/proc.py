@@ -23,6 +23,7 @@ So `run(cmd)` returns a frozen `CmdResult` carrying `returncode`, `stdout` and
 | `r.detail` | `stderr` folded onto one line — what to quote in an error. |
 | `r.combined_output` | Both streams, for classifying a failure by what it said. |
 | `r.server_error` | The failure was a 5xx, so the remedy is to wait and retry. |
+| `r.signalled` | A signal killed it; it never got to choose an exit code. |
 
 `failure_message(action, r)` renders a failure without asserting a cause the
 code has not established: it names the action, appends whatever the command
@@ -31,6 +32,16 @@ message and a classifier reading the same result cannot disagree about which
 stream the evidence was on. It accepts a raw `subprocess.CompletedProcess` too,
 so a call site still running `subprocess.run` directly can report a failure
 without converting first.
+
+A signalled death is called out the same way, because it is the failure with
+the least to say for itself: a process killed by SIGKILL or SIGPIPE writes
+nothing on the way out, so every stream is empty and the bare action was all a
+reader got — `git commit --allow-empty -m initial failed`, with no hint that
+git never objected to anything and the machine simply ran out of room to
+schedule it. The signal is named, and one that came from outside the process
+says so; a fault signal (SIGSEGV, SIGABRT) does point at the command, so it
+gets no such note. When the command explained nothing at all the exit code is
+quoted, since it is then the only evidence there is.
 
 An expired timeout is the same kind of answer. `run` converts it into a
 `CmdResult` carrying `TIMEOUT_RETURNCODE` — the shell convention — with the bound
@@ -55,6 +66,7 @@ should be free to depend on, and pulling in `log`, `ai_usage`, or
 from __future__ import annotations
 
 import re
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,6 +87,37 @@ DETAIL_LIMIT = 200
 # implementation detail: the eval scorers distinguish a timed-out case from a
 # failed one by this code.
 TIMEOUT_RETURNCODE = 124
+
+# Signals that mean something outside the process ended it: the OOM killer and
+# a supervisor's kill (SIGKILL, SIGTERM), a reader that went away (SIGPIPE), an
+# operator or a CI cancellation (SIGINT, SIGHUP, SIGQUIT), a scheduler's CPU
+# cap (SIGXCPU). None of them is anything the command chose, so a message that
+# names one should say where to look instead. The fault signals — SIGSEGV,
+# SIGBUS, SIGABRT, SIGILL, SIGFPE — are deliberately absent: those do point at
+# the command, and telling a reader otherwise is the misdirection this exists
+# to prevent.
+_EXTERNAL_SIGNALS = frozenset({
+    signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGPIPE,
+    signal.SIGTERM, signal.SIGKILL, signal.SIGXCPU,
+})
+
+# What to append when the signal came from outside. Contention is the common
+# cause on a loaded machine — an oversubscribed box kills what it cannot
+# schedule — and the reader's next move is to re-run rather than to bisect.
+_EXTERNAL_KILL_NOTE = "the machine ended it, not the command — re-run rather than bisect"
+
+
+def _signal_description(returncode: int) -> str:
+    """`SIGPIPE (signal 13)` for the signal behind a negative return code.
+
+    Falls back to the bare number for a signal this platform has no name for,
+    which is rarer than a `ValueError` escaping into an error path is welcome.
+    """
+    number = -returncode
+    try:
+        return f"{signal.Signals(number).name} (signal {number})"
+    except ValueError:
+        return f"signal {number}"
 
 
 @dataclass(frozen=True)
@@ -122,6 +165,18 @@ class CmdResult:
         """The failure was the far end's, so the answer is to wait and retry."""
         return bool(_SERVER_ERROR_RE.search(self.combined_output))
 
+    @property
+    def signalled(self) -> bool:
+        """A signal killed the process before it could choose an exit code.
+
+        `subprocess` reports that as the negated signal number, so a return
+        code below zero is the only evidence there is — a killed process
+        usually writes nothing on the way out, leaving both streams empty and
+        every message about it indistinguishable from a command that failed
+        quietly on purpose.
+        """
+        return self.returncode < 0
+
 
 def failure_message(action: str, r: CmdResult | subprocess.CompletedProcess) -> str:
     """Error text for a failed command, quoting what the command said.
@@ -132,6 +187,13 @@ def failure_message(action: str, r: CmdResult | subprocess.CompletedProcess) -> 
     failed and let the command's own stderr name the cause. A 5xx is called out
     separately because it is the one case where the answer is to wait rather
     than to change anything.
+
+    A signal death and an expired bound are called out for the opposite reason:
+    the command has nothing to say, and the bare action reads as though it
+    failed on its own terms. Naming the signal, and saying when it came from
+    outside the process, is what stops a killed `git commit` from being
+    investigated as a git problem. Anything else that explained nothing at all
+    is rendered with its exit code, since that is then the only evidence.
 
     Accepts a raw `CompletedProcess` too: most of `ai/` still calls
     `subprocess.run` directly, and those call sites should not have to convert
@@ -145,9 +207,28 @@ def failure_message(action: str, r: CmdResult | subprocess.CompletedProcess) -> 
         # case rather than annotate a retry and then say nothing about it.
         detail = r.detail or " ".join(r.stdout.split())[:DETAIL_LIMIT]
         return f"{action} — server error, retry later: {detail}"
+    if r.signalled:
+        return _killed_message(action, r)
+    if not r.detail and r.returncode == TIMEOUT_RETURNCODE:
+        return f"{action} — the bound expired before the command answered"
     if not r.detail:
-        return action
+        return f"{action} (exit {r.returncode})"
     return f"{action}: {r.detail}"
+
+
+def _killed_message(action: str, r: CmdResult) -> str:
+    """`failure_message` for a process a signal ended.
+
+    Whatever it managed to write first is still quoted — a command killed
+    part-way through often explains the state it was left in — but the signal
+    leads, because it is what the exit code cannot say.
+    """
+    killed = f"{action} — killed by {_signal_description(r.returncode)}"
+    if -r.returncode in _EXTERNAL_SIGNALS:
+        killed = f"{killed}; {_EXTERNAL_KILL_NOTE}"
+    if not r.detail:
+        return killed
+    return f"{killed}: {r.detail}"
 
 
 def _text(value: str | bytes | None) -> str:

@@ -932,7 +932,7 @@ def test_detect_repo_degrades_when_gh_says_nothing(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         pr_context.detect_repo()
 
-    assert capsys.readouterr().err.strip().endswith("via `gh repo view`")
+    assert capsys.readouterr().err.strip().endswith("via `gh repo view` (exit 1)")
 
 
 def test_detect_repo_rejects_an_empty_name_from_a_zero_exit(monkeypatch, capsys):
@@ -1090,14 +1090,14 @@ def test_update_to_remote_quotes_why_the_reset_failed(
 @patch("pr_context.subprocess.run")
 def test_update_to_remote_degrades_when_reset_says_nothing(
         mock_run, _mock_sha, _mock_branch, capsys):
-    """No stderr leaves the bare action — never a dangling separator."""
+    """No stderr leaves the action and the exit code — never a dangling separator."""
     mock_run.side_effect = _reset_run_sequence(
         MagicMock(returncode=1, stdout="", stderr=""))
 
     ctx = _make_ctx(head_sha="old111")
     assert update_to_remote(ctx) is ctx
     warning = capsys.readouterr().err.splitlines()[0]
-    assert warning.endswith("git reset --hard origin/feat/x failed")
+    assert warning.endswith("git reset --hard origin/feat/x failed (exit 1)")
 
 
 @patch("pr_context.subprocess.run")
@@ -1123,7 +1123,7 @@ def test_resolve_branch_degrades_when_the_script_says_nothing(
 
     assert _resolve_branch("bad-hint") == "bad-hint"
     warning = capsys.readouterr().err.splitlines()[0]
-    assert warning.endswith("resolve-branch could not resolve 'bad-hint'")
+    assert warning.endswith("resolve-branch could not resolve 'bad-hint' (exit 1)")
 
 
 # Every wt_switch failure path already names its own cause, so

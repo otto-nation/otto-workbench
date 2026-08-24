@@ -5,11 +5,13 @@ what is here is the behaviour only this side has — the callers that register a
 a SessionStart hook and the `pr` CLI, so nothing may raise and nothing may fork.
 """
 
-import subprocess
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import run_checked
 
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
@@ -35,7 +37,7 @@ def _allow_temp_paths(monkeypatch):
 
 def make_repo(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", str(path)], check=True, capture_output=True)
+    run_checked(["git", "init", "-q", str(path)])
     return path
 
 
@@ -60,14 +62,12 @@ class TestRegistration:
     def test_a_bare_repos_container_is_refused(self, tmp_path):
         container = tmp_path / "container"
         container.mkdir()
-        subprocess.run(["git", "init", "--bare", "-q", str(container / ".git")],
-                       check=True, capture_output=True)
+        run_checked(["git", "init", "--bare", "-q", str(container / ".git")])
         assert not workbench_projects.register(container)
 
     def test_a_worktree_inside_a_container_is_registered(self, tmp_path):
         container = tmp_path / "container"
-        subprocess.run(["git", "init", "--bare", "-q", str(container / ".git")],
-                       check=True, capture_output=True)
+        run_checked(["git", "init", "--bare", "-q", str(container / ".git")])
         assert workbench_projects.register(make_repo(container / "main"))
 
     def test_a_relative_path_is_refused(self):
@@ -128,7 +128,7 @@ class TestReads:
         beta = make_repo(tmp_path / "beta")
         workbench_projects.register(alpha)
         workbench_projects.register(beta)
-        subprocess.run(["rm", "-rf", str(alpha)], check=True)
+        shutil.rmtree(alpha)
         assert workbench_projects.registered() == [beta]
 
     def test_a_repo_appended_twice_is_read_once(self, tmp_path):

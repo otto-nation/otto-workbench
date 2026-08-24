@@ -242,6 +242,19 @@ pr gc
 
 A file that parses but holds a wrong-typed value is handled without the warning: a field whose value cannot be read as its recorded type falls back to its default, so a hand-edit that leaves `"many"` where a count belongs costs you that one field rather than the file. The next write restores it.
 
+## "This is a machine problem, not a test defect" in a test failure
+
+A test's subprocess was killed by a signal or cut off by a timeout, so it never got far enough to report an error of its own. `tests/conftest.py` raises `MachineContention` for that case specifically, separately from a command that exited non-zero with a real message, because the two mean opposite things: a non-zero exit accuses the code under test, a signal death accuses the machine.
+
+It shows up as a handful of failures in arbitrary tests that never repeat — a `git add -A` reporting `-13`, a probe that timed out, a git daemon that would not answer. The cause is an oversubscribed machine: a second whole-suite run, a build, or several agents on the same cores.
+
+```bash
+bin/local/run-tests --pytest          # re-run once the machine is idle
+TEST_JOBS=2 bin/local/run-tests       # or leave capacity for whatever else is running
+```
+
+`bin/local/run-tests` already sizes itself from the free cores rather than the total, so a second suite started through it takes the share the first left. A run started while the machine was still idle — or one whose load the one-minute average has not caught up to yet — can still land here.
+
 ## "merge conflict" in `~/.claude/settings.json`
 
 The AI sync merges `settings.json` rather than overwriting. If you see unexpected values, re-sync:

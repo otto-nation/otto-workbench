@@ -1,13 +1,12 @@
 import contextlib
 import io
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from conftest import synthetic_review
+from conftest import git_out, synthetic_review
 
 
 class TestExtractEvidence:
@@ -3697,71 +3696,35 @@ class TestCollectPreflightData:
     @staticmethod
     def _init_repo(path):
         """Initialize a git repo with standard test config."""
-        subprocess.run(
-            ["git", "init", "-b", "main", "-q"], cwd=str(path),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"], cwd=str(path),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"], cwd=str(path),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "commit.gpgsign", "false"], cwd=str(path),
-            check=True, capture_output=True,
-        )
+        git_out(path, "init", "-b", "main", "-q")
+        git_out(path, "config", "user.email", "test@test.com")
+        git_out(path, "config", "user.name", "Test")
+        git_out(path, "config", "commit.gpgsign", "false")
 
     @staticmethod
     def _add_origin(path):
         """Add the repo itself as origin and fetch main."""
-        subprocess.run(
-            ["git", "remote", "add", "origin", str(path)], cwd=str(path),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "fetch", "-q", "origin", "main"], cwd=str(path),
-            check=True, capture_output=True,
-        )
+        git_out(path, "remote", "add", "origin", str(path))
+        git_out(path, "fetch", "-q", "origin", "main")
 
     @staticmethod
     def _commit_all(path, message):
         """Stage every change in the repo and commit it."""
-        subprocess.run(
-            ["git", "add", "."], cwd=str(path), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", message],
-            cwd=str(path), check=True, capture_output=True,
-        )
+        git_out(path, "add", ".")
+        git_out(path, "commit", "-q", "--no-verify", "-m", message)
 
     def test_oversized_file_in_diff_but_omitted_from_contents(self, ro, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
         (repo / "big.txt").write_text("x" * 600_000)
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "big.txt").write_text("y" * 600_000)
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "change"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "change")
 
         pr = ro.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc",
@@ -3790,30 +3753,17 @@ class TestCollectPreflightData:
                 f"original_line_content_padding_{j}\n" for j in range(10_000)
             )
             (repo / f"file{i}.go").write_text(content)
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         for i in range(1, 6):
             content = "".join(
                 f"modified_line_content_padding_{j}\n" for j in range(10_000)
             )
             (repo / f"file{i}.go").write_text(content)
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "change"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "change")
 
         pr = ro.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc",
@@ -3844,26 +3794,13 @@ class TestCollectPreflightData:
         (repo / "CLAUDE.md").write_text("# Project\n")
         (repo / ".claude" / "architecture.md").write_text("## Known Constraints\n")
         (repo / ".claude" / "review" / "security.md").write_text("# Security\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "main.go").write_text("package main\nfunc hello() {}\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "add hello"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "add hello")
 
         pr = ro.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc",
@@ -3895,27 +3832,14 @@ class TestCollectPreflightData:
         self._init_repo(repo)
         (repo / "removed.txt").write_text("old content\n")
         (repo / "kept.txt").write_text("keep\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "removed.txt").unlink()
         (repo / "kept.txt").write_text("updated\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "remove file"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "remove file")
 
         pr = ro.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc",
@@ -3942,13 +3866,8 @@ class TestCollectPreflightData:
         repo.mkdir()
         self._init_repo(repo)
         (repo / "main.go").write_text("package main\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
         (repo / "main.go").write_text("package main\nfunc hello() {}\n")
 
@@ -3972,10 +3891,7 @@ class TestCollectPreflightData:
         (repo / "helper.go").write_text("package main\n")
         self._commit_all(repo, "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "main.go").write_text("package main\nfunc committed() {}\n")
         self._commit_all(repo, "add committed")
         (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
@@ -4026,28 +3942,15 @@ class TestCollectPreflightData:
         repo.mkdir()
         self._init_repo(repo)
         (repo / "big.py").write_text("x = 1\n" * 2000)
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         with open(str(repo / "big.py"), "a") as f:
             f.write("new_line_1\n")
             f.write("new_line_2\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "small change"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "small change")
 
         pr = ro.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc",
@@ -4073,27 +3976,14 @@ class TestCollectPreflightData:
         self._init_repo(repo)
         (repo / "CLAUDE.md").write_text("# Rules\n" * 10)
         (repo / "util.go").write_text("package main\n" + "func f() {}\n" * 3000)
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "CLAUDE.md").write_text("# Updated rules\n" * 10)
         (repo / "util.go").write_text("package main\n" + "func g() {}\n" * 3000)
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "change"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "change")
 
         pr = ro.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc",
@@ -4136,13 +4026,8 @@ class TestFetchBranchMetadata:
         repo.mkdir()
         self._init_repo(repo)
         (repo / "main.go").write_text("package main\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
         # Stay on main but modify a file without committing
         (repo / "main.go").write_text("package main\nfunc hello() {}\n")
@@ -4158,20 +4043,12 @@ class TestFetchBranchMetadata:
         repo.mkdir()
         self._init_repo(repo)
         (repo / "main.go").write_text("package main\n")
-        subprocess.run(
-            ["git", "add", "."], cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-q", "--no-verify", "-m", "init"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
         self._add_origin(repo)
         # Stage changes without committing
         (repo / "main.go").write_text("package main\nfunc staged() {}\n")
-        subprocess.run(
-            ["git", "add", "main.go"], cwd=str(repo),
-            check=True, capture_output=True,
-        )
+        git_out(repo, "add", "main.go")
 
         pr = ro.fetch_branch_metadata(str(repo))
         assert pr.changed_files == 1
@@ -4187,10 +4064,7 @@ class TestFetchBranchMetadata:
         (repo / ".gitignore").write_text("secret.txt\n")
         self._commit_all(repo, "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "main.go").write_text("package main\nfunc committed() {}\n")
         self._commit_all(repo, "add committed")
         (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
@@ -4224,27 +4098,15 @@ class TestFetchBranchMetadata:
         (repo / "main.go").write_text("package main\n")
         self._commit_all(repo, "init")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
         self._commit_all(repo, "add feat")
         # Move main forward behind the branch's back, so the branch is stale
-        subprocess.run(
-            ["git", "checkout", "main", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "main", "-q")
         (repo / "other.go").write_text("package main\nfunc other() {}\n")
         self._commit_all(repo, "add other")
-        subprocess.run(
-            ["git", "fetch", "-q", "origin", "main"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "checkout", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "fetch", "-q", "origin", "main")
+        git_out(repo, "checkout", "feat", "-q")
 
         pr = ro.fetch_branch_metadata(str(repo))
         paths = [f["path"] for f in pr.files]
@@ -4258,14 +4120,8 @@ class TestFetchBranchMetadata:
         self._commit_all(repo, "init")
         # Origin is added but never fetched, so origin/main does not resolve and
         # the fork point would collapse to HEAD — hiding every commit.
-        subprocess.run(
-            ["git", "remote", "add", "origin", str(repo)], cwd=str(repo),
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "remote", "add", "origin", str(repo))
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
         self._commit_all(repo, "add feat")
 
@@ -4278,21 +4134,12 @@ class TestFetchBranchMetadata:
         self._init_repo(repo)
         (repo / "main.go").write_text("package main\n")
         self._commit_all(repo, "init")
-        subprocess.run(
-            ["git", "checkout", "-b", "develop", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "develop", "-q")
         (repo / "dev.go").write_text("package main\nfunc dev() {}\n")
         self._commit_all(repo, "add dev")
         self._add_origin(repo)
-        subprocess.run(
-            ["git", "fetch", "-q", "origin", "develop"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "fetch", "-q", "origin", "develop")
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
         self._commit_all(repo, "add feat")
 
@@ -4376,10 +4223,7 @@ class TestFetchMetadataSelfMode:
         (repo / "main.go").write_text("package main\n")
         TestFetchBranchMetadata._commit_all(repo, "init")
         TestFetchBranchMetadata._add_origin(repo)
-        subprocess.run(
-            ["git", "checkout", "-b", "feat", "-q"],
-            cwd=str(repo), check=True, capture_output=True,
-        )
+        git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "unpushed.go").write_text("package main\nfunc unpushed() {}\n")
         TestFetchBranchMetadata._commit_all(repo, "add unpushed")
 

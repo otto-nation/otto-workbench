@@ -8,6 +8,8 @@ import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from conftest import run_checked
+
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
@@ -117,7 +119,7 @@ class TestTrailRoot:
     def test_start_writes_no_gitignore(self, tmp_path, monkeypatch):
         """The trail no longer lands in anyone's working tree, so it ignores nothing."""
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        run_checked(["git", "init", "-q", str(tmp_path)])
         Trail.start(script="pr", context={}).finish()
         assert not (tmp_path / ".gitignore").exists()
 

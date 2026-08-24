@@ -3,10 +3,11 @@
 import importlib.machinery
 import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
+
+from conftest import run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
@@ -49,9 +50,9 @@ def test_statusline_reads_the_target_dir_for_the_checkout(tmp_path, monkeypatch)
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = tmp_path / "wt"
     wt.mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "feat/a", str(wt)], check=True)
-    subprocess.run(["git", "-C", str(wt), "remote", "add", "origin",
-                    "git@github.com:acme/widget.git"], check=True)
+    run_checked(["git", "init", "-q", "-b", "feat/a", str(wt)])
+    run_checked(["git", "-C", str(wt), "remote", "add", "origin",
+                 "git@github.com:acme/widget.git"])
     monkeypatch.chdir(wt)
 
     # Derived, not a literal: the repo key is <readable>-<digest> and a
@@ -72,7 +73,7 @@ def test_statusline_is_silent_without_an_origin(tmp_path, monkeypatch):
     silent because it never derives a target without an origin remote."""
     wt = tmp_path / "wt"
     wt.mkdir()
-    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    run_checked(["git", "init", "-q", str(wt)])
     monkeypatch.chdir(wt)
     _save(wt)
 

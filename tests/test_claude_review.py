@@ -3,7 +3,6 @@
 import importlib.util
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -28,7 +27,8 @@ from review_common import (
 import review_gc
 
 from conftest import (
-    make_ctx, supersession_context, supersession_evidence, supersession_verdict,
+    make_ctx, run_checked, supersession_context, supersession_evidence,
+    supersession_verdict,
 )
 
 
@@ -2222,12 +2222,11 @@ def test_submit_pending_review_survives_an_unreadable_post_tracking_file(
 def _caller_checkout(path: Path, branch: str = "main") -> Path:
     """A real checkout with an origin and a commit, standing in for the caller."""
     path.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
-    subprocess.run(["git", "-C", str(path), "remote", "add", "origin",
-                    "git@github.com:acme/widget.git"], check=True)
-    subprocess.run(
+    run_checked(["git", "init", "-q", "-b", branch, str(path)])
+    run_checked(["git", "-C", str(path), "remote", "add", "origin",
+                 "git@github.com:acme/widget.git"])
+    run_checked(
         ["git", "-C", str(path), "commit", "-q", "--allow-empty", "-m", "x"],
-        check=True,
         env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
              "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
     )

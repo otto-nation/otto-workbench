@@ -5,6 +5,7 @@ import itertools
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -353,8 +354,7 @@ def init_worktree(path) -> Path:
     """
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-b", "main", "-q", str(path)],
-                   check=True, capture_output=True)
+    run_checked(["git", "init", "-b", "main", "-q", str(path)])
     return path
 
 
@@ -367,10 +367,89 @@ def worktree(tmp_path) -> Path:
 GIT_TIMEOUT = 10  # seconds; a hang here should fail the test, not stall the suite
 
 
+class MachineContention(AssertionError):
+    """A subprocess a test drove died on a signal or a timeout.
+
+    Its own class, and not a plain assertion, because the two failures a
+    fixture's subprocess can hand back mean opposite things. A command that
+    exits non-zero has diagnosed itself and the code under test is a suspect;
+    a command killed by SIGPIPE, or cut off by a timeout, never got far enough
+    to have an opinion, and the suspect is the machine it ran on.
+    """
+
+
+# Named so the reader stops looking for the bug in the diff. Three whole-suite
+# runs at once on an 18-core machine reproduce this every time, in a handful of
+# arbitrary tests that never repeat — a shape that reads as a real defect until
+# somebody spends an afternoon proving otherwise.
+_CONTENTION_HINT = (
+    "This is a machine problem, not a test defect: the command never got far "
+    "enough to report an error of its own. It is what an oversubscribed "
+    "machine produces — a second full suite, a build, or several agents "
+    "competing for the same cores. Re-run it on an idle machine, or lower "
+    "TEST_JOBS, before treating it as a failure of the code under test."
+)
+
+
+def _signal_description(returncode: int) -> str:
+    """`SIGPIPE (signal 13)` for a death the platform has a name for."""
+    number = -returncode
+    try:
+        return f"{signal.Signals(number).name} (signal {number})"
+    except ValueError:
+        return f"signal {number}"
+
+
+def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
+    """Run *argv* to completion and return it, failing the test unless it exits 0.
+
+    Output is captured as text, so the returned ``CompletedProcess`` carries
+    ``stdout`` and ``stderr`` for a caller that wants them.
+
+    The failure paths are what this exists for. A non-zero exit raises an
+    ``AssertionError`` quoting the command's own stdout and stderr — a bare
+    ``check=True`` renders as the exit code alone, which arrives without the
+    message that says what broke. A death on a signal or a timeout raises
+    ``MachineContention`` instead, which names the signal and says plainly that
+    the machine, not the test, is the thing that failed.
+    """
+    shown = " ".join(str(a) for a in argv)
+    where = f" in {cwd}" if cwd else ""
+    try:
+        result = subprocess.run(
+            argv, cwd=None if cwd is None else str(cwd), env=env,
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise MachineContention(
+            f"{shown} timed out after {timeout}s{where}\n{_CONTENTION_HINT}"
+        ) from exc
+    if result.returncode < 0:
+        raise MachineContention(
+            f"{shown} was killed by {_signal_description(result.returncode)}{where}\n"
+            f"{_CONTENTION_HINT}"
+        )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"{shown} failed (exit {result.returncode}){where}\n"
+            f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"
+        )
+    return result
+
+
+def git_out(cwd, *args, timeout=GIT_TIMEOUT) -> str:
+    """Run git in *cwd* and return its stdout, failing the test on any error.
+
+    The one git runner the suite's fixtures share. Per-module copies of it
+    drifted into a dozen spellings of the same three lines, and none of them
+    told a signal death apart from a git error — see ``run_checked``.
+    """
+    return run_checked(["git", "-C", str(cwd), *args], timeout=timeout).stdout
+
+
 def git_in(cwd, *args) -> None:
     """Run a git command in *cwd*, failing the test if it errors or hangs."""
-    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True,
-                   timeout=GIT_TIMEOUT)
+    git_out(cwd, *args)
 
 
 def seed_repo(path) -> Path:
@@ -397,8 +476,7 @@ def container(tmp_path) -> Path:
     """
     seed = seed_repo(tmp_path / "seed")
     root = tmp_path / "container"
-    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")], check=True,
-                   capture_output=True, timeout=GIT_TIMEOUT)
+    run_checked(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")])
     git_in(root / ".git", "worktree", "add", "-q", str(root / "main"), "main")
     return root
 

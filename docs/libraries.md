@@ -373,13 +373,16 @@ Loaded via `ui.sh`.
 
 ### portable.sh
 
-File-metadata readers that work on both userlands.
+Machine readers that work on both userlands.
 
-GNU coreutils and BSD `stat` spell the same fields with different flags, and a
-hand-rolled fallback prints a filesystem report before failing on GNU — so
-nothing outside this module calls `stat` with a format flag, and
-`bin/local/validate-stat-portability` enforces that. Hand-rolling it has
-already broken CI once; the header on `_stat_field` has the details.
+GNU coreutils and BSD spell the same values differently — `stat` takes
+different format flags, and the load average comes from `/proc/loadavg` on one
+and `sysctl vm.loadavg` on the other. Each reader here tries both forms so no
+caller has to branch on the platform. For `stat` that is also enforced:
+nothing outside this module calls it with a format flag, and
+`bin/local/validate-stat-portability` fails the build when something does. A
+hand-rolled fallback prints a filesystem report before failing on GNU, which
+has already broken CI once; the header on `_stat_field` has the details.
 
 It has no dependencies, so a caller that has not loaded the facade can source
 it on its own:
@@ -388,9 +391,10 @@ it on its own:
 file_mtime PATH   # modification time, epoch seconds
 file_birth PATH   # birth time, epoch seconds (0 where the FS has none)
 file_mode  PATH   # permission bits, octal — e.g. 644
+load_average      # one-minute load average, e.g. 3.72
 ```
 
-Each prints nothing and returns 1 when neither form resolves the field, so
+Each prints nothing and returns 1 when neither form resolves the value, so
 callers that want a default supply it themselves:
 
 ```bash
@@ -402,6 +406,7 @@ ts=$(file_mtime "$f") || ts=0
 | `file_mtime PATH` | modification time in epoch seconds. |
 | `file_birth PATH` | birth (creation) time in epoch seconds. Prints 0 on filesystems that do not record one; callers must treat 0 as "unknown". |
 | `file_mode PATH` | permission bits as an octal string, e.g. 644. |
+| `load_average` | the machine's one-minute load average, as the kernel spells it. |
 
 Loaded via `ui.sh`.
 

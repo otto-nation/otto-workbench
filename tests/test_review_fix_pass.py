@@ -1,9 +1,9 @@
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import git_out
 
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
@@ -21,22 +21,6 @@ _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
 _AGENT_ERROR = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded")
 
 
-def _git(wt: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(wt), *args],
-        capture_output=True, text=True,
-    )
-    # Raised rather than `check=True`: a CalledProcessError renders as its exit
-    # code alone, so a broken fixture arrives without the git error that says
-    # what broke.
-    if result.returncode != 0:
-        raise AssertionError(
-            f"git {' '.join(args)} failed ({result.returncode}) in {wt}\n"
-            f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"
-        )
-    return result.stdout
-
-
 @pytest.fixture
 def git_wt(tmp_path):
     """A real repo with one commit — the fix pass's staging is git behaviour."""
@@ -47,15 +31,15 @@ def git_wt(tmp_path):
     # or fails on whatever that machine has installed.
     hooks = tmp_path / "hooks"
     hooks.mkdir()
-    _git(wt, "init", "-q", "-b", "main")
-    _git(wt, "config", "user.email", "test@example.com")
-    _git(wt, "config", "user.name", "Test")
-    _git(wt, "config", "commit.gpgsign", "false")
-    _git(wt, "config", "core.hooksPath", str(hooks))
+    git_out(wt, "init", "-q", "-b", "main")
+    git_out(wt, "config", "user.email", "test@example.com")
+    git_out(wt, "config", "user.name", "Test")
+    git_out(wt, "config", "commit.gpgsign", "false")
+    git_out(wt, "config", "core.hooksPath", str(hooks))
     (wt / "src.py").write_text("original\n")
     (wt / ".gitignore").write_text("*.cache\n")
-    _git(wt, "add", "-A")
-    _git(wt, "commit", "-qm", "initial")
+    git_out(wt, "add", "-A")
+    git_out(wt, "commit", "-qm", "initial")
     return wt
 
 
@@ -70,7 +54,7 @@ def _committed_paths(wt: Path) -> set[str]:
     # quotePath=false for the same reason `_changed_source_files` sets it: git
     # escapes a non-ASCII name by default, and the assertion would compare the
     # escaped spelling against the real one.
-    out = _git(
+    out = git_out(
         wt, "-c", "core.quotePath=false",
         "show", "--name-only", "--pretty=format:", "HEAD",
     )
@@ -142,7 +126,7 @@ class TestCommitFixesStaging:
         )
 
         assert _committed_paths(git_wt) == {"tests_new.py"}
-        assert "tsconfig.tsbuildinfo" in _git(git_wt, "status", "--porcelain")
+        assert "tsconfig.tsbuildinfo" in git_out(git_wt, "status", "--porcelain")
 
     @patch("review_fix._push_fixes")
     def test_agent_created_file_is_committed(self, mock_push, git_wt):
@@ -155,7 +139,7 @@ class TestCommitFixesStaging:
     @patch("review_fix._push_fixes")
     def test_content_staged_before_the_pass_is_not_committed(self, mock_push, git_wt):
         (git_wt / "src.py").write_text("operator work in progress\n")
-        _git(git_wt, "add", "src.py")
+        git_out(git_wt, "add", "src.py")
         (git_wt / "fixture.json").write_text("{}\n")
 
         review_fix._commit_fixes(
@@ -163,7 +147,7 @@ class TestCommitFixesStaging:
         )
 
         assert _committed_paths(git_wt) == {"fixture.json"}
-        assert _git(git_wt, "show", "HEAD:src.py") == "original\n"
+        assert git_out(git_wt, "show", "HEAD:src.py") == "original\n"
 
     @patch("review_fix._push_fixes")
     def test_a_glob_metacharacter_in_a_name_matches_only_itself(
@@ -183,7 +167,7 @@ class TestCommitFixesStaging:
         )
 
         assert _committed_paths(git_wt) == {"report[1].md"}
-        assert "report1.md" in _git(git_wt, "status", "--porcelain")
+        assert "report1.md" in git_out(git_wt, "status", "--porcelain")
 
     @patch("review_fix.log")
     @patch("review_fix._push_fixes")
@@ -205,7 +189,7 @@ class TestCommitFixesStaging:
         )
 
         mock_push.assert_not_called()
-        assert _git(git_wt, "log", "--oneline").count("\n") == 1
+        assert git_out(git_wt, "log", "--oneline").count("\n") == 1
         assert "gate refused" in mock_log.warn.call_args[0][0]
 
 
@@ -545,7 +529,7 @@ class TestHasUncommittedChanges:
 
     def test_staged_only_changes(self, git_wt):
         (git_wt / "src.py").write_text("edited\n")
-        _git(git_wt, "add", "src.py")
+        git_out(git_wt, "add", "src.py")
         assert review_common.has_uncommitted_changes(git_wt) is True
 
     def test_untracked_only_changes(self, git_wt):
@@ -1034,7 +1018,7 @@ class TestRunFixPassOnADirtyWorktree:
 
         assert _committed_paths(git_wt) == {"helper.py"}
 
-        status = _git(git_wt, "status", "--porcelain")
+        status = git_out(git_wt, "status", "--porcelain")
         assert "tsconfig.tsbuildinfo" in status
         assert " M src.py" in status
         assert "build.cache" not in status
@@ -1071,8 +1055,8 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
     ):
         (git_wt / "dead_code.py").write_text("unused = 1\n")
-        _git(git_wt, "add", "dead_code.py")
-        _git(git_wt, "commit", "-qm", "add dead code")
+        git_out(git_wt, "add", "dead_code.py")
+        git_out(git_wt, "commit", "-qm", "add dead code")
 
         def agent_run(*args, **kwargs):
             (git_wt / "dead_code.py").unlink()
@@ -1085,7 +1069,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         review_fix.run_fix_pass(job)
 
         assert _committed_paths(git_wt) == {"dead_code.py"}
-        assert _git(git_wt, "status", "--porcelain").strip() == ""
+        assert git_out(git_wt, "status", "--porcelain").strip() == ""
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
     @patch("review_fix._push_fixes")
@@ -1105,10 +1089,10 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         )
         review_fix.run_fix_pass(job)
 
-        tracked = _git(git_wt, "ls-tree", "--name-only", "HEAD").split()
+        tracked = git_out(git_wt, "ls-tree", "--name-only", "HEAD").split()
         assert "renamed.py" in tracked
         assert "src.py" not in tracked
-        assert _git(git_wt, "status", "--porcelain").strip() == ""
+        assert git_out(git_wt, "status", "--porcelain").strip() == ""
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
     @patch("review_fix._push_fixes")
@@ -1155,8 +1139,8 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         )
         review_fix.run_fix_pass(job)
 
-        assert _git(git_wt, "log", "--oneline").strip().count("\n") == 0
-        assert " M src.py" in _git(git_wt, "status", "--porcelain")
+        assert git_out(git_wt, "log", "--oneline").strip().count("\n") == 0
+        assert " M src.py" in git_out(git_wt, "status", "--porcelain")
         assert "- [ ] **[M1]**" in Path(job.review_file).read_text()
         mock_push.assert_not_called()
 
@@ -1264,6 +1248,6 @@ class TestRunFixPassLeavesSkippedFindingsOpen:
         assert "- [x] **[M1]**" in review
         assert "- [ ] **[M2]**" in review
 
-        msg = _git(git_wt, "log", "-1", "--format=%B")
+        msg = git_out(git_wt, "log", "-1", "--format=%B")
         assert "1 fixed, 1 skipped" in msg
         assert "[M2] needs a product decision on the ceiling" in msg

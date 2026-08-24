@@ -96,3 +96,50 @@ teardown() {
   [ "${#lines[@]}" -eq 1 ]
   [[ "$output" =~ ^[0-9]+$ ]]
 }
+
+@test "load_average answers this machine with a bare decimal" {
+  run load_average
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^[0-9]+(\.[0-9]+)?$ ]]
+}
+
+@test "load_average reads the one-minute figure out of the BSD form" {
+  # `{ 1.85 2.05 2.13 }` — the brace has to go before the first field is the
+  # first field, and the two later averages are not what a caller asked for.
+  sysctl() { echo "{ 1.85 2.05 2.13 }"; }
+  run load_average
+  [ "$status" -eq 0 ]
+  [ "$output" = "1.85" ]
+}
+
+@test "load_average reads the one-minute figure out of the Linux form" {
+  # `0.52 0.58 0.59 1/234 1234` — no brace, and two trailing fields that are
+  # not averages at all.
+  sysctl() { return 1; }
+  cat() { echo "0.52 0.58 0.59 1/234 1234"; }
+  run load_average
+  unset -f cat
+  [ "$status" -eq 0 ]
+  [ "$output" = "0.52" ]
+}
+
+@test "load_average returns 1 and prints nothing when neither source reads" {
+  # The caller decides what an unknown load means; inventing a number here
+  # would have it size a test run from a reading nobody took.
+  sysctl() { return 1; }
+  cat() { return 1; }
+  run load_average
+  unset -f cat
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+@test "no stray stdout leaks in from the load source that fails" {
+  # Same hazard as the stat helpers: a losing `sysctl` on Linux prints its own
+  # complaint, and a `$(A || B)` would concatenate it onto B's answer.
+  sysctl() { echo "sysctl: unknown oid 'vm.loadavg'"; return 1; }
+  cat() { echo "0.52 0.58 0.59 1/234 1234"; }
+  run load_average
+  unset -f cat
+  [ "$output" = "0.52" ]
+}

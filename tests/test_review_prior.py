@@ -9,11 +9,11 @@ that the working tree no longer does.
 """
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import git_out
 
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
@@ -54,22 +54,10 @@ _AFTER = (
 )
 
 
-def _git(wt: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(wt), *args], capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise AssertionError(
-            f"git {' '.join(args)} failed ({result.returncode}) in {wt}\n"
-            f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"
-        )
-    return result.stdout
-
-
 def _commit(wt: Path, message: str) -> str:
-    _git(wt, "add", "-A")
-    _git(wt, "commit", "-qm", message)
-    return _git(wt, "rev-parse", "HEAD").strip()
+    git_out(wt, "add", "-A")
+    git_out(wt, "commit", "-qm", message)
+    return git_out(wt, "rev-parse", "HEAD").strip()
 
 
 @pytest.fixture
@@ -79,11 +67,11 @@ def repo(tmp_path):
     wt.mkdir()
     hooks = tmp_path / "hooks"
     hooks.mkdir()
-    _git(wt, "init", "-q", "-b", "main")
-    _git(wt, "config", "user.email", "test@example.com")
-    _git(wt, "config", "user.name", "Test")
-    _git(wt, "config", "commit.gpgsign", "false")
-    _git(wt, "config", "core.hooksPath", str(hooks))
+    git_out(wt, "init", "-q", "-b", "main")
+    git_out(wt, "config", "user.email", "test@example.com")
+    git_out(wt, "config", "user.name", "Test")
+    git_out(wt, "config", "commit.gpgsign", "false")
+    git_out(wt, "config", "core.hooksPath", str(hooks))
     return wt
 
 

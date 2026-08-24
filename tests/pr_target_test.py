@@ -7,9 +7,10 @@ bug in the rule, never to make a failing test pass.
 """
 
 import os
-import subprocess
 import sys
 from pathlib import Path
+
+from conftest import run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -321,8 +322,8 @@ def test_the_readable_part_never_ends_in_a_dash():
 
 def _git_repo(path: Path, origin: str, branch: str = "main") -> Path:
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
-    subprocess.run(["git", "-C", str(path), "remote", "add", "origin", origin], check=True)
+    run_checked(["git", "init", "-q", "-b", branch, str(path)])
+    run_checked(["git", "-C", str(path), "remote", "add", "origin", origin])
     return path
 
 
@@ -343,7 +344,7 @@ def test_repo_key_from_origin_reads_the_remote(tmp_path, origin, expected):
 def test_repo_key_from_origin_is_none_without_an_origin(tmp_path):
     path = tmp_path / "wt"
     path.mkdir()
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    run_checked(["git", "init", "-q", str(path)])
     assert pr_target.repo_key_from_origin(str(path)) is None
 
 
@@ -362,7 +363,7 @@ def test_repo_identity_labels_the_remote_readably(tmp_path, origin, expected):
 def test_repo_identity_is_none_without_an_origin(tmp_path):
     path = tmp_path / "wt"
     path.mkdir()
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    run_checked(["git", "init", "-q", str(path)])
     assert pr_target.repo_identity_from_origin(str(path)) is None
 
 
@@ -422,7 +423,7 @@ def test_target_dir_for_checkout_is_none_without_an_origin(tmp_path, monkeypatch
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     path = tmp_path / "wt"
     path.mkdir()
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    run_checked(["git", "init", "-q", str(path)])
     assert pr_target.target_dir_for_checkout(path) is None
 
 
@@ -431,9 +432,9 @@ def test_target_dir_for_checkout_is_none_on_detached_head(tmp_path, monkeypatch)
     wt = _git_repo(tmp_path / "wt", "git@github.com:acme/widget.git")
     # Layered onto os.environ, not substituted for it: a replacement env has to
     # guess PATH, and git is not under /usr/bin on a Homebrew install.
-    subprocess.run(["git", "-C", str(wt), "commit", "-q", "--allow-empty", "-m", "x"],
-                   check=True, env={**os.environ,
-                                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-                                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
-    subprocess.run(["git", "-C", str(wt), "checkout", "-q", "--detach", "HEAD"], check=True)
+    run_checked(["git", "-C", str(wt), "commit", "-q", "--allow-empty", "-m", "x"],
+                env={**os.environ,
+                     "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                     "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+    run_checked(["git", "-C", str(wt), "checkout", "-q", "--detach", "HEAD"])
     assert pr_target.target_dir_for_checkout(wt) is None

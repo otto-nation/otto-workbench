@@ -22,7 +22,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import (
-    assert_no_worktree_exit, git_in, make_ctx,
+    assert_no_worktree_exit, git_in, git_out, make_ctx, run_checked,
     supersession_context, supersession_evidence, supersession_verdict,
     write_thrash_log,
 )
@@ -5438,14 +5438,10 @@ class TestAddressingCommitIsPerLine:
 
     @staticmethod
     def _git(wt, *args):
-        subprocess.run(["git", "-C", str(wt), *args],
-                       check=True, capture_output=True)
+        git_out(wt, *args)
 
     def _sha(self, wt, rev):
-        return subprocess.run(
-            ["git", "-C", str(wt), "rev-parse", rev],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
+        return git_out(wt, "rev-parse", rev).strip()
 
     @pytest.fixture
     def branch(self, worktree):
@@ -5528,14 +5524,10 @@ class TestLineAnchorsAreTreeScoped:
 
     @staticmethod
     def _git(wt, *args):
-        subprocess.run(["git", "-C", str(wt), *args],
-                       check=True, capture_output=True)
+        git_out(wt, *args)
 
     def _sha(self, wt, rev):
-        return subprocess.run(
-            ["git", "-C", str(wt), "rev-parse", rev],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
+        return git_out(wt, "rev-parse", rev).strip()
 
     @pytest.fixture
     def trees(self, worktree):
@@ -5608,14 +5600,10 @@ class TestAddressedInResponseFraming:
         if when:
             env["GIT_AUTHOR_DATE"] = when
             env["GIT_COMMITTER_DATE"] = when
-        subprocess.run(["git", "-C", str(wt), *args],
-                       check=True, capture_output=True, env=env)
+        run_checked(["git", "-C", str(wt), *args], env=env)
 
     def _sha(self, wt, rev):
-        return subprocess.run(
-            ["git", "-C", str(wt), "rev-parse", rev],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
+        return git_out(wt, "rev-parse", rev).strip()
 
     @pytest.fixture
     def branch(self, worktree):
@@ -5754,14 +5742,10 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
         if when:
             env["GIT_AUTHOR_DATE"] = when
             env["GIT_COMMITTER_DATE"] = when
-        subprocess.run(["git", "-C", str(wt), *args],
-                       check=True, capture_output=True, env=env)
+        run_checked(["git", "-C", str(wt), *args], env=env)
 
     def _sha(self, wt, rev):
-        return subprocess.run(
-            ["git", "-C", str(wt), "rev-parse", rev],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
+        return git_out(wt, "rev-parse", rev).strip()
 
     @pytest.fixture
     def branch(self, worktree):

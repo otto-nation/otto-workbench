@@ -27,6 +27,14 @@ WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # shellcheck source=../../lib/ui.sh
 . "$WORKBENCH_DIR/lib/ui.sh"
 
+# Same GIT_DIR, one rung lower. A test that inherits it runs its `git -C <tmp>`
+# calls against the real repo instead: a suite caught here staged 2400 temp
+# files into the workbench's own index and wrote a placeholder identity to its
+# config. tests/test_helper.bash clears these per test as well — this is the
+# belt to that suspenders, since the hook is the only caller that sets them and
+# this is the one place every hook-run suite passes through.
+unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 # Both suites are bound by disk contention rather than CPU — every case builds a
 # temp tree and shells out to git — so throughput plateaus well below the core
 # count. Measured on an 18-core machine: bats runs the suite in 318s at --jobs 1,

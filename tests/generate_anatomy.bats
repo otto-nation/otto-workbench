@@ -12,6 +12,10 @@ bats_require_minimum_version 1.5.0
 # clean one from setup().
 setup_file() {
   load 'test_helper'
+  # Not just setup()'s job: the pre-push hook exports GIT_DIR, and every git
+  # call below would target the real repo without this — `git -C "$BIG_REPO"
+  # config user.email test@example.com` writes to the workbench's own config.
+  common_setup
   BIG_TMPDIR="$BATS_FILE_TMPDIR/big"
   BIG_REPO="$BIG_TMPDIR/repo"
   mkdir -p "$BIG_REPO/.claude"

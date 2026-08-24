@@ -137,9 +137,27 @@ github:
 otto-workbench sync git
 ```
 
-`step_github_ssh_443` writes a marker-delimited block into `~/.ssh/config` ahead of the first `Host` block — `ssh` keeps the first value it reads for each keyword, so the block has to precede a catch-all `Host *` to take effect. It also teaches `known_hosts` the `[ssh.github.com]:443` spelling of the GitHub keys the machine already trusts, copied from the existing `github.com` entries rather than scanned off the network. Port 443 is the same service behind the same host keys.
+`step_github_ssh` writes a marker-delimited `Host github.com` block into `~/.ssh/config` ahead of the first `Host` block — `ssh` keeps the first value it reads for each keyword, so the block has to precede a catch-all `Host *` to take effect. With the key set it adds `Hostname ssh.github.com` and `Port 443`, and teaches `known_hosts` the `[ssh.github.com]:443` spelling of the GitHub keys the machine already trusts, copied from the existing `github.com` entries rather than scanned off the network. Port 443 is the same service behind the same host keys.
 
-Nothing outside the markers is read or rewritten, and setting the key back to `false` (or removing it) takes the block out on the next sync. Edit the block by hand and the next sync will not notice — change the config key instead.
+Nothing outside the markers is read or rewritten, and setting the key back to `false` (or removing it) takes the routing lines out on the next sync — the block itself stays, because it also carries the keepalive described below. Edit the block by hand and the next sync will put the managed text back — change the config key instead.
+
+## A push that passed every gate never reached the remote
+
+`git push` opens the connection to the remote *before* it runs `pre-push`, and sends the packfile only once the hook returns. The socket is therefore idle for as long as the gates take, and the workbench's pre-push runs `validate-all` plus both test suites — over five minutes on a developer machine. Left idle that long, GitHub closes the connection, and the push fails after every gate has already printed a tick:
+
+```
+→ Running tests... ✓ (1453 tests, 149s)
+→ Running pytest... Connection to ssh.github.com closed by remote host.
+✓ (4642 tests, 185s)
+```
+
+The managed `Host github.com` block sets `ServerAliveInterval 30` and `ServerAliveCountMax 10` on every machine, whatever the routing key says: a keepalive every 30 seconds keeps the connection from being judged idle, and ten unanswered ones — five minutes of silence — is what it takes for `ssh` to call it dead.
+
+If a push failed this way before the block was in place, `otto-workbench sync git` installs it. To confirm a ref actually landed rather than trusting the ticks:
+
+```bash
+git ls-remote origin <branch>   # compare against git rev-parse HEAD
+```
 
 ## "refusing to commit with a placeholder identity"
 

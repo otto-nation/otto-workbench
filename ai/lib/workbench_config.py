@@ -45,8 +45,9 @@ PROJECT_CONFIG_NAME = ".workbench.yml"
 
 # Where the generated schema lives, repo-relative, and the raw URL that serves
 # it. One spelling of the path: bin/local/generate-config-schema writes there,
-# the modeline below points there, and tests/test_workbench_config.py fails if
-# the two stop agreeing — so moving the file is a one-line change here.
+# the modeline below points there, ``installed_schema_path`` reads it out of
+# the installed checkout, and tests/test_workbench_config.py fails if they stop
+# agreeing — so moving the file is a one-line change here.
 # Pinned to main rather than a release tag: the config on a machine tracks
 # whatever workbench is installed, and main is where the schema is regenerated.
 SCHEMA_PATH = "config.schema.json"
@@ -85,6 +86,14 @@ ISSUE_PROVIDER_KEY = "issue_tracker.provider"
 # cross-validates the pair.
 GITHUB_SSH_443_KEY = "github.ssh_over_443"
 
+# The launcher that resolves to the workbench this machine has installed. It is
+# a symlink into the checkout that installed it, so resolving it from any
+# worktree lands on that one — which is what lets a write be judged by the key
+# surface the machine actually reads rather than by the writing checkout's.
+# `bin/otto-workbench` derives the same root from its own location; there is no
+# equivalent here, so PATH is the link.
+INSTALLED_LAUNCHER = "otto-workbench"
+
 
 class ConfigError(ValueError):
     """A config file exists but cannot be read as one.
@@ -92,6 +101,16 @@ class ConfigError(ValueError):
     A ``ValueError`` subclass because that is what ``serde`` raises for the
     unusable value underneath, so a caller that already catches ``ValueError``
     keeps working.
+    """
+
+
+class ConfigKeyError(ConfigError):
+    """A write named a key the config surface does not have.
+
+    Its own type because a caller owes the two different things. A file that
+    would not open costs the recording and nothing else; a key nothing reads
+    costs the value itself, silently and in a file every repo on the machine
+    shares. A caller that shrugs at the first has to report the second.
     """
 
 
@@ -446,6 +465,159 @@ def load_config_or_default(
         return WorkbenchConfig()
 
 
+class KeyVerdict(StrEnum):
+    """What ``check_key`` found for a dotted key.
+
+    Two ways of being unrecognised, because they mean different things to
+    whoever has to act on them. A key this checkout does not define is a typo
+    or a key built at runtime. A key this checkout defines but the installed
+    workbench does not is the two disagreeing about where a value lives, which
+    is what a worktree standing off to the side of `main` produces.
+    """
+
+    KNOWN = "known"
+    UNKNOWN_HERE = "unknown_here"
+    UNKNOWN_INSTALLED = "unknown_installed"
+
+
+@dataclass(frozen=True)
+class KeyCheck:
+    """Whether one dotted key names something the workbench actually reads.
+
+    Read ``ok`` rather than comparing ``verdict``, so a call site states what
+    it is asking. ``source`` names the schema that refused, and is empty when
+    nothing did or when the refusal came from this checkout's own dataclasses.
+    """
+
+    verdict: KeyVerdict
+    key: str
+    source: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.verdict is KeyVerdict.KNOWN
+
+    @property
+    def reason(self) -> str:
+        """Why the key was refused, or ``""`` when it was not."""
+        if self.verdict is KeyVerdict.UNKNOWN_HERE:
+            return f"{self.key} is not a key WorkbenchConfig defines"
+        if self.verdict is KeyVerdict.UNKNOWN_INSTALLED:
+            return (
+                f"{self.key} is a key this checkout defines and the installed "
+                f"workbench does not ({self.source}) — the two disagree about "
+                f"where the value lives, and the file is read by the installed one"
+            )
+        return ""
+
+
+def _object_branch(schema: dict) -> dict:
+    """The object half of a schema fragment.
+
+    An optional field is written as a union with null, so the properties of the
+    thing it holds are one level in.
+    """
+    branches = schema.get("oneOf")
+    if not isinstance(branches, list):
+        return schema
+    for branch in branches:
+        if isinstance(branch, dict) and branch.get("type") != "null":
+            return branch
+    return schema
+
+
+def _named_property(schema: dict, name: str) -> dict | None:
+    """The fragment one key segment lands on, or ``None`` when it lands nowhere.
+
+    Permissive by design, and only in one direction: a fragment that lists its
+    properties and does not list this one refuses, and everything else accepts.
+    An open fragment — what ``schema_gen`` emits for a hint it cannot describe
+    — says nothing about which keys exist, and a check that cannot see the keys
+    must not be the thing that blocks a write.
+    """
+    schema = _object_branch(schema)
+    properties = schema.get("properties")
+    if isinstance(properties, dict) and name in properties:
+        found = properties[name]
+        return found if isinstance(found, dict) else {}
+    names = schema.get("propertyNames")
+    if isinstance(names, dict) and isinstance(names.get("enum"), list):
+        if name not in names["enum"]:
+            return None
+    extra = schema.get("additionalProperties")
+    if isinstance(extra, dict):
+        return extra
+    if isinstance(properties, dict):
+        return None
+    return {}
+
+
+def _schema_accepts(schema: dict, key: str) -> bool:
+    """Whether a JSON Schema describes a document that can hold this dotted key."""
+    cursor: dict | None = schema
+    for part in key.split("."):
+        if cursor is None:
+            return False
+        cursor = _named_property(cursor, part)
+    return cursor is not None
+
+
+def installed_schema_path() -> Path | None:
+    """``config.schema.json`` from the workbench installed on this machine.
+
+    ``None`` when there is no installed workbench to ask: a CI checkout, a
+    container, a clone with nothing on ``PATH``. The caller then has only its
+    own checkout's answer, which is where this started.
+
+    The launcher is resolved rather than read, so a ``~/.local/bin`` symlink
+    into a bare repo's ``main`` worktree lands on that worktree whichever
+    worktree the caller is running from.
+    """
+    launcher = shutil.which(INSTALLED_LAUNCHER)
+    if not launcher:
+        return None
+    schema = Path(launcher).resolve().parents[1] / SCHEMA_PATH
+    return schema if schema.is_file() else None
+
+
+def check_key(key: str) -> KeyCheck:
+    """Whether ``key`` is one the workbench reads, here and where it is installed.
+
+    Two surfaces, because only one of them can be trusted to be current. This
+    checkout answers first and catches a typo or a key assembled at runtime.
+    The installed workbench answers second and is the only one that can catch
+    the case this guard exists for: a worktree weeks behind ``main`` writing a
+    key that was valid when the branch was cut and has since moved, into a file
+    every repo on the machine shares.
+
+    The same comparison refuses the opposite direction, and that one is a
+    contributor rather than a mistake: a key added on a branch is a key the
+    installed workbench has not learned yet, so writing it here is refused
+    until the branch reaches ``main`` and the install follows. There is no flag
+    for it, deliberately — an override would be reached for by exactly the
+    stale writer this exists to stop. Edit the file by hand meanwhile; nothing
+    checks a hand-edit, and a key only your branch reads is one only your
+    branch has to load.
+    """
+    import schema_gen
+
+    if not _schema_accepts(schema_gen.dataclass_to_schema(WorkbenchConfig), key):
+        return KeyCheck(KeyVerdict.UNKNOWN_HERE, key)
+    path = installed_schema_path()
+    if path is None:
+        return KeyCheck(KeyVerdict.KNOWN, key)
+    try:
+        installed = json.loads(path.read_text())
+    except (OSError, ValueError):
+        # A broken installed schema leaves the local surface, which is the only
+        # check there was before there were two. Refusing here would turn one
+        # unreadable file into a config nobody on the machine can write.
+        return KeyCheck(KeyVerdict.KNOWN, key)
+    if not isinstance(installed, dict) or _schema_accepts(installed, key):
+        return KeyCheck(KeyVerdict.KNOWN, key)
+    return KeyCheck(KeyVerdict.UNKNOWN_INSTALLED, key, str(path))
+
+
 def set_value(key: str, value: str, path: Path | None = None) -> None:
     """Write one dotted key into a config file, creating it if needed.
 
@@ -454,14 +626,21 @@ def set_value(key: str, value: str, path: Path | None = None) -> None:
     them, which is why it is second rather than first.
 
     Raises ``ConfigError`` when the write cannot happen — a caller running in a
-    Claude hook has one exception type to catch, whichever writer ran.
+    Claude hook has one exception type to catch, whichever writer ran — and the
+    ``ConfigKeyError`` subclass when ``key`` is not one the workbench reads.
 
-    ``key`` is not checked against the dataclasses: a typo writes a stray field
-    that ``serde`` then ignores on the way back in. Every call site today passes
-    a literal; a call site that builds a key wants a check here first.
+    ``check_key`` is what decides, and it asks the installed workbench as well
+    as this checkout. Both files this writes are shared — the global one by
+    every repo on the machine, a project one by everybody who clones the repo —
+    and ``serde`` drops an unrecognised key on the way back in. Without the
+    check the write reports success and the value is simply gone, which is a
+    rule quietly not applying rather than anything anybody can see.
     """
     if path is None:
         path = global_config_path()
+    check = check_key(key)
+    if not check.ok:
+        raise ConfigKeyError(f"not writing {path}: {check.reason}")
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(CONFIG_HEADER + "\n")
@@ -483,7 +662,9 @@ def set_project_value(key: str, value: str, project_root: Path | str) -> None:
 
     Shares ``set_value`` rather than reimplementing the write: the yq-first
     ordering exists so a hand-authored file keeps its comments, and a second
-    writer would have to reproduce that ordering and would drift from it.
+    writer would have to reproduce that ordering and would drift from it. The
+    key check comes with it, which a repo file needs as much as the global one
+    — this one is committed, so a dead key travels to everybody who clones.
 
     The file is committed in the consumer repo, so this dirties a working tree
     the user may not have meant to modify. That is the same trade

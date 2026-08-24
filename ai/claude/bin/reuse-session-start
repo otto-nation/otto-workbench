@@ -79,12 +79,18 @@ def _issue_tracker_line(repo: str) -> str:
     up issue_tracker.provider" is a rule that gets skipped, so the resolved
     answer goes into context instead of behind a lookup — and "nobody has
     said" is the state the agent most needs to act on.
+
+    The unconfigured line names the command rather than the file. Told only
+    the key, an agent writes the shared config by hand under whatever name the
+    worktree in front of it happens to use; the command is what checks that
+    name against the workbench doing the reading.
     """
     provider = workbench_config.load_config_or_default(repo).issue_tracker.provider
     if provider is None:
         return (
             "Issue tracker: not configured — ask before filing, then record the"
-            f" answer in {workbench_config.ISSUE_PROVIDER_KEY}"
+            " answer by running otto-workbench config set"
+            f" {workbench_config.ISSUE_PROVIDER_KEY} PROVIDER"
         )
     return f"Issue tracker: {provider}"
 

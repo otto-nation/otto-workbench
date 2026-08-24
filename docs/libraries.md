@@ -156,6 +156,17 @@ workbench creates for you — recording an answer such as
 top of one you hand-author. A file that already exists is never seeded: the
 modeline is a courtesy on creation, not something sync re-imposes.
 
+Writes go through `otto-workbench config set KEY VALUE` (`--project` for the
+repo's own file), which is
+[`lib/config_cli.py`](../lib/config_cli.py) over `set_value`. It refuses a key
+neither this checkout nor the *installed* workbench reads: a checkout can be
+weeks behind `main` and still write the file every repo on the machine shares,
+and `serde` drops an unknown key on read, so a value recorded under a name the
+config has moved off is gone with nothing said at either end. Both surfaces are
+consulted because only the installed one can catch a stale writer using a key
+that is still valid where it is standing. Hand-editing stays supported — that
+is what the modeline is for — but nothing checks the key.
+
 Five layers decide a review value, highest first:
 
 | # | Layer | Example |

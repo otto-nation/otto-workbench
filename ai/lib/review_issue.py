@@ -256,6 +256,11 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
     read-only checkout — or a garbled scope — should cost the recording
     rather than the filing. ``adopt_project_review_yml`` makes the same
     trade on a failed write.
+
+    A refused key is the exception, and is reported at error level. It says
+    this checkout does not agree with the installed workbench about where the
+    tracker is recorded, which costs every later read on the machine, not just
+    this recording — a dim line is the wrong volume for that.
     """
     if wt_path is None:
         scope = str(_Scope.ALL)
@@ -284,6 +289,9 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
             f"Recorded {provider} in {workbench_config.PROJECT_CONFIG_NAME} "
             f"— commit it so the repo keeps the answer",
         )
+    except workbench_config.ConfigKeyError as exc:
+        log.error(str(exc))
+        log.dim(f"using {provider} for this run — this checkout cannot record it")
     except workbench_config.ConfigError as exc:
         log.dim(f"could not record the tracker ({exc}) — using {provider} for this run")
 

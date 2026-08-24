@@ -148,6 +148,50 @@ _AWK_LINE_HELPERS='
     }
 '
 
+# The awk rules that hand a scanner the lines of `fn`'s own body and nothing
+# else. Append to `_AWK_LINE_HELPERS`, pass the function name as `-v fn=`, and
+# define the two callbacks it invokes:
+#
+#   own_line(line)     — a raw line of fn's own body, nested definitions excluded
+#   heredoc_line(line) — a raw line of a heredoc that body writes; `heredoc_quoted`
+#                        says whether the shell would expand it
+#
+# fn's own body, and only it. A migration may carry helpers, whether beside the
+# function or nested inside it, and a helper says nothing about the one function
+# the framework calls — `ai/claude/20260624-workbench-state-dir.sh` nests one
+# that reads `$1` per worktree root, and
+# `bin/migrations/20260814-unify-workbench-config.sh` puts its absent-file
+# guards in folders beside the function. So a nested
+# definition is followed for its braces and skipped for its text, and the outer
+# body resumes where it closes. The body itself is bounded by the braces the file
+# opens after the definition line — counting them, rather than waiting for the
+# depth to rise, is what ends the scan of a one-line body whose brace pair opens
+# and closes before the depth is ever looked at.
+#
+# Shared rather than written twice: both scanners below want the same body and
+# the invariant is not obvious, so two copies would be two places to fix and one
+# of them would eventually be missed.
+_AWK_BODY_SCANNER='
+    BEGIN { definition = "^[ \t]*" fn "[ \t]*\\(\\)"; nested = -1 }
+    { body = heredoc_body($0) }
+    body && inside && nested < 0 { heredoc_line($0) }
+    body { next }
+    !inside && !closed && $0 ~ definition { inside = 1; depth = 0; nested = -1; own = 1 }
+    inside {
+      isdef = (!own && $0 ~ /^[ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)|function[ \t]+[A-Za-z_])/)
+      if (nested < 0 && !isdef) own_line($0)
+      stripped = code($0)
+      note_heredoc($0)
+      before = depth
+      depth += delta(stripped)
+      if (isdef && nested < 0 && depth > before) nested = before
+      if (nested >= 0 && depth <= nested) nested = -1
+      if (opens(stripped) > 0) opened = 1
+      if (opened && depth <= 0) { inside = 0; closed = 1 }
+      own = 0
+    }
+'
+
 # _file_scope_statements FILE — print "LINENO<TAB>TEXT" for every line of FILE
 # that would run when the file is sourced.
 #
@@ -184,39 +228,15 @@ _file_scope_statements() {
 # _migration_fn_reads_arg FILE FN — true when FN's own body reads a positional
 # parameter.
 #
-# FN's own body, and only it. A migration may carry helpers, whether beside the
-# function or nested inside it, and a helper that takes arguments says nothing
-# about the one function the framework calls — `ai/claude/20260624-workbench-
-# state-dir.sh` nests one that reads `$1` per worktree root. So a nested
-# definition is followed for its braces and skipped for its text, and the outer
-# body resumes where it closes. The body itself is bounded by the braces the file
-# opens after the definition line — counting them, rather than waiting for the
-# depth to rise, is what ends the scan of a one-line body whose brace pair opens
-# and closes before the depth is ever looked at.
-#
-# A heredoc the body writes is read too, unless its delimiter was quoted: an
-# unquoted body is expanded by the shell, so a repo path interpolated into a
-# message is a read of the argument like any other.
+# Body bounding is `_AWK_BODY_SCANNER`'s, so a helper's arguments are its own
+# business. A heredoc the body writes is read too, unless its delimiter was
+# quoted: an unquoted body is expanded by the shell, so a repo path interpolated
+# into a message is a read of the argument like any other.
 _migration_fn_reads_arg() {
   awk -v fn="$2" "$_AWK_LINE_HELPERS"'
-    BEGIN { definition = "^[ \t]*" fn "[ \t]*\\(\\)"; nested = -1 }
-    { body = heredoc_body($0) }
-    body && inside && nested < 0 && !heredoc_quoted && $0 ~ /\$\{?[1@*]/ { found = 1 }
-    body { next }
-    !inside && !closed && $0 ~ definition { inside = 1; depth = 0; nested = -1; own = 1 }
-    inside {
-      isdef = (!own && $0 ~ /^[ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)|function[ \t]+[A-Za-z_])/)
-      if (nested < 0 && !isdef && expandable($0) ~ /\$\{?[1@*]/) found = 1
-      stripped = code($0)
-      note_heredoc($0)
-      before = depth
-      depth += delta(stripped)
-      if (isdef && nested < 0 && depth > before) nested = before
-      if (nested >= 0 && depth <= nested) nested = -1
-      if (opens(stripped) > 0) opened = 1
-      if (opened && depth <= 0) { inside = 0; closed = 1 }
-      own = 0
-    }
+    function own_line(line) { if (expandable(line) ~ /\$\{?[1@*]/) found = 1 }
+    function heredoc_line(line) { if (!heredoc_quoted && line ~ /\$\{?[1@*]/) found = 1 }
+  '"$_AWK_BODY_SCANNER"'
     END { exit found ? 0 : 1 }
   ' "$1"
 }
@@ -229,23 +249,29 @@ _migration_fn_reads_arg() {
 #
 # The two absences a migration can meet look identical in the source and mean
 # opposite things. A target already in the shape the migration produces is done
-# with, and a target that has not been created yet is not — `bin/20260819-lift-
-# issue-tracker-key.sh` returned 0 on a machine whose config.yml did not exist,
+# with, and a target that has not been created yet is not —
+# `bin/migrations/20260819-lift-issue-tracker-key.sh`
+# returned 0 on a machine whose config.yml did not exist,
 # was recorded, and had nothing left to lift when a session wrote the file half
 # an hour later. Naming the status is what separates them, so a bare `return 0`
 # under an absent-path guard is the shape this exists to catch.
 #
-# Body bounding is `_migration_fn_reads_arg`'s: nested definitions are followed
-# for their braces and skipped for their text, so a helper's own guards are its
-# own business. Lines come through `expandable` rather than `code` because the
-# returned value is usually a double-quoted expansion, which `code` strips.
+# Body bounding is `_AWK_BODY_SCANNER`'s, so a helper's own guards are its own
+# business — the folders in `bin/migrations/20260814-unify-workbench-config.sh`
+# return to the migration function rather than to the framework, and their 0 is an
+# ordinary return. Lines come through `expandable` rather than `code` because
+# the returned value is usually a double-quoted expansion, which `code` strips.
 #
-# ceiling: three guard shapes are recognised — `[[ -f x ]] || return`,
-# `[[ ! -f x ]] && return`, and a `return` on the line after `if [[ ! -f x ]]`.
-# A return reached through an `else`, or from under a condition combining a path
-# test with something else, reads as not-absent and is left alone. Upgrade when a
-# migration needs one of those shapes to defer, rather than restructuring its
-# guard into one of the three.
+# A guard spread over two lines is carried in `pending`, which survives the
+# filler between the test and the return — a bare `then`, a blank, a comment —
+# and is dropped by the first statement that is neither.
+#
+# ceiling: four guard shapes are recognised — `[[ -f x ]] || return`,
+# `[[ ! -f x ]] && return`, and a `return` under `if [[ ! -f x ]]` with `then`
+# either on the test line or on its own. A return reached through an `else`, or
+# from under a condition combining a path test with something else, reads as
+# not-absent and is left alone. Upgrade when a migration needs one of those
+# shapes to defer, rather than restructuring its guard into one of the four.
 _migration_returns() {
   awk -v fn="$2" "$_AWK_LINE_HELPERS"'
     function path_test(line) { return (line ~ /\[\[[^]]*-[efdLsr][ \t]/) }
@@ -268,36 +294,30 @@ _migration_returns() {
       gsub(/["${}]/, "", v)
       return v
     }
-    function scan(line,   a) {
-      if (line ~ /(^|[ \t;&|(])return([ \t]|;|$)/) {
-        a = absent_here(line)
+    function own_line(line,   t, a) {
+      t = expandable(line)
+      if (t ~ /(^|[ \t;&|(])return([ \t]|;|$)/) {
+        a = absent_here(t)
         if (a < 0) a = (pending >= 0) ? pending : 0
-        printf "%d\t%d\t%s\n", NR, a, ret_value(line)
+        printf "%d\t%d\t%s\n", NR, a, ret_value(t)
         pending = -1
         return
       }
-      if (line ~ /^[ \t]*(if|elif)[ \t]/ && path_test(line) && absent_here(line) < 0) {
-        pending = negated(line) ? 1 : 0
+      if (t ~ /^[ \t]*(if|elif)[ \t]/ && path_test(t) && absent_here(t) < 0) {
+        pending = negated(t) ? 1 : 0
         return
       }
-      if (line ~ /[^ \t]/) pending = -1
+      # Filler, not a statement: a blank line, a line that held only a comment,
+      # and the keywords that merely continue the compound command the guard
+      # opened. `then` on its own line is the other conventional way to write a
+      # multi-line guard, so clearing `pending` here would lose the test that
+      # decides what the return underneath means.
+      if (t ~ /^[ \t]*(then|do)?[ \t]*[{(]?[ \t]*$/) return
+      pending = -1
     }
-    BEGIN { definition = "^[ \t]*" fn "[ \t]*\\(\\)"; nested = -1; pending = -1 }
-    { if (heredoc_body($0)) next }
-    !inside && !closed && $0 ~ definition { inside = 1; depth = 0; nested = -1; own = 1 }
-    inside {
-      isdef = (!own && $0 ~ /^[ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)|function[ \t]+[A-Za-z_])/)
-      if (nested < 0 && !isdef) scan(expandable($0))
-      stripped = code($0)
-      note_heredoc($0)
-      before = depth
-      depth += delta(stripped)
-      if (isdef && nested < 0 && depth > before) nested = before
-      if (nested >= 0 && depth <= nested) nested = -1
-      if (opens(stripped) > 0) opened = 1
-      if (opened && depth <= 0) { inside = 0; closed = 1 }
-      own = 0
-    }
+    function heredoc_line(line) { }
+    BEGIN { pending = -1 }
+  '"$_AWK_BODY_SCANNER"'
   ' "$1"
 }
 

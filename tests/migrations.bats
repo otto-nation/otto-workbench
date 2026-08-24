@@ -982,8 +982,7 @@ EOF
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" == *"SYNC CONTINUED"* ]]
-  [ ! -s "$FAKE_STATE/migrations.applied" ] \
-    || run ! grep -qxF "mycomp/20250101-defer.sh" "$FAKE_STATE/migrations.applied"
+  [ ! -s "$FAKE_STATE/migrations.applied" ]
 }
 
 @test "a deferred migration says nothing" {
@@ -1411,9 +1410,9 @@ unify_in_fake() {
     # way, and constants.sh builds the file path from the root exported above.
     . "$REPO_ROOT/lib/constants.sh"
     . "$REPO_ROOT/lib/config.sh"
-    # For MIGRATION_NOOP and MIGRATION_DEFERRED — the migration returns the
-    # framework's own statuses, so the test has to read them from the framework
-    # rather than name the numbers again.
+    # For MIGRATION_NOOP and MIGRATION_DEFERRED, which the migration body
+    # returns by name. The subshell keeps them from reaching the assertions
+    # outside, which spell the numbers out.
     . "$REPO_ROOT/lib/migrations.sh"
     . "$REPO_ROOT/bin/migrations/20260814-unify-workbench-config.sh"
     migration_20260814_unify_workbench_config
@@ -1552,7 +1551,7 @@ lift_in_fake() {
     export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
     . "$FAKE_ROOT/lib/ui.sh"
     . "$REPO_ROOT/lib/constants.sh"
-    # For MIGRATION_NOOP and MIGRATION_DEFERRED, as in unify_in_fake above.
+    # For the status names the migration body returns, as in unify_in_fake above.
     . "$REPO_ROOT/lib/migrations.sh"
     . "$REPO_ROOT/bin/migrations/20260824-lift-issue-tracker-key.sh"
     migration_20260824_lift_issue_tracker_key

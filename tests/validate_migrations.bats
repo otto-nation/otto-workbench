@@ -529,7 +529,9 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "an absent-file guard returning 1 is a failure, not a silent record" {
+@test "an absent-file guard returning 1 is accepted" {
+  # 1 is a failure, which the framework warns about and retries — the migration
+  # is not claiming the absence was handled, so there is nothing to reject.
   local dir="$FAKE_WORKBENCH/comp/migrations"
   mkdir -p "$dir"
   cat > "$dir/20260417-test.sh" <<'EOF'
@@ -598,6 +600,43 @@ EOF
   _run_validate
   [ "$status" -eq 1 ]
   [[ "$output" == *"only for a target that does not exist yet"* ]]
+}
+
+@test "MIGRATION_DEFERRED under a guard with then on its own line passes" {
+  # The other conventional way to write the multi-line guard. `then` is not a
+  # statement between the test and the return, so it must not lose the test.
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  if [[ ! -f "$SOME_FILE" ]]
+  then
+    return "$MIGRATION_DEFERRED"
+  fi
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "a bare return 0 under a guard with then on its own line fails" {
+  local dir="$FAKE_WORKBENCH/comp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20260417-test.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20260417_test() {
+  if [[ ! -f "$SOME_FILE" ]]
+  then
+    return 0
+  fi
+  echo "converting"
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"records the migration as applied against a file it never saw"* ]]
 }
 
 @test "MIGRATION_DEFERRED under an if testing for absence passes" {

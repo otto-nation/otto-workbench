@@ -79,7 +79,7 @@ These are owned by the workbench and updated every time you sync. Do not edit di
 | `~/.config/starship.toml` | `zsh/starship.toml` | copied |
 | `~/.gitconfig` | includes `git/gitconfig.shared` | include stanza |
 | `~/.git-hooks/*` | `git/hooks/` | symlinked |
-| `~/.ssh/config` | `git/steps.sh` | marker-delimited block, only when `github.ssh_over_443` is set — the rest of the file is yours |
+| `~/.ssh/config` | `git/steps.sh` | marker-delimited `Host github.com` block — the rest of the file is yours |
 | `~/.config/task/{Taskfile.yml,lib/}` | `Taskfile.global.yml`, `lib/` | symlinked |
 | `~/.claude/*` | `ai/claude/` | mixed (merge/copy/symlink) |
 

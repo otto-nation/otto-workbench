@@ -9,7 +9,8 @@
 #   1. Bootstraps ~/.gitconfig from template on a new machine (identity, GPG, credentials)
 #   2. Ensures ~/.gitconfig includes the shared workbench config (git/gitconfig.shared)
 #   3. Installs global git hooks for gitleaks — protects every repo on this machine
-#   4. Routes GitHub SSH over port 443 when github.ssh_over_443 asks for it
+#   4. Keeps GitHub's SSH connection alive across a long pre-push, and routes it
+#      over port 443 when github.ssh_over_443 asks for it
 #
 # Architecture (2-layer):
 #   ~/.gitconfig         → your machine: identity, GPG, overrides (+ includes shared config)
@@ -258,36 +259,65 @@ _gitconfig_interactive_bootstrap() {
   done
 }
 
-# ─── GitHub SSH over port 443 ─────────────────────────────────────────────────
+# ─── GitHub SSH ───────────────────────────────────────────────────────────────
 
-# The markers around the block step_github_ssh_443 owns in ~/.ssh/config.
-# Everything between them belongs to the workbench and is rewritten or removed
-# as the config key flips; everything outside is the user's and is never read.
-SSH_443_BEGIN="# >>> otto-workbench: github-ssh-443 >>>"
-SSH_443_END="# <<< otto-workbench: github-ssh-443 <<<"
+# The markers around the block step_github_ssh owns in ~/.ssh/config.
+# Everything between them belongs to the workbench and is rewritten as the
+# config changes; everything outside is the user's and is never read.
+SSH_GITHUB_BEGIN="# >>> otto-workbench: github-ssh >>>"
+SSH_GITHUB_END="# <<< otto-workbench: github-ssh <<<"
 
-# _ssh_443_block — the managed block's text, on stdout.
-_ssh_443_block() {
+# _ssh_github_block ROUTE_443 — the managed block's text, on stdout. ROUTE_443
+# is `true` when the block should also send github.com to the port 443 endpoint.
+#
+# The keepalive is in every rendering and the routing is in only some, because
+# the two answer to different things: the port is a property of the network the
+# machine is on, and the keepalive is a property of how long this machine's
+# pre-push hook holds a connection open before git sends anything down it.
+_ssh_github_block() {
+  local route_443="$1"
+
+  echo "$SSH_GITHUB_BEGIN"
   cat <<EOF
-$SSH_443_BEGIN
+# git opens the connection to the remote before it runs pre-push and sends the
+# packfile only once the hook returns, so the socket sits idle for as long as
+# the gates take. A hook that outlasts the server's idle timeout loses the push
+# after every check has already passed. A keepalive every 30 seconds keeps the
+# connection from being judged idle, and ten unanswered keepalives — five
+# minutes of silence — is what it takes to call the connection dead.
+EOF
+  if [[ "$route_443" == true ]]; then
+    cat <<EOF
 # Some networks block or intermittently reset outbound TCP/22. GitHub serves
 # the same SSH endpoint, with the same host keys, on port 443.
-# Managed by otto-workbench — set $GITHUB_SSH_443_CONFIG_KEY in
-# $WORKBENCH_CONFIG_NAME to remove this, not an edit here.
+EOF
+  fi
+  cat <<EOF
+# Managed by otto-workbench — $GITHUB_SSH_443_CONFIG_KEY in
+# $WORKBENCH_CONFIG_NAME decides the port, and the keepalive is not optional.
+# Edit the config and re-sync rather than this block.
 Host github.com
+EOF
+  if [[ "$route_443" == true ]]; then
+    cat <<EOF
   Hostname ssh.github.com
   Port 443
-$SSH_443_END
+EOF
+  fi
+  cat <<EOF
+  ServerAliveInterval 30
+  ServerAliveCountMax 10
+$SSH_GITHUB_END
 EOF
 }
 
-# _ssh_443_write FILE — replace FILE's contents with stdin.
+# _ssh_github_write FILE — replace FILE's contents with stdin.
 #
 # The scratch file is colocated with the destination so the mv is a rename
 # within one filesystem rather than a copy that can be seen half-written, and it
 # carries mode 600 before the move so the config is never briefly readable by
 # anyone else.
-_ssh_443_write() {
+_ssh_github_write() {
   local file="$1" tmp
   tmp="$(mktemp "$file.XXXXXX")"
   cat > "$tmp"
@@ -295,67 +325,69 @@ _ssh_443_write() {
   mv "$tmp" "$file"
 }
 
-# _ssh_443_strip FILE — FILE with the managed block removed, on stdout.
-_ssh_443_strip() {
-  awk -v begin="$SSH_443_BEGIN" -v end="$SSH_443_END" '
+# _ssh_github_strip FILE — FILE with the managed block removed, on stdout.
+_ssh_github_strip() {
+  awk -v begin="$SSH_GITHUB_BEGIN" -v end="$SSH_GITHUB_END" '
     $0 == begin { dropping = 1 }
     dropping != 1 { print }
     $0 == end { dropping = 0 }
   ' "$1"
 }
 
-# _ssh_443_current FILE — the managed block as FILE currently spells it, on
-# stdout. Empty when FILE has no block. Compared against _ssh_443_block so a
-# machine that installed an older wording picks up the current one on sync
-# rather than keeping the stale text until someone deletes it by hand.
-_ssh_443_current() {
-  awk -v begin="$SSH_443_BEGIN" -v end="$SSH_443_END" '
+# _ssh_github_current FILE — the managed block as FILE currently spells it, on
+# stdout. Empty when FILE has no block. Compared against _ssh_github_block so a
+# machine that installed an older wording — or one whose 443 key has since
+# flipped — picks up the current text on sync rather than keeping the stale
+# version until someone deletes it by hand.
+_ssh_github_current() {
+  awk -v begin="$SSH_GITHUB_BEGIN" -v end="$SSH_GITHUB_END" '
     $0 == begin { inside = 1 }
     inside { print }
     $0 == end && inside { exit }
   ' "$1"
 }
 
-# _ssh_443_insert FILE — write the managed block into FILE, ahead of the first
-# Host or Match block.
+# _ssh_github_insert FILE ROUTE_443 — write the managed block into FILE, ahead
+# of the first Host or Match block.
 #
 # Placement is the whole job. ssh keeps the first value it reads for each
 # keyword, so a Host github.com block sitting after a Host * block loses to it
-# and the routing silently does nothing. Inserting before the first block also
-# lands after the Include lines that Colima and OrbStack require at the top of
-# the file, which is where they have to stay.
+# and everything in it silently does nothing. Inserting before the first block
+# also lands after the Include lines that Colima and OrbStack require at the top
+# of the file, which is where they have to stay.
 #
 # The search is case-insensitive and accepts `=` as the separator because
 # ssh_config is: `host *`, `HOST *`, and `Host=*` all open a block, and reading
 # only the capitalized spelling would append to the end of a file whose wildcard
 # block is lowercase — the exact placement this function exists to avoid.
-_ssh_443_insert() {
-  local file="$1" first_block
+_ssh_github_insert() {
+  local file="$1" route_443="$2" first_block
   first_block="$(grep -n -m1 -iE '^[[:space:]]*(host|match)([[:space:]]|=)' "$file" | cut -d: -f1 || true)"
   if [[ -z "$first_block" ]]; then
-    { cat "$file"; echo; _ssh_443_block; } | _ssh_443_write "$file"
+    { cat "$file"; echo; _ssh_github_block "$route_443"; } | _ssh_github_write "$file"
   else
     # awk rather than head for the leading part: a config whose very first line
     # opens a block asks for zero lines, and BSD head rejects `-n 0` outright.
-    { awk -v n="$((first_block - 1))" 'NR <= n' "$file"; _ssh_443_block; echo; tail -n +"$first_block" "$file"; } | _ssh_443_write "$file"
+    { awk -v n="$((first_block - 1))" 'NR <= n' "$file"; _ssh_github_block "$route_443"; echo; tail -n +"$first_block" "$file"; } | _ssh_github_write "$file"
   fi
 }
 
-# _ssh_443_warn_unmanaged FILE — warn when FILE routes github.com outside the
-# managed block.
+# _ssh_github_warn_unmanaged FILE — warn when FILE declares github.com outside
+# the managed block.
 #
-# First value wins, so an entry of the user's own decides the route whichever
-# way this step leaves its block: ahead of ours it overrides the port, and it
-# outlives the removal that is supposed to put the machine back on port 22. The
-# entry is theirs, so it is reported rather than rewritten.
-_ssh_443_warn_unmanaged() {
+# First value wins, so an entry of the user's own decides the connection
+# whichever way this step leaves its block: ahead of ours it overrides the port
+# and the keepalive alike, and it outlives the rewrite that is supposed to put
+# the machine back on port 22. The entry is theirs, so it is reported rather
+# than rewritten.
+_ssh_github_warn_unmanaged() {
   local file="$1"
-  if _ssh_443_strip "$file" | grep -qiE '^[[:space:]]*host([[:space:]]|=)+github\.com([[:space:]]|$)'; then
-    warn "$file declares Host github.com outside the managed block — ssh keeps the first value it reads, so that entry decides the route"
+  if _ssh_github_strip "$file" | grep -qiE '^[[:space:]]*host([[:space:]]|=)+github\.com([[:space:]]|$)'; then
+    warn "$file declares Host github.com outside the managed block — ssh keeps the first value it reads, so that entry decides the connection"
   fi
 }
 
-# _ssh_443_known_hosts — teach known_hosts the [ssh.github.com]:443 spelling of
+# _ssh_github_known_hosts — teach known_hosts the [ssh.github.com]:443 spelling of
 # the GitHub host keys this machine already trusts.
 #
 # Copied from the machine's own github.com entries rather than scanned off the
@@ -367,7 +399,7 @@ _ssh_443_warn_unmanaged() {
 # A machine with no github.com entry yet has nothing to copy. That is left
 # alone: ssh then asks to confirm the key on the first connection, which is the
 # right question to put to a person rather than answer on their behalf.
-_ssh_443_known_hosts() {
+_ssh_github_known_hosts() {
   local known="$SSH_KNOWN_HOSTS_FILE"
   [[ -f "$known" ]] || return 0
   if grep -qF "[ssh.github.com]:443 " "$known"; then return 0; fi
@@ -479,63 +511,55 @@ step_local_hooks() {
   install_hook_dispatcher "git/hooks/pre-push-workbench"   "$dot_git/hooks/pre-push"   "pre-push"
 }
 
-# step_github_ssh_443 — route GitHub's SSH traffic over port 443 when the
-# config asks for it, and take the routing back out when it stops asking.
+# step_github_ssh — keep the managed github.com block in ~/.ssh/config saying
+# what the workbench currently means it to say.
 #
-# Opt-in and off by default: the direct route is one hop shorter wherever port
-# 22 works, so this is for the networks where it does not. Flipping the key back
-# to false removes the block, which is what keeps the setting from being a
-# one-way door.
-step_github_ssh_443() {
-  local want present=false
-  want="$(wb_config_get "$GITHUB_SSH_443_CONFIG_KEY" false)"
+# The block itself is unconditional: the keepalive it carries is what keeps a
+# push from being dropped while pre-push runs, and no machine wants that off.
+# Port 443 routing is the part the config decides — see _ssh_github_block for
+# why it defaults off — and flipping the key back takes the Hostname and Port
+# lines out again, which is what keeps the setting from being a one-way door.
+step_github_ssh() {
+  local route_443 present=false route_note="direct (port 22)"
+  route_443="$(wb_config_get "$GITHUB_SSH_443_CONFIG_KEY" false)"
+  if [[ "$route_443" == true ]]; then
+    route_note="over port 443 (ssh.github.com)"
+  fi
 
-  if [[ -f "$SSH_CONFIG_FILE" ]] && grep -qF "$SSH_443_BEGIN" "$SSH_CONFIG_FILE"; then
+  if [[ -f "$SSH_CONFIG_FILE" ]] && grep -qF "$SSH_GITHUB_BEGIN" "$SSH_CONFIG_FILE"; then
     present=true
   fi
 
   # A begin marker with no end marker means someone edited the block by hand and
   # left it open. Stripping from the begin marker to end-of-file would take the
   # rest of their config with it, so the file is reported and left alone.
-  if [[ "$present" == true ]] && ! grep -qF "$SSH_443_END" "$SSH_CONFIG_FILE"; then
-    warn "$SSH_CONFIG_FILE has the github-ssh-443 begin marker but no end marker — leaving the file untouched"
-    return 0
-  fi
-
-  if [[ "$want" != true ]]; then
-    if [[ "$present" == true ]]; then
-      _ssh_443_strip "$SSH_CONFIG_FILE" | _ssh_443_write "$SSH_CONFIG_FILE"
-      _ssh_443_warn_unmanaged "$SSH_CONFIG_FILE"
-      success "github SSH: port 443 routing removed"
-      return 0
-    fi
-    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "github SSH: direct (port 22)" || true
+  if [[ "$present" == true ]] && ! grep -qF "$SSH_GITHUB_END" "$SSH_CONFIG_FILE"; then
+    warn "$SSH_CONFIG_FILE has the github-ssh begin marker but no end marker — leaving the file untouched"
     return 0
   fi
 
   if [[ "$present" == true ]]; then
-    if [[ "$(_ssh_443_current "$SSH_CONFIG_FILE")" == "$(_ssh_443_block)" ]]; then
-      [[ "${WORKBENCH_SYNC:-}" != true ]] && success "github SSH: already routed over port 443" || true
+    if [[ "$(_ssh_github_current "$SSH_CONFIG_FILE")" == "$(_ssh_github_block "$route_443")" ]]; then
+      [[ "${WORKBENCH_SYNC:-}" != true ]] && success "github SSH: $route_note" || true
       return 0
     fi
-    # The block is ours but its text has drifted from the current template.
-    # Take it out and put it back rather than patching in place, so the rewrite
-    # goes through the one function that knows where the block belongs.
-    _ssh_443_strip "$SSH_CONFIG_FILE" | _ssh_443_write "$SSH_CONFIG_FILE"
-    _ssh_443_insert "$SSH_CONFIG_FILE"
-    _ssh_443_known_hosts
-    _ssh_443_warn_unmanaged "$SSH_CONFIG_FILE"
-    success "github SSH: port 443 block refreshed"
-    return 0
+    # The block is ours but its text has drifted from what the template renders
+    # now — an older release's wording, or the 443 key moving either way. Take
+    # it out and put it back rather than patching in place, so the rewrite goes
+    # through the one function that knows where the block belongs.
+    _ssh_github_strip "$SSH_CONFIG_FILE" | _ssh_github_write "$SSH_CONFIG_FILE"
+  else
+    mkdir -p "$SSH_DIR"
+    chmod 700 "$SSH_DIR"
+    [[ -f "$SSH_CONFIG_FILE" ]] || : > "$SSH_CONFIG_FILE"
   fi
 
-  mkdir -p "$SSH_DIR"
-  chmod 700 "$SSH_DIR"
-  [[ -f "$SSH_CONFIG_FILE" ]] || : > "$SSH_CONFIG_FILE"
-  _ssh_443_insert "$SSH_CONFIG_FILE"
-  _ssh_443_known_hosts
-  _ssh_443_warn_unmanaged "$SSH_CONFIG_FILE"
-  success "github SSH: routed over port 443 (ssh.github.com)"
+  _ssh_github_insert "$SSH_CONFIG_FILE" "$route_443"
+  if [[ "$route_443" == true ]]; then
+    _ssh_github_known_hosts
+  fi
+  _ssh_github_warn_unmanaged "$SSH_CONFIG_FILE"
+  success "github SSH: block written — $route_note"
 }
 
 # step_worktrunk_config — ensures the global worktrunk config has a default
@@ -618,8 +642,8 @@ install_git() {
   echo; info "git scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$GIT_SRC_DIR"
 
-  echo; info "github SSH route → $SSH_CONFIG_FILE"
-  step_github_ssh_443
+  echo; info "github SSH → $SSH_CONFIG_FILE"
+  step_github_ssh
 
   echo; info "worktrunk config"
   step_worktrunk_config
@@ -642,8 +666,8 @@ sync_git() {
   sync_header "git scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$GIT_SRC_DIR"
 
-  sync_header "github SSH route → $SSH_CONFIG_FILE"
-  step_github_ssh_443
+  sync_header "github SSH → $SSH_CONFIG_FILE"
+  step_github_ssh
 
   sync_header "worktrunk config"
   step_worktrunk_config

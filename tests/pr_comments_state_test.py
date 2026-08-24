@@ -19,17 +19,28 @@ from pr_comments_state import (
 
 def _decided(**overrides) -> ThreadRecord:
     """A thread carrying triage nothing can re-derive."""
-    return ThreadRecord(
-        state=ThreadState.ADDRESSED,
-        reviewer="alice",
-        last_seen_reply_id=1001,
-        file="handler.go",
-        line=42,
-        classification="suggestion",
-        summary="Fix the handler",
-        decided_at="2026-06-14T15:00:00Z",
+    return ThreadRecord(**{
+        "state": ThreadState.ADDRESSED,
+        "reviewer": "alice",
+        "last_seen_reply_id": 1001,
+        "file": "handler.go",
+        "line": 42,
+        "classification": "suggestion",
+        "summary": "Fix the handler",
+        "decided_at": "2026-06-14T15:00:00Z",
         **overrides,
-    )
+    })
+
+
+def _state(**overrides) -> CommentsState:
+    """A ledger with the identity fields already filled in.
+
+    Every test below is about the file or the threads in it, not about which PR
+    it belongs to — except the round-trip, which names its own values because
+    they are what it asserts.
+    """
+    return CommentsState(
+        **{"repo": "owner/repo", "pr_number": 1, "my_login": "me", **overrides})
 
 
 # ── The file ───────────────────────────────────────────────────────────────
@@ -59,7 +70,7 @@ def test_save_stamps_the_run_without_mutating_the_caller(tmp_path):
     writer's to edit — a frozen record handed to two writes must read the same
     both times."""
     path = tmp_path / "state.json"
-    state = CommentsState(repo="owner/repo", pr_number=1)
+    state = _state()
     save_state(path, state)
 
     assert state.last_run == ""
@@ -68,7 +79,7 @@ def test_save_stamps_the_run_without_mutating_the_caller(tmp_path):
 
 def test_save_creates_parent_directories(tmp_path):
     path = tmp_path / "nested" / "dir" / "state.json"
-    save_state(path, CommentsState(repo="repo", pr_number=1, my_login="user"))
+    save_state(path, _state())
     assert path.is_file()
 
 
@@ -78,7 +89,7 @@ def test_save_never_exposes_a_truncated_file(tmp_path, monkeypatch):
     before the first byte lands. A failed write left the thread lifecycle state
     half-written — the corruption the read side then has to discard."""
     path = tmp_path / "state.json"
-    save_state(path, CommentsState(repo="owner/repo", pr_number=1))
+    save_state(path, _state())
 
     def _explode(obj, fp, **kwargs):
         fp.write('{"partial":')
@@ -86,7 +97,7 @@ def test_save_never_exposes_a_truncated_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(serde.json, "dump", _explode)
     with pytest.raises(OSError):
-        save_state(path, CommentsState(repo="owner/repo", pr_number=2))
+        save_state(path, _state(pr_number=2))
 
     assert load_state(path).pr_number == 1
     assert list(tmp_path.glob("*.tmp")) == []
@@ -96,8 +107,7 @@ def test_the_written_shape_is_a_bare_id_to_record_mapping(tmp_path):
     """The ledger is typed in place, so the file a prior run wrote is the file
     this one writes. A wrapper around `threads` would have been a migration."""
     path = tmp_path / "state.json"
-    save_state(path, CommentsState(
-        repo="owner/repo", pr_number=1, threads={"T_abc": _decided()}))
+    save_state(path, _state(threads={"T_abc": _decided()}))
 
     raw = json.loads(path.read_text())
     assert set(raw) == {"repo", "pr_number", "my_login", "last_run", "threads"}
@@ -110,10 +120,8 @@ def test_the_written_shape_is_a_bare_id_to_record_mapping(tmp_path):
 
 def _write(path: Path, threads: dict) -> None:
     """Write a state file's `threads` directly, bypassing `save_state`."""
-    path.write_text(json.dumps({
-        "repo": "owner/repo", "pr_number": 1, "my_login": "me",
-        "last_run": "2026-06-14T15:00:00Z", "threads": threads,
-    }))
+    document = serde.to_dict(_state(last_run="2026-06-14T15:00:00Z"))
+    path.write_text(json.dumps({**document, "threads": threads}))
 
 
 @pytest.mark.parametrize("corrupt", [

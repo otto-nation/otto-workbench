@@ -776,7 +776,7 @@ cmd_config_set() {
 
 cmd_config() {
   local subcmd="${1:-}"
-  shift || true
+  shift 2>/dev/null || true
   case "$subcmd" in
     set)       cmd_config_set "$@" ;;
     -h|--help) _config_usage; return 0 ;;

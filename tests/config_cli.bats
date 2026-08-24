@@ -26,11 +26,13 @@ teardown() {
 }
 
 # install_launcher CHECKOUT — put CHECKOUT's launcher on PATH, so the config
-# writer treats CHECKOUT as the workbench this machine has installed.
+# writer treats CHECKOUT as the workbench this machine has installed. Calling it
+# a second time re-points the symlink and leaves PATH alone, which is what a
+# test that replaces setup()'s launcher with a stale one is asking for.
 install_launcher() {
   mkdir -p "$TMPDIR/bin"
   ln -sf "$1/bin/otto-workbench" "$TMPDIR/bin/otto-workbench"
-  PATH="$TMPDIR/bin:$PATH"
+  [[ ":$PATH:" == *":$TMPDIR/bin:"* ]] || PATH="$TMPDIR/bin:$PATH"
 }
 
 # make_stale_checkout DIR — a checkout whose schema still nests issue_tracker
@@ -135,6 +137,17 @@ json.dump(schema, open(sys.argv[2], "w"))
   [[ "$output" == *"issue_tracker.provider"* ]]
   [[ "$output" == *"$TMPDIR/installed/config.schema.json"* ]]
   [ ! -f "$CONFIG" ]
+}
+
+@test "--project is refused by the same check, and writes no file either" {
+  git init --quiet "$TMPDIR/repo"
+  cd "$TMPDIR/repo" || return 1
+  _assert_not_real_repo || return 1
+
+  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provdier github --project
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"issue_tracker.provdier"* ]]
+  [ ! -f "$TMPDIR/repo/.workbench.yml" ]
 }
 
 @test "the key the incident wrote is refused by this checkout on its own" {

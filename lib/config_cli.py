@@ -63,9 +63,9 @@ def _project_root() -> Path | None:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="otto-workbench config",
-        description="Read and write the workbench config, one key at a time.",
+        description="Write one key of the workbench config, checked before it lands.",
     )
-    sub = parser.add_subparsers(dest="action", required=True)
+    sub = parser.add_subparsers(required=True, metavar="command")
     setter = sub.add_parser("set", help="write one dotted key")
     setter.add_argument("key", help="dotted key, e.g. issue_tracker.provider")
     setter.add_argument("value", help="the value to record")

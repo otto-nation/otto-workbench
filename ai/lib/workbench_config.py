@@ -589,8 +589,19 @@ def check_key(key: str) -> KeyCheck:
     the case this guard exists for: a worktree weeks behind ``main`` writing a
     key that was valid when the branch was cut and has since moved, into a file
     every repo on the machine shares.
+
+    The same comparison refuses the opposite direction, and that one is a
+    contributor rather than a mistake: a key added on a branch is a key the
+    installed workbench has not learned yet, so writing it here is refused
+    until the branch reaches ``main`` and the install follows. There is no flag
+    for it, deliberately — an override would be reached for by exactly the
+    stale writer this exists to stop. Edit the file by hand meanwhile; nothing
+    checks a hand-edit, and a key only your branch reads is one only your
+    branch has to load.
     """
-    if not _schema_accepts(json.loads(schema_json()), key):
+    import schema_gen
+
+    if not _schema_accepts(schema_gen.dataclass_to_schema(WorkbenchConfig), key):
         return KeyCheck(KeyVerdict.UNKNOWN_HERE, key)
     path = installed_schema_path()
     if path is None:

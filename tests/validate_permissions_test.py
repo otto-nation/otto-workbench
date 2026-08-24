@@ -364,6 +364,45 @@ def test_the_container_file_is_local_but_a_worktree_file_is_not(container):
     assert not perms.is_local(str(tracked), perms.at_container(str(tracked), str(container)))
 
 
+def _container_settings(container, name, body):
+    path = container / ".claude" / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(body, indent=2))
+    return path
+
+
+def test_a_generated_container_file_is_not_local(container):
+    """Its rules were reviewed in the tracked file they were copied from."""
+    path = _container_settings(container, "settings.json", {
+        "permissions": {"allow": ["Bash(bin/*)"]},
+        perms.MANIFEST_KEY: {"permissions": {"allow": ["Bash(bin/*)"]}},
+    })
+    assert not perms.is_local(str(path), perms.at_container(str(path), str(container)))
+
+
+def test_a_hand_written_container_file_is_still_local(container):
+    """No stamp, no tracked owner — this is the grant #871 exists to catch."""
+    path = _container_settings(container, "settings.json",
+                               {"permissions": {"allow": ["Bash(bin/x)"]}})
+    assert perms.is_local(str(path), perms.at_container(str(path), str(container)))
+
+
+def test_a_stamp_does_not_excuse_settings_local_json(container):
+    """Claude Code owns that filename and appends to it; the stamp is not its."""
+    path = _container_settings(container, perms.LOCAL_SETTINGS, {
+        "permissions": {"allow": ["Bash(bin/x)"]},
+        perms.MANIFEST_KEY: {"permissions": {"allow": ["Bash(bin/x)"]}},
+    })
+    assert perms.is_local(str(path), perms.at_container(str(path), str(container)))
+
+
+def test_an_unparsable_container_file_stays_in_the_checked_class(container):
+    path = container / ".claude" / "settings.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("{ not json")
+    assert perms.is_local(str(path), perms.at_container(str(path), str(container)))
+
+
 # ── discovery and CLI ────────────────────────────────────────────────────
 
 
@@ -451,6 +490,29 @@ def test_main_reaches_the_container_file_above_the_worktree(container, monkeypat
     err = capsys.readouterr().err
     assert COVERED_GRANT in err
     assert "run the session from a worktree" in err
+
+
+def test_main_passes_a_generated_container_file(container, monkeypatch, capsys):
+    """The gate has to accept the mirror, or pre-push fails on the fix itself.
+
+    Every rule in it duplicates the tracked file — which is the point — so
+    without the stamp each one reports as drift and the validator exits 1.
+    """
+    worktree = container / "main"
+    (worktree / ".claude").mkdir(parents=True)
+    (worktree / vp.TRACKED_SETTINGS).write_text(json.dumps({"permissions": {
+        "allow": ["Bash(bin/*)"], "ask": ["Bash(bin/get-secret:*)"],
+    }}))
+    _container_settings(container, "settings.json", {
+        "permissions": {"allow": ["Bash(bin/*)"], "ask": ["Bash(bin/get-secret:*)"]},
+        perms.MANIFEST_KEY: {"permissions": {"allow": ["Bash(bin/*)"]}},
+    })
+
+    monkeypatch.setattr(vp, "_WORKBENCH_DIR", str(worktree))
+    monkeypatch.setattr(sys, "argv", ["validate-permissions"])
+    vp.main()
+
+    assert "every permission rule is live" in capsys.readouterr().out
 
 
 # ── --fix ────────────────────────────────────────────────────────────────

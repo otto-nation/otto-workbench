@@ -589,21 +589,42 @@ step_worktrunk_config() {
 }
 
 # step_worktrunk_pre_switch_fetch — ensures the worktrunk config has a
-# pre-switch hook that fetches and fast-forwards the default branch so new
+# pre-switch hook that brings the default branch up to date with origin, so new
 # branches are always created from the latest remote HEAD.
+#
+# The whole command lives in `git/bin/wt-fetch-default` rather than in the hook
+# line, because deciding how to move the ref needs a branch the template
+# language cannot express, and because the decision is worth testing.
+#
+# A `fetch-default` line that has drifted from the template is rewritten rather
+# than left alone. The line this replaces fast-forwarded through
+# `{{ worktree_path_of_branch(default_branch) }}`, which renders empty when no
+# worktree holds the branch — every machine carrying it needs the line replaced,
+# not merely not re-added, which is why the step converges instead of backing
+# off at the first `fetch-default` it sees.
 step_worktrunk_pre_switch_fetch() {
   command -v wt >/dev/null 2>&1 || return 0
 
   local config_file="$WORKTRUNK_CONFIG_FILE"
-  local hook_cmd='fetch-default = "git fetch origin {{ default_branch }} && git -C {{ worktree_path_of_branch(default_branch) }} merge --ff-only origin/{{ default_branch }} || true"'
+  local hook_cmd='fetch-default = "wt-fetch-default {{ default_branch }}"'
 
-  if [[ -f "$config_file" ]] && grep -q '^fetch-default' "$config_file"; then
+  if [[ ! -f "$config_file" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && skip "worktrunk config not found — run step_worktrunk_config first" || true
+    return 0
+  fi
+
+  if grep -qxF "$hook_cmd" "$config_file"; then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "worktrunk pre-switch fetch already set" || true
     return 0
   fi
 
-  if [[ ! -f "$config_file" ]]; then
-    [[ "${WORKBENCH_SYNC:-}" != true ]] && skip "worktrunk config not found — run step_worktrunk_config first" || true
+  if grep -q '^fetch-default' "$config_file"; then
+    # The key is ours but its command has drifted from the current template.
+    local tmp
+    tmp=$(mktemp)
+    awk -v line="$hook_cmd" '/^fetch-default/ { print line; next } { print }' "$config_file" > "$tmp"
+    mv "$tmp" "$config_file"
+    success "worktrunk pre-switch fetch hook refreshed"
     return 0
   fi
 

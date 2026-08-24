@@ -57,6 +57,7 @@
 
 - Before starting work or creating a PR on an existing branch, rebase onto `origin/main` and verify the diff (`git diff --stat origin/main...HEAD`) contains only your changes — reversions indicate a stale base
 - If a rebase has conflicts, resolve them before writing new code — don't add commits on top of a stale base
+- `wt switch -c` brings the default branch up to date before it cuts the new one, through the `fetch-default` pre-switch hook `otto-workbench sync git` installs. When it cannot — the default branch has diverged from `origin`, or the worktree holding it will not fast-forward — the switch aborts instead of branching from a stale base. That abort is the guarantee working; fix the default branch rather than re-running with `--no-hooks`
 
 ## Branch Completion
 

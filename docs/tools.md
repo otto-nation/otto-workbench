@@ -82,6 +82,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `check-surface-compat` | Fails when a public surface entry is removed without a breaking-change or Not-Breaking declaration |
 | `cleanup-testcontainers` | Stops and removes stale Testcontainers Docker resources left by test runs |
 | `generate-changelog` | Generates a changelog from conventional commits grouped by type |
+| `wt-fetch-default` | Brings the local default branch up to date with origin's — the worktrunk pre-switch hook |
 | `ghostty-terminfo-push` | Installs Ghostty's xterm-ghostty terminfo on a remote host — fixes 'Error opening terminal' over SSH |
 | `aliases` | Lists all custom shell aliases and functions with optional keyword filtering |
 

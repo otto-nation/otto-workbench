@@ -16,6 +16,7 @@
     "command:task",
     "command:validate-nesting",
     "command:wt-cleanup",
+    "command:wt-fetch-default",
     "command:wt-init",
     "component:ai",
     "component:brew",

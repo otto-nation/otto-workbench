@@ -20,6 +20,7 @@ developer's shell rather than from another process.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -214,7 +215,7 @@ class TestTheGuardItself:
         assert self._check(tmp_path, refreshed).read_bytes() == refreshed
 
     def test_a_write_to_a_guarded_key_fails(self, tmp_path):
-        with pytest.raises(AssertionError, match=str(tmp_path)):
+        with pytest.raises(AssertionError, match=re.escape(str(tmp_path))):
             self._check(tmp_path, _rewritten(b"dev@example.com", b"test@example.com"))
 
     def test_the_failure_names_the_key(self, tmp_path):

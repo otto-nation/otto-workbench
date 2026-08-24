@@ -15,16 +15,23 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 
 
+_LIBS: dict[str, object] = {}
+
+
 def _load_lib(name: str):
-    """Import `lib/<name>.py` without putting `lib/` on `sys.path`.
+    """Import `lib/<name>.py` once, without putting `lib/` on `sys.path`.
 
     `lib/` holds modules named for what they wrap rather than for this repo, so
-    adding it to the path would let one of them answer an unrelated import.
+    adding it to the path would let one of them answer an unrelated import. The
+    cache is what makes two callers asking for the same name share one module
+    rather than hold copies whose state can drift apart.
     """
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "lib" / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    if name not in _LIBS:
+        spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "lib" / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _LIBS[name] = module
+    return _LIBS[name]
 
 
 # Which variables redirect git at another repository is one fact, and
@@ -239,6 +246,12 @@ def _restore_config(path: Path, before: bytes | None) -> None:
     restamps its markers on the next hook, and the alternative is leaving a
     poisoned identity in a config every worktree of the repo shares.
     """
+    # ceiling: an unlocked write, so under `pytest -n` several workers can each
+    # roll the file back to their own snapshot and the last one wins. Every
+    # snapshot predates the leak, so the identity goes either way; what a losing
+    # write can drop is an external marker that landed between two snapshots.
+    # Upgrade to a lock held across snapshot-and-restore if the restored bytes
+    # ever have to be exactly one worker's.
     if before is None:
         path.unlink(missing_ok=True)
         return

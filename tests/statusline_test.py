@@ -25,6 +25,7 @@ with patch.object(sys, "argv", ["workbench-statusline"]):
     _spec.loader.exec_module(statusline)
 sys.modules.setdefault("workbench_statusline", statusline)
 
+import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
 import pr_target  # noqa: E402
 
@@ -80,7 +81,7 @@ def test_statusline_is_silent_without_an_origin(tmp_path, monkeypatch):
 
 
 def test_pr_piece_renders_ci_failures(tmp_path):
-    _save(tmp_path, pr_state.CIDomain(conclusion="failure", failure_count=3))
+    _save(tmp_path, pr_domains.CIDomain(conclusion="failure", failure_count=3))
 
     with _at(tmp_path):
         assert statusline._pr_piece() == "PR#42 CI:3F"
@@ -164,7 +165,7 @@ def test_pr_details_reads_typed_fields(tmp_path):
     PRState blanked the segment with nothing to catch it."""
     state = pr_state.new_state("owner/repo", "feat", pr_number=42,
                                head_sha="abc", worktree_root=str(tmp_path))
-    pr_state.apply(state, pr_state.ReviewSummary(verdict="approve"))
-    pr_state.apply(state, pr_state.CommentsSummary(by_state={"open": 2}))
+    pr_state.apply(state, pr_domains.ReviewSummary(verdict="approve"))
+    pr_state.apply(state, pr_domains.CommentsSummary(by_state={"open": 2}))
 
     assert statusline._pr_details(state) == "review:approve 2open"

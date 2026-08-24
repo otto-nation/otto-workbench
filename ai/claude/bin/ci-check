@@ -34,6 +34,7 @@ import ci_failures as ci
 import gh_client
 import git_client
 import pr_context
+import pr_domains
 import pr_state
 import proc
 import run_lock
@@ -956,7 +957,7 @@ def main():
     parser = ToolParser(
         prog=SCRIPT,
         description="CI failure status",
-        output_schema=pr_state.CIDomain,
+        output_schema=pr_domains.CIDomain,
     )
     parser.add_argument("--pr", help="PR number or URL")
     parser.add_argument("--branch", help="Branch name (overrides git detection)")

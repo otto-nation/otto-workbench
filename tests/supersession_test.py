@@ -20,7 +20,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pr_state
 import supersession
-from pr_state import SupersessionDomain, SupersessionKind, SupersessionSignal
+from pr_domains import SupersessionDomain, SupersessionKind, SupersessionSignal
 
 _CLEAN_LOG = "1700000000 1700000000\n"
 _SKEWED_LOG = "1700000000 1700864000\n"

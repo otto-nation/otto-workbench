@@ -1,6 +1,6 @@
 """Typed domain objects for PR review thread processing.
 
-Persistence-oriented structures live in pr_state.py; these model the
+Persistence-oriented structures live in pr_domains.py; these model the
 runtime pipeline: triage, classification, tracking, and fix-pass results.
 """
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 import serde
 from pr_comments import ThreadState
-from pr_state import ThreadAction, ThreadOutcome
+from pr_domains import ThreadAction, ThreadOutcome
 
 
 # ── Core types ─────────────────────────────────────────────────────────────

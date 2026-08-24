@@ -21,6 +21,7 @@ import gh_client
 import git_client
 import log
 import pr_context
+import pr_domains
 import pr_state
 import run_lock
 import timeouts
@@ -282,7 +283,7 @@ def _update_pr_state(
 
     status = read_pipeline_status(review_dir)
 
-    summary = pr_state.ReviewSummary(
+    summary = pr_domains.ReviewSummary(
         review_file=review_file,
         review_type=meta.review_type or ReviewType.FULL,
         head_sha=meta.head_sha,
@@ -487,7 +488,7 @@ def _should_auto_recover(repo: str, pr_number: str, review_file: Path) -> None:
     if not pr_head_sha or review_sha != pr_head_sha:
         return
     pipeline_status = read_pipeline_status(review_file.parent)
-    if pipeline_status in (pr_state.ReviewStatus.PARTIAL.value, pr_state.ReviewStatus.ERROR.value):
+    if pipeline_status in (pr_domains.ReviewStatus.PARTIAL.value, pr_domains.ReviewStatus.ERROR.value):
         log.info(f"Recovering failed review agents (HEAD unchanged at {review_sha[:7]})")
 
 

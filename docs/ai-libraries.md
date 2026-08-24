@@ -417,7 +417,7 @@ is still open at both points, so the hold applies to both.
 
 Typed domain objects for PR review thread processing.
 
-Persistence-oriented structures live in pr_state.py; these model the
+Persistence-oriented structures live in pr_domains.py; these model the
 runtime pipeline: triage, classification, tracking, and fix-pass results.
 
 ### publishing.py
@@ -594,7 +594,7 @@ What a pull request is right now: its target, its threads, its CI, whether it ha
 CI failure lifecycle tracking.
 
 Handles failure classification, progression tracking, and rendering for the
-ci-failures skill. State persistence is delegated to pr_state.CIDomain.
+ci-failures skill. State persistence is delegated to pr_domains.CIDomain.
 
 ### pr_context.py
 
@@ -666,6 +666,19 @@ cost more than the query itself, and they land in the file every `otto-log`
 query then reads. The exemption is read off these same three axes — `Need`
 carries no trail flag of its own for a command to add itself to.
 
+### pr_domains.py
+
+The domains a PR's state is made of.
+
+Each ``pr`` subcommand owns one domain and writes it as a unit. A domain is a
+dataclass subclassing :class:`Domain`; subclassing is the registration, and
+``pr_state`` derives its registry from ``PRState``'s own annotations, so a new
+domain is added here and named there and nowhere else.
+
+This module holds the domain types and the vocabulary they are written in.
+``pr_state`` holds the envelope over them, the registry and the state file I/O,
+and imports this module — never the other way round.
+
 ### pr_state.py
 
 Unified PR state framework.
@@ -676,6 +689,9 @@ section; ``pr status`` reads the whole thing without network calls.
 
 State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
 run's target — see ``pr_target.target_dir``, which owns that path.
+
+The domains this is an envelope over live in ``pr_domains``, which this module
+imports and which never imports this one.
 
 ### pr_target.py
 

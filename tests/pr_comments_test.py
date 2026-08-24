@@ -15,6 +15,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import pr_comments
+import pr_domains
 import pr_state
 import publishing
 import review_issue
@@ -422,12 +423,12 @@ def test_dashboard_backward_compatible_without_review_body():
 
 
 def test_render_status_not_checked():
-    c = pr_state.CommentsSummary()
+    c = pr_domains.CommentsSummary()
     assert render_status(c) == ["**Comments**: not checked yet"]
 
 
 def test_render_status_with_threads():
-    c = pr_state.CommentsSummary(
+    c = pr_domains.CommentsSummary(
         total_threads=5, by_state={"new": 2, "resolved": 3}, updated_at="t",
     )
     lines = render_status(c)
@@ -437,7 +438,7 @@ def test_render_status_with_threads():
 
 
 def test_render_status_with_blocking_reviewers():
-    c = pr_state.CommentsSummary(
+    c = pr_domains.CommentsSummary(
         total_threads=1, blocking_reviewers=["alice", "bob"], updated_at="t",
     )
     lines = render_status(c)
@@ -448,12 +449,12 @@ def test_render_status_with_blocking_reviewers():
 
 
 def test_render_triage_status_not_run():
-    t = pr_state.TriageSummary()
+    t = pr_domains.TriageSummary()
     assert render_triage_status(t) == ["**Triage**: not run yet"]
 
 
 def test_render_triage_status_with_data():
-    t = pr_state.TriageSummary(
+    t = pr_domains.TriageSummary(
         total=5, actionable=2, valid=1, questions=1, updated_at="2024-01-01T00:00:00Z",
     )
     result = render_triage_status(t)
@@ -468,17 +469,17 @@ def test_render_triage_status_with_data():
 
 
 def test_render_fix_status_not_run():
-    f = pr_state.FixSummary()
+    f = pr_domains.FixSummary()
     assert render_fix_status(f) == ["**Fix**: not run yet"]
 
 
 def test_render_fix_status_with_data():
-    f = pr_state.FixSummary(
+    f = pr_domains.FixSummary(
         threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED),
-            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.FIXED),
-            pr_state.ThreadOutcome(id="t3", action=pr_state.ThreadAction.DEFERRED),
-            pr_state.ThreadOutcome(id="t4", action=pr_state.ThreadAction.DISMISSED),
+            pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.FIXED),
+            pr_domains.ThreadOutcome(id="t2", action=pr_domains.ThreadAction.FIXED),
+            pr_domains.ThreadOutcome(id="t3", action=pr_domains.ThreadAction.DEFERRED),
+            pr_domains.ThreadOutcome(id="t4", action=pr_domains.ThreadAction.DISMISSED),
         ],
         commit_sha="abc1234", commit_status="pushed",
         updated_at="2026-07-14T00:00:00+00:00",
@@ -492,10 +493,10 @@ def test_render_fix_status_with_data():
 
 
 def test_render_fix_status_needs_human():
-    f = pr_state.FixSummary(
+    f = pr_domains.FixSummary(
         threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.NEEDS_HUMAN),
-            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.NEEDS_HUMAN),
+            pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.NEEDS_HUMAN),
+            pr_domains.ThreadOutcome(id="t2", action=pr_domains.ThreadAction.NEEDS_HUMAN),
         ],
         updated_at="2026-07-14T00:00:00+00:00",
     )
@@ -504,9 +505,9 @@ def test_render_fix_status_needs_human():
 
 
 def test_render_fix_status_deferred_issue():
-    f = pr_state.FixSummary(
+    f = pr_domains.FixSummary(
         threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.DEFERRED),
+            pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.DEFERRED),
         ],
         commit_sha="abc", commit_status="pushed",
         deferred_issue_id="ENG-456",
@@ -520,14 +521,14 @@ def test_render_fix_status_deferred_issue():
 # ── closeout debt ────────────────────────────────────────────────────────
 
 
-def _fix_with_closeout(**kwargs) -> pr_state.FixSummary:
+def _fix_with_closeout(**kwargs) -> pr_domains.FixSummary:
     """A pushed fix pass with three reply-owing outcomes and one that owes none."""
-    return pr_state.FixSummary(
+    return pr_domains.FixSummary(
         threads=[
-            pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED),
-            pr_state.ThreadOutcome(id="t2", action=pr_state.ThreadAction.ALREADY_ADDRESSED),
-            pr_state.ThreadOutcome(id="t3", action=pr_state.ThreadAction.DISMISSED),
-            pr_state.ThreadOutcome(id="t4", action=pr_state.ThreadAction.NEEDS_HUMAN),
+            pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.FIXED),
+            pr_domains.ThreadOutcome(id="t2", action=pr_domains.ThreadAction.ALREADY_ADDRESSED),
+            pr_domains.ThreadOutcome(id="t3", action=pr_domains.ThreadAction.DISMISSED),
+            pr_domains.ThreadOutcome(id="t4", action=pr_domains.ThreadAction.NEEDS_HUMAN),
         ],
         commit_sha="abc1234", commit_status="pushed",
         updated_at="2026-07-14T00:00:00+00:00",
@@ -600,8 +601,8 @@ def test_render_fix_status_warns_for_an_unfiled_tracking_issue():
 
 
 def test_render_fix_status_singularises_a_one_reply_queue():
-    f = pr_state.FixSummary(
-        threads=[pr_state.ThreadOutcome(id="t1", action=pr_state.ThreadAction.FIXED)],
+    f = pr_domains.FixSummary(
+        threads=[pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.FIXED)],
         replies_pending=True,
         updated_at="2026-07-14T00:00:00+00:00",
     )
@@ -612,7 +613,7 @@ def test_render_fix_status_singularises_a_one_reply_queue():
 
 def test_render_fix_status_says_replies_when_no_outcome_carries_the_count():
     """A queue whose outcomes were pruned still says replies are owed, not zero."""
-    f = pr_state.FixSummary(
+    f = pr_domains.FixSummary(
         threads=[], replies_pending=True, updated_at="2026-07-14T00:00:00+00:00",
     )
     assert _closeout_line(render_fix_status(f)) == (

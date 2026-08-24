@@ -8,17 +8,18 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import pr_domains
 import pr_state
 import rebase_status
 
 
 def test_render_status_not_run():
-    r = pr_state.RebaseSummary()
+    r = pr_domains.RebaseSummary()
     assert rebase_status.render_status(r) == ["**Rebase**: not run yet"]
 
 
 def test_render_status_completed_with_conflicts():
-    r = pr_state.RebaseSummary(
+    r = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=2, files_resolved=["a.py", "b.py"],
         force_pushed=True, updated_at="2026-06-20T00:00:00Z",
@@ -31,7 +32,7 @@ def test_render_status_completed_with_conflicts():
 
 
 def test_render_status_clean():
-    r = pr_state.RebaseSummary(
+    r = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=5,
         conflicts_resolved=0, files_resolved=[],
         force_pushed=True, updated_at="2026-06-20T00:00:00Z",
@@ -42,7 +43,7 @@ def test_render_status_clean():
 
 
 def test_render_status_not_pushed():
-    r = pr_state.RebaseSummary(
+    r = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=1, files_resolved=["a.py"],
         force_pushed=False, updated_at="2026-06-20T00:00:00Z",
@@ -52,7 +53,7 @@ def test_render_status_not_pushed():
 
 
 def test_render_status_conflicts():
-    r = pr_state.RebaseSummary(
+    r = pr_domains.RebaseSummary(
         status="conflicts", updated_at="2026-06-20T00:00:00Z",
     )
     result = rebase_status.render_status(r)
@@ -62,7 +63,7 @@ def test_render_status_conflicts():
 
 
 def test_render_status_stale_files():
-    r = pr_state.RebaseSummary(
+    r = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=1, files_resolved=["pnpm-lock.yaml"],
         files_stale=["pnpm-lock.yaml"],
@@ -75,7 +76,7 @@ def test_render_status_stale_files():
 
 
 def test_render_status_no_stale_line_when_clean():
-    r = pr_state.RebaseSummary(
+    r = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=1,
         conflicts_resolved=0, files_resolved=[],
         force_pushed=True, updated_at="2026-06-20T00:00:00Z",
@@ -84,7 +85,7 @@ def test_render_status_no_stale_line_when_clean():
 
 
 def test_render_status_aborted():
-    r = pr_state.RebaseSummary(
+    r = pr_domains.RebaseSummary(
         status="aborted", updated_at="2026-06-20T00:00:00Z",
     )
     result = rebase_status.render_status(r)
@@ -93,8 +94,8 @@ def test_render_status_aborted():
 
 def test_render_status_already_landed():
     """A refusal is not a completed rebase — the dashboard has to say which."""
-    r = pr_state.RebaseSummary(
-        status=pr_state.RebaseStatus.ALREADY_LANDED.value,
+    r = pr_domains.RebaseSummary(
+        status=pr_domains.RebaseStatus.ALREADY_LANDED.value,
         updated_at="2026-06-20T00:00:00Z",
     )
     result = rebase_status.render_status(r)
@@ -104,16 +105,16 @@ def test_render_status_already_landed():
 
 
 def test_render_status_unrelated_history():
-    r = pr_state.RebaseSummary(
-        status=pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+    r = pr_domains.RebaseSummary(
+        status=pr_domains.RebaseStatus.UNRELATED_HISTORY.value,
         updated_at="2026-06-20T00:00:00Z",
     )
     assert "shares no history" in rebase_status.render_status(r)[0]
 
 
 def test_render_status_conflicts_over_budget():
-    r = pr_state.RebaseSummary(
-        status=pr_state.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
+    r = pr_domains.RebaseSummary(
+        status=pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
         updated_at="2026-06-20T00:00:00Z",
     )
     assert "too many conflicts" in rebase_status.render_status(r)[0]
@@ -127,12 +128,12 @@ def test_every_refusal_status_renders_as_a_refusal():
     report a clean rebase that never ran.
     """
     refusals = {
-        pr_state.RebaseStatus.ALREADY_LANDED,
-        pr_state.RebaseStatus.UNRELATED_HISTORY,
-        pr_state.RebaseStatus.CONFLICTS_OVER_BUDGET,
+        pr_domains.RebaseStatus.ALREADY_LANDED,
+        pr_domains.RebaseStatus.UNRELATED_HISTORY,
+        pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET,
     }
     for status in refusals:
-        r = pr_state.RebaseSummary(
+        r = pr_domains.RebaseSummary(
             status=status.value, updated_at="2026-06-20T00:00:00Z",
         )
         assert "refused" in rebase_status.render_status(r)[0], status

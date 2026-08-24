@@ -27,6 +27,7 @@ pr_rebase_cli.__file__ = _pr_rebase_path
 _spec.loader.exec_module(pr_rebase_cli)
 
 import pr_context  # noqa: E402
+import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
 import timeouts  # noqa: E402
 
@@ -2804,7 +2805,7 @@ def test_unrelated_check_refuses_a_branch_with_no_merge_base():
     report = _run_unrelated_check(merge_base_rc=1)
 
     assert report.signal == pr_rebase_cli.RefusalSignal.NO_MERGE_BASE.value
-    assert report.status == pr_state.RebaseStatus.UNRELATED_HISTORY.value
+    assert report.status == pr_domains.RebaseStatus.UNRELATED_HISTORY.value
     assert _TARGET in report.detail
     # No merge base means no meaningful "ahead of" count to report.
     assert report.commits_ahead is None
@@ -2840,7 +2841,7 @@ def test_refuse_over_budget_aborts_before_refusing(capsys):
     assert ["git", "rebase", "--abort"] in commands
     payload = json.loads(capsys.readouterr().out)
     assert payload["signal"] == pr_rebase_cli.RefusalSignal.CONFLICTS_OVER_BUDGET.value
-    assert payload["status"] == pr_state.RebaseStatus.CONFLICTS_OVER_BUDGET.value
+    assert payload["status"] == pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value
     assert payload["override"] == "--force"
     assert "35" in payload["detail"]
 
@@ -2852,9 +2853,9 @@ def test_refuse_renders_the_hint_for_every_refusal_status():
     raises rather than printing nothing — this pins that they stay in step.
     """
     statuses = {
-        pr_state.RebaseStatus.ALREADY_LANDED.value,
-        pr_state.RebaseStatus.UNRELATED_HISTORY.value,
-        pr_state.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
+        pr_domains.RebaseStatus.ALREADY_LANDED.value,
+        pr_domains.RebaseStatus.UNRELATED_HISTORY.value,
+        pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
     }
     assert set(pr_rebase_cli._REFUSAL_HINTS) == statuses
 
@@ -2908,7 +2909,7 @@ def test_refuse_landed_records_the_status_for_the_dashboard():
         pr_rebase_cli._refuse(ctx, report, target_ref=_OTHER_TARGET)
 
     state = pr_state.load_state(ctx.target_dir)
-    assert state.rebase.status == pr_state.RebaseStatus.ALREADY_LANDED.value
+    assert state.rebase.status == pr_domains.RebaseStatus.ALREADY_LANDED.value
     assert state.rebase.target_base == _OTHER_TARGET
 
 
@@ -3001,7 +3002,7 @@ def test_fresh_refuses_an_unrelated_branch_before_rebasing():
     report = pr_rebase_cli.RefusalReport(
         branch=_LANDED_BRANCH, signal=pr_rebase_cli.RefusalSignal.NO_MERGE_BASE.value,
         detail=f"no commit in common with {_TARGET}",
-        status=pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+        status=pr_domains.RebaseStatus.UNRELATED_HISTORY.value,
     )
     rc, commands, saw_checkout = _run_fresh(unrelated=report, current_branch="other")
 
@@ -3018,7 +3019,7 @@ def test_fresh_asks_about_unrelated_history_before_the_git_landed_signals():
             branch=_LANDED_BRANCH,
             signal=pr_rebase_cli.RefusalSignal.NO_MERGE_BASE.value,
             detail="no commit in common",
-            status=pr_state.RebaseStatus.UNRELATED_HISTORY.value,
+            status=pr_domains.RebaseStatus.UNRELATED_HISTORY.value,
         ),
     )
 

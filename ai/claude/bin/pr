@@ -23,6 +23,7 @@ sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 import ci_failures
 import pr_comments
 import pr_context
+import pr_domains
 import pr_state
 import push_status
 import schema_gen
@@ -328,7 +329,7 @@ def _update_review_state(summary_data: dict,
         if k != "total" and isinstance(v, int) and v > 0
     }
     state = _load_or_init(ctx)
-    pr_state.apply(state, pr_state.ReviewSummary(
+    pr_state.apply(state, pr_domains.ReviewSummary(
         review_file=summary_data.get("review_file", ""),
         # The summary carries the type the review recorded; the stored value is
         # the fallback for a summary that predates the field. "pr" was never a
@@ -337,7 +338,7 @@ def _update_review_state(summary_data: dict,
         head_sha=summary_data.get("head_sha", ""),
         finding_counts=finding_counts,
         verdict=summary_data.get("verdict", ""),
-        status=summary_data.get("status", pr_state.ReviewStatus.COMPLETED.value),
+        status=summary_data.get("status", pr_domains.ReviewStatus.COMPLETED.value),
         failure_detail=summary_data.get("failure_detail", ""),
         cost_usd=summary_data.get("cost_usd", 0.0),
         updated_at=pr_state.now_iso(),

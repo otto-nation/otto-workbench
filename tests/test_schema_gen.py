@@ -146,14 +146,13 @@ def test_not_a_dataclass():
 
 def test_pr_state_models():
     """Verify schema generation works on the actual pr_state dataclasses."""
-    from pr_state import (
+    from pr_domains import (
         CIDomain,
         CommentsSummary,
-        PRIdentity,
-        PRState,
         RebaseSummary,
         ReviewSummary,
     )
+    from pr_state import PRIdentity, PRState
 
     for cls in [PRIdentity, CIDomain, ReviewSummary, CommentsSummary, RebaseSummary, PRState]:
         schema = dataclass_to_schema(cls)

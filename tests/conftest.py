@@ -406,7 +406,7 @@ def supersession_evidence(detail="`foo` is gone from origin/main"):
     """A signal that argues the branch is superseded."""
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from pr_state import SupersessionKind, SupersessionSignal
+    from pr_domains import SupersessionKind, SupersessionSignal
     return SupersessionSignal(SupersessionKind.READDS_REMOVED_SYMBOL, detail)
 
 
@@ -414,7 +414,7 @@ def supersession_context(detail="replayed onto a moved base"):
     """A signal that explains the branch without arguing anything about it."""
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from pr_state import SupersessionKind, SupersessionSignal
+    from pr_domains import SupersessionKind, SupersessionSignal
     return SupersessionSignal(SupersessionKind.REBASE_SKEW, detail, holds=False)
 
 

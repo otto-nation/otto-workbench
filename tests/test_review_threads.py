@@ -30,10 +30,10 @@ import pr_state
 import proc
 from proc import CmdResult
 from pr_comments import ThreadState
-from pr_state import (
-    CommitStatus, FixSummary, PRIdentity, PRState, SupersessionKind,
-    ThreadAction, ThreadOutcome,
+from pr_domains import (
+    CommitStatus, FixSummary, SupersessionKind, ThreadAction, ThreadOutcome,
 )
+from pr_state import PRIdentity, PRState
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
     TriageStats, triage_result_from_dict,

@@ -48,9 +48,10 @@ import ai_backend
 import gh_client
 import log
 import pr_context
+import pr_domains
 import pr_state
 import timeouts
-from pr_state import RebaseStatus, RebaseSummary
+from pr_domains import RebaseStatus, RebaseSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 
@@ -1775,7 +1776,7 @@ class RebaseOutcome:
 
     def save(self, ctx: pr_context.ResolvedContext) -> None:
         state = _load_or_init(ctx)
-        pr_state.apply(state, pr_state.RebaseSummary(
+        pr_state.apply(state, pr_domains.RebaseSummary(
             status=self.status.value,
             target_base=self.target_base,
             commits_replayed=self.commits_replayed,

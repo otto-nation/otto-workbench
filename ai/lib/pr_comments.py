@@ -55,7 +55,7 @@ import gh_client
 import log
 import publishing
 import serde
-from pr_state import CommentsSummary, FixSummary, ThreadAction, TriageSummary
+from pr_domains import CommentsSummary, FixSummary, ThreadAction, TriageSummary
 from proc import CmdResult
 from review_common import plural
 from review_github import PRData, fetch_review_threads

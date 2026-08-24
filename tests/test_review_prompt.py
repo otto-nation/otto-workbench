@@ -21,7 +21,7 @@ from review_prompt import (
     _build_pr_header, _compute_diff_budget,
 )
 from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
-from pr_state import CIDomain
+from pr_domains import CIDomain
 
 
 # ── _build_delta_section with file_filter ──────────────────────────────────

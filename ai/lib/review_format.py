@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from pr_state import VERDICT_PROSE_PREFIX_RE
+from pr_domains import VERDICT_PROSE_PREFIX_RE
 from review_common import SEVERITIES, severity_by_key
 from review_findings import Finding, parse_diff_hunks
 from review_sections import ReviewSections, SectionConfig

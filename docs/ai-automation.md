@@ -565,6 +565,24 @@ They stack: `git_client` sits on `proc`, which requires a `timeouts` tier on
 every call. `bin/local/validate-timeouts` enforces the last of those across
 `ai/`, so a new subprocess call cannot skip the question.
 
+### A push is not finished when git exits
+
+Every push these tasks issue goes through [`push.py`](ai-libraries.md#pushpy),
+which asks `git ls-remote` what the remote actually holds — a push that exits
+zero and lands nothing is what it exists to catch. Its docstring has the five
+outcomes and the one bounded retry; two of them change what you do. **Lost** is a
+hard stop: git succeeded, the remote does not have the commit, and nothing
+downstream runs. `pr comments` records that as `push_lost` rather than
+`push_failed`, because the operator watched a clean push; the fixes exist only in
+the worktree, so nothing may cite the SHA. **Unverified** means the remote could
+not be asked at all — a warning, because an unreachable remote has not said no.
+
+The bash half of `pr:create` reaches the same owner rather than keeping a second
+implementation: `_push_verified` in [`lib/ai/pr.sh`](../lib/ai/pr.sh) shells out
+to `ai/lib/push.py` and reads its exit code — `0` pushed, `1` refused, `2` lost,
+`3` unverified. Pushes typed by hand are outside all of this
+([#963](https://github.com/otto-nation/otto-workbench/issues/963)).
+
 ## Guidelines & Rules
 
 The workbench installs a layered rule system into Claude Code:

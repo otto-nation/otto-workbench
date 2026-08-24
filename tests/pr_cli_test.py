@@ -33,6 +33,7 @@ _spec.loader.exec_module(pr_cli)
 sys.modules.setdefault("pr_cli", pr_cli)
 
 import proc  # noqa: E402
+import pr_comments_fix  # noqa: E402
 import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
 import run_lock  # noqa: E402
@@ -43,7 +44,7 @@ import workbench_paths  # noqa: E402
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
 from conftest import assert_no_worktree_exit, make_ctx, seed_review  # noqa: E402
-from pr_domains import CLOSEOUT_COMMAND  # noqa: E402
+from pr_comments_fix import CLOSEOUT_COMMAND  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.
 _TEST_PR = "3057"
@@ -183,7 +184,7 @@ def _green_state():
 def test_merge_readiness_blocked_by_a_deferred_summary():
     import pr_state
     state = _green_state()
-    pr_state.apply(state, pr_domains.FixSummary(summary_deferred=True, updated_at="t"))
+    pr_state.apply(state, pr_comments_fix.FixSummary(summary_deferred=True, updated_at="t"))
     result = pr_cli._merge_readiness(state)
     assert "blocked" in result
     assert "closeout not delivered" in result
@@ -193,7 +194,7 @@ def test_merge_readiness_blocked_by_a_deferred_summary():
 def test_merge_readiness_blocked_by_a_pending_reply_queue():
     import pr_state
     state = _green_state()
-    pr_state.apply(state, pr_domains.FixSummary(replies_pending=True, updated_at="t"))
+    pr_state.apply(state, pr_comments_fix.FixSummary(replies_pending=True, updated_at="t"))
     assert "closeout not delivered" in pr_cli._merge_readiness(state)
 
 
@@ -201,7 +202,7 @@ def test_merge_readiness_blocked_by_an_unfiled_tracking_issue():
     """Deferred comments with nowhere to live are not a mergeable state."""
     import pr_state
     state = _green_state()
-    pr_state.apply(state, pr_domains.FixSummary(deferred_issue_pending=True, updated_at="t"))
+    pr_state.apply(state, pr_comments_fix.FixSummary(deferred_issue_pending=True, updated_at="t"))
     result = pr_cli._merge_readiness(state)
     assert "ready" not in result.lower()
     assert "closeout not delivered" in result
@@ -210,8 +211,8 @@ def test_merge_readiness_blocked_by_an_unfiled_tracking_issue():
 def test_merge_readiness_ignores_a_drained_closeout():
     import pr_state
     state = _green_state()
-    pr_state.apply(state, pr_domains.FixSummary(
-        threads=[pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.FIXED)],
+    pr_state.apply(state, pr_comments_fix.FixSummary(
+        threads=[pr_comments_fix.ThreadOutcome(id="t1", action=pr_comments_fix.ThreadAction.FIXED)],
         summary_url="https://example.test/c/1", replies_posted=1, updated_at="t",
     ))
     result = pr_cli._merge_readiness(state)

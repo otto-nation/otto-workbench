@@ -31,6 +31,7 @@ import agent_retry
 import ai_backend
 import git_client
 import pr_comments as pc
+import pr_comments_fix
 import pr_context
 import pr_domains
 import pr_state
@@ -38,7 +39,7 @@ import proc
 import run_lock
 import publishing
 from pr_comments import ThreadState
-from pr_domains import CommitStatus
+from pr_fix import CommitStatus
 import review_common
 import review_issue
 import timeouts
@@ -911,7 +912,7 @@ class CommitClaim(StrEnum):
 @dataclass
 class CommitPushResult:
     sha: str | None
-    # A pr_domains.CommitStatus. Typed as `str` because a status read back out
+    # A pr_fix.CommitStatus. Typed as `str` because a status read back out
     # of a state file is a plain string, and CommitStatus is a StrEnum
     # precisely so the two compare equal.
     status: str
@@ -1269,7 +1270,7 @@ class CommitAttribution:
 
 
 def _attribute_commit(
-    entry: CommentItem | pr_domains.ThreadOutcome,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome,
     cp: CommitPushResult,
     history: "AddressingHistory | None" = None,
     thread: ReportThread | None = None,
@@ -1391,7 +1392,7 @@ def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
 
 
 def _anchored_line(
-    entry: CommentItem | pr_domains.ThreadOutcome,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome,
     filepath: str, line: int, sha: str, wt_path: Path | None,
 ) -> int:
     """`line` when it still points at the same code in `sha`, else 0.
@@ -1420,7 +1421,7 @@ def _anchored_line(
 
 
 def _anchored_link(
-    entry: CommentItem | pr_domains.ThreadOutcome,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome,
     repo: str, filepath: str, line: int, sha: str, wt_path: Path | None,
 ) -> str:
     """A markdown blob link to `filepath`, anchored only where the line holds."""
@@ -1576,7 +1577,7 @@ class AddressingHistory:
 
     def framing(
         self,
-        entry: CommentItem | pr_domains.ThreadOutcome,
+        entry: CommentItem | pr_comments_fix.ThreadOutcome,
         thread: ReportThread | None,
         acted: bool = False,
     ) -> AddressedFraming:
@@ -1598,7 +1599,7 @@ class AddressingHistory:
         # the one the flat prefix is reserved for.
         return AddressedFraming(landed_after, sha)
 
-    def _commit_for(self, entry: CommentItem | pr_domains.ThreadOutcome) -> str:
+    def _commit_for(self, entry: CommentItem | pr_comments_fix.ThreadOutcome) -> str:
         """The branch commit behind this entry's code, or "" when there is none."""
         if not self._wt_path:
             return ""
@@ -1821,7 +1822,7 @@ def _validate_track(state: pr_state.PRState, track) -> None:
     """
     if track is TRACK_ALL:
         return
-    FA = pr_domains.ThreadAction
+    FA = pr_comments_fix.ThreadAction
     deferred_ids = {t.id for t in state.fix.threads if t.action == FA.DEFERRED}
     unknown = set(track) - deferred_ids
     if unknown:
@@ -1854,7 +1855,7 @@ def _finalize_deferred(
 
     _validate_track(state, track)
 
-    FA = pr_domains.ThreadAction
+    FA = pr_comments_fix.ThreadAction
     # `reason` carries why the thread was held back, and it is the only column
     # in the tracking issue that distinguishes an agent that gave up from a
     # decision anyone made. Rebuilding the item without it renders every row
@@ -1907,7 +1908,7 @@ def _report_unfiled_deferrals(state: pr_state.PRState, track) -> None:
     just as unfiled as no selection does, and they are the easiest ones to lose
     — the run reports success for the few that were named.
     """
-    FA = pr_domains.ThreadAction
+    FA = pr_comments_fix.ThreadAction
     still = [
         t for t in state.fix.threads
         if t.action == FA.DEFERRED and t.id not in track
@@ -1984,7 +1985,7 @@ def _thread_looks_handled(thread: ReportThread | None) -> bool:
 
 
 def _finding_location(
-    entry: CommentItem | pr_domains.ThreadOutcome | ReportThread,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome | ReportThread,
 ) -> str:
     """Reviewer and code location of an entry, or "" when it has neither.
 
@@ -2016,7 +2017,7 @@ _SOURCE_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-(\d+)")
 
 
 def _answered_comment_sources(
-    outcomes: list[pr_domains.ThreadOutcome],
+    outcomes: list[pr_comments_fix.ThreadOutcome],
     repo: str, pr_number: int, my_login: str,
 ) -> frozenset[str]:
     """Source comment ids our standing reply on the PR reports as handled.
@@ -2030,7 +2031,7 @@ def _answered_comment_sources(
     Costs one listing, and only when the snapshot holds an unsettled item that
     such a reply could settle.
     """
-    FA = pr_domains.ThreadAction
+    FA = pr_comments_fix.ThreadAction
     unsettled = (FA.DEFERRED, FA.NEEDS_HUMAN)
     if not any(
         o.action in unsettled and _comment_item_source(o).ok for o in outcomes
@@ -2061,7 +2062,7 @@ def _answered_comment_sources(
 
 
 def _entry_looks_handled(
-    outcome: pr_domains.ThreadOutcome,
+    outcome: pr_comments_fix.ThreadOutcome,
     threads_by_id: dict[str, ReportThread],
     answered_sources: frozenset[str],
     handled_locations: set[str],
@@ -2109,7 +2110,7 @@ def _reconcile_fix_snapshot(
     nothing asked, which is the honest reading for a caller that consulted only
     the review threads.
     """
-    FA = pr_domains.ThreadAction
+    FA = pr_comments_fix.ThreadAction
     unsettled = (FA.DEFERRED, FA.NEEDS_HUMAN)
     handled_locations = {
         _finding_location(t) for t in threads_by_id.values()
@@ -2428,7 +2429,7 @@ def _create_or_update_deferred_issue(
 
 
 def _fixed_status_for(
-    entry: CommentItem | pr_domains.ThreadOutcome,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome,
     cp: CommitPushResult,
     repo: str,
     history: "AddressingHistory | None" = None,
@@ -2599,7 +2600,7 @@ class CommentSource:
 
 
 def _comment_item_source(
-    entry: CommentItem | pr_domains.ThreadOutcome,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome,
 ) -> CommentSource:
     """The comment a decomposed item came from, empty when it is not one."""
     source_id = getattr(entry, "source_id", "")
@@ -2617,7 +2618,7 @@ def _comment_item_source(
 
 
 def _comment_item_permalink(
-    entry: CommentItem | pr_domains.ThreadOutcome,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome,
     repo: str, pr_number: int,
 ) -> str | None:
     """Build a permalink for a decomposed comment item from its source comment."""
@@ -2625,7 +2626,7 @@ def _comment_item_permalink(
 
 
 def _thread_permalink(
-    entry: CommentItem | pr_domains.ThreadOutcome,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome,
     threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str | None:
@@ -2651,7 +2652,7 @@ def _escape_cell(text: str) -> str:
 
 
 def _summary_cell(
-    entry: CommentItem | pr_domains.ThreadOutcome,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome,
     threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str:
@@ -2664,7 +2665,7 @@ def _summary_cell(
 
 
 def _build_row(
-    entry: CommentItem | pr_domains.ThreadOutcome, status: str,
+    entry: CommentItem | pr_comments_fix.ThreadOutcome, status: str,
     threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
     head_sha: str = "",
     wt_path: Path | None = None,
@@ -2712,7 +2713,7 @@ def _summarize_comment_body(body: str, max_len: int = 120) -> str:
     return "(empty)"
 
 
-_SummaryEntry = CommentItem | pr_domains.ThreadOutcome
+_SummaryEntry = CommentItem | pr_comments_fix.ThreadOutcome
 
 
 def _duplicate_item_ids(
@@ -3711,7 +3712,7 @@ def _post_pending_fix_replies(
         log.info("Push still pending — skipping deferred replies")
         return
 
-    FA = pr_domains.ThreadAction
+    FA = pr_comments_fix.ThreadAction
 
     def bucket(action: str) -> list[CommentItem]:
         # commit_sha carried, not dropped: this queue spans rounds, and an
@@ -3766,7 +3767,7 @@ def _post_pending_fix_replies(
 
 
 def _reconciled_commit(
-    fix: pr_domains.FixSummary, status: str, wt_path: Path | None,
+    fix: pr_comments_fix.FixSummary, status: str, wt_path: Path | None,
 ) -> CommitPushResult:
     """The pass's commit as the worktree now shows it, not as it was recorded.
 
@@ -3862,7 +3863,7 @@ def _render_deferred_summary(
     # _finish_deferred_work reconciles the snapshot against GitHub before
     # calling this, so a thread settled outside the fix pass has already been
     # flipped to FIXED and cannot still be sitting in DEFERRED or NEEDS_HUMAN.
-    FA = pr_domains.ThreadAction
+    FA = pr_comments_fix.ThreadAction
     fixed = [t for t in fix.threads if t.action == FA.FIXED]
     needs_human = [t for t in fix.threads if t.action == FA.NEEDS_HUMAN]
     deferred = [t for t in fix.threads if t.action == FA.DEFERRED]
@@ -4065,7 +4066,7 @@ def _build_thread_outcomes(
     dismissed: list[CommentItem],
     already_addressed: list[CommentItem] | None = None,
     commit_sha: str = "",
-) -> list[pr_domains.ThreadOutcome]:
+) -> list[pr_comments_fix.ThreadOutcome]:
     """Build ThreadOutcome list from categorized entries.
 
     `commit_sha` is stamped on the fixed entries only, through `_stamp_pass_commit`
@@ -4074,9 +4075,9 @@ def _build_thread_outcomes(
     that already names a commit. The others were not landed by this commit, and
     a SHA on them would read as if they had been.
     """
-    FA = pr_domains.ThreadAction
+    FA = pr_comments_fix.ThreadAction
     _stamp_pass_commit(fixed, commit_sha)
-    outcomes: list[pr_domains.ThreadOutcome] = []
+    outcomes: list[pr_comments_fix.ThreadOutcome] = []
     for entry in fixed:
         outcomes.append(entry.to_outcome(FA.FIXED))
     for entry in deferred:
@@ -4091,7 +4092,7 @@ def _build_thread_outcomes(
 
 
 def _persist_fix_state(
-    fix_summary: pr_domains.FixSummary,
+    fix_summary: pr_comments_fix.FixSummary,
     wt_path: Path,
     ctx: pr_context.ResolvedContext,
     trail: Trail | None,
@@ -4418,7 +4419,7 @@ def _run_comment_fix(
             summary_url = None
         empty_result.summary_url = summary_url
         empty_result.summary_deferred = summary_url is None and early_deferred
-        _persist_fix_state(pr_domains.FixSummary(
+        _persist_fix_state(pr_comments_fix.FixSummary(
             threads=_build_thread_outcomes(
                 [], [], all_needs_human, all_dismissed, all_addressed,
             ),
@@ -4525,7 +4526,7 @@ def _run_comment_fix(
         wt_path=wt_path,
     )
 
-    _persist_fix_state(pr_domains.FixSummary(
+    _persist_fix_state(pr_comments_fix.FixSummary(
         threads=_build_thread_outcomes(
             all_fixed, all_deferred, all_needs_human, all_dismissed,
             all_addressed, commit_sha=cp.sha or "",

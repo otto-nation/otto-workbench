@@ -42,6 +42,18 @@ answer to "did it land" independent of any caller's idea of how to fix it.
 gate; `pr ci`, `pr rebase` and the review fix pass never do, so a gate-by-default
 owner would silently stop three entrypoints pushing, and a `False` default would
 let the next call site inherit the wrong answer by omitting the argument.
+
+Two outcomes change what the operator does. A `LOST` push is a hard stop and
+nothing downstream may run: `pr comments` records it as `push_lost` rather than
+`push_failed`, because the terminal showed a clean push, and the fixes exist only
+in the worktree — nothing may cite the SHA. `UNVERIFIED` records as
+`push_unverified` and is a warning: a remote that could not be asked has not said
+no, so the push has very likely landed and simply cannot be confirmed.
+
+Running this module as a script is how the bash half of `pr:create` reaches it,
+since a second implementation in shell is the thing being avoided. It takes
+`--cwd`, `--branch`, `--remote` and `--set-upstream`, runs ungated, and answers
+in exit codes — `0` pushed, `1` refused, `2` lost, `3` unverified.
 """
 
 # doc-group: platform

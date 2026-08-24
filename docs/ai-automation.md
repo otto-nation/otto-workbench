@@ -550,9 +550,9 @@ of their subparsers — the same function the probe answers with — and fails t
 the day one of them declares an option that consumes a value, naming the two ways out:
 list the command as taking no target, or give it a delegate to ask.
 
-### Three shared foundations under `ai/`
+### Four shared foundations under `ai/`
 
-Three modules exist because the same decision was being re-made at every call
+Four modules exist because the same decision was being re-made at every call
 site, and the spread was the bug. Each owns its own reference page:
 
 | Module | Takes over | Reference |
@@ -560,27 +560,13 @@ site, and the spread was the bug. Each owns its own reference page:
 | `proc` | Running a subprocess, and what a failure is allowed to say — stderr included. | [`proc.py`](ai-libraries.md#procpy) |
 | `timeouts` | How long a subprocess may run, chosen as a tier rather than a number. | [`timeouts.py`](ai-libraries.md#timeoutspy) |
 | `git_client` | Invoking `git` — `cwd`, capture, non-zero handling, and per-subcommand config. | [`git_client.py`](ai-libraries.md#git_clientpy) |
+| `push` | Pushing, and asking the remote whether it actually took it. | [`push.py`](ai-libraries.md#pushpy) |
 
-They stack: `git_client` sits on `proc`, which requires a `timeouts` tier on
-every call. `bin/local/validate-timeouts` enforces the last of those across
-`ai/`, so a new subprocess call cannot skip the question.
-
-### A push is not finished when git exits
-
-Every push these tasks issue goes through [`push.py`](ai-libraries.md#pushpy),
-which asks `git ls-remote` what the remote actually holds — a push that exits
-zero and lands nothing is what it exists to catch. Its docstring has the five
-outcomes and the one bounded retry; two of them change what you do. **Lost** is a
-hard stop: git succeeded, the remote does not have the commit, and nothing
-downstream runs. `pr comments` records that as `push_lost` rather than
-`push_failed`, because the operator watched a clean push; the fixes exist only in
-the worktree, so nothing may cite the SHA. **Unverified** means the remote could
-not be asked at all — a warning, because an unreachable remote has not said no.
-
-The bash half of `pr:create` reaches the same owner rather than keeping a second
-implementation: `_push_verified` in [`lib/ai/pr.sh`](../lib/ai/pr.sh) shells out
-to `ai/lib/push.py` and reads its exit code — `0` pushed, `1` refused, `2` lost,
-`3` unverified. Pushes typed by hand are outside all of this
+They stack: `push` and `git_client` sit on `proc`, which requires a `timeouts`
+tier on every call. `bin/local/validate-timeouts` enforces the last of those
+across `ai/`, so a new subprocess call cannot skip the question. The bash half of
+`pr:create` reaches `push` through its CLI rather than reimplementing it; pushes
+typed by hand are outside all of this
 ([#963](https://github.com/otto-nation/otto-workbench/issues/963)).
 
 ## Guidelines & Rules

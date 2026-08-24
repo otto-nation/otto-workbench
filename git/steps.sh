@@ -516,10 +516,9 @@ step_local_hooks() {
 #
 # The block itself is unconditional: the keepalive it carries is what keeps a
 # push from being dropped while pre-push runs, and no machine wants that off.
-# Port 443 routing is the part the config decides — the direct route is one hop
-# shorter wherever port 22 works, so $GITHUB_SSH_443_CONFIG_KEY is off by
-# default and flipping it back takes the Hostname and Port lines out again,
-# which is what keeps the setting from being a one-way door.
+# Port 443 routing is the part the config decides — see _ssh_github_block for
+# why it defaults off — and flipping the key back takes the Hostname and Port
+# lines out again, which is what keeps the setting from being a one-way door.
 step_github_ssh() {
   local route_443 present=false route_note="direct (port 22)"
   route_443="$(wb_config_get "$GITHUB_SSH_443_CONFIG_KEY" false)"

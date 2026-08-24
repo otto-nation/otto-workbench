@@ -151,3 +151,23 @@ EOF
   [[ "$output" == *"no end marker"* ]]
   [ "$(cat "$SSH_CONFIG")" = "$before" ]
 }
+
+@test "refuses to strip when a stray end marker precedes the real block" {
+  cat > "$SSH_CONFIG" <<'EOF'
+# <<< otto-workbench: github-ssh-443 <<<
+
+# >>> otto-workbench: github-ssh-443 >>>
+Host github.com
+  Hostname ssh.github.com
+  Port 443
+# <<< otto-workbench: github-ssh-443 <<<
+EOF
+  local before
+  before=$(cat "$SSH_CONFIG")
+
+  run _run_migration
+
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"end marker before its begin marker"* ]]
+  [ "$(cat "$SSH_CONFIG")" = "$before" ]
+}

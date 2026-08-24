@@ -365,6 +365,13 @@ _ssh_github_setup() {
   cd "$TMPDIR/not-a-repo" || return 1
 }
 
+# _assert_keepalive_present — fail unless SSH_CONFIG_FILE carries both
+# keepalive lines the managed block always writes.
+_assert_keepalive_present() {
+  grep -q '  ServerAliveInterval 30' "$SSH_CONFIG_FILE"
+  grep -q '  ServerAliveCountMax 10' "$SSH_CONFIG_FILE"
+}
+
 # _ssh_github_user_config — an ~/.ssh/config shaped like a real one: includes that
 # must stay at the top, then a catch-all Host block.
 _ssh_github_user_config() {
@@ -479,8 +486,7 @@ EOF
   printf 'github:\n  ssh_over_443: false\n' > "$WORKBENCH_CONFIG_FILE"
   step_github_ssh
 
-  grep -q '  ServerAliveInterval 30' "$SSH_CONFIG_FILE"
-  grep -q '  ServerAliveCountMax 10' "$SSH_CONFIG_FILE"
+  _assert_keepalive_present
 }
 
 @test "github ssh flipping the key off leaves the rest of the config intact" {
@@ -623,8 +629,7 @@ EOF
 
   step_github_ssh
 
-  grep -q '  ServerAliveInterval 30' "$SSH_CONFIG_FILE"
-  grep -q '  ServerAliveCountMax 10' "$SSH_CONFIG_FILE"
+  _assert_keepalive_present
 }
 
 @test "github ssh writes the keepalive alongside the 443 routing" {
@@ -634,8 +639,7 @@ EOF
   step_github_ssh
 
   grep -q '  Port 443' "$SSH_CONFIG_FILE"
-  grep -q '  ServerAliveInterval 30' "$SSH_CONFIG_FILE"
-  grep -q '  ServerAliveCountMax 10' "$SSH_CONFIG_FILE"
+  _assert_keepalive_present
 }
 
 @test "github ssh keepalive block lands ahead of the first Host block" {

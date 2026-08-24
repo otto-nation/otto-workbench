@@ -649,9 +649,7 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
         msg += f"\n\n{fixed} fixed, {skipped} skipped"
     committed = git_client.run("commit", "-m", msg, cwd=wt_path)
     if not committed.ok:
-        # The gate above answers "dirty" when git could not read the worktree,
-        # so an empty commit here is that reading resolving itself, not a
-        # failure: the tree really was clean and there is nothing to push.
+        # See review_common.committed_nothing for why this isn't a failure.
         if review_common.committed_nothing(committed):
             log.info("No changes to commit")
             return None

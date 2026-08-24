@@ -286,10 +286,10 @@ def _status_lines(cwd: str, untracked: bool = True) -> list[str] | None:
     except (OSError, subprocess.SubprocessError) as exc:
         # A timeout raises rather than returning non-zero, and an unreadable
         # worktree is the answer either way.
-        log.error(f"git status failed in {cwd}: {type(exc).__name__}: {exc}")
+        log.warn(f"git status failed in {cwd}: {type(exc).__name__}: {exc}")
         return None
     if status.returncode != 0:
-        log.error(f"git status failed in {cwd}: {status.stderr.strip()}")
+        log.warn(f"git status failed in {cwd}: {status.stderr.strip()}")
         return None
     return [line for line in status.stdout.splitlines() if line.strip()]
 

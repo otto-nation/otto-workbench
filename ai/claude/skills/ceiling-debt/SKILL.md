@@ -37,3 +37,13 @@ git blame -L <line>,<line> <file>
 The trigger must name a condition — a clause turning on `if`, `once`, `when`, `unless`, or `until`, or an explicit `Upgrade trigger:` sentence. It may live on any line of the marker's comment block, not just the first. When the simplification has no upgrade path at all, the fix is to change the marker to the `ceiling-permanent:` form and say why the alternative is worse — never to invent a threshold nobody agreed to.
 
 5. If `.claude/ceiling-debt.md` exists and is stale (different from scan output), note it will be refreshed on session exit.
+
+## Regeneration
+
+The ledger auto-regenerates via the Stop hook. To force a refresh:
+
+```bash
+bash ~/.claude/skills/ceiling-debt/generate-ceiling-debt.sh
+```
+
+The hook resolves the repo first, so a session rooted at a bare-repo container scans the worktree the container stands in for. When nothing resolves it says so and exits non-zero rather than skipping in silence.

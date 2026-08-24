@@ -94,6 +94,29 @@ wt-init [--dry-run] [<path>]
 
 `<path>` defaults to the current directory.
 
+### `resolve-worktree`
+
+Print the worktree a bare-repo container stands in for — the checkout of its default branch.
+
+```
+resolve-worktree [<path>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-h`, `--help` | Show help |
+
+`<path>` defaults to the current directory. The default branch is `origin/HEAD` when the remote published one, `master` when it exists and `main` does not, and `main` otherwise.
+
+| Exit | Meaning |
+|------|---------|
+| `0` | Resolved; the worktree path is on stdout |
+| `1` | A bare repo, but no worktree holds the default branch |
+| `2` | Not a bare repository — nothing to resolve |
+| `64` | Usage error |
+
+Exit `2` is the ordinary answer for an everyday repo, a worktree, or a directory outside any repo, so callers treat it as "carry on here" rather than a failure. This is the one owner of that resolution: the [`claude` shell wrapper](architecture.md#shell-zsh), the ceiling-debt Stop hook, and the anatomy generator all call it.
+
 ### `lint-sweep`
 
 Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches.

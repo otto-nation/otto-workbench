@@ -11,6 +11,7 @@
     "command:mem-analyze",
     "command:otto-workbench",
     "command:resolve-branch",
+    "command:resolve-worktree",
     "command:serena-mcp",
     "command:task",
     "command:validate-nesting",

@@ -112,6 +112,11 @@ tools:
     visibility: brief
     description: "Resolve a fuzzy branch name to an exact git branch — tries exact, worktree, separator, fuzzy"
 
+  - name: resolve-worktree
+    permission: true
+    visibility: brief
+    description: "Print the worktree a bare-repo container stands in for — the checkout of its default branch"
+
   - name: wt-init
     permission: true
     visibility: brief

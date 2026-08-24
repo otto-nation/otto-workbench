@@ -156,23 +156,14 @@ label_from_filename() {
 }
 
 # _find_primary_worktree — for bare repos, prints the primary worktree path.
-# Looks for the worktree matching the default branch (origin/HEAD → main → master).
+#
+# Delegates to the workbench's resolve-worktree, which owns the default-branch
+# cascade and the worktree lookup for every caller that needs them. Prints
+# nothing when that script is not on PATH or when nothing resolves; the caller
+# treats an empty answer as "skip", which is what it did before too.
 _find_primary_worktree() {
-  local default_branch
-  default_branch="$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')" || true
-  if [[ -z "$default_branch" ]]; then
-    if git rev-parse --verify master >/dev/null 2>&1 && ! git rev-parse --verify main >/dev/null 2>&1; then
-      default_branch="master"
-    else
-      default_branch="main"
-    fi
-  fi
-
-  local wt_path
-  wt_path="$(git worktree list 2>/dev/null | grep "\[$default_branch\]" | awk '{print $1}')"
-  if [[ -n "$wt_path" && -d "$wt_path" ]]; then
-    printf '%s' "$wt_path"
-  fi
+  command -v resolve-worktree >/dev/null 2>&1 || return 0
+  resolve-worktree 2>/dev/null || true
 }
 
 # ── Ansible section ──────────────────────────────────────────────────────────

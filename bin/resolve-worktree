@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Resolve the worktree a bare-repo container stands in for.
+#
+# A bare repo has no working tree, so anything rooted at the container sees none
+# of the repo's tracked files — no CLAUDE.md, no .claude/, no source. This
+# prints the worktree checked out on the repo's default branch: the tree such a
+# tool should read and write instead.
+#
+# Usage: resolve-worktree [DIR]
+#        DIR defaults to the current directory.
+#
+# Output: absolute worktree path on stdout
+# Exit:   0  resolved
+#         1  DIR is a bare repo but no worktree holds the default branch
+#         2  DIR is not a bare repository — nothing to resolve
+#         64 usage error
+#
+# The single owner of this resolution. The zsh `claude` wrapper, the ceiling-debt
+# Stop hook, and the anatomy generator all call this rather than each deriving
+# the default branch and scanning the worktree list again.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+# Exit codes callers switch on. NOT_BARE is the ordinary case — every normal
+# repo, worktree, and non-repo directory lands there.
+EXIT_UNRESOLVED=1
+EXIT_NOT_BARE=2
+EXIT_USAGE=64
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [DIR]
+
+Print the worktree a bare-repo container stands in for — the checkout of its
+default branch. DIR defaults to the current directory.
+
+Exit codes:
+  0   resolved; the worktree path is on stdout
+  1   DIR is a bare repo but no worktree holds the default branch
+  2   DIR is not a bare repository — nothing to resolve
+  64  usage error
+EOF
+}
+
+# _default_branch — prints the branch a container's primary worktree is on.
+#
+# origin/HEAD when the remote published one; master only when it exists and main
+# does not; main otherwise. A container cloned with --bare has no
+# refs/remotes/origin/HEAD, so the fallback is the common path, not the edge.
+_default_branch() {
+  local branch
+  branch="$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null)" || branch=""
+  if [[ -n "$branch" ]]; then
+    printf '%s' "${branch#refs/remotes/origin/}"
+    return 0
+  fi
+
+  if git rev-parse --verify master >/dev/null 2>&1 && ! git rev-parse --verify main >/dev/null 2>&1; then
+    printf 'master'
+    return 0
+  fi
+  printf 'main'
+}
+
+# _worktree_on BRANCH — prints the existing worktree checked out on BRANCH.
+#
+# Reads --porcelain rather than the human listing, which packs path, SHA and
+# [branch] onto one whitespace-separated line: a path containing a space is
+# truncated by a naive split, and one containing a bracket reads as a branch
+# tag. A registered worktree whose directory is gone is skipped, not returned.
+_worktree_on() {
+  local branch="$1" line path=""
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        path="${line#worktree }"
+        ;;
+      "branch refs/heads/$branch")
+        [[ -d "$path" ]] || continue
+        printf '%s' "$path"
+        return 0
+        ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  return 1
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+dir="."
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -*) err "Unknown option: $1"; usage >&2; exit "$EXIT_USAGE" ;;
+    *) dir="$1"; shift ;;
+  esac
+done
+
+cd "$dir" 2>/dev/null || { err "No such directory: $dir"; exit "$EXIT_USAGE"; }
+
+[[ "$(git rev-parse --is-bare-repository 2>/dev/null)" == "true" ]] || exit "$EXIT_NOT_BARE"
+
+default_branch="$(_default_branch)"
+worktree="$(_worktree_on "$default_branch")" || {
+  err "$(pwd -P): bare repository with no worktree on '$default_branch'"
+  exit "$EXIT_UNRESOLVED"
+}
+
+printf '%s\n' "$worktree"

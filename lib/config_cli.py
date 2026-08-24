@@ -109,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
     except workbench_config.ConfigError as exc:
         print(f"{RED}✗{NC} {exc}", file=sys.stderr)
         return 1
+    except OSError as exc:
+        print(f"{RED}✗{NC} {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

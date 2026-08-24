@@ -52,6 +52,42 @@ _pad() {
   echo "$output" | grep -q "belongs in that module's"
 }
 
+@test "a doc sitting exactly on its budget passes" {
+  printf -- '<!-- doc-budget: 3 -->\none\ntwo\n' > "$FIXTURE/exact.src.md"
+
+  DOCS_DIR="$FIXTURE" run "$VALIDATOR"
+  [ "$status" -eq 0 ]
+}
+
+@test "one line over the budget fails" {
+  printf -- '<!-- doc-budget: 3 -->\none\ntwo\nthree\n' > "$FIXTURE/over.src.md"
+
+  DOCS_DIR="$FIXTURE" run "$VALIDATOR"
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "4 lines, over its budget of 3"
+}
+
+@test "counts a final line that carries no newline" {
+  # `wc -l` counts newlines, so a file ending mid-line reads one line short and
+  # slips past a budget it has already exceeded.
+  printf -- '<!-- doc-budget: 3 -->\none\ntwo\nthree' > "$FIXTURE/nonewline.src.md"
+
+  DOCS_DIR="$FIXTURE" run "$VALIDATOR"
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "4 lines, over its budget of 3"
+}
+
+@test "checks every budgeted doc rather than stopping at the first failure" {
+  printf -- '<!-- doc-budget: 1 -->\nover\n' > "$FIXTURE/a.src.md"
+  printf -- '<!-- doc-budget: 1 -->\n' > "$FIXTURE/b.src.md"
+  printf -- '<!-- doc-budget: 1 -->\nover\n' > "$FIXTURE/c.src.md"
+
+  DOCS_DIR="$FIXTURE" run "$VALIDATOR"
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "a.src.md: 2 lines"
+  echo "$output" | grep -q "c.src.md: 2 lines"
+}
+
 @test "fails on a '####' heading in a budgeted doc" {
   _copy_docs
   echo '#### A skill manifest'"'"'s fields' >> "$FIXTURE/ai-automation.src.md"

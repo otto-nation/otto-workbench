@@ -23,8 +23,8 @@
 # generated references or pages with no reason to be bounded, and are skipped.
 #
 # Usage: bin/local/validate-doc-budget [--quiet]
-# Exit codes: 0 if every budgeted doc is within its rules; 1 if one is not;
-#             2 on a usage error.
+# Exit codes: 0 if every budgeted doc is within its rules; 1 if one is not, or
+#             if no doc declares a budget at all; 2 on a usage error.
 
 set -euo pipefail
 
@@ -67,8 +67,9 @@ done
 _budget() {
   local line
   while IFS= read -r line; do
-    if [[ "$line" =~ $BUDGET_RE ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return; fi
+    if [[ "$line" =~ $BUDGET_RE ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return 0; fi
   done < "$1"
+  return 0
 }
 
 # _deep_headings SRC — every '####' heading, as "line:text", fences excluded.
@@ -89,7 +90,9 @@ for src in "$DOCS_DIR"/*.src.md; do
   docs=$((docs + 1))
   rel="${src#"$REPO_ROOT"/}"
 
-  lines="$(wc -l < "$src" | tr -d ' ')"
+  # awk, not `wc -l`: a file with no trailing newline has one fewer newline than
+  # it has lines, and the budget comparison is exact.
+  lines="$(awk 'END { print NR }' "$src")"
   if (( lines > budget )); then
     err "$rel: $lines lines, over its budget of $budget"
     echo "  A section describing one module's behaviour belongs in that module's" >&2

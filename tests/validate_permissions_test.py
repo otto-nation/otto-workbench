@@ -1,16 +1,27 @@
-"""Tests for bin/local/validate-permissions."""
+"""Tests for bin/local/validate-permissions.
+
+The validator's matcher, coverage test, and discovery walk live in
+``lib/permissions.py``, which it shares with ``lib/permission_sweep.py``. It
+imports the ones it uses into its own namespace, so ``vp.drift_in`` and friends
+resolve and the assertions below read as the validator's behaviour. ``perms``
+is here for the handful the validator has no call for — a name it imported only
+to be tested through would be an unused import standing in for a test seam.
+"""
 
 import importlib.machinery
 import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import git_in, seed_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-permissions"
+
+sys.path.insert(0, str(REPO_ROOT / "lib"))
+import permissions as perms  # noqa: E402
 
 _loader = importlib.machinery.SourceFileLoader("validate_permissions", str(SCRIPT))
 _spec = importlib.util.spec_from_loader("validate_permissions", _loader)
@@ -134,7 +145,7 @@ def test_a_settings_file_with_no_permissions_block_is_clean(tmp_path):
 # that reach credentials; these stand in for it so the tests do not move when
 # the real file gains a directory.
 
-TRACKED = vp.TrackedRules(allow=["bin/*", "ai/claude/bin/*"], ask=["bin/get-secret:*"])
+TRACKED = perms.TrackedRules(allow=["bin/*", "ai/claude/bin/*"], ask=["bin/get-secret:*"])
 
 # A grant `TRACKED` already covers via `Bash(bin/*)` — shared across the tests
 # below so they read as one known-covered example rather than a fresh literal.
@@ -142,7 +153,7 @@ COVERED_GRANT = "Bash(bin/local/validate-all)"
 
 
 def _local(tmp_path, *rules, bucket="allow"):
-    path = tmp_path / vp.LOCAL_SETTINGS
+    path = tmp_path / perms.LOCAL_SETTINGS
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"permissions": {bucket: list(rules)}}, indent=2))
     return str(path)
@@ -194,12 +205,12 @@ def test_a_local_rule_broader_than_the_tracked_one_is_not_flagged(tmp_path):
 
 def test_a_local_prefix_rule_is_not_judged_against_an_exact_tracked_rule(tmp_path):
     """`Bash(env:*)` reaches `env -i sh`, which `Bash(env)` never grants."""
-    tracked = vp.TrackedRules(allow=["env"])
+    tracked = perms.TrackedRules(allow=["env"])
     assert vp.drift_in(_local(tmp_path, "Bash(env:*)"), tracked).covered == []
 
 
 def test_an_exactly_repeated_tracked_rule_is_covered(tmp_path):
-    tracked = vp.TrackedRules(allow=["env"])
+    tracked = perms.TrackedRules(allow=["env"])
     assert [g.rule for g in vp.drift_in(_local(tmp_path, "Bash(env)"), tracked).covered] == [
         "Bash(env)"
     ]
@@ -253,7 +264,7 @@ def test_a_covered_grant_carries_the_line_it_is_written_on(tmp_path):
 
 
 def test_a_repo_with_no_tracked_settings_file_makes_no_grants(tmp_path):
-    assert vp.tracked_rules(str(tmp_path)) == vp.TrackedRules()
+    assert vp.tracked_rules(str(tmp_path)) == perms.TrackedRules()
 
 
 def test_the_tracked_rules_are_read_from_the_project_file():
@@ -266,38 +277,9 @@ def test_the_tracked_rules_are_read_from_the_project_file():
 # ── container discovery ──────────────────────────────────────────────────
 
 
-_GIT_TIMEOUT = 10  # seconds; a hang here should fail the test, not stall the suite
-
-
-def _git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True,
-                   timeout=_GIT_TIMEOUT)
-
-
-def _seed_repo(path):
-    """A one-commit repo, with an identity so the commit does not need the user's."""
-    path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-b", "main", "-q", str(path)], check=True,
-                   capture_output=True, timeout=_GIT_TIMEOUT)
-    _git(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty",
-         "--no-verify", "-m", "init")
-    return path
-
-
-@pytest.fixture
-def container(tmp_path):
-    """The bare-repo worktree layout: worktrees as peers of a bare `.git`."""
-    seed = _seed_repo(tmp_path / "seed")
-    root = tmp_path / "container"
-    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")], check=True,
-                   capture_output=True, timeout=_GIT_TIMEOUT)
-    _git(root / ".git", "worktree", "add", "-q", str(root / "main"), "main")
-    return root
-
-
 def test_a_normal_clone_has_no_container(tmp_path):
     """CI runs here: the shared git dir's parent is the checkout itself."""
-    assert vp.container_dir(str(_seed_repo(tmp_path / "clone"))) is None
+    assert vp.container_dir(str(seed_repo(tmp_path / "clone"))) is None
 
 
 def test_a_directory_outside_git_has_no_container(tmp_path):
@@ -320,17 +302,17 @@ def test_a_worktree_finds_its_container_under_an_inherited_git_dir(container, mo
 
 def test_a_linked_worktree_of_a_normal_clone_has_no_container(tmp_path):
     """The parent there is somebody's checkout, and its .claude/ is tracked."""
-    seed = _seed_repo(tmp_path / "seed")
-    _git(seed, "worktree", "add", "-q", str(tmp_path / "feature"), "-b", "feature")
+    seed = seed_repo(tmp_path / "seed")
+    git_in(seed, "worktree", "add", "-q", str(tmp_path / "feature"), "-b", "feature")
     assert vp.container_dir(str(tmp_path / "feature")) is None
 
 
 def test_the_container_settings_file_is_discovered(container):
     claude = container / ".claude"
     claude.mkdir()
-    (claude / vp.LOCAL_SETTINGS).write_text(json.dumps({"permissions": {"allow": ["Bash(x)"]}}))
+    (claude / perms.LOCAL_SETTINGS).write_text(json.dumps({"permissions": {"allow": ["Bash(x)"]}}))
     assert vp.discover_container_settings(str(container)) == [
-        str(claude / vp.LOCAL_SETTINGS)
+        str(claude / perms.LOCAL_SETTINGS)
     ]
 
 
@@ -346,12 +328,12 @@ def test_the_container_file_is_local_but_a_worktree_file_is_not(container):
     tracked = container / "main" / ".claude" / "settings.json"
     tracked.parent.mkdir(parents=True)
     tracked.write_text("{}")
-    local = container / ".claude" / vp.LOCAL_SETTINGS
+    local = container / ".claude" / perms.LOCAL_SETTINGS
     local.parent.mkdir()
     local.write_text("{}")
 
-    assert vp._is_local(str(local), vp._at_container(str(local), str(container)))
-    assert not vp._is_local(str(tracked), vp._at_container(str(tracked), str(container)))
+    assert perms.is_local(str(local), perms.at_container(str(local), str(container)))
+    assert not perms.is_local(str(tracked), perms.at_container(str(tracked), str(container)))
 
 
 # ── discovery and CLI ────────────────────────────────────────────────────
@@ -488,11 +470,11 @@ def test_fix_removes_nothing_the_tracked_rules_do_not_already_grant(tmp_path, mo
     assert before - after == set(drifting)
     for rule in before - after:
         body = vp.BASH_RULE.match(rule).group(1)
-        assert any(vp._covered_by(body, tracked) for tracked in TRACKED.allow)
+        assert any(perms.covered_by(body, tracked) for tracked in TRACKED.allow)
 
 
 def test_fix_preserves_the_rest_of_the_file(tmp_path, monkeypatch, capsys):
-    path = tmp_path / vp.LOCAL_SETTINGS
+    path = tmp_path / perms.LOCAL_SETTINGS
     path.write_text(json.dumps({
         "statusLine": {"command": "x"},
         "permissions": {

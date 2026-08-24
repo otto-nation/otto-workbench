@@ -34,6 +34,12 @@ The second is never pruned.  Removing it restores a deliberate gate on
 credential access, and `ask` outranks `allow` precisely so that a person sees
 the call; deciding to drop that gate is not a script's to make.
 
+A file that carries the gate itself is not in that class.  `ask` outranking
+`allow` is what makes the override a fault in the first place, and a settings
+file declaring both has kept the gate rather than opened it — so the `ask`
+rules read for the second class come from the tracked file *and* from the file
+under inspection.
+
 A grant with no tracked home — a one-afternoon WebFetch domain, a /tmp scratch
 script — is nobody's bug and is left alone by both classes.
 
@@ -162,6 +168,21 @@ def covered_by(local: str, tracked: str) -> bool:
     return matches(tracked, required_prefix(local))
 
 
+def gate_kept(gated: str, own_ask: list[str]) -> bool:
+    """Does a file's own `ask` bucket still gate everything a tracked ask does?
+
+    `gated` is the tracked ask rule's body and `own_ask` the ask bodies declared
+    by the file being inspected.
+
+    Whichever way Claude Code resolves two settings files, a file that declares
+    the gate beside the grant has not removed it: the ask rule sits at the same
+    precedence as the allow next to it, and `ask` beats `allow` within a set.
+    Coverage has to run the whole way — a local ask naming one invocation does
+    not stand in for a tracked prefix rule gating every command it spells.
+    """
+    return any(covered_by(gated, own) for own in own_ask)
+
+
 def re_grants(local: str, gated: str) -> bool:
     """Does a local allow rule hand back a command a tracked `ask` rule gates?
 
@@ -255,12 +276,18 @@ def drift_of(settings: Settings, tracked: TrackedRules) -> Drift:
     repeated here — and a grant naming something outside them has nowhere to
     move to, so it stays silent.  Flagging every local entry would make the
     check noise, which costs more than the entries it would catch.
+
+    A tracked `ask` rule the file re-declares for itself is not an override —
+    see `gate_kept`.  The grant may still be reported as covered, which it is:
+    deleting it leaves both the tracked allow and the gate standing.
     """
+    own_ask = bodies(settings.permissions, 'ask')
     overrides: list[Grant] = []
     covered: list[Grant] = []
     for body in dict.fromkeys(bodies(settings.permissions, 'allow')):
         rule = f'Bash({body})'
-        gated = next((t for t in tracked.ask if re_grants(body, t)), None)
+        gated = next((t for t in tracked.ask
+                      if re_grants(body, t) and not gate_kept(t, own_ask)), None)
         home = gated or next((t for t in tracked.allow if covered_by(body, t)), None)
         if home is None:
             continue

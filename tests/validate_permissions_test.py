@@ -247,6 +247,34 @@ def test_the_ask_prefix_reaches_every_command_it_spells(tmp_path):
     ]
 
 
+def _both_buckets(tmp_path, allow, ask):
+    path = tmp_path / perms.LOCAL_SETTINGS
+    path.write_text(json.dumps({"permissions": {"allow": [allow], "ask": [ask]}}, indent=2))
+    return vp.drift_in(str(path), TRACKED)
+
+
+def test_a_file_declaring_the_gate_itself_is_not_an_override(tmp_path):
+    """`ask` outranks `allow`, so a file carrying both has kept the gate."""
+    drift = _both_buckets(tmp_path, "Bash(bin/get-secret --name prod/db)",
+                          "Bash(bin/get-secret:*)")
+    assert drift.overrides == []
+
+
+def test_the_kept_gate_leaves_the_grant_merely_covered(tmp_path):
+    """`Bash(bin/*)` still grants it, so deleting it changes nothing."""
+    drift = _both_buckets(tmp_path, "Bash(bin/get-secret --name prod/db)",
+                          "Bash(bin/get-secret:*)")
+    assert [g.tracked for g in drift.covered] == ["Bash(bin/*)"]
+
+
+def test_a_narrower_local_ask_does_not_excuse_the_override(tmp_path):
+    """It gates one invocation; the tracked prefix gates every command it spells,
+    `bin/get-secrets-report` among them."""
+    drift = _both_buckets(tmp_path, "Bash(bin/get-*)",
+                          "Bash(bin/get-secret --name prod/db)")
+    assert [g.rule for g in drift.overrides] == ["Bash(bin/get-*)"]
+
+
 def test_only_the_allow_bucket_drifts(tmp_path):
     """A local `ask` or `deny` narrows the tracked grant rather than duplicating it."""
     path = _local(tmp_path, COVERED_GRANT, bucket="ask")

@@ -187,13 +187,14 @@ class TestCommitFixesStaging:
     @patch("review_fix.log")
     @patch("review_fix._push_fixes")
     def test_nothing_is_pushed_when_the_commit_fails(
-        self, mock_push, mock_log, git_wt, tmp_path,
+        self, mock_push, mock_log, git_wt, tmp_path, live_git_hooks,
     ):
         """A commit git refused must not reach the push — there is nothing there.
 
         Driven by a real pre-commit hook rather than an empty path set: the
         empty set returns at the guard above, never reaching the commit whose
-        failure this is about.
+        failure this is about. `live_git_hooks` is what lets the hook run at
+        all — the suite disowns hooks by default.
         """
         _install_failing_pre_commit(tmp_path)
         (git_wt / "fixture.json").write_text("{}\n")

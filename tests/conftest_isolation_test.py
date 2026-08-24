@@ -1,5 +1,5 @@
 """The sandboxes prove themselves: no test writes to the real state root, and
-no test repo runs the machine's git hooks."""
+no git command a test runs fires the machine's hooks."""
 
 import os
 import subprocess
@@ -11,7 +11,7 @@ sys.path.insert(0, str(LIB_DIR))
 
 import workbench_paths
 
-from conftest import disown_hooks, init_worktree, seed_repo
+from conftest import git_in, init_worktree
 
 
 def test_state_root_is_sandboxed_per_test(tmp_path):
@@ -37,57 +37,40 @@ def _reject_commits_from(hooks: Path) -> Path:
 
 
 def _commit_in(repo: Path) -> subprocess.CompletedProcess:
+    """Commit a file, reporting the outcome rather than raising on rejection."""
     (repo / "f.txt").write_text("one")
-    subprocess.run(["git", "-C", str(repo), "add", "--", "f.txt"],
-                   check=True, capture_output=True)
+    git_in(repo, "add", "--", "f.txt")
     return subprocess.run(
         ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
          "commit", "-q", "-m", "one"],
         capture_output=True, text=True)
 
 
-def test_disown_hooks_silences_a_hook_that_would_reject_the_commit(tmp_path):
-    """The contract, against a hooks dir this test controls.
-
-    `core.hooksPath` is global on a workbench machine, so the real thing being
-    disowned here is the developer's own `pre-commit` — which no test may set
-    up, and which is free to change under the suite.
-    """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-b", "main", "-q", str(repo)],
-                   check=True, capture_output=True)
-    hooks = _reject_commits_from(tmp_path / "hooks")
-    subprocess.run(["git", "-C", str(repo), "config", "core.hooksPath", str(hooks)],
-                   check=True, capture_output=True)
-    assert _commit_in(repo).returncode != 0
-
-    disown_hooks(repo)
-    assert _commit_in(repo).returncode == 0
-
-
-def test_a_repo_from_init_worktree_runs_no_hook(tmp_path):
-    """The wiring: a test repo is disowned by construction, not on request.
-
-    Planted where git looks by default, so this fails on a machine that has no
-    global `core.hooksPath` if `init_worktree` ever stops disowning.
-    """
+def test_a_test_repo_runs_no_hook(tmp_path):
+    """A hook planted where git looks by default does not fire."""
     repo = init_worktree(tmp_path / "repo")
     _reject_commits_from(repo / ".git" / "hooks")
 
     assert _commit_in(repo).returncode == 0
 
 
-def test_a_container_worktree_runs_no_hook(tmp_path):
-    """The bare clone is its own repo, so it needs disowning of its own —
-    `init_worktree` never sees it, and its worktrees read its config."""
-    seed = seed_repo(tmp_path / "seed")
-    root = tmp_path / "container"
-    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")],
-                   check=True, capture_output=True)
-    disown_hooks(root / ".git")
-    _reject_commits_from(root / ".git" / "hooks")
-    subprocess.run(["git", "-C", str(root / ".git"), "worktree", "add", "-q",
-                    str(root / "main"), "main"], check=True, capture_output=True)
+def test_the_sandbox_is_what_stops_the_hook(tmp_path, live_git_hooks):
+    """The same repo with the sandbox lifted, so the test above is known to be
+    reporting the fixture rather than passing for some other reason.
 
-    assert _commit_in(root / "main").returncode == 0
+    Worth pinning because on a machine that has a global `core.hooksPath` the
+    planted hook is bypassed either way, and the test above would keep passing
+    long after the fixture stopped working.
+    """
+    repo = init_worktree(tmp_path / "repo")
+    _reject_commits_from(repo / ".git" / "hooks")
+
+    assert _commit_in(repo).returncode != 0
+
+
+def test_a_container_worktree_runs_no_hook(container):
+    """The bare clone is a repo of its own that `init_worktree` never sees, and
+    its worktrees read its config — so it is the case a per-repo write missed."""
+    _reject_commits_from(container / ".git" / "hooks")
+
+    assert _commit_in(container / "main").returncode == 0

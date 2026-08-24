@@ -487,8 +487,8 @@ EOF
   # Against the real tree, not the fake one: the marker has to be spelled the
   # way lib/migrations.sh greps for it, and the state key has to match what
   # run_component_migrations records — a rename of the file breaks the second
-  # even when the first still holds. Both marked migrations are named, since a
-  # typo in either one's marker line is invisible everywhere else.
+  # even when the first still holds. Every marked migration is named, since a
+  # typo in any one's marker line is invisible everywhere else.
   run bash -c "
     . '$REPO_ROOT/lib/ui.sh'
     . '$REPO_ROOT/lib/migrations.sh'
@@ -499,6 +499,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"ai/claude/20260814-unify-trail-root.sh"* ]]
   [[ "$output" == *"bin/20260814-unify-workbench-config.sh"* ]]
+  [[ "$output" == *"bin/20260824-lift-issue-tracker-key.sh"* ]]
 }
 
 # ─── Project-scoped migrations ───────────────────────────────────────────────
@@ -959,6 +960,94 @@ EOF
   [ "$(cat "$TMPDIR/repo-new/.claude/architecture.md")" = "new" ]
 }
 
+# ─── Migrations whose target does not exist yet ──────────────────────────────
+#
+# The absence a no-op reports is final: the target has been looked at and holds
+# the shape the migration produces. The absence here is not — the target has not
+# been created yet, and something later in the same sync, or a session an hour
+# afterwards, may create it. Recording that as done is what retired
+# 20260819-lift-issue-tracker-key against a config.yml it never saw.
+
+@test "a migration whose target does not exist yet is not recorded" {
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-defer.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+migration_20250101_defer() {
+  echo "CALLED" >> "$TMPDIR/exec.log"
+  [[ -f "$TMPDIR/target" ]] || return "\$MIGRATION_DEFERRED"
+}
+EOF
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
+  [ ! -s "$FAKE_STATE/migrations.applied" ]
+}
+
+@test "a deferred migration says nothing" {
+  # Silence is the price of the retry: this can be answered on every sync for as
+  # long as the target stays absent, so anything printed here prints forever.
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-defer.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+migration_20250101_defer() {
+  return "\$MIGRATION_DEFERRED"
+}
+EOF
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Migration applied"* ]]
+  [[ "$output" != *"Migration failed"* ]]
+  [[ "$output" != *"migrations:"* ]]
+}
+
+@test "a deferred migration runs again once its target exists" {
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-defer.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+migration_20250101_defer() {
+  echo "CALLED" >> "$TMPDIR/exec.log"
+  [[ -f "$TMPDIR/target" ]] || return "\$MIGRATION_DEFERRED"
+  rm -f "$TMPDIR/target"
+}
+EOF
+
+  run_migrations_in_fake
+  touch "$TMPDIR/target"
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-defer.sh"* ]]
+  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 2 ]
+  [ ! -e "$TMPDIR/target" ]
+  grep -qxF "mycomp/20250101-defer.sh" "$FAKE_STATE/migrations.applied"
+}
+
+@test "a project-scoped migration defers per repo, not for the machine" {
+  # One repo has the target and one does not, so the run has to record the first
+  # and leave the second to be asked again.
+  mkdir -p "$FAKE_ROOT/mycomp/migrations"
+  cat > "$FAKE_ROOT/mycomp/migrations/20250101-proj.sh" <<EOF
+#!/usr/bin/env bash
+set -e
+# project-scoped: edits files inside each repo.
+migration_20250101_proj() {
+  [[ -f "\$1/target" ]] || return "\$MIGRATION_DEFERRED"
+}
+EOF
+  register_fake_project "$TMPDIR/repo-ready"
+  register_fake_project "$TMPDIR/repo-later"
+  touch "$TMPDIR/repo-ready/target"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-ready"
+  run ! grep -qF "repo-later" "$FAKE_STATE/migrations.applied"
+}
+
 # ─── Component discovery under set -e ────────────────────────────────────────
 
 @test "discover_migration_dirs returns 0 under set -e with no migrations" {
@@ -1321,14 +1410,21 @@ unify_in_fake() {
     # way, and constants.sh builds the file path from the root exported above.
     . "$REPO_ROOT/lib/constants.sh"
     . "$REPO_ROOT/lib/config.sh"
+    # For MIGRATION_NOOP and MIGRATION_DEFERRED, which the migration body
+    # returns by name. The subshell keeps them from reaching the assertions
+    # outside, which spell the numbers out.
+    . "$REPO_ROOT/lib/migrations.sh"
     . "$REPO_ROOT/bin/migrations/20260814-unify-workbench-config.sh"
     migration_20260814_unify_workbench_config
   )
 }
 
 @test "unification is a no-op when no legacy file exists" {
+  # NOOP, not deferred: nothing writes the three legacy files any more, so a
+  # machine without them will not grow them, and the adoption that can re-seed
+  # them forgets this migration's state line outright.
   run unify_in_fake
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 3 ]
   [ ! -f "$FAKE_CONFIG/config.yml" ]
 }
 
@@ -1426,7 +1522,7 @@ unify_in_fake() {
   run unify_in_fake
   [ "$status" -eq 0 ]
   run unify_in_fake
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 3 ]
   [ "$(yq -r '.reuse.level' "$FAKE_CONFIG/config.yml")" = "ultra" ]
 }
 
@@ -1455,20 +1551,41 @@ lift_in_fake() {
     export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
     . "$FAKE_ROOT/lib/ui.sh"
     . "$REPO_ROOT/lib/constants.sh"
-    . "$REPO_ROOT/bin/migrations/20260819-lift-issue-tracker-key.sh"
-    migration_20260819_lift_issue_tracker_key
+    # For the status names the migration body returns, as in unify_in_fake above.
+    . "$REPO_ROOT/lib/migrations.sh"
+    . "$REPO_ROOT/bin/migrations/20260824-lift-issue-tracker-key.sh"
+    migration_20260824_lift_issue_tracker_key
   )
 }
 
-@test "lift is a no-op when there is no config.yml" {
+@test "lift defers while there is no config.yml" {
+  # The bug this migration was re-dated for: the 20260819 version returned 0
+  # here, was recorded, and had nothing left to lift when a session wrote the
+  # legacy shape into a new config.yml half an hour later.
   run lift_in_fake
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 4 ]
   [ ! -f "$FAKE_CONFIG/config.yml" ]
 }
 
 @test "lift is a no-op when the key is already top-level" {
+  # Recorded rather than deferred: the file is here and holds no legacy key, and
+  # nothing writes .review.issue_tracker any more.
   mkdir -p "$FAKE_CONFIG"
   printf 'issue_tracker:\n  provider: github\n' > "$FAKE_CONFIG/config.yml"
+
+  run lift_in_fake
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+}
+
+@test "lift picks up a config.yml written after an earlier sync deferred it" {
+  # A deferred migration is not recorded, so the framework asks again — and the
+  # legacy shape a later session wrote is lifted on that pass.
+  run lift_in_fake
+  [ "$status" -eq 4 ]
+
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  issue_tracker:\n    provider: github\n' > "$FAKE_CONFIG/config.yml"
 
   run lift_in_fake
   [ "$status" -eq 0 ]
@@ -1537,6 +1654,6 @@ lift_in_fake() {
   run lift_in_fake
   [ "$status" -eq 0 ]
   run lift_in_fake
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 3 ]
   [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
 }

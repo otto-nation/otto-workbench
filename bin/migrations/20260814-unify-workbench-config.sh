@@ -46,7 +46,7 @@ _unify_workbench_config_fold_scalar() {
 #
 # This wrote .review.issue_tracker until the key moved to the top level; a
 # machine that ran that version is carried across by
-# 20260819-lift-issue-tracker-key rather than by a second path here.
+# 20260824-lift-issue-tracker-key rather than by a second path here.
 _unify_workbench_config_fold_review() {
   local source_file="$1"
   [[ -f "$source_file" ]] || return 0
@@ -72,8 +72,13 @@ migration_20260814_unify_workbench_config() {
   local default_file="$WORKBENCH_CONFIG_DIR/reuse-default"
   local review_file="$WORKBENCH_CONFIG_DIR/review.yml"
 
+  # NOOP rather than deferred: nothing writes these three any more — /reuse and
+  # the review settings go to config.yml — so a machine without them will not
+  # grow them on its own. Adoption is the one way a pre-split copy arrives late,
+  # and the marker above hands that case to
+  # _forget_adoption_sensitive_migrations rather than to a retry.
   if [[ ! -f "$level_file" && ! -f "$default_file" && ! -f "$review_file" ]]; then
-    return 0
+    return "$MIGRATION_NOOP"
   fi
 
   info "Unifying workbench settings into config.yml"

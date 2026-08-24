@@ -5,9 +5,13 @@
 # Idempotent — no-op if the include is not present.
 
 migration_20260402_remove_local_config_include() {
-  [[ -f "$GITCONFIG_FILE" ]] || return 0
+  # No ~/.gitconfig yet: the git component writes one later in this same sync,
+  # and a restored dotfile can bring the stale include back at any time after
+  # that. Recording the absence would retire the removal for good.
+  [[ -f "$GITCONFIG_FILE" ]] || return "$MIGRATION_DEFERRED"
 
   local local_config="$HOME/.gitconfig.local"
+  local removed=false
 
   # Remove the [include] + path stanza for .gitconfig.local
   if grep -qF ".gitconfig.local" "$GITCONFIG_FILE"; then
@@ -19,10 +23,16 @@ migration_20260402_remove_local_config_include() {
     sed_i -E '/^\[include\]$/{N;/^\[include\]\n([[:space:]]*$|\[)/s/^\[include\]\n//;}' "$GITCONFIG_FILE"
 
     success "Removed stale include for .gitconfig.local"
+    removed=true
   fi
 
   # Warn if the old file has content the user should merge
   if [[ -f "$local_config" ]] && [[ -s "$local_config" ]]; then
     warn "$local_config still exists — merge its contents into $GITCONFIG_FILE and delete it"
   fi
+
+  # The warning above is advice, not work: a run that only printed it changed
+  # nothing, and reporting it as applied claims an edit to ~/.gitconfig that
+  # never happened.
+  [[ "$removed" == true ]] || return "$MIGRATION_NOOP"
 }

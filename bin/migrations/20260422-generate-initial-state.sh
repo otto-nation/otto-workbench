@@ -5,9 +5,9 @@
 
 migration_20260422_generate_initial_state() {
   # Skip if YAML state already exists
-  [[ -f "$INSTALL_YML_FILE" ]] && return 0
+  [[ -f "$INSTALL_YML_FILE" ]] && return "$MIGRATION_NOOP"
   # Skip if old state file exists (will be migrated by 20260524)
-  [[ -f "$INSTALLED_STATE_FILE" ]] && return 0
+  [[ -f "$INSTALLED_STATE_FILE" ]] && return "$MIGRATION_NOOP"
 
   info "Generating initial installation state"
   state_detect_installed

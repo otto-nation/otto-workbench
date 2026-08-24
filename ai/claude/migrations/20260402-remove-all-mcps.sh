@@ -5,7 +5,13 @@
 # Idempotent — no-op if the keys do not exist.
 
 migration_20260402_remove_all_mcps() {
-  [[ -f "$CLAUDE_CONFIG_FILE" ]] || return 0
+  # NOOP rather than deferred, even though ~/.claude.json can appear later.
+  # This drains keys, and a ~/.claude.json written after this ran is a fresh
+  # install whose MCP entries the operator chose — draining those is the exact
+  # undo that _forget_adoption_sensitive_migrations refuses to perform for a
+  # removal migration. A machine with no file has nothing stale to remove, and
+  # that will not change.
+  [[ -f "$CLAUDE_CONFIG_FILE" ]] || return "$MIGRATION_NOOP"
 
   local names=("serena" "context7" "sequential-thinking")
   local name removed=false
@@ -22,6 +28,6 @@ migration_20260402_remove_all_mcps() {
   done
 
   if [[ "$removed" == false ]]; then
-    success "No stale MCP registrations found"
+    return "$MIGRATION_NOOP"
   fi
 }

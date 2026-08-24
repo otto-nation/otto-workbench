@@ -14,6 +14,12 @@
 #   - The scope marker and the function signature agree — a project-scoped
 #     migration reads the repo path the framework hands it, and one without the
 #     marker reads no argument, because the framework calls it with none
+#   - A guard that returns because the target is absent says which of the two
+#     absences it is: MIGRATION_DEFERRED (retry when the target appears) or
+#     MIGRATION_NOOP (retired for good). A bare `return 0` there is the shape
+#     that records a migration as applied against a file it never saw
+#   - MIGRATION_DEFERRED is returned only from such a guard — a deferred status
+#     is never recorded, so one reachable any other way re-runs forever
 #
 # Exit code: 0 if all checks pass (or no migrations found), 1 if any fail.
 
@@ -142,6 +148,50 @@ _AWK_LINE_HELPERS='
     }
 '
 
+# The awk rules that hand a scanner the lines of `fn`'s own body and nothing
+# else. Append to `_AWK_LINE_HELPERS`, pass the function name as `-v fn=`, and
+# define the two callbacks it invokes:
+#
+#   own_line(line)     — a raw line of fn's own body, nested definitions excluded
+#   heredoc_line(line) — a raw line of a heredoc that body writes; `heredoc_quoted`
+#                        says whether the shell would expand it
+#
+# fn's own body, and only it. A migration may carry helpers, whether beside the
+# function or nested inside it, and a helper says nothing about the one function
+# the framework calls — `ai/claude/20260624-workbench-state-dir.sh` nests one
+# that reads `$1` per worktree root, and
+# `bin/migrations/20260814-unify-workbench-config.sh` puts its absent-file
+# guards in folders beside the function. So a nested
+# definition is followed for its braces and skipped for its text, and the outer
+# body resumes where it closes. The body itself is bounded by the braces the file
+# opens after the definition line — counting them, rather than waiting for the
+# depth to rise, is what ends the scan of a one-line body whose brace pair opens
+# and closes before the depth is ever looked at.
+#
+# Shared rather than written twice: both scanners below want the same body and
+# the invariant is not obvious, so two copies would be two places to fix and one
+# of them would eventually be missed.
+_AWK_BODY_SCANNER='
+    BEGIN { definition = "^[ \t]*" fn "[ \t]*\\(\\)"; nested = -1 }
+    { body = heredoc_body($0) }
+    body && inside && nested < 0 { heredoc_line($0) }
+    body { next }
+    !inside && !closed && $0 ~ definition { inside = 1; depth = 0; nested = -1; own = 1 }
+    inside {
+      isdef = (!own && $0 ~ /^[ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)|function[ \t]+[A-Za-z_])/)
+      if (nested < 0 && !isdef) own_line($0)
+      stripped = code($0)
+      note_heredoc($0)
+      before = depth
+      depth += delta(stripped)
+      if (isdef && nested < 0 && depth > before) nested = before
+      if (nested >= 0 && depth <= nested) nested = -1
+      if (opens(stripped) > 0) opened = 1
+      if (opened && depth <= 0) { inside = 0; closed = 1 }
+      own = 0
+    }
+'
+
 # _file_scope_statements FILE — print "LINENO<TAB>TEXT" for every line of FILE
 # that would run when the file is sourced.
 #
@@ -178,40 +228,96 @@ _file_scope_statements() {
 # _migration_fn_reads_arg FILE FN — true when FN's own body reads a positional
 # parameter.
 #
-# FN's own body, and only it. A migration may carry helpers, whether beside the
-# function or nested inside it, and a helper that takes arguments says nothing
-# about the one function the framework calls — `ai/claude/20260624-workbench-
-# state-dir.sh` nests one that reads `$1` per worktree root. So a nested
-# definition is followed for its braces and skipped for its text, and the outer
-# body resumes where it closes. The body itself is bounded by the braces the file
-# opens after the definition line — counting them, rather than waiting for the
-# depth to rise, is what ends the scan of a one-line body whose brace pair opens
-# and closes before the depth is ever looked at.
-#
-# A heredoc the body writes is read too, unless its delimiter was quoted: an
-# unquoted body is expanded by the shell, so a repo path interpolated into a
-# message is a read of the argument like any other.
+# Body bounding is `_AWK_BODY_SCANNER`'s, so a helper's arguments are its own
+# business. A heredoc the body writes is read too, unless its delimiter was
+# quoted: an unquoted body is expanded by the shell, so a repo path interpolated
+# into a message is a read of the argument like any other.
 _migration_fn_reads_arg() {
   awk -v fn="$2" "$_AWK_LINE_HELPERS"'
-    BEGIN { definition = "^[ \t]*" fn "[ \t]*\\(\\)"; nested = -1 }
-    { body = heredoc_body($0) }
-    body && inside && nested < 0 && !heredoc_quoted && $0 ~ /\$\{?[1@*]/ { found = 1 }
-    body { next }
-    !inside && !closed && $0 ~ definition { inside = 1; depth = 0; nested = -1; own = 1 }
-    inside {
-      isdef = (!own && $0 ~ /^[ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)|function[ \t]+[A-Za-z_])/)
-      if (nested < 0 && !isdef && expandable($0) ~ /\$\{?[1@*]/) found = 1
-      stripped = code($0)
-      note_heredoc($0)
-      before = depth
-      depth += delta(stripped)
-      if (isdef && nested < 0 && depth > before) nested = before
-      if (nested >= 0 && depth <= nested) nested = -1
-      if (opens(stripped) > 0) opened = 1
-      if (opened && depth <= 0) { inside = 0; closed = 1 }
-      own = 0
-    }
+    function own_line(line) { if (expandable(line) ~ /\$\{?[1@*]/) found = 1 }
+    function heredoc_line(line) { if (!heredoc_quoted && line ~ /\$\{?[1@*]/) found = 1 }
+  '"$_AWK_BODY_SCANNER"'
     END { exit found ? 0 : 1 }
+  ' "$1"
+}
+
+# _migration_returns FILE FN — print "LINENO<TAB>ABSENT<TAB>VALUE" for every
+# `return` in FN's own body. ABSENT is 1 when the return is reached because a
+# path the migration tests does not exist, 0 otherwise; VALUE is the returned
+# token with quoting and `${}` stripped, so `"$MIGRATION_NOOP"` prints as
+# MIGRATION_NOOP.
+#
+# The two absences a migration can meet look identical in the source and mean
+# opposite things. A target already in the shape the migration produces is done
+# with, and a target that has not been created yet is not —
+# `bin/migrations/20260819-lift-issue-tracker-key.sh`
+# returned 0 on a machine whose config.yml did not exist,
+# was recorded, and had nothing left to lift when a session wrote the file half
+# an hour later. Naming the status is what separates them, so a bare `return 0`
+# under an absent-path guard is the shape this exists to catch.
+#
+# Body bounding is `_AWK_BODY_SCANNER`'s, so a helper's own guards are its own
+# business — the folders in `bin/migrations/20260814-unify-workbench-config.sh`
+# return to the migration function rather than to the framework, and their 0 is an
+# ordinary return. Lines come through `expandable` rather than `code` because
+# the returned value is usually a double-quoted expansion, which `code` strips.
+#
+# A guard spread over two lines is carried in `pending`, which survives the
+# filler between the test and the return — a bare `then`, a blank, a comment —
+# and is dropped by the first statement that is neither.
+#
+# ceiling: four guard shapes are recognised — `[[ -f x ]] || return`,
+# `[[ ! -f x ]] && return`, and a `return` under `if [[ ! -f x ]]` with `then`
+# either on the test line or on its own. A return reached through an `else`, or
+# from under a condition combining a path test with something else, reads as
+# not-absent and is left alone. Upgrade when a migration needs one of those
+# shapes to defer, rather than restructuring its guard into one of the four.
+_migration_returns() {
+  awk -v fn="$2" "$_AWK_LINE_HELPERS"'
+    function path_test(line) { return (line ~ /\[\[[^]]*-[efdLsr][ \t]/) }
+    function negated(line,   head) {
+      head = line
+      sub(/-[efdLsr][ \t].*$/, "", head)
+      return (head ~ /![ \t]*$/)
+    }
+    function absent_here(line) {
+      if (!path_test(line)) return -1
+      if (line ~ /\]\][ \t]*\|\|/) return negated(line) ? 0 : 1
+      if (line ~ /\]\][ \t]*&&/) return negated(line) ? 1 : 0
+      return -1
+    }
+    function ret_value(line,   v) {
+      v = line
+      sub(/^.*[ \t;&|(]return[ \t]*/, "", v)
+      if (v == line) sub(/^return[ \t]*/, "", v)
+      sub(/[ \t;&|)].*$/, "", v)
+      gsub(/["${}]/, "", v)
+      return v
+    }
+    function own_line(line,   t, a) {
+      t = expandable(line)
+      if (t ~ /(^|[ \t;&|(])return([ \t]|;|$)/) {
+        a = absent_here(t)
+        if (a < 0) a = (pending >= 0) ? pending : 0
+        printf "%d\t%d\t%s\n", NR, a, ret_value(t)
+        pending = -1
+        return
+      }
+      if (t ~ /^[ \t]*(if|elif)[ \t]/ && path_test(t) && absent_here(t) < 0) {
+        pending = negated(t) ? 1 : 0
+        return
+      }
+      # Filler, not a statement: a blank line, a line that held only a comment,
+      # and the keywords that merely continue the compound command the guard
+      # opened. `then` on its own line is the other conventional way to write a
+      # multi-line guard, so clearing `pending` here would lose the test that
+      # decides what the return underneath means.
+      if (t ~ /^[ \t]*(then|do)?[ \t]*[{(]?[ \t]*$/) return
+      pending = -1
+    }
+    function heredoc_line(line) { }
+    BEGIN { pending = -1 }
+  '"$_AWK_BODY_SCANNER"'
   ' "$1"
 }
 
@@ -273,6 +379,37 @@ _validate_migration() {
     _fail "$display: ${expected_fn}() reads a positional argument but the file carries no '# project-scoped:' header — the framework calls it with none"
   else
     _pass "$display: scope marker matches the function's arguments"
+  fi
+
+  # An absent target is two different answers wearing one shape, and only the
+  # returned status tells them apart: MIGRATION_NOOP retires the migration,
+  # MIGRATION_DEFERRED leaves it to be asked again once the target exists. A
+  # bare `return 0` there picks the first by accident and announces work that
+  # did not happen. The reverse rule keeps the deferred status reachable only
+  # from such a guard — nothing records it, so one returned on a condition that
+  # never resolves re-runs on every sync for the life of the file.
+  local return_hits lineno absent value bad_guard="" bad_defer=""
+  return_hits="$(_migration_returns "$migration" "$expected_fn")"
+  while IFS=$'\t' read -r lineno absent value; do
+    [[ -z "$lineno" ]] && continue
+    if [[ "$absent" == 1 && "$value" == 0 ]]; then
+      bad_guard="${bad_guard:-$lineno}"
+    fi
+    if [[ "$value" == MIGRATION_DEFERRED && "$absent" != 1 ]]; then
+      bad_defer="${bad_defer:-$lineno}"
+    fi
+  done <<< "$return_hits"
+
+  if [[ -n "$bad_guard" ]]; then
+    _fail "$display:$bad_guard: returning 0 because the target does not exist records the migration as applied against a file it never saw — return MIGRATION_DEFERRED to be asked again once it exists, or MIGRATION_NOOP to be retired"
+  else
+    _pass "$display: absent-target guards name the status they return"
+  fi
+
+  if [[ -n "$bad_defer" ]]; then
+    _fail "$display:$bad_defer: MIGRATION_DEFERRED is only for a target that does not exist yet — nothing records it, so one returned from any other condition runs again on every sync"
+  else
+    _pass "$display: MIGRATION_DEFERRED is guarded by an absent target"
   fi
 
   # Nothing may run at file scope — the framework sources the file for its

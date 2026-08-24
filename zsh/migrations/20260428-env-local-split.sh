@@ -5,14 +5,19 @@
 
 migration_20260428_env_local_split() {
   local env_file="$ENV_LOCAL_FILE"
-  [[ -f "$env_file" ]] || return 0
-  grep -q '# --- ENV-START ---' "$env_file" || return 0
+  # No ~/.env.local yet: step_env_local creates it from the template later in
+  # this same sync, and only a file that exists can be read for exports sitting
+  # inside the marker section.
+  [[ -f "$env_file" ]] || return "$MIGRATION_DEFERRED"
+  # A file with no markers predates them entirely and has no marker section to
+  # split; the generator adds them around its own content, never around a user's.
+  grep -q '# --- ENV-START ---' "$env_file" || return "$MIGRATION_NOOP"
 
   # Extract uncommented export lines from inside the marker section
   local exports
   exports=$(sed -n '/# --- ENV-START ---/,/# --- ENV-END ---/p' "$env_file" \
     | grep '^export ' || true)
-  [[ -n "$exports" ]] || return 0
+  [[ -n "$exports" ]] || return "$MIGRATION_NOOP"
 
   # Remove those lines from inside the markers
   local tmp

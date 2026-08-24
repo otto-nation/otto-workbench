@@ -427,8 +427,9 @@ export ANOTHER=value
 # existing below
 EOF
 
-  HOME="$FAKE_HOME" \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+  run env HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/lib/migrations.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+  [ "$status" -eq 0 ]
 
   # Uncommented exports should no longer be between markers
   local env_section
@@ -462,8 +463,10 @@ EOF
   local before
   before=$(cat "$FAKE_HOME/.env.local")
 
-  HOME="$FAKE_HOME" \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+  run env HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/lib/migrations.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+  # MIGRATION_NOOP — the file is here and holds nothing to move
+  [ "$status" -eq 3 ]
 
   local after
   after=$(cat "$FAKE_HOME/.env.local")
@@ -483,8 +486,10 @@ EOF
   local before
   before=$(cat "$FAKE_HOME/.env.local")
 
-  HOME="$FAKE_HOME" \
-    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+  run env HOME="$FAKE_HOME" \
+    bash -c ". '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/lib/migrations.sh'; . '$REPO_ROOT/zsh/migrations/20260428-env-local-split.sh'; migration_20260428_env_local_split"
+  # MIGRATION_NOOP — a file predating the markers has no marker section to split
+  [ "$status" -eq 3 ]
 
   local after
   after=$(cat "$FAKE_HOME/.env.local")

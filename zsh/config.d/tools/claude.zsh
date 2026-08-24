@@ -55,6 +55,13 @@ claude() {
   print -u2 -- "claude: $PWD is a bare repository — launching in $worktree"
   # A subshell, so the shell you launched from is still where you left it when
   # the session exits. Its status is the function's, so `claude` still reports
-  # what the session reported.
+  # what the session reported. `cd` is checked in its own subshell first so a
+  # worktree that vanished between resolution and launch still starts a
+  # session, in place, rather than silently returning without one.
+  if ! (cd "$worktree" 2>/dev/null); then
+    print -u2 -- "claude: cannot cd into $worktree — launching here, where no tracked file is in scope"
+    command claude "$@"
+    return
+  fi
   (cd "$worktree" && command claude "$@")
 }

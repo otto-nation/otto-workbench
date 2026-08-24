@@ -105,7 +105,10 @@ def head_branch(container: str) -> str | None:
     `tests/container_source.bats` fails if they diverge.
     """
     ref = git(container, 'symbolic-ref', '--quiet', 'HEAD')
-    return ref.rsplit('/', 1)[-1] if ref else None
+    if not ref:
+        return None
+    prefix = 'refs/heads/'
+    return ref[len(prefix):] if ref.startswith(prefix) else ref
 
 
 def is_source(repo_root: str, branch: str | None) -> bool:

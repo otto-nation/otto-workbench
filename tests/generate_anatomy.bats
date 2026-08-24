@@ -44,7 +44,7 @@ teardown() {
 
 # _init_repo_at DIR — makes DIR a git repo with one commit covering everything present
 _init_repo_at() {
-  git -C "$1" init -q
+  git -C "$1" init -q --initial-branch=main
   git -C "$1" config user.email test@example.com
   git -C "$1" config user.name Test
   git -C "$1" add -A

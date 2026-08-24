@@ -17,6 +17,9 @@
 
 set -e
 
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+RESOLVE_WORKTREE="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/bin/resolve-worktree"
+
 # ── Config ───────────────────────────────────────────────────────────────────
 
 TOKENS_PER_LINE=4
@@ -158,12 +161,14 @@ label_from_filename() {
 # _find_primary_worktree — for bare repos, prints the primary worktree path.
 #
 # Delegates to the workbench's resolve-worktree, which owns the default-branch
-# cascade and the worktree lookup for every caller that needs them. Prints
-# nothing when that script is not on PATH or when nothing resolves; the caller
-# treats an empty answer as "skip", which is what it did before too.
+# cascade and the worktree lookup for every caller that needs them. Resolved by
+# absolute path rather than PATH lookup, since a Stop hook's execution
+# environment is not guaranteed to have ~/.local/bin exported. Prints nothing
+# when that script is missing or when nothing resolves; the caller treats an
+# empty answer as "skip", which is what it did before too.
 _find_primary_worktree() {
-  command -v resolve-worktree >/dev/null 2>&1 || return 0
-  resolve-worktree 2>/dev/null || true
+  [[ -x "$RESOLVE_WORKTREE" ]] || return 0
+  "$RESOLVE_WORKTREE" 2>/dev/null || true
 }
 
 # ── Ansible section ──────────────────────────────────────────────────────────

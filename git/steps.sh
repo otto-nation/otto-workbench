@@ -621,7 +621,7 @@ step_worktrunk_pre_switch_fetch() {
   if grep -q '^fetch-default' "$config_file"; then
     # The key is ours but its command has drifted from the current template.
     local tmp
-    tmp=$(mktemp)
+    tmp=$(mktemp "${config_file}.XXXXXX")
     awk -v line="$hook_cmd" '/^fetch-default/ { print line; next } { print }' "$config_file" > "$tmp"
     mv "$tmp" "$config_file"
     success "worktrunk pre-switch fetch hook refreshed"

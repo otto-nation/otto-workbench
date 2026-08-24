@@ -165,6 +165,7 @@ git ls-remote origin <branch>   # compare against git rev-parse HEAD
 
 It moves that ref two different ways, and the message names which one failed:
 
+- **`Could not fetch origin/main.`** — a worktree holds the default branch, but the fetch that precedes the fast-forward itself failed: a network outage, an auth problem, or `origin` being unreachable. Diagnose the fetch directly (see Git Failure Debugging) before retrying.
 - **`could not fast-forward to origin/main`, with a worktree path** — a worktree holds the default branch and would not fast-forward. Either it carries commits `origin` does not have, or uncommitted changes conflict with what is coming in. Deal with them in that worktree.
 - **`Could not fast-forward 'main' to origin/main`, with no path** — no worktree holds the branch, so the ref was moved directly with `git fetch origin main:main`, and git refused because the two have diverged. Inspect with `git log --oneline origin/main..main` and reset the local branch once you are satisfied nothing is lost.
 

@@ -392,6 +392,11 @@ def merge_readiness(state: PRState) -> Readiness:
 
     Order follows the registry, so blockers arrive grouped by the domain that
     raised them and in the order the dashboard printed those domains above.
+
+    Refresh ``push`` before calling this. Nothing here can tell an unobserved
+    push domain from a branch that is up to date — both say nothing — so a
+    caller that skips the refresh reports a branch with unpushed commits as
+    ready to merge.
     """
     blockers: list[str] = []
     unchecked: list[str] = []

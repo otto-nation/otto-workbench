@@ -16,6 +16,11 @@ import pr_state
 from pr_domains import CLOSEOUT_COMMAND
 from proc import CmdResult
 
+# When the run being described happened. Any non-empty stamp means "written",
+# which is the only thing render_status and readiness read them for.
+_REBASE_RUN = "2026-06-20T00:00:00Z"
+_FIX_RUN = "2026-07-14T00:00:00+00:00"
+
 
 # ── The protocol ──────────────────────────────────────────────────────────
 
@@ -286,7 +291,7 @@ def test_rebase_render_completed_with_conflicts():
     result = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=2, files_resolved=["a.py", "b.py"],
-        force_pushed=True, updated_at="2026-06-20T00:00:00Z",
+        force_pushed=True, updated_at=_REBASE_RUN,
     ).render_status()
     assert len(result) >= 1
     assert "2 file(s)" in result[0]
@@ -298,7 +303,7 @@ def test_rebase_render_clean():
     result = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=5,
         conflicts_resolved=0, files_resolved=[],
-        force_pushed=True, updated_at="2026-06-20T00:00:00Z",
+        force_pushed=True, updated_at=_REBASE_RUN,
     ).render_status()
     assert len(result) >= 1
     assert "clean" in result[0].lower()
@@ -308,14 +313,14 @@ def test_rebase_render_not_pushed():
     result = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=1, files_resolved=["a.py"],
-        force_pushed=False, updated_at="2026-06-20T00:00:00Z",
+        force_pushed=False, updated_at=_REBASE_RUN,
     ).render_status()
     assert "force-pushed" not in result[0]
 
 
 def test_rebase_render_conflicts():
     result = pr_domains.RebaseSummary(
-        status="conflicts", updated_at="2026-06-20T00:00:00Z",
+        status="conflicts", updated_at=_REBASE_RUN,
     ).render_status()
     assert len(result) == 1
     assert "conflicts" in result[0].lower()
@@ -327,7 +332,7 @@ def test_rebase_render_stale_files():
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=1, files_resolved=["pnpm-lock.yaml"],
         files_stale=["pnpm-lock.yaml"],
-        force_pushed=True, updated_at="2026-06-20T00:00:00Z",
+        force_pushed=True, updated_at=_REBASE_RUN,
     ).render_status()
     assert len(result) == 2
     assert "regeneration failed" in result[1]
@@ -338,14 +343,14 @@ def test_rebase_render_no_stale_line_when_clean():
     r = pr_domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=1,
         conflicts_resolved=0, files_resolved=[],
-        force_pushed=True, updated_at="2026-06-20T00:00:00Z",
+        force_pushed=True, updated_at=_REBASE_RUN,
     )
     assert len(r.render_status()) == 1
 
 
 def test_rebase_render_aborted():
     result = pr_domains.RebaseSummary(
-        status="aborted", updated_at="2026-06-20T00:00:00Z",
+        status="aborted", updated_at=_REBASE_RUN,
     ).render_status()
     assert result == ["**Rebase**: aborted"]
 
@@ -354,7 +359,7 @@ def test_rebase_render_already_landed():
     """A refusal is not a completed rebase — the dashboard has to say which."""
     result = pr_domains.RebaseSummary(
         status=pr_domains.RebaseStatus.ALREADY_LANDED.value,
-        updated_at="2026-06-20T00:00:00Z",
+        updated_at=_REBASE_RUN,
     ).render_status()
     assert len(result) == 1
     assert "already landed" in result[0]
@@ -364,7 +369,7 @@ def test_rebase_render_already_landed():
 def test_rebase_render_unrelated_history():
     r = pr_domains.RebaseSummary(
         status=pr_domains.RebaseStatus.UNRELATED_HISTORY.value,
-        updated_at="2026-06-20T00:00:00Z",
+        updated_at=_REBASE_RUN,
     )
     assert "shares no history" in r.render_status()[0]
 
@@ -372,7 +377,7 @@ def test_rebase_render_unrelated_history():
 def test_rebase_render_conflicts_over_budget():
     r = pr_domains.RebaseSummary(
         status=pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
-        updated_at="2026-06-20T00:00:00Z",
+        updated_at=_REBASE_RUN,
     )
     assert "too many conflicts" in r.render_status()[0]
 
@@ -391,7 +396,7 @@ def test_every_refusal_status_renders_as_a_refusal():
     }
     for status in refusals:
         r = pr_domains.RebaseSummary(
-            status=status.value, updated_at="2026-06-20T00:00:00Z",
+            status=status.value, updated_at=_REBASE_RUN,
         )
         assert "refused" in r.render_status()[0], status
 
@@ -486,7 +491,7 @@ def test_fix_render_with_data():
             pr_domains.ThreadOutcome(id="t4", action=pr_domains.ThreadAction.DISMISSED),
         ],
         commit_sha="abc1234", commit_status="pushed",
-        updated_at="2026-07-14T00:00:00+00:00",
+        updated_at=_FIX_RUN,
     ).render_status()
     assert "**2 fixed**" in lines[0]
     assert "1 deferred" in lines[0]
@@ -501,7 +506,7 @@ def test_fix_render_needs_human():
             pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.NEEDS_HUMAN),
             pr_domains.ThreadOutcome(id="t2", action=pr_domains.ThreadAction.NEEDS_HUMAN),
         ],
-        updated_at="2026-07-14T00:00:00+00:00",
+        updated_at=_FIX_RUN,
     ).render_status()
     assert "2 need discussion" in lines[0]
 
@@ -511,7 +516,7 @@ def test_fix_render_already_addressed():
         threads=[
             pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.ALREADY_ADDRESSED),
         ],
-        updated_at="2026-07-14T00:00:00+00:00",
+        updated_at=_FIX_RUN,
     ).render_status()
     assert "1 already addressed" in lines[0]
 
@@ -523,7 +528,7 @@ def test_fix_render_deferred_issue():
         ],
         commit_sha="abc", commit_status="pushed",
         deferred_issue_id="ENG-456",
-        updated_at="2026-07-14T00:00:00+00:00",
+        updated_at=_FIX_RUN,
     ).render_status()
     assert any("ENG-456" in line for line in lines)
     assert any("tracked in" in line for line in lines)
@@ -542,7 +547,7 @@ def _fix_with_closeout(**kwargs) -> pr_domains.FixSummary:
             pr_domains.ThreadOutcome(id="t4", action=pr_domains.ThreadAction.NEEDS_HUMAN),
         ],
         commit_sha="abc1234", commit_status="pushed",
-        updated_at="2026-07-14T00:00:00+00:00",
+        updated_at=_FIX_RUN,
         **kwargs,
     )
 
@@ -629,7 +634,7 @@ def test_fix_render_singularises_a_one_reply_queue():
     f = pr_domains.FixSummary(
         threads=[pr_domains.ThreadOutcome(id="t1", action=pr_domains.ThreadAction.FIXED)],
         replies_pending=True,
-        updated_at="2026-07-14T00:00:00+00:00",
+        updated_at=_FIX_RUN,
     )
     assert _closeout_line(f.render_status()) == (
         f"  ⚠ closeout owed: 1 reply — run: {CLOSEOUT_COMMAND}"
@@ -639,7 +644,7 @@ def test_fix_render_singularises_a_one_reply_queue():
 def test_fix_render_says_replies_when_no_outcome_carries_the_count():
     """A queue whose outcomes were pruned still says replies are owed, not zero."""
     f = pr_domains.FixSummary(
-        threads=[], replies_pending=True, updated_at="2026-07-14T00:00:00+00:00",
+        threads=[], replies_pending=True, updated_at=_FIX_RUN,
     )
     assert _closeout_line(f.render_status()) == (
         f"  ⚠ closeout owed: replies — run: {CLOSEOUT_COMMAND}"

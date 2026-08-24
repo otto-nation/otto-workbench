@@ -1942,18 +1942,23 @@ def _short_sha(path, rev="HEAD") -> str:
     ).stdout.strip()
 
 
-def _held_fix_branch(tmp_path, *, rebase=True, drop=False, push=True):
-    """A branch carrying a fix commit the pass held, built against real git.
+# What every fix pass commits under (`_commit_and_push`), so two rounds on one
+# branch are indistinguishable by subject — which is why identity is content.
+_FIX_SUBJECT = "fix: address review comments"
 
-    Real git rather than a stubbed subprocess because the bug is precisely the
+# One author date for every fix commit a helper here writes. Two rounds
+# genuinely do land in the same second — a retry, fast CI — and a test that
+# waited for the clock to tick would only be reproducing the easy case.
+_FIX_DATE = "2026-01-01T00:00:00+00:00"
+
+
+def _feature_off_origin(tmp_path) -> Path:
+    """A clone with one pushed commit on `main` and `feature` checked out.
+
+    Real git throughout, because the bug these build is precisely the
     disagreement between two ways of asking about a rewritten commit: the
     recorded SHA still resolves as an object, and no branch anywhere contains
     it. Nothing short of an actual rebase produces that pair.
-
-    `rebase` replays the fix commit onto upstream work the way `pr rebase` does,
-    `drop` throws it away instead, and `push` decides whether what survives ever
-    reached the remote. `.held` is the SHA the fix pass recorded; `.replay` is
-    what the branch carries afterwards.
     """
     origin = tmp_path / "origin"
     subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(origin)],
@@ -1968,30 +1973,83 @@ def _held_fix_branch(tmp_path, *, rebase=True, drop=False, push=True):
     git_in(work, "add", "-A")
     git_in(work, "commit", "-q", "--no-verify", "-m", "base")
     git_in(work, "push", "-q", "-u", "origin", "main")
-
     git_in(work, "checkout", "-q", "-b", "feature")
-    (work / "fix.txt").write_text("fix\n")
+    return work
+
+
+def _fix_commit(work, name, content=None) -> str:
+    """A fix-pass commit adding *name*, under the pass's own subject and date."""
+    (work / name).write_text(content if content is not None else f"{name}\n")
     git_in(work, "add", "-A")
-    git_in(work, "commit", "-q", "--no-verify", "-m", "fix: address the review")
-    held = _short_sha(work)
+    git_in(work, "commit", "-q", "--no-verify", "--date", _FIX_DATE, "-m", _FIX_SUBJECT)
+    return _short_sha(work)
+
+
+def _rebase_onto_moved_main(work) -> None:
+    """Move `main` on and replay `feature` over it, the way `pr rebase` does."""
+    git_in(work, "checkout", "-q", "main")
+    (work / "upstream.txt").write_text("upstream\n")
+    git_in(work, "add", "-A")
+    git_in(work, "commit", "-q", "--no-verify", "-m", "upstream work")
+    git_in(work, "push", "-q", "origin", "main")
+    git_in(work, "checkout", "-q", "feature")
+    git_in(work, "rebase", "-q", "origin/main")
+
+
+def _held_fix_branch(tmp_path, *, rebase=True, drop=False, push=True):
+    """A branch carrying a fix commit the pass held.
+
+    `rebase` replays the fix commit onto upstream work the way `pr rebase` does,
+    `drop` throws it away instead, and `push` decides whether what survives ever
+    reached the remote. `.held` is the SHA the fix pass recorded; `.replay` is
+    what the branch carries afterwards.
+    """
+    work = _feature_off_origin(tmp_path)
+    held = _fix_commit(work, "fix.txt")
 
     if drop:
         git_in(work, "reset", "-q", "--hard", "HEAD~1")
         return SimpleNamespace(path=work, held=held, replay="")
 
     if rebase:
-        # The upstream commit that made the rebase necessary in the first place.
-        git_in(work, "checkout", "-q", "main")
-        (work / "upstream.txt").write_text("upstream\n")
-        git_in(work, "add", "-A")
-        git_in(work, "commit", "-q", "--no-verify", "-m", "upstream work")
-        git_in(work, "push", "-q", "origin", "main")
-        git_in(work, "checkout", "-q", "feature")
-        git_in(work, "rebase", "-q", "origin/main")
-
+        _rebase_onto_moved_main(work)
     if push:
         git_in(work, "push", "-q", "-u", "origin", "feature")
     return SimpleNamespace(path=work, held=held, replay=_short_sha(work))
+
+
+def _two_held_rounds(tmp_path):
+    """Two rounds of held fixes on one branch, then a rebase over both.
+
+    The pair a snapshot cannot tell apart by anything but content: same static
+    subject, same author date, two different commits it has to map separately.
+    """
+    work = _feature_off_origin(tmp_path)
+    first = _fix_commit(work, "one.txt")
+    second = _fix_commit(work, "two.txt")
+    _rebase_onto_moved_main(work)
+    git_in(work, "push", "-q", "-u", "origin", "feature")
+    return SimpleNamespace(
+        path=work, first=first, second=second,
+        first_replay=_short_sha(work, "HEAD~1"), second_replay=_short_sha(work),
+    )
+
+
+def _duplicated_fix(tmp_path):
+    """A branch where the held fix's patch appears twice: applied, undone, redone.
+
+    Two commits with one patch id, so "which commit replays the orphan?" has no
+    answer — the state a closeout must refuse to guess at rather than pick from.
+    """
+    work = _feature_off_origin(tmp_path)
+    held = _fix_commit(work, "fix.txt")
+    (work / "fix.txt").unlink()
+    git_in(work, "add", "-A")
+    git_in(work, "commit", "-q", "--no-verify", "-m", "revert: back that out")
+    _fix_commit(work, "fix.txt")
+    _rebase_onto_moved_main(work)
+    git_in(work, "push", "-q", "-u", "origin", "feature")
+    return SimpleNamespace(path=work, held=held)
 
 
 class TestFollowHistoryRewrite:
@@ -2047,6 +2105,45 @@ class TestFollowHistoryRewrite:
         saved = pr_state.load_state(repo.path / "target")
         assert saved.fix.commit_sha == repo.replay
         assert saved.fix.commit_status == CommitStatus.PUSHED
+
+    def test_two_rounds_each_reach_their_own_replay(self, rt, tmp_path):
+        """Every fix pass commits under one static subject, so identity is content.
+
+        A snapshot spans rounds — a thread fixed two commits ago still cites the
+        commit that fixed it — so mapping both orphans onto whichever replay was
+        found first would post one round's permalink under the other's work.
+        """
+        repo = _two_held_rounds(tmp_path)
+        state = _make_state(FixSummary(
+            commit_sha=repo.second, commit_status=CommitStatus.PUSH_HELD,
+            head_sha=repo.second,
+            threads=[
+                ThreadOutcome(id="t1", action=ThreadAction.FIXED,
+                              commit_sha=repo.first, read_sha=repo.first),
+                ThreadOutcome(id="t2", action=ThreadAction.FIXED,
+                              commit_sha=repo.second, read_sha=repo.second),
+            ],
+        ))
+        rt._follow_history_rewrite(state, repo.path)
+        assert repo.first_replay != repo.second_replay
+        assert state.fix.threads[0].commit_sha == repo.first_replay
+        assert state.fix.threads[1].commit_sha == repo.second_replay
+        assert state.fix.commit_sha == repo.second_replay
+
+    def test_two_commits_carrying_one_patch_are_not_guessed_between(
+        self, rt, tmp_path,
+    ):
+        """Applied, undone, redone: the branch offers two answers, so there is none."""
+        repo = _duplicated_fix(tmp_path)
+        state = _make_state(FixSummary(
+            commit_sha=repo.held, commit_status=CommitStatus.PUSH_HELD,
+            head_sha=repo.held,
+        ))
+        warned = []
+        with patch.object(rt.log, "warn", side_effect=warned.append):
+            rt._follow_history_rewrite(state, repo.path)
+        assert state.fix.commit_sha == repo.held
+        assert any(repo.held in w and "pr comments --fix" in w for w in warned)
 
     def test_the_deferred_replies_are_let_out(self, rt, tmp_path):
         """The other gate the orphan jammed: every reply cites the commit."""

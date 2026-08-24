@@ -2195,11 +2195,11 @@ def _follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
     replay that reached the remote clears the hold, and one still sitting local
     is unpushed for the ordinary reason and keeps holding.
 
-    Nothing is cleared when the rename cannot be followed. An orphan with no
-    replay keeps the SHA it was recorded with, the hold stands, and the warning
-    below names the two ways out — which is the honest answer to a state this
-    cannot read, and the one thing worse than blocking would be publishing on a
-    guess.
+    Nothing is cleared when the rename cannot be followed. An orphan no single
+    commit replays keeps the SHA it was recorded with, the hold stands, and the
+    warning below names the two ways out — which is the honest answer to a state
+    this cannot read, and the one thing worse than blocking would be publishing
+    on a guess.
     """
     fix = state.fix
     recorded = fix.commit_sha
@@ -2234,11 +2234,12 @@ def _follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
         )
     if recorded and replays.get(recorded) == "" and _commit_unpushed(fix.commit_status):
         log.warn(
-            f"Fix commit {recorded} is no longer on this branch and nothing on "
-            "it replays that commit — the closeout stays held. If the work "
-            "landed under another commit (a squash, a reword), re-run "
-            "`pr comments --fix --post` to re-triage against the current HEAD; "
-            f"if it was dropped, restore it with `git cherry-pick {recorded}`"
+            f"Fix commit {recorded} is no longer on this branch and no single "
+            "commit on it carries that change — the closeout stays held. If the "
+            "work landed as a different change — a squash, a reworked fix — "
+            "re-run `pr comments --fix --post` to re-triage against HEAD; "
+            f"if it was dropped, restore it with `git cherry-pick {recorded}` "
+            "while the orphaned object is still there — a gc reclaims it"
         )
 
 
@@ -4093,36 +4094,74 @@ def _rewritten_away(wt_path: Path, sha: str) -> bool:
     ).returncode == 1
 
 
+def _patch_ids(wt_path: Path, *revs: str) -> dict[str, list[str]]:
+    """Patch id → the commits in *revs* carrying it, git's own equivalence test.
+
+    The same one `git cherry` and `git rebase` use to recognise a commit they
+    have already replayed, reached here through `patch-id` because those two
+    answer "is it there?" and this has to answer "which one is it?".
+
+    `--stable` so the id is a property of the change and not of whoever's diff
+    settings produced it, and `--no-merges` because a merge has no single patch:
+    `log -p` prints no diff for one, which would otherwise land every merge on a
+    shared empty id. An empty commit drops out the same way, and neither can
+    collide with anything, since `patch-id` emits no line for either.
+
+    ceiling: the whole `revs` diff is materialised to be piped through one
+    `patch-id`, trading memory for a fixed two processes rather than two per
+    candidate commit. Upgrade to a per-commit `diff-tree | patch-id` walk if a
+    range ever grows large enough that the LOCAL timeout expires — which
+    degrades safely, since no ids means no match means the hold stands.
+    """
+    patches = git_client.run(
+        "log", "-p", "--no-merges", "--format=commit %H", *revs, cwd=wt_path,
+    )
+    if not patches.ok or not patches.stdout:
+        return {}
+    # Not git_client: this one reads a diff on stdin, and `run` deliberately
+    # exposes no way to write to a child's input.
+    ids = proc.run(["git", "patch-id", "--stable"], cwd=wt_path,
+                   input_text=patches.stdout, timeout=timeouts.LOCAL)
+    if not ids.ok:
+        return {}
+    by_id: dict[str, list[str]] = {}
+    for line in ids.stdout.splitlines():
+        patch_id, _, commit = line.partition(" ")
+        if patch_id and commit.strip():
+            by_id.setdefault(patch_id, []).append(commit.strip())
+    return by_id
+
+
 def _replayed_commit(wt_path: Path, sha: str) -> str:
     """The commit now on the branch that replays *sha*, or "" when none does.
 
-    A rebase copies each commit's author date and subject verbatim and changes
-    only the SHA and the parent — conflict resolution included, since the
-    resolution edits the tree and not the header. That pair therefore names the
-    replay of an orphan, and nothing else on the branch: two commits sharing a
-    subject would still have to share an author timestamp to the second.
+    Matched on the patch the commit carries, because the header carries nothing
+    that tells two fix commits apart: every pass commits under one static
+    subject (`_commit_and_push`), and two rounds close enough together — a
+    retry, a fast CI loop — share an author date to the second as well. Content
+    is the only field a rebase preserves that is also the commit's own, and it
+    survives an amend and a conflict resolution that a subject match would not.
 
     Searched from the orphan's own merge base rather than from the upstream
     branch, because the rewrite may have moved the branch onto a newer base and
     the old one is the only commit both histories still agree on.
 
-    A reword, a squash, or a dropped commit produces no match, and that is the
-    honest answer: the recorded commit's work is not on the branch under any
-    name this can vouch for.
+    Two answers is no answer. A patch that appears twice in range — applied,
+    reverted, applied again; a cherry-pick duplicated by the rebase — leaves
+    nothing to choose between, so it takes the no-match path and keeps holding
+    rather than citing a commit picked by list order. A reword or an amend still
+    matches, since neither touches the diff; a squash, a dropped commit, and a
+    fix reworked into a different change do not, and that is the honest answer:
+    the recorded commit's work is not on the branch under any name.
     """
-    identity = git_client.out(
-        "show", "--no-patch", "--format=%at%x00%s", sha, cwd=wt_path,
-    )
+    orphan = _patch_ids(wt_path, "--no-walk", sha)
     base = git_client.out("merge-base", sha, "HEAD", cwd=wt_path)
-    if not identity or not base:
+    if len(orphan) != 1 or not base:
         return ""
-    for line in git_client.lines(
-        "log", "--format=%h%x00%at%x00%s", f"{base}..HEAD", cwd=wt_path,
-    ):
-        short, _, rest = line.partition("\x00")
-        if rest == identity:
-            return short
-    return ""
+    replays = _patch_ids(wt_path, f"{base}..HEAD").get(next(iter(orphan)), [])
+    if len(replays) != 1:
+        return ""
+    return git_client.out("rev-parse", "--short", replays[0], cwd=wt_path)
 
 
 def _unrecovered_commit(

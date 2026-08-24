@@ -153,10 +153,10 @@ Settle that reason with the user, and only then run `--finish --post`, which
 pushes the commit and drains the replies and the summary.
 
 A rebase between the two runs is expected and is not a problem: `--finish`
-follows the recorded SHA to the commit that replaced it before deciding whether
-anything is owed. When it says the fix commit is on the branch under no name at
-all — dropped, squashed, or reworded — the hold is real and the message names
-the two ways out. Do not reach for `--fix` to unstick a closeout otherwise: it
+follows the recorded SHA to the commit that replaced it — matched on patch id,
+so an amend or a reword is followed too — before deciding whether anything is
+owed. When it reports the fix commit as carried by no commit on the branch, or
+by two, the hold is real and the message names the two ways out. Do not reach for `--fix` to unstick a closeout otherwise: it
 re-triages from scratch and discards the replies already reviewed.
 
 **If `needs_human` and `deferred` are both empty and no unseen comments:**

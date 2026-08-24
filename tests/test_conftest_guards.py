@@ -10,19 +10,29 @@ user config in the same section stays guarded, the same key name in another
 section stays guarded, and a leaked test is still caught by the identity it
 writes.
 
+Catching is half of it: the guard restores the bytes it snapshotted, so a run
+that trips it leaves the shared config as it found it. That half is driven here
+by a real `git config` aimed at a repository the caller did not name, which is
+the shape the leak arrives in.
+
 The review-env guard covers the other direction — config arriving from the
 developer's shell rather than from another process.
 """
 
 import os
+import re
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from conftest import (
     _assert_config_unchanged, _clear_review_env, _describe_config_change,
-    _guarded_lines, _review_env_keys, _section_of,
+    _guarded_lines, _load_lib, _review_env_keys, _section_of, init_worktree,
+    seed_repo,
 )
+
+gitenv = _load_lib("gitenv")
 
 _CONFIG = b"""[core]
 \trepositoryformatversion = 0
@@ -181,29 +191,127 @@ class TestTheFailureNamesTheKey:
 
 
 class TestTheGuardItself:
-    """The check the fixture runs at teardown, over a stand-in config path."""
+    """The check the fixture runs at teardown, over a stand-in config file.
+
+    A real file rather than a path that names nothing: the guard writes now, and
+    a check that never let it write would not notice if it stopped.
+    """
 
     @staticmethod
-    def _check(after: bytes | None, before: bytes | None = _CONFIG):
-        _assert_config_unchanged(Path("/repo/.git/config"), before, after)
+    def _check(tmp_path, after: bytes | None, before: bytes | None = _CONFIG):
+        path = tmp_path / "config"
+        if after is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(after)
+        _assert_config_unchanged(path, before, after)
+        return path
 
-    def test_an_untouched_config_passes(self):
-        self._check(_CONFIG)
+    def test_an_untouched_config_passes(self, tmp_path):
+        self._check(tmp_path, _CONFIG)
 
-    def test_a_concurrent_marker_write_passes(self):
-        self._check(_rewritten(b"1786075417", b"1786075999"))
+    def test_a_concurrent_marker_write_passes(self, tmp_path):
+        refreshed = _rewritten(b"1786075417", b"1786075999")
+        assert self._check(tmp_path, refreshed).read_bytes() == refreshed
 
-    def test_a_write_to_a_guarded_key_fails(self):
-        with pytest.raises(AssertionError, match="/repo/.git/config"):
-            self._check(_rewritten(b"dev@example.com", b"test@example.com"))
+    def test_a_write_to_a_guarded_key_fails(self, tmp_path):
+        with pytest.raises(AssertionError, match=re.escape(str(tmp_path))):
+            self._check(tmp_path, _rewritten(b"dev@example.com", b"test@example.com"))
 
-    def test_the_failure_names_the_key(self):
+    def test_the_failure_names_the_key(self, tmp_path):
         with pytest.raises(AssertionError, match=r"\+email = test@example.com"):
-            self._check(_rewritten(b"dev@example.com", b"test@example.com"))
+            self._check(tmp_path, _rewritten(b"dev@example.com", b"test@example.com"))
 
-    def test_a_config_created_mid_test_fails(self):
+    def test_the_failure_does_not_accuse_the_running_test(self, tmp_path):
+        """A leak out of another process lands on whichever test was in flight."""
+        with pytest.raises(AssertionError, match="need not be this test"):
+            self._check(tmp_path, _rewritten(b"dev@example.com", b"test@example.com"))
+
+    def test_a_config_created_mid_test_fails(self, tmp_path):
         with pytest.raises(AssertionError, match=r"\+\[core\]"):
-            self._check(_CONFIG, before=None)
+            self._check(tmp_path, _CONFIG, before=None)
+
+
+class TestTheGuardRestoresWhatItCatches:
+    """The other half of catching a leak: the operator should not have to undo it."""
+
+    def test_the_snapshotted_bytes_come_back(self, tmp_path):
+        path = tmp_path / "config"
+        path.write_bytes(_rewritten(b"dev@example.com", b"test@example.com"))
+
+        with pytest.raises(AssertionError):
+            _assert_config_unchanged(path, _CONFIG, path.read_bytes())
+
+        assert path.read_bytes() == _CONFIG
+
+    def test_a_config_that_did_not_exist_is_removed_again(self, tmp_path):
+        path = tmp_path / "config"
+        path.write_bytes(_CONFIG)
+
+        with pytest.raises(AssertionError):
+            _assert_config_unchanged(path, None, path.read_bytes())
+
+        assert not path.exists()
+
+    def test_an_external_write_is_left_where_it_landed(self, tmp_path):
+        """Restoring an exempt write would undo worktrunk's own state for it."""
+        refreshed = _rewritten(b"1786075417", b"1786075999")
+        path = tmp_path / "config"
+        path.write_bytes(refreshed)
+
+        _assert_config_unchanged(path, _CONFIG, refreshed)
+
+        assert path.read_bytes() == refreshed
+
+
+class TestTheInheritedGitEnvironment:
+    """The other end of the leak: the environment that redirects git at all."""
+
+    def test_no_override_survives_into_a_test(self):
+        """Asked against lib/gitenv.py's list rather than conftest's own, so a
+        conftest that clears a shorter one than the gates do fails here."""
+        assert [n for n in gitenv.GIT_ENV_OVERRIDES if n in os.environ] == []
+
+
+class TestALeakedIdentityIsCaughtAndUndone:
+    """The whole guard, driven by the write it exists for.
+
+    `git config` is run for real, against a repository the caller did not name:
+    git reads GIT_DIR ahead of the directory `-C` moved to, which is how a test
+    that builds a repo under tmp_path writes its identity somewhere else. The
+    pre-push hook exports GIT_DIR, so this is the shape the leak arrives in.
+    """
+
+    @staticmethod
+    def _leak(tmp_path) -> tuple[Path, bytes]:
+        elsewhere = seed_repo(tmp_path / "elsewhere")
+        config = elsewhere / ".git" / "config"
+        before = config.read_bytes()
+
+        named = init_worktree(tmp_path / "named")
+        subprocess.run(
+            ["git", "-C", str(named), "config", "user.email", "test@example.com"],
+            check=True, capture_output=True,
+            env={**os.environ, "GIT_DIR": str(elsewhere / ".git")},
+        )
+        return config, before
+
+    def test_the_write_lands_on_the_repo_git_dir_names(self, tmp_path):
+        """The premise: without this, the rest of the class proves nothing."""
+        config, before = self._leak(tmp_path)
+        assert b"test@example.com" in config.read_bytes()
+        assert b"test@example.com" not in before
+
+    def test_the_guard_catches_it(self, tmp_path):
+        config, before = self._leak(tmp_path)
+        with pytest.raises(AssertionError, match=r"\+\s*email = test@example.com"):
+            _assert_config_unchanged(config, before, config.read_bytes())
+
+    def test_the_guard_undoes_it(self, tmp_path):
+        config, before = self._leak(tmp_path)
+        with pytest.raises(AssertionError):
+            _assert_config_unchanged(config, before, config.read_bytes())
+        assert config.read_bytes() == before
 
 
 class TestSectionNames:

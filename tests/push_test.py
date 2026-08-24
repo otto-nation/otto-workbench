@@ -24,6 +24,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import git_client  # noqa: E402
+import proc  # noqa: E402
 import push  # noqa: E402
 import timeouts  # noqa: E402
 
@@ -380,3 +381,44 @@ def test_every_retry_state_has_a_report_line():
     """A LOST report claiming a retry that never ran is the wrong-reporting
     failure this module exists to remove."""
     assert set(push._RETRY_NOTE) == set(push.Retry)
+
+
+# ── the bash bridge ─────────────────────────────────────────────────────────
+
+
+def test_cli_exit_codes_cover_every_status():
+    """A status with no exit code would raise KeyError at the worst moment."""
+    assert set(push._EXIT_CODES) == set(push.PushStatus)
+
+
+def test_cli_exits_zero_on_a_verified_push(pushable):
+    wt, _ = pushable
+    _commit(wt, "work")
+    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 0
+
+
+def test_cli_reports_a_lost_push(pushable, capsys):
+    wt, remote = pushable
+    _commit(wt, "work")
+    _lose_pushes(remote)
+    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 2
+    assert "the remote did not move" in capsys.readouterr().err
+
+
+def test_cli_exits_one_when_git_refuses(pushable, monkeypatch):
+    """A refusal and a lost push get different codes so bash can tell them apart."""
+    wt, _ = pushable
+    _commit(wt, "work")
+    monkeypatch.setattr(
+        push.git_client, "run",
+        lambda *cmd, **kw: proc.CmdResult(1, "", "error: failed to push some refs"),
+    )
+    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 1
+
+
+def test_cli_exits_three_when_the_remote_cannot_be_asked(pushable, monkeypatch):
+    """Unverified is its own code — the shell warns rather than aborting."""
+    wt, _ = pushable
+    _commit(wt, "work")
+    monkeypatch.setattr(push, "remote_head", lambda *a, **k: None)
+    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 3

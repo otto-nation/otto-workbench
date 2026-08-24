@@ -14,6 +14,17 @@
 # `PR_BASE`, `PR_ISSUE`, `PR_TEMPLATE`, `PR_HAS_TEMPLATE`, `PR_TITLE`,
 # `PR_DESCRIPTION`.
 
+# _push_verified BRANCH [--set-upstream]
+# Pushes BRANCH through the owner in ai/lib/push.py, which confirms the remote
+# ref actually moved. Returns non-zero on a refused, lost, or unverified push,
+# having already reported which of the three it was — nothing is echoed here,
+# because a second "Push failed" would say it worse and say it twice.
+_push_verified() {
+  local branch="$1"; shift
+  python3 "$WORKBENCH_ROOT/ai/lib/push.py" \
+    --cwd . --branch "$branch" --remote "$GIT_REMOTE" "$@"
+}
+
 # push_branch BRANCH
 # Pushes BRANCH to remote, handling first-push and divergence cases.
 # Returns 1 on any failure that should abort the caller.
@@ -22,7 +33,7 @@ push_branch() {
 
   if ! git ls-remote --heads "$GIT_REMOTE" "$branch" | grep -q "$branch"; then
     echo "→ Pushing new branch to remote..."
-    git push -u "$GIT_REMOTE" "$branch" || { echo "✗ Push failed"; return 1; }
+    _push_verified "$branch" --set-upstream || return 1
     return 0
   fi
 
@@ -30,7 +41,7 @@ push_branch() {
 
   # If no tracking branch configured, just push
   if ! git rev-parse --verify "@{u}" &>/dev/null 2>&1; then
-    git push "$GIT_REMOTE" "$branch" || { echo "✗ Push failed"; return 1; }
+    _push_verified "$branch" || return 1
     return 0
   fi
 
@@ -48,7 +59,7 @@ push_branch() {
     return 1
   elif [ "$remote_sha" = "$base_sha" ]; then
     echo "→ Local has unpushed commits, pushing..."
-    git push "$GIT_REMOTE" "$branch" || { echo "✗ Push failed"; return 1; }
+    _push_verified "$branch" || return 1
   else
     echo "✗ Branch has diverged from remote"
     echo "→ Fix with: git pull --rebase or git reset"

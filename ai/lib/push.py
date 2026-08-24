@@ -48,6 +48,7 @@ let the next call site inherit the wrong answer by omitting the argument.
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -345,3 +346,42 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     log.dim(f"origin:   {result.remote_sha[:7] or 'no such ref'}")
     log.dim(_RETRY_NOTE[result.retry])
     log.dim(f"Re-run: git -C '{wt_path}' push")
+
+
+# The bash half of `pr:create` reads these rather than parsing output. HELD
+# shares REFUSED's code: the CLI always runs ungated, so it is unreachable, and
+# a status this map did not answer for must not read as success.
+_EXIT_CODES = {
+    PushStatus.PUSHED: 0,
+    PushStatus.REFUSED: 1,
+    PushStatus.HELD: 1,
+    PushStatus.LOST: 2,
+    PushStatus.UNVERIFIED: 3,
+}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Push and verify from the shell — see the module docstring.
+
+    The bridge for `lib/ai/pr.sh`, which is bash and cannot reach the owner any
+    other way. It stays ungated: the shell half runs under `pr:create`, where
+    pushing the branch is the point of the command rather than something the
+    publishing gate decides.
+    """
+    parser = argparse.ArgumentParser(description="Push a branch and verify it landed.")
+    parser.add_argument("--cwd", default=".")
+    parser.add_argument("--branch", required=True)
+    parser.add_argument("--remote", default="origin")
+    parser.add_argument("--set-upstream", action="store_true")
+    ns = parser.parse_args(argv)
+
+    # The branch is named explicitly rather than left to git's push.default,
+    # because the shell caller has already decided which branch it means.
+    args = (["-u"] if ns.set_upstream else []) + [ns.remote, ns.branch]
+    result = push(ns.cwd, gated=False, branch=ns.branch, remote=ns.remote, args=args)
+    report(result, ns.cwd)
+    return _EXIT_CODES[result.status]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

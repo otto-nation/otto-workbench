@@ -381,10 +381,23 @@ class TestDiscovery:
 # ── Probing ───────────────────────────────────────────────────────────────
 
 
-# The bound every case in this section runs under, in place of timeouts.QUICK.
-# Long enough that a bash script printing a constant answers well inside it,
-# short enough that a case built on breaching it costs tenths of a second.
+# The bound a case runs under when every tool in it is meant to time out.
+# Nothing there turns on a fixture being scheduled inside the bound — a script
+# the kernel has not started yet and a script sleeping far past it both produce
+# the timeout the case is about — so it can stay short enough that a breach
+# costs tenths of a second.
+#
+# A case where some tool must *answer* takes the shipped bound instead. An
+# answer does turn on the fixture being scheduled, and half a second is not
+# reliably enough to fork and start a shell on a machine running this suite in
+# parallel. Pinning such a case short reproduced the defect this section exists
+# to check for: the machine decided the result, not the tool.
 PROBE_BOUND = 0.5
+
+# What a fixture runs when it must not answer this attempt. `exec` so the sleep
+# takes over the pid the prober kills — a sleep left running under a killed
+# parent outlives its case by half a minute, and that is load the next case pays.
+NEVER_ANSWERS = "exec sleep 30\n"
 
 # Sleeping tools enough that a serial round would be plainly slower than a
 # concurrent one, and fewer than PROBE_WORKERS so they all go out together.
@@ -394,13 +407,15 @@ assert SLOW_TOOLS <= PROBE_WORKERS, "the cases below assume one round holds them
 
 
 def _attempts_of(script: Path) -> Path:
-    """The file a fixture tool appends a byte to each time it is run."""
+    """The file a fixture tool appends a byte to each time it is run.
+
+    Only a fixture given room to answer can be trusted to have written it: a
+    probe that breaches its bound is SIGKILLed, and the kill can land before
+    bash has reached the script's first line. Cases counting how many times a
+    script was probed use the ``probes`` fixture, which counts on the side of
+    the fence that cannot be killed.
+    """
     return script.parent / f"{script.name}.attempts"
-
-
-def _attempts(script: Path) -> int:
-    stamp = _attempts_of(script)
-    return len(stamp.read_bytes()) if stamp.exists() else 0
 
 
 def _tool_body(name: str) -> str:
@@ -428,15 +443,21 @@ def _write_probe_fixture(directory: Path, name: str, middle: str) -> Path:
 
 def _write_sleeping_tool(directory: Path, name: str) -> Path:
     """A marked script that never answers inside any bound worth waiting."""
-    return _write_probe_fixture(directory, name, "sleep 30\n")
+    return _write_probe_fixture(directory, name, NEVER_ANSWERS)
 
 
 def _write_flaky_tool(directory: Path, name: str) -> Path:
-    """Outruns the bound the first time it is run, and answers after that."""
+    """Outruns the bound the first time it is run, and answers after that.
+
+    Which attempt it is on comes from the stamp file, so it only tells the truth
+    under a bound its first line is certain to be reached inside — the case
+    using it takes the shipped bound rather than PROBE_BOUND.
+    """
     script = directory / name
     return _write_probe_fixture(
         directory, name,
-        f"[ \"$(wc -c < '{_attempts_of(script)}' | tr -d ' ')\" -lt 2 ] && sleep 30\n")
+        f"[ \"$(wc -c < '{_attempts_of(script)}' | tr -d ' ')\" -lt 2 ] "
+        f"&& {NEVER_ANSWERS}")
 
 
 def _write_dawdling_tool(directory: Path, name: str, pause: float) -> Path:
@@ -446,8 +467,31 @@ def _write_dawdling_tool(directory: Path, name: str, pause: float) -> Path:
 
 @pytest.fixture
 def short_probe_bound(monkeypatch):
-    """The server's bound, shortened so a breach costs the suite tenths."""
+    """The server's bound, shortened so a breach costs the suite tenths.
+
+    Only for a case where every tool is meant to time out — see PROBE_BOUND.
+    """
     monkeypatch.setattr(server, "DISCOVERY_TIMEOUT", PROBE_BOUND)
+
+
+@pytest.fixture
+def probes(monkeypatch):
+    """Every script the prober spawned a probe for, in the order it did.
+
+    Counted here rather than by the fixture scripts themselves: a timed-out
+    probe is SIGKILLed, and on a busy machine that lands before the script has
+    recorded anything, so a stamp the child writes undercounts exactly the
+    attempts these cases exist to check. The real probe still runs.
+    """
+    spawned: list[Path] = []
+    probe = server.probe_tool
+
+    def counting(script: Path):
+        spawned.append(script)
+        return probe(script)
+
+    monkeypatch.setattr(server, "probe_tool", counting)
+    return spawned
 
 
 class TestProbeFailure:
@@ -565,27 +609,32 @@ class TestProbeRetry:
     """
 
     def test_a_tool_that_answers_on_the_second_try_is_discovered(
-            self, tmp_path, short_probe_bound):
+            self, tmp_path, probes):
+        """The shipped bound, because the second attempt has to be able to answer.
+
+        It is also the one case that pays the bound in full — the first attempt
+        sleeps through it — which is what a real transient stall costs.
+        """
         script = _write_flaky_tool(tmp_path, "flaky-tool")
 
         result = probe_tools([script])[0]
 
         assert result.ok is True
-        assert _attempts(script) == PROBE_ATTEMPTS
+        assert probes == [script] * PROBE_ATTEMPTS
 
     def test_a_tool_that_never_answers_is_run_the_attempt_count_and_no_more(
-            self, tmp_path, short_probe_bound):
+            self, tmp_path, short_probe_bound, probes):
         script = _write_sleeping_tool(tmp_path, "sleeping-tool")
 
         assert probe_tools([script])[0].timed_out is True
-        assert _attempts(script) == PROBE_ATTEMPTS
+        assert probes == [script] * PROBE_ATTEMPTS
 
-    def test_a_tool_that_answered_wrongly_is_not_run_again(self, tmp_path):
+    def test_a_tool_that_answered_wrongly_is_not_run_again(self, tmp_path, probes):
         """Re-running it would cost the same wait to be told the same thing."""
         script = _write_probe_fixture(tmp_path, "broken-tool", "exit 3\n")
 
         assert probe_tools([script])[0].failure is ProbeFailure.BROKEN
-        assert _attempts(script) == 1
+        assert probes == [script]
 
 
 class TestTimeoutIsReportedApart:
@@ -616,8 +665,13 @@ class TestTimeoutIsReportedApart:
         assert "exited 3" in skipped[0].getMessage()
 
     def test_a_slow_tool_does_not_stop_the_others_being_offered(
-            self, tmp_path, short_probe_bound, caplog):
-        """One dropped tool is one tool, not a scan that gave up."""
+            self, tmp_path, caplog):
+        """One dropped tool is one tool, not a scan that gave up.
+
+        The shipped bound, because the round holds a tool that has to answer and
+        the two share one bound — shortening it to hurry the sleeper along is
+        how the quick tool starts timing out too.
+        """
         slow = _write_sleeping_tool(tmp_path, "sleeping-tool")
         quick = _write_marked_script(tmp_path, "my-tool")
 

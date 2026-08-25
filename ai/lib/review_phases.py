@@ -2,7 +2,7 @@
 
 A review is a sequence of agent phases. What a phase *is* — its built-in spec,
 and how that spec resolves against the config file and the environment — is
-`agent_types` and `agent_phases`, which the whole workbench shares. This module
+`agent_registry` and `agent_phases`, which the whole workbench shares. This module
 is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
 one review's worktree, session log and throttle, and the executors that run
 each phase.
@@ -26,7 +26,8 @@ from pathlib import Path
 import agent_phases
 import agent_retry
 import log
-from agent_types import EFFORT_PRESETS, PHASES, Phase
+from agent_registry import PHASES
+from agent_types import EFFORT_PRESETS, Phase, PhaseShape
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD,
     AgentInvocation, _parse_session_cost, build_add_dirs,
@@ -109,7 +110,7 @@ class PhaseRunner:
         self.thinking = agent_phases.phase_thinking(phase, job.effort, cfg)
         self.provider = agent_phases.phase_provider(cfg)
         self.budget = agent_phases.phase_budget(phase, job.effort)
-        self.agent = None if spec.edits else (
+        self.agent = None if spec.shape is PhaseShape.FIX else (
             spec.agent if spec.agent is not None else preset.agent
         )
         self.max_turns = job_turns(phase, job)

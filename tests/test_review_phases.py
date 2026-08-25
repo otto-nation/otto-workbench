@@ -12,7 +12,8 @@ import agent_phases
 import review_common
 import review_pipeline
 import review_phases
-from agent_types import REVIEW_PHASES, AgentKind, Effort, Phase, Thinking
+from agent_registry import REVIEW_PHASES
+from agent_types import AgentKind, Effort, Phase, Thinking
 
 
 class TestPhaseLogPath:
@@ -310,8 +311,8 @@ class TestNoDuplicateDefaults:
             assert not hasattr(review_preflight, name), f"{name} is a stale copy"
 
     def test_phase_artifact_names_are_not_also_constants(self):
-        # `Phase.log_filename` and `Phase.output_filename` are the one owner
-        # each. A second module-level string holding the same value — under
+        # `PhaseSpec.log_filename` and `PhaseSpec.output_filename` are the one
+        # owner each. A second module-level string holding the same value — under
         # any name — would be a second owner, and the two would drift.
         #
         # TEMPLATE_* is excluded: the prompt templates in
@@ -321,7 +322,10 @@ class TestNoDuplicateDefaults:
         artifact_names = {
             name
             for p in REVIEW_PHASES
-            for name in (p.log_filename, p.output_filename)
+            for name in (
+                review_phases.PHASES[p].log_filename,
+                review_phases.PHASES[p].output_filename,
+            )
             if name
         }
         duplicates = {
@@ -424,7 +428,7 @@ class TestPhaseTurnBudgets:
         job = _omitted_job(tmp_path, omitted=["big.py"])
         for phase in REVIEW_PHASES:
             # A fan-out phase derives its log from an index, so it needs one.
-            index = 1 if "{}" in phase.log_filename else None
+            index = 1 if "{}" in review_phases.PHASES[phase].log_filename else None
             runner = review_pipeline.PhaseRunner(job, phase, index)
             assert runner.max_turns == review_phases.job_turns(phase, job), phase
 

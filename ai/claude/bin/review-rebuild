@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import log
 from trail import Trail, add_trail_args
+from agent_registry import PHASES
 from agent_types import Phase
 from review_common import (
     META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
@@ -34,7 +35,7 @@ def _discover_group_files(review_dir: Path) -> list[str]:
     groups = []
     i = 1
     while True:
-        path = review_dir / Phase.GROUP.output_filename.format(i)
+        path = review_dir / PHASES[Phase.GROUP].output_filename.format(i)
         if not path.exists():
             break
         groups.append(str(path))

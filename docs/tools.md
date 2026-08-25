@@ -313,7 +313,7 @@ Re-reviews narrow to what changed since the prior review, and that delta follows
 
 #### Model selection
 
-Each pipeline phase resolves its model as **`--model` flag > `WORKBENCH_AI_<PHASE>_MODEL` > `WORKBENCH_AI_MODEL` > phase default**. The phase names and their defaults live in `PHASES` ([`ai/lib/agent_types.py`](../ai/lib/agent_types.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
+Each pipeline phase resolves its model as **`--model` flag > `WORKBENCH_AI_<PHASE>_MODEL` > `WORKBENCH_AI_MODEL` > phase default**. The phase names and their defaults live in `PHASES` ([`ai/lib/agent_registry.py`](../ai/lib/agent_registry.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
 
 Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL` when those are set; otherwise the alias is passed to the CLI as-is.
 

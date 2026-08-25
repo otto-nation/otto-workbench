@@ -15,7 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from conftest import write_thrash_log
 import agent_retry
-from agent_types import PHASES, DEFAULT_RETRY_CEILING, Phase
+from agent_registry import PHASES
+from agent_types import DEFAULT_RETRY_CEILING, Phase
 import review_phases
 import review_retry
 from review_common import Diagnosis, DiagnosisKind

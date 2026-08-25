@@ -23,7 +23,8 @@ from pathlib import Path
 import agent_phases
 import agent_retry
 import ai_backend
-from agent_types import PHASES, Phase
+from agent_registry import PHASES
+from agent_types import Phase, PhaseShape
 from review_common import Diagnosis
 from workbench_config import WorkbenchConfig
 
@@ -70,12 +71,12 @@ def run_fix_pass(
     pass against its own checklist keeps the number it already put in the
     prompt. ``add_dirs`` defaults to ``cwd`` alone; ``label`` to the phase's.
 
-    Only phases whose spec sets ``edits`` may come through here: the retry hints
-    and the ``produced()`` contract are both about work landing in the worktree,
-    and a read-only review phase belongs to ``review_phases.PhaseRunner``.
+    Only phases shaped ``FIX`` may come through here: the retry hints and the
+    ``produced()`` contract are both about work landing in the worktree, and a
+    read-only review phase belongs to ``review_phases.PhaseRunner``.
     """
     spec = PHASES[phase]
-    if not spec.edits:
+    if spec.shape is not PhaseShape.FIX:
         raise ValueError(
             f"{phase} does not edit the workspace; run it through PhaseRunner"
         )

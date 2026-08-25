@@ -364,9 +364,9 @@ def docs_reference() -> str:
     lines = [
         "| Scope | File |",
         "|-------|------|",
-        f"| Global | `{CONFIG_NAME}` under the [config root](#rootssh) |",
-        f"| Container | `{PROJECT_CONFIG_NAME}` beside a bare repo's worktrees |",
         f"| Project | `{PROJECT_CONFIG_NAME}` at a repo toplevel |",
+        f"| Container | `{PROJECT_CONFIG_NAME}` beside a bare repo's worktrees |",
+        f"| Global | `{CONFIG_NAME}` under the [config root](#rootssh) |",
         "",
         f"A new config file is born holding one line, the modeline that points an "
         f"editor's YAML language server at "

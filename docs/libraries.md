@@ -120,9 +120,9 @@ fails if the committed schema goes stale.
 
 | Scope | File |
 |-------|------|
-| Global | `config.yml` under the [config root](#rootssh) |
-| Container | `.workbench.yml` beside a bare repo's worktrees |
 | Project | `.workbench.yml` at a repo toplevel |
+| Container | `.workbench.yml` beside a bare repo's worktrees |
+| Global | `config.yml` under the [config root](#rootssh) |
 
 A new config file is born holding one line, the modeline that points an editor's YAML language server at [`config.schema.json`](../config.schema.json):
 

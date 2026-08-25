@@ -2300,6 +2300,12 @@ def _resolve_fixed_threads(
         if thread.is_resolved:
             continue
         if pc.resolve_thread(entry.id):
+            # Written back so a second caller over the same report skips it. A
+            # combined --fix --finish run resolves the already-addressed bucket
+            # in the fix pass and drains it again in the closeout, off the same
+            # thread objects; without this the guard above never fires and the
+            # bucket is counted out of the tally twice.
+            thread.is_resolved = True
             priors.append(thread.state)
     if priors:
         log.info(f"Resolved {len(priors)} fixed thread(s)")

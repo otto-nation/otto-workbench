@@ -4266,6 +4266,38 @@ class TestResolveFixedThreads:
             resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
         assert resolved == [ThreadState.NEW]
 
+    def test_a_second_pass_over_the_same_threads_moves_nothing(self, rt):
+        """The buckets feed the tally, so resolving twice must not count twice.
+
+        A combined --fix --finish run whose commit was held resolves the
+        already-addressed bucket in the fix pass and then drains that same
+        bucket in the closeout, both off the report's thread objects. Nothing
+        re-fetches in between, so only the write-back marks them resolved.
+        """
+        fixed = [CommentItem(id="t1"), CommentItem(id="t2")]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", state=ThreadState.NEW),
+            "t2": ReportThread(id="t2", state=ThreadState.ADDRESSED),
+        }
+        with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+            first = rt._resolve_fixed_threads(fixed, threads_by_id)
+            second = rt._resolve_fixed_threads(fixed, threads_by_id)
+        assert first == [ThreadState.NEW, ThreadState.ADDRESSED]
+        assert second == []
+        assert mock_resolve.call_count == 2
+
+    def test_a_refused_resolve_stays_open_for_the_next_pass(self, rt):
+        """Only a mutation that landed marks the thread resolved.
+
+        A drafted run refuses every one of them, and the closeout that follows
+        with --post has to find the bucket still owed.
+        """
+        fixed = [CommentItem(id="t1")]
+        threads_by_id = {"t1": ReportThread(id="t1", state=ThreadState.NEW)}
+        with patch("pr_comments.resolve_thread", return_value=False):
+            rt._resolve_fixed_threads(fixed, threads_by_id)
+        assert threads_by_id["t1"].is_resolved is False
+
 
 # ── Blocking reviewers ────────────────────────────────────────────────────────
 

@@ -27,7 +27,7 @@ and keeps exactly the two scopes it always had.
 Those are layers 4 through 6 of the precedence chain, behind CLI flags and env
 vars:
 
-    CLI flag > CLAUDE_REVIEW_<PHASE>_* > CLAUDE_REVIEW_* > project > container > global
+    CLI flag > WORKBENCH_AI_<PHASE>_* > WORKBENCH_AI_* > project > container > global
 
 so nothing here overrides a value a caller passed or exported.
 """
@@ -50,7 +50,7 @@ from typing import get_type_hints
 import serde
 import timeouts
 import workbench_paths
-from review_common import Effort, Phase, Thinking
+from agent_types import Effort, Phase, Thinking
 
 # `git_layout` is a workbench-wide module rather than an `ai/lib` one, because
 # the permission mirror reads the same layout. In a checkout that is one
@@ -193,20 +193,36 @@ class IssueTrackerConfig:
 
 
 @dataclass(frozen=True)
-class ReviewConfig:
-    """Review pipeline settings.
+class AgentConfig:
+    """How this machine sizes an agent invocation.
 
     ``model``, ``thinking`` and ``provider`` are the file forms of
-    CLAUDE_REVIEW_MODEL, _THINKING and _PROVIDER; ``phases`` is the file form
+    WORKBENCH_AI_MODEL, _THINKING and _PROVIDER; ``phases`` is the file form
     of the per-phase keys ``Phase.model_env_key`` derives. A phase entry beats
     the section-level value, matching how a phase env key beats the global one.
+
+    Top-level rather than under ``review``: a phase is any agent invocation the
+    workbench sizes, and the review pipeline is one domain of them. Which model
+    a fix pass runs is not a review setting just because reviews were the first
+    caller to have one.
     """
 
     model: str | None = None
     thinking: Thinking | None = None
     provider: str | None = None
-    effort: Effort | None = None
     phases: dict[Phase, PhaseOverride] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ReviewConfig:
+    """Review pipeline settings.
+
+    ``effort`` is the only knob left here: it selects a depth preset that skips
+    phases and moves thresholds, and no other domain has one. Everything a
+    single invocation is sized by lives under ``agent``.
+    """
+
+    effort: Effort | None = None
 
 
 @dataclass(frozen=True)
@@ -233,6 +249,7 @@ class GitHubConfig:
 @dataclass(frozen=True)
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     issue_tracker: IssueTrackerConfig = field(default_factory=IssueTrackerConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)

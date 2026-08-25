@@ -8,138 +8,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import agent_phases
 import review_common
 import review_pipeline
 import review_phases
-from review_common import AgentKind, Effort, Phase, Thinking
-
-
-class TestPhasesRegistry:
-    def test_covers_every_phase(self):
-        assert set(review_phases.PHASES) == set(Phase)
-
-    def test_key_matches_spec_phase(self):
-        for phase, spec in review_phases.PHASES.items():
-            assert spec.phase is phase
-
-    def test_spec_is_frozen(self):
-        spec = review_phases.PHASES[Phase.GROUP]
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            spec.max_turns = 99
-
-    def test_every_phase_defaults_to_sonnet(self):
-        assert {s.model for s in review_phases.PHASES.values()} == {"sonnet"}
-
-
-class TestPhaseThinkingDefaults:
-    def test_preserves_current_levels(self):
-        expected = {
-            Phase.SINGLE: Thinking.MEDIUM,
-            Phase.HOLISTIC: Thinking.MEDIUM,
-            Phase.SCOUT: Thinking.LOW,
-            Phase.GROUP: Thinking.LOW,
-            Phase.SYNTHESIS: Thinking.MEDIUM,
-            Phase.DISPROVE: Thinking.MEDIUM,
-            Phase.FIX: Thinking.LOW,
-        }
-        actual = {p: s.thinking for p, s in review_phases.PHASES.items()}
-        assert actual == expected
-
-
-class TestPhaseMaxTurnsDefaults:
-    def test_preserves_current_budgets(self):
-        expected = {
-            Phase.SINGLE: 15,
-            Phase.HOLISTIC: 15,
-            Phase.SCOUT: 10,
-            Phase.GROUP: 15,
-            Phase.SYNTHESIS: 15,
-            Phase.DISPROVE: 15,
-            Phase.FIX: 20,
-        }
-        actual = {p: s.max_turns for p, s in review_phases.PHASES.items()}
-        assert actual == expected
-
-
-class TestPhaseAgentPins:
-    """Three phases are pinned to reviewer-lite regardless of --effort.
-
-    They receive pre-collected data and do no context gathering, so raising
-    effort must not upgrade them. A change to this mapping should be a
-    deliberate edit to this test, not an incidental side effect.
-    """
-
-    def test_pinned_phases(self):
-        pinned = {p for p, s in review_phases.PHASES.items() if s.agent is not None}
-        assert pinned == {Phase.GROUP, Phase.SCOUT, Phase.DISPROVE}
-
-    def test_pinned_phases_use_reviewer_lite(self):
-        for phase in (Phase.GROUP, Phase.SCOUT, Phase.DISPROVE):
-            assert review_phases.PHASES[phase].agent is AgentKind.REVIEWER_LITE
-
-    def test_effort_derived_phases(self):
-        derived = {
-            p for p, s in review_phases.PHASES.items()
-            if s.agent is None and not s.edits
-        }
-        assert derived == {Phase.SINGLE, Phase.HOLISTIC, Phase.SYNTHESIS}
-
-    def test_only_the_fix_phase_edits(self):
-        editing = {p for p, s in review_phases.PHASES.items() if s.edits}
-        assert editing == {Phase.FIX}
-
-
-class TestOmittedTurnBumpRegistry:
-    """Which phases pay for omitted files is a property of the spec.
-
-    Before, it was the presence or absence of `+ _omitted_turns(job)` at each
-    call site — which is how the parallel group fan-out lost its bump. Changing
-    this mapping should be a deliberate edit to this test.
-    """
-
-    def test_source_reading_phases_scale(self):
-        scaling = {
-            p for p, s in review_phases.PHASES.items() if s.scales_with_omitted
-        }
-        assert scaling == {Phase.SINGLE, Phase.HOLISTIC, Phase.SCOUT, Phase.GROUP}
-
-    def test_a_new_phase_inherits_the_bump(self):
-        """The default is on, so forgetting the flag over-budgets rather than under."""
-        assert review_phases.PhaseSpec(Phase.GROUP).scales_with_omitted is True
-
-
-class TestPhaseLogNames:
-    """Each phase's session log is named after the phase.
-
-    Adding a phase must not mean naming its log by hand, so these assert the
-    convention over the enum rather than a hand-written list. The exception
-    is the pinning test: it is what proves the convention renamed nothing.
-    """
-
-    def test_preserves_current_filenames(self):
-        expected = {
-            Phase.SINGLE: "",
-            Phase.HOLISTIC: "holistic.jsonl",
-            Phase.SCOUT: "scout.jsonl",
-            Phase.GROUP: "group-{}.jsonl",
-            Phase.SYNTHESIS: "synthesis.jsonl",
-            Phase.DISPROVE: "disprove.jsonl",
-            Phase.FIX: "fix.jsonl",
-        }
-        assert {p: p.log_filename for p in Phase} == expected
-
-    def test_every_phase_but_single_has_a_distinct_log(self):
-        names = [p.log_filename for p in Phase if p is not Phase.SINGLE]
-        assert all(names)
-        assert len(set(names)) == len(names)
-
-    def test_single_names_no_log_of_its_own(self):
-        # It writes to the job's log, which the caller may point anywhere.
-        assert Phase.SINGLE.log_filename == ""
-
-    def test_group_is_the_only_indexed_phase(self):
-        indexed = {p for p in Phase if "{}" in p.log_filename}
-        assert indexed == {Phase.GROUP}
+from agent_types import AgentKind, Effort, Phase, Thinking
 
 
 class TestPhaseLogPath:
@@ -170,51 +43,6 @@ class TestPhaseLogPath:
         # already raises on.
         with pytest.raises(ValueError):
             review_common.phase_log_path(str(tmp_path / "review.md"), Phase.SCOUT, 3)
-
-
-class TestPhaseOutputNames:
-    """Each phase's findings artifact is named after the phase.
-
-    Mirrors TestPhaseLogNames: assert the convention over the enum rather
-    than a hand-written list, with one pinning test proving the convention
-    renamed nothing.
-    """
-
-    def test_preserves_current_filenames(self):
-        expected = {
-            Phase.SINGLE: "",
-            Phase.HOLISTIC: "holistic.md",
-            Phase.SCOUT: "scout.md",
-            Phase.GROUP: "group-{}.md",
-            Phase.SYNTHESIS: "",
-            Phase.DISPROVE: "disprove.md",
-            Phase.FIX: "",
-        }
-        assert {p: p.output_filename for p in Phase} == expected
-
-    def test_phases_that_write_the_review_file_name_no_artifact(self):
-        # single and synthesis produce review.md; fix edits it in place.
-        empty = {p for p in Phase if not p.output_filename}
-        assert empty == {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX}
-
-    def test_every_artifact_name_is_distinct(self):
-        names = [p.output_filename for p in Phase if p.output_filename]
-        assert len(set(names)) == len(names)
-
-    def test_group_is_the_only_indexed_phase(self):
-        indexed = {p for p in Phase if "{}" in p.output_filename}
-        assert indexed == {Phase.GROUP}
-
-    def test_stem_is_shared_with_the_log(self):
-        # The two properties differ only by extension. Sharing the stem is
-        # what stops them drifting the way the constants drifted from the
-        # logs — a phase renamed for one is renamed for both.
-        both = [p for p in Phase if p.log_filename and p.output_filename]
-        assert both
-        for phase in both:
-            assert phase.log_filename.removesuffix(".jsonl") == (
-                phase.output_filename.removesuffix(".md")
-            )
 
 
 class TestPhaseOutputPath:
@@ -295,14 +123,14 @@ class TestPhaseRunnerResolution:
         assert runner.budget == 8.0
 
     def test_thinking_prefers_effort_override(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.HIGH), Phase.GROUP, 1)
         assert runner.thinking is Thinking.HIGH
 
     def test_thinking_falls_back_to_phase_default(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         runner = review_pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.GROUP, 1)
         assert runner.thinking is Thinking.LOW
 
@@ -315,7 +143,7 @@ class TestPhaseRunnerResolution:
         runner = review_pipeline.PhaseRunner(job, Phase.SCOUT)
         expected = (
             review_phases.PHASES[Phase.SCOUT].max_turns
-            + 2 * review_phases.OMITTED_FILE_TURNS
+            + 2 * agent_phases.OMITTED_FILE_TURNS
         )
         assert runner.max_turns == expected
 
@@ -325,12 +153,12 @@ class TestPhaseRunnerResolution:
         assert runner.max_turns == review_phases.PHASES[Phase.DISPROVE].max_turns
 
     def test_provider_reads_env(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLAUDE_REVIEW_PROVIDER", "vertex")
+        monkeypatch.setenv("WORKBENCH_AI_PROVIDER", "vertex")
         runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.provider == "vertex"
 
     def test_model_reads_phase_env_key(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.SCOUT)
         assert runner.model == "claude-haiku-4-5"
 
@@ -339,21 +167,21 @@ class TestPhaseRunnerResolution:
         # _resolve_thinking_level, which layers a per-phase (and a global)
         # env override on top of the effort/phase default — PhaseRunner must
         # keep that layering rather than reading _phase_thinking() bare.
-        monkeypatch.setenv("CLAUDE_REVIEW_GROUP_THINKING", "xhigh")
+        monkeypatch.setenv("WORKBENCH_AI_GROUP_THINKING", "xhigh")
         runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.thinking == "xhigh"
 
     def test_thinking_reads_global_env_key(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
-        monkeypatch.setenv("CLAUDE_REVIEW_THINKING", "xhigh")
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
+        monkeypatch.setenv("WORKBENCH_AI_THINKING", "xhigh")
         runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         assert runner.thinking == "xhigh"
 
 
 class TestPhaseRunnerInvocation:
     def test_carries_resolved_values(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         runner = review_pipeline.PhaseRunner(
             _job(tmp_path, Effort.HIGH), Phase.GROUP, 1,
         )
@@ -416,10 +244,10 @@ class TestPhaseRunnerReachesBackend:
             self.waited = True
 
     def test_invoke_forwards_invocation_and_throttle(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_MODEL", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
 
         import review_agent
@@ -577,7 +405,7 @@ def _capture_invocations(monkeypatch):
 
 
 class TestPhaseTurnBudgets:
-    """`phase_turns` is the single owner, and `PhaseRunner` reports what it says.
+    """`job_turns` is the single owner, and `PhaseRunner` reports what it says.
 
     Driven off the registry rather than a list of phases, so a phase added
     later is covered here without an edit.
@@ -585,29 +413,29 @@ class TestPhaseTurnBudgets:
 
     def test_every_phase_matches_its_spec(self, tmp_path):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
-        bump = 2 * review_phases.OMITTED_FILE_TURNS
+        bump = 2 * agent_phases.OMITTED_FILE_TURNS
         for phase, spec in review_phases.PHASES.items():
             expected = spec.max_turns + (bump if spec.scales_with_omitted else 0)
-            assert review_phases.phase_turns(phase, job) == expected, phase
+            assert review_phases.job_turns(phase, job) == expected, phase
 
-    def test_the_runner_reports_what_phase_turns_resolves(self, tmp_path):
+    def test_the_runner_reports_what_job_turns_resolves(self, tmp_path):
         job = _omitted_job(tmp_path, omitted=["big.py"])
         for phase in review_phases.PHASES:
             # A fan-out phase derives its log from an index, so it needs one.
             index = 1 if "{}" in phase.log_filename else None
             runner = review_pipeline.PhaseRunner(job, phase, index)
-            assert runner.max_turns == review_phases.phase_turns(phase, job), phase
+            assert runner.max_turns == review_phases.job_turns(phase, job), phase
 
     def test_nothing_bumps_with_no_omitted_files(self, tmp_path):
         job = _omitted_job(tmp_path)
         for phase, spec in review_phases.PHASES.items():
-            assert review_phases.phase_turns(phase, job) == spec.max_turns, phase
+            assert review_phases.job_turns(phase, job) == spec.max_turns, phase
 
     def test_an_opted_out_effort_bumps_nothing(self, tmp_path):
         """`--effort low` skips omitted files entirely, so no phase pays for them."""
         job = _omitted_job(tmp_path, omitted=["big.py"], effort=Effort.LOW)
         for phase, spec in review_phases.PHASES.items():
-            assert review_phases.phase_turns(phase, job) == spec.max_turns, phase
+            assert review_phases.job_turns(phase, job) == spec.max_turns, phase
 
 
 class TestExecutorsUseTheResolvedBudget:
@@ -615,7 +443,7 @@ class TestExecutorsUseTheResolvedBudget:
 
     A phase that recomputes its own budget is how the parallel group fan-out
     came to disagree with the serial one, so the assertion is against
-    `phase_turns`, not against a literal.
+    `job_turns`, not against a literal.
     """
 
     def _first_invocation(self, monkeypatch, run):
@@ -629,14 +457,14 @@ class TestExecutorsUseTheResolvedBudget:
         inv = self._first_invocation(
             monkeypatch, lambda: review_phases._phase_holistic(job, 3),
         )
-        assert inv.max_turns == review_phases.phase_turns(Phase.HOLISTIC, job)
+        assert inv.max_turns == review_phases.job_turns(Phase.HOLISTIC, job)
 
     def test_scout(self, tmp_path, monkeypatch):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
         inv = self._first_invocation(
             monkeypatch, lambda: review_phases._phase_scout(job, 3),
         )
-        assert inv.max_turns == review_phases.phase_turns(Phase.SCOUT, job)
+        assert inv.max_turns == review_phases.job_turns(Phase.SCOUT, job)
 
     def test_disprove_does_not_pay_for_omitted_files(self, tmp_path, monkeypatch):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
@@ -661,7 +489,7 @@ class TestGroupTurnBudget:
     def test_default_budget_includes_the_omitted_file_bump(self, tmp_path, monkeypatch):
         seen = _capture_invocations(monkeypatch)
         self._run(_omitted_job(tmp_path, omitted=["big.py", "huge.py"]))
-        expected = review_phases.PHASES[Phase.GROUP].max_turns + 2 * review_phases.OMITTED_FILE_TURNS
+        expected = review_phases.PHASES[Phase.GROUP].max_turns + 2 * agent_phases.OMITTED_FILE_TURNS
         assert seen[0].max_turns == expected
 
     def test_default_budget_is_the_phase_budget_with_nothing_omitted(self, tmp_path, monkeypatch):
@@ -703,6 +531,6 @@ class TestParallelGroupTurnBudget:
             skip_groups={}, pipeline_state=None,
         )
 
-        expected = review_phases.PHASES[Phase.GROUP].max_turns + review_phases.OMITTED_FILE_TURNS
+        expected = review_phases.PHASES[Phase.GROUP].max_turns + agent_phases.OMITTED_FILE_TURNS
         assert len(seen) == 2
         assert all(inv.max_turns == expected for inv in seen)

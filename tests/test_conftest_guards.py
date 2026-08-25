@@ -27,9 +27,9 @@ from pathlib import Path
 import pytest
 
 from conftest import (
-    _assert_config_unchanged, _clear_review_env, _describe_config_change,
-    _guarded_lines, _load_lib, _review_env_keys, _section_of, init_worktree,
-    seed_repo,
+    _agent_env_keys, _assert_config_unchanged, _clear_agent_env,
+    _describe_config_change, _guarded_lines, _load_lib, _section_of,
+    init_worktree, seed_repo,
 )
 
 gitenv = _load_lib("gitenv")
@@ -334,25 +334,25 @@ class TestSectionNames:
         assert _section_of(b"marker = {}") is None
 
 
-class TestReviewEnvGuard:
-    def test_the_running_test_sees_no_review_config(self):
+class TestAgentEnvGuard:
+    def test_the_running_test_sees_no_agent_config(self):
         """The contract itself: this assertion is what an exported var breaks."""
-        assert _review_env_keys() == []
+        assert _agent_env_keys() == []
 
     def test_the_shell_value_is_hidden_then_restored(self, monkeypatch):
-        monkeypatch.setenv("CLAUDE_REVIEW_THINKING", "xhigh")
-        guard = _clear_review_env.__wrapped__()
+        monkeypatch.setenv("WORKBENCH_AI_THINKING", "xhigh")
+        guard = _clear_agent_env.__wrapped__()
 
         next(guard)
-        assert "CLAUDE_REVIEW_THINKING" not in os.environ
+        assert "WORKBENCH_AI_THINKING" not in os.environ
 
         next(guard, None)
-        assert os.environ["CLAUDE_REVIEW_THINKING"] == "xhigh"
+        assert os.environ["WORKBENCH_AI_THINKING"] == "xhigh"
 
     def test_a_var_the_test_set_does_not_survive_it(self, monkeypatch):
-        guard = _clear_review_env.__wrapped__()
+        guard = _clear_agent_env.__wrapped__()
         next(guard)
 
-        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         next(guard, None)
-        assert "CLAUDE_REVIEW_SCOUT_MODEL" not in os.environ
+        assert "WORKBENCH_AI_SCOUT_MODEL" not in os.environ

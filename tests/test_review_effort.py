@@ -7,9 +7,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import agent_phases
 import review_phases
 import review_pipeline
-from review_common import AgentKind, Effort, Thinking
+from agent_types import AgentKind, Effort, Thinking
 from review_phases import PhaseResult
 from review_preflight import PipelineState, PRContext, PRMetadata, ReviewJob
 
@@ -81,43 +82,20 @@ class TestEffortPresets:
 
 
 class TestOmittedTurns:
-    def _make_job(self, effort=Effort.MEDIUM, omitted_files=None):
-        from review_preflight import PreflightData, PRContext, PRMetadata, ReviewJob
-        pr = PRMetadata(
-            title="test", body="", head="main", base="main",
-            head_sha="abc", additions=10, deletions=5,
-            changed_files=1, files=[],
-        )
-        preflight = PreflightData(
-            diff="", commit_log="", file_contents={},
-            file_permissions={}, claude_md="", architecture_md="",
-            omitted_files=omitted_files or [],
-        )
-        return ReviewJob(
-            repo="test/repo", pr_number="1", pr=pr,
-            ctx=PRContext(), wt_path="/tmp", review_file="/tmp/review.md",
-            session_log="/tmp/log.jsonl",
-            effort=effort, preflight=preflight,
-        )
+    """The effort tier decides whether omitted files cost turns at all."""
 
     def test_medium_adds_turns_for_omitted(self):
-        job = self._make_job(effort=Effort.MEDIUM, omitted_files=["big.py", "huge.py"])
-        turns = review_phases._omitted_turns(job)
-        assert turns == 2 * review_phases.OMITTED_FILE_TURNS
+        turns = agent_phases.omitted_turns(Effort.MEDIUM, 2)
+        assert turns == 2 * agent_phases.OMITTED_FILE_TURNS
 
     def test_low_skips_omitted_turns(self):
-        job = self._make_job(effort=Effort.LOW, omitted_files=["big.py", "huge.py"])
-        turns = review_phases._omitted_turns(job)
-        assert turns == 0
+        assert agent_phases.omitted_turns(Effort.LOW, 2) == 0
 
     def test_high_adds_turns_for_omitted(self):
-        job = self._make_job(effort=Effort.HIGH, omitted_files=["big.py"])
-        turns = review_phases._omitted_turns(job)
-        assert turns == review_phases.OMITTED_FILE_TURNS
+        assert agent_phases.omitted_turns(Effort.HIGH, 1) == agent_phases.OMITTED_FILE_TURNS
 
     def test_no_omitted_files_returns_zero(self):
-        job = self._make_job(effort=Effort.MEDIUM)
-        assert review_phases._omitted_turns(job) == 0
+        assert agent_phases.omitted_turns(Effort.MEDIUM, 0) == 0
 
 
 class TestHolisticSkipReason:

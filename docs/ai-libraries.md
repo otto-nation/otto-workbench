@@ -14,6 +14,32 @@ Each section below is the module's own docstring, rendered from `ai/lib/` by [`g
 
 The orchestration of a review run: what it checks before spending anything, how the work is split into phases, what each agent is asked, and where the run's artifacts live.
 
+### agent_phases.py
+
+What a phase resolves to here: the spec, the config file, the environment.
+
+``agent_types`` says what a phase's built-in defaults are. This module answers
+the question a caller actually has — which model, thinking level, provider and
+turn budget *this* invocation runs with — by layering the config file and the
+environment over that spec.
+
+One precedence chain, most specific first, for every knob a phase has:
+
+    explicit argument  >  WORKBENCH_AI_<PHASE>_*  >  WORKBENCH_AI_*
+                       >  agent.phases.<phase>.*  >  agent.*  >  built-in
+
+The effort preset sits between the config and the built-in for thinking level
+only, because it is the one knob a review's depth setting flattens.
+
+**Model aliases.** Whichever layer wins, a bare tier alias (``sonnet``,
+``opus``, ``haiku``) is then resolved through ``ANTHROPIC_DEFAULT_SONNET_MODEL``
+/ ``ANTHROPIC_DEFAULT_OPUS_MODEL`` / ``ANTHROPIC_DEFAULT_HAIKU_MODEL``. An alias
+names a tier, not a deployment — on Vertex and Bedrock the account provisions a
+specific model ID, and that is where it lives. A concrete model ID anywhere in
+the chain passes through untouched. The Claude CLI does this resolution itself;
+the Pi backend does not, so it happens here before dispatch and both backends
+land on the same model.
+
 ### agent_retry.py
 
 Shared guard against agents that finish without producing anything.
@@ -31,6 +57,26 @@ Two shapes are supported, matching the two ways the `pr` scripts call an agent:
   retry_blank_response — a stateless prompt whose answer must parse.  There is
                         no session log, so the response itself is the signal.
 
+### agent_types.py
+
+The vocabulary every agent invocation is described in.
+
+A phase is one agent invocation the workbench knows how to size: what model it
+runs, how hard it thinks, how many turns it gets, which agent definition it
+adopts. This module owns the names for those things — ``Phase``, ``Thinking``,
+``AgentKind``, ``Effort`` — and the built-in spec each phase resolves from
+(``PhaseSpec``, ``PHASES``).
+
+It imports nothing but the standard library, and that is the point. The
+vocabulary used to live in ``review_common``, which reaches the PR state
+machine, the usage ledger and the git client; ``ai_backend`` needed one enum
+from it and took all of that with it, and ``workbench_config`` needed three.
+Anything may depend on the vocabulary, so the vocabulary depends on nothing.
+
+Resolving a spec against the config file and the environment is
+``agent_phases``'s job — that layer needs ``workbench_config``, which needs
+this one.
+
 ### prompt.py
 
 Terminal questions, for the few commands that have one to ask.
@@ -46,33 +92,15 @@ exception. No answer is never consent.
 
 ### review_agent.py
 
-Agent invocation, cost tracking, model selection, and diagnostics.
+Agent invocation, cost tracking, and diagnostics.
 
 Delegates actual AI invocation to ai_backend (which dispatches to
 Claude Code CLI or Pi CLI based on AI_BACKEND env var). This module
 adds cost tracking, failure diagnosis, and output recovery on top.
 
-**Which model a phase uses.** Every review phase resolves its model through one
-chain, most specific first:
-
-1. an explicit ``--model`` on the command
-2. the phase's own key — ``CLAUDE_REVIEW_GROUP_MODEL``,
-   ``CLAUDE_REVIEW_HOLISTIC_MODEL``, ``CLAUDE_REVIEW_SINGLE_MODEL``,
-   ``CLAUDE_REVIEW_SCOUT_MODEL``, ``CLAUDE_REVIEW_DISPROVE_MODEL``,
-   ``CLAUDE_REVIEW_FIX_MODEL``, ``CLAUDE_REVIEW_SYNTHESIS_MODEL``
-3. ``CLAUDE_REVIEW_MODEL``, which covers every phase at once
-4. the phase's built-in default
-
-Whichever wins, a bare tier alias (``sonnet``, ``opus``, ``haiku``) is then
-resolved through ``ANTHROPIC_DEFAULT_SONNET_MODEL`` /
-``ANTHROPIC_DEFAULT_OPUS_MODEL`` / ``ANTHROPIC_DEFAULT_HAIKU_MODEL``. An alias
-names a tier, not a deployment — on Vertex and Bedrock the account provisions a
-specific model ID, and that is where it lives. A concrete model ID anywhere in
-the chain passes through untouched.
-
-The Claude CLI does this resolution itself; the Pi backend does not, so the
-resolution happens here before dispatch and both backends land on the same
-model.
+Which model, thinking level and provider an invocation runs with is
+``agent_phases``'s question, not this one's — it resolves a phase against the
+config file and the environment, and hands the answer here already decided.
 
 ### review_gc.py
 
@@ -103,12 +131,14 @@ which is what puts `pr` on the path.
 
 ### review_phases.py
 
-Phase registry and executors for the review pipeline.
+Phase executors for the review pipeline.
 
-A review is a sequence of agent phases, and this module owns what a phase *is*:
-the built-in spec (`PhaseSpec`, `PHASES`), the resolution of a spec plus an
-effort preset into the seven values an invocation needs (`PhaseRunner`), the
-turn budgets, and the executors that actually run each phase.
+A review is a sequence of agent phases. What a phase *is* — its built-in spec,
+and how that spec resolves against the config file and the environment — is
+`agent_types` and `agent_phases`, which the whole workbench shares. This module
+is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
+one review's worktree, session log and throttle, and the executors that run
+each phase.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
@@ -1829,7 +1859,7 @@ and keeps exactly the two scopes it always had.
 Those are layers 4 through 6 of the precedence chain, behind CLI flags and env
 vars:
 
-    CLI flag > CLAUDE_REVIEW_<PHASE>_* > CLAUDE_REVIEW_* > project > container > global
+    CLI flag > WORKBENCH_AI_<PHASE>_* > WORKBENCH_AI_* > project > container > global
 
 so nothing here overrides a value a caller passed or exported.
 

@@ -32,7 +32,7 @@
         }
       }
     },
-    "review": {
+    "agent": {
       "type": "object",
       "properties": {
         "model": {
@@ -64,21 +64,6 @@
           "oneOf": [
             {
               "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "effort": {
-          "oneOf": [
-            {
-              "type": "string",
-              "enum": [
-                "low",
-                "medium",
-                "high"
-              ]
             },
             {
               "type": "null"
@@ -128,6 +113,26 @@
               "fix"
             ]
           }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "effort": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

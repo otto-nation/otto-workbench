@@ -13,8 +13,9 @@ from review_preflight import (
     PRContext, PRMetadata, PreflightData, ReviewJob,
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES,
 )
+from agent_types import Effort
 from review_common import (
-    Effort, PriorDisposition,
+    PriorDisposition,
     TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SYNTHESIS,
 )
 from review_findings import _parse_ledger_line

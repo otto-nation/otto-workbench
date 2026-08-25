@@ -22,11 +22,12 @@ from pathlib import Path
 
 import log
 import serde
+from agent_types import Phase
 from review_agent import _parse_session_cost
 from review_common import (
     FILENAME_PIPELINE_STATE,
     META_STATUS,
-    Diagnosis, DiagnosisKind, Phase,
+    Diagnosis, DiagnosisKind,
     _derive_path,
     phase_log_path,
     read_pipeline_status,

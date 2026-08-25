@@ -411,7 +411,7 @@ class TestRunPreflight:
                 vq.QuotaVerdict.NOT_PROVISIONED, "anthropic-claude-sonnet-5"),
             [vq.Phase.SCOUT, vq.Phase.GROUP], "proj", "us-east5",
         )
-        assert "CLAUDE_REVIEW_SCOUT_MODEL, CLAUDE_REVIEW_GROUP_MODEL" in lines[-1]
+        assert "WORKBENCH_AI_SCOUT_MODEL, WORKBENCH_AI_GROUP_MODEL" in lines[-1]
 
     @patch("vertex_quota.check_quota")
     def test_cli_shorthand_skipped_not_failed(self, mock_check, monkeypatch):

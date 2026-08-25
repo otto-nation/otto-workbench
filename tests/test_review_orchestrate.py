@@ -1452,13 +1452,13 @@ class TestCheckSerialAbort:
         assert consec == 1
 
 
-# ── 19. _resolve_model ──────────────────────────────────────────────────────
+# ── 19. resolve_model ──────────────────────────────────────────────────────
 
 
 @pytest.fixture
 def no_model_env(monkeypatch):
     """A clean slate — the developer's own shell usually has these set."""
-    for key in ("CLAUDE_REVIEW_MODEL", "UNUSED_KEY", "MY_MODEL_KEY",
+    for key in ("WORKBENCH_AI_MODEL", "UNUSED_KEY", "MY_MODEL_KEY",
                 "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
         monkeypatch.delenv(key, raising=False)
@@ -1479,55 +1479,55 @@ class TestResolveModel:
         assert ro.ModelAlias.parse("sonnet") is ro.ModelAlias.SONNET
 
     def test_explicit(self, ro, no_model_env):
-        assert ro._resolve_model("opus", "SOME_KEY", "sonnet") == "opus"
+        assert ro.resolve_model("opus", "SOME_KEY", "sonnet") == "opus"
 
     def test_env_key(self, ro, no_model_env, monkeypatch):
         monkeypatch.setenv("MY_MODEL_KEY", "haiku")
 
-        assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "haiku"
+        assert ro.resolve_model("", "MY_MODEL_KEY", "sonnet") == "haiku"
 
     def test_global_env(self, ro, no_model_env, monkeypatch):
-        monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "opus")
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "opus")
         self._clear_alias_envs(ro, monkeypatch)
-        assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "opus"
+        assert ro.resolve_model("", "UNUSED_KEY", "sonnet") == "opus"
 
     def test_global_env_alias_resolved(self, ro, no_model_env, monkeypatch):
-        monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "opus")
+        monkeypatch.setenv("WORKBENCH_AI_MODEL", "opus")
         monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-6")
-        assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "claude-opus-4-6"
+        assert ro.resolve_model("", "UNUSED_KEY", "sonnet") == "claude-opus-4-6"
 
     def test_default_fallback(self, ro, no_model_env):
-        assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "sonnet"
+        assert ro.resolve_model("", "UNUSED_KEY", "sonnet") == "sonnet"
 
     def test_alias_resolved_via_env(self, ro, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         self._clear_alias_envs(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
-        assert ro._resolve_model("", "UNUSED_KEY", "sonnet") == "claude-sonnet-5"
+        assert ro.resolve_model("", "UNUSED_KEY", "sonnet") == "claude-sonnet-5"
 
     def test_explicit_alias_resolved(self, ro, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         self._clear_alias_envs(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-6")
-        assert ro._resolve_model("opus", "SOME_KEY", "sonnet") == "claude-opus-4-6"
+        assert ro.resolve_model("opus", "SOME_KEY", "sonnet") == "claude-opus-4-6"
 
     def test_env_key_alias_resolved(self, ro, monkeypatch):
         monkeypatch.setenv("MY_MODEL_KEY", "haiku")
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         self._clear_alias_envs(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "claude-haiku-4-5@20251001")
-        assert ro._resolve_model("", "MY_MODEL_KEY", "sonnet") == "claude-haiku-4-5@20251001"
+        assert ro.resolve_model("", "MY_MODEL_KEY", "sonnet") == "claude-haiku-4-5@20251001"
 
     def test_empty_alias_env_falls_back_to_alias(self, ro, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         self._clear_alias_envs(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "")
-        assert ro._resolve_model("sonnet", "SOME_KEY", "opus") == "sonnet"
+        assert ro.resolve_model("sonnet", "SOME_KEY", "opus") == "sonnet"
 
     def test_full_model_id_not_resolved(self, ro, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         self._clear_alias_envs(ro, monkeypatch)
-        assert ro._resolve_model("claude-sonnet-5", "SOME_KEY", "sonnet") == "claude-sonnet-5"
+        assert ro.resolve_model("claude-sonnet-5", "SOME_KEY", "sonnet") == "claude-sonnet-5"
 
 
 # ── 19b. phase_model / collect_phase_models ─────────────────────────────────
@@ -1535,15 +1535,15 @@ class TestResolveModel:
 
 class TestPhaseModel:
     def _clean_env(self, ro, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_MODEL", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         for phase in ro.Phase:
             monkeypatch.delenv(phase.model_env_key, raising=False)
         for alias in ro.ModelAlias:
             monkeypatch.delenv(alias.env_key, raising=False)
 
     def test_phase_env_keys_follow_convention(self, ro):
-        assert ro.Phase.SCOUT.model_env_key == "CLAUDE_REVIEW_SCOUT_MODEL"
-        assert ro.Phase.SCOUT.thinking_env_key == "CLAUDE_REVIEW_SCOUT_THINKING"
+        assert ro.Phase.SCOUT.model_env_key == "WORKBENCH_AI_SCOUT_MODEL"
+        assert ro.Phase.SCOUT.thinking_env_key == "WORKBENCH_AI_SCOUT_THINKING"
 
     def test_default(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
@@ -1551,19 +1551,19 @@ class TestPhaseModel:
 
     def test_env_key_derived_from_phase_name(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
-        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         assert ro.phase_model("scout", "") == "claude-haiku-4-5"
         assert ro.phase_model("group", "") == "sonnet"
 
     def test_explicit_overrides_env(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
-        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         assert ro.phase_model("scout", "claude-opus-5") == "claude-opus-5"
 
     def test_collect_groups_phases_by_model(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-5")
-        monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         models = ro.collect_phase_models("")
         assert models["claude-haiku-4-5"] == ["scout"]
         assert set(models["claude-sonnet-5"]) == set(ro.PHASES) - {"scout"}

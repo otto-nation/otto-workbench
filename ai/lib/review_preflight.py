@@ -24,11 +24,12 @@ import git_client
 import log
 import serde
 import workbench_config
+from agent_types import Effort
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from pr_domains import ReviewStatus
 from pr_state import now_iso
 from review_common import (
-    FILE_STAT_FMT, FILENAME_PIPELINE_STATE, Diagnosis, DiagnosisKind, Effort, Mode,
+    FILE_STAT_FMT, FILENAME_PIPELINE_STATE, Diagnosis, DiagnosisKind, Mode,
     PRIOR_SHA_RE, ReviewType, plural,
 )
 from review_dedup import _get_bot_login

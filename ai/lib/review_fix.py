@@ -36,15 +36,15 @@ import land
 import log
 import proc
 from review_agent import diagnose_missing_output
+from agent_types import PHASES, Phase
 from review_common import (
-    Phase,
     TEMPLATE_FIX,
     preserve_log, restore_preserved,
 )
 from review_findings import (
     Finding, extract_skip_reasons, match_skip, parse_findings,
 )
-from review_phases import PHASES, PhaseRunner
+from review_phases import PhaseRunner
 from review_preflight import ReviewJob
 from review_prompt import build_prompt
 from review_retry import _FIX_RETRY_HINT, _has_output, _is_retryable

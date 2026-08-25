@@ -62,6 +62,8 @@ Two-layer architecture:
 
 `~/.gitconfig` includes `git/gitconfig.shared` via a `[include]` stanza. `git config --global` writes to `~/.gitconfig` as expected. Global hooks live in [`git/hooks/`](../git/hooks/) and are symlinked to `~/.git-hooks/`.
 
+Setting `core.hooksPath` globally makes git ignore every repository's own `.git/hooks/`, so [`git/hooks/pre-push`](../git/hooks/pre-push) runs the repo-local `pre-push` itself, handing it the same arguments and the same ref lines git handed the global one. A repo-local hook that refuses still refuses the push. When it does not, the refs are recorded to `push-intents.json` under the state root, and the next `pr` command asks the remote whether each one landed — so a push typed by hand is verified the way [`push.py`](ai-libraries.md#pushpy) verifies the ones the workbench issues. See [`push_intent.py`](ai-libraries.md#push_intentpy).
+
 The component also owns one marker-delimited `Host github.com` block in `~/.ssh/config`. That is a third ownership mode alongside the two above: not a whole file the workbench writes (`git/gitconfig.shared`) and not a whole file left to you (`~/.gitconfig`), but a fenced region inside a file that is otherwise yours and is never read. The block always carries the SSH keepalive that keeps a push from being dropped while pre-push runs; it carries the port 443 routing as well only when `github.ssh_over_443` is set, and flipping that key back takes those lines out again. See [Troubleshooting](troubleshooting.md#ssh-connect-to-host-githubcom-port-22-connection-refused) for when to reach for the routing.
 
 ### Secrets

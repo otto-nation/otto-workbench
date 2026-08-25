@@ -368,9 +368,9 @@ site, and the spread was the bug. Each owns its own reference page:
 
 They stack: `land` sits on `push` and `git_client`, which sit on `proc`, which
 requires a `timeouts` tier on every call — `bin/local/validate-timeouts` enforces
-that one across `ai/`, so a new subprocess call cannot skip the question. The
-bash half of `pr:create` reaches `push` through its CLI rather than reimplementing
-it; pushes typed by hand are outside all of this ([#963](https://github.com/otto-nation/otto-workbench/issues/963), [#904](https://github.com/otto-nation/otto-workbench/issues/904)).
+that one across `ai/`, so a new subprocess call cannot skip the question. The bash
+half of `pr:create` reaches `push` through its CLI rather than reimplementing it,
+and a push typed by hand is recorded by the global `pre-push` hook for `pr` to reconcile.
 
 ## Guidelines & Rules
 

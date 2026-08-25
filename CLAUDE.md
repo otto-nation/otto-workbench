@@ -44,6 +44,15 @@ allow-listed, so they only add a permission prompt.
 Install it into the same pipx venv as pytest — `pipx inject pytest pytest-xdist` — to get
 the parallel run locally. CI installs it explicitly.
 
+The runner sizes the run from the cores the machine is *not* already using: the core count
+less the one-minute load average, floored at 2 and capped at 12. A second whole-suite run
+therefore takes the share the first left rather than oversubscribing the box, which is
+what neither suite survives — a test subprocess that cannot get scheduled surfaces as a
+timeout, a SIGPIPE, or a git daemon that will not answer, in arbitrary tests that never
+repeat. `TEST_JOBS` overrides the sizing outright, and `TEST_JOBS=1` restores the serial
+ordering. When contention does get through, `tests/conftest.py` raises `MachineContention`
+and names it in the message: re-run it, do not bisect it.
+
 ## Conventions
 
 - **Single source of truth** — every piece of data or config has exactly one authoritative owner. Display logic reads from the owner; it does not duplicate or re-derive the data. Runtime choices (e.g. Docker runtime) are recorded in state files (`~/.local/state/workbench/`); checks should read state, not infer from binary presence. When defaults must appear in multiple formats (YAML + shell), add a cross-validation test. Registry `*.registry.yml` files own tool documentation (`tools[]`). Registry `*.env.yml` files own env var declarations (`env[]`, `auth`), colocated with the consumer code that reads them. Env vars set programmatically at runtime (e.g. DOCKER_HOST) are NOT declared in registries.

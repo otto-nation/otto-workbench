@@ -35,9 +35,18 @@ task lint          # ShellCheck all shell scripts
 
 Both go through `bin/local/run-tests`, which owns the parallelism settings for the whole
 repo — the Taskfile, the pre-push hook, and CI all call it rather than spelling the flags
-out themselves. It sizes the run from the core count; set `TEST_JOBS` to override, and
-`TEST_JOBS=1` to get the serial ordering back when bisecting a test that only fails under
-concurrency.
+out themselves. It sizes the run from the cores the machine is *not* already using — the
+core count less the one-minute load average, floored at 2 and capped at 12 — so a suite
+started beside another one takes the share that one left rather than oversubscribing the
+box. Set `TEST_JOBS` to take the sizing back, and `TEST_JOBS=1` to get the serial ordering
+when bisecting a test that only fails under concurrency.
+
+Sizing from load is what keeps concurrent whole-suite runs honest. Neither suite fails
+gracefully when it cannot get scheduled: a subprocess that never runs surfaces as a
+timeout, a SIGPIPE, or a git daemon that will not answer, and none of those name the
+machine as the cause. When one does slip through, the shared runner in `tests/conftest.py`
+raises `MachineContention` rather than a plain assertion and says so in the message — a
+failure carrying that text is a machine to re-run on, not a defect to bisect.
 
 Tests live in `tests/`. Each file targets a single library function or script behaviour. The shared helper `tests/test_helper.bash` provides `source_lib`, `make_ai_config`, `make_fake_binary`, and `make_git_remote`.
 

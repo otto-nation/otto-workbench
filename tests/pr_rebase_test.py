@@ -31,7 +31,9 @@ import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
 import timeouts  # noqa: E402
 
-from conftest import assert_no_worktree_exit, init_worktree, make_ctx  # noqa: E402
+from conftest import (  # noqa: E402
+    assert_no_worktree_exit, git_out, init_worktree, make_ctx, run_checked,
+)
 
 # The base a run resolved to, threaded into every helper that derives a signal
 # from it. Named here rather than repeated as a literal so a test that cares
@@ -2330,10 +2332,8 @@ _CHECKOUT_BRANCH = "feat/checkout"
 
 
 def _git(repo, *args):
-    """Run git in *repo*, failing the test on a non-zero exit."""
-    return subprocess.run(
-        ["git", *args], cwd=str(repo), capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    """The shared git runner, stripped — see conftest.run_checked."""
+    return git_out(repo, *args).strip()
 
 
 def _commit(repo, name, message):
@@ -3108,33 +3108,27 @@ def _merged_and_deleted_remote(tmp_path) -> Path:
     The worktree is left on an unrelated branch so _fresh has to check out.
     """
     origin = tmp_path / "origin"
-    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)],
-                   check=True, capture_output=True)
+    run_checked(["git", "init", "--bare", "-b", "main", str(origin)])
     work = tmp_path / "work"
-    subprocess.run(["git", "clone", str(origin), str(work)],
-                   check=True, capture_output=True)
+    run_checked(["git", "clone", str(origin), str(work)])
 
-    git = ["git", "-C", str(work)]
-    subprocess.run(git + ["config", "user.email", "t@example.com"],
-                   check=True, capture_output=True)
-    subprocess.run(git + ["config", "user.name", "Test"], check=True, capture_output=True)
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "config", "user.name", "Test")
     (work / "base.txt").write_text("base\n")
-    subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
-    subprocess.run(git + ["commit", "-m", "base"], check=True, capture_output=True)
-    subprocess.run(git + ["push", "-u", "origin", "main"], check=True, capture_output=True)
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "base")
+    _git(work, "push", "-u", "origin", "main")
 
-    subprocess.run(git + ["checkout", "-b", _LANDED_BRANCH], check=True, capture_output=True)
+    _git(work, "checkout", "-b", _LANDED_BRANCH)
     (work / "feature.txt").write_text("feature\n")
-    subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
-    subprocess.run(git + ["commit", "-m", "feature"], check=True, capture_output=True)
-    subprocess.run(git + ["push", "-u", "origin", _LANDED_BRANCH],
-                   check=True, capture_output=True)
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "feature")
+    _git(work, "push", "-u", "origin", _LANDED_BRANCH)
 
     # The merge, as GitHub leaves it: the remote branch is deleted and the
     # worktree is sitting on something else by the time anyone rebases.
-    subprocess.run(git + ["checkout", "-b", "other", "main"], check=True, capture_output=True)
-    subprocess.run(git + ["push", "origin", "--delete", _LANDED_BRANCH],
-                   check=True, capture_output=True)
+    _git(work, "checkout", "-b", "other", "main")
+    _git(work, "push", "origin", "--delete", _LANDED_BRANCH)
     return work
 
 

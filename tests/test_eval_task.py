@@ -102,6 +102,24 @@ class TestCreateTempRepo:
         assert "git log failed" in str(exc.value)
         assert "not a git repository" in str(exc.value)
 
+    def test_a_killed_step_names_the_signal_rather_than_blaming_git(self, tmp_path):
+        """#970's symptom: a loaded machine kills the step and git says nothing.
+
+        The message used to be `git commit --allow-empty -m initial failed` and
+        nothing more, which reads as git having objected to the arguments.
+
+        A real signal rather than a patched result: the negative return code has
+        to survive the trip back through `subprocess` for this to prove anything.
+        """
+        killed = ["sh", "-c", "kill -PIPE $$", "git"]
+        with pytest.raises(RuntimeError) as exc:
+            eval_task._git_step(killed, ["commit", "--allow-empty", "-m", "initial"],
+                                eval_task.clean_env())
+        message = str(exc.value)
+        assert "git commit --allow-empty -m initial failed" in message
+        assert "SIGPIPE (signal 13)" in message
+        assert "re-run rather than bisect" in message
+
 
 class _StubTask:
     """Stands in for a real task so the runner can be exercised without an LLM."""

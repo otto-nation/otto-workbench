@@ -6,6 +6,7 @@ nothing to print and every classifier reading the wrong stream.
 """
 
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -62,11 +63,21 @@ class TestCmdResult:
     def test_a_bare_number_is_not_a_status_line(self):
         assert not CmdResult(1, "", "wrote 503 bytes").server_error
 
+    def test_signalled_reads_the_negated_signal_number(self):
+        assert CmdResult(-9).signalled
+        assert CmdResult(-signal.SIGPIPE).signalled
+
+    def test_an_ordinary_exit_is_not_signalled(self):
+        assert not CmdResult(1).signalled
+        assert not CmdResult(128).signalled
+        assert not CmdResult().signalled
+
 
 class TestFailureMessage:
-    def test_bare_action_when_the_command_explained_nothing(self):
+    def test_the_exit_code_when_the_command_explained_nothing(self):
+        """It is then the only evidence the failure left behind."""
         assert proc.failure_message("Failed to fetch the diff", CmdResult(1)) == (
-            "Failed to fetch the diff"
+            "Failed to fetch the diff (exit 1)"
         )
 
     def test_quotes_the_cause_the_command_gave(self):
@@ -97,6 +108,60 @@ class TestFailureMessage:
         # report failures without converting first.
         r = subprocess.run(["sh", "-c", "echo nope >&2; exit 1"], capture_output=True, text=True)
         assert proc.failure_message("Failed", r) == "Failed: nope"
+
+
+class TestFailureMessageForAKilledProcess:
+    """A killed process says nothing, so the message is all the reader gets.
+
+    This is the shape #970 surfaced: a whole-suite run on a loaded machine had
+    `git commit --allow-empty -m initial failed` and nothing else to go on, and
+    the first guess was a defect in git's arguments rather than the box being
+    out of room.
+    """
+
+    def test_the_signal_is_named(self):
+        msg = proc.failure_message("git commit failed", CmdResult(-signal.SIGKILL))
+        assert msg == (
+            "git commit failed — killed by SIGKILL (signal 9); "
+            "the machine ended it, not the command — re-run rather than bisect"
+        )
+
+    def test_a_broken_pipe_is_named_too(self):
+        msg = proc.failure_message("git fetch failed", CmdResult(-signal.SIGPIPE))
+        assert "SIGPIPE (signal 13)" in msg
+        assert "re-run rather than bisect" in msg
+
+    def test_a_fault_signal_points_at_the_command(self):
+        """SIGSEGV is the command's problem, and saying otherwise misdirects."""
+        msg = proc.failure_message("the linter failed", CmdResult(-signal.SIGSEGV))
+        assert "SIGSEGV (signal 11)" in msg
+        assert "the machine ended it" not in msg
+
+    def test_whatever_it_managed_to_say_is_still_quoted(self):
+        r = CmdResult(-signal.SIGTERM, "", "warning: index is locked")
+        msg = proc.failure_message("git add failed", r)
+        assert msg.startswith("git add failed — killed by SIGTERM (signal 15)")
+        assert msg.endswith(": warning: index is locked")
+
+    def test_a_signal_this_platform_cannot_name_still_renders(self):
+        assert "signal 77" in proc.failure_message("Failed", CmdResult(-77))
+
+    def test_an_expired_bound_says_so_without_the_stderr(self):
+        """A hand-built timeout result carries the code and nothing else."""
+        msg = proc.failure_message("git fetch failed", CmdResult(proc.TIMEOUT_RETURNCODE))
+        assert msg == "git fetch failed — the bound expired before the command answered"
+
+    def test_a_real_timeout_keeps_the_bound_run_quoted(self):
+        r = proc.run(["sleep", "5"], timeout=0.1)
+        assert proc.failure_message("git fetch failed", r) == (
+            "git fetch failed: timed out after 0.1s: sleep 5"
+        )
+
+    def test_a_real_signal_survives_the_round_trip(self):
+        """Not a hand-built result — the negative code has to come from the OS."""
+        r = proc.run(["sh", "-c", "kill -PIPE $$"], timeout=timeouts.QUICK)
+        assert r.signalled
+        assert "SIGPIPE (signal 13)" in proc.failure_message("git commit failed", r)
 
 
 class TestRun:

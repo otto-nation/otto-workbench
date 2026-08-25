@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# File-metadata readers that work on both userlands.
+# Machine readers that work on both userlands.
 #
-# GNU coreutils and BSD `stat` spell the same fields with different flags, and a
-# hand-rolled fallback prints a filesystem report before failing on GNU — so
-# nothing outside this module calls `stat` with a format flag, and
-# `bin/local/validate-stat-portability` enforces that. Hand-rolling it has
-# already broken CI once; the header on `_stat_field` has the details.
+# GNU coreutils and BSD spell the same values differently — `stat` takes
+# different format flags, and the load average comes from `/proc/loadavg` on one
+# and `sysctl vm.loadavg` on the other. Each reader here tries both forms so no
+# caller has to branch on the platform. For `stat` that is also enforced:
+# nothing outside this module calls it with a format flag, and
+# `bin/local/validate-stat-portability` fails the build when something does. A
+# hand-rolled fallback prints a filesystem report before failing on GNU, which
+# has already broken CI once; the header on `_stat_field` has the details.
 #
 # It has no dependencies, so a caller that has not loaded the facade can source
 # it on its own:
@@ -14,9 +17,10 @@
 # file_mtime PATH   # modification time, epoch seconds
 # file_birth PATH   # birth time, epoch seconds (0 where the FS has none)
 # file_mode  PATH   # permission bits, octal — e.g. 644
+# load_average      # one-minute load average, e.g. 3.72
 # ```
 #
-# Each prints nothing and returns 1 when neither form resolves the field, so
+# Each prints nothing and returns 1 when neither form resolves the value, so
 # callers that want a default supply it themselves:
 #
 # ```bash
@@ -54,4 +58,24 @@ file_birth() {
 # file_mode PATH — permission bits as an octal string, e.g. 644.
 file_mode() {
   _stat_field '%a' '%Lp' "$1"
+}
+
+# load_average — the machine's one-minute load average, as the kernel spells it.
+#
+# A decimal string such as `3.72`: the raw reading, not a rounded one, so a
+# caller decides for itself which way to round. Prints nothing and returns 1
+# where neither source is readable.
+#
+# The two forms are assigned separately for the same reason `_stat_field` does
+# it — a `$(A || B)` would concatenate any stdout the losing form produced.
+# BSD's `sysctl -n vm.loadavg` answers `{ 1.85 2.05 2.13 }` and Linux's
+# `/proc/loadavg` answers `0.52 0.58 0.59 1/234 1234`, so dropping a leading
+# `{ ` leaves the one-minute figure first in both.
+load_average() {
+  local raw
+  raw=$(sysctl -n vm.loadavg 2>/dev/null) \
+    || raw=$(cat /proc/loadavg 2>/dev/null) \
+    || return 1
+  raw="${raw#\{ }"
+  printf '%s' "${raw%% *}"
 }

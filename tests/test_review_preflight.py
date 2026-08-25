@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+
+from conftest import git_out
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -18,13 +19,8 @@ import review_preflight as rp
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args],
-        cwd=str(repo),
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    """The shared git runner, stripped — see conftest.run_checked."""
+    return git_out(repo, *args).strip()
 
 
 def _make_job(head_sha: str, prior_review: str = "") -> rp.ReviewJob:

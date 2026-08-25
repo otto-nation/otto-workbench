@@ -1397,6 +1397,7 @@ So `run(cmd)` returns a frozen `CmdResult` carrying `returncode`, `stdout` and
 | `r.detail` | `stderr` folded onto one line — what to quote in an error. |
 | `r.combined_output` | Both streams, for classifying a failure by what it said. |
 | `r.server_error` | The failure was a 5xx, so the remedy is to wait and retry. |
+| `r.signalled` | A signal killed it; it never got to choose an exit code. |
 
 `failure_message(action, r)` renders a failure without asserting a cause the
 code has not established: it names the action, appends whatever the command
@@ -1405,6 +1406,16 @@ message and a classifier reading the same result cannot disagree about which
 stream the evidence was on. It accepts a raw `subprocess.CompletedProcess` too,
 so a call site still running `subprocess.run` directly can report a failure
 without converting first.
+
+A signalled death is called out the same way, because it is the failure with
+the least to say for itself: a process killed by SIGKILL or SIGPIPE writes
+nothing on the way out, so every stream is empty and the bare action was all a
+reader got — `git commit --allow-empty -m initial failed`, with no hint that
+git never objected to anything and the machine simply ran out of room to
+schedule it. The signal is named, and one that came from outside the process
+says so; a fault signal (SIGSEGV, SIGABRT) does point at the command, so it
+gets no such note. When the command explained nothing at all the exit code is
+quoted, since it is then the only evidence there is.
 
 An expired timeout is the same kind of answer. `run` converts it into a
 `CmdResult` carrying `TIMEOUT_RETURNCODE` — the shell convention — with the bound

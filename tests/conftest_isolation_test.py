@@ -1,17 +1,20 @@
 """The sandboxes prove themselves: no test writes to the real state root, and
-no git command a test runs fires the machine's hooks."""
+no git command a test runs fires the machine's hooks. The shared subprocess
+runner every fixture goes through is pinned here too."""
 
 import os
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
 import workbench_paths
 
-from conftest import git_in, init_worktree
+from conftest import MachineContention, git_in, git_out, init_worktree, run_checked
 
 
 def test_state_root_is_sandboxed_per_test(tmp_path):
@@ -79,3 +82,55 @@ def test_a_container_worktree_runs_no_hook(container):
     _reject_commits_from(container / ".git" / "hooks")
 
     assert _commit_in(container / "main").returncode == 0
+
+
+# ── the shared subprocess runner ────────────────────────────────────────────
+#
+# A command that exits non-zero and a command that never finished are different
+# diagnoses, and telling them apart is the whole point of the runner. Under an
+# oversubscribed machine the second kind arrives in arbitrary tests that never
+# repeat, which reads as a real defect until somebody proves otherwise.
+
+
+def test_git_out_returns_what_the_command_printed(tmp_path):
+    repo = init_worktree(tmp_path / "repo")
+
+    assert git_out(repo, "symbolic-ref", "--short", "HEAD").strip() == "main"
+
+
+def test_a_git_error_keeps_the_message_git_wrote(tmp_path):
+    """`check=True` renders as an exit code alone, which loses the diagnosis."""
+    repo = init_worktree(tmp_path / "repo")
+
+    with pytest.raises(AssertionError) as excinfo:
+        git_out(repo, "rev-parse", "--verify", "refs/heads/nope")
+
+    assert not isinstance(excinfo.value, MachineContention)
+    assert "exit 128" in str(excinfo.value)
+    assert "Needed a single revision" in str(excinfo.value)
+
+
+def test_a_signal_death_is_named_as_contention(tmp_path):
+    """The SIGPIPE that started #970: a `git add -A` that reported -13 with
+    empty output, which a plain runner shows as `failed (-13)` and nothing else."""
+    with pytest.raises(MachineContention) as excinfo:
+        run_checked(["bash", "-c", "kill -PIPE $$"])
+
+    message = str(excinfo.value)
+    assert "SIGPIPE (signal 13)" in message
+    assert "machine problem, not a test defect" in message
+
+
+def test_a_timeout_is_named_as_contention():
+    with pytest.raises(MachineContention) as excinfo:
+        run_checked(["sleep", "30"], timeout=0.1)
+
+    message = str(excinfo.value)
+    assert "timed out after 0.1s" in message
+    assert "machine problem, not a test defect" in message
+
+
+def test_contention_reads_as_a_failure_rather_than_an_error():
+    """An AssertionError subclass, so pytest reports it beside the other
+    failures instead of as a collection-time explosion nobody attributes."""
+    assert issubclass(MachineContention, AssertionError)

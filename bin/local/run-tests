@@ -37,23 +37,66 @@ unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIE
 
 # Both suites are bound by disk contention rather than CPU — every case builds a
 # temp tree and shells out to git — so throughput plateaus well below the core
-# count. Measured on an 18-core machine: bats runs the suite in 318s at --jobs 1,
-# 92s at 8, 80s at 12, and 83s at 16.
+# count. Measured on an 18-core machine with nothing else running: bats runs the
+# suite in 318s at --jobs 1, 92s at 8, 80s at 12, and 83s at 16.
 #
 # ceiling: one cap for both runners, derived from bats' curve. Upgrade to a
 # per-runner cap if pytest's own measured plateau lands somewhere other than 12.
 TEST_JOBS_CAP=12
 
+# The suite does not fail gracefully when it cannot get scheduled: a subprocess
+# that never runs surfaces as a timeout, a SIGPIPE, or a git daemon that will
+# not answer, none of which name the machine as the cause. Three whole-suite
+# runs at 12 jobs each on 18 cores produced a handful of such failures every
+# time, and never the same test twice. Sizing from free capacity is what keeps
+# the second and third runs out of that territory; the floor is what keeps them
+# making progress rather than stalling behind the first.
+TEST_JOBS_FLOOR=2
+
+# JOBS — the resolved parallelism, set once by main() before either suite runs.
+JOBS=""
+
+# busy_cores — cores the rest of the machine is already using, rounded down.
+#
+# Zero under CI: a hosted runner is dedicated to this job, so its load average
+# reports the setup steps that just finished — apt-get, pipx, a checkout —
+# rather than work still competing with the suite. Subtracting that would size
+# an idle 4-core runner down to the floor.
+busy_cores() {
+  if [[ -n "${CI:-}" ]]; then
+    echo 0
+    return 0
+  fi
+  local load whole
+  load=$(load_average) || load=0
+  whole="${load%%.*}"
+  # A reading we cannot parse is treated as an idle machine: guessing from a
+  # value of unknown shape is worse than the plain core count this replaced.
+  # Truncating the fraction is deliberate too — a one-minute average already
+  # lags the load it reports, so rounding it up would double-count the lag.
+  [[ "$whole" =~ ^[0-9]+$ ]] || whole=0
+  echo "$whole"
+}
+
 # test_jobs — how many test processes to run at once.
 #
-# Cores, capped. TEST_JOBS overrides it for a caller that knows better — a
-# shared runner that should not take the whole box, or a bisect that wants the
-# serial ordering back with TEST_JOBS=1.
+# Free capacity — cores less the load already on the machine — clamped to
+# [TEST_JOBS_FLOOR, TEST_JOBS_CAP]. On an idle box that is the core count capped,
+# exactly as before; with another worktree's suite already running it is the
+# share that suite left behind. TEST_JOBS overrides the whole calculation for a
+# caller that knows better — a shared runner that should not take the whole box,
+# or a bisect that wants the serial ordering back with TEST_JOBS=1.
 test_jobs() {
-  local cores
+  if [[ -n "${TEST_JOBS:-}" ]]; then
+    echo "$TEST_JOBS"
+    return 0
+  fi
+  local cores busy free jobs
   cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || cores=1
-  local jobs=$(( cores < TEST_JOBS_CAP ? cores : TEST_JOBS_CAP ))
-  echo "${TEST_JOBS:-$jobs}"
+  busy=$(busy_cores)
+  free=$(( cores - busy ))
+  jobs=$(( free > TEST_JOBS_FLOOR ? free : TEST_JOBS_FLOOR ))
+  echo "$(( jobs < TEST_JOBS_CAP ? jobs : TEST_JOBS_CAP ))"
 }
 
 usage() {
@@ -70,7 +113,10 @@ Options:
   -h, --help      Show this help
 
 Environment:
-  TEST_JOBS       Parallel test processes (default: cores, capped at $TEST_JOBS_CAP)
+  TEST_JOBS       Parallel test processes. Defaults to the cores the machine
+                  is not already using — at least $TEST_JOBS_FLOOR, at most $TEST_JOBS_CAP.
+                  Set it to take the sizing back; TEST_JOBS=1 restores the
+                  serial ordering.
 EOF
 }
 
@@ -79,12 +125,10 @@ EOF
 # --timing is not optional: the pre-push hook reads the per-test durations out
 # of this stream to report the ones over its threshold.
 run_bats() {
-  local jobs
-  jobs=$(test_jobs)
   local jobs_flag=()
   # bats farms tests out through GNU parallel and silently runs them serially
   # without it, so the flag is only worth passing when parallel is installed.
-  command -v parallel >/dev/null 2>&1 && jobs_flag=(--jobs "$jobs")
+  command -v parallel >/dev/null 2>&1 && jobs_flag=(--jobs "$JOBS")
   bats "$WORKBENCH_DIR/tests/" --recursive --timing "${jobs_flag[@]}" "$@"
 }
 
@@ -94,10 +138,8 @@ run_bats() {
 # so a checkout whose pytest has no xdist plugin still runs the suite, just
 # serially. -p xdist is probed rather than assumed for that reason.
 run_pytest() {
-  local jobs
-  jobs=$(test_jobs)
   local jobs_flag=()
-  pytest -VV 2>/dev/null | grep -q xdist && jobs_flag=(-n "$jobs")
+  pytest -VV 2>/dev/null | grep -q xdist && jobs_flag=(-n "$JOBS")
   pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "$@"
 }
 
@@ -120,8 +162,17 @@ main() {
     exit 1
   fi
 
+  # Resolved once, before either suite starts. The load average is a
+  # one-minute figure, so sizing pytest after bats has finished would size it
+  # from the load our own bats run just produced and floor every second suite.
+  JOBS=$(test_jobs)
+
   [[ "$suite" == pytest ]] || run_bats "${runner_args[@]+"${runner_args[@]}"}"
   [[ "$suite" == bats ]] || run_pytest "${runner_args[@]+"${runner_args[@]}"}"
 }
 
-main "$@"
+# Guarded so tests/run_tests.bats can source the sizing functions without
+# running a suite.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

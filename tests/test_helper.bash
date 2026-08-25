@@ -118,6 +118,18 @@ make_fake_binary() {
   chmod +x "$dir/$name"
 }
 
+# make_fake_task_dir REPO_ROOT — creates $TMPDIR/fake-task-config with a
+# `lib` symlink into REPO_ROOT, echoing the fake dir's path. Simulates the
+# ~/.config/task install layout: Taskfile.yml and lib/ are symlinks, and
+# nothing else is reachable from the fake dir.
+make_fake_task_dir() {
+  local repo_root="$1"
+  local fake_task_dir="$BATS_TEST_TMPDIR/fake-task-config"
+  mkdir -p "$fake_task_dir"
+  ln -s "$repo_root/lib" "$fake_task_dir/lib"
+  printf '%s' "$fake_task_dir"
+}
+
 # make_fake_gh EXIT_CODE OUTPUT — stub gh that records its arguments in
 # $TMPDIR/gh-args.txt (path exposed via GH_ARGS_FILE) and prints OUTPUT.
 # Failures print on stderr, matching how gh reports errors. Callers that only

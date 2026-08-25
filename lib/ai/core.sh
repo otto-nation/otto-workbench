@@ -28,7 +28,10 @@
 if [ -n "${BASH_SOURCE:-}" ]; then
   _ai_core_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 else
-  _ai_core_dir="$(cd "${TASKFILE_DIR:?lib/ai/core.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai" && pwd -P)"
+  _ai_core_dir="$(cd "${TASKFILE_DIR:?lib/ai/core.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai" && pwd -P)" || {
+    echo "lib/ai/core.sh: cannot resolve TASKFILE_DIR/lib/ai (TASKFILE_DIR=${TASKFILE_DIR:-})" >&2
+    return 1
+  }
 fi
 # shellcheck source=/dev/null
 . "$(dirname "$_ai_core_dir")/conventions.sh"

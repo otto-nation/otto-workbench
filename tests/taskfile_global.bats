@@ -54,9 +54,8 @@ teardown() {
 
 @test "core.sh works when sourced through symlinked TASKFILE_DIR" {
   # Simulates ~/.config/task/ setup: Taskfile.yml and lib/ are symlinks
-  local fake_task_dir="$BATS_TEST_TMPDIR/fake-task-config"
-  mkdir -p "$fake_task_dir"
-  ln -s "$REPO_ROOT/lib" "$fake_task_dir/lib"
+  local fake_task_dir
+  fake_task_dir=$(make_fake_task_dir "$REPO_ROOT")
 
   run sh -c "TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$COMMIT_TYPES\""
   [ "$status" -eq 0 ]
@@ -67,11 +66,14 @@ teardown() {
   # The install links lib/ into the checkout and nothing else, so a root taken
   # from TASKFILE_DIR itself finds conventions.sh and no ai/ script at all —
   # which is how pr:create came to invoke an ai/lib/push.py that wasn't there.
-  local fake_task_dir="$BATS_TEST_TMPDIR/fake-task-config"
-  mkdir -p "$fake_task_dir"
-  ln -s "$REPO_ROOT/lib" "$fake_task_dir/lib"
+  #
+  # dash, not sh: on macOS /bin/sh is bash, which sets BASH_SOURCE even under
+  # `sh -c`, so `sh -c` here would exercise the BASH_SOURCE branch instead of
+  # the TASKFILE_DIR branch this test exists to cover.
+  local fake_task_dir
+  fake_task_dir=$(make_fake_task_dir "$REPO_ROOT")
 
-  run sh -c "TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
+  run dash -c "TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
   [ "$status" -eq 0 ]
   [ -f "$output/ai/lib/push.py" ]
 }

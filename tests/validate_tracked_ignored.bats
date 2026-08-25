@@ -11,9 +11,6 @@ setup() {
   common_setup
   TMPDIR="$(mktemp -d)"
   VALIDATOR="$REPO_ROOT/bin/local/validate-tracked-ignored"
-  # --exclude-standard reads core.excludesFile, so the machine's global ignore
-  # would otherwise decide what these fixtures contain.
-  export GIT_CONFIG_GLOBAL=/dev/null
 }
 
 teardown() {
@@ -28,7 +25,6 @@ _make_repo() {
   GIT_CEILING_DIRECTORIES="$(dirname "$dir")" git -C "$dir" init --quiet
   git -C "$dir" config user.email "test@example.com"
   git -C "$dir" config user.name "Test"
-  git -C "$dir" config core.hooksPath /dev/null
   echo "init" > "$dir/README.md"
   git -C "$dir" add README.md
   git -C "$dir" commit -m "initial" --quiet

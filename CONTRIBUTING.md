@@ -56,6 +56,11 @@ Tests live in `tests/`. Each file targets a single library function or script be
 - Use `run` + `$status` / `$output` for functions with side effects or exit codes.
 - Call functions directly (without `run`) when asserting variable state.
 - Use `TMPDIR="$(mktemp -d)"` in `setup()` and `rm -rf "$TMPDIR"` in `teardown()` for any filesystem work.
+- Call `common_setup` first in `setup()`, and in a `setup_file()` that runs git. It is what
+  detaches a temp repo from the machine's own git config — `core.fsmonitor`, the global
+  hooks path, everything in `~/.gitconfig` — so no test needs a guard of its own. A test
+  that wants a global config with content in it re-exports `GIT_CONFIG_GLOBAL` afterwards,
+  pointing at a file it wrote; `tests/test_helper_isolation.bats` pins both halves.
 - Name tests in plain English describing the expected behaviour, e.g. `"omits a chunk that would exceed the budget"`.
 
 When adding a new library function, add a corresponding test file `tests/<function_name>.bats`.

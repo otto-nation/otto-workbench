@@ -8,7 +8,6 @@ setup() {
   load 'test_helper'
   common_setup
   export NO_COLOR=1
-  export GIT_CONFIG_GLOBAL=/dev/null
 
   SNIPPET="$REPO_ROOT/zsh/config.d/tools/claude.zsh"
   # Physical path: on macOS mktemp hands back /var/..., git reports the

@@ -15,7 +15,6 @@ setup() {
   TMPDIR="$(mktemp -d)"
   # Prevent git from discovering the parent workbench repo during parallel test runs
   export GIT_CEILING_DIRECTORIES="$TMPDIR"
-  export GIT_CONFIG_GLOBAL=/dev/null
 }
 
 teardown() {

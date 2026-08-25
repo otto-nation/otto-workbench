@@ -12,7 +12,6 @@ setup() {
   TMPDIR="$(mktemp -d)"
   SCRIPT="$REPO_ROOT/git/bin/wt-fetch-default"
 
-  export GIT_CONFIG_GLOBAL=/dev/null
   export GIT_CEILING_DIRECTORIES="$TMPDIR"
 
   _make_origin
@@ -30,7 +29,6 @@ teardown() {
 _git_identity() {
   git -C "$1" config user.email "test@example.com"
   git -C "$1" config user.name "Test"
-  git -C "$1" config core.hooksPath /dev/null
 }
 
 # _make_origin — a bare remote on main with one commit, plus the seed clone the

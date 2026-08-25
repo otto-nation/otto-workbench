@@ -46,7 +46,7 @@ from review_common import (
     read_pipeline_status, read_pipeline_warnings, read_review_meta,
     review_file_path, review_meta_from_dict,
 )
-from ai_usage import SessionUsage, parse_session_log
+from ai_usage import SessionUsage, format_tokens, parse_session_log
 import prompt
 import review_issue
 import review_worktree
@@ -164,14 +164,6 @@ def _display_review(path: Path) -> None:
     print()
 
 
-def _format_tokens(n: int) -> str:
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if n >= 1000:
-        return f"{n // 1000}k"
-    return str(n)
-
-
 def _format_usage(*log_paths: str, wall_clock_ms: int | None = None) -> str:
     logs = [p for p in log_paths if p and os.path.isfile(p)]
     if not logs:
@@ -186,9 +178,9 @@ def _format_usage(*log_paths: str, wall_clock_ms: int | None = None) -> str:
     if cost == 0.0 and total == 0 and duration_ms == 0:
         return ""
 
-    tokens_part = f"{_format_tokens(total)} tokens"
+    tokens_part = f"{format_tokens(total)} tokens"
     if cached > 0:
-        tokens_part += f" ({_format_tokens(cached)} cached)"
+        tokens_part += f" ({format_tokens(cached)} cached)"
 
     duration_s = duration_ms // 1000
     mins, secs = divmod(duration_s, 60)

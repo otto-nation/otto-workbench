@@ -130,7 +130,7 @@ def test_format_usage_multiple_logs(cr, tmp_path):
     _make_session_log(log2, cost=2.00, input_tokens=300, output_tokens=400, duration_ms=120000)
     result = cr._format_usage(log1, log2)
     assert "$3.00" in result
-    assert "1k" in result
+    assert "1.0k" in result
     assert "3m 0s" in result
 
 
@@ -155,7 +155,7 @@ def test_format_usage_mixed_existing_and_missing(cr, tmp_path):
     _make_session_log(log, cost=2.50, input_tokens=500, output_tokens=500, duration_ms=30000)
     result = cr._format_usage(log, str(tmp_path / "missing.jsonl"))
     assert "$2.50" in result
-    assert "1k" in result
+    assert "1.0k" in result
 
 
 def test_format_usage_no_args(cr):
@@ -173,7 +173,7 @@ def test_format_usage_tokens_over_1k_suffix(cr, tmp_path):
     log = str(tmp_path / "medium.jsonl")
     _make_session_log(log, cost=1.00, input_tokens=800, output_tokens=700, duration_ms=10000)
     result = cr._format_usage(log)
-    assert "1k tokens" in result
+    assert "1.5k tokens" in result
 
 
 def test_format_usage_tokens_over_1m_suffix(cr, tmp_path):
@@ -184,7 +184,7 @@ def test_format_usage_tokens_over_1m_suffix(cr, tmp_path):
     )
     result = cr._format_usage(log)
     assert "1.2M tokens" in result
-    assert "(100k cached)" in result
+    assert "(100.0k cached)" in result
 
 
 def test_format_usage_duration_seconds_only(cr, tmp_path):
@@ -215,8 +215,8 @@ def test_format_usage_separates_cache_from_fresh(cr, tmp_path):
         duration_ms=10000, cache_read=5000, cache_create=3000,
     )
     result = cr._format_usage(log)
-    assert "8k tokens" in result
-    assert "(5k cached)" in result
+    assert "8.3k tokens" in result
+    assert "(5.0k cached)" in result
 
 
 def test_format_usage_no_cache_omits_parenthetical(cr, tmp_path):
@@ -242,8 +242,8 @@ def test_format_usage_total_includes_cache_reads(cr, tmp_path):
         duration_ms=10000, cache_read=10000,
     )
     result = cr._format_usage(log)
-    assert "10k tokens" in result
-    assert "(10k cached)" in result
+    assert "10.3k tokens" in result
+    assert "(10.0k cached)" in result
 
 
 def test_format_usage_model_usage_tokens(cr, tmp_path):
@@ -262,8 +262,8 @@ def test_format_usage_model_usage_tokens(cr, tmp_path):
         },
     )
     result = cr._format_usage(log)
-    assert "2k tokens" in result
-    assert "(1k cached)" in result
+    assert "2.1k tokens" in result
+    assert "(1.0k cached)" in result
 
 
 # ── count_severities ──────────────────────────────────────────────────────────

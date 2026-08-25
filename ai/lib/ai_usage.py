@@ -38,6 +38,27 @@ import workbench_paths
 
 LEDGER_DIRNAME = "usage"
 
+# Where a token count stops being written out in full. A cache-read total runs
+# to eight digits, which no column and no summary line has room for, so it is
+# abbreviated at the first threshold that keeps it narrow.
+_TOKENS_PER_M = 1_000_000
+_TOKENS_PER_K = 1_000
+
+
+def format_tokens(n: int) -> str:
+    """A token count abbreviated for display: `1.2M`, `4.5k`, or the number.
+
+    One rendering for every surface that reports usage, so a figure read off
+    `otto-log stats` and the same figure in a review's summary line are the
+    same figure. A caller with its own placeholder for "not counted" handles
+    that before calling — this renders a number it was given.
+    """
+    if n >= _TOKENS_PER_M:
+        return f"{n / _TOKENS_PER_M:.1f}M"
+    if n >= _TOKENS_PER_K:
+        return f"{n / _TOKENS_PER_K:.1f}k"
+    return str(n)
+
 
 def ledger_dir() -> Path:
     """Where the usage ledger lives: ``<state>/usage/YYYY-MM.jsonl``.

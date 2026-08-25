@@ -270,12 +270,6 @@ _BILLED_KEYS = ("input_tokens", "cache_read_tokens", "cache_write_tokens")
 # same format the trail uses, so the date is the stamp's leading field.
 _LEDGER_TS_DATE = slice(0, 10)
 
-# Token counts are abbreviated at the first threshold that keeps the column
-# narrow — a cache-read total runs to eight digits otherwise.
-_TOKENS_PER_M = 1_000_000
-_TOKENS_PER_K = 1_000
-
-
 @dataclass(frozen=True)
 class CostShare:
     """The cost one ledger record contributes to one group."""
@@ -370,11 +364,7 @@ def aggregate_usage(records: list[dict], by: str) -> list[UsageRow]:
 def _fmt_tokens(n: int | None) -> str:
     if n is None:
         return _NO_GROUP
-    if n >= _TOKENS_PER_M:
-        return f"{n / _TOKENS_PER_M:.1f}M"
-    if n >= _TOKENS_PER_K:
-        return f"{n / _TOKENS_PER_K:.1f}k"
-    return str(n)
+    return ai_usage.format_tokens(n)
 
 
 def _fmt_duration(ms: int | None) -> str:

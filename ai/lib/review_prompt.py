@@ -14,8 +14,8 @@ import sys
 from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
-from string import Template
 
+import agent_templates
 import json
 import log
 from agent_types import EFFORT_PRESETS, Effort
@@ -24,7 +24,6 @@ from review_common import (
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
     PriorDisposition,
-    TEMPLATE_DIR_REL,
     TEMPLATE_DISPROVE, TEMPLATE_FIX,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
@@ -49,12 +48,6 @@ from review_preflight import (
 # `## Verdict` line is parsed against — the wording an agent is asked for cannot
 # drift from the wording that is recognised.
 VERDICT_OPTIONS = " / ".join(v.prose for v in ReviewVerdict)
-
-
-# ── Template rendering ────────────────────────────────────────────────────────
-
-def _template_dir() -> Path:
-    return Path(__file__).resolve().parent.parent / TEMPLATE_DIR_REL
 
 
 def _build_pr_header(
@@ -627,12 +620,6 @@ def _build_prior_section(
 </prior_review>"""
 
 
-def render_template(name: str, **kwargs) -> str:
-    path = _template_dir() / name
-    tmpl = Template(path.read_text())
-    return tmpl.safe_substitute(**kwargs)
-
-
 @dataclass(frozen=True)
 class CommonSections:
     """Sections shared by every template, built once per prompt."""
@@ -1083,7 +1070,7 @@ def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra)
     common = _build_common_sections(job, max_turns=max_turns)
     builder, label = handler(job, common, extra)
     template_vars = builder.vars
-    rendered = render_template(template_name, **template_vars)
+    rendered = agent_templates.render(template_name, **template_vars)
     return _log_prompt_size(template_name, rendered, template_vars, job, label=label)
 
 

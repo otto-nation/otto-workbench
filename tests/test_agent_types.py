@@ -10,7 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent_types
-from agent_types import AgentKind, Effort, Phase, Thinking
+from agent_types import (
+    REVIEW_PHASES, AgentKind, Effort, Phase, PhaseDomain, Thinking,
+)
 
 
 class TestPhasesRegistry:
@@ -28,6 +30,50 @@ class TestPhasesRegistry:
 
     def test_every_phase_defaults_to_sonnet(self):
         assert {s.model for s in agent_types.PHASES.values()} == {"sonnet"}
+
+    def test_every_phase_carries_a_label(self):
+        assert all(s.label for s in agent_types.PHASES.values())
+
+
+class TestPhaseDomains:
+    """Which entry point runs a phase is registry data, not a naming guess."""
+
+    def test_preserves_current_domains(self):
+        expected = {
+            Phase.SINGLE: PhaseDomain.REVIEW,
+            Phase.HOLISTIC: PhaseDomain.REVIEW,
+            Phase.SCOUT: PhaseDomain.REVIEW,
+            Phase.GROUP: PhaseDomain.REVIEW,
+            Phase.SYNTHESIS: PhaseDomain.REVIEW,
+            Phase.DISPROVE: PhaseDomain.REVIEW,
+            Phase.FIX: PhaseDomain.REVIEW,
+            Phase.COMMENTS_FIX: PhaseDomain.COMMENTS,
+            Phase.CI_FIX: PhaseDomain.CI,
+        }
+        assert {p: s.domain for p, s in agent_types.PHASES.items()} == expected
+
+    def test_the_property_reads_the_registry(self):
+        for phase, spec in agent_types.PHASES.items():
+            assert phase.domain is spec.domain
+
+    def test_review_phases_are_the_review_domain(self):
+        assert set(REVIEW_PHASES) == {
+            p for p, s in agent_types.PHASES.items()
+            if s.domain is PhaseDomain.REVIEW
+        }
+
+    def test_a_phase_outside_review_names_no_review_artifact(self):
+        """It writes into its own entry point's tracking directory.
+
+        Answering with a `comments_fix.md` nobody writes would read as a real
+        path — the review sweep would glob for it and the fix pass would look
+        for its log where it never lands.
+        """
+        for phase in (Phase.COMMENTS_FIX, Phase.CI_FIX):
+            with pytest.raises(ValueError, match="entry point"):
+                phase.output_filename
+            with pytest.raises(ValueError, match="entry point"):
+                phase.log_filename
 
 
 class TestPhaseEnvKeys:
@@ -63,6 +109,10 @@ class TestPhaseThinkingDefaults:
             Phase.SYNTHESIS: Thinking.MEDIUM,
             Phase.DISPROVE: Thinking.MEDIUM,
             Phase.FIX: Thinking.LOW,
+            # Neither fix pass named a thinking level before it was a phase —
+            # both called the backend without one and took its default.
+            Phase.COMMENTS_FIX: None,
+            Phase.CI_FIX: None,
         }
         actual = {p: s.thinking for p, s in agent_types.PHASES.items()}
         assert actual == expected
@@ -78,9 +128,39 @@ class TestPhaseMaxTurnsDefaults:
             Phase.SYNTHESIS: 15,
             Phase.DISPROVE: 15,
             Phase.FIX: 20,
+            Phase.COMMENTS_FIX: 20,
+            Phase.CI_FIX: 20,
         }
         actual = {p: s.max_turns for p, s in agent_types.PHASES.items()}
         assert actual == expected
+
+
+class TestPhaseBudgetDefaults:
+    """A phase outside a review pins its own dollar cap.
+
+    There is no ``--effort`` at those entry points, so a ``None`` budget would
+    resolve to nothing at all rather than to a preset.
+    """
+
+    def test_only_the_non_review_phases_pin_a_budget(self):
+        pinned = {
+            p for p, s in agent_types.PHASES.items() if s.max_budget is not None
+        }
+        assert pinned == {Phase.COMMENTS_FIX, Phase.CI_FIX}
+
+    def test_preserves_current_caps(self):
+        assert agent_types.PHASES[Phase.COMMENTS_FIX].max_budget == 2.0
+        assert agent_types.PHASES[Phase.CI_FIX].max_budget == 3.0
+
+
+class TestItemScaling:
+    def test_chunk_size_is_the_tightest_cap(self):
+        # 60 turns at 5 each allows 12; $5 at $0.50 each allows 10.
+        scaling = agent_types.PHASES[Phase.COMMENTS_FIX].scaling
+        assert scaling.chunk_size == 10
+
+    def test_a_phase_that_scales_with_nothing_bounds_no_chunk(self):
+        assert agent_types.PHASES[Phase.CI_FIX].scaling.chunk_size == 0
 
 
 class TestPhaseAgentPins:
@@ -106,9 +186,14 @@ class TestPhaseAgentPins:
         }
         assert derived == {Phase.SINGLE, Phase.HOLISTIC, Phase.SYNTHESIS}
 
-    def test_only_the_fix_phase_edits(self):
+    def test_only_the_fix_phases_edit(self):
         editing = {p for p, s in agent_types.PHASES.items() if s.edits}
-        assert editing == {Phase.FIX}
+        assert editing == {Phase.FIX, Phase.COMMENTS_FIX, Phase.CI_FIX}
+
+    def test_no_editing_phase_pins_a_reviewer_agent(self):
+        # Every AgentKind is a persona forbidden from touching source files.
+        for phase, spec in agent_types.PHASES.items():
+            assert not (spec.edits and spec.agent), phase
 
 
 class TestOmittedTurnBumpRegistry:
@@ -127,15 +212,17 @@ class TestOmittedTurnBumpRegistry:
 
     def test_a_new_phase_inherits_the_bump(self):
         """The default is on, so forgetting the flag over-budgets rather than under."""
-        assert agent_types.PhaseSpec(Phase.GROUP).scales_with_omitted is True
+        spec = agent_types.PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        assert spec.scales_with_omitted is True
 
 
 class TestPhaseLogNames:
-    """Each phase's session log is named after the phase.
+    """Each review phase's session log is named after the phase.
 
     Adding a phase must not mean naming its log by hand, so these assert the
-    convention over the enum rather than a hand-written list. The exception
-    is the pinning test: it is what proves the convention renamed nothing.
+    convention over the review domain rather than a hand-written list. The
+    exception is the pinning test: it is what proves the convention renamed
+    nothing.
     """
 
     def test_preserves_current_filenames(self):
@@ -148,10 +235,10 @@ class TestPhaseLogNames:
             Phase.DISPROVE: "disprove.jsonl",
             Phase.FIX: "fix.jsonl",
         }
-        assert {p: p.log_filename for p in Phase} == expected
+        assert {p: p.log_filename for p in REVIEW_PHASES} == expected
 
     def test_every_phase_but_single_has_a_distinct_log(self):
-        names = [p.log_filename for p in Phase if p is not Phase.SINGLE]
+        names = [p.log_filename for p in REVIEW_PHASES if p is not Phase.SINGLE]
         assert all(names)
         assert len(set(names)) == len(names)
 
@@ -160,16 +247,16 @@ class TestPhaseLogNames:
         assert Phase.SINGLE.log_filename == ""
 
     def test_group_is_the_only_indexed_phase(self):
-        indexed = {p for p in Phase if "{}" in p.log_filename}
+        indexed = {p for p in REVIEW_PHASES if "{}" in p.log_filename}
         assert indexed == {Phase.GROUP}
 
 
 class TestPhaseOutputNames:
-    """Each phase's findings artifact is named after the phase.
+    """Each review phase's findings artifact is named after the phase.
 
-    Mirrors TestPhaseLogNames: assert the convention over the enum rather
-    than a hand-written list, with one pinning test proving the convention
-    renamed nothing.
+    Mirrors TestPhaseLogNames: assert the convention over the review domain
+    rather than a hand-written list, with one pinning test proving the
+    convention renamed nothing.
     """
 
     def test_preserves_current_filenames(self):
@@ -182,26 +269,26 @@ class TestPhaseOutputNames:
             Phase.DISPROVE: "disprove.md",
             Phase.FIX: "",
         }
-        assert {p: p.output_filename for p in Phase} == expected
+        assert {p: p.output_filename for p in REVIEW_PHASES} == expected
 
     def test_phases_that_write_the_review_file_name_no_artifact(self):
         # single and synthesis produce review.md; fix edits it in place.
-        empty = {p for p in Phase if not p.output_filename}
+        empty = {p for p in REVIEW_PHASES if not p.output_filename}
         assert empty == {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX}
 
     def test_every_artifact_name_is_distinct(self):
-        names = [p.output_filename for p in Phase if p.output_filename]
+        names = [p.output_filename for p in REVIEW_PHASES if p.output_filename]
         assert len(set(names)) == len(names)
 
     def test_group_is_the_only_indexed_phase(self):
-        indexed = {p for p in Phase if "{}" in p.output_filename}
+        indexed = {p for p in REVIEW_PHASES if "{}" in p.output_filename}
         assert indexed == {Phase.GROUP}
 
     def test_stem_is_shared_with_the_log(self):
         # The two properties differ only by extension. Sharing the stem is
         # what stops them drifting the way the constants drifted from the
         # logs — a phase renamed for one is renamed for both.
-        both = [p for p in Phase if p.log_filename and p.output_filename]
+        both = [p for p in REVIEW_PHASES if p.log_filename and p.output_filename]
         assert both
         for phase in both:
             assert phase.log_filename.removesuffix(".jsonl") == (

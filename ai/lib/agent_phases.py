@@ -33,7 +33,7 @@ from enum import StrEnum
 import workbench_config
 from agent_types import (
     ENV_PREFIX,
-    EFFORT_PRESETS, PHASES,
+    EFFORT_PRESETS, PHASES, REVIEW_PHASES,
     Effort, Phase, Thinking,
 )
 from workbench_config import WorkbenchConfig
@@ -131,6 +131,17 @@ def resolve_provider() -> str | None:
     return os.environ.get(PROVIDER_ENV)
 
 
+def phase_provider(config: WorkbenchConfig | None = None) -> str | None:
+    """The backend provider an invocation runs against: the env key, then config.
+
+    Not per-phase: a provider is where the models are served from, and a run
+    that reached half its phases on one deployment and half on another would be
+    unattributable. The phase argument other resolvers take is deliberately
+    absent so no caller can imply otherwise.
+    """
+    return resolve_provider() or _config(config).agent.provider
+
+
 # ── Config layers ────────────────────────────────────────────────────────────
 
 
@@ -171,26 +182,32 @@ def phase_model(
 
 
 def collect_phase_models(explicit: str | None) -> dict[str, list[Phase]]:
-    """Map each model the pipeline would use to the phases that requested it.
+    """Map each model the review pipeline would use to the phases requesting it.
 
     Callers use this to check every distinct model once up front and to name
     the env keys worth changing when one of them is unusable.
+
+    Scoped to the review phases: preflight fails the run when a model is
+    unreachable, and a review has no business refusing to start over the model
+    a CI fix pass would have used.
     """
     models: dict[str, list[Phase]] = {}
     cfg = workbench_config.load_config_or_default()
-    for phase in PHASES:
+    for phase in REVIEW_PHASES:
         models.setdefault(phase_model(phase, explicit, cfg), []).append(phase)
     return models
 
 
 def phase_thinking_default(
-    phase: Phase, effort: Effort, config: WorkbenchConfig | None = None,
+    phase: Phase, effort: Effort | None = None,
+    config: WorkbenchConfig | None = None,
 ) -> Thinking | None:
     """The thinking level below the env layers: config, effort preset, spec.
 
     A phase entry beats the section, and both beat the effort preset — a level
     written for one phase is more specific than one the preset flattens
-    everything to.
+    everything to. ``effort=None`` is a phase running outside a review, where
+    there is no preset to flatten anything and the spec stands under the config.
     """
     cfg = _config(config)
     override = cfg.agent.phases.get(phase)
@@ -198,12 +215,13 @@ def phase_thinking_default(
         return override.thinking
     if cfg.agent.thinking is not None:
         return cfg.agent.thinking
-    preset = EFFORT_PRESETS[effort].thinking
+    preset = EFFORT_PRESETS[effort].thinking if effort is not None else None
     return preset if preset is not None else PHASES[phase].thinking
 
 
 def phase_thinking(
-    phase: Phase, effort: Effort, config: WorkbenchConfig | None = None,
+    phase: Phase, effort: Effort | None = None,
+    config: WorkbenchConfig | None = None,
 ) -> str | None:
     """The thinking level a phase runs at, env layers included."""
     return resolve_thinking(
@@ -220,7 +238,7 @@ def resolve_effort(
     return _config(config).review.effort or Effort.MEDIUM
 
 
-# ── Turn budgets ─────────────────────────────────────────────────────────────
+# ── Turn and dollar budgets ──────────────────────────────────────────────────
 
 
 def omitted_turns(effort: Effort, omitted_files: int) -> int:
@@ -234,18 +252,82 @@ def omitted_turns(effort: Effort, omitted_files: int) -> int:
     return omitted_files * OMITTED_FILE_TURNS
 
 
-def phase_omitted_bump(phase: Phase, effort: Effort, omitted_files: int) -> int:
+def phase_omitted_bump(
+    phase: Phase, effort: Effort | None, omitted_files: int,
+) -> int:
     """The omitted-file bump this phase takes, zero when its spec opts out.
 
     Separate from ``phase_turns`` because a caller escalating past the registry
     default still owes the phase its bump — the retry ceiling is not a default,
     but whether the phase scales at all is still the spec's answer.
+
+    Zero without an effort too: the bump measures what a review's preflight had
+    to leave out of the prompt, and a phase running outside a review has no
+    preflight behind it.
     """
-    if not PHASES[phase].scales_with_omitted:
+    if effort is None or not PHASES[phase].scales_with_omitted:
         return 0
     return omitted_turns(effort, omitted_files)
 
 
-def phase_turns(phase: Phase, effort: Effort, omitted_files: int = 0) -> int:
-    """A phase's turn budget: its registry default plus the bump its spec opts into."""
-    return PHASES[phase].max_turns + phase_omitted_bump(phase, effort, omitted_files)
+def phase_turns(
+    phase: Phase, effort: Effort | None = None, omitted_files: int = 0,
+    *, items: int = 0,
+) -> int:
+    """A phase's turn budget: its registry default, scaled by the work it faces.
+
+    Two scalings, and no phase takes both. ``omitted_files`` is what a review's
+    preflight left out of the prompt, which a phase that reads branch source has
+    to open itself. ``items`` is the length of the checklist a fix pass is
+    handed: each item costs ``turns_per_item``, clamped between the phase's flat
+    default as a floor and ``turns_cap`` as the most one agent gets.
+    """
+    spec = PHASES[phase]
+    base = spec.max_turns
+    if spec.scaling.turns_per_item:
+        base = min(
+            max(base, items * spec.scaling.turns_per_item), spec.scaling.turns_cap,
+        )
+    return base + phase_omitted_bump(phase, effort, omitted_files)
+
+
+def phase_budget(
+    phase: Phase, effort: Effort | None = None, *, items: int = 0,
+) -> float | None:
+    """The dollar cap on one invocation of a phase.
+
+    ``max_budget=None`` in the spec defers to the effort preset's per-agent
+    budget, which is how every review phase is sized. A phase that pins its own
+    takes it flat, or scales it with ``items`` the way ``phase_turns`` does when
+    its spec names a per-item rate.
+    """
+    spec = PHASES[phase]
+    if spec.max_budget is None:
+        return EFFORT_PRESETS[effort].agent_budget if effort is not None else None
+    if not spec.scaling.budget_per_item:
+        return spec.max_budget
+    return min(
+        max(spec.max_budget, items * spec.scaling.budget_per_item),
+        spec.scaling.budget_cap,
+    )
+
+
+def phase_retry_turns(phase: Phase, original: int) -> int:
+    """Turns for a second attempt at a phase whose first came back empty.
+
+    Bumped above whatever the original pass was given and floored at the spec's
+    minimum, then capped by the retry ceiling rather than the first pass's cap:
+    clamping a retry to the budget that just ran out guarantees the same
+    failure, which is what made the bump dead precisely when it was warranted.
+    """
+    retry = PHASES[phase].retry
+    return min(max(retry.turns_min, original + retry.bump), retry.ceiling)
+
+
+def phase_chunk_size(phase: Phase) -> int:
+    """How many items one invocation of a phase may be handed at once.
+
+    Derived from the per-item rates and caps, so raising a cap or lowering a
+    rate widens the chunk rather than needing a second number kept in step.
+    """
+    return PHASES[phase].scaling.chunk_size

@@ -22,9 +22,9 @@ teardown() {
   common_teardown
 }
 
-@test "render_template: substitutes variables" {
+@test "agent_templates.render: substitutes variables" {
   result=$(_py '
-result = mod.render_template("single-agent.md",
+result = mod.agent_templates.render("single-agent.md",
     pr_number="42", repo="test/repo",
     pr_header="## PR metadata", reviews_section="## Reviews",
     env_section="## Env", issue_section="", prior_section="",
@@ -36,9 +36,9 @@ print(result)
   [[ "$result" == *"test/repo"* ]]
 }
 
-@test "render_template: safe_substitute leaves unknown vars" {
+@test "agent_templates.render: safe_substitute leaves unknown vars" {
   result=$(_py '
-result = mod.render_template("single-agent.md",
+result = mod.agent_templates.render("single-agent.md",
     pr_number="1", repo="r",
     pr_header="h", reviews_section="r",
     env_section="e", review_file="f",

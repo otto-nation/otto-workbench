@@ -48,7 +48,7 @@ import log
 import serde
 import timeouts
 import workbench_paths
-from agent_types import Phase
+from agent_types import REVIEW_PHASES, Phase
 from ai_usage import SessionUsage, parse_session_log
 from pr_domains import ReviewStatus, ReviewVerdict
 from pr_state import now_iso
@@ -401,8 +401,6 @@ TEMPLATE_FIX = "fix-findings.md"
 TEMPLATE_FIX_COMMENTS = "fix-comments.md"
 TEMPLATE_FIX_CI = "fix-ci.md"
 
-TEMPLATE_DIR_REL = Path("lib") / "review-templates"
-
 
 # ── Shared prompt blocks ─────────────────────────────────────────────────────
 #
@@ -509,15 +507,19 @@ def phase_artifacts(review_dir: Path) -> list[Path]:
     """Every phase artifact and session log present in *review_dir*.
 
     Both an artifact and a session log are named after the phase that wrote
-    them, so the set is derived rather than hand-copied — a phase added to the
-    enum is found here for free. review.md is the deliverable and names no
-    phase, so it is never matched.
+    them, so the set is derived rather than hand-copied — a review phase added
+    to the enum is found here for free. review.md is the deliverable and names
+    no phase, so it is never matched.
+
+    Only the review phases are swept: a phase belonging to another entry point
+    writes into that entry point's own tracking directory, and asking it for an
+    artifact name raises rather than minting one that would never match.
     """
     # Only GROUP's stem carries a "{}" placeholder (see Phase._stem); the
     # format call is a no-op for every other phase's plain filename.
     patterns = [
         name.format("*")
-        for p in Phase
+        for p in REVIEW_PHASES
         for name in (p.output_filename, p.log_filename)
         if name
     ]

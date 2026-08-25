@@ -5959,9 +5959,25 @@ class TestFixPassThrashGuard:
             tmp_path / "ignore" / "pr-comments" / "fix-session.jsonl")
 
     def test_invoke_passes_the_diagnosable_session_log(self, rt, tmp_path):
+        tracking = tmp_path / "tracking.md"
+        tracking.write_text("- [x] fixed one\n")
         with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
-            rt._invoke_fix_agent("PROMPT", tmp_path)
+            rt._guarded_fix_pass(
+                "PROMPT", tmp_path, None, tracking,
+                max_turns=10, max_budget=1.0, label="Fix pass",
+            )
         assert inv.call_args.args[0].session_log == rt._fix_session_log(tmp_path)
+
+    def test_the_pass_runs_under_the_comments_fix_phase(self, rt, tmp_path):
+        """The ledger and the overrides both key on the phase, so it is named."""
+        tracking = tmp_path / "tracking.md"
+        tracking.write_text("- [x] fixed one\n")
+        with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
+            rt._guarded_fix_pass(
+                "PROMPT", tmp_path, None, tracking,
+                max_turns=10, max_budget=1.0, label="Fix pass",
+            )
+        assert inv.call_args.args[0].task == rt.Phase.COMMENTS_FIX
 
     def test_pass_that_checks_nothing_off_is_retried_with_the_fix_hint(self, rt, tmp_path):
         write_thrash_log(Path(rt._fix_session_log(tmp_path)))
@@ -5969,8 +5985,8 @@ class TestFixPassThrashGuard:
         tracking.write_text("- [ ] fix the thing\n")
         prompts = []
 
-        with patch.object(rt, "_invoke_fix_agent",
-                          side_effect=lambda p, *a, **k: prompts.append(p) or 0):
+        with patch.object(rt.ai_backend, "invoke_fix",
+                          side_effect=lambda inv: prompts.append(inv.prompt) or 0):
             diagnosis = rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
                 max_turns=10, max_budget=1.0, label="Fix pass",
@@ -5985,7 +6001,7 @@ class TestFixPassThrashGuard:
         tracking = tmp_path / "tracking.md"
         tracking.write_text("- [x] fixed one\n- [ ] not the other\n")
 
-        with patch.object(rt, "_invoke_fix_agent", return_value=0) as inv:
+        with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
             diagnosis = rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
                 max_turns=10, max_budget=1.0, label="Fix pass",
@@ -6208,22 +6224,6 @@ class TestWorktreeGuard:
                                 rt._finish_deferred_work, self._ctx(), PRReport())
 
 
-class TestFixRetryBudget:
-    """A retry must outgrow the attempt it replaces, or it fails identically."""
-
-    def test_retry_above_the_first_pass_cap_gets_more_turns(self, rt):
-        assert rt._fix_retry_budget(rt.FIX_MAX_TURNS_CAP) > rt.FIX_MAX_TURNS_CAP
-
-    def test_retry_bump_is_applied(self, rt):
-        assert rt._fix_retry_budget(60) == 60 + rt.FIX_RETRY_TURNS_BUMP
-
-    def test_retry_is_capped_at_the_retry_ceiling(self, rt):
-        assert rt._fix_retry_budget(500) == rt.FIX_RETRY_MAX_TURNS_CAP
-
-    def test_small_budget_floors_at_the_minimum(self, rt):
-        assert rt._fix_retry_budget(5) == rt.FIX_RETRY_TURNS_MIN
-
-
 class TestFixChunks:
     def test_splits_into_chunks_of_at_most_size(self, rt):
         chunks = rt._fix_chunks(list(range(41)), 10)
@@ -6244,35 +6244,24 @@ class TestFixChunks:
         assert [x for c in rt._fix_chunks(items, 10) for x in c] == items
 
 
-class TestFixChunkSize:
-    """A chunk must fit both caps, or the pass starves on whichever binds first."""
-
-    def test_chunk_fits_the_turn_cap(self, rt):
-        assert rt.FIX_CHUNK_SIZE * rt.FIX_TURNS_PER_ITEM <= rt.FIX_MAX_TURNS_CAP
-
-    def test_chunk_fits_the_budget_cap(self, rt):
-        assert rt.FIX_CHUNK_SIZE * rt.FIX_BUDGET_PER_ITEM <= rt.FIX_MAX_BUDGET_CAP
-
-    def test_a_full_chunk_is_not_capped_down(self, rt):
-        assert rt._fix_turn_budget(rt.FIX_CHUNK_SIZE) == (
-            rt.FIX_CHUNK_SIZE * rt.FIX_TURNS_PER_ITEM
-        )
-
-
 class TestFixBatches:
     """Threads and items share one budget, so they share one chunk."""
+
+    def _chunk_size(self, rt):
+        return rt.agent_phases.phase_chunk_size(rt.Phase.COMMENTS_FIX)
 
     def test_a_batch_never_exceeds_the_chunk_size(self, rt):
         batches = rt._fix_batches(list(range(30)), list(range(30, 55)))
         assert all(
-            len(threads) + len(items) <= rt.FIX_CHUNK_SIZE
+            len(threads) + len(items) <= self._chunk_size(rt)
             for threads, items in batches
         )
 
     def test_mixed_work_is_not_chunked_kind_by_kind(self, rt):
         """Chunking each kind separately would put 2x the cap in one pass."""
-        batches = rt._fix_batches(list(range(rt.FIX_CHUNK_SIZE)),
-                                  list(range(100, 100 + rt.FIX_CHUNK_SIZE)))
+        size = self._chunk_size(rt)
+        batches = rt._fix_batches(list(range(size)),
+                                  list(range(100, 100 + size)))
         assert len(batches) == 2
 
     def test_nothing_is_lost_or_reordered(self, rt):
@@ -6296,19 +6285,20 @@ class TestFixPassRetryHeadroom:
         }) + "\n")
 
     def test_retry_of_a_capped_pass_gets_more_turns(self, rt, tmp_path):
-        self._max_turns_log(rt._fix_session_log(tmp_path), rt.FIX_MAX_TURNS_CAP)
+        cap = rt.PHASES[rt.Phase.COMMENTS_FIX].scaling.turns_cap
+        self._max_turns_log(rt._fix_session_log(tmp_path), cap)
         tracking = tmp_path / "tracking.md"
         tracking.write_text("- [ ] fix the thing\n")
         budgets = []
 
-        with patch.object(rt, "_invoke_fix_agent",
-                          side_effect=lambda p, *a, **k: budgets.append(k["max_turns"]) or 0):
+        with patch.object(rt.ai_backend, "invoke_fix",
+                          side_effect=lambda inv: budgets.append(inv.max_turns) or 0):
             rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
-                max_turns=rt.FIX_MAX_TURNS_CAP, max_budget=1.0, label="Fix pass",
+                max_turns=cap, max_budget=1.0, label="Fix pass",
             )
 
-        assert budgets == [rt.FIX_MAX_TURNS_CAP, rt.FIX_MAX_TURNS_CAP * 2]
+        assert budgets == [cap, cap * 2]
 
 
 class TestRunFixBatch:

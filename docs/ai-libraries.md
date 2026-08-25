@@ -14,6 +14,21 @@ Each section below is the module's own docstring, rendered from `ai/lib/` by [`g
 
 The orchestration of a review run: what it checks before spending anything, how the work is split into phases, what each agent is asked, and where the run's artifacts live.
 
+### agent_invoke.py
+
+The one owner of an agent invocation: resolve the phase, run it, guard it.
+
+``agent_types`` says what a phase is, ``agent_phases`` says what it resolves to
+here, and ``ai_backend`` knows how to talk to a CLI. This module is what sits
+between them: given a phase and a prompt, it builds the invocation from the
+phase's resolved model, thinking level and provider, runs it, and hands the
+result to ``agent_retry``'s guard with the phase's own retry ceiling.
+
+Call sites used to do that assembly themselves, and each one did it slightly
+differently — a hardcoded model here, a missing retry ceiling there, a usage
+ledger label spelled a third way. Reaching ``ai_backend`` directly is what let
+those differ; going through here is what stops them.
+
 ### agent_phases.py
 
 What a phase resolves to here: the spec, the config file, the environment.
@@ -56,6 +71,20 @@ Two shapes are supported, matching the two ways the `pr` scripts call an agent:
                         tracking checklist.  Diagnosed from its session log.
   retry_blank_response — a stateless prompt whose answer must parse.  There is
                         no session log, so the response itself is the signal.
+
+### agent_templates.py
+
+Where prompt templates live, and the one way to render one.
+
+Every agent invocation in the workbench is prompted from a file in the same
+directory, and each caller used to find and render it for itself: the review
+pipeline through ``review_prompt``, the comments fix pass and the CI fix pass
+through a ``TEMPLATE_DIR`` and a ``Template(...).safe_substitute`` of their own.
+Three spellings of one path is three chances for a moved template to break one
+caller and not the others.
+
+Stdlib only, like ``agent_types`` and for the same reason: a prompt is the last
+thing that should need the PR state machine to render.
 
 ### agent_types.py
 

@@ -51,7 +51,10 @@ from review_retry import (
 from review_scout import format_leads_block, parse_scout_output
 from review_state import _update_group_done, _update_group_failed
 
-RETRY_MAX_TURNS_GROUP = agent_retry.RETRY_MAX_TURNS
+# The group phase's own retry ceiling, off its registry entry. Synthesis borrows
+# it as an upper bound for the same reason it always has: both are review phases
+# sized against the same 15-turn default.
+RETRY_MAX_TURNS_GROUP = PHASES[Phase.GROUP].retry.ceiling
 
 
 # ── Phase turn budgets ───────────────────────────────────────────────────────
@@ -104,8 +107,8 @@ class PhaseRunner:
         self.session_log = phase_log_path(job.review_file, phase, index) or job.session_log
         self.model = agent_phases.phase_model(phase, job.model, cfg)
         self.thinking = agent_phases.phase_thinking(phase, job.effort, cfg)
-        self.provider = agent_phases.resolve_provider() or cfg.agent.provider
-        self.budget = preset.agent_budget
+        self.provider = agent_phases.phase_provider(cfg)
+        self.budget = agent_phases.phase_budget(phase, job.effort)
         self.agent = None if spec.edits else (
             spec.agent if spec.agent is not None else preset.agent
         )

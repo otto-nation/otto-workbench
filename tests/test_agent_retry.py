@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from conftest import write_thrash_log
 import agent_retry
+from agent_types import PHASES, DEFAULT_RETRY_CEILING, Phase
 import review_phases
 import review_retry
 from review_common import Diagnosis, DiagnosisKind
@@ -45,8 +46,8 @@ class TestPipelineDelegatesToSharedGuard:
         assert review_retry._RETRY_HINT is agent_retry.RETRY_HINT
         assert review_retry._FIX_RETRY_HINT is agent_retry.FIX_RETRY_HINT
 
-    def test_group_retry_ceiling_comes_from_the_shared_cap(self):
-        assert review_phases.RETRY_MAX_TURNS_GROUP == agent_retry.RETRY_MAX_TURNS
+    def test_group_retry_ceiling_comes_from_the_group_spec(self):
+        assert review_phases.RETRY_MAX_TURNS_GROUP == PHASES[Phase.GROUP].retry.ceiling
 
 
 class TestRetryUnproductive:
@@ -218,7 +219,7 @@ class TestRetryBlankResponse:
 # without a row here fails `test_every_kind_is_covered` — the guard exists
 # because a kind that nobody classified silently defaults to "give up".
 _RETRY_POLICY = {
-    DiagnosisKind.MAX_TURNS: (True, agent_retry.RETRY_HINT, agent_retry.RETRY_MAX_TURNS),
+    DiagnosisKind.MAX_TURNS: (True, agent_retry.RETRY_HINT, DEFAULT_RETRY_CEILING),
     DiagnosisKind.COMPLETED: (False, "", _TURNS),
     DiagnosisKind.AGENT_ERROR: (False, "", _TURNS),
     DiagnosisKind.TRANSIENT: (True, "", _TURNS),
@@ -255,7 +256,7 @@ class TestSharedRetryability:
 
     def test_turn_budget_is_never_lowered_below_what_the_caller_asked_for(self):
         """A phase already scaled above the shared ceiling keeps its budget."""
-        generous = agent_retry.RETRY_MAX_TURNS + 10
+        generous = DEFAULT_RETRY_CEILING + 10
         assert agent_retry.turns_for(_MAX_TURNS, generous) == generous
 
     # hint_for priority order: no-write > max-turns > nothing.
@@ -272,7 +273,7 @@ class TestSharedRetryability:
         earns a bigger retry when the run also never wrote anything.
         """
         both = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS, no_write_tool=True)
-        assert agent_retry.turns_for(both, _TURNS) == agent_retry.RETRY_MAX_TURNS
+        assert agent_retry.turns_for(both, _TURNS) == DEFAULT_RETRY_CEILING
 
     def test_max_turns_alone_still_gets_the_max_turns_hint(self):
         """The priority above must not have swallowed the less specific case."""

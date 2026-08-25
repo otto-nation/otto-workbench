@@ -23,13 +23,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from string import Template
 from typing import TypedDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
+import agent_invoke
+import agent_phases
 import agent_retry
-import ai_backend
+import agent_templates
 import ci_failures as ci
 import gh_client
 import land
@@ -41,6 +42,7 @@ import run_lock
 import review_common
 import log
 import timeouts
+from agent_types import Phase
 from pr_fix import CommitStatus
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
@@ -48,13 +50,7 @@ from trail import Trail, add_trail_args
 SCRIPT = Path(__file__).name
 
 
-# ── Fix phase constants ─────────────────────────────────────────────────────
-
 _SKIP_KINDS = frozenset(("infra", "flaky"))
-FIX_MAX_TURNS = 20
-FIX_MAX_BUDGET = 3.0
-FIX_MODEL = "sonnet"
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "lib" / "review-templates"
 
 
 _SKIP_CONCLUSIONS = frozenset(("skipped", "cancelled"))
@@ -608,8 +604,8 @@ def _render_ci_fix_template(
     tracking_file: str, wt_path: str, max_turns: int,
 ) -> str:
     """Render the fix-ci.md template."""
-    tmpl = Template((TEMPLATE_DIR / review_common.TEMPLATE_FIX_CI).read_text())
-    return tmpl.safe_substitute(
+    return agent_templates.render(
+        review_common.TEMPLATE_FIX_CI,
         branch_name=branch,
         repo=repo,
         failures_content=failures_content,
@@ -718,44 +714,32 @@ def _run_fix(trail, report: dict, ctx) -> int:
     trail.info("fix_start", f"{fixable_count} fixable failure(s)")
     log.info(f"Fixing {fixable_count} CI failure(s)...")
 
+    max_turns = agent_phases.phase_turns(Phase.CI_FIX)
     prompt = _render_ci_fix_template(
         branch=ctx.branch,
         repo=ctx.repo,
         failures_content=tracking_file.read_text(),
         tracking_file=str(tracking_file),
         wt_path=str(toplevel),
-        max_turns=FIX_MAX_TURNS,
+        max_turns=max_turns,
     )
 
     session_log = str(tracking_dir / "fix-session.jsonl")
-    rc = 0
-
-    def invoke(text: str, turns: int) -> int:
-        nonlocal rc
-        rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
-            prompt=text,
-            cwd=str(toplevel),
-            session_log=session_log,
-            add_dirs=[str(toplevel)],
-            max_turns=turns,
-            max_budget=FIX_MAX_BUDGET,
-            model=FIX_MODEL,
-            task="ci-fix",
-            repo=ctx.repo,
-            pr=str(ctx.pr_number) if ctx.pr_number else None,
-        ))
-        return rc
 
     # An agent that finishes having checked nothing off was thrashing; the
     # shared guard gives it one more attempt with a hint naming the mechanism.
-    agent_retry.run_guarded(
-        invoke, prompt, session_log,
-        label="CI fix pass", max_turns=FIX_MAX_TURNS,
+    rc = agent_invoke.run_fix_pass(
+        Phase.CI_FIX, prompt,
+        cwd=toplevel,
+        session_log=session_log,
         produced=lambda: _count_checked(tracking_file) > 0,
+        max_turns=max_turns,
         hint_select=lambda diagnosis: (
             agent_retry.hint_for(diagnosis) or agent_retry.CI_FIX_RETRY_HINT
         ),
-    )
+        repo=ctx.repo,
+        pr=str(ctx.pr_number) if ctx.pr_number else None,
+    ).exit_code
 
     fixed = _count_checked(tracking_file)
     skipped = _count_unchecked(tracking_file)

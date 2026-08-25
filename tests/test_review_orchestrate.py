@@ -1566,13 +1566,24 @@ class TestPhaseModel:
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         models = ro.collect_phase_models("")
         assert models["claude-haiku-4-5"] == ["scout"]
-        assert set(models["claude-sonnet-5"]) == set(ro.PHASES) - {"scout"}
+        assert set(models["claude-sonnet-5"]) == set(ro.REVIEW_PHASES) - {"scout"}
 
-    def test_collect_covers_every_phase(self, ro, monkeypatch):
+    def test_collect_covers_every_review_phase(self, ro, monkeypatch):
         self._clean_env(ro, monkeypatch)
         models = ro.collect_phase_models("")
         phases = [p for group in models.values() for p in group]
-        assert sorted(phases) == sorted(ro.PHASES)
+        assert sorted(phases) == sorted(ro.REVIEW_PHASES)
+
+    def test_a_phase_from_another_entry_point_is_not_preflighted(self, ro, monkeypatch):
+        """Preflight resolves the models a *review* is about to run.
+
+        A fix pass belonging to `pr comments` or `pr ci` never runs here, so a
+        bad model pinned on it must not fail a review before it starts.
+        """
+        self._clean_env(ro, monkeypatch)
+        models = ro.collect_phase_models("")
+        named = {p for group in models.values() for p in group}
+        assert not named & {ro.Phase.COMMENTS_FIX, ro.Phase.CI_FIX}
 
 
 # ── 19c. enum_arg ───────────────────────────────────────────────────────────

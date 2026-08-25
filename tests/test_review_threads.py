@@ -2712,9 +2712,11 @@ def _gated(*_args, **_kwargs):
 class TestResolutionsReachThePersistedTally:
     """The closeout resolves threads after the counts were written.
 
-    `pr status` reads `comments.by_state`, and that snapshot is taken at fetch
-    time — before the drain runs. Without the delta a fully closed-out PR keeps
-    reporting the threads it just resolved as open.
+    `pr status` reads `comments.by_state`, and that snapshot is saved at fetch
+    time — before the fix pass or the drain runs. Without the delta a fully
+    closed-out PR keeps reporting the threads it just resolved as open. This
+    class covers the drain; `TestFixPassResolutionsReachTheTally` covers the
+    fix pass, which resolves through the same helper on the commoner path.
     """
 
     def _drain(self, rt, by_state, *, prior=ThreadState.NEW, count=2):
@@ -2765,6 +2767,49 @@ class TestResolutionsReachThePersistedTally:
         comments = self._drain(rt, {"new": 1})
         assert comments.by_state[ThreadState.NEW] == 0
         assert comments.by_state[ThreadState.RESOLVED] == 2
+
+
+class TestFixPassResolutionsReachTheTally:
+    """The fix pass resolves after the counts were saved, same as the drain.
+
+    This is the commoner path of the two: a pass that fixed, pushed, replied and
+    resolved in one run leaves `replies_pending` false, so the drain returns
+    early and never sees those threads. `_persist_fix_state` is where the pass
+    writes its own results, and so where the delta has to land.
+    """
+
+    def _persist(self, rt, by_state, resolved):
+        ctx = make_ctx()
+        state = _make_state(FixSummary())
+        state.comments.by_state = dict(by_state)
+        with patch("pr_state.load_or_init", return_value=state), \
+             patch("pr_state.save_state") as save:
+            rt._persist_fix_state(FixSummary(), Path("/wt"), ctx, None,
+                                  resolved=resolved)
+        assert save.called, "the pass must still save what it persisted"
+        return state.comments
+
+    def test_the_pass_moves_what_it_resolved(self, rt):
+        comments = self._persist(
+            rt, {"new": 2, "addressed": 1},
+            [ThreadState.NEW, ThreadState.ADDRESSED],
+        )
+        assert comments.by_state[ThreadState.NEW] == 1
+        assert comments.by_state[ThreadState.ADDRESSED] == 0
+        assert comments.by_state[ThreadState.RESOLVED] == 2
+
+    def test_a_pass_that_resolved_nothing_leaves_the_tally_alone(self, rt):
+        """The default, and the shape of every caller that predates the delta."""
+        assert self._persist(rt, {"new": 2}, []).by_state == {"new": 2}
+
+    def test_omitting_the_argument_is_the_same_as_none_resolved(self, rt):
+        ctx = make_ctx()
+        state = _make_state(FixSummary())
+        state.comments.by_state = {"new": 2}
+        with patch("pr_state.load_or_init", return_value=state), \
+             patch("pr_state.save_state"):
+            rt._persist_fix_state(FixSummary(), Path("/wt"), ctx, None)
+        assert state.comments.by_state == {"new": 2}
 
 
 class TestTriageQueueIsRecorded:
@@ -4172,12 +4217,12 @@ class TestResolveFixedThreads:
     def test_resolves_unresolved_threads(self, rt):
         fixed = [CommentItem(id="t1"), CommentItem(id="t2")]
         threads_by_id = {
-            "t1": ReportThread(id="t1", is_resolved=False),
-            "t2": ReportThread(id="t2", is_resolved=False),
+            "t1": ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
+            "t2": ReportThread(id="t2", state=ThreadState.ADDRESSED, is_resolved=False),
         }
         with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
             resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
-        assert resolved == ["t1", "t2"]
+        assert resolved == [ThreadState.NEW, ThreadState.ADDRESSED]
         assert mock_resolve.call_count == 2
 
     def test_skips_already_resolved(self, rt):
@@ -4202,19 +4247,19 @@ class TestResolveFixedThreads:
         mock_resolve.assert_not_called()
 
     def test_reports_only_successful_resolves(self, rt):
-        """The ids feed the persisted tally, so a refused mutation must not appear.
+        """The buckets feed the tally, so a refused mutation must not appear.
 
-        A drafted run refuses every one of them, which is how the closeout keeps
-        a run that published nothing from moving the counts.
+        A drafted run refuses every one of them, which is how a run that
+        published nothing is kept from moving the counts.
         """
         fixed = [CommentItem(id="t1"), CommentItem(id="t2")]
         threads_by_id = {
-            "t1": ReportThread(id="t1"),
-            "t2": ReportThread(id="t2"),
+            "t1": ReportThread(id="t1", state=ThreadState.NEW),
+            "t2": ReportThread(id="t2", state=ThreadState.ADDRESSED),
         }
         with patch("pr_comments.resolve_thread", side_effect=[True, False]):
             resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
-        assert resolved == ["t1"]
+        assert resolved == [ThreadState.NEW]
 
 
 # ── Blocking reviewers ────────────────────────────────────────────────────────

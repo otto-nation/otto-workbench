@@ -2280,15 +2280,18 @@ def _deliver_pr_body(wt_path: Path, repo: str, pr_number: int) -> bool:
 def _resolve_fixed_threads(
     fixed: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
-) -> int:
-    """Resolve fixed threads on GitHub. Returns count resolved.
+) -> list[str]:
+    """Resolve fixed threads on GitHub. Returns the ids resolved.
 
     Entries absent from threads_by_id are silently skipped — they are either
     comment items with synthetic IDs (ic-…/rb-…) that are not real review
     threads, or items added by callers for a different purpose.  Do not add
     comment items to `fixed` expecting them to be resolved here.
+
+    The ids rather than a count, because the closeout has to tell the persisted
+    thread tally which buckets these left — see `_record_resolutions`.
     """
-    resolved = 0
+    resolved: list[str] = []
     for entry in fixed:
         thread = threads_by_id.get(entry.id)
         if thread is None:
@@ -2296,10 +2299,41 @@ def _resolve_fixed_threads(
         if thread.is_resolved:
             continue
         if pc.resolve_thread(entry.id):
-            resolved += 1
+            resolved.append(entry.id)
     if resolved:
-        log.info(f"Resolved {resolved} fixed thread(s)")
+        log.info(f"Resolved {len(resolved)} fixed thread(s)")
     return resolved
+
+
+def _record_resolutions(
+    state: pr_state.PRState,
+    resolved_ids: list[str],
+    threads_by_id: dict[str, ReportThread],
+) -> None:
+    """Move threads the closeout just resolved into the persisted tally.
+
+    The comment counts are written from a snapshot taken at fetch time, before
+    the closeout runs. Every thread `--finish --post` resolves would otherwise
+    stay filed under whichever bucket it arrived in, so `pr status` reports a
+    closed-out PR as still holding open threads. Applied as a delta rather than
+    re-fetched: the ids and their prior buckets are both already in hand, and a
+    second round trip could only disagree with what we just wrote.
+    """
+    by_state = state.comments.by_state
+    moved = 0
+    for tid in resolved_ids:
+        # Present by construction: _resolve_fixed_threads only returns ids it
+        # found in threads_by_id, and it skips the already-resolved.
+        prior = threads_by_id[tid].state
+        if prior == ThreadState.RESOLVED:
+            continue
+        if by_state.get(prior, 0) > 0:
+            by_state[prior] -= 1
+        moved += 1
+    if not moved:
+        return
+    by_state[ThreadState.RESOLVED] = by_state.get(ThreadState.RESOLVED, 0) + moved
+    state.comments.updated_at = pr_state.now_iso()
 
 
 def _build_deferred_issue_body(
@@ -3746,6 +3780,9 @@ def _post_pending_fix_replies(
     before any fix work runs, so a drafted pass renders them and then drops
     them — and the triage-only pass, where nothing was fixable, is exactly the
     shape that leaves no fixed entry to carry them back.
+
+    Whatever it resolves it also records against the persisted thread tally,
+    which was written from a snapshot taken before this phase ran.
     """
     fix = state.fix
     if not _commit_unpushed(fix.commit_status) and not fix.replies_pending:
@@ -3763,6 +3800,7 @@ def _post_pending_fix_replies(
         log.info("Push still pending — skipping deferred replies")
         return
 
+    resolved_ids: list[str] = []
     FA = pr_comments_fix.ThreadAction
 
     def bucket(action: str) -> list[CommentItem]:
@@ -3792,14 +3830,14 @@ def _post_pending_fix_replies(
             fixed, threads_by_id, repo, pr_number,
             _reconciled_commit(fix, fix.commit_status, wt_path), wt_path,
         )
-        _resolve_fixed_threads(fixed, threads_by_id)
+        resolved_ids += _resolve_fixed_threads(fixed, threads_by_id)
 
     addressed = bucket(FA.ALREADY_ADDRESSED)
     if addressed:
         fix.replies_posted += _post_already_addressed_replies(
             addressed, threads_by_id, repo, pr_number, wt_path,
         )
-        _resolve_fixed_threads(addressed, threads_by_id)
+        resolved_ids += _resolve_fixed_threads(addressed, threads_by_id)
 
     # Not resolved, unlike the other two: telling a reviewer their premise does
     # not hold is the reply most likely to be argued with, so the thread stays
@@ -3809,6 +3847,8 @@ def _post_pending_fix_replies(
         fix.replies_posted += _post_dismissed_replies(
             dismissed, threads_by_id, repo, pr_number, wt_path,
         )
+
+    _record_resolutions(state, resolved_ids, threads_by_id)
 
     # A draft delivered nothing, so the queue has to survive for the next run.
     if publishing.enabled():

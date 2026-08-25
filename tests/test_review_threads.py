@@ -2697,6 +2697,76 @@ class TestTriageOnlyPassQueue:
         mock_reply.assert_not_called()
 
 
+def _gated(*_args, **_kwargs):
+    """Stand in for a GitHub write, reporting what the real one would.
+
+    `pr_comments.post_thread_reply` and `resolve_thread` both refuse and return
+    False when the gate is shut. A mock hardwired to True would report a drafted
+    run as having published, which is the exact confusion these tests exist to
+    catch.
+    """
+    import publishing
+    return publishing.enabled()
+
+
+class TestResolutionsReachThePersistedTally:
+    """The closeout resolves threads after the counts were written.
+
+    `pr status` reads `comments.by_state`, and that snapshot is taken at fetch
+    time — before the drain runs. Without the delta a fully closed-out PR keeps
+    reporting the threads it just resolved as open.
+    """
+
+    def _drain(self, rt, by_state, *, prior=ThreadState.NEW, count=2):
+        ids = [f"t{n}" for n in range(1, count + 1)]
+        fix = FixSummary(
+            threads=[
+                ThreadOutcome(id=tid, summary="s", file="x.py", line=1,
+                              action=ThreadAction.FIXED)
+                for tid in ids
+            ],
+            commit_sha="abc1234", commit_status="pushed", replies_pending=True,
+        )
+        threads_by_id = {
+            tid: ReportThread(id=tid, state=prior, is_resolved=False,
+                              comments=[{"databaseId": 100 + n}])
+            for n, tid in enumerate(ids)
+        }
+        state = _make_state(fix)
+        state.comments.by_state = dict(by_state)
+        with patch.object(rt, "_is_pushed", return_value=True), \
+             patch("pr_comments.post_thread_reply", side_effect=_gated), \
+             patch("pr_comments.resolve_thread", side_effect=_gated):
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        return state.comments
+
+    def test_resolved_threads_leave_their_prior_bucket(self, rt, publishing_on):
+        comments = self._drain(rt, {"new": 3, "resolved": 1})
+        assert comments.by_state[ThreadState.NEW] == 1
+        assert comments.by_state[ThreadState.RESOLVED] == 3
+
+    def test_the_first_resolution_opens_the_bucket(self, rt, publishing_on):
+        """A PR with nothing resolved yet has no `resolved` key to increment."""
+        comments = self._drain(rt, {"addressed": 2}, prior=ThreadState.ADDRESSED)
+        assert comments.by_state[ThreadState.RESOLVED] == 2
+        assert comments.by_state[ThreadState.ADDRESSED] == 0
+
+    def test_a_draft_moves_nothing(self, rt):
+        """Nothing was resolved on GitHub, so the tally must not claim it was."""
+        comments = self._drain(rt, {"new": 3, "resolved": 1})
+        assert comments.by_state == {"new": 3, "resolved": 1}
+
+    def test_the_tally_is_stamped_only_when_it_moves(self, rt, publishing_on):
+        assert self._drain(rt, {"new": 2}).updated_at
+        assert not self._drain(rt, {"new": 2}, count=0).updated_at
+
+    def test_counts_never_go_negative(self, rt, publishing_on):
+        """A bucket the snapshot under-counts must not wrap past zero."""
+        comments = self._drain(rt, {"new": 1})
+        assert comments.by_state[ThreadState.NEW] == 0
+        assert comments.by_state[ThreadState.RESOLVED] == 2
+
+
 class TestTriageQueueIsRecorded:
     """The flag the drain turns on: a drafted triage owes its replies."""
 
@@ -4106,16 +4176,16 @@ class TestResolveFixedThreads:
             "t2": ReportThread(id="t2", is_resolved=False),
         }
         with patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
-            count = rt._resolve_fixed_threads(fixed, threads_by_id)
-        assert count == 2
+            resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
+        assert resolved == ["t1", "t2"]
         assert mock_resolve.call_count == 2
 
     def test_skips_already_resolved(self, rt):
         fixed = [CommentItem(id="t1")]
         threads_by_id = {"t1": ReportThread(id="t1", is_resolved=True)}
         with patch("pr_comments.resolve_thread") as mock_resolve:
-            count = rt._resolve_fixed_threads(fixed, threads_by_id)
-        assert count == 0
+            resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
+        assert resolved == []
         mock_resolve.assert_not_called()
 
     def test_skips_an_entry_absent_from_threads_by_id(self, rt):
@@ -4127,19 +4197,24 @@ class TestResolveFixedThreads:
         """
         fixed = [CommentItem(id="ic-123")]
         with patch("pr_comments.resolve_thread") as mock_resolve:
-            count = rt._resolve_fixed_threads(fixed, {})
-        assert count == 0
+            resolved = rt._resolve_fixed_threads(fixed, {})
+        assert resolved == []
         mock_resolve.assert_not_called()
 
-    def test_counts_only_successful_resolves(self, rt):
+    def test_reports_only_successful_resolves(self, rt):
+        """The ids feed the persisted tally, so a refused mutation must not appear.
+
+        A drafted run refuses every one of them, which is how the closeout keeps
+        a run that published nothing from moving the counts.
+        """
         fixed = [CommentItem(id="t1"), CommentItem(id="t2")]
         threads_by_id = {
             "t1": ReportThread(id="t1"),
             "t2": ReportThread(id="t2"),
         }
         with patch("pr_comments.resolve_thread", side_effect=[True, False]):
-            count = rt._resolve_fixed_threads(fixed, threads_by_id)
-        assert count == 1
+            resolved = rt._resolve_fixed_threads(fixed, threads_by_id)
+        assert resolved == ["t1"]
 
 
 # ── Blocking reviewers ────────────────────────────────────────────────────────

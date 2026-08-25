@@ -2283,15 +2283,19 @@ def _deliver_pr_body(wt_path: Path, repo: str, pr_number: int) -> bool:
 def _resolve_fixed_threads(
     fixed: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
-) -> int:
-    """Resolve fixed threads on GitHub. Returns count resolved.
+) -> list[ThreadState]:
+    """Resolve fixed threads on GitHub. Returns the bucket each one came from.
 
     Entries absent from threads_by_id are silently skipped — they are either
     comment items with synthetic IDs (ic-…/rb-…) that are not real review
     threads, or items added by callers for a different purpose.  Do not add
     comment items to `fixed` expecting them to be resolved here.
+
+    The prior buckets rather than a count, because every caller resolves threads
+    after the persisted tally was written and has to tell it which buckets these
+    left — see `_record_resolutions`.
     """
-    resolved = 0
+    priors: list[ThreadState] = []
     for entry in fixed:
         thread = threads_by_id.get(entry.id)
         if thread is None:
@@ -2299,10 +2303,52 @@ def _resolve_fixed_threads(
         if thread.is_resolved:
             continue
         if pc.resolve_thread(entry.id):
-            resolved += 1
-    if resolved:
-        log.info(f"Resolved {resolved} fixed thread(s)")
-    return resolved
+            # Written back so a second caller over the same report skips it. A
+            # combined --fix --finish run resolves the already-addressed bucket
+            # in the fix pass and drains it again in the closeout, off the same
+            # thread objects; without this the guard above never fires and the
+            # bucket is counted out of the tally twice.
+            thread.is_resolved = True
+            priors.append(thread.state)
+    if priors:
+        log.info(f"Resolved {len(priors)} fixed thread(s)")
+    return priors
+
+
+def _record_resolutions(
+    state: pr_state.PRState,
+    priors: list[ThreadState],
+) -> None:
+    """Move threads just resolved on GitHub into the persisted tally.
+
+    The comment counts are written from a snapshot taken at fetch time, before
+    either the fix pass or the closeout resolves anything. Every thread they
+    settle would otherwise stay filed under whichever bucket it arrived in, so
+    `pr status` reports a drained PR as still holding open threads. Applied as a
+    delta rather than re-fetched: the buckets are already in hand, and a second
+    round trip could only disagree with what we just wrote.
+    """
+    by_state = state.comments.by_state
+    moved = 0
+    for prior in priors:
+        if prior == ThreadState.RESOLVED:
+            continue
+        # Clamped rather than allowed to go negative: a count below zero would
+        # be read as a real tally by everything downstream, where a floor is at
+        # worst an undercount. It means the snapshot and the threads we resolved
+        # disagree, so say so instead of absorbing it.
+        if by_state.get(prior, 0) > 0:
+            by_state[prior] -= 1
+        else:
+            log.warn(
+                f"Thread tally has no {prior} left to move — "
+                "counts were snapshotted against a different thread set"
+            )
+        moved += 1
+    if not moved:
+        return
+    by_state[ThreadState.RESOLVED] = by_state.get(ThreadState.RESOLVED, 0) + moved
+    state.comments.updated_at = pr_state.now_iso()
 
 
 def _build_deferred_issue_body(
@@ -3749,6 +3795,9 @@ def _post_pending_fix_replies(
     before any fix work runs, so a drafted pass renders them and then drops
     them — and the triage-only pass, where nothing was fixable, is exactly the
     shape that leaves no fixed entry to carry them back.
+
+    Whatever it resolves it also records against the persisted thread tally,
+    which was written from a snapshot taken before this phase ran.
     """
     fix = state.fix
     if not _commit_unpushed(fix.commit_status) and not fix.replies_pending:
@@ -3766,6 +3815,7 @@ def _post_pending_fix_replies(
         log.info("Push still pending — skipping deferred replies")
         return
 
+    resolved: list[ThreadState] = []
     FA = pr_comments_fix.ThreadAction
 
     def bucket(action: str) -> list[CommentItem]:
@@ -3795,14 +3845,14 @@ def _post_pending_fix_replies(
             fixed, threads_by_id, repo, pr_number,
             _reconciled_commit(fix, fix.commit_status, wt_path), wt_path,
         )
-        _resolve_fixed_threads(fixed, threads_by_id)
+        resolved += _resolve_fixed_threads(fixed, threads_by_id)
 
     addressed = bucket(FA.ALREADY_ADDRESSED)
     if addressed:
         fix.replies_posted += _post_already_addressed_replies(
             addressed, threads_by_id, repo, pr_number, wt_path,
         )
-        _resolve_fixed_threads(addressed, threads_by_id)
+        resolved += _resolve_fixed_threads(addressed, threads_by_id)
 
     # Not resolved, unlike the other two: telling a reviewer their premise does
     # not hold is the reply most likely to be argued with, so the thread stays
@@ -3812,6 +3862,8 @@ def _post_pending_fix_replies(
         fix.replies_posted += _post_dismissed_replies(
             dismissed, threads_by_id, repo, pr_number, wt_path,
         )
+
+    _record_resolutions(state, resolved)
 
     # A draft delivered nothing, so the queue has to survive for the next run.
     if publishing.enabled():
@@ -4251,8 +4303,14 @@ def _persist_fix_state(
     wt_path: Path,
     ctx: pr_context.ResolvedContext,
     trail: Trail | None,
+    resolved: list[ThreadState] | None = None,
 ) -> None:
-    """Save fix pass results to PR state."""
+    """Save fix pass results to PR state.
+
+    `resolved` names the bucket each thread this pass resolved on GitHub came
+    from. The comment counts were snapshotted and saved before the pass ran, so
+    they only account for those resolutions if the delta is applied here.
+    """
     try:
         st = pr_state.load_or_init(
             target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
@@ -4260,6 +4318,7 @@ def _persist_fix_state(
             worktree_root=str(wt_path),
         )
         pr_state.apply(st, fix_summary)
+        _record_resolutions(st, resolved or [])
         pr_state.save_state(ctx.target_dir, st)
     except Exception as exc:
         if trail:
@@ -4530,6 +4589,11 @@ def _run_comment_fix(
 
     no_commit = CommitPushResult(None, CommitStatus.NO_CHANGES, "")
 
+    # Both return paths hand this to _persist_fix_state: the tally on disk was
+    # written before this function ran, so it learns of these resolutions only
+    # from the delta.
+    resolved: list[ThreadState] = []
+
     triage_replies = 0
     if dismissed:
         triage_replies += _post_dismissed_replies(
@@ -4539,7 +4603,7 @@ def _run_comment_fix(
         triage_replies += _post_already_addressed_replies(
             all_addressed, threads_by_id, ctx.repo, report.pr_number, wt_path,
         )
-        _resolve_fixed_threads(all_addressed, threads_by_id)
+        resolved += _resolve_fixed_threads(all_addressed, threads_by_id)
 
     all_fixable = bool(fixable) or bool(fixable_items)
     has_items = (
@@ -4585,7 +4649,7 @@ def _run_comment_fix(
             summary_url=summary_url or "",
             summary_deferred=summary_url is None and early_deferred,
             updated_at=pr_state.now_iso(),
-        ), wt_path, ctx, trail)
+        ), wt_path, ctx, trail, resolved=resolved)
         return empty_result
 
     tracking_dir = wt_path / "ignore" / "pr-comments"
@@ -4656,7 +4720,7 @@ def _run_comment_fix(
         replies_posted += _reply_to_fixed(
             tracking.fixed, threads_by_id, ctx.repo, report.pr_number, cp, wt_path,
         )
-        _resolve_fixed_threads(tracking.fixed, threads_by_id)
+        resolved += _resolve_fixed_threads(tracking.fixed, threads_by_id)
 
     all_fixed = tracking.fixed + tracking.fixed_items
     all_deferred = tracking.deferred + tracking.deferred_items
@@ -4701,7 +4765,7 @@ def _run_comment_fix(
         summary_deferred=summary_url is None and pending_deferred,
         has_comment_items=has_items,
         updated_at=pr_state.now_iso(),
-    ), wt_path, ctx, trail)
+    ), wt_path, ctx, trail, resolved=resolved)
 
     return CommentFixResult(
         fixed=all_fixed,

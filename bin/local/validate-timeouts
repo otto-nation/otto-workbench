@@ -69,11 +69,6 @@ RUNNERS = {
 SEARCH_DIRS = ('ai',)
 SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
 
-# The MCP server runs under `uv run --with mcp python3` with ai/lib nowhere on
-# sys.path, so it cannot import the table however much it would like to.  It is
-# the one file here that owns its own numbers.
-EXEMPT = {os.path.join('ai', 'claude', 'mcps', 'server.py')}
-
 SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
@@ -209,10 +204,6 @@ def _is_python(path: str) -> bool:
     return first.startswith(b'#!') and b'python' in first
 
 
-def _exempt_paths(repo_root: str) -> set[str]:
-    return {os.path.join(repo_root, rel) for rel in EXEMPT}
-
-
 def discover_scripts(repo_root: str) -> list[str]:
     found = []
     roots = [os.path.join(repo_root, d) for d in SEARCH_DIRS]
@@ -221,8 +212,7 @@ def discover_scripts(repo_root: str) -> list[str]:
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
             paths = [os.path.join(dirpath, f) for f in filenames]
             found += [p for p in paths if _is_python(p)]
-    exempt = _exempt_paths(repo_root)
-    return sorted(p for p in found if p not in exempt)
+    return sorted(found)
 
 
 # ── Reporting ────────────────────────────────────────────────────────────────
@@ -261,13 +251,10 @@ def main():
 
     repo_root = _WORKBENCH_DIR
     if args.files:
-        exempt = _exempt_paths(repo_root)
-        # Named files go through the same two gates discovery applies. Without
-        # the `_is_python` one, a non-Python path reaches the parser and is
-        # reported unparseable, which reads as a finding about a file that was
-        # never in scope.
-        files = [f for f in args.files
-                 if os.path.realpath(f) not in exempt and _is_python(f)]
+        # Named files go through the same gate discovery applies. Without it a
+        # non-Python path reaches the parser and is reported unparseable, which
+        # reads as a finding about a file that was never in scope.
+        files = [f for f in args.files if _is_python(f)]
     else:
         files = discover_scripts(repo_root)
 

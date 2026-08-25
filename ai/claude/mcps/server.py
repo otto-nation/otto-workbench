@@ -30,7 +30,9 @@ import os
 import stat
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -46,16 +48,42 @@ WORKBENCH_DIR = Path(__file__).resolve().parents[3]
 # project as the working directory, so the workbench's Python has to be named
 # before it can be imported.
 sys.path.insert(0, str(WORKBENCH_DIR / "ai" / "lib"))
+import timeouts  # noqa: E402
 from tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
 
 COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
 
-# ceiling: candidates are probed one at a time, so the worst case is this
-# timeout times the number of marker-bearing scripts. Four of them today, well
-# under a second — probe concurrently if a component ever adds enough that
-# server startup becomes noticeable.
-DISCOVERY_TIMEOUT = 2.0
+# A probe prints a schema the script already holds, so it belongs in the QUICK
+# tier and a breach is a wedged process or a machine with nothing left to
+# schedule. This was a local 2.0 for as long as the table was thought to be out
+# of reach here — under the cost of starting a Python interpreter on a loaded
+# machine, and a probe that outran it dropped the tool for the whole session.
+DISCOVERY_TIMEOUT = timeouts.QUICK
+
+# Seconds a tool call gets before the client is told it timed out. Not a tier
+# from `timeouts`: those bound a subprocess that should already have answered,
+# while this is a budget for whichever tool the client asked for — `pr review`
+# drives agents for minutes. Same carve-out as `eval_task.EVAL_CASE_BUDGET`.
+TOOL_CALL_BUDGET = 300
+
 TOOL_SCHEMA_FLAG = "--tool-schema"
+
+# Candidates are probed together, so the bound above is the wait for all of
+# them rather than for each in turn — which is what lets the bound be generous
+# enough to survive a loaded machine without startup paying per tool.
+#
+# ceiling: one fixed cap for every machine. Make it a function of
+# `os.cpu_count()` if the workbench is ever installed somewhere with fewer
+# cores than this, where the spawns are themselves the contention.
+PROBE_WORKERS = 8
+
+# How many times a candidate is probed before discovery gives up on it this
+# scan. A second try costs one extra bound for the whole round rather than one
+# per tool, because that round is concurrent too, and it is only ever paid when
+# something already went wrong. It is worth paying: re-discovery runs when the
+# scanned directories change, so a tool dropped here is missing until somebody
+# edits the tree rather than until the next poll.
+PROBE_ATTEMPTS = 2
 
 # Keys every tool-schema document must carry. bin/local/validate-skills asserts
 # the same pair against declared output_schema tools.
@@ -136,22 +164,48 @@ def declares_tool_schema(script: Path) -> bool:
     return any(marker in head for marker in DECLARATION_MARKERS)
 
 
+class ProbeFailure(Enum):
+    """Why a probe did not answer, split by what would put it right.
+
+    A script that exits non-zero, prints something other than JSON, or omits a
+    required key is broken, and its author is who fixes it. One that never
+    answers inside the bound is a wedged process or a machine with nothing left
+    to schedule — far more often a fact about the machine than about the
+    script. Reporting the two the same way sends whoever reads it after the
+    wrong thing, so the distinction travels with the result.
+
+    A candidate with no marker is neither: nothing ran, and most executables in
+    a ``bin/`` are not tools.
+    """
+
+    UNMARKED = "unmarked"
+    TIMED_OUT = "timed out"
+    BROKEN = "broken"
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     """What ``script --tool-schema`` answered, or why it did not.
 
     The reason travels with the result rather than going straight to the log,
     so a caller that is not the server — ``bin/local/validate-tool-schema`` —
-    can report the same failure to whoever broke the script.
+    can report the same failure to whoever broke the script. ``failure`` says
+    which kind of failure it was, so that caller can also decline to call a
+    slow machine a broken tool.
     """
 
     script: Path
     schema: dict | None = None
     reason: str | None = None
+    failure: ProbeFailure | None = None
 
     @property
     def ok(self) -> bool:
         return self.schema is not None
+
+    @property
+    def timed_out(self) -> bool:
+        return self.failure is ProbeFailure.TIMED_OUT
 
 
 def probe_tool(script: Path) -> ProbeResult:
@@ -162,9 +216,14 @@ def probe_tool(script: Path) -> ProbeResult:
     ignores unknown flags does its real work instead of answering, and
     ``build-otto-ai-tools-tarball`` wrote a release archive into the CWD that
     way. The invariant travels with the function that would break it.
+
+    One probe and one script. ``probe_tools`` is what discovery and the
+    validator call, because it runs the round concurrently and retries the
+    probes that ran out of time.
     """
     if not declares_tool_schema(script):
-        return ProbeResult(script, reason="no protocol marker in its source")
+        return ProbeResult(script, reason="no protocol marker in its source",
+                           failure=ProbeFailure.UNMARKED)
     try:
         result = subprocess.run(
             [str(script), TOOL_SCHEMA_FLAG],
@@ -174,20 +233,65 @@ def probe_tool(script: Path) -> ProbeResult:
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
         if result.returncode != 0:
-            return ProbeResult(script, reason=(
+            return ProbeResult(script, failure=ProbeFailure.BROKEN, reason=(
                 f"{TOOL_SCHEMA_FLAG} exited {result.returncode}: "
                 f"{result.stderr.strip() or '(no stderr)'}"
             ))
         schema = json.loads(result.stdout)
         missing = [key for key in REQUIRED_SCHEMA_KEYS if key not in schema]
         if missing:
-            return ProbeResult(script, reason=f"schema is missing {', '.join(missing)}")
+            return ProbeResult(script, failure=ProbeFailure.BROKEN,
+                               reason=f"schema is missing {', '.join(missing)}")
         schema["_script"] = str(script)
         return ProbeResult(script, schema=schema)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
+    except subprocess.TimeoutExpired:
+        return ProbeResult(
+            script, failure=ProbeFailure.TIMED_OUT,
+            reason=f"{TOOL_SCHEMA_FLAG} did not answer within {DISCOVERY_TIMEOUT:g}s")
+    except (json.JSONDecodeError, OSError) as exc:
         # Name the exception type rather than trusting its str() to say which
-        # of the three it was — docs/tools.md tells readers these are distinct.
-        return ProbeResult(script, reason=f"{type(exc).__name__}: {exc}")
+        # of the two it was — docs/tools.md tells readers these are distinct.
+        return ProbeResult(script, reason=f"{type(exc).__name__}: {exc}",
+                           failure=ProbeFailure.BROKEN)
+
+
+def _probe_round(scripts: list[Path]) -> list[ProbeResult]:
+    """Probe every script at once, answering in the order they were given.
+
+    Threads rather than tasks or processes: a probe is a subprocess spawn, so
+    the interpreter is waiting on ``wait4`` for all but a sliver of it.
+    """
+    with ThreadPoolExecutor(max_workers=min(len(scripts), PROBE_WORKERS)) as pool:
+        return list(pool.map(probe_tool, scripts))
+
+
+def probe_tools(scripts: list[Path]) -> list[ProbeResult]:
+    """Probe every script in *scripts*, returning results in the given order.
+
+    The order is the caller's rather than completion's. Discovery and
+    ``bin/local/validate-tool-schema`` both report in path order, and a list
+    that reshuffled under load would make two runs over the same tree disagree
+    about nothing.
+
+    A probe that ran out of time is tried again, up to ``PROBE_ATTEMPTS`` in
+    all. Only the ones that timed out are re-run, and they are re-run together,
+    so the retry costs one more bound for the round rather than one per tool. A
+    script that answered — with a schema or with a mistake in one — is left
+    alone: running it again would cost the same wait to be told the same thing.
+    """
+    if not scripts:
+        return []
+    results = _probe_round(scripts)
+    for _ in range(PROBE_ATTEMPTS - 1):
+        retry = [result.script for result in results if result.timed_out]
+        if not retry:
+            break
+        logger.warning("Probing %d script(s) again, they did not answer in time: %s",
+                       len(retry), ", ".join(str(script) for script in retry))
+        again = {result.script: result for result in _probe_round(retry)}
+        results = [again.get(result.script, result) if result.timed_out else result
+                   for result in results]
+    return results
 
 
 def tool_candidates(d: Path) -> list[Path]:
@@ -247,23 +351,49 @@ def _described(schema: dict, entry: RegistryEntry) -> dict:
     return {**schema, "description": entry.tool_description}
 
 
-def _scan_tool_dir(d: Path, registry: dict[Path, RegistryEntry]) -> list[dict]:
-    """Return tool schemas from the offered scripts in *d*.
+def _offered_scripts(dirs: list[Path],
+                     registry: dict[Path, RegistryEntry]) -> dict[Path, RegistryEntry]:
+    """Every offered candidate under *dirs*, in directory-then-path order."""
+    offers: dict[Path, RegistryEntry] = {}
+    for d in dirs:
+        offers.update(offered_candidates(d, registry))
+    return offers
+
+
+def _scan_offered(dirs: list[Path], registry: dict[Path, RegistryEntry]) -> list[dict]:
+    """Return tool schemas from the offered scripts under *dirs*.
+
+    Every directory's candidates go into one probing round rather than a round
+    per directory, so what a client waits for at startup is one probe and not
+    one per tool.
 
     A script that carries a marker meant to be a tool, so every way it can then
-    fail to answer is logged at warning level. Silence here reads as "no tool
-    here" and leaves nothing to debug — the scan covers every component's
-    ``bin/``, so the author of a broken tool is rarely the person reading these
-    logs. Executables with no marker are not tools and stay quiet.
+    fail to answer is logged. Silence here reads as "no tool here" and leaves
+    nothing to debug — the scan covers every component's ``bin/``, so the
+    author of a broken tool is rarely the person reading these logs.
+    Executables with no marker are not tools and stay quiet.
+
+    A probe that never answered is logged at error level rather than warning,
+    and worded so it does not read as a broken tool: it outlived a bound a
+    script answering from memory cannot plausibly need, which is a wedged
+    process or a machine under load. The two failures want different people to
+    look at them, so they do not share a line.
     """
-    results = []
-    for script, entry in offered_candidates(d, registry).items():
-        probed = probe_tool(script)
-        if probed.ok:
-            results.append(_described(probed.schema, entry))
+    offers = _offered_scripts(dirs, registry)
+    schemas = []
+    for result in probe_tools(list(offers)):
+        if result.ok:
+            schemas.append(_described(result.schema, offers[result.script]))
+        elif result.timed_out:
+            logger.error(
+                "Not offering %s this scan: %s, on %d attempts. A probe answers "
+                "with a schema the script already holds, so this is a loaded "
+                "machine or a wedged script rather than a broken tool. Discovery "
+                "runs again when something under the scanned directories changes.",
+                result.script, result.reason, PROBE_ATTEMPTS)
         else:
-            logger.warning("Skipping %s: %s", script, probed.reason)
-    return results
+            logger.warning("Skipping %s: %s", result.script, result.reason)
+    return schemas
 
 
 def discover_tools(dirs: list[Path] | None = None,
@@ -281,8 +411,7 @@ def discover_tools(dirs: list[Path] | None = None,
         registry = load_registry_entries(WORKBENCH_DIR)
     tools: dict[str, dict] = {}
 
-    all_schemas = [s for d in dirs for s in _scan_tool_dir(d, registry)]
-    for schema in all_schemas:
+    for schema in _scan_offered(dirs, registry):
         if schema["name"] not in tools:
             tools[schema["name"]] = schema
             logger.info("Discovered tool: %s (%s)", schema["name"], schema["_script"])
@@ -572,12 +701,13 @@ def create_server() -> RunningServer:
                 [script] + cli_args,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=TOOL_CALL_BUDGET,
                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
             )
         except subprocess.TimeoutExpired:
             return CallToolResult(
-                content=[TextContent(type="text", text="Tool execution timed out (300s)")],
+                content=[TextContent(type="text", text=(
+                    f"Tool execution timed out ({TOOL_CALL_BUDGET}s)"))],
                 isError=True,
             )
 

@@ -541,10 +541,25 @@ real work when probed. Scripts that mention the flag in prose without implementi
 must word around the literal to stay out of the probe path.
 
 Carrying a marker is a claim to be a tool, so a candidate that then fails to answer — a
-non-zero exit, malformed JSON, a schema missing `name` or `input_schema`, or a probe that
-outruns the timeout — is logged at warning level on stderr with the reason. A tool you
-added that never appears in an MCP client is explained there. Executables with no marker
-are not tools and are skipped without comment.
+non-zero exit, malformed JSON, or a schema missing `name` or `input_schema` — is logged at
+warning level on stderr with the reason. A tool you added that never appears in an MCP
+client is explained there. Executables with no marker are not tools and are skipped
+without comment.
+
+**A probe that never answers is a different finding.** The probe prints a schema the
+script already holds, so it belongs in the `QUICK` tier of
+[`ai/lib/timeouts.py`](../ai/lib/timeouts.py) and a breach is a wedged process or a machine
+with nothing left to schedule — not a broken tool. It is logged at error level and worded
+that way, because the two want different people to look at them. The bound used to be a
+2-second local constant, which is under the cost of starting a Python interpreter on a
+loaded machine; a probe that outran it dropped the tool for the whole session, since
+re-discovery only runs when the scanned directories change.
+
+Two things pay for the more generous bound. Candidates are probed concurrently, so what a
+client waits for at startup is one probe rather than one per tool, and a probe that ran out
+of time is tried once more — only the ones that timed out, and all of them together, so the
+retry costs one more bound for the round rather than one per tool. Results are reported in
+path order whatever order they finish in, so two scans of the same tree agree.
 
 **What a client is offered.** Carrying the marker makes a script probeable, not public.
 The registries decide who sees it: an entry with `visibility: full` or `brief` is offered,
@@ -562,11 +577,17 @@ otherwise render into. A script's own `--tool-schema` description is written for
 
 Those warnings belong to whichever MCP client spawned the server, so the same claims are
 checked at build time by `bin/local/validate-tool-schema`. It imports this discovery —
-the directories, the candidate filter, the probe itself, and the registry lookup — and
-fails when a candidate in the checkout cannot answer or no registry entry names it, rather
-than leaving the tool to vanish at runtime. Visibility is not checked: a `hidden` entry is
-a decision somebody made, and the probe has to cover the script anyway because `pr` runs
-it.
+the directories, the candidate filter, the probing round itself, and the registry lookup —
+and fails when a candidate in the checkout cannot answer or no registry entry names it,
+rather than leaving the tool to vanish at runtime. Visibility is not checked: a `hidden`
+entry is a decision somebody made, and the probe has to cover the script anyway because
+`pr` runs it.
+
+It carries the same split. A probe that ran out of time is counted and reported apart from
+the broken ones and points at the runner's load rather than at the script — on an
+oversubscribed build runner that is what actually happened, and reporting it as a tool that
+"cannot answer `--tool-schema`" sent readers after a script that was fine. It still fails
+the run: a tool nobody could verify is a tool that may not reach a client.
 
 **Staying current without a restart.** The client owns this process — it spawns the server
 over stdio and nothing outside can restart it — so a tool added, re-signatured, or

@@ -24,7 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import server
 from server import (
+    PROBE_ATTEMPTS,
+    PROBE_WORKERS,
     WORKBENCH_DIR,
+    ProbeFailure,
     _args_to_cli,
     _extract_json,
     _log_lost_tools,
@@ -33,6 +36,7 @@ from server import (
     discover_tools,
     discover_with_baseline,
     discovery_fingerprint,
+    probe_tools,
     watch_for_tool_changes,
 )
 from tool_registry import RegistryEntry, Visibility
@@ -372,6 +376,310 @@ class TestDiscovery:
         assert "pr" in tools
         assert "input_schema" in tools["pr"]
         assert tools["pr"]["output_schema"]["type"] == "object"
+
+
+# ── Probing ───────────────────────────────────────────────────────────────
+
+
+# The bound a case runs under when every tool in it is meant to time out.
+# Nothing there turns on a fixture being scheduled inside the bound — a script
+# the kernel has not started yet and a script sleeping far past it both produce
+# the timeout the case is about — so it can stay short enough that a breach
+# costs tenths of a second.
+#
+# A case where some tool must *answer* takes the shipped bound instead. An
+# answer does turn on the fixture being scheduled, and half a second is not
+# reliably enough to fork and start a shell on a machine running this suite in
+# parallel. Pinning such a case short reproduced the defect this section exists
+# to check for: the machine decided the result, not the tool.
+PROBE_BOUND = 0.5
+
+# What a fixture runs when it must not answer this attempt. `exec` so the sleep
+# takes over the pid the prober kills — a sleep left running under a killed
+# parent outlives its case by half a minute, and that is load the next case pays.
+NEVER_ANSWERS = "exec sleep 30\n"
+
+# Sleeping tools enough that a serial round would be plainly slower than a
+# concurrent one, and fewer than PROBE_WORKERS so they all go out together.
+SLOW_TOOLS = 6
+
+assert SLOW_TOOLS <= PROBE_WORKERS, "the cases below assume one round holds them all"
+
+
+def _attempts_of(script: Path) -> Path:
+    """The file a fixture tool appends a byte to each time it is run.
+
+    Only a fixture given room to answer can be trusted to have written it: a
+    probe that breaches its bound is SIGKILLed, and the kill can land before
+    bash has reached the script's first line. Cases counting how many times a
+    script was probed use the ``probes`` fixture, which counts on the side of
+    the fence that cannot be killed.
+    """
+    return script.parent / f"{script.name}.attempts"
+
+
+def _tool_body(name: str) -> str:
+    """The line that answers the probe with a minimal schema for *name*."""
+    document = {"name": name, "input_schema": {"type": "object", "properties": {}}}
+    return f"printf '%s' '{json.dumps(document)}'\n"
+
+
+def _write_probe_fixture(directory: Path, name: str, middle: str) -> Path:
+    """A marked script that records the attempt, runs *middle*, then answers.
+
+    Real subprocesses rather than a patched ``subprocess.run``: a probe that
+    outruns its bound is what these cases are about, and a sleeping script is
+    the honest way to produce one.
+    """
+    script = directory / name
+    script.write_text("#!/bin/bash\n"
+                      "# answers --tool-schema\n"
+                      f"printf 'x' >> '{_attempts_of(script)}'\n"
+                      f"{middle}"
+                      f"{_tool_body(name)}")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return script
+
+
+def _write_sleeping_tool(directory: Path, name: str) -> Path:
+    """A marked script that never answers inside any bound worth waiting."""
+    return _write_probe_fixture(directory, name, NEVER_ANSWERS)
+
+
+def _write_flaky_tool(directory: Path, name: str) -> Path:
+    """Outruns the bound the first time it is run, and answers after that.
+
+    Which attempt it is on comes from the stamp file, so it only tells the truth
+    under a bound its first line is certain to be reached inside — the case
+    using it takes the shipped bound rather than PROBE_BOUND.
+    """
+    script = directory / name
+    return _write_probe_fixture(
+        directory, name,
+        f"[ \"$(wc -c < '{_attempts_of(script)}' | tr -d ' ')\" -lt 2 ] "
+        f"&& {NEVER_ANSWERS}")
+
+
+def _write_dawdling_tool(directory: Path, name: str, pause: float) -> Path:
+    """Answers, but only after *pause* seconds — so completion order is known."""
+    return _write_probe_fixture(directory, name, f"sleep {pause}\n")
+
+
+@pytest.fixture
+def short_probe_bound(monkeypatch):
+    """The server's bound, shortened so a breach costs the suite tenths.
+
+    Only for a case where every tool is meant to time out — see PROBE_BOUND.
+    """
+    monkeypatch.setattr(server, "DISCOVERY_TIMEOUT", PROBE_BOUND)
+
+
+@pytest.fixture
+def probes(monkeypatch):
+    """Every script the prober spawned a probe for, in the order it did.
+
+    Counted here rather than by the fixture scripts themselves: a timed-out
+    probe is SIGKILLed, and on a busy machine that lands before the script has
+    recorded anything, so a stamp the child writes undercounts exactly the
+    attempts these cases exist to check. The real probe still runs.
+    """
+    spawned: list[Path] = []
+    probe = server.probe_tool
+
+    def counting(script: Path):
+        spawned.append(script)
+        return probe(script)
+
+    monkeypatch.setattr(server, "probe_tool", counting)
+    return spawned
+
+
+class TestProbeFailure:
+    """A wedged probe and a wrong answer are different problems.
+
+    Both used to arrive as one ``reason`` string off one ``except`` clause, so
+    a tool dropped because the machine had nothing left to schedule read
+    exactly like a tool whose author broke it.
+    """
+
+    def test_a_probe_that_ran_out_of_time_says_so(self, tmp_path, short_probe_bound):
+        script = _write_sleeping_tool(tmp_path, "sleeping-tool")
+
+        result = probe_tools([script])[0]
+
+        assert result.failure is ProbeFailure.TIMED_OUT
+        assert result.timed_out is True
+        assert "did not answer within" in result.reason
+
+    def test_a_non_zero_exit_is_a_broken_tool_not_a_slow_one(self, tmp_path):
+        script = tmp_path / "broken-tool"
+        script.write_text("#!/bin/bash\n# answers --tool-schema\nexit 3\n")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        result = probe_tools([script])[0]
+
+        assert result.failure is ProbeFailure.BROKEN
+        assert result.timed_out is False
+
+    def test_malformed_json_is_a_broken_tool(self, tmp_path):
+        script = tmp_path / "garbled-tool"
+        script.write_text("#!/bin/bash\n# answers --tool-schema\necho not json\n")
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        result = probe_tools([script])[0]
+
+        assert result.failure is ProbeFailure.BROKEN
+        assert "JSONDecodeError" in result.reason
+
+    def test_a_schema_missing_a_key_is_a_broken_tool(self, tmp_path):
+        script = tmp_path / "partial-tool"
+        script.write_text(textwrap.dedent("""\
+            #!/usr/bin/env python3
+            import json, sys
+            if "--tool-schema" in sys.argv:
+                json.dump({"name": "partial-tool"}, sys.stdout)
+                sys.exit(0)
+        """))
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+        assert probe_tools([script])[0].failure is ProbeFailure.BROKEN
+
+    def test_an_unmarked_script_is_neither(self, tmp_path):
+        """Nothing ran, so there is no tool here to call slow or broken."""
+        script = _write_destructive_script(tmp_path)
+
+        assert probe_tools([script])[0].failure is ProbeFailure.UNMARKED
+
+    def test_a_tool_that_answers_carries_no_failure(self, tmp_path):
+        script = _write_marked_script(tmp_path, "my-tool")
+
+        result = probe_tools([script])[0]
+
+        assert result.ok is True
+        assert result.failure is None
+
+
+class TestConcurrentProbing:
+    """Candidates go out together, which is what pays for a generous bound."""
+
+    def test_results_come_back_in_the_order_they_were_asked_for(self, tmp_path):
+        """Two runs over the same tree must not disagree about nothing.
+
+        The pauses run counter to the order asked for, so a list assembled as
+        the probes finished would come back reversed.
+        """
+        scripts = [_write_dawdling_tool(tmp_path, f"tool-{i}", pause)
+                   for i, pause in enumerate((0.4, 0.3, 0.2, 0.1, 0.0))]
+
+        results = probe_tools(scripts)
+
+        assert [r.script for r in results] == scripts
+        assert all(r.ok for r in results)
+
+    def test_the_wait_is_one_probes_and_not_one_per_tool(self, tmp_path,
+                                                         short_probe_bound):
+        """The bound can only be generous if startup does not pay it per tool.
+
+        Probed one at a time these would cost SLOW_TOOLS bounds, twice over
+        with the retry. Together they cost two.
+        """
+        scripts = [_write_sleeping_tool(tmp_path, f"sleeping-{i}")
+                   for i in range(SLOW_TOOLS)]
+
+        started = time.monotonic()
+        results = probe_tools(scripts)
+        elapsed = time.monotonic() - started
+
+        assert all(r.timed_out for r in results)
+        assert elapsed < SLOW_TOOLS * PROBE_BOUND, (
+            f"{SLOW_TOOLS} probes of {PROBE_BOUND}s took {elapsed:.1f}s — "
+            f"that is a serial round, not a concurrent one")
+
+    def test_no_thread_is_asked_for_when_there_is_nothing_to_probe(self):
+        assert probe_tools([]) == []
+
+
+class TestProbeRetry:
+    """A probe that lost a race with the scheduler gets one more chance.
+
+    Re-discovery runs when the scanned directories change, so a tool dropped at
+    startup is missing until somebody edits the tree — not until the next poll.
+    That is what makes a second attempt worth its cost, and the cost is one more
+    bound for the round rather than one per tool.
+    """
+
+    def test_a_tool_that_answers_on_the_second_try_is_discovered(
+            self, tmp_path, probes):
+        """The shipped bound, because the second attempt has to be able to answer.
+
+        It is also the one case that pays the bound in full — the first attempt
+        sleeps through it — which is what a real transient stall costs.
+        """
+        script = _write_flaky_tool(tmp_path, "flaky-tool")
+
+        result = probe_tools([script])[0]
+
+        assert result.ok is True
+        assert probes == [script] * PROBE_ATTEMPTS
+
+    def test_a_tool_that_never_answers_is_run_the_attempt_count_and_no_more(
+            self, tmp_path, short_probe_bound, probes):
+        script = _write_sleeping_tool(tmp_path, "sleeping-tool")
+
+        assert probe_tools([script])[0].timed_out is True
+        assert probes == [script] * PROBE_ATTEMPTS
+
+    def test_a_tool_that_answered_wrongly_is_not_run_again(self, tmp_path, probes):
+        """Re-running it would cost the same wait to be told the same thing."""
+        script = _write_probe_fixture(tmp_path, "broken-tool", "exit 3\n")
+
+        assert probe_tools([script])[0].failure is ProbeFailure.BROKEN
+        assert probes == [script]
+
+
+class TestTimeoutIsReportedApart:
+    """What an operator reading the server's stderr is sent to look at."""
+
+    def test_a_timed_out_probe_is_an_error_that_blames_the_machine(
+            self, tmp_path, short_probe_bound, caplog):
+        script = _write_sleeping_tool(tmp_path, "sleeping-tool")
+
+        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
+            assert discover_tools([tmp_path], _registered(script)) == {}
+
+        dropped = [r for r in caplog.records if "Not offering" in r.getMessage()]
+        assert len(dropped) == 1
+        assert dropped[0].levelno == logging.ERROR
+        assert "loaded machine or a wedged script" in dropped[0].getMessage()
+        assert "sleeping-tool" in dropped[0].getMessage()
+
+    def test_a_broken_tool_stays_a_warning_about_the_tool(self, tmp_path, caplog):
+        script = _write_probe_fixture(tmp_path, "broken-tool", "exit 3\n")
+
+        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
+            assert discover_tools([tmp_path], _registered(script)) == {}
+
+        skipped = [r for r in caplog.records if "Skipping" in r.getMessage()]
+        assert len(skipped) == 1
+        assert skipped[0].levelno == logging.WARNING
+        assert "exited 3" in skipped[0].getMessage()
+
+    def test_a_slow_tool_does_not_stop_the_others_being_offered(
+            self, tmp_path, caplog):
+        """One dropped tool is one tool, not a scan that gave up.
+
+        The shipped bound, because the round holds a tool that has to answer and
+        the two share one bound — shortening it to hurry the sleeper along is
+        how the quick tool starts timing out too.
+        """
+        slow = _write_sleeping_tool(tmp_path, "sleeping-tool")
+        quick = _write_marked_script(tmp_path, "my-tool")
+
+        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
+            tools = discover_tools([tmp_path], _registered(slow, quick))
+
+        assert set(tools) == {"my-tool"}
+        assert "sleeping-tool" in caplog.text
 
 
 class TestRegistryVisibility:

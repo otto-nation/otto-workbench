@@ -10,6 +10,14 @@ probe timeout is skipped with a warning on the server's stderr — which belongs
 to whichever MCP client spawned it, not to the person who broke the script.
 The tool just never appears.  This check moves that discovery to the build.
 
+A probe that ran out of time is reported apart from the rest, because it is a
+different finding: the probe prints a schema the script already holds, so on a
+build runner a breach is the runner being oversubscribed far more often than
+the tool being wedged.  Calling that "cannot answer `--tool-schema`" sent
+readers to look at a script that was fine.  It still fails the run — a tool
+nobody could verify is a tool that may not reach a client — but it says which
+of the two happened.
+
 The other way a marked script never reaches a client is that no registry entry
 names it — the server offers what the registries document and skips the rest,
 so an unregistered tool is as absent as a broken one, and just as quiet.  That
@@ -18,7 +26,8 @@ the probe has to cover the tool anyway because `pr` runs it.
 
 Every rule here is the server's own: `ai/claude/mcps/server.py` owns what a tool
 directory is (`discover_tool_dirs`), which scripts get probed (`tool_candidates`)
-and what counts as an answer (`probe_tool`), and `ai/lib/tool_registry.py` owns
+and what counts as an answer (`probe_tools`, which also owns how the round is run
+and how many attempts a probe gets), and `ai/lib/tool_registry.py` owns
 which registries name scripts (`load_registry_entries`).  This script only walks
 the result and prints it, so the two cannot drift.
 
@@ -36,18 +45,20 @@ Exit code: 0 if every candidate answers and is registered, 1 otherwise.
 import argparse
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'ai', 'lib'))
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'ai', 'claude', 'mcps'))
-from ansi import RED, GREEN, DIM, NC  # noqa: E402
+from ansi import RED, GREEN, YELLOW, DIM, NC  # noqa: E402
 from server import (  # noqa: E402
+    PROBE_ATTEMPTS,
     TOOL_SCHEMA_FLAG,
     ProbeResult,
     discover_tool_dirs,
-    probe_tool,
+    probe_tools,
     tool_candidates,
 )
 from tool_registry import load_registry_entries  # noqa: E402
@@ -69,10 +80,16 @@ def validator_root() -> str:
 
 
 def check_root(root: str) -> list[ProbeResult]:
-    """Probe every candidate under *root* and return the results in path order."""
-    return [probe_tool(script)
-            for d in discover_tool_dirs(root)
-            for script in tool_candidates(d)]
+    """Probe every candidate under *root* and return the results in path order.
+
+    The server's own `probe_tools` runs the round, so the candidates go out
+    concurrently and a timed-out one is retried exactly as it would be at
+    startup.  Walking them one at a time here would make the build's answer
+    depend on a scheduling accident the runtime does not have.
+    """
+    return probe_tools([script
+                        for d in discover_tool_dirs(root)
+                        for script in tool_candidates(d)])
 
 
 def unregistered(root: str) -> list[Path]:
@@ -87,17 +104,41 @@ def unregistered(root: str) -> list[Path]:
 # ── Reporting ────────────────────────────────────────────────────────────────
 
 
-def _report(results: list[ProbeResult], root: str, quiet: bool) -> int:
-    failures = 0
+@dataclass(frozen=True)
+class Tally:
+    """How the probed candidates came out, grouped by what would put each right.
+
+    `broken` is somebody's mistake in a script and `timed_out` is a probe that
+    never came back, which on a build runner is usually the runner.  Two counts
+    rather than one so the summary can name the difference; a caller that only
+    needs "did anything fail" reads `failures`.
+    """
+
+    checked: int = 0
+    broken: int = 0
+    timed_out: int = 0
+
+    @property
+    def failures(self) -> int:
+        return self.broken + self.timed_out
+
+
+def _report(results: list[ProbeResult], root: str, quiet: bool) -> Tally:
+    broken = 0
+    timed_out = 0
     for result in results:
         relpath = os.path.relpath(str(result.script), root)
-        if not result.ok:
-            failures += 1
+        if result.timed_out:
+            timed_out += 1
+            print(f'{YELLOW}⧗{NC} {relpath}: {result.reason}, on {PROBE_ATTEMPTS} '
+                  f'attempts', file=sys.stderr)
+        elif not result.ok:
+            broken += 1
             print(f'{RED}✗{NC} {relpath}: {result.reason}', file=sys.stderr)
         elif not quiet:
             name = result.schema['name']
             print(f'  {GREEN}✓{NC} {relpath} {DIM}→ {name}{NC}')
-    return failures
+    return Tally(checked=len(results), broken=broken, timed_out=timed_out)
 
 
 def _report_unregistered(scripts: list[Path], root: str) -> int:
@@ -108,19 +149,26 @@ def _report_unregistered(scripts: list[Path], root: str) -> int:
     return len(scripts)
 
 
-def _print_summary(checked: int, failures: int, unnamed: int) -> None:
+def _print_summary(tally: Tally, unnamed: int) -> None:
+    checked = tally.checked
     print()
     if checked == 0:
         print(f'  {DIM}no --tool-schema candidates found{NC}')
         return
-    if failures == 0 and unnamed == 0:
+    if tally.failures == 0 and unnamed == 0:
         print(f'{GREEN}✓{NC} {checked} tools answer --tool-schema')
         return
-    if failures:
-        print(f'{RED}✗{NC} {failures} of {checked} tools claim --tool-schema '
+    if tally.broken:
+        print(f'{RED}✗{NC} {tally.broken} of {checked} tools claim --tool-schema '
               f'but cannot answer it', file=sys.stderr)
         print(f'    {DIM}a tool that fails here is skipped at runtime and never '
               f'reaches an MCP client{NC}', file=sys.stderr)
+    if tally.timed_out:
+        print(f'{YELLOW}⧗{NC} {tally.timed_out} of {checked} tools did not answer '
+              f'--tool-schema in time', file=sys.stderr)
+        print(f'    {DIM}the probe prints a schema the script already holds, so this '
+              f'is a machine with nothing left to schedule or a wedged script — look '
+              f'at the load on this runner before the tool{NC}', file=sys.stderr)
     if unnamed:
         print(f'{RED}✗{NC} {unnamed} of {checked} tools claim --tool-schema '
               f'with no registry entry', file=sys.stderr)
@@ -141,10 +189,10 @@ def main():
 
     root = validator_root()
     results = check_root(root)
-    failures = _report(results, root, args.quiet)
+    tally = _report(results, root, args.quiet)
     unnamed = _report_unregistered(unregistered(root), root)
-    _print_summary(len(results), failures, unnamed)
-    if failures or unnamed:
+    _print_summary(tally, unnamed)
+    if tally.failures or unnamed:
         sys.exit(1)
 
 

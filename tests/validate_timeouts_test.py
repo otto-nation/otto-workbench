@@ -232,20 +232,17 @@ def test_discover_finds_extensionless_python_scripts():
     assert str(REPO_ROOT / "ai" / "lib" / "proc.py") in scripts
 
 
-def test_the_mcp_server_is_exempt():
-    """It runs with ai/lib nowhere on sys.path, so it cannot import the table."""
-    exempt = REPO_ROOT / "ai" / "claude" / "mcps" / "server.py"
-    assert exempt.is_file(), "the exemption names a file that no longer exists"
-    assert str(exempt) not in vt.discover_scripts(str(REPO_ROOT))
+def test_the_mcp_server_is_covered():
+    """It was exempt on the reading that `uv run` put ai/lib out of its reach.
 
-
-def test_the_exemption_holds_when_the_file_is_named(monkeypatch, capsys):
-    """Discovery is not the only way in — a hook or an editor passes paths."""
-    exempt = REPO_ROOT / "ai" / "claude" / "mcps" / "server.py"
-    assert vt.check_file(str(exempt)), "the exempt file would now pass on its own"
-    monkeypatch.setattr(sys, "argv", ["validate-timeouts", "--quiet", str(exempt)])
-    vt.main()
-    assert "0 files checked" in capsys.readouterr().out
+    It puts that directory on `sys.path` itself — that is how it imports
+    `tool_registry` — so `timeouts` was importable all along and the exemption
+    only meant the file went unchecked.
+    """
+    server = REPO_ROOT / "ai" / "claude" / "mcps" / "server.py"
+    assert server.is_file()
+    assert str(server) in vt.discover_scripts(str(REPO_ROOT))
+    assert vt.check_file(str(server)) == []
 
 
 def test_a_named_non_python_file_is_not_reported_unparseable(monkeypatch, capsys, tmp_path):

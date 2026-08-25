@@ -63,6 +63,19 @@ def _answers(keys: str) -> str:
 
 GOOD = _answers('"name": "good", "input_schema": {"type": "object"}')
 
+# The bound a case runs under when every tool in it is meant to time out.
+# Nothing there turns on a fixture being scheduled inside the bound — a script
+# the kernel has not started yet and a script sleeping far past it both produce
+# the timeout the case is about — so it can stay short enough to cost tenths.
+# A case holding a tool that must *answer* takes the shipped bound instead: the
+# two share one bound, and shortening it to hurry the sleeper along is how the
+# answering tool starts timing out too.
+TIMEOUT_BOUND = 0.2
+
+# A tool that never answers. `exec` so the sleep takes over the pid the prober
+# kills, rather than outliving it as an orphan for half a minute.
+SLEEPS_FOREVER = '#!/bin/bash\n# answers --tool-schema\nexec sleep 30\n'
+
 
 def _reasons(root: Path) -> dict[str, str | None]:
     """{script name: failure reason or None} for every candidate under *root*."""
@@ -104,11 +117,31 @@ def test_a_tool_omitting_input_schema_is_caught(tmp_path):
 
 def test_a_tool_that_outruns_the_probe_timeout_is_caught(tmp_path, monkeypatch):
     """The probe timeout is the server's, shortened here so the suite is not."""
-    monkeypatch.setattr(server, "DISCOVERY_TIMEOUT", 0.2)
-    _write_script(tmp_path, "bin/slow-tool",
-                  '#!/bin/bash\n# answers --tool-schema\nsleep 5\n')
+    monkeypatch.setattr(server, "DISCOVERY_TIMEOUT", TIMEOUT_BOUND)
+    _write_script(tmp_path, "bin/slow-tool", SLEEPS_FOREVER)
 
-    assert "TimeoutExpired" in _reasons(tmp_path)["slow-tool"]
+    assert "did not answer within" in _reasons(tmp_path)["slow-tool"]
+
+
+def test_a_timeout_is_not_reported_as_a_broken_tool(tmp_path):
+    """A wedged probe and a wrong answer want different people to look.
+
+    On a build runner a breach of a bound the script should not need is the
+    runner being oversubscribed far more often than the script being wrong, and
+    "cannot answer --tool-schema" sent readers after a script that was fine.
+
+    The shipped bound, not TIMEOUT_BOUND: the broken tool has to get far enough
+    to exit 3, and under a short one it times out like its neighbour — which is
+    this very finding, arriving as a green test.
+    """
+    _write_script(tmp_path, "bin/slow-tool", SLEEPS_FOREVER)
+    _write_script(tmp_path, "bin/broken-tool",
+                  '#!/bin/bash\n# answers --tool-schema\nexit 3\n')
+
+    outcomes = {r.script.name: r.failure for r in vts.check_root(str(tmp_path))}
+
+    assert outcomes == {"slow-tool": server.ProbeFailure.TIMED_OUT,
+                        "broken-tool": server.ProbeFailure.BROKEN}
 
 
 def test_every_broken_tool_is_reported_not_just_the_first(tmp_path):
@@ -223,7 +256,7 @@ def test_an_unmarked_script_needs_no_entry(tmp_path):
 
 def test_the_checks_are_the_servers_own():
     """Drift guard: a copy of any of these rules here could disagree at runtime."""
-    assert vts.probe_tool is server.probe_tool
+    assert vts.probe_tools is server.probe_tools
     assert vts.tool_candidates is server.tool_candidates
     assert vts.discover_tool_dirs is server.discover_tool_dirs
     assert vts.load_registry_entries is tool_registry.load_registry_entries
@@ -266,6 +299,28 @@ def test_main_exits_1_and_names_the_reason(tmp_path, monkeypatch, capsys):
     assert "bin/broken-tool" in err
     assert "exited 3" in err
     assert "1 of 1 tools" in err
+
+
+def test_main_blames_the_machine_not_the_tool_for_a_timeout(tmp_path, monkeypatch, capsys):
+    """Still a failure — a tool nobody could verify may not reach a client.
+
+    What changes is the diagnosis: the summary counts it apart from the broken
+    ones and points at the runner's load rather than at the script.
+    """
+    monkeypatch.setattr(server, "DISCOVERY_TIMEOUT", TIMEOUT_BOUND)
+    _write_script(tmp_path, "bin/slow-tool", SLEEPS_FOREVER)
+    _write_registry(tmp_path, "bin", "slow-tool")
+    monkeypatch.setenv("VALIDATOR_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["validate-tool-schema", "--quiet"])
+
+    with pytest.raises(SystemExit) as exc:
+        vts.main()
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "1 of 1 tools did not answer --tool-schema in time" in err
+    assert "look at the load on this runner" in err
+    assert "cannot answer it" not in err
 
 
 def test_main_exits_1_and_names_an_unregistered_tool(tmp_path, monkeypatch, capsys):

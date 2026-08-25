@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import serde
 from pr_comments_state import ThreadState
 from pr_comments_fix import ThreadAction, ThreadOutcome
+from pr_fix import FixOutcome
 
 
 # ── Core types ─────────────────────────────────────────────────────────────
@@ -128,12 +129,49 @@ class ClassificationResult:
 
 @dataclass
 class TrackingResult:
-    """Results from parsing the fix-tracking markdown file."""
+    """What the fix agent recorded, sorted back onto the entries it was handed.
 
-    fixed: list[CommentItem] = field(default_factory=list)
-    deferred: list[CommentItem] = field(default_factory=list)
-    fixed_items: list[CommentItem] = field(default_factory=list)
-    deferred_items: list[CommentItem] = field(default_factory=list)
+    Keyed by :class:`~pr_fix.FixOutcome` rather than held in a field per verdict:
+    the vocabulary belongs to the tracking file, and a named field for each of
+    its members would have to grow here every time that file learns to say
+    something new. Two dicts rather than one because only an inline thread has
+    somewhere to reply — the entries decomposed out of top-level comments are
+    reported on but never replied to, so every surface downstream needs the two
+    apart or together on demand rather than merged on the way in.
+    """
+
+    threads: dict[FixOutcome, list[CommentItem]] = field(default_factory=dict)
+    items: dict[FixOutcome, list[CommentItem]] = field(default_factory=dict)
+
+    def _side(self, item: bool) -> dict[FixOutcome, list[CommentItem]]:
+        return self.items if item else self.threads
+
+    def bucket(self, outcome: FixOutcome, *, item: bool = False) -> list[CommentItem]:
+        """The entries recorded under one outcome, threads by default."""
+        return self._side(item).get(outcome, [])
+
+    def both(self, outcome: FixOutcome) -> list[CommentItem]:
+        """Threads and comment items alike, for a surface that treats them the same."""
+        return self.bucket(outcome) + self.bucket(outcome, item=True)
+
+    def add(self, outcome: FixOutcome, entry: CommentItem, *, item: bool = False) -> None:
+        """Record one entry under one outcome."""
+        self._side(item).setdefault(outcome, []).append(entry)
+
+    def merge(self, other: TrackingResult) -> None:
+        """Accumulate another result's entries into this one."""
+        for item, side in ((False, other.threads), (True, other.items)):
+            for outcome, entries in side.items():
+                self._side(item).setdefault(outcome, []).extend(entries)
+
+    def drop(self, outcome: FixOutcome) -> None:
+        """Forget everything recorded under one outcome, threads and items both.
+
+        What a retry supersedes: the entries it was handed have been decided
+        again, and keeping the first answer beside the second would report both.
+        """
+        self.threads.pop(outcome, None)
+        self.items.pop(outcome, None)
 
 
 # ── Report types ──────────────────────────────────────────────────────────

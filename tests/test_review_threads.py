@@ -32,7 +32,7 @@ from proc import CmdResult
 from pr_comments_state import ThreadState
 from pr_comments_fix import FixSummary, ThreadAction, ThreadOutcome
 from pr_domains import SupersessionKind
-from pr_fix import CommitStatus
+from pr_fix import CommitStatus, FixOutcome
 from pr_state import PRIdentity, PRState
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
@@ -1524,7 +1524,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             return _git_ran(0, stdout="aaa1111\n")
 
         batch = rt.FixBatchResult(
-            tracking=TrackingResult(fixed=threads),
+            tracking=TrackingResult(threads={FixOutcome.FIXED: threads}),
             unproductive=False, max_turns=10, max_budget=1.0,
         )
         with patch.object(rt, "_run_fix_batch", return_value=batch), \
@@ -3363,8 +3363,33 @@ class TestReconcileFixSnapshot:
         assert rt._reconcile_fix_snapshot(state, threads) == 0
         assert state.fix.threads[0].action == ThreadAction.NEEDS_HUMAN
 
+    def test_a_declined_thread_settled_by_hand_is_reclaimed(self, rt):
+        """The agent refused it; the operator doing it anyway outranks that refusal.
+
+        Without this the thread republishes as declined on every later run, so the
+        reviewer keeps reading a verdict the tree stopped supporting.
+        """
+        state = _make_state(FixSummary(head_sha="aaaaaaa", threads=[
+            ThreadOutcome(id="t1", action=ThreadAction.DECLINED,
+                          reason="the premise does not hold"),
+        ]))
+        threads = {"t1": self._thread([{"body": "x"}],
+                                      state=ThreadState.RESOLVED, is_resolved=True)}
+        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert state.fix.threads[0].action == ThreadAction.FIXED
+        assert "reconciled" in state.fix.threads[0].reason
+
+    def test_a_declined_thread_still_open_is_left_alone(self, rt):
+        state = _make_state(FixSummary(head_sha="aaaaaaa", threads=[
+            ThreadOutcome(id="t1", action=ThreadAction.DECLINED,
+                          reason="the premise does not hold"),
+        ]))
+        threads = {"t1": self._thread([{"body": "why not do it the other way?"}])}
+        assert rt._reconcile_fix_snapshot(state, threads) == 0
+        assert state.fix.threads[0].action == ThreadAction.DECLINED
+
     def test_settled_outcomes_are_left_alone(self, rt):
-        """Only the two open actions are reconcilable — the rest are already decided."""
+        """Only the open actions are reconcilable — the rest are already decided."""
         settled = (ThreadAction.FIXED, ThreadAction.DISMISSED,
                    ThreadAction.ALREADY_ADDRESSED)
         state = _make_state(FixSummary(head_sha="aaaaaaa", threads=[
@@ -4350,24 +4375,38 @@ class TestClassifyAlreadyAddressed:
 
     def test_thread_outcomes_carry_already_addressed_action(self, rt):
         entry = self._entry("already_addressed")
-        outcomes = rt._build_thread_outcomes([], [], [], [], [entry])
+        outcomes = rt._build_thread_outcomes(
+            {ThreadAction.ALREADY_ADDRESSED: [entry]},
+        )
         assert len(outcomes) == 1
         assert outcomes[0].action == ThreadAction.ALREADY_ADDRESSED
+
+    def test_an_action_the_caller_did_not_name_records_nothing(self, rt):
+        """The mapping is the whole vocabulary of a call — nothing is implied."""
+        assert rt._build_thread_outcomes({}) == []
+
+    def test_a_declined_thread_is_recorded_as_declined(self, rt):
+        """Not folded into needs-human: the state file keeps the two apart."""
+        entry = CommentItem(id="t9", reviewer="kgn", reason="premise does not hold")
+        outcomes = rt._build_thread_outcomes({ThreadAction.DECLINED: [entry]})
+        assert outcomes[0].action == ThreadAction.DECLINED
+        assert outcomes[0].reason == "premise does not hold"
 
     def test_only_fixed_outcomes_carry_the_pass_commit(self, rt):
         """A deferred thread was not fixed by this commit — or any."""
         fixed = self._entry("valid")
         deferred = CommentItem(id="t2", file="b.py", line=2, reviewer="kgn",
                                summary="too complex")
-        outcomes = rt._build_thread_outcomes(
-            [fixed], [deferred], [], [], commit_sha="deadbee",
-        )
+        outcomes = rt._build_thread_outcomes({
+            ThreadAction.FIXED: [fixed],
+            ThreadAction.DEFERRED: [deferred],
+        }, commit_sha="deadbee")
         by_id = {o.id: o.commit_sha for o in outcomes}
         assert by_id == {"t1": "deadbee", "t2": ""}
 
     def test_no_commit_leaves_the_sha_empty(self, rt):
         outcomes = rt._build_thread_outcomes(
-            [self._entry("valid")], [], [], [], commit_sha="",
+            {ThreadAction.FIXED: [self._entry("valid")]}, commit_sha="",
         )
         assert outcomes[0].commit_sha == ""
 
@@ -4503,7 +4542,7 @@ class TestFixPassHoldsWhenContested:
             return _git_ran(0, stdout="abc1234\n")
 
         batch = rt.FixBatchResult(
-            tracking=TrackingResult(fixed=[threads[0]]),
+            tracking=TrackingResult(threads={FixOutcome.FIXED: [threads[0]]}),
             unproductive=False, max_turns=10, max_budget=1.0,
         )
         with patch.object(rt, "_run_fix_batch", return_value=batch), \
@@ -5934,7 +5973,7 @@ class TestFixPassThrashGuard:
 
     def test_invoke_passes_the_diagnosable_session_log(self, rt, tmp_path):
         tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [x] fixed one\n")
+        tracking.write_text("- [x] fixed\n")
         with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
             rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
@@ -5945,7 +5984,7 @@ class TestFixPassThrashGuard:
     def test_the_pass_runs_under_the_comments_fix_phase(self, rt, tmp_path):
         """The ledger and the overrides both key on the phase, so it is named."""
         tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [x] fixed one\n")
+        tracking.write_text("- [x] fixed\n")
         with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
             rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
@@ -5956,7 +5995,7 @@ class TestFixPassThrashGuard:
     def test_pass_that_checks_nothing_off_is_retried_with_the_fix_hint(self, rt, tmp_path):
         write_thrash_log(Path(rt._fix_session_log(tmp_path)))
         tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [ ] fix the thing\n")
+        tracking.write_text("- [ ] fixed\n")
         prompts = []
 
         with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
@@ -5973,7 +6012,7 @@ class TestFixPassThrashGuard:
         """Partial progress belongs to `_retry_fix_pass`, not to the guard."""
         write_thrash_log(Path(rt._fix_session_log(tmp_path)))
         tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [x] fixed one\n- [ ] not the other\n")
+        tracking.write_text("- [x] fixed\n- [ ] declined — <why>\n")
 
         with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
             diagnosis = rt._guarded_fix_pass(
@@ -5985,8 +6024,17 @@ class TestFixPassThrashGuard:
         assert inv.call_count == 1
 
     def test_missing_tracking_file_counts_as_no_work(self, rt, tmp_path):
-        assert rt._count_checked(tmp_path / "absent.md") == 0
-        assert rt._count_unchecked(tmp_path / "absent.md") == 0
+        """A pass that never wrote the file it was given produced nothing."""
+        write_thrash_log(Path(rt._fix_session_log(tmp_path)))
+
+        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
+            diagnosis = rt._guarded_fix_pass(
+                "PROMPT", tmp_path, None, tmp_path / "absent.md",
+                max_turns=10, max_budget=1.0, label="Fix pass",
+            )
+
+        assert inv.call_count == 2
+        assert diagnosis.no_write_tool
 
 
 class TestTriageThrashGuard:
@@ -6262,7 +6310,7 @@ class TestFixPassRetryHeadroom:
         cap = rt.PHASES[rt.Phase.COMMENTS_FIX].scaling.turns_cap
         self._max_turns_log(rt._fix_session_log(tmp_path), cap)
         tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [ ] fix the thing\n")
+        tracking.write_text("- [ ] fixed\n")
         budgets = []
 
         with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
@@ -6308,13 +6356,124 @@ class TestRunFixBatch:
         assert build.call_args.kwargs["fixable_items"] == [9]
 
 
+class TestCommentTrackingRoundTrip:
+    """What the agent records comes back on the thread that earned it.
+
+    The file format is `fix_tracking`'s and is tested there. What is tested here
+    is the domain's half of the round trip: the section bodies this pass renders,
+    and the entries the parsed verdicts are attached back onto.
+    """
+
+    def _thread(self, tid="t1"):
+        return CommentItem(id=tid, file="a.py", line=3, reviewer="kgn",
+                           summary="rename it")
+
+    def _built(self, rt, tmp_path, threads, comment_items=()):
+        path = tmp_path / "ignore" / "pr-comments" / "fix-tracking.md"
+        with patch.object(rt, "_diff_context_for_file", return_value=""):
+            rt._build_tracking_file(
+                path, list(threads), {}, tmp_path, 42,
+                fixable_items=list(comment_items),
+            )
+        return path
+
+    def _answer(self, path, label, reason=""):
+        """Tick one box the way the agent's Edit would."""
+        suffix = f" — {reason}" if reason else ""
+        placeholder = "" if label == "fixed" else " — <why>"
+        path.write_text(path.read_text().replace(
+            f"- [ ] {label}{placeholder}", f"- [x] {label}{suffix}", 1,
+        ))
+
+    def _parsed(self, rt, path, threads, comment_items=()):
+        return rt._parse_tracking_results(
+            path, list(threads), fixable_items=list(comment_items),
+        )
+
+    def test_the_section_carries_the_id_the_reviewer_and_the_context(self, rt, tmp_path):
+        text = self._built(rt, tmp_path, [self._thread()]).read_text()
+        assert text.startswith("# Comment Fix Tracking — PR #42\n")
+        assert "## <!-- fix:t1 --> a.py:3 — @kgn" in text
+        assert "**Summary:** rename it" in text
+
+    def test_a_ticked_fix_comes_back_as_the_entry_the_pass_handed_over(self, rt, tmp_path):
+        threads = [self._thread()]
+        path = self._built(rt, tmp_path, threads)
+        self._answer(path, "fixed")
+        result = self._parsed(rt, path, threads)
+        assert [e.id for e in result.bucket(FixOutcome.FIXED)] == ["t1"]
+        assert result.bucket(FixOutcome.FIXED)[0].reviewer == "kgn"
+
+    def test_a_declined_thread_keeps_the_agent_s_own_words(self, rt, tmp_path):
+        threads = [self._thread()]
+        path = self._built(rt, tmp_path, threads)
+        self._answer(path, "declined", "the helper it names does not exist")
+        entry = self._parsed(rt, path, threads).bucket(FixOutcome.DECLINED)[0]
+        assert entry.reason == "the helper it names does not exist"
+
+    def test_a_verdict_with_no_reason_still_says_something(self, rt, tmp_path):
+        threads = [self._thread()]
+        path = self._built(rt, tmp_path, threads)
+        self._answer(path, "needs a person")
+        entry = self._parsed(rt, path, threads).bucket(FixOutcome.NEEDS_HUMAN)[0]
+        assert entry.reason == "agent could not auto-fix"
+
+    def test_an_untouched_thread_is_work_still_owed(self, rt, tmp_path):
+        threads = [self._thread()]
+        path = self._built(rt, tmp_path, threads)
+        entry = self._parsed(rt, path, threads).bucket(FixOutcome.DEFERRED)[0]
+        assert entry.reason == "agent could not auto-fix"
+
+    def test_a_comment_item_is_kept_apart_from_a_thread(self, rt, tmp_path):
+        """Only a thread has somewhere to reply, so the two never merge."""
+        items = [CommentItem(id="c9", file="b.py", line=1, reviewer="ana",
+                             body="two spaces")]
+        path = self._built(rt, tmp_path, [], items)
+        self._answer(path, "fixed")
+        result = self._parsed(rt, path, [], items)
+        assert result.bucket(FixOutcome.FIXED) == []
+        assert [e.id for e in result.bucket(FixOutcome.FIXED, item=True)] == ["c9"]
+
+    def test_a_section_the_pass_never_handed_over_is_ignored(self, rt, tmp_path):
+        """The file is agent-editable — an invented id names nobody to reply to."""
+        threads = [self._thread()]
+        path = self._built(rt, tmp_path, threads)
+        path.write_text(path.read_text() + (
+            "\n## <!-- fix:invented --> z.py:1 — @nobody\n\n- [x] fixed\n"
+        ))
+        result = self._parsed(rt, path, threads)
+        assert result.bucket(FixOutcome.FIXED) == []
+        assert [e.id for e in result.bucket(FixOutcome.DEFERRED)] == ["t1"]
+
+
 class TestMergeTracking:
     def test_batch_results_accumulate(self, rt):
-        total = rt.TrackingResult(fixed=["a"], deferred_items=["z"])
-        rt._merge_tracking(total, rt.TrackingResult(fixed=["b"], deferred=["c"]))
-        assert total.fixed == ["a", "b"]
-        assert total.deferred == ["c"]
-        assert total.deferred_items == ["z"]
+        total = rt.TrackingResult(
+            threads={FixOutcome.FIXED: ["a"]}, items={FixOutcome.DEFERRED: ["z"]},
+        )
+        total.merge(rt.TrackingResult(
+            threads={FixOutcome.FIXED: ["b"], FixOutcome.DEFERRED: ["c"]},
+        ))
+        assert total.bucket(FixOutcome.FIXED) == ["a", "b"]
+        assert total.bucket(FixOutcome.DEFERRED) == ["c"]
+        assert total.bucket(FixOutcome.DEFERRED, item=True) == ["z"]
+
+    def test_a_merge_does_not_alias_the_source_s_lists(self, rt):
+        """A batch merged into an empty total must not hand over its own list."""
+        batch = rt.TrackingResult(threads={FixOutcome.FIXED: ["a"]})
+        total = rt.TrackingResult()
+        total.merge(batch)
+        total.add(FixOutcome.FIXED, "b")
+        assert batch.bucket(FixOutcome.FIXED) == ["a"]
+
+    def test_dropping_an_outcome_forgets_threads_and_items_alike(self, rt):
+        total = rt.TrackingResult(
+            threads={FixOutcome.DEFERRED: ["a"], FixOutcome.FIXED: ["k"]},
+            items={FixOutcome.DEFERRED: ["z"]},
+        )
+        total.drop(FixOutcome.DEFERRED)
+        assert total.both(FixOutcome.DEFERRED) == []
+        assert total.bucket(FixOutcome.FIXED) == ["k"]
 
 
 class TestPartitionBatches:
@@ -6322,7 +6481,7 @@ class TestPartitionBatches:
 
     def _batch(self, rt, deferred, *, unproductive):
         return rt.FixBatchResult(
-            tracking=rt.TrackingResult(deferred=deferred),
+            tracking=rt.TrackingResult(threads={FixOutcome.DEFERRED: deferred}),
             unproductive=Diagnosis(DiagnosisKind.MAX_TURNS) if unproductive else None,
             max_turns=50, max_budget=5.0,
         )
@@ -6332,23 +6491,23 @@ class TestPartitionBatches:
             self._batch(rt, ["a"], unproductive=False),
             self._batch(rt, ["b"], unproductive=True),
         ])
-        assert retryable.deferred == ["a"]
-        assert stalled.deferred == ["b"]
+        assert retryable.bucket(FixOutcome.DEFERRED) == ["a"]
+        assert stalled.bucket(FixOutcome.DEFERRED) == ["b"]
 
     def test_all_productive_leaves_nothing_stalled(self, rt):
         retryable, stalled = rt._partition_batches([
             self._batch(rt, ["a"], unproductive=False),
             self._batch(rt, ["b"], unproductive=False),
         ])
-        assert retryable.deferred == ["a", "b"]
-        assert stalled.deferred == []
+        assert retryable.bucket(FixOutcome.DEFERRED) == ["a", "b"]
+        assert stalled.bucket(FixOutcome.DEFERRED) == []
 
     def test_all_stalled_leaves_nothing_retryable(self, rt):
         retryable, stalled = rt._partition_batches([
             self._batch(rt, ["a"], unproductive=True),
         ])
-        assert retryable.deferred == []
-        assert stalled.deferred == ["a"]
+        assert retryable.bucket(FixOutcome.DEFERRED) == []
+        assert stalled.bucket(FixOutcome.DEFERRED) == ["a"]
 
 
 # ── HumanReason ─────────────────────────────────────────────────────────────

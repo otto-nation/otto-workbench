@@ -21,7 +21,7 @@ from pr_context import (
     fetch_and_reset, create_worktree_for_branch,
 )
 
-from conftest import make_ctx  # noqa: E402
+from conftest import git_in, make_ctx, run_checked  # noqa: E402
 
 
 # ── PR input parsing ────────────────────────────────────────────────────────
@@ -786,15 +786,15 @@ def _git_repo(path: Path, origin="git@github.com:acme/widget.git",
               branch="main") -> Path:
     """A checkout with one commit, so HEAD names a branch. origin=None omits it."""
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    git_in(path, "init", "-q", "-b", branch)
     if origin:
-        subprocess.run(["git", "-C", str(path), "remote", "add", "origin", origin],
-                       check=True)
+        git_in(path, "remote", "add", "origin", origin)
     # Identity through the environment, never `git config`: the autouse guard in
-    # conftest fails any test that writes config into the repo under test.
-    subprocess.run(
+    # conftest fails any test that writes config into the repo under test. The
+    # env is why this one spells the command out rather than going through
+    # git_in, which passes none.
+    run_checked(
         ["git", "-C", str(path), "commit", "-q", "--allow-empty", "-m", "init"],
-        check=True,
         env={**os.environ,
              "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
              "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"},

@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import git_out
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -769,16 +771,10 @@ class TestWorkbenchToolDirs:
         depth it does not reach, its tools go silently undiscovered — so make
         that a test failure rather than an absence nobody notices.
         """
-        listing = subprocess.run(
-            ["git", "ls-files", "--", "*bin/*"],
-            cwd=WORKBENCH_DIR,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        listing = git_out(WORKBENCH_DIR, "ls-files", "--", "*bin/*")
         tracked = {
             WORKBENCH_DIR / re.sub(r"(^|/)bin/.*", r"\1bin", line)
-            for line in listing.stdout.splitlines()
+            for line in listing.splitlines()
         }
 
         assert tracked <= set(discover_tool_dirs())

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import stat
-import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
 import pytest
-from conftest import load_script
+from conftest import load_script, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-tool-schema"
@@ -378,9 +377,7 @@ def test_validator_root_defaults_to_the_checkout(monkeypatch):
 
 def test_validate_all_discovers_this_validator():
     """The entry point globs bin/local/validate-*, so no list needs editing."""
-    listed = subprocess.run(
-        [str(REPO_ROOT / "bin" / "local" / "validate-all"), "--list"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-    )
+    listed = run_checked([str(REPO_ROOT / "bin" / "local" / "validate-all"), "--list"],
+                         cwd=REPO_ROOT)
 
     assert str(SCRIPT) in listed.stdout.splitlines()

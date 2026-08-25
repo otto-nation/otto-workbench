@@ -50,6 +50,7 @@ import log
 import pr_context
 import pr_domains
 import pr_state
+import proc
 import push
 import timeouts
 from agent_types import Phase
@@ -504,9 +505,11 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
     log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(job.regen_dir).name}/)")
     r = _try_run(run_cmd, cwd=job.regen_dir)
 
-    # A missing binary raises FileNotFoundError rather than exiting 127, and a
-    # tool-managed binary is only on PATH inside `mise exec`. Retry there.
-    if (r is None or r.returncode == 127) and not use_mise and shutil.which("mise"):
+    # A missing binary raises FileNotFoundError rather than reporting the
+    # command-not-found code, and a tool-managed binary is only on PATH inside
+    # `mise exec`. Retry there.
+    missing = r is None or r.returncode == proc.MISSING_RETURNCODE
+    if missing and not use_mise and shutil.which("mise"):
         use_mise = True
         run_cmd = ["mise", "exec", "--"] + cmd
         log.info(f"Retrying with mise: {' '.join(run_cmd)}")

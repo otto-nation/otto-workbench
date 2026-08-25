@@ -88,6 +88,15 @@ DETAIL_LIMIT = 200
 # failed one by this code.
 TIMEOUT_RETURNCODE = 124
 
+# What a process exits with when it was interrupted at the keyboard, and what an
+# executable that is not on PATH comes back as. Both are shell convention in the
+# same family as the timeout code above, and both were being written as bare
+# numbers at the call sites that produce or read them — a raw `sys.exit(130)`
+# says nothing about why that number, and the reader who has to know is the one
+# reading `128 + SIGINT` off it.
+INTERRUPT_RETURNCODE = 130
+MISSING_RETURNCODE = 127
+
 # Signals that mean something outside the process ended it: the OOM killer and
 # a supervisor's kill (SIGKILL, SIGTERM), a reader that went away (SIGPIPE), an
 # operator or a CI cancellation (SIGINT, SIGHUP, SIGQUIT), a scheduler's CPU

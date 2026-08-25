@@ -23,6 +23,7 @@ import log
 import pr_context
 import pr_domains
 import pr_state
+import proc
 import run_lock
 import timeouts
 import workbench_paths
@@ -1230,7 +1231,10 @@ def _run_self_review(args) -> None:
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    signal.signal(signal.SIGINT, lambda *_: (log.blank(), log.info("Interrupted"), sys.exit(130)))
+    signal.signal(
+        signal.SIGINT,
+        lambda *_: (log.blank(), log.info("Interrupted"),
+                    sys.exit(proc.INTERRUPT_RETURNCODE)))
 
     parser = argparse.ArgumentParser(
         prog=SCRIPT,

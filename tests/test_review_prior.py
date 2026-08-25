@@ -202,7 +202,6 @@ class TestAccountedByTheReview:
         assert _by_id(review_prior.reconcile(PRIOR_ONE_FINDING, review), "M1").reason is None
 
 
-
 # ── What the tree settles on its own ─────────────────────────────────────────
 
 

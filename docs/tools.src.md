@@ -269,7 +269,7 @@ pr [global flags] <command> [flags]
 | Command | Description |
 |---------|-------------|
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
-| `ci [--fix] [--post]` | Fetch and classify CI failures; `--fix` attempts automated repair, `--post` pushes it |
+| `ci [--fix] [--post]` | Fetch and classify CI failures; `--fix` attempts automated repair, `--post` pushes the fix |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
 | `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
@@ -297,7 +297,7 @@ push prints the command that would send it, and every outcome short of a landed
 push carries that command as data — `ai/lib/land.py` owns the commit and the
 push under it, and `push.resume_command` renders the one thing to run.
 
-Beside `--fix`, `--post` is a modifier rather than a mode: `pr review --fix
+Alongside `--fix`, `--post` is a modifier rather than a mode: `pr review --fix
 --post` means publish what this run produces — post the findings, push the
 commit — while `pr review --post` on its own publishes the review already on
 disk. One caveat on `pr ci --fix --post`: the rebase it may run first pushes

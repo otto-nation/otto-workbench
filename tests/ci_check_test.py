@@ -1075,6 +1075,53 @@ _LANDED = push.PushResult(
 )
 
 
+def _run_fix_landing(landed, tmp_path):
+    """Drive `_run_fix` to the commit, with the land owner answering `landed`.
+
+    Returns (the exit code, the Trail mock the run recorded against).
+    """
+    tracking_dir = tmp_path / "ignore" / "ci-failures"
+    tracking_dir.mkdir(parents=True)
+    (tracking_dir / "fix-tracking.md").write_text("- [x] build\n")
+
+    ctx = MagicMock()
+    ctx.worktree_root = tmp_path
+    ctx.repo = "owner/repo"
+    ctx.branch = "feat/test"
+    trail = MagicMock()
+
+    with patch("ci_check._build_ci_tracking_file", return_value=1), \
+         patch("ci_check._rebase_if_behind", return_value=False), \
+         patch("ci_check._render_ci_fix_template", return_value="PROMPT"), \
+         patch("ci_check._commit_and_push", return_value=landed), \
+         patch("ci_check.ai_backend.invoke_fix", return_value=0):
+        rc = ci_check._run_fix(trail, {"failures": [{"job": "build"}]}, ctx)
+    return rc, trail
+
+
+def test_a_refused_commit_fails_the_fix_run(tmp_path):
+    """The fixes are loose in the worktree; exiting zero reports work nobody has."""
+    refused = land.LandResult(CommitStatus.COMMIT_FAILED, error="hook rejected it")
+    rc, _ = _run_fix_landing(refused, tmp_path)
+    assert rc == 1
+
+
+def test_a_held_push_still_passes_the_fix_run(tmp_path):
+    """Drafting the push is the default, not a failure — the commit is real."""
+    held = land.LandResult(CommitStatus.PUSH_HELD, sha="abc1234",
+                           resume="git -C '/fake' push")
+    rc, trail = _run_fix_landing(held, tmp_path)
+    assert rc == 0
+    assert trail.info.call_args.kwargs["data"]["resume"] == "git -C '/fake' push"
+
+
+def test_the_fix_pass_gives_the_land_owner_its_trail():
+    """`land` reports a refused commit to the trail — with none, nothing records it."""
+    with patch.object(land, "land") as mock_land:
+        ci_check._commit_and_push(Path("/fake"), 1, 0, "the-trail")
+    assert mock_land.call_args.kwargs["trail"] == "the-trail"
+
+
 def _run_commit_and_push(dirty, result=_LANDED):
     """Run _commit_and_push against a stubbed git and push owner.
 

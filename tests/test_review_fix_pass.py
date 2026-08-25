@@ -30,7 +30,7 @@ _PUSHED = push.PushResult(
 )
 
 
-def _recordinggit_out(calls: list[list[str]]):
+def _recording_git(calls: list[list[str]]):
     """A `git_client.run` that records its argv and answers `rev-parse` with a sha.
 
     `land` reads HEAD back after the commit and raises when it cannot, so a
@@ -107,7 +107,7 @@ class TestCommitFixes:
     @patch("land.push.push", return_value=_PUSHED)
     def test_commits_with_counts(self, mock_push, tmp_path):
         calls: list[list[str]] = []
-        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+        with patch("land.git_client.run", side_effect=_recording_git(calls)):
             review_fix._commit_fixes(
                 self._make_job(tmp_path), {"a.go"}, fixed=3, skipped=1,
             )
@@ -116,7 +116,7 @@ class TestCommitFixes:
     @patch("land.push.push", return_value=_PUSHED)
     def test_zero_fixed_omits_count_from_message(self, mock_push, tmp_path):
         calls: list[list[str]] = []
-        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+        with patch("land.git_client.run", side_effect=_recording_git(calls)):
             review_fix._commit_fixes(
                 self._make_job(tmp_path), {"a.go"}, fixed=0, skipped=2,
             )
@@ -126,7 +126,7 @@ class TestCommitFixes:
     def test_stages_only_the_named_paths(self, mock_push, tmp_path):
         """`git add -A` swept up whatever else was sitting in the worktree."""
         calls: list[list[str]] = []
-        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+        with patch("land.git_client.run", side_effect=_recording_git(calls)):
             review_fix._commit_fixes(
                 self._make_job(tmp_path), {"b.go", "a.go"}, fixed=1, skipped=0,
             )
@@ -138,7 +138,7 @@ class TestCommitFixes:
     def test_the_pass_pushes_gated(self, mock_push, tmp_path):
         """A fix pass runs on the operator's behalf, so its push waits for `--post`."""
         calls: list[list[str]] = []
-        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+        with patch("land.git_client.run", side_effect=_recording_git(calls)):
             review_fix._commit_fixes(
                 self._make_job(tmp_path), {"a.go"}, fixed=1, skipped=0,
             )
@@ -530,7 +530,7 @@ class TestCommitFixesWithSummary:
     def test_commit_includes_summary(self, mock_push, tmp_path):
         calls: list[list[str]] = []
         summary = "Fixed:\n  - [M1] corrected condition\nSkipped:\n  - [S1] needs design"
-        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+        with patch("land.git_client.run", side_effect=_recording_git(calls)):
             review_fix._commit_fixes(
                 self._make_job(tmp_path), {"a.go"}, fixed=1, skipped=1, summary=summary,
             )
@@ -542,7 +542,7 @@ class TestCommitFixesWithSummary:
     @patch("land.push.push", return_value=_PUSHED)
     def test_commit_without_summary(self, mock_push, tmp_path):
         calls: list[list[str]] = []
-        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+        with patch("land.git_client.run", side_effect=_recording_git(calls)):
             review_fix._commit_fixes(
                 self._make_job(tmp_path), {"a.go"}, fixed=2, skipped=0, summary="",
             )

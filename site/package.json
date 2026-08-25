@@ -11,7 +11,7 @@
     "verify": "otto-brand-verify --out out --control py-7"
   },
   "dependencies": {
-    "@otto-nation/brand": "https://github.com/otto-nation/otto-nation.github.io/releases/download/brand-v1.0.0/otto-nation-brand-1.0.0.tgz",
+    "@otto-nation/brand": "https://github.com/otto-nation/otto-nation.github.io/releases/download/brand-v1.0.1/otto-nation-brand-1.0.1.tgz",
     "fumadocs-core": "16.14.5",
     "fumadocs-mdx": "15.2.3",
     "fumadocs-ui": "16.14.5",

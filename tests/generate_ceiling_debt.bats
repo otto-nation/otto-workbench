@@ -7,7 +7,6 @@ setup() {
   load 'test_helper'
   common_setup
   export NO_COLOR=1
-  export GIT_CONFIG_GLOBAL=/dev/null
 
   SCRIPT="$REPO_ROOT/ai/claude/skills/ceiling-debt/generate-ceiling-debt.sh"
   # Physical path: on macOS mktemp hands back /var/..., git reports the

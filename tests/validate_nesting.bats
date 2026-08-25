@@ -270,13 +270,12 @@ SCRIPT
 
 _init_diff_repo() {
   local dir="$1"
-  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
+  common_setup
   GIT_CEILING_DIRECTORIES="$(dirname "$dir")"
   export GIT_CEILING_DIRECTORIES
   git -C "$dir" init -b main --quiet
   git -C "$dir" config user.email "test@example.com"
   git -C "$dir" config user.name "Test"
-  git -C "$dir" config core.hooksPath /dev/null
 }
 
 @test "validate-nesting --diff: catches new violations in added lines" {

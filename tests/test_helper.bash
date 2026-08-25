@@ -15,12 +15,38 @@ _assert_not_real_repo() {
   fi
 }
 
-# common_setup — call first in every test's setup().
-# Prevents tests from accidentally targeting the real repo via inherited env.
+# common_setup — call first in every test's setup(), and in any setup_file()
+# that runs git.
+# Prevents tests from accidentally targeting the real repo via inherited env,
+# and detaches every git command a test runs from the machine's own config.
 common_setup() {
   # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
   # causes git commands in tests to target the real repo instead of temp repos)
   unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
+
+  # Give git a config of its own, so a temp repo inherits nothing the developer
+  # set. A workbench machine turns on core.fsmonitor, core.untrackedCache, and a
+  # global core.hooksPath, none of which a test asks for and two of which it pays
+  # for: fsmonitor leaves a `git fsmonitor--daemon` per temp repo holding the bats
+  # runner's stdout, so a case ends not when its commands do but when the daemon
+  # it orphaned exits, and the global pre-commit runs gitleaks over every staged
+  # file of a fixture. A clean CI runner has none of this, so the price is
+  # invisible in pass/fail and shows up only as a suite that appears to hang.
+  #
+  # Emptying the two config files beats naming each setting through
+  # GIT_CONFIG_COUNT: no list has to be kept current, so a key added to
+  # gitconfig.shared tomorrow is excluded already, and a repo's own config still
+  # wins — a test whose subject is a hook firing plants it in .git/hooks and it
+  # runs, which a `-c core.hooksPath` would silently override. Both are exported
+  # because a tool under test reads them in a subprocess.
+  #
+  # The global one is a writable path rather than /dev/null so `git config
+  # --global`, which sync_git calls, still succeeds; git cannot lock /dev/null.
+  # Nothing writes the system config, so /dev/null is enough there. A test that
+  # wants a global config with content in it re-exports GIT_CONFIG_GLOBAL after
+  # this call, pointing at a file it wrote — see lint_sweep.bats.
+  export GIT_CONFIG_GLOBAL="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/gitconfig-global"
+  export GIT_CONFIG_SYSTEM=/dev/null
 }
 
 # common_teardown — call last in every test's teardown().
@@ -68,7 +94,7 @@ make_git_repo_with_org() {
   local org="$2"
   local repo="$3"
   mkdir -p "$dir"
-  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
+  common_setup
   GIT_CEILING_DIRECTORIES="$(dirname "$dir")" git -C "$dir" init --quiet
   git -C "$dir" remote add origin "git@github.com:${org}/${repo}.git"
 }
@@ -163,7 +189,6 @@ _make_repo_no_default_branch() {
   local extra_branch="${3:-}"
   git init --bare "$dir/remote.git" --quiet --initial-branch="$initial_branch"
   git clone "$dir/remote.git" "$dir/repo" --quiet 2>/dev/null
-  git -C "$dir/repo" config core.hooksPath /dev/null
   git -C "$dir/repo" config user.email "test@example.com"
   git -C "$dir/repo" config user.name "Test"
   echo "init" > "$dir/repo/README.md"
@@ -185,8 +210,7 @@ make_git_remote() {
   local local_dir="$2"
   local branch="${3:-feature/test}"
 
-  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
-  export GIT_CONFIG_GLOBAL=/dev/null
+  common_setup
   GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
   export GIT_CEILING_DIRECTORIES
 
@@ -203,7 +227,6 @@ make_git_remote() {
 
   git config user.email "test@example.com"
   git config user.name "Test"
-  git config core.hooksPath /dev/null
 
   echo "init" > README.md
   git add .
@@ -224,8 +247,7 @@ clone_from_shared_remote() {
   local local_dir="$2"
   local branch="${3:-feature/test}"
 
-  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
-  export GIT_CONFIG_GLOBAL=/dev/null
+  common_setup
   GIT_CEILING_DIRECTORIES="$(dirname "$local_dir")"
   export GIT_CEILING_DIRECTORIES
 
@@ -242,6 +264,5 @@ clone_from_shared_remote() {
 
   git config user.email "test@example.com"
   git config user.name "Test"
-  git config core.hooksPath /dev/null
   git checkout "$branch" --quiet 2>/dev/null
 }

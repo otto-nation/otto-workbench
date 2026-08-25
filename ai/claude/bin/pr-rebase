@@ -75,6 +75,19 @@ def _tinfo(action: str, detail: str, **kwargs) -> None:
         _trail.info(action, detail, **kwargs)
 
 
+def _billed_to() -> dict[str, str | None]:
+    """The repo and PR every AI call this run makes bills to in the usage ledger.
+
+    The conflict and pre-push helpers sit several frames below the resolved
+    context, and the trail this run opened already holds the same subject — so
+    they read it from there rather than each signature between them growing two
+    parameters that only get forwarded.
+    """
+    ctx = _trail.context if _trail else {}
+    pr = ctx.get("pr")
+    return {"repo": ctx.get("repo"), "pr": str(pr) if pr else None}
+
+
 # How many unpushed commits a divergence refusal names before it stops. The
 # operator needs enough to recognise the branch, not the whole log.
 _UNPUSHED_SUBJECT_LIMIT = 10
@@ -998,6 +1011,7 @@ def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
         usable=lambda reply: _valid_commit_header(_generated_subject(reply)),
         label="pre-push fix commit message",
         task="push-check-fix-message",
+        **_billed_to(),
     )
     return _generated_subject(answer.text) if answer.ok else _FALLBACK_FIX_SUBJECT
 
@@ -1031,7 +1045,7 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
 
     answer = agent_invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd, label=f"pre-push fix for {filepath}",
-        usable=_resolution_parses, task="push-check-fix",
+        usable=_resolution_parses, task="push-check-fix", **_billed_to(),
     )
     if answer.exit_code != 0:
         log.error(f"AI fix failed for {filepath} (exit {answer.exit_code})")
@@ -1198,7 +1212,7 @@ def _resolve_full_file(
     answer = agent_invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"conflict resolution for {filepath}",
-        usable=_resolution_parses, task="conflict-resolve",
+        usable=_resolution_parses, task="conflict-resolve", **_billed_to(),
     )
     if answer.exit_code != 0:
         _terr("resolve_conflicts", f"AI prompt failed for {filepath}",
@@ -1248,6 +1262,7 @@ def _resolve_chunked(
         label=f"chunked resolution for {filepath}",
         usable=lambda s: _parse_chunked_resolutions(s, len(blocks))[0] is not None,
         task="conflict-resolve-chunked",
+        **_billed_to(),
     )
     if answer.exit_code != 0:
         _terr("resolve_conflicts", f"AI prompt failed for {filepath}",
@@ -1303,7 +1318,7 @@ def _ai_suggest_regeneration(filepath: str, cwd: str) -> tuple[str, ...] | None:
     answer = agent_invoke.run_prompt(
         Phase.REBASE, prompt_text, cwd=cwd,
         label=f"lockfile regeneration command for {filepath}",
-        usable=lambda s: bool(s.strip()), task="lockfile-regen",
+        usable=lambda s: bool(s.strip()), task="lockfile-regen", **_billed_to(),
     )
     if not answer.ok:
         return None
@@ -1720,6 +1735,7 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
             Phase.REBASE, prompt, cwd=cwd,
             label=f"stash conflict resolution for {filepath}",
             usable=_resolution_parses, task="stash-conflict-resolve",
+            **_billed_to(),
         )
         if answer.exit_code != 0:
             log.error(f"AI resolution failed for stash conflict: {filepath}")

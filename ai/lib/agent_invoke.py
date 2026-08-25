@@ -53,12 +53,20 @@ def _require_shape(phase: Phase, shape: PhaseShape, runner: str):
     return spec
 
 
-def _resolved(phase: Phase, config: WorkbenchConfig | None):
-    """The three knobs every shape resolves the same way, whatever runs it."""
-    return (
-        agent_phases.phase_model(phase, None, config),
-        agent_phases.phase_thinking(phase, None, config),
-        agent_phases.phase_provider(config),
+@dataclass(frozen=True)
+class _Knobs:
+    """The three settings every shape resolves the same way, whatever runs it."""
+
+    model: str | None
+    thinking: str | None
+    provider: str | None
+
+
+def _resolved(phase: Phase, config: WorkbenchConfig | None) -> _Knobs:
+    return _Knobs(
+        model=agent_phases.phase_model(phase, None, config),
+        thinking=agent_phases.phase_thinking(phase, None, config),
+        provider=agent_phases.phase_provider(config),
     )
 
 
@@ -115,13 +123,13 @@ def run_prompt(
     """
     spec = _require_shape(phase, PhaseShape.PROMPT, "run_prompt")
     work_dir = str(cwd)
-    model, thinking, provider = _resolved(phase, config)
+    knobs = _resolved(phase, config)
     ledger_task = task or str(phase)
 
     text, exit_code = agent_retry.retry_blank_response(
         lambda attempt: ai_backend.prompt(
-            attempt, cwd=work_dir, model=model, thinking=thinking,
-            provider=provider, task=ledger_task, repo=repo, pr=pr,
+            attempt, cwd=work_dir, model=knobs.model, thinking=knobs.thinking,
+            provider=knobs.provider, task=ledger_task, repo=repo, pr=pr,
         ),
         prompt, label=label or spec.label, usable=usable,
     )
@@ -257,7 +265,7 @@ def run_fix(
     budget = agent_phases.phase_budget(phase) if max_budget is None else max_budget
     dirs = [str(d) for d in add_dirs] if add_dirs else [work_dir]
     name = label or spec.label
-    model, thinking, provider = _resolved(phase, config)
+    knobs = _resolved(phase, config)
 
     exit_code = 0
 
@@ -270,9 +278,9 @@ def run_fix(
             add_dirs=dirs,
             max_turns=attempt_turns,
             max_budget=budget,
-            model=model,
-            thinking=thinking,
-            provider=provider,
+            model=knobs.model,
+            thinking=knobs.thinking,
+            provider=knobs.provider,
             label=name,
             task=task or str(phase),
             repo=repo,

@@ -44,9 +44,6 @@ def backend(monkeypatch):
     return install
 
 
-_ANY = staticmethod(lambda text: True)
-
-
 class TestRunPromptResult:
     def test_reports_the_answer_and_its_verdict(self, backend, tmp_path):
         backend(("the answer", 0))

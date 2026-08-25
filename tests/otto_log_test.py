@@ -6,10 +6,9 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-import importlib.machinery
-import importlib.util
 
 import pytest
+from conftest import load_script
 
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
@@ -21,17 +20,7 @@ import trail as trail_module
 import workbench_paths
 from trail import Trail
 
-_spec = importlib.util.spec_from_loader(
-    "otto_log",
-    importlib.machinery.SourceFileLoader("otto_log", str(BIN_DIR / "otto-log")),
-)
-otto_log = importlib.util.module_from_spec(_spec)
-# Registered before execution: @dataclass resolves a string annotation through
-# sys.modules[cls.__module__], which is how `from __future__ import annotations`
-# leaves them. Without this line that lookup misses and the class body raises
-# AttributeError inside dataclasses._is_type, so the whole module fails to load.
-sys.modules["otto_log"] = otto_log
-_spec.loader.exec_module(otto_log)
+otto_log = load_script("otto_log", BIN_DIR / "otto-log")
 
 
 def _make_trail(script: str, events: list[tuple[str, str]]) -> str:

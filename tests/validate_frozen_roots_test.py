@@ -1,20 +1,15 @@
 """Tests for bin/local/validate-frozen-roots."""
 
-import importlib.machinery
-import importlib.util
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-frozen-roots"
 
-_loader = importlib.machinery.SourceFileLoader("validate_frozen_roots", str(SCRIPT))
-_spec = importlib.util.spec_from_loader("validate_frozen_roots", _loader)
-vfr = importlib.util.module_from_spec(_spec)
-sys.modules["validate_frozen_roots"] = vfr
-_spec.loader.exec_module(vfr)
+vfr = load_script("validate_frozen_roots", SCRIPT)
 
 
 def _check(tmp_path, source):

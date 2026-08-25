@@ -1,6 +1,5 @@
 """Tests for ci-check script functions."""
 
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -8,21 +7,16 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from conftest import assert_no_worktree_exit, make_ctx, write_thrash_log
+from conftest import (
+    CI_CHECK, assert_no_worktree_exit, load_script, make_ctx, write_thrash_log,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-_ci_check_path = str(BIN_DIR / "ci-check")
-_loader = importlib.machinery.SourceFileLoader("ci_check", _ci_check_path)
-_spec = importlib.util.spec_from_loader("ci_check", _loader, origin=_ci_check_path)
-ci_check = importlib.util.module_from_spec(_spec)
-ci_check.__file__ = _ci_check_path
-_spec.loader.exec_module(ci_check)
-sys.modules.setdefault("ci_check", ci_check)
+ci_check = load_script("ci_check", CI_CHECK)
 
 import land  # noqa: E402
 import publishing  # noqa: E402

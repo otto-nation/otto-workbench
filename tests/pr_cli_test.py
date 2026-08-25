@@ -1,7 +1,6 @@
 """Tests for pr CLI helper functions."""
 
 import ast
-import importlib.util
 import json
 import os
 import subprocess
@@ -11,6 +10,10 @@ from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 import pytest
+
+# `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
+# and importing one shadows the fixture with a plain function.
+from conftest import assert_no_worktree_exit, load_script, make_ctx, seed_review
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
@@ -23,15 +26,7 @@ if str(LIB_DIR) not in sys.path:
 # handle left on the real thing.
 _REAL_SUBPROCESS_RUN = subprocess.run
 
-# Import the extensionless pr script via importlib
-_pr_path = str(BIN_DIR / "pr")
-_loader = importlib.machinery.SourceFileLoader("pr_cli", _pr_path)
-_spec = importlib.util.spec_from_loader("pr_cli", _loader, origin=_pr_path)
-pr_cli = importlib.util.module_from_spec(_spec)
-pr_cli.__file__ = _pr_path
-_spec.loader.exec_module(pr_cli)
-# Register so @patch("pr_cli.subprocess.run") can resolve the module
-sys.modules.setdefault("pr_cli", pr_cli)
+pr_cli = load_script("pr_cli", BIN_DIR / "pr")
 
 import proc  # noqa: E402
 import pr_comments_fix  # noqa: E402
@@ -42,9 +37,6 @@ import timeouts  # noqa: E402
 import tool_parser  # noqa: E402
 import workbench_paths  # noqa: E402
 
-# `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
-# and importing one shadows the fixture with a plain function.
-from conftest import assert_no_worktree_exit, make_ctx, seed_review  # noqa: E402
 from pr_comments_fix import CLOSEOUT_COMMAND  # noqa: E402
 
 # Shared fixture values for the positional-vs-flag-value tests below.

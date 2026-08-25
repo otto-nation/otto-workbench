@@ -69,6 +69,11 @@ tools:
     visibility: brief
     description: "Validates that stat format flags are confined to the lib/portable.sh helpers"
 
+  - name: validate-script-loading
+    permission: false
+    visibility: brief
+    description: "Validates that only tests/conftest.py executes a module out of a file, so one script never has two module objects"
+
   - name: validate-permissions
     permission: false
     visibility: brief

@@ -1,7 +1,5 @@
 """Tests for pr-rebase helper functions."""
 
-import importlib.util
-import importlib.machinery
 import json
 import os
 import subprocess
@@ -12,28 +10,22 @@ from unittest import mock
 
 import pytest
 
+from conftest import (
+    assert_no_worktree_exit, git_out, init_worktree, load_script, make_ctx, run_checked,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-# Import the extensionless pr-rebase script via importlib
-_pr_rebase_path = str(BIN_DIR / "pr-rebase")
-_loader = importlib.machinery.SourceFileLoader("pr_rebase_cli", _pr_rebase_path)
-_spec = importlib.util.spec_from_loader("pr_rebase_cli", _loader, origin=_pr_rebase_path)
-pr_rebase_cli = importlib.util.module_from_spec(_spec)
-pr_rebase_cli.__file__ = _pr_rebase_path
-_spec.loader.exec_module(pr_rebase_cli)
+pr_rebase_cli = load_script("pr_rebase_cli", BIN_DIR / "pr-rebase")
 
 import pr_context  # noqa: E402
 import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
 import timeouts  # noqa: E402
-
-from conftest import (  # noqa: E402
-    assert_no_worktree_exit, git_out, init_worktree, make_ctx, run_checked,
-)
 
 # The base a run resolved to, threaded into every helper that derives a signal
 # from it. Named here rather than repeated as a literal so a test that cares

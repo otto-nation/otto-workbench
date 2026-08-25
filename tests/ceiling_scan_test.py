@@ -1,20 +1,14 @@
 """Tests for the ceiling-scan debt ledger CLI."""
 
-import importlib.machinery
-import importlib.util
 import time
 from pathlib import Path
 
+from conftest import load_script
 from conftest import write_marker_file as _write
 
 BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin"
 
-_spec = importlib.util.spec_from_loader(
-    "ceiling_scan",
-    importlib.machinery.SourceFileLoader("ceiling_scan", str(BIN_DIR / "ceiling-scan")),
-)
-ceiling_scan = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(ceiling_scan)
+ceiling_scan = load_script("ceiling_scan", BIN_DIR / "ceiling-scan")
 
 
 def _scan(tmp_path: Path) -> list[dict]:

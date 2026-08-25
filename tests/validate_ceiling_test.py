@@ -1,20 +1,14 @@
 """Tests for bin/local/validate-ceiling."""
 
-import importlib.machinery
-import importlib.util
-import sys
 from pathlib import Path
 
+from conftest import load_script
 from conftest import write_marker_file as _write
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-ceiling"
 
-_loader = importlib.machinery.SourceFileLoader("validate_ceiling", str(SCRIPT))
-_spec = importlib.util.spec_from_loader("validate_ceiling", _loader)
-vc = importlib.util.module_from_spec(_spec)
-sys.modules["validate_ceiling"] = vc
-_spec.loader.exec_module(vc)
+vc = load_script("validate_ceiling", SCRIPT)
 
 
 def test_a_marker_with_a_trigger_passes(tmp_path):

@@ -35,6 +35,99 @@ def _load_lib(name: str):
     return _LIBS[name]
 
 
+# The same cache for the other half of the tree. Scripts under `bin/`,
+# `bin/local/` and `ai/claude/bin/` carry no `.py` extension, so a test cannot
+# import one — it has to execute the file. Two callers executing the same file
+# hold two module objects for one script, and the two are not interchangeable:
+# `mock.patch("<name>.f")` resolves its target through `sys.modules`, while a
+# test that kept its own reference calls straight into the module it built. The
+# patch lands on one copy and the call reads the other, so a mock silently does
+# nothing — a failure that appears only when both callers are live in one
+# process, which under `pytest -n` depends on how the files were distributed.
+_SCRIPTS: dict[str, object] = {}
+_SCRIPT_OWNERS: dict[Path, str] = {}
+
+
+def load_script(name: str, path) -> object:
+    """Execute the script at *path* once, as module *name*, and return it.
+
+    Every caller asking for *name* gets that one module object, and it is the
+    one `sys.modules[name]` holds, so a string patch target and a held
+    reference always mean the same module.
+
+    Registration happens before execution and is never undone. A dataclass
+    resolves a string annotation through `sys.modules[cls.__module__]` while
+    its class body runs, which is why the name has to be there first; and a
+    name dropped at session teardown would strand every module still holding a
+    reference to a script the interpreter no longer answers for.
+
+    The name and the file are held as a pair, so a name already taken by
+    another file — or a file already loaded under another name — raises instead
+    of quietly producing the second copy. `sys.argv` is pinned to the script's
+    own name for the execution, since a script that reads arguments at import
+    time would otherwise read pytest's.
+    """
+    path = Path(path).resolve()
+    owner = _SCRIPT_OWNERS.get(path)
+    if owner is not None and owner != name:
+        raise RuntimeError(
+            f"{path} is already loaded as {owner!r}, so asking for it as {name!r} "
+            f"would build a second module object for one script. Ask for {owner!r}."
+        )
+    taken = next((p for p, n in _SCRIPT_OWNERS.items() if n == name), None)
+    if taken is not None and taken != path:
+        raise RuntimeError(
+            f"module name {name!r} already belongs to {taken}, so {path} needs a "
+            f"name of its own."
+        )
+    if name in _SCRIPTS:
+        return _SCRIPTS[name]
+    module = _exec_module(name, path)
+    _SCRIPTS[name] = module
+    _SCRIPT_OWNERS[path] = name
+    return module
+
+
+def exec_fresh(name: str, path):
+    """Execute *path* as a throwaway module, for a test whose subject is import time.
+
+    The deliberate opposite of `load_script`: a module that reads the
+    environment while its body runs answers whatever the environment said then,
+    so a test that changes the environment has to execute it again. The name is
+    registered for the duration of the execution only — the same dataclass
+    lookup `load_script` describes — and dropped afterwards, so the copy the
+    rest of the suite shares stays the one `load_script` owns.
+    """
+    module = _exec_module(name, Path(path).resolve())
+    del sys.modules[name]
+    return module
+
+
+def _exec_module(name: str, path: Path):
+    """Build the module, register the name, run the body, and hand it back.
+
+    On a failed execution the name is released again. Leaving a half-executed
+    module registered would hand the next caller a module that imports cleanly
+    and behaves like nothing in the file, which reads as a defect somewhere
+    else entirely.
+    """
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader, origin=str(path))
+    module = importlib.util.module_from_spec(spec)
+    module.__file__ = str(path)
+    sys.modules[name] = module
+    saved_argv = sys.argv
+    sys.argv = [path.name]
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    finally:
+        sys.argv = saved_argv
+    return module
+
+
 # Which variables redirect git at another repository is one fact, and
 # lib/gitenv.py owns it — lib/gitenv.sh and every gate under bin/local/ already
 # read the same list. A hand-copy here stood a variable short of it, so a
@@ -616,17 +709,12 @@ def write_marker_file(directory, name: str, *lines: str) -> Path:
     return path
 
 
-# Session-scoped: the module is loaded once and shared across all tests.
-# Tests must not mutate module-level state.
+# One module object per script, shared across every test that asks for it, so a
+# test must not mutate module-level state. The fixtures are the ergonomic face
+# of `load_script`; a module-level caller reaches for `load_script` directly.
 @pytest.fixture(scope="session")
 def rp():
-    loader = importlib.machinery.SourceFileLoader("review_post", str(REVIEW_POST))
-    spec = importlib.util.spec_from_loader("review_post", loader)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["review_post"] = mod
-    spec.loader.exec_module(mod)
-    yield mod
-    del sys.modules["review_post"]
+    return load_script("review_post", REVIEW_POST)
 
 
 @pytest.fixture(autouse=True)
@@ -718,59 +806,27 @@ def _clear_bot_login_cache():
 
 @pytest.fixture(scope="session")
 def ro():
-    loader = importlib.machinery.SourceFileLoader("review_orchestrate", str(REVIEW_ORCHESTRATE))
-    spec = importlib.util.spec_from_loader("review_orchestrate", loader)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["review_orchestrate"] = mod
-    spec.loader.exec_module(mod)
-    yield mod
-    del sys.modules["review_orchestrate"]
+    return load_script("review_orchestrate", REVIEW_ORCHESTRATE)
 
 
 @pytest.fixture(scope="session")
 def rt():
-    loader = importlib.machinery.SourceFileLoader("review_threads", str(REVIEW_THREADS))
-    spec = importlib.util.spec_from_loader("review_threads", loader)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["review_threads"] = mod
-    spec.loader.exec_module(mod)
-    yield mod
-    del sys.modules["review_threads"]
+    return load_script("review_threads", REVIEW_THREADS)
 
 
 @pytest.fixture(scope="session")
 def rss():
-    loader = importlib.machinery.SourceFileLoader(
-        "reuse_session_start", str(REUSE_SESSION_START),
-    )
-    spec = importlib.util.spec_from_loader("reuse_session_start", loader)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["reuse_session_start"] = mod
-    spec.loader.exec_module(mod)
-    yield mod
-    del sys.modules["reuse_session_start"]
+    return load_script("reuse_session_start", REUSE_SESSION_START)
 
 
 @pytest.fixture(scope="session")
 def em():
-    loader = importlib.machinery.SourceFileLoader("eval_models", str(EVAL_MODELS))
-    spec = importlib.util.spec_from_loader("eval_models", loader)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["eval_models"] = mod
-    spec.loader.exec_module(mod)
-    yield mod
-    del sys.modules["eval_models"]
+    return load_script("eval_models", EVAL_MODELS)
 
 
 @pytest.fixture(scope="session")
 def cc():
-    loader = importlib.machinery.SourceFileLoader("ci_check", str(CI_CHECK))
-    spec = importlib.util.spec_from_loader("ci_check", loader)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["ci_check"] = mod
-    spec.loader.exec_module(mod)
-    yield mod
-    del sys.modules["ci_check"]
+    return load_script("ci_check", CI_CHECK)
 
 
 # One temp root for every make_ctx() default target_dir, not a tmp_path-scoped

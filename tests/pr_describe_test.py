@@ -1,10 +1,10 @@
 """Tests for pr-describe."""
 
-import importlib.machinery
-import importlib.util
 import sys
 from pathlib import Path
 from unittest import mock
+
+from conftest import assert_no_worktree_exit, load_script, make_ctx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
@@ -12,18 +12,10 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-# Import the extensionless pr-describe script via importlib
-_path = str(BIN_DIR / "pr-describe")
-_loader = importlib.machinery.SourceFileLoader("pr_describe_cli", _path)
-_spec = importlib.util.spec_from_loader("pr_describe_cli", _loader, origin=_path)
-pr_describe_cli = importlib.util.module_from_spec(_spec)
-pr_describe_cli.__file__ = _path
-_spec.loader.exec_module(pr_describe_cli)
+pr_describe_cli = load_script("pr_describe_cli", BIN_DIR / "pr-describe")
 
 import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
-
-from conftest import assert_no_worktree_exit, make_ctx  # noqa: E402
 
 
 def _ctx(worktree, head_sha="aaaa111", pr_number=7):

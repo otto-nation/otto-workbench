@@ -1,20 +1,15 @@
 """Tests for bin/local/validate-stat-portability."""
 
-import importlib.machinery
-import importlib.util
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-stat-portability"
 
-_loader = importlib.machinery.SourceFileLoader("validate_stat_portability", str(SCRIPT))
-_spec = importlib.util.spec_from_loader("validate_stat_portability", _loader)
-vsp = importlib.util.module_from_spec(_spec)
-sys.modules["validate_stat_portability"] = vsp
-_spec.loader.exec_module(vsp)
+vsp = load_script("validate_stat_portability", SCRIPT)
 
 
 def _check(tmp_path, source):

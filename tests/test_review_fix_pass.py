@@ -567,7 +567,7 @@ class TestCommittedNothing:
 
     def test_staged_but_unchanged_content_is_not_a_rejection(self, git_wt):
         """`add` of an unmodified file stages nothing, so the commit is empty."""
-        _git(git_wt, "add", "src.py")
+        git_out(git_wt, "add", "src.py")
         result = review_fix.git_client.run("commit", "-m", "x", cwd=git_wt)
         assert not result.ok
         assert review_common.committed_nothing(result) is True
@@ -576,7 +576,7 @@ class TestCommittedNothing:
         """`live_git_hooks` is what lets the hook run — the suite disowns them."""
         _install_failing_pre_commit(tmp_path)
         (git_wt / "src.py").write_text("edited\n")
-        _git(git_wt, "add", "src.py")
+        git_out(git_wt, "add", "src.py")
         result = review_fix.git_client.run("commit", "-m", "x", cwd=git_wt)
         assert not result.ok
         assert review_common.committed_nothing(result) is False
@@ -934,8 +934,8 @@ class TestRunFixPassRetry:
         # so a bare tmp_path no longer stands in for a worktree.
         wt = tmp_path / "worktree"
         wt.mkdir()
-        _git(wt, "init", "-q", "-b", "main")
-        _git(wt, "-c", "user.email=t@t", "-c", "user.name=t",
+        git_out(wt, "init", "-q", "-b", "main")
+        git_out(wt, "-c", "user.email=t@t", "-c", "user.name=t",
              "-c", "commit.gpgsign=false",
              "commit", "-q", "--allow-empty", "--no-verify", "-m", "initial")
         job.wt_path = str(wt)
@@ -1163,7 +1163,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         review_fix.run_fix_pass(job)
 
         assert (git_wt / "helper.py").read_text() == "def helper(): pass\n"
-        assert _git(git_wt, "log", "--oneline").strip().count("\n") == 0
+        assert git_out(git_wt, "log", "--oneline").strip().count("\n") == 0
         mock_push.assert_not_called()
 
         err = capsys.readouterr().err
@@ -1190,7 +1190,7 @@ class TestRunFixPassWhenTheSnapshotFails:
 
         assert mock_invoke.call_count == 2
         assert (git_wt / "helper.py").read_text() == "def helper(): pass\n"
-        assert _git(git_wt, "log", "--oneline").strip().count("\n") == 0
+        assert git_out(git_wt, "log", "--oneline").strip().count("\n") == 0
         mock_push.assert_not_called()
         assert "nothing was committed or pushed" in capsys.readouterr().err
 

@@ -293,7 +293,7 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
 def _record_for_repo(provider: str, wt_path: str) -> None:
     """Write the answer where every worktree of this repo will read it.
 
-    The container when the repo is in the bare-repo layout, because the
+    That is the container when the repo is in the bare-repo layout, because the
     worktree the question was asked in is the one thing about this repo that
     does not last: ``wt remove`` deletes it and the answer with it, and the
     branch cut tomorrow starts with nothing recorded. The container file sits

@@ -407,10 +407,13 @@ def container_config_path(project_root: Path | str) -> Path | None:
     at all each answer ``None``, which is what keeps a repo outside the layout
     on the two scopes it has always had.
 
-    Shells out to git, so a caller resolving the same root repeatedly should
-    hold on to the answer. Nothing does today: the scope list is built once per
-    ``load_config``, and the hooks that run on every prompt load the global
-    scope alone.
+    Shells out to git, so a caller in a loop should hold on to the answer.
+    Nothing loops today: the scope list is built once per ``load_config``, and
+    the hooks that run on every prompt load the global scope alone. A writer
+    resolving the root twice — once to decide the scope, once inside
+    ``set_container_value`` — pays two more ``rev-parse`` reads at a prompt a
+    person is standing at, which is the price of the refusal living in one
+    place instead of at each call site.
     """
     container = container_dir(str(project_root))
     return None if container is None else Path(container) / PROJECT_CONFIG_NAME

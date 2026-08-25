@@ -121,9 +121,10 @@ class PriorDisposition(StrEnum):
     def parse(cls, text: str) -> "PriorDisposition | None":
         """The disposition a ledger line states, if it states one plainly.
 
-        The verdict has to stand on its own — the whole text, or ahead of a
-        dash, colon or parenthesis. A qualified one ("Fixed, but only on the
-        happy path") is left unparsed rather than read as its optimistic half.
+        The verdict has to stand on its own — the whole text, or ahead of the
+        break that introduces its detail. A qualified one ("Fixed, but only on
+        the happy path") is left unparsed rather than read as its optimistic
+        half.
         """
         lowered = text.strip().lower()
         for member in cls:
@@ -163,7 +164,14 @@ def disposition_precedence(disposition: "PriorDisposition | None") -> int:
 
 # What may follow a disposition without qualifying it: nothing, or a break that
 # introduces detail rather than a caveat.
-_DISPOSITION_TAIL_RE = re.compile(r"^\s*(?:[—–:(-]|$)")
+#
+# The full stop is on the list because a review states a verdict in a sentence
+# as readily as in a clause — "Fixed. `check_key` now calls it directly." is the
+# same claim as "Fixed — `check_key` now calls it directly.", and the prompt's
+# example cannot show every punctuation a model will reach for. The comma stays
+# off it: what follows a comma qualifies the verdict rather than explaining it.
+DISPOSITION_TAIL_PUNCTUATION = "—–:(-."
+_DISPOSITION_TAIL_RE = re.compile(rf"^\s*(?:[{re.escape(DISPOSITION_TAIL_PUNCTUATION)}]|$)")
 
 
 def plural(n: int) -> str:

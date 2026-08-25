@@ -122,6 +122,29 @@ class TestAccountedByTheReview:
         assert record.disposition is PriorDisposition.FIXED
         assert record.source is DispositionSource.LEDGER
 
+    def test_a_verdict_ending_a_sentence_is_read_as_that_verdict(self):
+        """The ledger form a synthesis agent writes when its detail is prose."""
+        review = _ledger("- **[M1]** `handler.go` — Fixed. The error is checked now.")
+        record = _by_id(review_prior.reconcile(PRIOR_ONE_FINDING, review), "M1")
+        assert record.disposition is PriorDisposition.FIXED
+        assert record.source is DispositionSource.LEDGER
+
+    def test_a_prior_finding_citing_a_bare_file_is_still_matched(self):
+        """A location a review wrote without a line number still names its file."""
+        prior = "## Nit\n- [ ] **[N9]** `bin/otto-workbench` — the guard is unreachable\n"
+        review = _ledger("- **[N9]** `bin/otto-workbench` — Fixed")
+        record = _by_id(review_prior.reconcile(prior, review), "N9")
+        assert record.ref.path == "bin/otto-workbench"
+        assert record.disposition is PriorDisposition.FIXED
+
+    def test_a_bare_file_carries_forward_by_stable_id(self):
+        """Without a path there is no stable ID, and no carry-forward to match."""
+        prior = "## Nit\n- [ ] **[N9]** `bin/otto-workbench` — the guard is unreachable\n"
+        review = "## Nit\n- **[N3]** `bin/otto-workbench` — the guard is unreachable\n"
+        record = _by_id(review_prior.reconcile(prior, review), "N9")
+        assert record.disposition is PriorDisposition.STILL_OPEN
+        assert record.source is DispositionSource.CARRIED
+
     def test_ledger_matches_reworded_finding_by_path(self):
         review = (
             "## Must fix\n"

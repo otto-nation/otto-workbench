@@ -550,9 +550,9 @@ of their subparsers — the same function the probe answers with — and fails t
 the day one of them declares an option that consumes a value, naming the two ways out:
 list the command as taking no target, or give it a delegate to ask.
 
-### Four shared foundations under `ai/`
+### Five shared foundations under `ai/`
 
-Four modules exist because the same decision was being re-made at every call
+Five modules exist because the same decision was being re-made at every call
 site, and the spread was the bug. Each owns its own reference page:
 
 | Module | Takes over | Reference |
@@ -561,13 +561,13 @@ site, and the spread was the bug. Each owns its own reference page:
 | `timeouts` | How long a subprocess may run, chosen as a tier rather than a number. | [`timeouts.py`](ai-libraries.md#timeoutspy) |
 | `git_client` | Invoking `git` — `cwd`, capture, non-zero handling, and per-subcommand config. | [`git_client.py`](ai-libraries.md#git_clientpy) |
 | `push` | Pushing, and asking the remote whether it actually took it. | [`push.py`](ai-libraries.md#pushpy) |
+| `land` | Committing a pass's work and pushing it, as one act with one result. | [`land.py`](ai-libraries.md#landpy) |
 
-They stack: `push` and `git_client` sit on `proc`, which requires a `timeouts`
-tier on every call. `bin/local/validate-timeouts` enforces the last of those
-across `ai/`, so a new subprocess call cannot skip the question. The bash half of
-`pr:create` reaches `push` through its CLI rather than reimplementing it; pushes
-typed by hand are outside all of this
-([#963](https://github.com/otto-nation/otto-workbench/issues/963)).
+They stack: `land` sits on `push` and `git_client`, which sit on `proc`, which
+requires a `timeouts` tier on every call — `bin/local/validate-timeouts` enforces
+that one across `ai/`, so a new subprocess call cannot skip the question. The
+bash half of `pr:create` reaches `push` through its CLI rather than reimplementing
+it; pushes typed by hand are outside all of this ([#963](https://github.com/otto-nation/otto-workbench/issues/963), [#904](https://github.com/otto-nation/otto-workbench/issues/904)).
 
 ## Guidelines & Rules
 

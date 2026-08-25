@@ -43,6 +43,7 @@ import review_state as _rst  # noqa: E402
 
 import log  # noqa: E402
 import pr_state  # noqa: E402
+import publishing  # noqa: E402
 
 from pr_context import detect_repo  # noqa: E402
 from review_common import (  # noqa: E402
@@ -316,6 +317,9 @@ def main():
                         help="Max file groups in multi-phase reviews (default: effort-based)")
     parser.add_argument("--fix", action="store_true",
                         help="Run fix pass after review to apply findings")
+    parser.add_argument("--post", action="store_true",
+                        help="Let the fix pass push its commit; without it the "
+                             "push is drafted")
     parser.add_argument("--generated", action="store_true",
                         help="Include tier3-generated files (skipped by default)")
     parser.add_argument("--recover-sha", default="",
@@ -323,6 +327,12 @@ def main():
                              "(pins metadata to the failed run's HEAD)")
     add_trail_args(parser)
     args = parser.parse_args()
+
+    # Before anything runs. `claude-review` decides whether this run may publish
+    # and forwards the answer here, because the gate is per-process and the fix
+    # pass lives in this one.
+    if args.post:
+        publishing.enable()
 
     if args.no_disprove:
         args.disprove = False

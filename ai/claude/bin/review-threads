@@ -30,6 +30,7 @@ import log
 import agent_retry
 import ai_backend
 import git_client
+import land
 import pr_comments as pc
 import pr_comments_fix
 import pr_comments_state as pcs
@@ -938,19 +939,6 @@ _UNPUSHED_STATUSES = frozenset({
     CommitStatus.PUSH_UNVERIFIED,
 })
 
-_PUSH_STATUS = {
-    push.PushStatus.PUSHED: CommitStatus.PUSHED,
-    push.PushStatus.HELD: CommitStatus.PUSH_HELD,
-    push.PushStatus.REFUSED: CommitStatus.PUSH_FAILED,
-    push.PushStatus.LOST: CommitStatus.PUSH_LOST,
-    # Its own status rather than folded into `push_lost`: an unverified push has
-    # almost certainly landed, and rendering it as a remote that does not hold
-    # the commit is as unfounded as rendering it as pushed. The run cannot make
-    # either claim, so it makes neither.
-    push.PushStatus.UNVERIFIED: CommitStatus.PUSH_UNVERIFIED,
-}
-
-
 def _commit_unpushed(status: str) -> bool:
     return status in _UNPUSHED_STATUSES
 
@@ -970,7 +958,8 @@ def _push_commit(wt_path: Path, trail: Trail | None) -> push.PushResult:
 def _pushed(sha: str | None, result: push.PushResult) -> CommitPushResult:
     """What the pass records for a push the owner has already reported."""
     return CommitPushResult(
-        sha, _PUSH_STATUS[result.status], "" if result.ok else result.output.strip(),
+        sha, land.commit_status(result.status),
+        "" if result.ok else result.output.strip(),
     )
 
 
@@ -1053,8 +1042,8 @@ def _commit_and_push(
 
     result = git_client.run("commit", "-m", msg, cwd=wt_path)
     if not result.ok:
-        # See review_common.committed_nothing for why this isn't a failure.
-        if review_common.committed_nothing(result):
+        # See land.committed_nothing for why this isn't a failure.
+        if land.committed_nothing(result):
             return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
         err = result.stderr.strip()
         log.error(f"commit failed: {err}")
@@ -2308,7 +2297,7 @@ def _push_held_commit(
         return
     if not result.ok:
         _report_diverged_push(wt_path, result, trail)
-        fix.commit_status = _PUSH_STATUS[result.status]
+        fix.commit_status = land.commit_status(result.status)
         return
 
     log.info(f"Pushed held fixes ({fix.commit_sha})")

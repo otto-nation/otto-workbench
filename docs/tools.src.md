@@ -269,7 +269,7 @@ pr [global flags] <command> [flags]
 | Command | Description |
 |---------|-------------|
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
-| `ci [--fix]` | Fetch and classify CI failures; `--fix` attempts automated repair |
+| `ci [--fix] [--post]` | Fetch and classify CI failures; `--fix` attempts automated repair, `--post` pushes the fix |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
 | `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
@@ -287,6 +287,21 @@ therefore not saying the same thing twice — the first names the work, the
 second opens the gate. The same `--post` gates `pr review` and `--reply`; it is
 one switch for the whole process, not a `comments` flag — see
 `ai/lib/publishing.py`, which owns it.
+
+**Every fix pass answers to the same gate.** `pr ci --fix` and `pr review --fix`
+commit what their agent fixed and draft the push without `--post`, exactly as
+`pr comments --fix` does. The commit always happens: it is local, it is what
+makes the work reviewable, and it keeps the next round from reading its own
+dirty tree as a refused commit. The push is the outward act, so it waits. A held
+push prints the command that would send it, and every outcome short of a landed
+push carries that command as data — `ai/lib/land.py` owns the commit and the
+push under it, and `push.resume_command` renders the one thing to run.
+
+Alongside `--fix`, `--post` is a modifier rather than a mode: `pr review --fix
+--post` means publish what this run produces — post the findings, push the
+commit — while `pr review --post` on its own publishes the review already on
+disk. One caveat on `pr ci --fix --post`: the rebase it may run first pushes
+through a subprocess the gate does not reach, so that push happens either way.
 
 The work itself runs in two phases:
 

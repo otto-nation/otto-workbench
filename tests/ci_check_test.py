@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from conftest import assert_no_worktree_exit, make_ctx, write_thrash_log
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -22,7 +24,10 @@ ci_check.__file__ = _ci_check_path
 _spec.loader.exec_module(ci_check)
 sys.modules.setdefault("ci_check", ci_check)
 
+import land  # noqa: E402
+import publishing  # noqa: E402
 import push  # noqa: E402
+from pr_fix import CommitStatus  # noqa: E402
 from proc import CmdResult  # noqa: E402
 
 
@@ -1041,7 +1046,8 @@ def _run_fix_with_tracking(tmp_path, tracking_body, invoke_fix):
     with patch("ci_check._build_ci_tracking_file", return_value=1), \
          patch("ci_check._rebase_if_behind", return_value=False), \
          patch("ci_check._render_ci_fix_template", return_value="PROMPT"), \
-         patch("ci_check._commit_and_push", return_value=""), \
+         patch("ci_check._commit_and_push",
+               return_value=land.LandResult(CommitStatus.NO_CHANGES)), \
          patch("ci_check.ai_backend.invoke_fix", side_effect=invoke_fix) as inv:
         ci_check._run_fix(MagicMock(), report, ctx)
     return inv
@@ -1069,14 +1075,64 @@ _LANDED = push.PushResult(
 )
 
 
+def _run_fix_landing(landed, tmp_path):
+    """Drive `_run_fix` to the commit, with the land owner answering `landed`.
+
+    Returns (the exit code, the Trail mock the run recorded against).
+    """
+    tracking_dir = tmp_path / "ignore" / "ci-failures"
+    tracking_dir.mkdir(parents=True)
+    (tracking_dir / "fix-tracking.md").write_text("- [x] build\n")
+
+    ctx = MagicMock()
+    ctx.worktree_root = tmp_path
+    ctx.repo = "owner/repo"
+    ctx.branch = "feat/test"
+    trail = MagicMock()
+
+    with patch("ci_check._build_ci_tracking_file", return_value=1), \
+         patch("ci_check._rebase_if_behind", return_value=False), \
+         patch("ci_check._render_ci_fix_template", return_value="PROMPT"), \
+         patch("ci_check._commit_and_push", return_value=landed), \
+         patch("ci_check.ai_backend.invoke_fix", return_value=0):
+        rc = ci_check._run_fix(trail, {"failures": [{"job": "build"}]}, ctx)
+    return rc, trail
+
+
+def test_a_refused_commit_fails_the_fix_run(tmp_path):
+    """The fixes are loose in the worktree; exiting zero reports work nobody has."""
+    refused = land.LandResult(CommitStatus.COMMIT_FAILED, error="hook rejected it")
+    rc, _ = _run_fix_landing(refused, tmp_path)
+    assert rc == 1
+
+
+def test_a_held_push_still_passes_the_fix_run(tmp_path):
+    """Drafting the push is the default, not a failure — the commit is real."""
+    held = land.LandResult(CommitStatus.PUSH_HELD, sha="abc1234",
+                           resume="git -C '/fake' push")
+    rc, trail = _run_fix_landing(held, tmp_path)
+    assert rc == 0
+    assert trail.info.call_args.kwargs["data"]["resume"] == "git -C '/fake' push"
+
+
+def test_the_fix_pass_gives_the_land_owner_its_trail():
+    """`land` reports a refused commit to the trail — with none, nothing records it."""
+    with patch.object(land, "land") as mock_land:
+        ci_check._commit_and_push(Path("/fake"), 1, 0, "the-trail")
+    assert mock_land.call_args.kwargs["trail"] == "the-trail"
+
+
 def _run_commit_and_push(dirty, result=_LANDED):
     """Run _commit_and_push against a stubbed git and push owner.
+
+    The stubs go on `land`, which owns the commit and the push now — the
+    assertions here are about what `ci-check` asks it for.
 
     The owner is stubbed rather than left to the fake git below, because it
     verifies with a second git call whose canned answer would decide the
     outcome — making every assertion here depend on the stub's shape.
 
-    Returns (sha, git argv list, the `push.push` mock).
+    Returns (the LandResult, git argv list, the `push.push` mock).
     """
     calls = []
 
@@ -1084,17 +1140,17 @@ def _run_commit_and_push(dirty, result=_LANDED):
         calls.append(list(args))
         return CmdResult(0, "abc1234\n" if "rev-parse" in args else "")
 
-    with patch.object(ci_check.git_client, "run", side_effect=fake_run), \
-         patch.object(ci_check.push, "push", return_value=result) as mock_push, \
-         patch.object(ci_check.review_common, "has_uncommitted_changes",
-                      return_value=dirty):
-        sha = ci_check._commit_and_push(Path("/fake"), 1, 0)
-    return sha, calls, mock_push
+    with patch.object(land.git_client, "run", side_effect=fake_run), \
+         patch.object(land.git_client, "is_dirty", return_value=dirty), \
+         patch.object(land.push, "push", return_value=result) as mock_push:
+        landed = ci_check._commit_and_push(Path("/fake"), 1, 0)
+    return landed, calls, mock_push
 
 
 def test_commit_and_push_skips_a_clean_worktree():
-    sha, calls, mock_push = _run_commit_and_push(dirty=False)
-    assert sha is None
+    landed, calls, mock_push = _run_commit_and_push(dirty=False)
+    assert landed.status is CommitStatus.NO_CHANGES
+    assert landed.sha == ""
     assert calls == []
     mock_push.assert_not_called()
 
@@ -1114,20 +1170,26 @@ def test_commit_and_push_accepts_an_empty_commit_after_an_unreadable_status():
             return CmdResult(1, "On branch main\nnothing to commit, working tree clean\n")
         return CmdResult(0, "")
 
-    with patch.object(ci_check.git_client, "run", side_effect=fake_run), \
-         patch.object(ci_check.review_common, "has_uncommitted_changes",
-                      return_value=True):
-        sha = ci_check._commit_and_push(Path("/fake"), 1, 0)
+    with patch.object(land.git_client, "run", side_effect=fake_run), \
+         patch.object(land.git_client, "is_dirty", return_value=True):
+        landed = ci_check._commit_and_push(Path("/fake"), 1, 0)
 
-    assert sha is None
+    assert landed.status is CommitStatus.NO_CHANGES
     assert not any("push" in call for call in calls)
 
 
 def test_commit_and_push_stages_untracked_files():
     """A fix that only adds files must land in the commit, not be dropped by -u."""
-    sha, calls, _ = _run_commit_and_push(dirty=True)
-    assert sha == "abc1234"
+    landed, calls, _ = _run_commit_and_push(dirty=True)
+    assert landed.sha == "abc1234"
     assert calls[0][-2:] == ["add", "-A"]
+
+
+def test_commit_and_push_names_the_ci_fix_and_its_counts():
+    """The message is ci-check's own; everything below it is the owner's."""
+    _, calls, _ = _run_commit_and_push(dirty=True)
+    commit = next(call for call in calls if call[0] == "commit")
+    assert commit[2] == "fix: address CI failures\n\n1 fixed, 0 skipped"
 
 
 def test_commit_and_push_reports_a_push_that_never_landed(capsys):
@@ -1136,16 +1198,49 @@ def test_commit_and_push_reports_a_push_that_never_landed(capsys):
         push.PushStatus.LOST, sha="abc1234ff", branch="feat/x",
         remote_sha="9999999aa",
     )
-    sha, _, _ = _run_commit_and_push(dirty=True, result=lost)
+    landed, _, _ = _run_commit_and_push(dirty=True, result=lost)
 
     printed = capsys.readouterr().err
     assert "the remote did not move" in printed
     assert "9999999" in printed
     # The commit is real whatever the remote did, and the caller records it.
-    assert sha == "abc1234"
+    assert landed.status is CommitStatus.PUSH_LOST
+    assert landed.sha == "abc1234"
+    assert landed.resume == "git -C '/fake' push"
 
 
-def test_commit_and_push_pushes_ungated():
-    """`pr ci` never opens the publishing gate; a gated call would draft."""
+def test_commit_and_push_pushes_gated():
+    """A `pr ci --fix` run without `--post` commits and drafts the push."""
     _, _, mock_push = _run_commit_and_push(dirty=True)
-    assert mock_push.call_args.kwargs["gated"] is False
+    assert mock_push.call_args.kwargs["gated"] is True
+
+
+# ── --post opens the gate ─────────────────────────────────────────────────
+
+
+def _gate_at_first_work(argv):
+    """Whether the run could publish by the time it started doing anything.
+
+    Target resolution is the first thing after the parse, so a run that opted in
+    must already be able to publish there — a gate opened later is a gate some
+    code path can push ahead of.
+    """
+    seen = {}
+
+    def stop(*args, **kwargs):
+        seen["enabled"] = publishing.enabled()
+        raise SystemExit(0)
+
+    with patch.object(sys, "argv", ["ci-check", *argv]), \
+         patch.object(ci_check.pr_context, "resolve", side_effect=stop), \
+         pytest.raises(SystemExit):
+        ci_check.main()
+    return seen["enabled"]
+
+
+def test_a_fix_run_without_post_cannot_publish():
+    assert _gate_at_first_work(["--fix"]) is False
+
+
+def test_post_opens_the_gate_before_anything_runs():
+    assert _gate_at_first_work(["--fix", "--post"]) is True

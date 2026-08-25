@@ -702,7 +702,7 @@ def _build_orchestrate_args(
     session_log: str, prior_review_path: str, issue_link: str,
     issue_context: str, max_parallel: int, no_holistic: bool,
     max_cost: float | None, model: str | None, mode: str = "",
-    fix_pass: bool = False, effort: str | None = None,
+    fix_pass: bool = False, post: bool = False, effort: str | None = None,
     max_groups: int | None = None,
     no_scout: bool = False, disprove: bool | None = None,
     generated: bool = False, recover_sha: str = "",
@@ -730,6 +730,10 @@ def _build_orchestrate_args(
     args += ["--generator-version", _generator_version()]
     if fix_pass:
         args.append("--fix")
+    # The publishing gate is process-wide and the fix pass runs in there, so the
+    # only way it learns this run may publish is to be told on its own argv.
+    if post:
+        args.append("--post")
     if no_holistic:
         args.append("--no-holistic")
     if max_cost:
@@ -1054,7 +1058,8 @@ def _run_self_review_body(
         prior_review_path=prior_review_path, issue_link=issue_link,
         issue_context=issue_context, max_parallel=max_parallel,
         no_holistic=no_holistic, max_cost=max_cost, model=model,
-        mode="self", fix_pass=fix_pass, effort=effort, max_groups=max_groups,
+        mode="self", fix_pass=fix_pass, post=args.post,
+        effort=effort, max_groups=max_groups,
         no_scout=no_scout, disprove=disprove, generated=generated,
         recover_sha=recover_sha, target_dir=ctx.target_dir,
     )

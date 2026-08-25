@@ -335,6 +335,88 @@ def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
     assert result.retry is push.Retry.DIRTY
 
 
+# ── the resume command ──────────────────────────────────────────────────────
+
+
+def _result(status, refusal=None, sha="1a2b3c4d", branch="feat/x", args=()):
+    return push.PushResult(status, sha=sha, branch=branch, refusal=refusal, args=args)
+
+
+def test_a_landed_push_needs_no_resume():
+    assert push.resume_command(_result(push.PushStatus.PUSHED), "/tmp/wt") == ""
+
+
+@pytest.mark.parametrize("status", [s for s in push.PushStatus if s is not
+                                    push.PushStatus.PUSHED])
+def test_every_unfinished_status_names_a_command(status):
+    """Rule 2 of the land owner: nothing falls short without saying what finishes it."""
+    resume = push.resume_command(_result(status), "/tmp/wt")
+    assert resume.startswith("git -C '/tmp/wt' ")
+
+
+@pytest.mark.parametrize("refusal", list(push.Refusal))
+def test_every_refusal_names_a_command(refusal):
+    """A refusal kind with no answer would render an empty "Resume:" line."""
+    assert push.resume_command(
+        _result(push.PushStatus.REFUSED, refusal), "/tmp/wt",
+    ).startswith("git -C '/tmp/wt' push")
+
+
+def test_a_divergence_answers_force_with_lease():
+    assert push.resume_command(
+        _result(push.PushStatus.REFUSED, push.Refusal.DIVERGED), "/tmp/wt",
+    ) == "git -C '/tmp/wt' push --force-with-lease"
+
+
+@pytest.mark.parametrize("refusal", [push.Refusal.HOOK, push.Refusal.TRANSPORT,
+                                     push.Refusal.OTHER])
+def test_no_other_refusal_answers_a_force_push(refusal):
+    """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
+    assert "--force" not in push.resume_command(
+        _result(push.PushStatus.REFUSED, refusal), "/tmp/wt",
+    )
+
+
+def test_an_unverified_push_is_checked_rather_than_repushed():
+    """It has very likely landed; `ls-remote` answers in one round trip."""
+    result = push.PushResult(
+        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x", remote="upstream",
+    )
+    assert push.resume_command(result, "/tmp/wt") == (
+        "git -C '/tmp/wt' ls-remote upstream feat/x"
+    )
+
+
+def test_the_resume_replays_what_the_push_was_given():
+    """`pr rebase` pushes with a lease; a plain resume is refused a second time."""
+    result = _result(push.PushStatus.REFUSED, push.Refusal.HOOK,
+                     args=("--force-with-lease",))
+    assert push.resume_command(result, "/tmp/wt") == (
+        "git -C '/tmp/wt' push --force-with-lease"
+    )
+
+
+def test_a_divergence_does_not_repeat_a_lease_the_push_already_carried():
+    result = _result(push.PushStatus.REFUSED, push.Refusal.DIVERGED,
+                     args=("--force-with-lease",))
+    assert push.resume_command(result, "/tmp/wt").count("--force-with-lease") == 1
+
+
+def test_a_push_records_the_arguments_it_was_given(monkeypatch):
+    """Nothing can replay them later unless the result carried them out."""
+    monkeypatch.setattr(push.git_client, "run",
+                        lambda *a, **k: proc.CmdResult(1, "", "failed to push some refs"))
+    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+                       args=["--force-with-lease"])
+    assert result.args == ("--force-with-lease",)
+
+
+def test_the_resume_command_quotes_a_worktree_with_a_space():
+    """Unquoted, the path splits and the command runs somewhere else or nowhere."""
+    resume = push.resume_command(_result(push.PushStatus.LOST), "/tmp/my wt")
+    assert "'/tmp/my wt'" in resume
+
+
 # ── the report ──────────────────────────────────────────────────────────────
 
 

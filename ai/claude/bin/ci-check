@@ -32,16 +32,16 @@ import agent_retry
 import ai_backend
 import ci_failures as ci
 import gh_client
-import git_client
+import land
 import pr_context
 import pr_domains
 import pr_state
-import proc
-import push
+import publishing
 import run_lock
 import review_common
 import log
 import timeouts
+from pr_fix import CommitStatus
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
 
@@ -633,40 +633,22 @@ def _count_unchecked(path: Path) -> int:
                if line.strip().startswith("- [ ]"))
 
 
-def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
-    """Commit and push fixes if there are changes. Returns commit SHA or None."""
-    if not review_common.has_uncommitted_changes(wt_path):
-        log.info("No changes to commit")
-        return None
+def _commit_and_push(
+    wt_path: Path, fixed: int, skipped: int, trail: Trail | None = None,
+) -> land.LandResult:
+    """Commit and push the CI fixes, and say what became of both.
 
-    # -A, not -u: a fix that adds files (tests, fixtures) would otherwise be
-    # dropped from the commit while still counted as fixed.
-    staged = git_client.run("add", "-A", cwd=wt_path)
-    if not staged.ok:
-        raise RuntimeError(proc.failure_message("Failed to stage fixes", staged))
+    The whole tree, because a CI fix pass owns the worktree it runs in — there
+    is no snapshot difference here to stage by name.
+
+    The push is gated, so a run without `--post` commits the fixes and drafts
+    the push instead of making it. The result carries the resume command for
+    that case and for every way a push can fall short.
+    """
     msg = "fix: address CI failures"
     if fixed:
         msg += f"\n\n{fixed} fixed, {skipped} skipped"
-    committed = git_client.run("commit", "-m", msg, cwd=wt_path)
-    if not committed.ok:
-        # See review_common.committed_nothing for why this isn't a failure.
-        if review_common.committed_nothing(committed):
-            log.info("No changes to commit")
-            return None
-        raise RuntimeError(proc.failure_message("Failed to commit fixes", committed))
-    sha = git_client.head_sha(cwd=wt_path)
-    if not sha:
-        # The commit above succeeded, so HEAD not reading back is the repo
-        # saying something is wrong with it — louder than reporting no sha.
-        raise RuntimeError("Committed the fixes but could not read the new HEAD")
-    log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
-
-    # The sha is returned whatever the push did: the commit exists locally, and
-    # the caller's report of what this run fixed is about the commit, not the
-    # remote. The owner is what says out loud whether the remote has it.
-    push.report(push.push(wt_path, gated=False), wt_path)
-
-    return sha
+    return land.land(wt_path, message=msg, gated=True, trail=trail)
 
 
 def _rebase_if_behind(trail, report: dict, ctx) -> bool:
@@ -725,6 +707,12 @@ def _run_fix(trail, report: dict, ctx) -> int:
 
     # Rebase after capturing failure data — the original run has the failures
     # we need to fix, but the branch should be current before applying fixes
+    #
+    # ceiling: the publishing gate is process-wide and this is a subprocess, so
+    # `pr-rebase` force-pushes whether or not this run was given `--post`. A
+    # draft run therefore still moves the remote here, which is the one place it
+    # can. Upgrade trigger: when `pr-rebase` takes a `--post` of its own,
+    # forward this run's.
     _rebase_if_behind(trail, report, ctx)
 
     trail.info("fix_start", f"{fixable_count} fixable failure(s)")
@@ -777,13 +765,24 @@ def _run_fix(trail, report: dict, ctx) -> int:
         data={"fixed": fixed, "skipped": skipped},
     )
 
+    landed = None
     if fixed > 0:
-        sha = _commit_and_push(toplevel, fixed, skipped)
-        if sha:
-            trail.info("fix_committed", f"committed at {sha}")
+        landed = _commit_and_push(toplevel, fixed, skipped, trail)
+        # The land owner has already reported the commit and whatever the push
+        # did, including the command that would finish a held or refused one.
+        if landed.sha:
+            trail.info("fix_committed", f"committed at {landed.sha}",
+                       data={"status": str(landed.status), "resume": landed.resume})
 
     if skipped > 0:
         log.info(f"{skipped} failure(s) could not be auto-fixed")
+
+    # A refused commit leaves the pass's work loose in the worktree, and this
+    # run is the only thing that knows it happened — `ci-check` has no state
+    # file a later `pr status` could read it out of. Exiting zero over it would
+    # report fixes that were never recorded anywhere.
+    if landed and landed.status is CommitStatus.COMMIT_FAILED:
+        return 1
 
     return 0 if rc == 0 else 1
 
@@ -970,6 +969,8 @@ def main():
                         help="Git worktree directory")
     parser.add_argument("--fix", action="store_true",
                         help="Invoke AI to fix failures after diagnosis")
+    parser.add_argument("--post", action="store_true",
+                        help="Push the fixes; without it the push is drafted")
     parser.add_argument("--wait", action="store_true",
                         help="Poll until all jobs complete, emitting incremental reports")
     parser.add_argument("--wait-timeout", type=int, default=900,
@@ -978,6 +979,10 @@ def main():
                         help="Poll interval in seconds (default: 30)")
     add_trail_args(parser)
     args = parser.parse_args()
+
+    # Before anything runs, so no code path can push ahead of the decision.
+    if args.post:
+        publishing.enable()
 
     ctx = pr_context.resolve(
         pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,

@@ -1960,6 +1960,28 @@ def test_build_orchestrate_args_forwards_an_explicit_medium(cr, tmp_path):
     assert args[args.index("--effort") + 1] == "medium"
 
 
+def test_build_orchestrate_args_omits_post_by_default(cr, tmp_path):
+    args = cr._build_orchestrate_args(
+        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
+        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
+        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        model=None, target_dir=tmp_path / "state",
+    )
+    assert "--post" not in args
+
+
+def test_build_orchestrate_args_forwards_post(cr, tmp_path):
+    """The publishing gate is process-wide and the fix pass runs in that
+    subprocess, so its argv is the only way it learns this run may publish."""
+    args = cr._build_orchestrate_args(
+        pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
+        wt_path="/wt", session_log="", prior_review_path="", issue_link="",
+        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        model=None, target_dir=tmp_path / "state", post=True,
+    )
+    assert "--post" in args
+
+
 # ── --recover with --self ─────────────────────────────────────────────────────
 
 

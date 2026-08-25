@@ -15,6 +15,10 @@ one. Everything outside the difference goes uncommitted, so an unreadable
 worktree spelled the same way as an unchanged one is how a pass reports success
 having left the agent's fixes behind.
 
+The commit always happens; the push waits for `--post`. `land` owns both, and
+the split is its: a local commit asserts nothing to anybody, while a push puts
+the pass's work on a branch somebody else is reading.
+
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
 """
@@ -28,10 +32,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import git_client
+import land
 import log
 import proc
-import push
-from push import PushStatus, Refusal
 from review_agent import diagnose_missing_output
 from review_common import (
     Phase,
@@ -52,78 +55,25 @@ RETRY_MAX_TURNS_FIX = 40
 
 def _commit_fixes(
     job: ReviewJob, paths: set[str], fixed: int, skipped: int, summary: str = "",
-):
-    """Commit the source files the fix-pass agent changed.
+) -> land.LandResult:
+    """Commit the source files the fix-pass agent changed, and push them.
 
     `paths` is the snapshot difference, so a file the agent created is in it and
-    anything that was already dirty is not. Staging it by name rather than with
-    `git add -A` is what keeps a build artifact or unrelated work in progress
-    out of a commit the pass then pushes.
+    anything that was already dirty is not. Handing that list to the owner
+    rather than letting it stage the whole tree is what keeps a build artifact
+    or unrelated work in progress out of a commit the pass then pushes.
+
+    The push is gated: a fix pass runs on the operator's behalf and pushing is
+    an outward act, so it waits for `--post` the way a posted comment does. The
+    commit is not — it is local, and it is what makes the work reviewable at all.
     """
-    if not paths:
-        return
-
-    ordered = sorted(paths)
-    # `:(literal)` because git reads these as pathspecs, not filenames. A file
-    # actually named `report[1].md` would otherwise match as a character class
-    # and stage whichever unrelated paths it happened to glob — the opposite of
-    # what staging by name is here to guarantee.
-    pathspecs = [f":(literal){path}" for path in ordered]
-    staged = git_client.run("add", "--", *pathspecs, cwd=job.wt_path)
-    if not staged.ok:
-        raise RuntimeError(proc.failure_message("Failed to stage fixes", staged))
-
     msg = "fix: self-review findings"
     if fixed:
         msg += f"\n\n{fixed} fixed, {skipped} skipped"
     if summary:
         msg += f"\n\n{summary}"
 
-    # Pathspec commit, so content the operator staged before the pass started
-    # stays staged instead of riding along in the index.
-    result = git_client.run("commit", "-m", msg, "--", *pathspecs, cwd=job.wt_path)
-    if not result.ok:
-        log.warn(f"Failed to commit fixes: {result.detail}")
-        return
-
-    log.info(f"Committed fixes ({fixed} fixed, {skipped} skipped)")
-    _push_fixes(job)
-
-
-def _push_fixes(job: ReviewJob):
-    """Push committed fixes, and confirm they reached the remote.
-
-    The owner classifies the failure and answers whether the commit landed; the
-    advice for each kind of refusal stays here, because what to do about a
-    diverged branch differs by the pass that hit it.
-    """
-    result = push.push(job.wt_path, gated=False)
-
-    if result.status is not PushStatus.REFUSED:
-        push.report(result, job.wt_path)
-        return
-
-    if result.refusal is Refusal.DIVERGED:
-        log.error(
-            f"push failed — branch diverged. Run:\n"
-            f"  git -C '{job.wt_path}' push --force-with-lease\n"
-            f"stderr: {result.output.strip()}"
-        )
-        return
-
-    if result.refusal is Refusal.HOOK:
-        log.error(
-            f"fixes failed this repo's pre-push checks — commit "
-            f"{result.sha[:7] or 'HEAD'} is local only and needs repair.\n\n"
-            f"{push.output_tail(result.output, indent='  ')}\n\n"
-            f"  Repair, then: git -C '{job.wt_path}' push"
-        )
-        return
-
-    log.error(
-        f"push failed — fixes are committed locally but not pushed:\n"
-        f"stderr: {result.output.strip()}"
-    )
+    return land.land(job.wt_path, message=msg, gated=True, paths=paths)
 
 
 def _changed_source_files(wt_path: str) -> set[str] | None:

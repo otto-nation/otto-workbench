@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -4790,3 +4791,40 @@ class TestCleanupScope:
             "mode": ro.PIPELINE_SINGLE,
         }
         assert (review_dir / "disprove.jsonl").exists()
+
+
+class TestThePublishingGate:
+    """`--post` is forwarded here because the gate is per-process.
+
+    `claude-review` decides whether a run may publish, but the fix pass runs in
+    this subprocess — spawned before that decision would otherwise be made — so
+    a gate opened in the parent would never reach the push the pass makes.
+    """
+
+    def _gate_at_first_work(self, ro, monkeypatch, tmp_path, argv):
+        """Whether the run could publish by the time it started doing anything."""
+        import publishing
+
+        seen = {}
+
+        def stop(*args, **kwargs):
+            seen["enabled"] = publishing.enabled()
+            raise SystemExit(0)
+
+        monkeypatch.setattr(ro, "detect_repo", stop)
+        monkeypatch.setattr(sys, "argv", [
+            "review-orchestrate", "--mode", "self",
+            "--review-file", str(tmp_path / "review.md"),
+            "--repo-dir", str(tmp_path), *argv,
+        ])
+        with pytest.raises(SystemExit):
+            ro.main()
+        return seen["enabled"]
+
+    def test_a_fix_run_without_post_cannot_publish(self, ro, monkeypatch, tmp_path):
+        assert self._gate_at_first_work(ro, monkeypatch, tmp_path, ["--fix"]) is False
+
+    def test_post_opens_the_gate_before_anything_runs(self, ro, monkeypatch, tmp_path):
+        assert self._gate_at_first_work(
+            ro, monkeypatch, tmp_path, ["--fix", "--post"],
+        ) is True

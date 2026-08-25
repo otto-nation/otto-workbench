@@ -196,10 +196,12 @@ _make_dirs() {
 }
 
 # ── Bare-repo containers ─────────────────────────────────────────────────────
-# The container holds .claude/ but no source; the worktree beside it holds the
-# source. resolve-worktree is what joins the two, so it has to be on PATH.
+# A container holds no work tree, so it is not a thing this indexes. Its own
+# .claude/ is not the exception: an index written there would list the
+# worktree's paths under a root where none of them exist, and no .gitignore
+# rule, review, or CI check can reach inside a container to catch it.
 
-@test "indexes the resolved worktree when run at a bare container" {
+@test "writes nothing at a bare container, even one holding .claude" {
   printf '# a thing\ncode\n' > "$REPO/a.sh"
   _init_repo
 
@@ -208,21 +210,22 @@ _make_dirs() {
   git clone -q --bare "$REPO" "$container/.git"
   git -C "$container" worktree add -q "$container/main" main
 
-  PATH="$REPO_ROOT/bin:$PATH" run bash "$GEN_ANATOMY" "$container"
+  run bash "$GEN_ANATOMY" "$container"
   [ "$status" -eq 0 ]
-  [ -f "$container/.claude/anatomy.md" ]
-  [[ "$(cat "$container/.claude/anatomy.md")" == *"a.sh"* ]]
+  [ ! -e "$container/.claude/anatomy.md" ]
 }
 
-@test "exits quietly at a bare container with no worktree to index" {
+@test "indexes the worktree itself when run inside one" {
   printf '# a thing\ncode\n' > "$REPO/a.sh"
   _init_repo
 
   local container="$TMPDIR/container"
-  mkdir -p "$container/.claude"
   git clone -q --bare "$REPO" "$container/.git"
+  git -C "$container" worktree add -q "$container/main" main
+  mkdir -p "$container/main/.claude"
 
-  PATH="$REPO_ROOT/bin:$PATH" run bash "$GEN_ANATOMY" "$container"
+  run bash "$GEN_ANATOMY" "$container/main"
   [ "$status" -eq 0 ]
+  [[ "$(cat "$container/main/.claude/anatomy.md")" == *"a.sh"* ]]
   [ ! -e "$container/.claude/anatomy.md" ]
 }

@@ -11,14 +11,15 @@
 # Usage: generate-anatomy.sh [PROJECT_ROOT]
 #        Defaults to git repo root of the current directory.
 #
+# Indexes the tree it is run in and nothing else. A bare-repo container is not
+# one, so it gets no index — see main() for why writing one there is worse than
+# writing none.
+#
 # Exit codes:
-#   0 — generated, up-to-date, or skipped (not a git repo / no .claude/)
+#   0 — generated, up-to-date, or skipped (no work tree here / no .claude/)
 #   1 — unexpected error
 
 set -e
-
-_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-RESOLVE_WORKTREE="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/bin/resolve-worktree"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
@@ -158,19 +159,6 @@ label_from_filename() {
   DESC="${base^}"
 }
 
-# _find_primary_worktree — for bare repos, prints the primary worktree path.
-#
-# Delegates to the workbench's resolve-worktree, which owns the default-branch
-# cascade and the worktree lookup for every caller that needs them. Resolved by
-# absolute path rather than PATH lookup, since a Stop hook's execution
-# environment is not guaranteed to have ~/.local/bin exported. Prints nothing
-# when that script is missing or when nothing resolves; the caller treats an
-# empty answer as "skip", which is what it did before too.
-_find_primary_worktree() {
-  [[ -x "$RESOLVE_WORKTREE" ]] || return 0
-  "$RESOLVE_WORKTREE" 2>/dev/null || true
-}
-
 # ── Ansible section ──────────────────────────────────────────────────────────
 
 # generate_ansible_section OUTPUT_FILE — appends a "Service Stack" section to the
@@ -294,35 +282,26 @@ generate_directory_index() {
 
 main() {
   local project_root="${1:-}"
-  local anatomy_root="" source_root=""
 
   if [[ -n "$project_root" ]]; then
     cd "$project_root" 2>/dev/null || exit 0
   fi
 
-  # Resolve where .claude/ lives (anatomy_root) and where source files live (source_root).
-  # In regular repos both are the same. In bare repos they differ: .claude/ is at the
-  # bare root, source files are in the primary worktree.
-  local toplevel
-  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || true
+  # The index describes the tree it is written into, so one root answers both
+  # questions. A bare-repo container has no tree and gets no index: an index
+  # written there would describe a worktree's files under a root where none of
+  # those paths exist, and nothing could ever catch it — a bare repo has no work
+  # tree, so no .gitignore rule, review, or CI check reaches inside a container.
+  local root
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+  [[ -n "$root" ]] || exit 0
 
-  if [[ -n "$toplevel" ]]; then
-    source_root="$toplevel"
-    anatomy_root="$toplevel"
-  elif [[ "$(git rev-parse --is-bare-repository 2>/dev/null)" == "true" ]]; then
-    anatomy_root="$(pwd)"
-    source_root="$(_find_primary_worktree)"
-    [[ -n "$source_root" ]] || exit 0
-  else
-    exit 0
-  fi
+  cd "$root" || exit 0
 
-  [[ -d "$anatomy_root/.claude" ]] || exit 0
-
-  cd "$source_root" || exit 0
+  [[ -d "$root/.claude" ]] || exit 0
 
   # ── Staleness check ──────────────────────────────────────────────────────
-  local current_hash anatomy_file="$anatomy_root/.claude/anatomy.md"
+  local current_hash anatomy_file="$root/.claude/anatomy.md"
   current_hash="$(git rev-parse HEAD 2>/dev/null)" || exit 0
 
   if [[ -f "$anatomy_file" ]]; then

@@ -28,7 +28,28 @@ DISCOVER --> PROPOSE --> APPLY
 
 **Goal:** Understand the project structure, conventions, and patterns.
 
-### 1a. Read existing scaffold
+### 1a. Resolve the project root
+
+```bash
+git rev-parse --show-toplevel
+resolve-worktree
+```
+
+Everything this skill reads and writes is a tracked project file, so it belongs in a
+working tree. Take the first of these that prints a path: `git rev-parse` when the
+session is already in a worktree, `resolve-worktree` when it is rooted at a bare-repo
+container, which has no working tree of its own.
+
+`resolve-worktree` exiting 2 means this is not a container either — with no repo root
+printed above it, there is no project here to analyze. Any other non-zero exit means
+the container names no worktree to write into: say so and stop. Never fall back to
+the current directory. A container holds no work tree, so a `.claude/CLAUDE.md`
+written there is tracked by nothing and read by no session.
+
+`cd` to the resolved path and run every phase below from there. Invoked through
+`otto-workbench ai init`, that directory is already current and this step confirms it.
+
+### 1b. Read existing scaffold
 
 ```bash
 cat .claude/CLAUDE.md
@@ -37,7 +58,7 @@ ls .claude/rules/
 
 For each rule file in `.claude/rules/`, read it and note which sections are empty.
 
-### 1b. Scan the codebase
+### 1c. Scan the codebase
 
 Use Glob and Grep to understand:
 

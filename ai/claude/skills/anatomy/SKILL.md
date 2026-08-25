@@ -40,4 +40,11 @@ The generator is idempotent — repeated runs with the same git HEAD are instant
 
 ## Output location
 
-`.claude/anatomy.md` in the project root (gitignored, not committed).
+`.claude/anatomy.md` in the project root (gitignored, not committed) — the root
+`git rev-parse --show-toplevel` names from wherever the generator was run, so the index
+always describes the tree it is written into.
+
+A bare-repo container has no working tree, and so gets no index at all. Every path an
+index lists exists in a worktree rather than beside the bare `.git`, nothing there is
+covered by a `.gitignore` rule, and no session rooted at a container reads one anyway:
+the `claude` shell wrapper launches such a session in a worktree instead.

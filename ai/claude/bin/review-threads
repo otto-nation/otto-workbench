@@ -64,7 +64,7 @@ from review_github import fetch_pr_data
 from review_issue import CreatedIssue, IssueDelivery, IssueResult
 import supersession
 from tool_parser import handle_value_flags
-from trail import Trail, add_trail_args
+from trail import EXCERPT_LIMIT, Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 
@@ -427,11 +427,11 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     try:
         raw = json.loads(_extract_json(stdout))
     except (json.JSONDecodeError, TypeError):
-        preview = (stdout or "")[:200]
+        preview = (stdout or "")[:proc.DETAIL_LIMIT]
         if trail:
             trail.error("triage", "AI returned non-JSON output",
                         data={"output_len": len(stdout or ""),
-                              "output_preview": (stdout or "")[:500]})
+                              "output_preview": (stdout or "")[:EXCERPT_LIMIT]})
         log.error(f"ai returned non-JSON output ({len(stdout or '')} chars): {preview}")
         return None, 1
 

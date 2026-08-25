@@ -80,6 +80,12 @@ _SERVER_ERROR_RE = re.compile(r"\bHTTP 5\d\d\b")
 # How much of a stream to quote when it is the only account of a failure there
 # is. stdout is a payload rather than a sentence, so it needs a bound; stderr is
 # quoted whole because a command that writes an essay there is the exception.
+#
+# The bound on a console line generally, not only on the ones built here: a
+# caller printing its own preview of a command's output is answering the same
+# question, for a reader who still has the scrollback. What goes into a trail
+# record instead takes `trail.EXCERPT_LIMIT`, which is wider because nobody
+# reading it later has the terminal.
 DETAIL_LIMIT = 200
 
 # What `run` reports when a command outlived its timeout. 124 is the shell

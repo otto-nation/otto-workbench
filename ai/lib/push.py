@@ -78,7 +78,7 @@ from pathlib import Path
 import git_client
 import log
 import publishing
-from trail import Trail
+from trail import EXCERPT_LIMIT, Trail
 
 
 class PushStatus(StrEnum):
@@ -351,7 +351,8 @@ def push(
         output = r.combined_output
         if trail:
             trail.error("push", "git refused the push",
-                        data={"sha": sha, "branch": branch, "error": output[:500]})
+                        data={"sha": sha, "branch": branch,
+                              "error": output[:EXCERPT_LIMIT]})
         return PushResult(PushStatus.REFUSED, sha, branch, refusal=classify(output),
                           output=output, remote=remote, args=argv)
 

@@ -54,11 +54,12 @@ json.dump(schema, open(sys.argv[2], "w"))
 
 # ─── Dispatch ────────────────────────────────────────────────────────────────
 
-@test "config --help prints usage and names the write" {
+@test "config --help prints usage and names both sides" {
   run "$REPO_ROOT/bin/otto-workbench" config --help
   [ "$status" -eq 0 ]
   [[ "$output" == *"Usage: otto-workbench config"* ]]
   [[ "$output" == *"set KEY VALUE"* ]]
+  [[ "$output" == *"status"* ]]
 }
 
 @test "config with no subcommand prints usage and fails" {
@@ -116,6 +117,83 @@ json.dump(schema, open(sys.argv[2], "w"))
   run "$REPO_ROOT/bin/otto-workbench" config set reuse.level ultra --project
   [ "$status" -eq 1 ]
   [[ "$output" == *"needs a git repo"* ]]
+}
+
+# ─── The report ──────────────────────────────────────────────────────────────
+#
+# What each scope resolved to is Python and is covered by
+# tests/test_workbench_config.py. These are the dispatch, the exit codes, and
+# that the rendering actually puts a source next to a value.
+
+# _make_repo — a git repo under TMPDIR, and the shell standing in it.
+_make_repo() {
+  git init --quiet "$TMPDIR/repo"
+  cd "$TMPDIR/repo" || return 1
+  _assert_not_real_repo || return 1
+}
+
+@test "status lists every scope, project first, with its path" {
+  _make_repo
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"project"*"$TMPDIR/repo/.workbench.yml"* ]]
+  [[ "$output" == *"global"*"$CONFIG"* ]]
+  # Precedence order, not alphabetical or merge order.
+  [[ "${output#*project}" == *global* ]]
+}
+
+@test "status marks a scope with no file" {
+  _make_repo
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(no file)"* ]]
+}
+
+@test "status outside a repo reports the global scope alone" {
+  cd "$TMPDIR" || return 1
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"global"* ]]
+  [[ "$output" != *".workbench.yml"* ]]
+}
+
+@test "status names the file a value came from, and calls the rest defaults" {
+  _make_repo
+  run "$REPO_ROOT/bin/otto-workbench" config set reuse.level ultra
+  [ "$status" -eq 0 ]
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reuse.level"*"ultra"*"global"* ]]
+  [[ "$output" == *"reuse.default"*"full"*"default"* ]]
+}
+
+@test "status reports a key nothing reads, and still exits 0" {
+  _make_repo
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'review:\n  issue_tracker:\n    provider: github\n' > "$CONFIG"
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Keys nothing reads"* ]]
+  [[ "$output" == *"review.issue_tracker.provider"* ]]
+}
+
+@test "status fails and names the file when a scope cannot be read" {
+  _make_repo
+  printf 'reuse: [unclosed\n' > "$TMPDIR/repo/.workbench.yml"
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$TMPDIR/repo/.workbench.yml"* ]]
+}
+
+@test "status takes no arguments" {
+  run "$REPO_ROOT/bin/otto-workbench" config status extra
+  [ "$status" -eq 2 ]
 }
 
 # ─── The guard ───────────────────────────────────────────────────────────────

@@ -167,6 +167,14 @@ consulted because only the installed one can catch a stale writer using a key
 that is still valid where it is standing. Hand-editing stays supported — that
 is what the modeline is for — but nothing checks the key.
 
+`otto-workbench config status` reports the read side: every scope in
+precedence order with its path and whether the file is there, every key with
+the value it resolved to and the file that supplied it, and any key a file
+holds that the surface does not have. Nothing else answers that — the loader
+merges the scopes and returns the result, so an inherited value and a local
+one are indistinguishable afterwards, and a key written under a name nothing
+reads is dropped in silence by both the loader and the reader waiting on it.
+
 Five layers decide a review value, highest first:
 
 | # | Layer | Example |

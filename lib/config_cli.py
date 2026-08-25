@@ -1,7 +1,16 @@
-"""Write one workbench config key, checked against the keys the workbench reads.
+"""Read and write the workbench config, checked against the keys it reads.
 
 Usage: python3 lib/config_cli.py set KEY VALUE [--project]
        otto-workbench config set KEY VALUE [--project]
+       otto-workbench config status
+
+`status` answers the two questions the files themselves cannot: what is the
+value right now, and which file supplied it.  The loader deep-merges every
+scope and returns the result, so a value inherited from the machine-wide file
+and a value set by the repo in front of you look identical afterwards — and a
+key written under a name nothing reads looks exactly like a key nobody ever
+set, in both directions, for as long as it takes somebody to notice the rule
+it was meant to turn on is not applying.
 
 The config files are hand-authorable and the schema modeline is there so an
 editor completes them, so for a person this command is a convenience.  For an
@@ -23,8 +32,13 @@ the caller is standing in.  Run out of a stale checkout instead, it still
 refuses: `workbench_config.check_key` asks the installed schema as well as its
 own.  See `ai/lib/workbench_config.py`.
 
-Exit codes: 0 on a completed write, 1 on a refused key or a failed write,
-2 on a usage error (argparse's own).
+Exit codes: 0 on a completed write or a report that read every scope, 1 on a
+refused key, a failed write, or a scope that could not be read, 2 on a usage
+error (argparse's own).
+
+A stray key is reported and still exits 0.  It is the finding this command
+exists for, but the command's job is to show the config, and a report that
+fails because the thing it reported is bad is one nobody can put in a script.
 """
 
 from __future__ import annotations
@@ -42,7 +56,7 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
         sys.path.insert(0, _path)
 
 import workbench_config  # noqa: E402
-from ansi import DIM, GREEN, NC, RED  # noqa: E402
+from ansi import BOLD, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 
 
 def _project_root() -> Path | None:
@@ -73,7 +87,50 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--project", action="store_true",
         help="write the current repo's .workbench.yml instead of the global file",
     )
+    setter.set_defaults(run=_write)
+    reporter = sub.add_parser(
+        "status", help="show every scope, every value, and the file it came from",
+    )
+    reporter.set_defaults(run=_status)
     return parser.parse_args(argv)
+
+
+def _status(_args: argparse.Namespace) -> int:
+    """Print every scope, every resolved value, and the file each came from.
+
+    All of it on stdout, including the problems. The exit code is what a script
+    reads, and splitting the report across two streams only guarantees that the
+    line explaining why a section is missing lands somewhere other than where
+    the section would have been.
+    """
+    status = workbench_config.config_status(_project_root())
+
+    print(f"{BOLD}Scopes{NC} {DIM}— highest precedence first{NC}")
+    for scope in status.scopes:
+        mark = f"{GREEN}✓{NC}" if scope.exists else f"{DIM}·{NC}"
+        note = "" if scope.exists else f"  {DIM}(no file){NC}"
+        print(f"  {mark} {scope.name:<8} {scope.path}{note}")
+
+    for problem in status.problems:
+        print(f"  {RED}✗{NC} {problem}")
+
+    if status.keys:
+        key_width = max(len(row.key) for row in status.keys)
+        value_width = max(len(row.value) for row in status.keys)
+        print(f"\n{BOLD}Values{NC}")
+        for row in status.keys:
+            source = "default" if row.is_default else row.scope.name
+            tint = DIM if row.is_default else NC
+            print(f"  {row.key:<{key_width}}  {row.value:<{value_width}}  "
+                  f"{tint}{source}{NC}")
+
+    if status.strays:
+        print(f"\n{BOLD}Keys nothing reads{NC} {DIM}— the value is dropped on load{NC}")
+        width = max(len(stray.key) for stray in status.strays)
+        for stray in status.strays:
+            print(f"  {YELLOW}✗{NC} {stray.key:<{width}}  {DIM}{stray.scope.path}{NC}")
+
+    return 0 if status.ok else 1
 
 
 def _write(args: argparse.Namespace) -> int:
@@ -97,7 +154,7 @@ def _write(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        return _write(args)
+        return args.run(args)
     except workbench_config.ConfigKeyError as exc:
         print(f"{RED}✗{NC} {exc}", file=sys.stderr)
         print(

@@ -43,6 +43,11 @@ except ImportError:
 CONFIG_NAME = "config.yml"
 PROJECT_CONFIG_NAME = ".workbench.yml"
 
+# What a reader calls each scope. Beside the filenames because they name the
+# same two things, and because ``config_scopes`` pairs them up.
+GLOBAL_SCOPE = "global"
+PROJECT_SCOPE = "project"
+
 # Where the generated schema lives, repo-relative, and the raw URL that serves
 # it. One spelling of the path: bin/local/generate-config-schema writes there,
 # the modeline below points there, ``installed_schema_path`` reads it out of
@@ -246,21 +251,33 @@ def _values_column(hint) -> str:
     return "any"
 
 
-def _default_column(f: dataclasses.Field) -> str:
-    """A field's default as the table writes it, or an em dash for no value.
+def render_value(value) -> str:
+    """One config value as a reader sees it, or an em dash for no value.
 
-    ``None`` and the empty string are both "nothing is set" to a reader — the
-    key is absent from a config file that leaves it alone either way.
+    ``None`` and the empty string are both "nothing is set" — a config file
+    that leaves the key alone and one that spells it out as empty are the same
+    thing to everything downstream.
 
     A bool is written the way YAML spells it rather than the way Python does,
-    since the column is read as something to copy into a config file and
-    ``True`` is a string there, not a boolean.
+    since the rendering is read as something to copy into a config file and
+    ``True`` is a string there, not a boolean. An enum renders as its value for
+    the same reason: that is the spelling the file holds.
     """
-    if f.default is dataclasses.MISSING or f.default is None or f.default == "":
+    if value is None or value == "":
         return "—"
-    if isinstance(f.default, bool):
-        return f"`{str(f.default).lower()}`"
-    return f"`{f.default}`"
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, Enum):
+        return str(value.value)
+    return str(value)
+
+
+def _default_column(f: dataclasses.Field) -> str:
+    """A field's default as the table writes it, or an em dash for no value."""
+    if f.default is dataclasses.MISSING:
+        return "—"
+    rendered = render_value(f.default)
+    return rendered if rendered == "—" else f"`{rendered}`"
 
 
 def _reference_rows(cls, prefix: str = "") -> list[tuple[str, str, str]]:
@@ -427,6 +444,35 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return merged
 
 
+@dataclass(frozen=True)
+class ConfigScope:
+    """One file the merge reads, and the name a reader knows it by."""
+
+    name: str
+    path: Path
+
+    @property
+    def exists(self) -> bool:
+        return self.path.is_file()
+
+
+def config_scopes(project_root: Path | str | None = None) -> list[ConfigScope]:
+    """Every file the config is merged from, lowest precedence first.
+
+    Merge order rather than precedence order, because that is the order the
+    loader applies them in and this is what it iterates. A reader wants the
+    reverse, so ``config_status`` flips it once on the way out.
+
+    The one owner of which files there are. ``load_config`` merges these and
+    ``config_status`` reports on them, so a scope cannot be added to the merge
+    without appearing in the report that explains where a value came from.
+    """
+    scopes = [ConfigScope(GLOBAL_SCOPE, global_config_path())]
+    if project_root is not None:
+        scopes.append(ConfigScope(PROJECT_SCOPE, project_config_path(project_root)))
+    return scopes
+
+
 def load_config(project_root: Path | str | None = None) -> WorkbenchConfig:
     """The merged, typed config for a scope.
 
@@ -434,9 +480,7 @@ def load_config(project_root: Path | str | None = None) -> WorkbenchConfig:
     a hand-authored file gets a loud failure rather than the silent discard
     ``serde.load_file`` gives a regenerable cache.
     """
-    paths = [global_config_path()]
-    if project_root is not None:
-        paths.append(project_config_path(project_root))
+    paths = [scope.path for scope in config_scopes(project_root)]
 
     merged: dict = {}
     for path in paths:
@@ -463,6 +507,184 @@ def load_config_or_default(
         return load_config(project_root)
     except ConfigError:
         return WorkbenchConfig()
+
+
+@dataclass(frozen=True)
+class ResolvedKey:
+    """One key of the config surface, and which file answered for it.
+
+    ``scope`` is ``None`` when no file named the key and the value is the
+    dataclass default. A caller renders that differently from an inherited
+    value: one is a decision nobody has made, the other is a decision made
+    somewhere else.
+    """
+
+    key: str
+    value: str
+    scope: ConfigScope | None = None
+
+    @property
+    def is_default(self) -> bool:
+        return self.scope is None
+
+
+@dataclass(frozen=True)
+class StrayKey:
+    """A key a config file holds that no version of the surface reads.
+
+    The whole reason ``config status`` exists. ``serde`` drops what it does not
+    recognise, so a key spelled slightly wrong is a value that is simply gone,
+    and every reader downstream sees the default and says nothing.
+    """
+
+    key: str
+    scope: ConfigScope
+
+
+@dataclass(frozen=True)
+class ConfigStatus:
+    """What the config resolves to right now, and where each piece came from.
+
+    ``scopes`` is highest precedence first — the order the answer is decided
+    in, which is the order a reader reasons about, and the reverse of the merge
+    order ``config_scopes`` returns.
+
+    ``problems`` holds anything that stopped a file from being read or typed.
+    It is separate from ``strays`` because the two cost different things: a
+    stray key loses one value, an unreadable file loses the whole scope.
+    """
+
+    scopes: list[ConfigScope]
+    keys: list[ResolvedKey]
+    strays: list[StrayKey]
+    problems: list[str]
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
+
+
+def _flatten(data: dict, prefix: str = "") -> dict[str, object]:
+    """Every leaf of a raw config mapping, keyed by its dotted path.
+
+    An empty mapping is a leaf: it sets nothing, so recursing into it would
+    contribute no key, and treating it as one records that the file mentioned
+    the section at all.
+    """
+    flat: dict[str, object] = {}
+    for key, value in data.items():
+        dotted = f"{prefix}{key}"
+        if isinstance(value, dict) and value:
+            flat.update(_flatten(value, f"{dotted}."))
+        else:
+            flat[dotted] = value
+    return flat
+
+
+def _entry_rows(
+    cls, held: dict | None, provenance: dict[str, ConfigScope], prefix: str,
+) -> list[ResolvedKey]:
+    """Rows for the entries an enum-keyed section actually holds.
+
+    An enum key contributes its value rather than its member name, because the
+    value is what the config file spells.
+    """
+    rows: list[ResolvedKey] = []
+    for entry, value in (held or {}).items():
+        name = entry.value if isinstance(entry, Enum) else entry
+        rows += _resolved_rows(cls, value, provenance, f"{prefix}{name}.")
+    return rows
+
+
+def _resolved_rows(
+    cls, obj, provenance: dict[str, ConfigScope], prefix: str = "",
+) -> list[ResolvedKey]:
+    """One row per leaf key of a typed config object.
+
+    Walks ``dataclasses.fields`` through ``serde.classify``, the same way
+    ``_reference_rows`` builds the docs table and ``schema_gen`` builds the
+    schema — so the keys reported here are the keys the workbench reads, with
+    no second listing to keep in step.
+
+    An enum-keyed section expands over the entries the config actually holds
+    rather than over every member of the enum. A phase nobody has overridden
+    has nothing to report, and listing all of them would bury the ones that do.
+    """
+    rows: list[ResolvedKey] = []
+    hints = get_type_hints(cls)
+    for f in dataclasses.fields(cls):
+        kind, args = serde.classify(hints[f.name])
+        key = f"{prefix}{f.name}"
+        value = getattr(obj, f.name)
+        if kind is serde.HintKind.DATACLASS:
+            rows += _resolved_rows(hints[f.name], value, provenance, f"{key}.")
+        elif kind is serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
+            rows += _entry_rows(args[1], value, provenance, f"{key}.")
+        else:
+            rows.append(ResolvedKey(key, render_value(value), provenance.get(key)))
+    return rows
+
+
+def config_status(project_root: Path | str | None = None) -> ConfigStatus:
+    """The resolved config for a scope, with the file each value came from.
+
+    ``load_config`` answers what the value is and discards how it got there,
+    which leaves a key written into the wrong file indistinguishable from a key
+    nobody ever set. This answers both, and reports what it could not read
+    rather than raising: a command whose whole job is diagnosing a config file
+    has to survive the file being the problem.
+    """
+    import schema_gen
+
+    scopes = config_scopes(project_root)
+    problems: list[str] = []
+    strays: list[StrayKey] = []
+    provenance: dict[str, ConfigScope] = {}
+    schema = schema_gen.dataclass_to_schema(WorkbenchConfig)
+
+    merged: dict = {}
+    loaded: list[tuple[ConfigScope, dict]] = []
+    for scope in scopes:
+        try:
+            raw = read_yaml(scope.path)
+        except ConfigError as exc:
+            problems.append(str(exc))
+            continue
+        loaded.append((scope, raw))
+        merged = _deep_merge(merged, raw)
+        flat = _flatten(raw)
+        provenance.update(dict.fromkeys(flat, scope))
+        strays += [StrayKey(key, scope) for key in flat
+                   if not _schema_accepts(schema, key)]
+
+    try:
+        config = serde.from_dict(WorkbenchConfig, merged)
+    except (TypeError, ValueError) as exc:
+        problems += _typing_problems(loaded) or [f"{scopes[0].path}: {exc}"]
+        return ConfigStatus(list(reversed(scopes)), [], strays, problems)
+
+    keys = _resolved_rows(WorkbenchConfig, config, provenance)
+    return ConfigStatus(list(reversed(scopes)), keys, strays, problems)
+
+
+def _typing_problems(loaded: list[tuple[ConfigScope, dict]]) -> list[str]:
+    """Which individual scopes hold a value the config cannot be built from.
+
+    The merged failure names every file that exists, because that is all it
+    knows. Typing each scope on its own instead names the file to open — which
+    is the whole question a reader has when a value is rejected.
+
+    Empty when no scope fails alone, which leaves the caller its joint message:
+    a merge can only override, so this should not happen, and inventing a
+    culprit would be worse than repeating what the loader would have said.
+    """
+    problems: list[str] = []
+    for scope, raw in loaded:
+        try:
+            serde.from_dict(WorkbenchConfig, raw)
+        except (TypeError, ValueError) as exc:
+            problems.append(f"{scope.path}: {exc}")
+    return problems
 
 
 class KeyVerdict(StrEnum):

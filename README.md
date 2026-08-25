@@ -89,7 +89,7 @@ These are created once (from templates or by first-time setup) and never modifie
 
 | File | Purpose | Bootstrap |
 |------|---------|-----------|
-| `~/.config/workbench/config.yml` | Reuse level, review pipeline, issue tracker, GitHub SSH route — edit it, or write one key with `otto-workbench config set KEY VALUE`; see [libraries.md](docs/libraries.md#configsh) | `bin/migrations/20260814-unify-workbench-config.sh` |
+| `~/.config/workbench/config.yml` | Reuse level, review pipeline, issue tracker, GitHub SSH route — edit it, or write one key with `otto-workbench config set KEY VALUE`. `otto-workbench config status` shows what every key resolves to and which file supplied it; see [libraries.md](docs/libraries.md#configsh) | `bin/migrations/20260814-unify-workbench-config.sh` |
 | `~/.gitconfig` | Git identity, GPG, credentials | `git/gitconfig.template` |
 | `~/.env.local` | Shell secrets, API keys, env overrides | `zsh/.env.local.template` |
 | `~/.config/task/taskfile.env` | AI automation tokens (`GH_TOKEN`, `AI_COMMAND`) | `task --global ai:setup` |

@@ -19,10 +19,16 @@
 # are defined in lib/conventions.sh — sourced here so AI automation inherits them.
 # When sourced from bash (bin scripts), BASH_SOURCE resolves the path.
 # When sourced from sh (Taskfile tasks), TASKFILE_DIR is set by go-task.
+#
+# Both branches resolve to a physical path, because the installed Taskfile is a
+# symlink farm: `~/.config/task` holds a `lib` link into the checkout and nothing
+# else, so a TASKFILE_DIR-relative root names a directory where only `lib/` is
+# reachable. Sourcing `conventions.sh` through it works and everything under
+# `ai/` does not, which is the shape this cost an afternoon to see.
 if [ -n "${BASH_SOURCE:-}" ]; then
-  _ai_core_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _ai_core_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 else
-  _ai_core_dir="${TASKFILE_DIR:?lib/ai/core.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai"
+  _ai_core_dir="$(cd "${TASKFILE_DIR:?lib/ai/core.sh requires BASH_SOURCE or TASKFILE_DIR}/lib/ai" && pwd -P)"
 fi
 # shellcheck source=/dev/null
 . "$(dirname "$_ai_core_dir")/conventions.sh"

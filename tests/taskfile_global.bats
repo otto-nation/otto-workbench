@@ -63,6 +63,19 @@ teardown() {
   [[ "$output" == *"feat"* ]]
 }
 
+@test "WORKBENCH_ROOT reaches ai/ through a symlinked TASKFILE_DIR" {
+  # The install links lib/ into the checkout and nothing else, so a root taken
+  # from TASKFILE_DIR itself finds conventions.sh and no ai/ script at all —
+  # which is how pr:create came to invoke an ai/lib/push.py that wasn't there.
+  local fake_task_dir="$BATS_TEST_TMPDIR/fake-task-config"
+  mkdir -p "$fake_task_dir"
+  ln -s "$REPO_ROOT/lib" "$fake_task_dir/lib"
+
+  run sh -c "TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
+  [ "$status" -eq 0 ]
+  [ -f "$output/ai/lib/push.py" ]
+}
+
 # ─── All tasks source core.sh with TASKFILE_DIR template ────────────────────
 
 @test "all task cmds that source core.sh use TASKFILE_DIR template variable" {

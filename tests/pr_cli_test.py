@@ -1989,3 +1989,30 @@ def test_the_schema_contracts_are_read_off_the_mode_table():
         pr_cli.review_listing.SCHEMA_VERSIONS
     assert pr_cli._served_schema_versions("review", ["--summary"]) == ()
     assert pr_cli._served_schema_versions("status", []) == ()
+
+
+# ── push reconciliation ─────────────────────────────────────────────────────
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_every_command_reconciles_recorded_pushes_first(mock_resolve, mock_run):
+    """The single entry point for the record the global pre-push hook leaves.
+
+    Before the context is resolved, so a report about a push made hours ago in
+    another repository is not withheld by a command that goes on to fail for
+    reasons of its own.
+    """
+    mock_resolve.return_value = make_ctx()
+    mock_run.return_value = MagicMock(returncode=0)
+    with patch("pr_cli.push_intent.reconcile") as reconcile:
+        reconcile.side_effect = lambda: mock_resolve.assert_not_called()
+        _run_main("rebase")
+    reconcile.assert_called_once_with()
+    mock_resolve.assert_called_once()
+
+
+def test_reconciliation_is_hooked_in_exactly_one_place():
+    """One owner, so a new subcommand inherits it rather than declaring it."""
+    source = Path(pr_cli.__file__).read_text()
+    assert source.count("push_intent.reconcile(") == 1

@@ -23,6 +23,7 @@ sys.path.insert(0, str(BIN_DIR.parent.parent / "lib"))
 import pr_context
 import pr_domains
 import pr_state
+import push_intent
 import schema_gen
 import review_gc
 import log
@@ -1005,6 +1006,16 @@ def main():
     if not args.command:
         print(usage, file=sys.stderr)
         sys.exit(0)
+
+    # The one place a push nobody verified is asked about. Every push on this
+    # machine passes the global pre-push hook, which records what it is about to
+    # send; `pr` is the workbench's git surface and is always somewhere that can
+    # print, so this is where the remote is asked whether those pushes landed.
+    # Here rather than inside a subcommand: it belongs to no one command, and it
+    # runs before the context is resolved so a report about an earlier push is
+    # not withheld by a command that goes on to fail for reasons of its own. It
+    # costs one failed `stat` when nothing is pending, which is nearly always.
+    push_intent.reconcile()
 
     entry = _COMMANDS[args.command]
     if {"-h", "--help"} & set(extra) and "script" in entry:

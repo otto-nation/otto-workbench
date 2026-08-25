@@ -173,6 +173,53 @@ def test_fetch_and_reset_survives_fetch_exception(mock_run):
     fetch_and_reset("/wt", "feat/x")
 
 
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_blocks_when_the_status_read_failed(mock_run, mock_log):
+    """Regression: a `status` that failed is not a worktree that came back clean.
+
+    Read as clean, the guard finds no blocker and the hard reset below it
+    destroys whatever was uncommitted.
+    """
+    runs = _safe_reset_runs()
+    runs[2] = MagicMock(returncode=128, stdout="",
+                        stderr="fatal: .git/index: index file smaller than expected")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "could not be read" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_blocks_when_the_status_read_timed_out(mock_run, mock_log):
+    """A timeout raises rather than returning, and must not escape the guard.
+
+    Left uncaught it aborts the command from inside a safety check; folded into
+    a non-zero result it blocks the reset, which is the same answer every other
+    unreadable state gets.
+    """
+    runs = _safe_reset_runs()
+    runs[2] = subprocess.TimeoutExpired(cmd=["git", "status", "--porcelain"], timeout=1)
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "could not be read" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_fetch_and_reset_blocks_when_unpushed_commits_cannot_be_counted(mock_run, mock_log):
+    """The other half of the same guard: a rev-list that never ran counted nothing."""
+    runs = _safe_reset_runs()
+    runs[3] = MagicMock(returncode=128, stdout="",
+                        stderr="fatal: bad revision 'origin/feat/x..HEAD'")
+    mock_run.side_effect = runs
+    fetch_and_reset("/wt", "feat/x")
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "could not be counted" in mock_log.warn.call_args.args[0]
+
+
 # ── update_to_remote ───────────────────────────────────────────────────────
 
 
@@ -210,6 +257,39 @@ def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log, _mock
     assert update_to_remote(ctx) is ctx
     mock_log.warn.assert_called_once()
     assert "uncommitted" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("pr_context.log")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_when_the_status_read_failed(mock_run, mock_log, _mock_branch):
+    """The same guard from the other entry point — no fetch, and no reset."""
+    mock_run.return_value = MagicMock(
+        returncode=128, stdout="", stderr="fatal: .git/index: index file corrupt",
+    )
+    ctx = _make_ctx()
+    assert update_to_remote(ctx) is ctx
+    assert mock_run.call_count == 1
+    assert "uncommitted" in mock_log.warn.call_args.args[0]
+
+
+@patch("pr_context._current_branch_quiet", return_value="feat/x")
+@patch("pr_context.log")
+@patch("pr_context._head_sha", return_value="local111")
+@patch("pr_context.subprocess.run")
+def test_update_to_remote_skips_when_unpushed_commits_cannot_be_counted(
+    mock_run, mock_sha, mock_log, _mock_branch,
+):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),             # status --porcelain (clean)
+        MagicMock(returncode=0),                         # fetch
+        MagicMock(returncode=0, stdout="remote222\n"),   # rev-parse origin/branch
+        MagicMock(returncode=128, stdout="", stderr="fatal: bad revision"),
+    ]
+    ctx = _make_ctx(head_sha="local111")
+    assert update_to_remote(ctx) is ctx
+    assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
+    assert "could not count" in mock_log.warn.call_args.args[0].lower()
 
 
 @patch("pr_context._current_branch_quiet", return_value="feat/x")

@@ -649,6 +649,10 @@ def _commit_and_push(wt_path: Path, fixed: int, skipped: int) -> str | None:
         msg += f"\n\n{fixed} fixed, {skipped} skipped"
     committed = git_client.run("commit", "-m", msg, cwd=wt_path)
     if not committed.ok:
+        # See review_common.committed_nothing for why this isn't a failure.
+        if review_common.committed_nothing(committed):
+            log.info("No changes to commit")
+            return None
         raise RuntimeError(proc.failure_message("Failed to commit fixes", committed))
     sha = git_client.head_sha(cwd=wt_path)
     if not sha:

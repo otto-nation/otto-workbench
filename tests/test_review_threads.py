@@ -740,6 +740,25 @@ class TestCommitAndPush:
         with pytest.raises(RuntimeError, match="index.lock"):
             self._commit(rt, mock_run)
 
+    def test_an_empty_commit_after_an_unreadable_status_is_no_changes(self, rt):
+        """The gate answers "dirty" when git could not read the worktree.
+
+        Reaching the commit therefore no longer proves there was work: git
+        declining an empty change is that ambiguity resolving, and reporting it
+        as commit_failed would put a rejection in front of the reviewer that
+        nobody made.
+        """
+        def mock_run(*cmd, **kwargs):
+            if "commit" in cmd:
+                return _git_ran(
+                    1, stdout="On branch main\nnothing to commit, working tree clean\n",
+                )
+            return _git_ran(0)
+
+        result = self._commit(rt, mock_run)
+        assert result.status == "no_changes"
+        assert result.sha is None
+
     def test_commit_failed(self, rt):
         """git commit returns non-zero → commit_failed with error text."""
         def mock_run(*cmd, **kwargs):

@@ -3951,6 +3951,56 @@ def test_force_push_no_resolved_files_skips_ai_fix():
     mock_fix.assert_not_called()
 
 
+# ── _status_lines ──────────────────────────────────────────────────────────
+
+
+def test_status_lines_reads_a_clean_worktree_as_empty(tmp_path):
+    """Half the contract: clean is an empty list, and an empty list is not None."""
+    init_worktree(tmp_path)
+    assert pr_rebase_cli._status_lines(str(tmp_path)) == []
+
+
+def test_status_lines_cannot_read_a_path_that_is_not_a_repo(tmp_path):
+    """The other half: a read that failed is None, not a tree with nothing in it."""
+    assert pr_rebase_cli._status_lines(str(tmp_path)) is None
+
+
+def test_status_lines_cannot_read_a_worktree_with_a_broken_index(tmp_path):
+    init_worktree(tmp_path)
+    (tmp_path / ".git" / "index").write_bytes(b"garbage")
+    assert pr_rebase_cli._status_lines(str(tmp_path)) is None
+
+
+def test_status_lines_folds_a_timeout_into_the_same_answer():
+    """`subprocess.run(timeout=)` raises rather than returning non-zero.
+
+    Uncaught, the exception aborts the command from inside a read whose whole
+    job is to decide whether the rebase is safe to start.
+    """
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, timeouts.LOCAL)
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        assert pr_rebase_cli._status_lines("/fake") is None
+
+
+def test_retry_push_refuses_when_the_worktree_cannot_be_read(tmp_path):
+    """An unreadable tree is not a validated one.
+
+    Pre-push hooks run against the worktree, so a retry that pushes when the
+    dirty check could not answer pushes a tree nothing validated.
+    """
+    with mock.patch.object(pr_rebase_cli, "_push") as mock_push:
+        assert pr_rebase_cli._retry_push(str(tmp_path), "force_push") is None
+    mock_push.assert_not_called()
+
+
+def test_commit_regenerated_refuses_when_the_worktree_cannot_be_read(tmp_path, capsys):
+    """No file list means no `git add -u` — the recovery step just does not run."""
+    assert pr_rebase_cli._commit_regenerated(str(tmp_path)) is False
+    assert "Cannot tell what the hook regenerated" in capsys.readouterr().err
+
+
 # ── _auto_stash ────────────────────────────────────────────────────────────
 
 
@@ -3978,6 +4028,32 @@ def test_auto_stash_covers_untracked_files(status_out, expected):
     stash_calls = [c for c in calls if c[:2] == ["git", "stash"]]
     assert bool(stash_calls) is expected
     assert all("-u" in c for c in stash_calls)
+
+
+def test_auto_stash_refuses_when_the_worktree_cannot_be_read(tmp_path):
+    """A failed status must not read as a clean tree and rebase over the work.
+
+    git refusing a rebase on a dirty tree is a backstop that happens to catch
+    this; `_auto_stash` is the guard, and its answer has to be honest whether
+    or not something downstream would notice.
+    """
+    assert pr_rebase_cli._auto_stash(str(tmp_path)) is None
+
+
+def test_auto_stash_does_not_stash_a_tree_it_could_not_read():
+    """Refusing means refusing before the stash, not stashing blind."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=128, stdout="", stderr="fatal: index file corrupt",
+        )
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        assert pr_rebase_cli._auto_stash("/fake") is None
+
+    assert not [c for c in calls if c[:2] == ["git", "stash"]]
 
 
 # ── _auto_unstash ──────────────────────────────────────────────────────────

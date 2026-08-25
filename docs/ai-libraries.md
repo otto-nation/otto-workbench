@@ -332,6 +332,11 @@ in the second and not the first are attributed to it. Without that first
 snapshot the pass cannot tell its own work from whatever was already sitting in
 the worktree, and it both commits and takes credit for the difference.
 
+A snapshot git could not take stops the pass rather than reading as an empty
+one. Everything outside the difference goes uncommitted, so an unreadable
+worktree spelled the same way as an unchanged one is how a pass reports success
+having left the agent's fixes behind.
+
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
 
@@ -1300,10 +1305,10 @@ The publishing gate is deliberately not here. `pr_comments` gates its writes on
 gate inside the transport would make a policy decision invisible to the code
 that owns it.
 
-Unlike `git_client`, this depends on `log` as well as `proc`: a rate-limit
-ladder that waits five minutes in silence reads as a hang, so the waiting is
-announced. Whether a *failed* call is worth logging remains the caller's
-decision, as it is there.
+Like `git_client`, this depends on `log` as well as `proc`, and for more of its
+surface than that one does: a rate-limit ladder that waits five minutes in
+silence reads as a hang, so the waiting is announced. Whether a *failed* call is
+worth logging remains the caller's decision, as it is there.
 
 ### git_client.py
 
@@ -1355,14 +1360,20 @@ loudly.
 discards a failure, and it is deliberate: it is what the wrappers it replaces
 already did, because most of these reads are questions with a reasonable
 "don't know" answer. When the exit code or stderr matters — and for a write it
-always does — call `run` and read the `CmdResult`.
+always does — call `run` and read the `CmdResult`. A yes/no read whose caller
+gates destructive or discarding work on the answer belongs in that second group
+too: through `out` its "don't know" is spelled the same way as its "no", which
+is how `is_dirty` used to report a killed `status` as a clean tree.
 
 Writes are not modelled beyond `run`. Committing and pushing gets an owner of
 its own, with the publishing gate over it, rather than a convenience wrapper
 here that would turn four gate-less push sites into five.
 
-Depends on `proc` and nothing else. Whether a failed read is worth logging is
-the caller's decision, and most of them have already decided it is not.
+Depends on `proc`, and on `log` for the one read that has to announce a failure
+it absorbs: `is_dirty` answering "dirty" because git never answered would
+otherwise be indistinguishable from a genuinely dirty tree. Whether any other
+failed read is worth logging stays the caller's decision, and most of them have
+already decided it is not.
 
 ### log.py
 

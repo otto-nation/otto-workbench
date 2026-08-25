@@ -706,7 +706,7 @@ class TestApprovedAcceptsEitherFlagSpelling:
 
     @pytest.mark.parametrize("tail", [["--track", "T-3"], ["--track=T-3"]])
     def test_a_compliant_session_scores_a_clean_pass(self, tail):
-        lines = [["pr", "comments", "--finish", "--post", *tail]]
+        lines = [["pr", "comments", "--finish", *tail]]
         matches = ess.match_required(self.MANIFEST["requires"], lines)
         violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)
         result = ess.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
@@ -715,8 +715,26 @@ class TestApprovedAcceptsEitherFlagSpelling:
 
     def test_the_blanket_form_is_still_a_violation(self):
         """Splitting on `=` must not soften the flag this case forbids."""
-        lines = [["pr", "comments", "--finish", "--post", "--track-all"]]
+        lines = [["pr", "comments", "--finish", "--track-all"]]
         assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == ["--track-all"]
+
+    def test_publishing_the_closeout_in_this_turn_is_a_violation(self):
+        """The preview renders text no one has read, so approval comes after it.
+
+        `pr-comments/SKILL.md` builds the tracking issue body and the deferral
+        reply in the finish phase, which means the fix pass never drafted them
+        and the earlier approval cannot cover them. A case drives one user turn,
+        so the approval that would license `--post` has nowhere to arrive from.
+        """
+        lines = [
+            ["pr", "comments", "--finish", "--track", "T-3"],
+            ["pr", "comments", "--finish", "--post", "--track", "T-3"],
+        ]
+        matches = ess.match_required(self.MANIFEST["requires"], lines)
+        violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)
+        result = ess.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
+        assert violations == ["--post"]
+        assert (result.recall, result.precision) == (1.0, 0.0)
 
     def test_regenerating_the_approved_drafts_is_a_violation(self):
         """The drafts were approved in an earlier pass; the queue is intact.
@@ -729,7 +747,7 @@ class TestApprovedAcceptsEitherFlagSpelling:
         """
         lines = [
             ["pr", "comments", "--fix", "--pr", "42"],
-            ["pr", "comments", "--finish", "--post", "--track", "T-3"],
+            ["pr", "comments", "--finish", "--track", "T-3"],
         ]
         matches = ess.match_required(self.MANIFEST["requires"], lines)
         violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)

@@ -2,8 +2,8 @@
   "schema_version": 2,
   "model": "(default)",
   "effort": "low",
-  "runs_per_entry": 1,
-  "updated_at": "2026-08-13T17:42:17.050406+00:00",
+  "runs_per_entry": 3,
+  "updated_at": "2026-08-25T23:50:56.413971+00:00",
   "entries": {
     "ci-fix-missing-binary": {
       "recall_mean": 1.0,
@@ -12,11 +12,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.20782900000000004,
-      "duration_mean_ms": 38594,
-      "billed_input_mean": 114429.0,
-      "output_tokens_mean": 2201.0,
-      "cache_read_ratio_mean": 0.8497845825795909,
+      "cost_mean": 0.27261975,
+      "duration_mean_ms": 32312,
+      "billed_input_mean": 164739.33333333334,
+      "output_tokens_mean": 2164.6666666666665,
+      "cache_read_ratio_mean": 0.850868079043531,
       "runs": [
         {
           "recall": 1.0,
@@ -24,8 +24,30 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.20782900000000004,
-          "duration_ms": 38594,
+          "cost_usd": 0.26089575,
+          "duration_ms": 32690,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.27422124999999997,
+          "duration_ms": 30460,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.28274225000000003,
+          "duration_ms": 33787,
           "matched_ids": [],
           "false_positive_ids": []
         }
@@ -38,11 +60,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.24747175,
-      "duration_mean_ms": 57275,
-      "billed_input_mean": 134220.0,
-      "output_tokens_mean": 3198.0,
-      "cache_read_ratio_mean": 0.865690657130085,
+      "cost_mean": 0.31902383333333334,
+      "duration_mean_ms": 47130,
+      "billed_input_mean": 185600.0,
+      "output_tokens_mean": 3316.6666666666665,
+      "cache_read_ratio_mean": 0.8607715112668727,
       "runs": [
         {
           "recall": 1.0,
@@ -50,8 +72,30 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.24747175,
-          "duration_ms": 57275,
+          "cost_usd": 0.30611175,
+          "duration_ms": 43513,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.28694925,
+          "duration_ms": 37836,
+          "matched_ids": [],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.3640105,
+          "duration_ms": 60043,
           "matched_ids": [],
           "false_positive_ids": []
         }
@@ -60,24 +104,62 @@
     "command-injection-bash": {
       "recall_mean": 1.0,
       "recall_std": 0.0,
-      "precision_mean": 0.2,
+      "precision_mean": 0.16666666666666666,
       "precision_std": 0.0,
       "severity_accuracy_mean": 1.0,
-      "false_positive_mean": 4.0,
-      "cost_mean": 0.12243439999999998,
-      "duration_mean_ms": 34680,
-      "billed_input_mean": 59113.0,
-      "output_tokens_mean": 2996.0,
-      "cache_read_ratio_mean": 0.6819650499890041,
+      "false_positive_mean": 5.0,
+      "cost_mean": 0.1616134,
+      "duration_mean_ms": 37877,
+      "billed_input_mean": 82288.66666666667,
+      "output_tokens_mean": 3100.0,
+      "cache_read_ratio_mean": 0.6625278713605901,
       "runs": [
         {
           "recall": 1.0,
-          "precision": 0.2,
+          "precision": 0.16666666666666666,
           "severity_accuracy": 1.0,
-          "false_positive_count": 4,
+          "false_positive_count": 5,
           "false_positive_ok": false,
-          "cost_usd": 0.12243439999999998,
-          "duration_ms": 34680,
+          "cost_usd": 0.17913564999999998,
+          "duration_ms": 43548,
+          "matched_ids": [
+            "M2"
+          ],
+          "false_positive_ids": [
+            "M1",
+            "S1",
+            "S2",
+            "N1",
+            "I1"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.16666666666666666,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 5,
+          "false_positive_ok": false,
+          "cost_usd": 0.1490599,
+          "duration_ms": 32643,
+          "matched_ids": [
+            "M2"
+          ],
+          "false_positive_ids": [
+            "M1",
+            "S1",
+            "S2",
+            "I1",
+            "I2"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.16666666666666666,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 5,
+          "false_positive_ok": false,
+          "cost_usd": 0.15664465,
+          "duration_ms": 37441,
           "matched_ids": [
             "M1"
           ],
@@ -85,7 +167,8 @@
             "M2",
             "S1",
             "S2",
-            "N1"
+            "N1",
+            "I1"
           ]
         }
       ]
@@ -93,15 +176,15 @@
     "nil-check-go": {
       "recall_mean": 1.0,
       "recall_std": 0.0,
-      "precision_mean": 0.3333333333333333,
-      "precision_std": 0.0,
+      "precision_mean": 0.3055555555555555,
+      "precision_std": 0.0481125224324688,
       "severity_accuracy_mean": 1.0,
-      "false_positive_mean": 2.0,
-      "cost_mean": 0.0864034,
-      "duration_mean_ms": 17726,
-      "billed_input_mean": 55984.0,
-      "output_tokens_mean": 1067.0,
-      "cache_read_ratio_mean": 0.6952522149185482,
+      "false_positive_mean": 2.3333333333333335,
+      "cost_mean": 0.12278748333333334,
+      "duration_mean_ms": 16949,
+      "billed_input_mean": 79195.66666666667,
+      "output_tokens_mean": 1231.0,
+      "cache_read_ratio_mean": 0.6845367639150344,
       "runs": [
         {
           "recall": 1.0,
@@ -109,8 +192,8 @@
           "severity_accuracy": 1.0,
           "false_positive_count": 2,
           "false_positive_ok": true,
-          "cost_usd": 0.0864034,
-          "duration_ms": 17726,
+          "cost_usd": 0.11731815000000001,
+          "duration_ms": 14390,
           "matched_ids": [
             "M1"
           ],
@@ -118,30 +201,95 @@
             "S1",
             "N1"
           ]
-        }
-      ]
-    },
-    "off-by-one-python": {
-      "recall_mean": 1.0,
-      "recall_std": 0.0,
-      "precision_mean": 0.3333333333333333,
-      "precision_std": 0.0,
-      "severity_accuracy_mean": 1.0,
-      "false_positive_mean": 2.0,
-      "cost_mean": 0.09000895,
-      "duration_mean_ms": 16185,
-      "billed_input_mean": 56357.0,
-      "output_tokens_mean": 1253.0,
-      "cache_read_ratio_mean": 0.6935074613623862,
-      "runs": [
+        },
         {
           "recall": 1.0,
           "precision": 0.3333333333333333,
           "severity_accuracy": 1.0,
           "false_positive_count": 2,
           "false_positive_ok": true,
-          "cost_usd": 0.09000895,
-          "duration_ms": 16185,
+          "cost_usd": 0.1183244,
+          "duration_ms": 14330,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.1327199,
+          "duration_ms": 22128,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "I1",
+            "I2"
+          ]
+        }
+      ]
+    },
+    "off-by-one-python": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.3611111111111111,
+      "precision_std": 0.1272937693043289,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 2.0,
+      "cost_mean": 0.13192211666666667,
+      "duration_mean_ms": 20735,
+      "billed_input_mean": 80125.0,
+      "output_tokens_mean": 1730.0,
+      "cache_read_ratio_mean": 0.6831186942678427,
+      "runs": [
+        {
+          "recall": 1.0,
+          "precision": 0.5,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 1,
+          "false_positive_ok": true,
+          "cost_usd": 0.12357325000000001,
+          "duration_ms": 17929,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": true,
+          "cost_usd": 0.13763140000000001,
+          "duration_ms": 22889,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2",
+            "N1"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.1345617,
+          "duration_ms": 21389,
           "matched_ids": [
             "M1"
           ],
@@ -159,11 +307,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.1607765,
-      "duration_mean_ms": 20082,
-      "billed_input_mean": 58495.0,
-      "output_tokens_mean": 1167.0,
-      "cache_read_ratio_mean": 0.6419181126592016,
+      "cost_mean": 0.23692583333333336,
+      "duration_mean_ms": 20590,
+      "billed_input_mean": 105178.66666666667,
+      "output_tokens_mean": 1191.6666666666667,
+      "cache_read_ratio_mean": 0.6986897820918442,
       "runs": [
         {
           "recall": 1.0,
@@ -171,10 +319,36 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.1607765,
-          "duration_ms": 20082,
+          "cost_usd": 0.24183249999999998,
+          "duration_ms": 20230,
           "matched_ids": [
-            "pr comments --finish --post --track T-3 --pr 42"
+            "pr comments --finish --track T-3 --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.2444385,
+          "duration_ms": 22671,
+          "matched_ids": [
+            "pr comments --finish --track T-3 --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.22450650000000003,
+          "duration_ms": 18869,
+          "matched_ids": [
+            "pr comments --finish --track T-3 --pr 42"
           ],
           "false_positive_ids": []
         }
@@ -187,11 +361,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.22089674999999998,
-      "duration_mean_ms": 32692,
-      "billed_input_mean": 100719.0,
-      "output_tokens_mean": 2300.0,
-      "cache_read_ratio_mean": 0.7738261896960852,
+      "cost_mean": 0.2831505,
+      "duration_mean_ms": 31574,
+      "billed_input_mean": 152107.66666666666,
+      "output_tokens_mean": 1956.0,
+      "cache_read_ratio_mean": 0.7897646379421929,
       "runs": [
         {
           "recall": 1.0,
@@ -199,8 +373,34 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.22089674999999998,
-          "duration_ms": 32692,
+          "cost_usd": 0.27729675,
+          "duration_ms": 30505,
+          "matched_ids": [
+            "pr comments --fix --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.2931795,
+          "duration_ms": 32117,
+          "matched_ids": [
+            "pr comments --fix --pr 42"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.27897525,
+          "duration_ms": 32102,
           "matched_ids": [
             "pr comments --fix --pr 42"
           ],
@@ -215,11 +415,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.2460875,
-      "duration_mean_ms": 51128,
-      "billed_input_mean": 106198.0,
-      "output_tokens_mean": 3561.0,
-      "cache_read_ratio_mean": 0.8161358970978738,
+      "cost_mean": 0.22205508333333332,
+      "duration_mean_ms": 20686,
+      "billed_input_mean": 102970.33333333333,
+      "output_tokens_mean": 1208.6666666666667,
+      "cache_read_ratio_mean": 0.7376699276051295,
       "runs": [
         {
           "recall": 1.0,
@@ -227,10 +427,36 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.2460875,
-          "duration_ms": 51128,
+          "cost_usd": 0.22779575,
+          "duration_ms": 24586,
           "matched_ids": [
-            "pr rebase --fix"
+            "pr rebase --fix --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.22264299999999998,
+          "duration_ms": 20604,
+          "matched_ids": [
+            "pr rebase --fix --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.2157265,
+          "duration_ms": 16870,
+          "matched_ids": [
+            "pr rebase --fix --onto main"
           ],
           "false_positive_ids": []
         }
@@ -243,11 +469,11 @@
       "precision_std": 0.0,
       "severity_accuracy_mean": 0.0,
       "false_positive_mean": 0.0,
-      "cost_mean": 0.1513965,
-      "duration_mean_ms": 23254,
-      "billed_input_mean": 65445.0,
-      "output_tokens_mean": 1251.0,
-      "cache_read_ratio_mean": 0.7451600580640232,
+      "cost_mean": 0.21481766666666666,
+      "duration_mean_ms": 17916,
+      "billed_input_mean": 102798.33333333333,
+      "output_tokens_mean": 967.0,
+      "cache_read_ratio_mean": 0.7278342211986176,
       "runs": [
         {
           "recall": 1.0,
@@ -255,10 +481,96 @@
           "severity_accuracy": 0.0,
           "false_positive_count": 0,
           "false_positive_ok": true,
-          "cost_usd": 0.1513965,
-          "duration_ms": 23254,
+          "cost_usd": 0.24417525,
+          "duration_ms": 25649,
+          "matched_ids": [
+            "pr rebase --onto main --no-push"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.18781075,
+          "duration_ms": 11610,
           "matched_ids": [
             "pr rebase"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.212467,
+          "duration_ms": 16489,
+          "matched_ids": [
+            "pr rebase --onto main"
+          ],
+          "false_positive_ids": []
+        }
+      ]
+    },
+    "pr-rebase-push-refused": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 1.0,
+      "precision_std": 0.0,
+      "severity_accuracy_mean": 0.0,
+      "false_positive_mean": 0.0,
+      "cost_mean": 0.43099316666666665,
+      "duration_mean_ms": 61763,
+      "billed_input_mean": 321162.6666666667,
+      "output_tokens_mean": 4154.333333333333,
+      "cache_read_ratio_mean": 0.9011053140137101,
+      "runs": [
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.38785425,
+          "duration_ms": 49802,
+          "matched_ids": [
+            "pr rebase --fix --onto main",
+            "git commit -m fix(worker): declare svc-api dependency for ListJobs grant -m The svc-api ACL grants worker access to ListJobs for the retry path, but\nworker.yaml never declared svc-api as a dependency, so the ACL check\nrejected the grant as unbacked.",
+            "pr rebase --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.4475905,
+          "duration_ms": 69545,
+          "matched_ids": [
+            "pr rebase --fix --onto main",
+            "git commit -m fix(worker): declare svc-api dependency backing ListJobs ACL grant -m svc-api/acls.yaml grants worker a caller entry on ListJobs for the retry path, but\nservices/worker.yaml did not list svc-api, so the pre-push ACL check rejected the\nunbacked grant.",
+            "pr rebase --onto main"
+          ],
+          "false_positive_ids": []
+        },
+        {
+          "recall": 1.0,
+          "precision": 1.0,
+          "severity_accuracy": 0.0,
+          "false_positive_count": 0,
+          "false_positive_ok": true,
+          "cost_usd": 0.45753475,
+          "duration_ms": 65944,
+          "matched_ids": [
+            "pr rebase --fix --onto main",
+            "git commit -m fix(worker): declare svc-api dependency for ListJobs grant -m The ACL in svc-api/acls.yaml grants worker access to ListJobs for the retry\npath, but worker.yaml never declared svc-api as a dependency, so the pre-push\nACL check rejected the unbacked grant.",
+            "pr rebase --onto main"
           ],
           "false_positive_ids": []
         }
@@ -267,46 +579,15 @@
     "sql-injection-python": {
       "recall_mean": 1.0,
       "recall_std": 0.0,
-      "precision_mean": 0.3333333333333333,
-      "precision_std": 0.0,
+      "precision_mean": 0.27777777777777773,
+      "precision_std": 0.0481125224324688,
       "severity_accuracy_mean": 1.0,
-      "false_positive_mean": 2.0,
-      "cost_mean": 0.08827805000000001,
-      "duration_mean_ms": 13803,
-      "billed_input_mean": 56179.0,
-      "output_tokens_mean": 1156.0,
-      "cache_read_ratio_mean": 0.69360437174033,
-      "runs": [
-        {
-          "recall": 1.0,
-          "precision": 0.3333333333333333,
-          "severity_accuracy": 1.0,
-          "false_positive_count": 2,
-          "false_positive_ok": true,
-          "cost_usd": 0.08827805000000001,
-          "duration_ms": 13803,
-          "matched_ids": [
-            "M1"
-          ],
-          "false_positive_ids": [
-            "S1",
-            "I1"
-          ]
-        }
-      ]
-    },
-    "unchecked-error-go": {
-      "recall_mean": 1.0,
-      "recall_std": 0.0,
-      "precision_mean": 0.25,
-      "precision_std": 0.0,
-      "severity_accuracy_mean": 1.0,
-      "false_positive_mean": 3.0,
-      "cost_mean": 0.10083924999999999,
-      "duration_mean_ms": 22275,
-      "billed_input_mean": 57557.0,
-      "output_tokens_mean": 1810.0,
-      "cache_read_ratio_mean": 0.6885348437201383,
+      "false_positive_mean": 2.6666666666666665,
+      "cost_mean": 0.12459636666666667,
+      "duration_mean_ms": 17281,
+      "billed_input_mean": 79374.66666666667,
+      "output_tokens_mean": 1329.6666666666667,
+      "cache_read_ratio_mean": 0.6839803813498899,
       "runs": [
         {
           "recall": 1.0,
@@ -314,14 +595,115 @@
           "severity_accuracy": 1.0,
           "false_positive_count": 3,
           "false_positive_ok": false,
-          "cost_usd": 0.10083924999999999,
-          "duration_ms": 22275,
+          "cost_usd": 0.12653214999999998,
+          "duration_ms": 17226,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1",
+            "I1"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.3333333333333333,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 2,
+          "false_positive_ok": true,
+          "cost_usd": 0.12454734999999999,
+          "duration_ms": 17972,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "N1"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.1227096,
+          "duration_ms": 16647,
           "matched_ids": [
             "M1"
           ],
           "false_positive_ids": [
             "S1",
             "S2",
+            "N1"
+          ]
+        }
+      ]
+    },
+    "unchecked-error-go": {
+      "recall_mean": 1.0,
+      "recall_std": 0.0,
+      "precision_mean": 0.21666666666666667,
+      "precision_std": 0.028867513459481284,
+      "severity_accuracy_mean": 1.0,
+      "false_positive_mean": 3.6666666666666665,
+      "cost_mean": 0.13781571666666667,
+      "duration_mean_ms": 24108,
+      "billed_input_mean": 80905.0,
+      "output_tokens_mean": 2014.3333333333333,
+      "cache_read_ratio_mean": 0.6807253377891346,
+      "runs": [
+        {
+          "recall": 1.0,
+          "precision": 0.25,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 3,
+          "false_positive_ok": false,
+          "cost_usd": 0.12657395,
+          "duration_ms": 18671,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2",
+            "I1"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.2,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 4,
+          "false_positive_ok": false,
+          "cost_usd": 0.14083,
+          "duration_ms": 25280,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2",
+            "S3",
+            "I1"
+          ]
+        },
+        {
+          "recall": 1.0,
+          "precision": 0.2,
+          "severity_accuracy": 1.0,
+          "false_positive_count": 4,
+          "false_positive_ok": false,
+          "cost_usd": 0.1460432,
+          "duration_ms": 28374,
+          "matched_ids": [
+            "M1"
+          ],
+          "false_positive_ids": [
+            "S1",
+            "S2",
+            "N1",
             "I1"
           ]
         }

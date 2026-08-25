@@ -113,6 +113,15 @@ EVENT_TYPE_WIDTH = max(len(event_type.value) for event_type in EventType)
 # Durations are measured with `time.monotonic_ns` and reported in milliseconds.
 NS_PER_MS = 1_000_000
 
+# How much of a command's output an event's `data` carries. A record is read
+# long after the process that wrote it is gone, so the excerpt is the whole of
+# what a later reader gets — generous enough for a stack trace's first frames,
+# bounded because a build step that writes megabytes to stderr would otherwise
+# put all of them in the month file every caller reads. Wider than
+# `proc.DETAIL_LIMIT`, which bounds what a *console* line quotes back to
+# someone who still has the terminal in front of them.
+EXCERPT_LIMIT = 500
+
 _ANSI_DIM = "\033[2m"
 _ANSI_RESET = "\033[0m"
 _ANSI_LEVELS = {

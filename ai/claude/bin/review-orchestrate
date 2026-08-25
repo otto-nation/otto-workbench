@@ -45,6 +45,7 @@ import review_state as _rst  # noqa: E402
 
 import log  # noqa: E402
 import pr_state  # noqa: E402
+import proc  # noqa: E402
 import publishing  # noqa: E402
 
 from pr_context import detect_repo  # noqa: E402
@@ -369,4 +370,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        sys.exit(130)
+        sys.exit(proc.INTERRUPT_RETURNCODE)

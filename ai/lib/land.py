@@ -78,7 +78,7 @@ import push
 from pr_fix import CommitStatus
 from proc import CmdResult
 from push import PushResult, PushStatus
-from trail import Trail
+from trail import EXCERPT_LIMIT, Trail
 
 # git prints these on stdout, with exit 1, when a commit resolves to an empty
 # change. `--allow-empty` is not the answer: an empty commit is noise on the
@@ -293,7 +293,7 @@ def _recover(
     if push.holds(wt_path, sha):
         return LandResult(CommitStatus.PUSHED, sha=sha)
 
-    log.info(f"Recovered {sha[:7]} — committed outside the pass")
+    log.info(f"Recovered {git_client.abbrev(sha)} — committed outside the pass")
     result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
     push.report(result, wt_path)
     return _landed(wt_path, sha, result)
@@ -340,7 +340,8 @@ def _commit(
         error = committed.stderr.strip() or committed.stdout.strip()
         log.error(f"commit failed: {error}")
         if trail:
-            trail.error("commit", "commit failed", data={"error": error[:500]})
+            trail.error("commit", "commit failed",
+                        data={"error": error[:EXCERPT_LIMIT]})
         return _Commit(outcome=LandResult(CommitStatus.COMMIT_FAILED, error=error))
 
     sha = git_client.head_sha(cwd=wt_path)
@@ -350,7 +351,7 @@ def _commit(
         raise RuntimeError("Committed, but could not read the new HEAD")
 
     subject = message.splitlines()[0] if message.strip() else "(no subject)"
-    log.info(f"Committed {sha[:7]} — {subject}")
+    log.info(f"Committed {git_client.abbrev(sha)} — {subject}")
     if trail:
         trail.info("commit", "committed the pass's work", data={"sha": sha})
     return _Commit(sha=sha)

@@ -16,6 +16,7 @@ from datetime import date
 from pathlib import Path
 
 import agent_templates
+import git_client
 import json
 import log
 from agent_types import EFFORT_PRESETS, Effort
@@ -37,7 +38,8 @@ from review_scout import (
     is_scout_output, parse_scout_output,
 )
 from review_preflight import (
-    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
+    MAX_PROMPT_BYTES, MAX_REVIEW_BODY_LEN, MIN_DIFF_BYTES,
+    NON_PREFLIGHT_OVERHEAD_BYTES,
     PRContext, PRMetadata, PreflightData, ReviewJob,
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -96,9 +98,6 @@ def _build_pr_header(
             lines += ["", "### File breakdown (sorted by churn)", file_stats]
 
     return "\n".join(lines)
-
-
-MAX_REVIEW_BODY_LEN = 200
 
 
 def _format_reviews(raw_json: str) -> str:
@@ -212,7 +211,7 @@ def _format_thread_item(t: dict, state: str) -> list[str]:
     lines = [f"- {label}`{loc}`" if loc else f"- {label}(general comment)"]
     if state in (THREAD_CONTESTED, THREAD_REPLIED):
         for r in t.get("replies", []):
-            body = r.get("body", "").replace("\n", " ")[:200]
+            body = r.get("body", "").replace("\n", " ")[:MAX_REVIEW_BODY_LEN]
             lines.append(f"  > @{r.get('author', '?')}: {body}")
     return lines
 
@@ -399,7 +398,7 @@ def _build_delta_section(
 ) -> str:
     if not preflight or not preflight.prior_head_sha:
         return ""
-    prior = preflight.prior_head_sha[:7]
+    prior = git_client.abbrev(preflight.prior_head_sha)
     delta_files = preflight.delta_files
     if file_filter:
         filter_set = set(file_filter)
@@ -817,8 +816,8 @@ def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
     if not _is_incremental(job):
         return base_ctx
     pf = job.preflight
-    prior_sha = pf.prior_head_sha[:7]
-    head_sha = job.pr.head_sha[:7]
+    prior_sha = git_client.abbrev(pf.prior_head_sha)
+    head_sha = git_client.abbrev(job.pr.head_sha)
     n_files = len(pf.delta_files)
     incremental_note = (
         f"\n\n**Incremental review note:** {n_files} file(s) changed since the "

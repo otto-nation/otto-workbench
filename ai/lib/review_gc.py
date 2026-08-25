@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import shutil
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import gh_client
@@ -58,9 +58,17 @@ GC_STALE_DAYS = 7
 GC_FAILED_STALE_DAYS = 30
 PRUNE_MAX_FILES = 10
 
-# Every staleness check reads an mtime, which is seconds, against a threshold
-# stated in days — this is the only conversion between the two.
-SECONDS_PER_DAY = 86_400
+
+def _age_days(f: Path, now: float) -> float:
+    """How long ago *f* was last written, in days, as of the *now* timestamp.
+
+    Every staleness check here reads an mtime, which is seconds, against a
+    threshold stated in days; this is the one place the two meet. `now` is the
+    caller's because a sweep compares a whole directory against a single
+    instant — reading the clock per file would let a slow walk age its own
+    later entries past the threshold.
+    """
+    return (now - f.stat().st_mtime) / timedelta(days=1).total_seconds()
 
 
 def cleanup_intermediates(review_dir: Path) -> None:
@@ -131,9 +139,7 @@ def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
     if not files:
         return True
     now = datetime.now().timestamp()
-    return all(
-        (now - f.stat().st_mtime) / SECONDS_PER_DAY > stale_days for f in files
-    )
+    return all(_age_days(f, now) > stale_days for f in files)
 
 
 def _clean_stale_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS) -> int:
@@ -146,8 +152,7 @@ def _clean_stale_intermediates(review_dir: Path, stale_days: int = GC_STALE_DAYS
     count = 0
     now = datetime.now().timestamp()
     for f in phase_artifacts(review_dir):
-        age_days = (now - f.stat().st_mtime) / SECONDS_PER_DAY
-        if age_days > stale_days:
+        if _age_days(f, now) > stale_days:
             f.unlink(missing_ok=True)
             count += 1
     return count
@@ -175,8 +180,7 @@ def _collect_stray(f: Path, stale_days: int = GC_STALE_DAYS) -> int:
     """
     if _is_migration_input(f, f.parent):
         return 0
-    age_days = (datetime.now().timestamp() - f.stat().st_mtime) / SECONDS_PER_DAY
-    if age_days <= stale_days:
+    if _age_days(f, datetime.now().timestamp()) <= stale_days:
         return 0
     f.unlink(missing_ok=True)
     log.info(f"GC: removed stray {f.name}")

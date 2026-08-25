@@ -78,7 +78,7 @@ from pathlib import Path
 import git_client
 import log
 import publishing
-from trail import Trail
+from trail import EXCERPT_LIMIT, Trail
 
 
 class PushStatus(StrEnum):
@@ -351,7 +351,8 @@ def push(
         output = r.combined_output
         if trail:
             trail.error("push", "git refused the push",
-                        data={"sha": sha, "branch": branch, "error": output[:500]})
+                        data={"sha": sha, "branch": branch,
+                              "error": output[:EXCERPT_LIMIT]})
         return PushResult(PushStatus.REFUSED, sha, branch, refusal=classify(output),
                           output=output, remote=remote, args=argv)
 
@@ -422,7 +423,7 @@ def resume_command(result: PushResult, wt_path: str | Path) -> str:
 def report(result: PushResult, wt_path: str | Path) -> None:
     """Say what happened, in the terms the reader has to act on."""
     if result.status is PushStatus.PUSHED:
-        log.ok(f"Pushed {result.sha[:7]} to {result.branch}")
+        log.ok(f"Pushed {git_client.abbrev(result.sha)} to {result.branch}")
         return
 
     # A draft is not a failure, and `publishing.draft` has already said so.
@@ -433,8 +434,8 @@ def report(result: PushResult, wt_path: str | Path) -> None:
 
     if result.status is PushStatus.UNVERIFIED:
         log.warn(
-            f"pushed {result.sha[:7]} but could not reach the remote to confirm "
-            f"it landed — check with: {resume}"
+            f"pushed {git_client.abbrev(result.sha)} but could not reach the "
+            f"remote to confirm it landed — check with: {resume}"
         )
         return
 
@@ -452,8 +453,8 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     # under the state root that nobody has seen.
     log.dim(f"repo:     {wt_path}")
     log.dim(f"branch:   {result.branch}")
-    log.dim(f"expected: {result.sha[:7]}")
-    log.dim(f"origin:   {result.remote_sha[:7] or 'no such ref'}")
+    log.dim(f"expected: {git_client.abbrev(result.sha)}")
+    log.dim(f"origin:   {git_client.abbrev(result.remote_sha) or 'no such ref'}")
     log.dim(_RETRY_NOTE[result.retry])
     log.dim(f"Resume: {resume}")
 

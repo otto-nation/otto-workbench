@@ -52,6 +52,14 @@ the call sites that has none; as a result code it degrades through
 than an implementation detail: the eval scorers tell a timed-out case from a
 failed one by it.
 
+The exit codes and `DETAIL_LIMIT` are conventions rather than choices, so
+`bin/local/validate-magic-values` holds their monopoly: anywhere under `ai/`, a
+literal 124, 127 or 130 written where something exits with it or reads it back
+is rejected, and so is a slice bound that respells one of the caps —
+`DETAIL_LIMIT` here or `trail.EXCERPT_LIMIT` next door. It reads the values out
+of the modules that define them, so renaming a constant fails that check rather
+than quietly retiring it.
+
 Named `proc` rather than `cmd`: `ai/lib` goes on `sys.path` ahead of the
 standard library, and a module called `cmd` there would shadow the stdlib
 `cmd` that `pdb` imports.
@@ -80,6 +88,12 @@ _SERVER_ERROR_RE = re.compile(r"\bHTTP 5\d\d\b")
 # How much of a stream to quote when it is the only account of a failure there
 # is. stdout is a payload rather than a sentence, so it needs a bound; stderr is
 # quoted whole because a command that writes an essay there is the exception.
+#
+# The bound on a console line generally, not only on the ones built here: a
+# caller printing its own preview of a command's output is answering the same
+# question, for a reader who still has the scrollback. What goes into a trail
+# record instead takes `trail.EXCERPT_LIMIT`, which is wider because nobody
+# reading it later has the terminal.
 DETAIL_LIMIT = 200
 
 # What `run` reports when a command outlived its timeout. 124 is the shell
@@ -87,6 +101,15 @@ DETAIL_LIMIT = 200
 # implementation detail: the eval scorers distinguish a timed-out case from a
 # failed one by this code.
 TIMEOUT_RETURNCODE = 124
+
+# What a process exits with when it was interrupted at the keyboard, and what an
+# executable that is not on PATH comes back as. Both are shell convention in the
+# same family as the timeout code above, and both were being written as bare
+# numbers at the call sites that produce or read them — a raw `sys.exit(130)`
+# says nothing about why that number, and the reader who has to know is the one
+# reading `128 + SIGINT` off it.
+INTERRUPT_RETURNCODE = 130
+MISSING_RETURNCODE = 127
 
 # Signals that mean something outside the process ended it: the OOM killer and
 # a supervisor's kill (SIGKILL, SIGTERM), a reader that went away (SIGPIPE), an

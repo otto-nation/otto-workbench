@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+import git_client
+
 if TYPE_CHECKING:
     from pr_domains import CIDomain
 
@@ -356,7 +358,7 @@ def render_dashboard(
     show_status: bool = False,
 ) -> str:
     """Render a human-readable dashboard string for stderr output."""
-    header = f"## CI Run #{run.run_number} ({run.head_sha[:7]})"
+    header = f"## CI Run #{run.run_number} ({git_client.abbrev(run.head_sha)})"
     if show_status:
         suffix = "in progress" if run.status != "completed" else "complete"
         header += f" — {suffix}"

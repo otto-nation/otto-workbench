@@ -168,6 +168,27 @@ def test_cache_read_ratio_zero_when_no_input():
     assert SessionUsage().cache_read_ratio == 0.0
 
 
+# ── format_tokens ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("n,expected", [
+    (0, "0"),
+    (999, "999"),
+    (1_000, "1.0k"),
+    (12_345, "12.3k"),
+    (999_999, "1000.0k"),
+    (1_000_000, "1.0M"),
+    (2_500_000, "2.5M"),
+])
+def test_format_tokens_abbreviates_at_each_threshold(n, expected):
+    """`otto-log stats` and a review's summary line render a count the same way.
+
+    They used to disagree — one wrote `12k` where the other wrote `12.3k` — so a
+    figure read off one and quoted against the other did not match.
+    """
+    assert ai_usage.format_tokens(n) == expected
+
+
 # ── merge ─────────────────────────────────────────────────────────────────────
 
 

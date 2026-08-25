@@ -1489,6 +1489,14 @@ used once belongs at its call site, spelled out with `run`.
 | `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
 | `lines(*args)` | Stdout split into non-empty lines. |
 
+`abbrev` is the one call here that runs no git at all: it shortens a sha already
+in hand for display, the way `head_sha(short=True)` shortens one it just asked
+for. How much of a sha a reader is shown is a convention this module owns, and
+before it did, thirty-one call sites each spelled the seven out for themselves.
+`bin/local/validate-magic-values` keeps it that way: under `ai/`, slicing
+anything named for a sha to a literal length is rejected whatever the length,
+since a site free to pick eight is a site free to disagree with the rest.
+
 There is no `timeout` parameter. The bound follows from the subcommand the same
 way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`
 run `UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so
@@ -1658,6 +1666,14 @@ the call sites that has none; as a result code it degrades through
 `out`/`ok`/`lines` exactly as any other failure does, and it is contract rather
 than an implementation detail: the eval scorers tell a timed-out case from a
 failed one by it.
+
+The exit codes and `DETAIL_LIMIT` are conventions rather than choices, so
+`bin/local/validate-magic-values` holds their monopoly: anywhere under `ai/`, a
+literal 124, 127 or 130 written where something exits with it or reads it back
+is rejected, and so is a slice bound that respells one of the caps —
+`DETAIL_LIMIT` here or `trail.EXCERPT_LIMIT` next door. It reads the values out
+of the modules that define them, so renaming a constant fails that check rather
+than quietly retiring it.
 
 Named `proc` rather than `cmd`: `ai/lib` goes on `sys.path` ahead of the
 standard library, and a module called `cmd` there would shadow the stdlib

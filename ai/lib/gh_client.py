@@ -53,7 +53,7 @@ from proc import CmdResult
 # Deliberately not pushed down into `proc.run`: git being absent is a broken
 # machine and should crash where it happens, whereas gh is optional tooling
 # that much of `ai/` already treats as best-effort.
-GH_MISSING_RETURNCODE = 127
+GH_MISSING_RETURNCODE = proc.MISSING_RETURNCODE
 
 # Flags whose response size is the data's rather than one round trip's.
 # `--paginate` walks as many requests as the result set needs, and

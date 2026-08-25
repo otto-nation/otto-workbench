@@ -167,6 +167,19 @@ def test_a_path_listing_read_returns_a_usable_pathspec(repo):
     assert git_client.lines("diff", "--cached", "--name-only", cwd=repo) == ["é.txt"]
 
 
+# ── Formatting ──────────────────────────────────────────────────────────────
+
+
+def test_abbrev_shortens_a_sha_to_what_git_itself_shows(repo):
+    sha = _commit(repo)
+    assert git_client.abbrev(sha) == git_client.head_sha(cwd=repo, short=True)
+
+
+def test_abbrev_leaves_a_sha_nobody_recorded_empty():
+    """An empty sha must not become a stub — a caller's own `or` fallback owns that."""
+    assert git_client.abbrev("") == ""
+
+
 # ── Reads ───────────────────────────────────────────────────────────────────
 
 

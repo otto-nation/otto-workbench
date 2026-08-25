@@ -19,6 +19,14 @@ used once belongs at its call site, spelled out with `run`.
 | `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
 | `lines(*args)` | Stdout split into non-empty lines. |
 
+`abbrev` is the one call here that runs no git at all: it shortens a sha already
+in hand for display, the way `head_sha(short=True)` shortens one it just asked
+for. How much of a sha a reader is shown is a convention this module owns, and
+before it did, thirty-one call sites each spelled the seven out for themselves.
+`bin/local/validate-magic-values` keeps it that way: under `ai/`, slicing
+anything named for a sha to a literal length is rejected whatever the length,
+since a site free to pick eight is a site free to disagree with the rest.
+
 There is no `timeout` parameter. The bound follows from the subcommand the same
 way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`
 run `UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so
@@ -169,6 +177,25 @@ def lines(
 ) -> list[str]:
     """Stdout split into non-empty lines, or empty when git exited non-zero."""
     return [line for line in out(*args, cwd=cwd, config=config).splitlines() if line]
+
+
+# How much of a commit sha to show a reader. Seven is what git abbreviates to in
+# a small repository and what every surface here had hand-sliced; the number is
+# a display choice, not a property of the sha, so it belongs to one function
+# rather than to the thirty-one places that were spelling it `sha[:7]`.
+_ABBREV = 7
+
+
+# ── Formatting ──────────────────────────────────────────────────────────────
+
+def abbrev(sha: str) -> str:
+    """`sha` abbreviated for display, and "" for a sha nobody recorded.
+
+    Pure — this renders a sha already in hand, where `head_sha(short=True)` asks
+    git for one. An empty input stays empty rather than becoming a stub, so a
+    caller can still spell its own `or "unknown"` fallback and mean it.
+    """
+    return sha[:_ABBREV]
 
 
 # ── Reads ───────────────────────────────────────────────────────────────────

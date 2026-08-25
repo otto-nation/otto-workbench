@@ -48,7 +48,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import gh_client
 import log
@@ -526,12 +526,12 @@ def _relative_time(iso_str: str) -> str:
     try:
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
         delta = datetime.now(timezone.utc) - dt
-        hours = int(delta.total_seconds() // 3600)
+        hours = delta // timedelta(hours=1)
         if hours < 1:
-            return f"{int(delta.total_seconds() // 60)} minutes ago"
-        if hours < 24:
+            return f"{delta // timedelta(minutes=1)} minutes ago"
+        days = delta // timedelta(days=1)
+        if not days:
             return f"{hours} hours ago"
-        days = hours // 24
         return f"{days} day{plural(days)} ago"
     except (ValueError, TypeError):
         return ""

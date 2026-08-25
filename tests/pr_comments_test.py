@@ -2,6 +2,7 @@
 
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -678,3 +679,29 @@ class TestIssueTrackerGate:
     def test_draft_names_the_provider_and_title(self, no_subprocess, capsys):
         review_issue.create_issue("linear", "ENG", "the issue title", "body")
         assert "the issue title" in capsys.readouterr().err
+
+
+# ── _relative_time ──────────────────────────────────────────────────────────
+
+
+class TestRelativeTime:
+    """The dashboard's age column, at each unit boundary it crosses."""
+
+    @staticmethod
+    def _ago(**kwargs) -> str:
+        stamp = datetime.now(timezone.utc) - timedelta(**kwargs)
+        return pr_comments._relative_time(stamp.isoformat())
+
+    @pytest.mark.parametrize("kwargs,expected", [
+        ({"minutes": 5}, "5 minutes ago"),
+        ({"minutes": 59}, "59 minutes ago"),
+        ({"hours": 1}, "1 hours ago"),
+        ({"hours": 23}, "23 hours ago"),
+        ({"hours": 24}, "1 day ago"),
+        ({"days": 3}, "3 days ago"),
+    ])
+    def test_each_unit_boundary(self, kwargs, expected):
+        assert self._ago(**kwargs) == expected
+
+    def test_an_unparseable_stamp_reads_as_no_age(self):
+        assert pr_comments._relative_time("not a timestamp") == ""

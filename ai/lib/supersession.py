@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 
 import gh_client
@@ -185,7 +186,8 @@ def _rebase_skew_days(wt_path: Path, base: str) -> int:
     parts = out.splitlines()[0].split()
     if len(parts) != 2 or not all(p.isdigit() for p in parts):
         return 0
-    return max(0, (int(parts[1]) - int(parts[0])) // 86400)
+    skew = timedelta(seconds=int(parts[1]) - int(parts[0]))
+    return max(0, skew // timedelta(days=1))
 
 
 def _branch_added_symbols(wt_path: Path, base: str) -> list[AddedSymbol]:

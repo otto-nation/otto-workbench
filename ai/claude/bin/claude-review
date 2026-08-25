@@ -23,6 +23,7 @@ import log
 import pr_context
 import pr_domains
 import pr_state
+import proc
 import run_lock
 import timeouts
 import workbench_paths
@@ -45,7 +46,7 @@ from review_common import (
     read_pipeline_status, read_pipeline_warnings, read_review_meta,
     review_file_path, review_meta_from_dict,
 )
-from ai_usage import SessionUsage, parse_session_log
+from ai_usage import SessionUsage, format_tokens, parse_session_log
 import prompt
 import review_issue
 import review_worktree
@@ -163,14 +164,6 @@ def _display_review(path: Path) -> None:
     print()
 
 
-def _format_tokens(n: int) -> str:
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if n >= 1000:
-        return f"{n // 1000}k"
-    return str(n)
-
-
 def _format_usage(*log_paths: str, wall_clock_ms: int | None = None) -> str:
     logs = [p for p in log_paths if p and os.path.isfile(p)]
     if not logs:
@@ -185,9 +178,9 @@ def _format_usage(*log_paths: str, wall_clock_ms: int | None = None) -> str:
     if cost == 0.0 and total == 0 and duration_ms == 0:
         return ""
 
-    tokens_part = f"{_format_tokens(total)} tokens"
+    tokens_part = f"{format_tokens(total)} tokens"
     if cached > 0:
-        tokens_part += f" ({_format_tokens(cached)} cached)"
+        tokens_part += f" ({format_tokens(cached)} cached)"
 
     duration_s = duration_ms // 1000
     mins, secs = divmod(duration_s, 60)
@@ -446,8 +439,9 @@ def _resolve_recover_sha(review_dir: Path, head_sha: str) -> str:
     if head_sha and recorded_sha != head_sha:
         log.warn(
             f"HEAD has moved since the failed review "
-            f"({recorded_sha[:7]} → {head_sha[:7]}); completing the run at "
-            f"{recorded_sha[:7]} — run `pr review` to review the new commits"
+            f"({git_client.abbrev(recorded_sha)} → {git_client.abbrev(head_sha)}); "
+            f"completing the run at {git_client.abbrev(recorded_sha)} — "
+            f"run `pr review` to review the new commits"
         )
     return recorded_sha
 
@@ -471,7 +465,7 @@ def _pin_recover_worktree(
     pinned = review_worktree.detached_worktree_at(recover_sha, repo_dir, label)
     if pinned is None:
         log.error(
-            f"Commit {recover_sha[:7]} from the failed review is no longer "
+            f"Commit {git_client.abbrev(recover_sha)} from the failed review is no longer "
             f"available — run `pr review` for a fresh review"
         )
         sys.exit(1)
@@ -489,7 +483,8 @@ def _should_auto_recover(repo: str, pr_number: str, review_file: Path) -> None:
         return
     pipeline_status = read_pipeline_status(review_file.parent)
     if pipeline_status in (pr_domains.ReviewStatus.PARTIAL.value, pr_domains.ReviewStatus.ERROR.value):
-        log.info(f"Recovering failed review agents (HEAD unchanged at {review_sha[:7]})")
+        log.info(
+            f"Recovering failed review agents (HEAD unchanged at {git_client.abbrev(review_sha)})")
 
 
 def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool) -> None:
@@ -509,14 +504,19 @@ def _check_stale_review(repo: str, pr_number: str, review_file: Path, force: boo
         review_dir = review_file.parent
         pipeline_status = read_pipeline_status(review_dir)
         if pipeline_status in ("partial", "error"):
-            log.info(f"Recovering failed review agents (HEAD unchanged at {pr_head_sha[:7]})")
+            log.info(
+                "Recovering failed review agents "
+                f"(HEAD unchanged at {git_client.abbrev(pr_head_sha)})")
             return
 
-        log.warn(f"No new commits since the last review (HEAD {pr_head_sha[:7]})")
+        log.warn(
+            f"No new commits since the last review (HEAD {git_client.abbrev(pr_head_sha)})")
         if not prompt.confirm("Re-review anyway?"):
             sys.exit(0)
     else:
-        log.info(f"Incremental review: new commits since last review ({review_sha[:7]}..{pr_head_sha[:7]})")
+        log.info(
+            "Incremental review: new commits since last review "
+            f"({git_client.abbrev(review_sha)}..{git_client.abbrev(pr_head_sha)})")
 
 
 def _generator_version() -> str:
@@ -1043,7 +1043,7 @@ def _run_self_review_body(
 
     if fix_pass and _recover_drifted(recover_sha, wt_path):
         log.error(
-            f"--fix cannot run on a review recovered at {recover_sha[:7]} — HEAD has "
+            f"--fix cannot run on a review recovered at {git_client.abbrev(recover_sha)} — HEAD has "
             f"moved, so the edits would land in a throwaway checkout. Recover without "
             f"--fix, then run `pr review --self --fix`."
         )
@@ -1223,7 +1223,10 @@ def _run_self_review(args) -> None:
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    signal.signal(signal.SIGINT, lambda *_: (log.blank(), log.info("Interrupted"), sys.exit(130)))
+    signal.signal(
+        signal.SIGINT,
+        lambda *_: (log.blank(), log.info("Interrupted"),
+                    sys.exit(proc.INTERRUPT_RETURNCODE)))
 
     parser = argparse.ArgumentParser(
         prog=SCRIPT,

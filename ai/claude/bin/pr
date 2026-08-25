@@ -970,7 +970,10 @@ def main():
         sys.stdout.write("\n")
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, lambda *_: (log.blank(), log.info("Interrupted"), sys.exit(130)))
+    signal.signal(
+        signal.SIGINT,
+        lambda *_: (log.blank(), log.info("Interrupted"),
+                    sys.exit(proc.INTERRUPT_RETURNCODE)))
 
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so

@@ -454,7 +454,9 @@ def _create_linear(
             return None
         m = _ISSUE_PATTERN_JIRA_LINEAR.search(output)
         if not m:
-            log.error(f"Could not parse issue ID from linear output: {output[:200]}")
+            log.error(
+                "Could not parse issue ID from linear output: "
+                f"{output[:proc.DETAIL_LIMIT]}")
             return None
         issue_id = m.group(0)
         url = _get_linear_issue_url(issue_id)

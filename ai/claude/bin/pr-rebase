@@ -50,12 +50,13 @@ import log
 import pr_context
 import pr_domains
 import pr_state
+import proc
 import push
 import timeouts
 from agent_types import Phase
 from pr_domains import RebaseStatus, RebaseSummary
 from tool_parser import ToolParser
-from trail import Trail, add_trail_args
+from trail import EXCERPT_LIMIT, Trail, add_trail_args
 
 SCRIPT = Path(__file__).name
 
@@ -504,9 +505,11 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
     log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(job.regen_dir).name}/)")
     r = _try_run(run_cmd, cwd=job.regen_dir)
 
-    # A missing binary raises FileNotFoundError rather than exiting 127, and a
-    # tool-managed binary is only on PATH inside `mise exec`. Retry there.
-    if (r is None or r.returncode == 127) and not use_mise and shutil.which("mise"):
+    # A missing binary raises FileNotFoundError rather than reporting the
+    # command-not-found code, and a tool-managed binary is only on PATH inside
+    # `mise exec`. Retry there.
+    missing = r is None or r.returncode == proc.MISSING_RETURNCODE
+    if missing and not use_mise and shutil.which("mise"):
         use_mise = True
         run_cmd = ["mise", "exec", "--"] + cmd
         log.info(f"Retrying with mise: {' '.join(run_cmd)}")
@@ -520,10 +523,11 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
 
     if r.returncode != 0:
         _terr("regeneration", f"{' '.join(cmd)} failed in {job.regen_dir}",
-              data={"cmd": cmd, "exit_code": r.returncode, "stderr": r.stderr.strip()[:500]})
+              data={"cmd": cmd, "exit_code": r.returncode,
+                    "stderr": r.stderr.strip()[:EXCERPT_LIMIT]})
         log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
         if r.stderr.strip():
-            log.dim(r.stderr.strip()[:200])
+            log.dim(r.stderr.strip()[:proc.DETAIL_LIMIT])
         return False
 
     if job.stage_dir:
@@ -1230,7 +1234,7 @@ def _resolve_full_file(
                 "filepath": filepath,
                 "reason": failure_reason,
                 "stdout_len": len(stdout),
-                "stdout_tail": stdout[-200:] if stdout else "",
+                "stdout_tail": stdout[-EXCERPT_LIMIT:] if stdout else "",
             },
         )
         log.error(f"Failed to parse resolution for {filepath} ({failure_reason})")
@@ -1750,7 +1754,7 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
                     "filepath": filepath,
                     "reason": failure_reason,
                     "stdout_len": len(stdout),
-                    "stdout_tail": stdout[-200:] if stdout else "",
+                    "stdout_tail": stdout[-EXCERPT_LIMIT:] if stdout else "",
                 },
             )
             log.error(f"Failed to parse stash resolution for {filepath} ({failure_reason})")

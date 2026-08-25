@@ -61,11 +61,25 @@ _SECTION_RE = re.compile(
     r"^## <!-- fix:(?P<id>[^\s>]+) -->[ ]*(?P<heading>.*)$", re.MULTILINE,
 )
 
+# Whatever follows the label is `rest`, left for `_reason` to interpret rather
+# than pinned to the separator the render happens to write. The one character it
+# may not start with is a newline: a bare `- [ ] fixed` would otherwise swallow
+# the line below it as its own reason and the box on that line would never be
+# seen at all.
 _BOX_RE = re.compile(
-    r"^- \[(?P<mark>[ xX])\] (?P<label>%s)(?:[ ]*—[ ]*(?P<reason>.*?))?[ ]*$"
+    r"^- \[(?P<mark>[ xX])\] (?P<label>%s)(?P<rest>[^\w\n].*)?$"
     % "|".join(re.escape(label) for label, _ in _BOXES),
     re.MULTILINE,
 )
+
+# What stands between a ticked box's label and the agent's words after it. The
+# render writes an em dash, but the agent is writing prose and reaches for a
+# colon or a plain hyphen often enough that matching only the one character
+# would read those lines as no box at all — and a tick read as untouched sends a
+# later pass back over work already done. Anything after the label is the
+# reason; this only says where the reason starts. Brackets are left in place:
+# half of a wrapped aside is worse to read than the whole of one.
+_REASON_LEAD = re.compile(r"^[\s—–:.,;-]+")
 
 _LOCATION_RE = re.compile(r"^(?P<file>.+):(?P<line>\d+)$")
 
@@ -169,9 +183,13 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
     Ticking more than one resolves by `_BOXES` order rather than by position in
     the file, so an agent that reorders the list cannot change what its answer
     means.
+
+    Only the boxes that ask for a reason keep one. `ItemOutcome` states that a
+    FIXED entry carries no reason, and an agent that annotates its tick anyway
+    should not be the one thing that makes that untrue.
     """
     ticked = {
-        box.group("label"): (box.group("reason") or "").strip()
+        box.group("label"): _reason(box.group("rest"))
         for box in _BOX_RE.finditer(body)
         if box.group("mark") in "xX"
     }
@@ -179,5 +197,16 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
         if label not in ticked:
             continue
         into.outcome = outcome
-        into.reason = "" if ticked[label] == _WHY else ticked[label]
+        into.reason = ticked[label] if outcome in _REASONED else ""
         return
+
+
+def _reason(rest: str | None) -> str:
+    """The agent's words after a ticked box's label, without the separator.
+
+    The placeholder the render leaves behind reads as no reason: a box ticked
+    without it being replaced said nothing, and reporting `<why>` back to a
+    reviewer as the agent's reasoning is worse than reporting none.
+    """
+    text = _REASON_LEAD.sub("", (rest or "").strip()).strip()
+    return "" if text == _WHY else text

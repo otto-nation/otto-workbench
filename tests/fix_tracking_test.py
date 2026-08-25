@@ -39,7 +39,7 @@ def _tick(text: str, section_id: str, label: str, reason: str = "") -> str:
     end = tail.find("\n## <!-- fix:")
     body, rest = (tail[:end], tail[end:]) if end >= 0 else (tail, "")
     if reason:
-        body = body.replace(f"{old} — {fix_tracking._WHY}", replacement, 1)
+        body = body.replace(f"{old} — <why>", replacement, 1)
     else:
         body = body.replace(old, replacement, 1)
     return head + marker + body + rest
@@ -108,6 +108,33 @@ class TestParse:
         ))
         outcome = fix_tracking.parse(path)[0]
         assert outcome.outcome == FixOutcome.DECLINED
+        assert outcome.reason == ""
+
+    def test_a_box_annotated_the_agent_s_own_way_still_counts(self, tmp_path):
+        """The em dash is what the render writes, not what the agent has to write.
+
+        A tick the parse cannot see reads as work still owed, so the same item
+        goes back to a second pass that redoes what the first already did.
+        """
+        path = tmp_path / "t.md"
+        fix_tracking.write(path, "t", [FixItem(id="A")])
+        path.write_text(path.read_text().replace(
+            "- [ ] declined — <why>", "- [x] declined: the premise does not hold",
+        ))
+        outcome = fix_tracking.parse(path)[0]
+        assert outcome.outcome == FixOutcome.DECLINED
+        assert outcome.reason == "the premise does not hold"
+        assert fix_tracking.checked(path) == 1
+
+    def test_a_reason_written_after_fixed_is_not_reported_as_one(self, tmp_path):
+        """`ItemOutcome` says a FIXED entry carries no reason; the parse holds to it."""
+        path = tmp_path / "t.md"
+        fix_tracking.write(path, "t", [FixItem(id="A")])
+        path.write_text(path.read_text().replace(
+            "- [ ] fixed", "- [x] fixed — renamed the guard",
+        ))
+        outcome = fix_tracking.parse(path)[0]
+        assert outcome.outcome == FixOutcome.FIXED
         assert outcome.reason == ""
 
     def test_a_fix_that_landed_outranks_a_position_argued_beside_it(self, tmp_path):

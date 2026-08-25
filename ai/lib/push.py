@@ -423,6 +423,11 @@ def report(result: PushResult, wt_path: str | Path) -> None:
         return
 
     log.error("push reported success but the remote did not move")
+    # Named rather than left to the resume line below, because the reader is not
+    # always standing in the repository this happened in: `push_intent` reports a
+    # push made in another terminal, and a review fix pass pushes from a worktree
+    # under the state root that nobody has seen.
+    log.dim(f"repo:     {wt_path}")
     log.dim(f"branch:   {result.branch}")
     log.dim(f"expected: {result.sha[:7]}")
     log.dim(f"origin:   {result.remote_sha[:7] or 'no such ref'}")

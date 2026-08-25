@@ -46,9 +46,21 @@ outcome: a `git add` that fails, and a HEAD that will not read back after a
 commit git said it made. Both mean the repository is not answering, and a pass
 that treats them as "nothing to commit" reports success having lost the work.
 
-Regenerating hooks are not handled here yet. `review-threads` and `pr-rebase`
-each own a commit-the-regenerated-files-and-retry recovery, and folding them
-into one belongs with the change that moves those two callers across.
+Two things can happen around a landing that are not the landing, and both are
+options rather than defaults, because a caller that does not ask for them wants
+the plain answer:
+
+- `regen` — a pre-push hook that rewrites generated files leaves the tree dirty
+  and the push refused, and the commit underneath it was fine. Naming a message
+  commits what the hook wrote and pushes once more. The retry reports the
+  original commit, which is the one the caller's entries are stamped with; the
+  regeneration rides above it.
+- `recover_from` — the agent a fix pass ran committed its own work, so the pass
+  finds nothing to commit and has a commit it did not make to account for.
+  Naming the HEAD from before the pass lets the owner attribute and push it.
+  Recovery only ever *adds* information: it never overwrites what the caller's
+  own commit attempt concluded, because reporting `no_changes` over a commit a
+  hook rejected publishes "nothing needed doing" about work that was refused.
 """
 
 # doc-group: platform
@@ -96,9 +108,10 @@ _PUSH_STATUS = {
 def commit_status(status: PushStatus) -> CommitStatus:
     """The push owner's answer, in the vocabulary a fix pass records.
 
-    Public because `review-threads` still runs its own commit path and has to
-    speak the same vocabulary from it; `land` uses this too, so the two cannot
-    drift apart in the meantime.
+    Public for the one caller that pushes a commit it did not just make —
+    `review-threads` sending a held commit on a later run — which has a
+    `PushResult` and no landing to read the status off. `land` uses this too, so
+    the two cannot answer differently.
     """
     return _PUSH_STATUS[status]
 
@@ -169,32 +182,151 @@ def _stage(wt_path: str | Path, scope: list[str], whole_tree: bool) -> None:
         raise RuntimeError(proc.failure_message("Failed to stage the commit", staged))
 
 
-def land(
+def _landed(wt_path: str | Path, sha: str, result: PushResult) -> LandResult:
+    """One push's answer as a landing. The only place a `LandResult` is built."""
+    return LandResult(
+        commit_status(result.status),
+        sha=sha,
+        error="" if result.ok else result.output.strip(),
+        resume=push.resume_command(result, wt_path),
+        push=result,
+    )
+
+
+def _regenerated(wt_path: str | Path) -> list[str]:
+    """The tracked files something rewrote under us, from git's own status.
+
+    `run` rather than `lines`: the marker this reads is in the first two columns,
+    and stripping the output would take the leading space off the first line and
+    leave it looking like anything but a modification.
+    """
+    status = git_client.run(
+        "status", "--porcelain", "--untracked-files=no", cwd=wt_path,
+    )
+    return [line[3:] for line in status.stdout.splitlines() if line.startswith(" M ")]
+
+
+def _retry_after_regen(
+    wt_path: str | Path,
+    message: str,
+    *,
+    gated: bool,
+    args: Sequence[str],
+    trail: Trail | None,
+) -> PushResult | None:
+    """Commit what a pre-push hook regenerated and push once more, or None.
+
+    None whenever the recovery does not apply or does not complete — nothing was
+    regenerated, staging or committing it failed, or the second push fell short
+    too. The caller then reports its original push, which is the honest answer:
+    the commit it made is still the one its work is in.
+    """
+    modified = _regenerated(wt_path)
+    if not modified:
+        return None
+
+    log.info("Committing regenerated files...")
+    if trail:
+        trail.info("push", "committing regenerated files before retry",
+                   data={"files": modified})
+    if not git_client.ok("add", "-u", cwd=wt_path):
+        log.error("Failed to stage regenerated files.")
+        return None
+    if not git_client.run("commit", "-m", message, cwd=wt_path).ok:
+        return None
+
+    # Reported whichever way it went: a second push happened, and the operator
+    # who watched the first one refused is owed the same line about this one —
+    # including the resume command, when it fell short too.
+    result = push.push(wt_path, gated=gated, args=args, trail=trail)
+    push.report(result, wt_path)
+    return result if result.ok else None
+
+
+def _moved_head(wt_path: str | Path, before: str) -> str:
+    """HEAD, when it is no longer the commit the caller recorded, else "".
+
+    Both sides go through git, so an abbreviated `before` — which is what a
+    caller that recorded a SHA for a reviewer has — still compares equal to the
+    full HEAD it names.
+    """
+    head = git_client.head_sha(cwd=wt_path)
+    if not head or head == git_client.out("rev-parse", before, cwd=wt_path):
+        return ""
+    return head
+
+
+def _unrecovered(wt_path: str | Path, prior: LandResult) -> LandResult:
+    """What the caller knows when recovery found no commit it did not make.
+
+    Recovery exists to add information. When it finds none, whatever the commit
+    attempt already established stands — see the module docstring.
+
+    With nothing but `NO_CHANGES` to preserve, the tree itself distinguishes the
+    two remaining readings. Changes still sitting there after a commit was
+    attempted mean something refused it, not that there was nothing to commit.
+    """
+    if prior.status is not CommitStatus.NO_CHANGES:
+        return prior
+    if git_client.is_dirty(wt_path):
+        return LandResult(
+            CommitStatus.COMMIT_FAILED,
+            error="changes remain uncommitted in the worktree",
+        )
+    return prior
+
+
+def _recover(
+    wt_path: str | Path,
+    prior: LandResult,
+    before: str,
+    *,
+    gated: bool,
+    args: Sequence[str],
+    trail: Trail | None,
+) -> LandResult:
+    """Account for a commit made outside the caller's own attempt."""
+    sha = _moved_head(wt_path, before)
+    if not sha:
+        return _unrecovered(wt_path, prior)
+
+    if push.holds(wt_path, sha):
+        return LandResult(CommitStatus.PUSHED, sha=sha)
+
+    log.info(f"Recovered {sha[:7]} — committed outside the pass")
+    result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
+    push.report(result, wt_path)
+    return _landed(wt_path, sha, result)
+
+
+@dataclass(frozen=True)
+class _Commit:
+    """What the commit half produced: a SHA to push, or the outcome to report.
+
+    Exactly one of the two is set. A commit that was made has no status yet —
+    the push decides it — and the `CommitStatus` vocabulary has no spelling for
+    "committed, not pushed" on purpose, so the two cases are separate fields
+    rather than one `LandResult` carrying a status the next line overwrites.
+    """
+
+    sha: str = ""
+    outcome: LandResult | None = None
+
+
+def _commit(
     wt_path: str | Path,
     *,
     message: str,
-    gated: bool,
-    paths: Iterable[str] | None = None,
-    args: Sequence[str] = (),
-    trail: Trail | None = None,
-) -> LandResult:
-    """Commit the work in *wt_path* and push it, and say what became of both.
-
-    `message` is the full commit message, subject and body. `gated` decides
-    whether the push consults the publishing gate and is required, the same way
-    `push.push` requires it. `paths` scopes the commit — `None` for the whole
-    tree, a list for exactly those files. `args` is passed through to `git push`.
-
-    Nothing to commit is `NO_CHANGES`, not a failure: a pass whose agent changed
-    nothing has an outcome, and it is the same outcome whether the emptiness was
-    visible before the commit or only to git.
-    """
+    paths: Iterable[str] | None,
+    trail: Trail | None,
+) -> _Commit:
+    """Stage the scope and commit it, or say why there is nothing to push."""
     whole_tree = paths is None
     scope = _pathspecs(paths)
     if whole_tree and not git_client.is_dirty(wt_path):
-        return LandResult(CommitStatus.NO_CHANGES)
+        return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))
     if not whole_tree and not scope:
-        return LandResult(CommitStatus.NO_CHANGES)
+        return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))
 
     _stage(wt_path, scope, whole_tree)
 
@@ -204,12 +336,12 @@ def land(
     committed = git_client.run("commit", "-m", message, *limit, cwd=wt_path)
     if not committed.ok:
         if committed_nothing(committed):
-            return LandResult(CommitStatus.NO_CHANGES)
+            return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))
         error = committed.stderr.strip() or committed.stdout.strip()
         log.error(f"commit failed: {error}")
         if trail:
             trail.error("commit", "commit failed", data={"error": error[:500]})
-        return LandResult(CommitStatus.COMMIT_FAILED, error=error)
+        return _Commit(outcome=LandResult(CommitStatus.COMMIT_FAILED, error=error))
 
     sha = git_client.head_sha(cwd=wt_path)
     if not sha:
@@ -221,13 +353,50 @@ def land(
     log.info(f"Committed {sha[:7]} — {subject}")
     if trail:
         trail.info("commit", "committed the pass's work", data={"sha": sha})
+    return _Commit(sha=sha)
 
-    result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
+
+def land(
+    wt_path: str | Path,
+    *,
+    message: str,
+    gated: bool,
+    paths: Iterable[str] | None = None,
+    args: Sequence[str] = (),
+    trail: Trail | None = None,
+    regen: str | None = None,
+    recover_from: str | None = None,
+) -> LandResult:
+    """Commit the work in *wt_path* and push it, and say what became of both.
+
+    `message` is the full commit message, subject and body. `gated` decides
+    whether the push consults the publishing gate and is required, the same way
+    `push.push` requires it. `paths` scopes the commit — `None` for the whole
+    tree, a list for exactly those files. `args` is passed through to `git push`.
+    `regen` is the commit message for files a pre-push hook rewrote, and asks for
+    the retry that recovers from one; `recover_from` is HEAD before the caller's
+    work began, and asks for a commit made outside the caller to be accounted
+    for. Both are described in the module docstring, and both are off by default.
+
+    Nothing to commit is `NO_CHANGES`, not a failure: a pass whose agent changed
+    nothing has an outcome, and it is the same outcome whether the emptiness was
+    visible before the commit or only to git.
+    """
+    made = _commit(wt_path, message=message, paths=paths, trail=trail)
+    if made.outcome is not None:
+        if recover_from is None:
+            return made.outcome
+        return _recover(wt_path, made.outcome, recover_from,
+                        gated=gated, args=args, trail=trail)
+
+    result = push.push(wt_path, gated=gated, sha=made.sha, args=args, trail=trail)
     push.report(result, wt_path)
-    return LandResult(
-        commit_status(result.status),
-        sha=sha,
-        error="" if result.ok else result.output.strip(),
-        resume=push.resume_command(result, wt_path),
-        push=result,
-    )
+    # Only a refusal can be a regenerating hook: a push the remote dropped left
+    # nothing behind to commit, and `push` has already retried that one itself.
+    if result.status is PushStatus.REFUSED and regen is not None:
+        retried = _retry_after_regen(
+            wt_path, regen, gated=gated, args=args, trail=trail,
+        )
+        if retried:
+            return _landed(wt_path, made.sha, retried)
+    return _landed(wt_path, made.sha, result)

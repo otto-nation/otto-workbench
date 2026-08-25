@@ -1,11 +1,41 @@
 #!/usr/bin/env bash
-# Global pre-push hook: runs global checks, then delegates to repo-local hook.
+# Global pre-push hook: runs global checks, delegates to the repo-local hook,
+# then records what the push is about to do so a later run can confirm it landed.
 # Installed via step_global_hooks in git/steps.sh (symlinked to ~/.git-hooks/pre-push).
 #
 # When core.hooksPath is set globally, git ignores .git/hooks/ entirely.
 # This hook restores that delegation so per-repo pre-push checks still run.
 
 set -euo pipefail
+
+# The workbench checkout this hook is a symlink into. Resolved from the link
+# rather than from the repository being pushed, which is somebody else's.
+_self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_workbench="$(cd "$(dirname "$_self")/../.." && pwd)"
+
+# ── Pushed refs ─────────────────────────────────────────────────────────────
+
+# git writes the refs this push carries to the hook's stdin, one
+# `<local ref> <local sha> <remote ref> <remote sha>` line each, and that is the
+# only honest source for what is being pushed: `git push origin foo:bar` moves
+# neither HEAD nor a branch of the same name. Reading them consumes them, so the
+# repo-local hook below is handed the same bytes back — without that, delegation
+# would starve any repo-local hook that reads its own stdin.
+#
+# Guarded on stdin not being a terminal so a hook run by hand does not block on
+# `cat`, and `|| true` because losing the capture must not fail the push.
+_refs=""
+if [[ ! -t 0 ]]; then
+  _refs="$(cat)" || true
+fi
+
+# Replay the captured lines. `printf '%s\n' ""` would emit a lone newline, which
+# a `while read -r local_ref local_sha remote_ref remote_sha` loop takes for a
+# ref with four empty fields — so an empty capture writes nothing at all.
+replay_refs() {
+  [[ -n "$_refs" ]] || return 0
+  printf '%s\n' "$_refs"
+}
 
 # ── Global checks ───────────────────────────────────────────────────────────
 
@@ -19,6 +49,30 @@ fi
 _git_common="$(git rev-parse --git-common-dir)"
 _local_hook="$_git_common/hooks/pre-push"
 
+# Run rather than `exec`, so this hook is still here afterwards to record the
+# push. A repo-local hook that refuses is a push that never leaves the machine,
+# and an intent recorded before it ran would be reported as a push that vanished
+# — a false alarm this repo's own three-gate pre-push would raise every time it
+# failed. The refs are redirected rather than piped so the hook keeps this
+# process's stdout and stderr, which is where its gates report.
+_status=0
 if [[ -x "$_local_hook" ]]; then
-  exec "$_local_hook" "$@"
+  "$_local_hook" "$@" < <(replay_refs) || _status=$?
 fi
+
+# ── Push intent ─────────────────────────────────────────────────────────────
+
+# Record what this push is about to do, so the next workbench command can ask
+# the remote whether it landed. Fails open in three independent ways, because
+# this runs on every push in every repo on this machine and a bookkeeping entry
+# is never worth refusing one: the recorder itself always exits zero, `|| true`
+# catches an interpreter that is missing or a checkout that has moved, and
+# `set -e` therefore has nothing left to act on.
+_recorder="$_workbench/ai/lib/push_intent.py"
+_toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || _toplevel="$PWD"
+
+if [[ "$_status" -eq 0 && -n "$_refs" && -f "$_recorder" ]]; then
+  replay_refs | python3 "$_recorder" --repo "$_toplevel" --remote "${1:-origin}" || true
+fi
+
+exit "$_status"

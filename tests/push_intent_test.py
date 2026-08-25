@@ -340,6 +340,8 @@ def test_the_file_lives_under_the_state_root(monkeypatch, tmp_path):
 def test_a_push_from_a_worktree_is_recorded_against_that_worktree(pushable):
     """`repo` is where `ls-remote` has to run to reach the same remote."""
     wt, _ = pushable
-    assert git_out(wt, "rev-parse", "--show-toplevel").strip()
     push_intent.record([_ref()], repo=str(wt), remote="origin")
-    assert _records()[0].repo == str(wt)
+    # The hook records `rev-parse --show-toplevel`, which on macOS names the
+    # temp root through /private — the same directory by another spelling.
+    toplevel = git_out(wt, "rev-parse", "--show-toplevel").strip()
+    assert Path(_records()[0].repo).resolve() == Path(toplevel).resolve()

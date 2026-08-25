@@ -10,8 +10,18 @@ set -euo pipefail
 
 # The workbench checkout this hook is a symlink into. Resolved from the link
 # rather than from the repository being pushed, which is somebody else's.
+#
+# `|| _workbench=""` is the first of the fail-open guards described below, and
+# the only one that has to be here: `readlink` reads the link's stored target
+# text without checking it, one level, so a checkout that has moved and a
+# relative link resolved against the pushed repository both reach the `cd` with
+# a path that does not exist. Under `set -e` that `cd` would exit non-zero, and
+# a pre-push hook exiting non-zero refuses the push — in every repository on
+# this machine, fifty lines before the guard that was meant to catch this. An
+# empty `_workbench` instead leaves `_recorder` pointing nowhere, so the `-f`
+# test below skips recording and the push goes on.
 _self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-_workbench="$(cd "$(dirname "$_self")/../.." && pwd)"
+_workbench="$(cd "$(dirname "$_self")/../.." 2>/dev/null && pwd)" || _workbench=""
 
 # ── Pushed refs ─────────────────────────────────────────────────────────────
 
@@ -63,11 +73,12 @@ fi
 # ── Push intent ─────────────────────────────────────────────────────────────
 
 # Record what this push is about to do, so the next workbench command can ask
-# the remote whether it landed. Fails open in three independent ways, because
+# the remote whether it landed. Fails open in four independent ways, because
 # this runs on every push in every repo on this machine and a bookkeeping entry
-# is never worth refusing one: the recorder itself always exits zero, `|| true`
-# catches an interpreter that is missing or a checkout that has moved, and
-# `set -e` therefore has nothing left to act on.
+# is never worth refusing one: the resolution above yields an empty path
+# instead of exiting, the `-f` test below skips a recorder that is not there,
+# the recorder itself always exits zero, and `|| true` catches a missing
+# interpreter — so `set -e` has nothing left to act on.
 _recorder="$_workbench/ai/lib/push_intent.py"
 _toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || _toplevel="$PWD"
 

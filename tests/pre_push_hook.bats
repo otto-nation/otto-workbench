@@ -15,7 +15,11 @@
 setup() {
   load 'test_helper'
   common_setup
-  TMPDIR="$(mktemp -d)"
+  SANDBOX="$(mktemp -d)"
+  # Exported on purpose, and the sandboxing is the point: git, python3 and jq
+  # all take their scratch space from TMPDIR, so every subprocess a test starts
+  # is confined to this directory alongside everything the test writes itself.
+  export TMPDIR="$SANDBOX"
   sandbox_state_dir
   INTENTS="$WORKBENCH_STATE_DIR/push-intents.json"
 
@@ -37,7 +41,7 @@ setup() {
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
+  rm -rf "$SANDBOX"
   common_teardown
 }
 
@@ -198,6 +202,28 @@ done'
   run git -C "$TMPDIR/linked" push origin linked
   [ "$status" -eq 0 ]
   [[ "$output" == *"LOCAL from the common dir"* ]]
+}
+
+# ── Resolving the workbench checkout ─────────────────────────────────────────
+
+@test "a hook that cannot find its own checkout still pushes and still delegates" {
+  # `readlink` returns the link's stored target text and checks nothing, so a
+  # relative link is resolved against the repository being pushed rather than
+  # against the link's own directory, and lands on a path that is not there.
+  # The recorder is unfindable from that, which must cost the record and not
+  # the push: this hook runs on every push in every repo on this machine.
+  mkdir -p "$TMPDIR/relative/moved/git/hooks"
+  cp "$REPO_ROOT/git/hooks/pre-push" "$TMPDIR/relative/moved/git/hooks/pre-push"
+  chmod +x "$TMPDIR/relative/moved/git/hooks/pre-push"
+  ln -sf "moved/git/hooks/pre-push" "$TMPDIR/relative/pre-push"
+  git config --global core.hooksPath "$TMPDIR/relative"
+  [ ! -e "$TMPDIR/wt/moved" ]
+
+  write_local_hook 'echo "LOCAL delegated"; cat >/dev/null'
+  run git -C "$TMPDIR/wt" push origin main
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LOCAL delegated"* ]]
+  [ ! -f "$INTENTS" ]
 }
 
 # ── Running the hook by hand ─────────────────────────────────────────────────

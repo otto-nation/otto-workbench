@@ -45,8 +45,12 @@ The record's whole lifecycle is designed against a permanent false alarm:
 `record` never raises. It is called from `pre-push`, where anything non-zero
 refuses the push — in every repo on this machine — and no bookkeeping entry is
 worth that. The hook adds its own `|| true` over the top; both are deliberate,
-because only one of them is visible from each side. `reconcile` is not guarded
-the same way: it runs inside `pr`, where a bug should be loud.
+because only one of them is visible from each side. `reconcile` raises, and its
+one call site in `pr` catches and warns, for a related reason: every subcommand
+passes through it on the way to work that has nothing to do with pushing, so an
+escaping exception would take the whole CLI down over a side-feature. Warning
+rather than passing is what keeps a bug in here loud without coupling anything
+to it.
 """
 
 # doc-group: platform

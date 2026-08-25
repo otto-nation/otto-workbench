@@ -1,0 +1,23 @@
+{
+  "pr": {
+    "on_no_match": "fail",
+    "rules": [
+      {
+        "match": ["rebase", "--fix"],
+        "stdout": "{\"status\": \"completed\", \"commits_replayed\": 17, \"conflicts_resolved\": 1, \"files_resolved\": [\"docs/notes.md\"], \"files_stale\": [], \"force_pushed\": false}",
+        "stderr": "▸ Fetching origin...\n▸ Rebasing onto origin/main...\n✓ Resolved: docs/notes.md\n▸ Rebase complete — resolved 1 file(s) across 1 commit(s) — force-pushing...\n✗ push refused (hook) — nothing reached the remote\n  ── Checking service ACLs ──\n  acl-grants: 1 ACL issues found\n    ✗ svc-api/acls.yaml:8: worker cannot reach svc-api (no dependency in services/worker.yaml; grant on ListJobs)\n  ACL issues found. Add missing entries to prevent runtime failures.\n    PRE-PUSH CHECKS FAILED\n    • ACL check failed: acl-grants\n  error: failed to push some refs to 'github.com:example/example.git'\n  Resume: git -C '/tmp/eval-skill-repo' push --force-with-lease\n▸ Attempting to fix pre-push check failures...\n✗ Force-push failed.\n",
+        "exit": 1
+      },
+      {
+        "match": ["rebase"],
+        "stdout": "{\"status\": \"clean\", \"commits_replayed\": 18, \"conflicts_resolved\": 0, \"files_resolved\": [], \"files_stale\": [], \"force_pushed\": true}",
+        "stderr": "▸ Fetching origin...\n▸ Rebasing onto origin/main...\n▸ Force-pushing...\n✓ Force-pushed successfully.\n",
+        "exit": 0
+      }
+    ]
+  },
+  "pr-rebase": {"on_no_match": "fail", "rules": []},
+  "git": {"on_no_match": "passthrough", "rules": [
+    {"match": ["push"], "stderr": "refusing: pushes are stubbed\n", "exit": 1}
+  ]}
+}

@@ -1,0 +1,5 @@
+name: worker
+
+dependencies:
+  - svc-queue
+  - svc-audit

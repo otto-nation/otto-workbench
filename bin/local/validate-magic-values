@@ -30,18 +30,27 @@ A module-level `NAME = 124` is never a finding wherever it appears.  That is
 what naming a value looks like; a check that flagged it would have nowhere left
 for an owner to live.
 
+A cap is matched by value alone, so a slice that lands on 200 for a reason of
+its own is a finding too.  That is deliberate rather than a false positive: two
+sites written to the same number are indistinguishable from here, and the way
+past the check is to name the cap that was meant — which is the outcome either
+way.  Matching on what is being sliced, the way the sha rule does, would need a
+vocabulary for every noun a body of text goes by.
+
 Known limits: only a cap that some module has already named is watched, so a
 one-off `desc[:80]` passes — this check reports a value that has an owner being
 respelled, not every number that could deserve one.  A new owner is protected
-once it is added to `OWNERS`.  And an exit code is only recognised where it is
-exited with or compared against something spelled `returncode` or `exit_code`,
-so a wrapper that renames the field hides its literal.
+once it is added to `EXIT_OWNERS` or `CAP_OWNERS`.  And an exit code is only
+recognised where it is exited with, compared against, keyed by or assigned to
+something spelled `returncode` or `exit_code`, so a wrapper that renames the
+field hides its literal.
 
 Exit code: 0 if all files pass, 1 if any have violations.
 """
 
 import argparse
 import ast
+import functools
 import os
 import re
 import sys
@@ -101,18 +110,17 @@ class Violation:
 # ── Owners ───────────────────────────────────────────────────────────────────
 
 
+@functools.cache
 def _module_constants(repo_root: str, module: str) -> dict[str, int]:
-    """Every module-level `NAME = <int>` in ai/lib/<module>.py."""
+    """Every module-level integer constant in ai/lib/<module>.py.
+
+    Cached because several owners share a module, and each of them would
+    otherwise re-read and re-parse the same file.
+    """
     path = os.path.join(repo_root, LIB_DIR, f'{module}.py')
     with open(path) as f:
         tree = ast.parse(f.read(), filename=path)
-    found = {}
-    for node in tree.body:
-        value = node.value if isinstance(node, ast.Assign) else None
-        if not isinstance(value, ast.Constant) or not _is_int(value):
-            continue
-        found.update({t.id: value.value for t in node.targets if isinstance(t, ast.Name)})
-    return found
+    return dict(pair for node in tree.body for pair in _int_assignment(node))
 
 
 def resolve_owners(repo_root: str, owners) -> dict[int, list[str]]:
@@ -128,7 +136,7 @@ def resolve_owners(repo_root: str, owners) -> dict[int, list[str]]:
         if name not in constants:
             raise SystemExit(
                 f'{RED}✗{NC} {module}.{name} is gone — this check watches a '
-                f'constant that no longer exists; update OWNERS')
+                f'constant that no longer exists; update its owners table')
         by_value.setdefault(constants[name], []).append(f'{module}.{name}')
     return by_value
 
@@ -138,6 +146,21 @@ def resolve_owners(repo_root: str, owners) -> dict[int, list[str]]:
 
 def _is_int(node) -> bool:
     return isinstance(node.value, int) and not isinstance(node.value, bool)
+
+
+def _int_assignment(node) -> list[tuple[str, int]]:
+    """The names *node* binds to an integer, with the value, or [] if it binds none.
+
+    `NAME: int = 130` counts alongside `NAME = 130` — an owner is no less named
+    for carrying an annotation, and a check that read only one of the two forms
+    would report the constant missing the day a module gained the other.
+    """
+    targets = node.targets if isinstance(node, ast.Assign) else \
+        [node.target] if isinstance(node, ast.AnnAssign) else []
+    value = getattr(node, 'value', None)
+    if not isinstance(value, ast.Constant) or not _is_int(value):
+        return []
+    return [(t.id, value.value) for t in targets if isinstance(t, ast.Name)]
 
 
 def _int_bound(node) -> tuple[int, str] | None:
@@ -167,14 +190,8 @@ def _named_constants(tree) -> set[int]:
     number belongs.  Matching by line keeps the exemption to the assignment
     itself rather than to the whole module.
     """
-    lines = set()
-    for node in tree.body:
-        value = node.value if isinstance(node, ast.Assign) else None
-        if not isinstance(value, ast.Constant) or not _is_int(value):
-            continue
-        if any(isinstance(t, ast.Name) and t.id.isupper() for t in node.targets):
-            lines.add(node.lineno)
-    return lines
+    return {node.lineno for node in tree.body
+            if any(name.isupper() for name, _ in _int_assignment(node))}
 
 
 def _sha_slices(tree) -> list[Violation]:
@@ -233,16 +250,22 @@ def _exit_positions(node):
 
 
 def check_file(filepath: str, exits: dict[int, list[str]],
-               caps: dict[int, list[str]]) -> list[Violation]:
+               caps: dict[int, list[str]]) -> list[Violation] | None:
+    """The findings in *filepath*, or None for a file that could not be read.
+
+    None rather than an empty list, because the two answers are not the same
+    one: a file this check never parsed has no findings and no clean bill
+    either, and reporting it as clean is how a syntax error under `ai/` would
+    leave the run green.
+    """
     with open(filepath) as f:
         source = f.read()
     try:
         tree = ast.parse(source, filename=filepath)
     except SyntaxError as exc:
-        # Silence here would read as "clean" for a file this check never saw.
         print(f'{RED}!{NC} {filepath}: unparseable, not checked ({exc})',
               file=sys.stderr)
-        return []
+        return None
     found = _sha_slices(tree) + _capped_slices(tree, caps)
     found += [Violation(line=node.lineno, found=repr(node.value),
                         suggestion=' or '.join(owners))
@@ -289,14 +312,29 @@ def _report_violations(relpath: str, violations: list[Violation]) -> None:
               f'{DIM}— use {v.suggestion}{NC}', file=sys.stderr)
 
 
-def _print_summary(files_checked: int, errors: int) -> None:
+def _report_file(relpath: str, violations: list[Violation] | None, quiet: bool) -> None:
+    """What one file's result looks like on the way past.
+
+    A file that could not be parsed gets no line here — its warning went out
+    when the parse failed, and a tick beside it would contradict that.
+    """
+    if violations:
+        _report_violations(relpath, violations)
+    elif violations == [] and not quiet:
+        print(f'  {GREEN}✓{NC} {relpath}')
+
+
+def _print_summary(files_checked: int, errors: int, unreadable: int) -> None:
     print()
-    if errors == 0:
-        print(f'{GREEN}✓{NC} {files_checked} files checked, '
-              f'every owned value is spelled by its owner')
-    else:
+    if errors:
         print(f'{RED}✗{NC} {errors} of {files_checked} files write out a value '
               f'that has an owner', file=sys.stderr)
+    if unreadable:
+        print(f'{RED}✗{NC} {unreadable} file{"" if unreadable == 1 else "s"} '
+              f'could not be parsed and went unchecked', file=sys.stderr)
+    if not errors and not unreadable:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, '
+              f'every owned value is spelled by its owner')
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -320,18 +358,15 @@ def main():
     files = [f for f in args.files if _is_python(f)] if args.files \
         else discover_scripts(repo_root)
 
-    errors = 0
+    errors, unreadable = 0, 0
     for filepath in files:
         violations = check_file(filepath, exits, caps)
-        relpath = os.path.relpath(filepath, repo_root)
         errors += 1 if violations else 0
-        if violations:
-            _report_violations(relpath, violations)
-        elif not args.quiet:
-            print(f'  {GREEN}✓{NC} {relpath}')
+        unreadable += 1 if violations is None else 0
+        _report_file(os.path.relpath(filepath, repo_root), violations, args.quiet)
 
-    _print_summary(len(files), errors)
-    if errors:
+    _print_summary(len(files) - unreadable, errors, unreadable)
+    if errors or unreadable:
         sys.exit(1)
 
 

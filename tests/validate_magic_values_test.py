@@ -167,6 +167,10 @@ def test_a_module_level_constant_is_where_a_number_belongs(tmp_path):
     assert _check(tmp_path, "INTERRUPT_RETURNCODE = 130\n") == []
 
 
+def test_an_annotated_constant_is_a_constant_too(tmp_path):
+    assert _check(tmp_path, "INTERRUPT_RETURNCODE: int = 130\n") == []
+
+
 # ── reporting ────────────────────────────────────────────────────────────
 
 
@@ -181,8 +185,8 @@ def a(commit, out, r):
     assert [v.line for v in violations] == [3, 4, 5, 6]
 
 
-def test_syntax_error_is_tolerated_but_reported(tmp_path, capsys):
-    assert _check(tmp_path, "def f(sha:\n    return sha[:7]\n") == []
+def test_an_unparseable_file_answers_neither_clean_nor_dirty(tmp_path, capsys):
+    assert _check(tmp_path, "def f(sha:\n    return sha[:7]\n") is None
     assert "unparseable, not checked" in capsys.readouterr().err
 
 
@@ -208,11 +212,24 @@ def test_a_named_non_python_file_is_not_reported_unparseable(monkeypatch, capsys
 
 def test_repo_is_clean():
     """The rule this validator enforces holds across the tree it walks."""
-    offenders = {
+    results = {
         path: vm.check_file(path, EXITS, CAPS)
         for path in vm.discover_scripts(str(REPO_ROOT))
     }
-    assert {p: v for p, v in offenders.items() if v} == {}
+    assert {p: v for p, v in results.items() if v != []} == {}
+
+
+def test_an_unparseable_file_fails_the_run(tmp_path, monkeypatch, capsys):
+    """A file that went unchecked must not leave the run green."""
+    bad = tmp_path / "broken.py"
+    bad.write_text("def f(sha:\n    return sha[:7]\n")
+    monkeypatch.setattr(sys, "argv", ["validate-magic-values", str(bad)])
+    with pytest.raises(SystemExit) as exc:
+        vm.main()
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "could not be parsed and went unchecked" in captured.err
+    assert "✓" not in captured.out
 
 
 def test_main_exits_1_on_a_violation(tmp_path, monkeypatch, capsys):

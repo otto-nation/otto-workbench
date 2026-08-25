@@ -1,16 +1,33 @@
 """The workbench's typed configuration.
 
-One file per scope — global ``config.yml`` under the config root and project
-``.workbench.yml`` at a repo root — deep-merged and typed into
-``WorkbenchConfig``. The dataclasses here are the single definition: they type
-the runtime lookups, they generate ``config.schema.json``
-(``bin/local/generate-config-schema``), and their ``Phase``-keyed maps make a
-phase a valid config key the moment it becomes an enum member.
+One file per scope, deep-merged and typed into ``WorkbenchConfig``. The
+dataclasses here are the single definition: they type the runtime lookups, they
+generate ``config.schema.json`` (``bin/local/generate-config-schema``), and
+their ``Phase``-keyed maps make a phase a valid config key the moment it
+becomes an enum member.
 
-The config is layers 4 and 5 of the precedence chain, behind CLI flags and env
+Three scopes, most specific first:
+
+    project    ``.workbench.yml`` at the work-tree root — this checkout
+    container  ``.workbench.yml`` beside a bare repo's worktrees — this repo
+    global     ``config.yml`` under the config root — every repo
+
+The container scope exists only in the bare-repo worktree layout, where every
+checkout is a peer of the bare ``.git`` inside a container directory. It is the
+scope for an answer that belongs to the repo but cannot be committed to it: a
+worktree file has to be copied into each of the ~100 checkouts a monorepo
+accumulates, is absent in whichever one ``wt switch -c`` cut this morning, and
+is deleted with the worktree by ``wt remove``. A file at the container is
+outside every checkout, so it needs no gitignore entry and survives all three.
+
+Ordered by specificity, so the checkout in front of you outranks the repo and
+the repo outranks the machine. A repo that is a plain clone has no container
+and keeps exactly the two scopes it always had.
+
+Those are layers 4 through 6 of the precedence chain, behind CLI flags and env
 vars:
 
-    CLI flag > CLAUDE_REVIEW_<PHASE>_* > CLAUDE_REVIEW_* > project > global
+    CLI flag > CLAUDE_REVIEW_<PHASE>_* > CLAUDE_REVIEW_* > project > container > global
 
 so nothing here overrides a value a caller passed or exported.
 """
@@ -24,6 +41,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -34,6 +52,15 @@ import timeouts
 import workbench_paths
 from review_common import Effort, Phase, Thinking
 
+# `git_layout` is a workbench-wide module rather than an `ai/lib` one, because
+# the permission mirror reads the same layout. In a checkout that is one
+# directory up; in the otto-ai-tools tarball, which flattens both into one
+# `lib/`, it is already beside this file and the path below does not exist.
+_WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent / "lib"
+if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
+    sys.path.insert(0, str(_WORKBENCH_LIB))
+from git_layout import container_dir  # noqa: E402
+
 try:
     import yaml
 except ImportError:
@@ -42,6 +69,14 @@ except ImportError:
 
 CONFIG_NAME = "config.yml"
 PROJECT_CONFIG_NAME = ".workbench.yml"
+
+# What a reader calls each scope. Beside the filenames because they name the
+# same files, and because ``config_scopes`` pairs them up. The container scope
+# reuses ``PROJECT_CONFIG_NAME``: it is the same file in a directory one level
+# out, so a copy moved up from a worktree keeps working.
+GLOBAL_SCOPE = "global"
+CONTAINER_SCOPE = "container"
+PROJECT_SCOPE = "project"
 
 # Where the generated schema lives, repo-relative, and the raw URL that serves
 # it. One spelling of the path: bin/local/generate-config-schema writes there,
@@ -246,21 +281,33 @@ def _values_column(hint) -> str:
     return "any"
 
 
-def _default_column(f: dataclasses.Field) -> str:
-    """A field's default as the table writes it, or an em dash for no value.
+def render_value(value) -> str:
+    """One config value as a reader sees it, or an em dash for no value.
 
-    ``None`` and the empty string are both "nothing is set" to a reader — the
-    key is absent from a config file that leaves it alone either way.
+    ``None`` and the empty string are both "nothing is set" — a config file
+    that leaves the key alone and one that spells it out as empty are the same
+    thing to everything downstream.
 
     A bool is written the way YAML spells it rather than the way Python does,
-    since the column is read as something to copy into a config file and
-    ``True`` is a string there, not a boolean.
+    since the rendering is read as something to copy into a config file and
+    ``True`` is a string there, not a boolean. An enum renders as its value for
+    the same reason: that is the spelling the file holds.
     """
-    if f.default is dataclasses.MISSING or f.default is None or f.default == "":
+    if value is None or value == "":
         return "—"
-    if isinstance(f.default, bool):
-        return f"`{str(f.default).lower()}`"
-    return f"`{f.default}`"
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, Enum):
+        return str(value.value)
+    return str(value)
+
+
+def _default_column(f: dataclasses.Field) -> str:
+    """A field's default as the table writes it, or an em dash for no value."""
+    if f.default is dataclasses.MISSING:
+        return "—"
+    rendered = render_value(f.default)
+    return rendered if rendered == "—" else f"`{rendered}`"
 
 
 def _reference_rows(cls, prefix: str = "") -> list[tuple[str, str, str]]:
@@ -317,8 +364,9 @@ def docs_reference() -> str:
     lines = [
         "| Scope | File |",
         "|-------|------|",
-        f"| Global | `{CONFIG_NAME}` under the [config root](#rootssh) |",
         f"| Project | `{PROJECT_CONFIG_NAME}` at a repo toplevel |",
+        f"| Container | `{PROJECT_CONFIG_NAME}` beside a bare repo's worktrees |",
+        f"| Global | `{CONFIG_NAME}` under the [config root](#rootssh) |",
         "",
         f"A new config file is born holding one line, the modeline that points an "
         f"editor's YAML language server at "
@@ -328,7 +376,7 @@ def docs_reference() -> str:
         CONFIG_HEADER,
         "```",
         "",
-        "Every key both files accept:",
+        "Every key any of them accepts:",
         "",
         "| Key | Values | Default |",
         "|-----|--------|---------|",
@@ -348,6 +396,27 @@ def global_config_path() -> Path:
 
 def project_config_path(project_root: Path | str) -> Path:
     return Path(project_root) / PROJECT_CONFIG_NAME
+
+
+def container_config_path(project_root: Path | str) -> Path | None:
+    """The config file above a bare repo's worktrees, or ``None`` for a clone.
+
+    ``git_layout.container_dir`` decides whether there is one, so this scope
+    appears exactly where the permission mirror already writes and nowhere
+    else. A plain clone, a linked worktree of one, and a directory in no repo
+    at all each answer ``None``, which is what keeps a repo outside the layout
+    on the two scopes it has always had.
+
+    Shells out to git, so a caller in a loop should hold on to the answer.
+    Nothing loops today: the scope list is built once per ``load_config``, and
+    the hooks that run on every prompt load the global scope alone. A writer
+    resolving the root twice — once to decide the scope, once inside
+    ``set_container_value`` — pays two more ``rev-parse`` reads at a prompt a
+    person is standing at, which is the price of the refusal living in one
+    place instead of at each call site.
+    """
+    container = container_dir(str(project_root))
+    return None if container is None else Path(container) / PROJECT_CONFIG_NAME
 
 
 def read_yaml(path: Path) -> dict:
@@ -427,6 +496,45 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return merged
 
 
+@dataclass(frozen=True)
+class ConfigScope:
+    """One file the merge reads, and the name a reader knows it by."""
+
+    name: str
+    path: Path
+
+    @property
+    def exists(self) -> bool:
+        return self.path.is_file()
+
+
+def config_scopes(project_root: Path | str | None = None) -> list[ConfigScope]:
+    """Every file the config is merged from, lowest precedence first.
+
+    Merge order rather than precedence order, because that is the order the
+    loader applies them in and this is what it iterates. A reader wants the
+    reverse, so ``config_status`` flips it once on the way out.
+
+    The one owner of which files there are. ``load_config`` merges these and
+    ``config_status`` reports on them, so a scope cannot be added to the merge
+    without appearing in the report that explains where a value came from.
+
+    The container sits between the two older scopes: it speaks for one repo
+    where the global file speaks for every repo, and the checkout in front of
+    you speaks for itself. A repo outside the bare-repo layout has no container
+    and contributes no third scope, rather than a scope naming a file that
+    could never exist.
+    """
+    scopes = [ConfigScope(GLOBAL_SCOPE, global_config_path())]
+    if project_root is None:
+        return scopes
+    container = container_config_path(project_root)
+    if container is not None:
+        scopes.append(ConfigScope(CONTAINER_SCOPE, container))
+    scopes.append(ConfigScope(PROJECT_SCOPE, project_config_path(project_root)))
+    return scopes
+
+
 def load_config(project_root: Path | str | None = None) -> WorkbenchConfig:
     """The merged, typed config for a scope.
 
@@ -434,9 +542,7 @@ def load_config(project_root: Path | str | None = None) -> WorkbenchConfig:
     a hand-authored file gets a loud failure rather than the silent discard
     ``serde.load_file`` gives a regenerable cache.
     """
-    paths = [global_config_path()]
-    if project_root is not None:
-        paths.append(project_config_path(project_root))
+    paths = [scope.path for scope in config_scopes(project_root)]
 
     merged: dict = {}
     for path in paths:
@@ -463,6 +569,184 @@ def load_config_or_default(
         return load_config(project_root)
     except ConfigError:
         return WorkbenchConfig()
+
+
+@dataclass(frozen=True)
+class ResolvedKey:
+    """One key of the config surface, and which file answered for it.
+
+    ``scope`` is ``None`` when no file named the key and the value is the
+    dataclass default. A caller renders that differently from an inherited
+    value: one is a decision nobody has made, the other is a decision made
+    somewhere else.
+    """
+
+    key: str
+    value: str
+    scope: ConfigScope | None = None
+
+    @property
+    def is_default(self) -> bool:
+        return self.scope is None
+
+
+@dataclass(frozen=True)
+class StrayKey:
+    """A key a config file holds that no version of the surface reads.
+
+    The whole reason ``config status`` exists. ``serde`` drops what it does not
+    recognise, so a key spelled slightly wrong is a value that is simply gone,
+    and every reader downstream sees the default and says nothing.
+    """
+
+    key: str
+    scope: ConfigScope
+
+
+@dataclass(frozen=True)
+class ConfigStatus:
+    """What the config resolves to right now, and where each piece came from.
+
+    ``scopes`` is highest precedence first — the order the answer is decided
+    in, which is the order a reader reasons about, and the reverse of the merge
+    order ``config_scopes`` returns.
+
+    ``problems`` holds anything that stopped a file from being read or typed.
+    It is separate from ``strays`` because the two cost different things: a
+    stray key loses one value, an unreadable file loses the whole scope.
+    """
+
+    scopes: list[ConfigScope]
+    keys: list[ResolvedKey]
+    strays: list[StrayKey]
+    problems: list[str]
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
+
+
+def _flatten(data: dict, prefix: str = "") -> dict[str, object]:
+    """Every leaf of a raw config mapping, keyed by its dotted path.
+
+    An empty mapping is a leaf: it sets nothing, so recursing into it would
+    contribute no key, and treating it as one records that the file mentioned
+    the section at all.
+    """
+    flat: dict[str, object] = {}
+    for key, value in data.items():
+        dotted = f"{prefix}{key}"
+        if isinstance(value, dict) and value:
+            flat.update(_flatten(value, f"{dotted}."))
+        else:
+            flat[dotted] = value
+    return flat
+
+
+def _entry_rows(
+    cls, held: dict | None, provenance: dict[str, ConfigScope], prefix: str,
+) -> list[ResolvedKey]:
+    """Rows for the entries an enum-keyed section actually holds.
+
+    An enum key contributes its value rather than its member name, because the
+    value is what the config file spells.
+    """
+    rows: list[ResolvedKey] = []
+    for entry, value in (held or {}).items():
+        name = entry.value if isinstance(entry, Enum) else entry
+        rows += _resolved_rows(cls, value, provenance, f"{prefix}{name}.")
+    return rows
+
+
+def _resolved_rows(
+    cls, obj, provenance: dict[str, ConfigScope], prefix: str = "",
+) -> list[ResolvedKey]:
+    """One row per leaf key of a typed config object.
+
+    Walks ``dataclasses.fields`` through ``serde.classify``, the same way
+    ``_reference_rows`` builds the docs table and ``schema_gen`` builds the
+    schema — so the keys reported here are the keys the workbench reads, with
+    no second listing to keep in step.
+
+    An enum-keyed section expands over the entries the config actually holds
+    rather than over every member of the enum. A phase nobody has overridden
+    has nothing to report, and listing all of them would bury the ones that do.
+    """
+    rows: list[ResolvedKey] = []
+    hints = get_type_hints(cls)
+    for f in dataclasses.fields(cls):
+        kind, args = serde.classify(hints[f.name])
+        key = f"{prefix}{f.name}"
+        value = getattr(obj, f.name)
+        if kind is serde.HintKind.DATACLASS:
+            rows += _resolved_rows(hints[f.name], value, provenance, f"{key}.")
+        elif kind is serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
+            rows += _entry_rows(args[1], value, provenance, f"{key}.")
+        else:
+            rows.append(ResolvedKey(key, render_value(value), provenance.get(key)))
+    return rows
+
+
+def config_status(project_root: Path | str | None = None) -> ConfigStatus:
+    """The resolved config for a scope, with the file each value came from.
+
+    ``load_config`` answers what the value is and discards how it got there,
+    which leaves a key written into the wrong file indistinguishable from a key
+    nobody ever set. This answers both, and reports what it could not read
+    rather than raising: a command whose whole job is diagnosing a config file
+    has to survive the file being the problem.
+    """
+    import schema_gen
+
+    scopes = config_scopes(project_root)
+    problems: list[str] = []
+    strays: list[StrayKey] = []
+    provenance: dict[str, ConfigScope] = {}
+    schema = schema_gen.dataclass_to_schema(WorkbenchConfig)
+
+    merged: dict = {}
+    loaded: list[tuple[ConfigScope, dict]] = []
+    for scope in scopes:
+        try:
+            raw = read_yaml(scope.path)
+        except ConfigError as exc:
+            problems.append(str(exc))
+            continue
+        loaded.append((scope, raw))
+        merged = _deep_merge(merged, raw)
+        flat = _flatten(raw)
+        provenance.update(dict.fromkeys(flat, scope))
+        strays += [StrayKey(key, scope) for key in flat
+                   if not _schema_accepts(schema, key)]
+
+    try:
+        config = serde.from_dict(WorkbenchConfig, merged)
+    except (TypeError, ValueError) as exc:
+        problems += _typing_problems(loaded) or [f"{scopes[0].path}: {exc}"]
+        return ConfigStatus(list(reversed(scopes)), [], strays, problems)
+
+    keys = _resolved_rows(WorkbenchConfig, config, provenance)
+    return ConfigStatus(list(reversed(scopes)), keys, strays, problems)
+
+
+def _typing_problems(loaded: list[tuple[ConfigScope, dict]]) -> list[str]:
+    """Which individual scopes hold a value the config cannot be built from.
+
+    The merged failure names every file that exists, because that is all it
+    knows. Typing each scope on its own instead names the file to open — which
+    is the whole question a reader has when a value is rejected.
+
+    Empty when no scope fails alone, which leaves the caller its joint message:
+    a merge can only override, so this should not happen, and inventing a
+    culprit would be worse than repeating what the loader would have said.
+    """
+    problems: list[str] = []
+    for scope, raw in loaded:
+        try:
+            serde.from_dict(WorkbenchConfig, raw)
+        except (TypeError, ValueError) as exc:
+            problems.append(f"{scope.path}: {exc}")
+    return problems
 
 
 class KeyVerdict(StrEnum):
@@ -672,6 +956,28 @@ def set_project_value(key: str, value: str, project_root: Path | str) -> None:
     write as a non-event.
     """
     set_value(key, value, project_config_path(project_root))
+
+
+def set_container_value(key: str, value: str, project_root: Path | str) -> None:
+    """Write one dotted key into the file above a bare repo's worktrees.
+
+    Raises ``ConfigError`` when the repo has no container, rather than falling
+    back to the worktree. The two files differ in what survives: a worktree one
+    is deleted by ``wt remove`` and unseen by every sibling checkout, so a
+    caller that asked for the durable scope and silently got the disposable one
+    has been told the opposite of what happened.
+
+    Same ``set_value`` and therefore the same key check as the other two. This
+    file is not committed, which makes the check matter more rather than less:
+    nobody reviews it, so a key nothing reads is never noticed by anyone.
+    """
+    path = container_config_path(project_root)
+    if path is None:
+        raise ConfigError(
+            f"{project_root} is not a bare-repo worktree, so it has no "
+            f"container to write {PROJECT_CONFIG_NAME} into",
+        )
+    set_value(key, value, path)
 
 
 def _set_value_with_pyyaml(path: Path, key: str, value: str) -> None:

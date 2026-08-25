@@ -124,6 +124,8 @@ otto-workbench [--workbench-dir <path>] <command>
 | `otto-workbench permissions mirror` | Machine | Copy a repo's tracked grants into the bare-repo container above its worktrees |
 | `otto-workbench config set KEY VALUE` | Machine | Write one key into the machine-wide config, checked against the key surface |
 | `otto-workbench config set KEY VALUE --project` | Project | Write one key into the current repo's .workbench.yml instead |
+| `otto-workbench config set KEY VALUE --container` | Container | Write one key into the .workbench.yml above a bare repo's worktrees |
+| `otto-workbench config status` | Project | Show every scope, every resolved value, and the file each came from |
 
 ### `task`
 

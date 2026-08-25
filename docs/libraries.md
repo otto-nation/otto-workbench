@@ -110,7 +110,7 @@ filenames, the schema URL and the modeline are declared once in
 `WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only.
 
 [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed
-owner of the same two files: it deep-merges them into a `WorkbenchConfig` and
+owner of the same files: it deep-merges them into a `WorkbenchConfig` and
 rejects an unknown enum value or phase key rather than silently dropping it. It
 spells those same names a second time for Python, and `tests/config.bats` fails
 when a pair drifts. The scope and key tables below are generated from the
@@ -120,8 +120,9 @@ fails if the committed schema goes stale.
 
 | Scope | File |
 |-------|------|
-| Global | `config.yml` under the [config root](#rootssh) |
 | Project | `.workbench.yml` at a repo toplevel |
+| Container | `.workbench.yml` beside a bare repo's worktrees |
+| Global | `config.yml` under the [config root](#rootssh) |
 
 A new config file is born holding one line, the modeline that points an editor's YAML language server at [`config.schema.json`](../config.schema.json):
 
@@ -129,7 +130,7 @@ A new config file is born holding one line, the modeline that points an editor's
 # yaml-language-server: $schema=https://raw.githubusercontent.com/otto-nation/otto-workbench/main/config.schema.json
 ```
 
-Every key both files accept:
+Every key any of them accepts:
 
 | Key | Values | Default |
 |-----|--------|---------|
@@ -157,7 +158,8 @@ top of one you hand-author. A file that already exists is never seeded: the
 modeline is a courtesy on creation, not something sync re-imposes.
 
 Writes go through `otto-workbench config set KEY VALUE` (`--project` for the
-repo's own file), which is
+repo's own committed file, `--container` for the one above its worktrees),
+which is
 [`lib/config_cli.py`](../lib/config_cli.py) over `set_value`. It refuses a key
 neither this checkout nor the *installed* workbench reads: a checkout can be
 weeks behind `main` and still write the file every repo on the machine shares,
@@ -167,19 +169,40 @@ consulted because only the installed one can catch a stale writer using a key
 that is still valid where it is standing. Hand-editing stays supported — that
 is what the modeline is for — but nothing checks the key.
 
-Five layers decide a review value, highest first:
+`otto-workbench config status` reports the read side: every scope in
+precedence order with its path and whether the file is there, every key with
+the value it resolved to and the file that supplied it, and any key a file
+holds that the surface does not have. Nothing else answers that — the loader
+merges the scopes and returns the result, so an inherited value and a local
+one are indistinguishable afterwards, and a key written under a name nothing
+reads is dropped in silence by both the loader and the reader waiting on it.
+
+Six layers decide a review value, highest first:
 
 | # | Layer | Example |
 |---|-------|---------|
 | 1 | Explicit flag | `--model opus`, `--effort high` |
 | 2 | Phase env var | `CLAUDE_REVIEW_SCOUT_MODEL` |
 | 3 | Global env var | `CLAUDE_REVIEW_MODEL` |
-| 4 | Project config | `.workbench.yml` |
-| 5 | Global config | `config.yml` |
+| 4 | Project config | `<worktree>/.workbench.yml` |
+| 5 | Container config | `<container>/.workbench.yml` |
+| 6 | Global config | `config.yml` |
 
 Within one file a `review.phases.<phase>` entry outranks the `review.*` section
-it sits under. Layers 4 and 5 deep-merge, so a project file that sets one phase
-keeps every global sibling.
+it sits under. Layers 4 through 6 deep-merge, so a project file that sets one
+phase keeps every sibling the layers below it set.
+
+Layer 5 exists only in the bare-repo worktree layout, where every checkout is
+a peer of the bare `.git` inside a container directory — the same directory
+`otto-workbench permissions mirror` writes a repo's grants into. It is the
+scope for an answer that belongs to the repo but cannot be committed to it: a
+worktree file has to be copied into every checkout, is missing from whichever
+one `wt switch -c` just cut, and is deleted along with the worktree by `wt
+remove`. Ordered by specificity — this checkout, then this repo, then this
+machine. A plain clone has no container and keeps exactly two layers.
+
+`wb_config_get` below reads layers 4 and 6 only; the typed loader reads all
+three. `otto-workbench config status` is where all three are visible.
 
 A repo still holding the legacy `.claude/review.yml` is converted to
 `.workbench.yml` the first time a review reads its issue tracker; the old file

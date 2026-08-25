@@ -1728,17 +1728,34 @@ rather than a source of growth.
 
 The workbench's typed configuration.
 
-One file per scope — global ``config.yml`` under the config root and project
-``.workbench.yml`` at a repo root — deep-merged and typed into
-``WorkbenchConfig``. The dataclasses here are the single definition: they type
-the runtime lookups, they generate ``config.schema.json``
-(``bin/local/generate-config-schema``), and their ``Phase``-keyed maps make a
-phase a valid config key the moment it becomes an enum member.
+One file per scope, deep-merged and typed into ``WorkbenchConfig``. The
+dataclasses here are the single definition: they type the runtime lookups, they
+generate ``config.schema.json`` (``bin/local/generate-config-schema``), and
+their ``Phase``-keyed maps make a phase a valid config key the moment it
+becomes an enum member.
 
-The config is layers 4 and 5 of the precedence chain, behind CLI flags and env
+Three scopes, most specific first:
+
+    project    ``.workbench.yml`` at the work-tree root — this checkout
+    container  ``.workbench.yml`` beside a bare repo's worktrees — this repo
+    global     ``config.yml`` under the config root — every repo
+
+The container scope exists only in the bare-repo worktree layout, where every
+checkout is a peer of the bare ``.git`` inside a container directory. It is the
+scope for an answer that belongs to the repo but cannot be committed to it: a
+worktree file has to be copied into each of the ~100 checkouts a monorepo
+accumulates, is absent in whichever one ``wt switch -c`` cut this morning, and
+is deleted with the worktree by ``wt remove``. A file at the container is
+outside every checkout, so it needs no gitignore entry and survives all three.
+
+Ordered by specificity, so the checkout in front of you outranks the repo and
+the repo outranks the machine. A repo that is a plain clone has no container
+and keeps exactly the two scopes it always had.
+
+Those are layers 4 through 6 of the precedence chain, behind CLI flags and env
 vars:
 
-    CLI flag > CLAUDE_REVIEW_<PHASE>_* > CLAUDE_REVIEW_* > project > global
+    CLI flag > CLAUDE_REVIEW_<PHASE>_* > CLAUDE_REVIEW_* > project > container > global
 
 so nothing here overrides a value a caller passed or exported.
 

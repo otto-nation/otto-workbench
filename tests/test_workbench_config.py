@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import add_worktree, seed_repo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -161,6 +162,240 @@ def test_a_non_mapping_file_is_rejected(roots):
     _write(config_root / "config.yml", "- one\n- two\n")
     with pytest.raises(wc.ConfigError, match="mapping"):
         wc.load_config(project)
+
+
+# ── The container scope ─────────────────────────────────────────────────────
+
+
+def test_a_worktree_of_a_bare_repo_gains_a_container_scope(roots, container):
+    config_root, _ = roots
+    assert [s.path for s in wc.config_scopes(container / "main")] == [
+        config_root / wc.CONFIG_NAME,
+        container / wc.PROJECT_CONFIG_NAME,
+        container / "main" / wc.PROJECT_CONFIG_NAME,
+    ]
+
+
+def test_the_container_sits_between_the_two_older_scopes(roots, container):
+    """Merge order, so the report's precedence order is its reverse."""
+    assert [s.name for s in wc.config_scopes(container / "main")] == [
+        wc.GLOBAL_SCOPE, wc.CONTAINER_SCOPE, wc.PROJECT_SCOPE,
+    ]
+    assert [s.name for s in wc.config_status(container / "main").scopes] == [
+        wc.PROJECT_SCOPE, wc.CONTAINER_SCOPE, wc.GLOBAL_SCOPE,
+    ]
+
+
+def test_a_plain_clone_keeps_the_two_scopes_it_always_had(roots, tmp_path):
+    clone = seed_repo(tmp_path / "clone")
+    assert wc.container_config_path(clone) is None
+    assert [s.name for s in wc.config_scopes(clone)] == [wc.GLOBAL_SCOPE, wc.PROJECT_SCOPE]
+
+
+def test_the_container_file_beats_the_global_one(roots, container):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "review:\n  model: sonnet\n")
+    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
+    assert wc.load_config(container / "main").review.model == "opus"
+
+
+def test_the_worktree_file_beats_the_container_one(roots, container):
+    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
+    _write(container / "main" / wc.PROJECT_CONFIG_NAME, "review:\n  model: haiku\n")
+    assert wc.load_config(container / "main").review.model == "haiku"
+
+
+def test_the_container_does_not_discard_global_siblings(roots, container):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "review:\n  model: sonnet\n  thinking: medium\n")
+    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
+    cfg = wc.load_config(container / "main")
+    assert cfg.review.model == "opus"
+    assert cfg.review.thinking is Thinking.MEDIUM
+
+
+def test_a_container_value_names_the_container_in_the_report(roots, container):
+    _write(container / wc.PROJECT_CONFIG_NAME, "issue_tracker:\n  provider: github\n")
+    status = wc.config_status(container / "main")
+    assert _row(status, "issue_tracker.provider").scope.name == wc.CONTAINER_SCOPE
+
+
+def test_set_container_value_writes_above_the_worktrees(roots, container):
+    wc.set_container_value("issue_tracker.provider", "github", container / "main")
+    assert not (container / "main" / wc.PROJECT_CONFIG_NAME).exists()
+    assert "github" in (container / wc.PROJECT_CONFIG_NAME).read_text()
+
+
+def test_a_sibling_worktree_reads_what_the_container_recorded(roots, container):
+    """The reason the scope exists: `wt switch -c` cuts a checkout holding
+    nothing, and a worktree file would have to be copied into it by hand."""
+    wc.set_container_value("issue_tracker.provider", "github", container / "main")
+    feature = add_worktree(container, "feature")
+    assert wc.load_config(feature).issue_tracker.provider is wc.IssueProvider.GITHUB
+
+
+def test_set_container_value_refuses_a_plain_clone(roots, tmp_path):
+    """Falling back to the worktree would answer the opposite of what was asked:
+    that file is deleted by `wt remove` and unseen by every sibling checkout."""
+    clone = seed_repo(tmp_path / "clone")
+    with pytest.raises(wc.ConfigError, match="container"):
+        wc.set_container_value("issue_tracker.provider", "github", clone)
+    assert not (clone / wc.PROJECT_CONFIG_NAME).exists()
+
+
+def test_set_container_value_refuses_the_same_keys(roots, container):
+    with pytest.raises(wc.ConfigKeyError):
+        wc.set_container_value("issue_tracker.providr", "github", container / "main")
+
+
+# ── Status ──────────────────────────────────────────────────────────────────
+
+
+def _row(status: wc.ConfigStatus, key: str) -> wc.ResolvedKey:
+    return next(row for row in status.keys if row.key == key)
+
+
+def test_scopes_are_reported_highest_precedence_first(roots):
+    config_root, project = roots
+    status = wc.config_status(project)
+    assert [s.name for s in status.scopes] == [wc.PROJECT_SCOPE, wc.GLOBAL_SCOPE]
+    assert [s.path for s in status.scopes] == [
+        project / wc.PROJECT_CONFIG_NAME, config_root / wc.CONFIG_NAME,
+    ]
+
+
+def test_the_merge_and_the_report_read_the_same_files(roots):
+    """`config_scopes` is the one owner, so neither can gain a file alone."""
+    _, project = roots
+    reported = [s.path for s in wc.config_status(project).scopes]
+    assert sorted(reported) == sorted(s.path for s in wc.config_scopes(project))
+
+
+def test_a_scope_with_no_file_is_reported_as_absent(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
+    status = wc.config_status(project)
+    by_name = {s.name: s for s in status.scopes}
+    assert by_name[wc.GLOBAL_SCOPE].exists
+    assert not by_name[wc.PROJECT_SCOPE].exists
+
+
+def test_outside_a_repo_there_is_only_the_global_scope(roots):
+    status = wc.config_status()
+    assert [s.name for s in status.scopes] == [wc.GLOBAL_SCOPE]
+
+
+def test_a_value_names_the_file_that_supplied_it(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
+    _write(project / ".workbench.yml", "issue_tracker:\n  provider: github\n")
+    status = wc.config_status(project)
+    assert _row(status, "reuse.level").scope.name == wc.GLOBAL_SCOPE
+    assert _row(status, "issue_tracker.provider").scope.name == wc.PROJECT_SCOPE
+
+
+def test_an_overridden_value_names_the_file_that_won(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
+    _write(project / ".workbench.yml", "reuse:\n  level: lite\n")
+    row = _row(wc.config_status(project), "reuse.level")
+    assert row.value == "lite"
+    assert row.scope.name == wc.PROJECT_SCOPE
+
+
+def test_a_key_no_file_sets_is_reported_as_a_default(roots):
+    _, project = roots
+    row = _row(wc.config_status(project), "reuse.default")
+    assert row.value == "full"
+    assert row.is_default
+
+
+def test_a_phase_override_is_reported_under_its_own_key(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", """
+review:
+  phases:
+    scout:
+      model: haiku
+""")
+    row = _row(wc.config_status(project), "review.phases.scout.model")
+    assert row.value == "haiku"
+    assert row.scope.name == wc.GLOBAL_SCOPE
+
+
+def test_a_phase_nobody_overrode_is_not_reported(roots):
+    """Every phase would bury the ones a file actually names."""
+    _, project = roots
+    keys = [row.key for row in wc.config_status(project).keys]
+    assert not [key for key in keys if key.startswith("review.phases.")]
+
+
+def test_the_reported_keys_are_the_documented_keys(roots):
+    """One walk over `WorkbenchConfig`, not a second listing of its keys.
+
+    The docs table and the report both derive from the dataclass, so a renamed
+    field moves in both at once. The placeholder rows are dropped because the
+    report expands those over the entries a file actually holds.
+    """
+    _, project = roots
+    documented = [key for key, _, _ in wc._reference_rows(wc.WorkbenchConfig)
+                  if "<" not in key]
+    assert [row.key for row in wc.config_status(project).keys] == documented
+
+
+def test_a_key_the_surface_does_not_have_is_reported_as_a_stray(roots):
+    """The incident this command exists for: the right value, the wrong key."""
+    config_root, project = roots
+    _write(config_root / "config.yml", "review:\n  issue_tracker:\n    provider: github\n")
+    status = wc.config_status(project)
+    assert [(s.key, s.scope.name) for s in status.strays] == [
+        ("review.issue_tracker.provider", wc.GLOBAL_SCOPE),
+    ]
+    assert _row(status, "issue_tracker.provider").is_default
+
+
+def test_a_stray_key_does_not_make_the_report_a_failure(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "reuse:\n  levl: ultra\n")
+    assert wc.config_status(project).ok
+
+
+def test_an_unreadable_scope_is_a_problem_and_the_rest_still_reports(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
+    _write(project / ".workbench.yml", "reuse: [unclosed\n")
+    status = wc.config_status(project)
+    assert not status.ok
+    assert str(project / ".workbench.yml") in status.problems[0]
+    assert _row(status, "reuse.level").value == "ultra"
+
+
+def test_a_rejected_value_names_the_one_file_holding_it(roots):
+    """The merged failure names every file that exists; this names the culprit."""
+    config_root, project = roots
+    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
+    _write(project / ".workbench.yml", "reuse:\n  level: sideways\n")
+    status = wc.config_status(project)
+    assert not status.ok
+    assert status.problems == [
+        f"{project / '.workbench.yml'}: 'sideways' is not a valid ReuseLevel",
+    ]
+    assert status.keys == []
+
+
+def test_a_rejected_value_still_reports_the_scopes_and_the_strays(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "reuse:\n  levl: ultra\n  level: sideways\n")
+    status = wc.config_status(project)
+    assert [s.name for s in status.scopes] == [wc.PROJECT_SCOPE, wc.GLOBAL_SCOPE]
+    assert [s.key for s in status.strays] == ["reuse.levl"]
+
+
+def test_render_value_writes_what_a_config_file_would_hold():
+    assert wc.render_value(True) == "true"
+    assert wc.render_value(wc.ReuseLevel.FULL) == "full"
+    assert wc.render_value(None) == "—"
+    assert wc.render_value("") == "—"
 
 
 # ── Schema ──────────────────────────────────────────────────────────────────

@@ -18,16 +18,21 @@ The orchestration of a review run: what it checks before spending anything, how 
 
 The one owner of an agent invocation: resolve the phase, run it, guard it.
 
-``agent_types`` says what a phase is, ``agent_phases`` says what it resolves to
-here, and ``ai_backend`` knows how to talk to a CLI. This module is what sits
-between them: given a phase and a prompt, it builds the invocation from the
-phase's resolved model, thinking level and provider, runs it, and hands the
-result to ``agent_retry``'s guard with the phase's own retry ceiling.
+``agent_types`` says what a phase is, ``agent_registry`` says which phases there
+are, ``agent_phases`` says what one resolves to here, and ``ai_backend`` knows
+how to talk to a CLI. This module is what sits between them: given a phase and
+a prompt, it builds the invocation from the phase's resolved model, thinking
+level and provider, runs it, and hands the result to ``agent_retry``'s guard.
+
+One function per ``PhaseShape``, and a phase reaches exactly the one its spec
+names — ``run_prompt`` for a stateless call, ``run_agent`` for a tool-using
+agent, ``run_fix`` for one that writes to the branch.
 
 Call sites used to do that assembly themselves, and each one did it slightly
 differently — a hardcoded model here, a missing retry ceiling there, a usage
 ledger label spelled a third way. Reaching ``ai_backend`` directly is what let
-those differ; going through here is what stops them.
+those differ; going through here is what stops them, and
+``TestOneOwnerForBackendCalls`` is what keeps it that way.
 
 ### agent_phases.py
 
@@ -148,15 +153,16 @@ exception. No answer is never consent.
 
 ### review_agent.py
 
-Agent invocation, cost tracking, and diagnostics.
+What an agent run left behind: its cost, its diagnosis, its salvage.
 
-Delegates actual AI invocation to ai_backend (which dispatches to
-Claude Code CLI or Pi CLI based on AI_BACKEND env var). This module
-adds cost tracking, failure diagnosis, and output recovery on top.
+Everything here reads a session log after the fact. Running the agent is
+``agent_invoke``'s job and resolving which model it ran with is
+``agent_phases``'s; this module is what the pipeline asks once the log exists —
+what the run cost, why it produced nothing, whether the document it was denied
+permission to save can still be recovered.
 
-Which model, thinking level and provider an invocation runs with is
-``agent_phases``'s question, not this one's — it resolves a phase against the
-config file and the environment, and hands the answer here already decided.
+The split matters for the quota retry, whose two halves live apart: this module
+reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
 
 ### review_gc.py
 

@@ -7,7 +7,7 @@ them run the pipeline twice against one review directory, which is the only
 thing that exercises persistence, `_resolve_recovery` and the rendered Agent
 Failures section together.
 
-The agent is faked at `invoke_agent`, the single seam every phase reaches
+The agent is faked at `run_agent`, the single seam every phase reaches
 through `PhaseRunner.invoke`. A test scripts a run by naming the phases that
 produce no output, then runs the pipeline again over the same directory the
 way `pr review --recover` does.
@@ -56,7 +56,7 @@ _RECOVER_HINT = "Run `pr review --recover`"
 
 
 class _Agent:
-    """A scripted stand-in for `invoke_agent`.
+    """A scripted stand-in for `run_agent`.
 
     `fails` and `denied` name the phases that produce no output, keyed on the
     session log's stem (`group-2`, `holistic`, `synthesis`) — the only handle
@@ -151,7 +151,7 @@ def run(monkeypatch):
             job.review_file, fails=fails, denied=denied, costs=costs,
             review_body=review_body,
         )
-        monkeypatch.setattr(review_phases, "invoke_agent", agent)
+        monkeypatch.setattr(review_phases, "run_agent", agent)
         # The sweep belongs to the orchestrator's scope rather than to the
         # pipeline, so a run that leaves no state behind is only visible to a
         # harness that enters that scope too.

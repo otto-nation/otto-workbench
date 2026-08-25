@@ -231,10 +231,9 @@ class TestPhaseRunnerReachesBackend:
     """PhaseRunner.invoke() must reach ai_backend.invoke_agent with the
     fully-resolved AgentInvocation and must wait on the job's throttle.
 
-    Every other pipeline test stubs review_pipeline.invoke_agent (or
-    review_agent.invoke_agent), which swallows any argument shape. Patching
-    one layer deeper, at ai_backend.invoke_agent, keeps the seam between
-    PhaseRunner and the backend under test.
+    Every other pipeline test stubs review_pipeline.run_agent, which swallows
+    any argument shape. Patching one layer deeper, at ai_backend.invoke_agent,
+    keeps the seam between PhaseRunner and the backend under test.
     """
 
     class _RecordingThrottle:
@@ -251,7 +250,7 @@ class TestPhaseRunnerReachesBackend:
         monkeypatch.delenv("WORKBENCH_AI_MODEL", raising=False)
         monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
 
-        import review_agent
+        import agent_invoke
 
         seen = {}
 
@@ -259,7 +258,7 @@ class TestPhaseRunnerReachesBackend:
             seen["inv"] = inv
             return 0
 
-        monkeypatch.setattr(review_agent.ai_backend, "invoke_agent", fake_backend_invoke)
+        monkeypatch.setattr(agent_invoke.ai_backend, "invoke_agent", fake_backend_invoke)
 
         job = _job(tmp_path, Effort.HIGH)
         job.throttle = self._RecordingThrottle()
@@ -279,7 +278,7 @@ class TestPhaseRunnerReachesBackend:
         """`retry_missing_output` calls its callback as `invoke(prompt, turns)`."""
         seen = []
         monkeypatch.setattr(
-            review_phases, "invoke_agent",
+            review_phases, "run_agent",
             lambda inv, throttle=None: seen.append(inv) or 0,
         )
         runner = review_pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
@@ -403,7 +402,7 @@ def _capture_invocations(monkeypatch):
         }) + "\n")
         return 0
 
-    monkeypatch.setattr(review_phases, "invoke_agent", fake_invoke)
+    monkeypatch.setattr(review_phases, "run_agent", fake_invoke)
     monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
     return seen
 

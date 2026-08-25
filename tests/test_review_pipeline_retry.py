@@ -190,7 +190,7 @@ class TestRetryMissingOutput:
         job = _make_job(tmp_path, session_log=log_path)
         codes = iter([0, 3])
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_phases, "invoke_agent", lambda *a, **k: next(codes))
+        monkeypatch.setattr(review_phases, "run_agent", lambda *a, **k: next(codes))
         errors = []
         monkeypatch.setattr(review_pipeline.log, "error", errors.append)
 
@@ -230,7 +230,7 @@ class TestSingleAgentCleanup:
             return 0
 
         monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_phases, "invoke_agent", _agent)
+        monkeypatch.setattr(review_phases, "run_agent", _agent)
         with review_gc.cleaned_on_success(Path(job.artifact_dir)):
             review_pipeline.run_single_agent(job, disprove=False)
         return job

@@ -23,13 +23,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
-import agent_retry
-import ai_backend
+import agent_invoke
 import gh_client
 import git_client
 import log
 import pr_context
 import pr_state
+from agent_types import Phase
 from pr_domains import DescribeSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
@@ -217,17 +217,18 @@ def run_describe(
     prompt = _build_prompt(
         template, bool(template_path), title, body, commits, changed_files,
     )
-    stdout, rc = agent_retry.retry_blank_response(
-        lambda text: ai_backend.prompt(text, cwd=str(wt_path), task=SCRIPT),
-        prompt, label="Describe", usable=_usable_revision,
+    answer = agent_invoke.run_prompt(
+        Phase.DESCRIBE, prompt,
+        cwd=wt_path, usable=_usable_revision, task=SCRIPT,
+        repo=ctx.repo, pr=str(ctx.pr_number),
     )
-    if rc != 0 or not _usable_revision(stdout):
+    if not answer.ok:
         if trail:
-            trail.error("describe", "AI prompt failed", data={"exit_code": rc})
+            trail.error("describe", "AI prompt failed", data={"exit_code": answer.exit_code})
         log.error("ai prompt failed")
         return 1
 
-    raw = stdout.strip()
+    raw = answer.text.strip()
     if raw == _NO_CHANGE:
         log.info("Description already matches the template — no change")
         _persist(wt_path, ctx, DescribeSummary(
@@ -239,8 +240,8 @@ def run_describe(
     revised = _extract_description(raw)
     if revised is None:
         # _usable_revision already passed, so this should not happen, but guard
-        # against a caller that bypasses agent_retry.retry_blank_response and so
-        # never ran that check.
+        # against a caller that bypasses agent_invoke.run_prompt and so never
+        # ran that check.
         if trail:
             trail.error("describe", "AI response missing extraction markers")
         log.error("ai response missing extraction markers — not posting to GitHub")

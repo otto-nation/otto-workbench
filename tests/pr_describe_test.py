@@ -36,7 +36,7 @@ def _run(ctx, *, body="", ai=(_wrapped("NEW BODY"), 0), **kw):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body",
                            return_value=("title", body)), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
-         mock.patch.object(pr_describe_cli.ai_backend, "prompt",
+         mock.patch.object(pr_describe_cli.agent_invoke.ai_backend, "prompt",
                            return_value=ai) as prompt, \
          mock.patch.object(pr_describe_cli, "_apply_body",
                            side_effect=lambda r, n, b: edits.append(b) or True):
@@ -222,7 +222,7 @@ def test_failed_ai_call_is_not_recorded(worktree):
 
 def test_unreachable_pr_stops_before_the_ai_call(worktree):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=None), \
-         mock.patch.object(pr_describe_cli.ai_backend, "prompt") as prompt:
+         mock.patch.object(pr_describe_cli.agent_invoke.ai_backend, "prompt") as prompt:
         rc = pr_describe_cli.run_describe(_ctx(worktree))
     assert rc == 1
     assert not prompt.called
@@ -231,7 +231,7 @@ def test_unreachable_pr_stops_before_the_ai_call(worktree):
 def test_a_rejected_edit_is_not_recorded(worktree):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
-         mock.patch.object(pr_describe_cli.ai_backend, "prompt",
+         mock.patch.object(pr_describe_cli.agent_invoke.ai_backend, "prompt",
                            return_value=(_wrapped("B"), 0)), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=False):
         rc = pr_describe_cli.run_describe(_ctx(worktree))
@@ -247,7 +247,7 @@ def test_a_blank_first_answer_earns_one_retry(worktree):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
-         mock.patch.object(pr_describe_cli.ai_backend, "prompt",
+         mock.patch.object(pr_describe_cli.agent_invoke.ai_backend, "prompt",
                            side_effect=answers) as prompt:
         rc = pr_describe_cli.run_describe(_ctx(worktree))
     assert rc == 0
@@ -264,7 +264,7 @@ def test_prompt_carries_the_template_and_the_branch_contents(worktree):
                            return_value=("feat: x", "old body")), \
          mock.patch.object(pr_describe_cli, "_git", return_value="deadbee fix: y"), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
-         mock.patch.object(pr_describe_cli.ai_backend, "prompt",
+         mock.patch.object(pr_describe_cli.agent_invoke.ai_backend, "prompt",
                            return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(worktree))
     text = prompt.call_args[0][0]
@@ -279,7 +279,7 @@ def test_prompt_says_so_when_the_repo_ships_no_template(worktree):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body", return_value=("t", "")), \
          mock.patch.object(pr_describe_cli, "_git", return_value=""), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True), \
-         mock.patch.object(pr_describe_cli.ai_backend, "prompt",
+         mock.patch.object(pr_describe_cli.agent_invoke.ai_backend, "prompt",
                            return_value=(_wrapped("B"), 0)) as prompt:
         pr_describe_cli.run_describe(_ctx(worktree))
     assert "this repo ships none" in prompt.call_args[0][0]

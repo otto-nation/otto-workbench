@@ -84,12 +84,17 @@ def _resolve_skill_path(agent: str) -> Path | None:
 # ── Command builders ──────────────────────────────────────────────────────────
 
 
-def _build_prompt_cmd(model: str | None = None, provider: str | None = None) -> list[str]:
+def _build_prompt_cmd(
+    model: str | None = None, provider: str | None = None,
+    thinking: str | None = None,
+) -> list[str]:
     cmd = ["pi", "-p", "--no-session", "--approve"]
     if provider:
         cmd += ["--provider", provider]
     if model:
         cmd += ["--model", model]
+    if thinking:
+        cmd += ["--thinking", thinking]
     return cmd
 
 
@@ -344,13 +349,17 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
 
 def prompt(
     text: str, *, cwd: str, model: str | None = None,
+    thinking: str | None = None, provider: str | None = None,
 ) -> tuple[str, int, ai_usage.SessionUsage | None]:
     """Stateless text-in/text-out via pi -p. Returns (text, exit_code, usage).
 
     Pi's -p mode reports no usage, so the third element is always None — the
     ledger records nothing rather than a zeroed row that reads as a free call.
+
+    ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
+    both exactly as the agent modes do.
     """
-    cmd = _build_prompt_cmd(model=model)
+    cmd = _build_prompt_cmd(model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=timeouts.UNBOUNDED)
     return result.stdout, result.returncode, None

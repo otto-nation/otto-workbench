@@ -30,7 +30,6 @@ import agent_invoke
 import agent_phases
 import agent_retry
 import agent_templates
-import ai_backend
 import git_client
 import land
 import pr_comments as pc
@@ -411,16 +410,20 @@ def _run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
         commit_log=_branch_commit_log(repo_dir),
     )
 
-    stdout, rc = agent_retry.retry_blank_response(
-        lambda text: ai_backend.prompt(text, cwd=str(repo_dir), task="comment-triage"),
-        prompt, label="Triage", usable=_parses_as_json,
+    pr_number = ctx_args.get("pr_number")
+    answer = agent_invoke.run_prompt(
+        Phase.COMMENTS_TRIAGE, prompt,
+        cwd=repo_dir, usable=_parses_as_json, task="comment-triage",
+        repo=ctx_args.get("repo"), pr=str(pr_number) if pr_number else None,
     )
-    if rc != 0:
+    if answer.exit_code != 0:
         if trail:
-            trail.error("triage", "AI prompt failed", data={"exit_code": rc})
+            trail.error("triage", "AI prompt failed",
+                        data={"exit_code": answer.exit_code})
         log.error("ai prompt failed")
         return None, 1
 
+    stdout = answer.text
     try:
         raw = json.loads(_extract_json(stdout))
     except (json.JSONDecodeError, TypeError):
@@ -687,7 +690,7 @@ def _guarded_fix_pass(
     output.  Returns the diagnosis, or None when the pass produced work.
     """
     dirs = [str(wt_path)] + ([str(main_wt)] if main_wt else [])
-    return agent_invoke.run_fix_pass(
+    return agent_invoke.run_fix(
         Phase.COMMENTS_FIX, prompt,
         cwd=wt_path,
         session_log=_fix_session_log(wt_path),

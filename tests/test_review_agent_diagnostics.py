@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import agent_invoke
+import ai_backend
 import review_agent
 import review_retry
 from review_common import Diagnosis, DiagnosisKind
@@ -241,11 +243,11 @@ class TestWritableDirs:
     def _add_dirs(self, monkeypatch, artifact_dir: str) -> list[str]:
         captured = {}
         monkeypatch.setattr(
-            review_agent.ai_backend, "invoke_agent",
+            agent_invoke.ai_backend, "invoke_agent",
             lambda inv: captured.update(add_dirs=inv.add_dirs) or 0,
         )
-        review_agent.invoke_agent(
-            review_agent.AgentInvocation(
+        agent_invoke.run_agent(
+            ai_backend.AgentInvocation(
                 prompt="prompt",
                 session_log="/tmp/session.jsonl",
                 add_dirs=review_agent.build_add_dirs("/tmp/wt", artifact_dir),

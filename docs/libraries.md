@@ -147,7 +147,7 @@ Every key any of them accepts:
 | `issue_tracker.jira_url` | string | — |
 | `github.ssh_over_443` | boolean | `false` |
 
-`<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `comments_fix`, `ci_fix`
+`<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `comments_fix`, `comments_triage`, `ci_fix`, `rebase`, `describe`
 
 Both writers seed the modeline — `wb_config_ensure_file` in bash, `set_value`
 in Python — and `yq -i` carries it through every later write, so completion and

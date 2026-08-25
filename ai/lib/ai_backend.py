@@ -121,14 +121,20 @@ def _require_cwd(cwd: str, entry_point: str) -> None:
 
 def prompt(
     text: str, *, cwd: str, model: str | None = None,
+    thinking: str | None = None, provider: str | None = None,
     task: str | None = None, repo: str | None = None, pr: str | None = None,
 ) -> tuple[str, int]:
     """Stateless text-in/text-out. Returns (response_text, exit_code).
 
     `cwd` is required — see _require_cwd for why it has no safe default.
+
+    `thinking` and `provider` follow the same rule as on `AgentInvocation`: Pi
+    honours both, Claude Code has a flag for neither and drops them.
     """
     _require_cwd(cwd, "prompt")
-    result = _get_module().prompt(text, cwd=cwd, model=model)
+    result = _get_module().prompt(
+        text, cwd=cwd, model=model, thinking=thinking, provider=provider,
+    )
     # Backends report (text, code, usage); tolerate the older pair so a backend that
     # has not adopted the triple degrades to unmeasured rather than crashing dispatch.
     if len(result) == 3:

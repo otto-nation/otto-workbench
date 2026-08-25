@@ -55,6 +55,8 @@ class PhaseDomain(StrEnum):
     REVIEW = "review"
     COMMENTS = "comments"
     CI = "ci"
+    REBASE = "rebase"
+    DESCRIBE = "describe"
 
 
 class PhaseShape(StrEnum):
@@ -96,7 +98,10 @@ class Phase(StrEnum):
     DISPROVE = "disprove"
     FIX = "fix"
     COMMENTS_FIX = "comments_fix"
+    COMMENTS_TRIAGE = "comments_triage"
     CI_FIX = "ci_fix"
+    REBASE = "rebase"
+    DESCRIBE = "describe"
 
     @property
     def model_env_key(self) -> str:
@@ -137,7 +142,7 @@ class AgentKind(StrEnum):
 
     Every member here is a review persona forbidden from editing the workspace.
     Phases that write to the branch pass ``None`` instead of an ``AgentKind`` —
-    see ``run_fix_pass``.
+    see ``agent_invoke.run_fix``.
     """
 
     REVIEWER = "reviewer"

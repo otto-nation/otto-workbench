@@ -198,6 +198,55 @@ def _clear_agent_env():
     os.environ.update(saved)
 
 
+def _backend_binaries() -> set[str]:
+    """The CLI names an AI call can spawn, from the enum that selects between them."""
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from ai_backend import Backend
+    return {b.value for b in Backend}
+
+
+@pytest.fixture(autouse=True)
+def _no_live_backend(monkeypatch):
+    """Never let a test spawn a real agent CLI.
+
+    The guard sits on ``subprocess`` rather than on ``ai_backend``, because the
+    backend modules are where the spawn happens and a good many tests exercise
+    them for real with ``subprocess.run`` stubbed. Replacing that function is
+    how such a test declares it has taken the spawn over, and it replaces this
+    wrapper along with it; a test that never stubs it reaches the wrapper and is
+    refused.
+
+    The floor exists because a missing stub does not read as one. A test that
+    replaces ``<script>.ai_backend`` wholesale stopped covering the call once
+    ``agent_invoke`` began holding its own reference to the module — the call
+    then costs real money and answers differently every run, which surfaces as a
+    flaky assertion rather than as an unstubbed seam.
+    """
+    binaries = _backend_binaries()
+    real_run, real_popen = subprocess.run, subprocess.Popen
+
+    def refuse_backend(cmd):
+        argv0 = cmd[0] if isinstance(cmd, (list, tuple)) and cmd else cmd
+        if Path(str(argv0)).name in binaries:
+            raise AssertionError(
+                f"a test spawned the {argv0} CLI for real — stub ai_backend's own "
+                "attributes (the module agent_invoke holds), not a script's alias "
+                "for it, or stub subprocess.run to answer as the CLI would"
+            )
+
+    def guarded_run(cmd, *args, **kwargs):
+        refuse_backend(cmd)
+        return real_run(cmd, *args, **kwargs)
+
+    def guarded_popen(cmd, *args, **kwargs):
+        refuse_backend(cmd)
+        return real_popen(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    monkeypatch.setattr(subprocess, "Popen", guarded_popen)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_workbench_config(tmp_path, monkeypatch):
     """Run every test against an empty config root.

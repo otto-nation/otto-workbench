@@ -16,7 +16,8 @@ by a real `git config` aimed at a repository the caller did not name, which is
 the shape the leak arrives in.
 
 The review-env guard covers the other direction — config arriving from the
-developer's shell rather than from another process.
+developer's shell rather than from another process. The live-backend guard
+covers a third: a spawn leaving the test process for a real agent CLI.
 """
 
 import os
@@ -27,9 +28,9 @@ from pathlib import Path
 import pytest
 
 from conftest import (
-    _agent_env_keys, _assert_config_unchanged, _clear_agent_env,
-    _describe_config_change, _guarded_lines, _load_lib, _section_of,
-    init_worktree, seed_repo,
+    _agent_env_keys, _assert_config_unchanged, _backend_binaries,
+    _clear_agent_env, _describe_config_change, _guarded_lines, _load_lib,
+    _section_of, init_worktree, seed_repo,
 )
 
 gitenv = _load_lib("gitenv")
@@ -356,3 +357,31 @@ class TestAgentEnvGuard:
         monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
         next(guard, None)
         assert "WORKBENCH_AI_SCOUT_MODEL" not in os.environ
+
+
+class TestLiveBackendGuard:
+    """A test that forgot to stub the backend is refused, not billed.
+
+    The guard runs against this test too, so each case here is the real thing:
+    the spawn is attempted and the wrapper is what stops it.
+    """
+
+    @pytest.mark.parametrize("binary", sorted(_backend_binaries()))
+    def test_every_backend_cli_is_refused(self, binary):
+        with pytest.raises(AssertionError, match="for real"):
+            subprocess.run([binary, "-p", "hello"], capture_output=True)
+
+    def test_an_absolute_path_to_one_is_refused_too(self):
+        """`which` resolves the binary before the backend spawns it."""
+        with pytest.raises(AssertionError, match="for real"):
+            subprocess.run(["/opt/homebrew/bin/claude", "-p", "hello"])
+
+    def test_popen_is_guarded_as_well_as_run(self):
+        # invoke_agent and invoke_fix stream, so they reach Popen, not run.
+        with pytest.raises(AssertionError, match="for real"):
+            subprocess.Popen(["claude", "-p"], stdout=subprocess.PIPE)
+
+    def test_every_other_command_still_runs(self):
+        assert subprocess.run(
+            ["echo", "hi"], capture_output=True, text=True,
+        ).stdout == "hi\n"

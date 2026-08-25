@@ -728,7 +728,7 @@ def _run_fix(trail, report: dict, ctx) -> int:
 
     # An agent that finishes having checked nothing off was thrashing; the
     # shared guard gives it one more attempt with a hint naming the mechanism.
-    rc = agent_invoke.run_fix_pass(
+    rc = agent_invoke.run_fix(
         Phase.CI_FIX, prompt,
         cwd=toplevel,
         session_log=session_log,

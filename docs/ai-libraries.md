@@ -1608,6 +1608,62 @@ since a second implementation in shell is the thing being avoided. It takes
 `--cwd`, `--branch`, `--remote` and `--set-upstream`, runs ungated, and answers
 in exit codes — `0` pushed, `1` refused, `2` lost, `3` unverified.
 
+### push_intent.py
+
+What every push on this machine was about to do, and whether it did it.
+
+`push.py` owns the pushes this workbench issues: it pushes, asks the remote
+whether the ref moved, and reports loudly when it did not. It cannot see a push
+you type yourself. `git push` from a terminal, from an editor, or from a script
+that is not ours reaches the remote through the same socket, behind the same
+gates, and nothing asks afterwards whether it landed — so the failure `push.py`
+exists to catch happens in the place where it is least likely to be noticed.
+No wrapper printed a summary, so there is nothing to scroll back to; the next
+signal is a branch with no PR, long after the reason is gone.
+
+The global `pre-push` hook is the one thing every push on this machine passes
+through, whoever issued it. It hands the ref lines git gave it to `record`,
+which writes down what is about to be pushed. `reconcile` asks the remote about
+each record later, through `push.remote_head`, and reports what did not land
+through `push.report` — the same words an automated push is reported in, rather
+than a second vocabulary for the same failure.
+
+Reconciliation runs at the start of the next `pr` command. That is later than
+the shell prompt and much cheaper: no network call sits near the prompt, and
+`pr` is both the workbench's git surface and somewhere that can always print.
+It costs one failed `stat` when nothing is pending — every run but the ones
+that matter — and one `ls-remote` per pending ref when something is.
+
+The record's whole lifecycle is designed against a permanent false alarm:
+
+* A second push to the same ref replaces the first record rather than adding
+  one, so `push A; push B` never reports A as lost.
+* A delete push drops the record for that ref and writes none of its own —
+  a ref being removed has no commit left to verify.
+* A remote that has moved *past* the recorded commit landed it and was built
+  upon; `_built_upon` asks that locally before anything is reported.
+* A record whose working tree has since been removed drains in silence, which
+  is what makes a push between throwaway repositories — a test suite's, say —
+  cost nothing to have recorded, without this having to know what a temp root
+  looks like.
+* Reconciliation reports a record at most once and then drops it. A push that
+  landed drops silently, one that did not is reported once and drops too.
+  Nothing survives a report, so nothing can repeat one.
+* A record the remote could not be asked about survives, because nothing was
+  learned — but for `_MAX_ATTEMPTS` tries only, after which it is reported as
+  unverified and dropped.
+* `_MAX_RECORDS` bounds the file on a machine where reconciliation never runs.
+
+`record` never raises. It is called from `pre-push`, where anything non-zero
+refuses the push — in every repo on this machine — and no bookkeeping entry is
+worth that. The hook adds its own `|| true` over the top; both are deliberate,
+because only one of them is visible from each side. `reconcile` raises, and its
+one call site in `pr` catches and warns, for a related reason: every subcommand
+passes through it on the way to work that has nothing to do with pushing, so an
+escaping exception would take the whole CLI down over a side-feature. Warning
+rather than passing is what keeps a bug in here loud without coupling anything
+to it.
+
 ### run_lock.py
 
 Advisory whole-run lock, scoped to what a run targets.

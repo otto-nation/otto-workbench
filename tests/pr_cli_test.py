@@ -1,5 +1,6 @@
 """Tests for pr CLI helper functions."""
 
+import ast
 import importlib.util
 import json
 import os
@@ -1989,3 +1990,56 @@ def test_the_schema_contracts_are_read_off_the_mode_table():
         pr_cli.review_listing.SCHEMA_VERSIONS
     assert pr_cli._served_schema_versions("review", ["--summary"]) == ()
     assert pr_cli._served_schema_versions("status", []) == ()
+
+
+# ── push reconciliation ─────────────────────────────────────────────────────
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_every_command_reconciles_recorded_pushes_first(mock_resolve, mock_run):
+    """The single entry point for the record the global pre-push hook leaves.
+
+    Before the context is resolved, so a report about a push made hours ago in
+    another repository is not withheld by a command that goes on to fail for
+    reasons of its own.
+    """
+    mock_resolve.return_value = make_ctx()
+    mock_run.return_value = MagicMock(returncode=0)
+    with patch("pr_cli.push_intent.reconcile") as reconcile:
+        reconcile.side_effect = lambda: mock_resolve.assert_not_called()
+        _run_main("rebase")
+    reconcile.assert_called_once_with()
+    mock_resolve.assert_called_once()
+
+
+@patch("pr_cli.subprocess.run")
+@patch("pr_cli.pr_context.resolve")
+def test_a_reconciliation_that_raises_leaves_the_command_running(
+        mock_resolve, mock_run, capsys):
+    """Every subcommand passes through reconciliation on its way to work that
+    has nothing to do with pushing, so a bug in it is a warning, not an outage —
+    and it is a warning rather than silence so the bug is still findable."""
+    mock_resolve.return_value = make_ctx()
+    mock_run.return_value = MagicMock(returncode=0)
+    with patch("pr_cli.push_intent.reconcile", side_effect=RuntimeError("the record broke")):
+        _run_main("rebase")
+    mock_resolve.assert_called_once()
+    assert "the record broke" in capsys.readouterr().err
+
+
+def test_reconciliation_is_hooked_in_exactly_one_place():
+    """One owner, so a new subcommand inherits it rather than declaring it.
+
+    Counted off the parse tree rather than the source text: a docstring or a
+    comment naming the call — this file's own prose about it, one day — would
+    read as a second owner and fail a test about the code.
+    """
+    tree = ast.parse(Path(pr_cli.__file__).read_text())
+    calls = [node for node in ast.walk(tree)
+             if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute)
+             and node.func.attr == "reconcile"
+             and isinstance(node.func.value, ast.Name)
+             and node.func.value.id == "push_intent"]
+    assert len(calls) == 1

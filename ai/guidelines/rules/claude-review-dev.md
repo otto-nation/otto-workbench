@@ -24,7 +24,14 @@ one line per prior finding, `- **[M1]** \`path\` — Fixed`, `— Still open`, o
 `— Declined`, with the ID and path copied from the prior review. Those three
 verdicts are `PriorDisposition`, and `_build_prior_section()`'s instruction
 interpolates the enum's values, so the words asked for and the words parsed
-cannot drift apart.
+cannot drift apart. Where the verdict sits in the line is held together by a
+test instead: `TestLedgerInstructionParses` reads every example the instruction
+shows back through `_parse_ledger_line`, because an example the parser rejects
+is invisible until a whole re-review's bookkeeping is lost. A verdict parses
+when it comes first and ends the line or breaks with one of
+`DISPOSITION_TAIL_PUNCTUATION`; a comma is deliberately not on that list, so
+"Fixed, but only on the happy path" reaches no verdict rather than its
+optimistic half.
 The ledger is unioned across groups by `merge_reviews()` — where the strongest
 verdict wins, in `PriorDisposition.precedence` order (`Declined` beats
 `Still open` beats `Fixed`) — copied through by the synthesis templates, and
@@ -43,9 +50,19 @@ finding lines hash to, so a verbatim carry-forward counts with or without its
 gone, or whose quoted code was in that file at the prior review's `head_sha`
 and is not in it now. `DispositionSource` records which of those answered, so
 an inference is never read back as something the review stated, and the tree is
-asked last because it cannot produce `Declined`. What none of them settles is
-undecided: it is warned about with a basis saying why, and the whole
-reconciliation — settled and not — is written to `prior-findings.json`.
+asked last because it cannot produce `Declined`. Every source reads a location
+through `_extract_finding_path()`, which asks `_extract_path()` first so a
+finding citing a bare `` `path` `` with no `:<line>` still yields a path and a
+stable ID — without one it can be neither carried forward nor checked against
+the tree.
+
+What none of them settles is undecided, and `UndecidedReason` says which kind:
+an unreadable ledger verdict and a location nothing could parse are defects
+here, `NOT_CHECKABLE` is a check there was nothing to run, and only
+`NOT_MENTIONED` is the review passing a finding by. `report()` prints them
+grouped in that order rather than as one list — run together they all read as
+the last one — and the whole reconciliation, settled and not, is written to
+`prior-findings.json`.
 
 Because the ledger is stripped, `Declined` also has to survive on the finding
 line itself: a declined finding is carried forward annotated

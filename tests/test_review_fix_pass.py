@@ -936,8 +936,8 @@ class TestRunFixPassRetry:
         wt.mkdir()
         git_out(wt, "init", "-q", "-b", "main")
         git_out(wt, "-c", "user.email=t@t", "-c", "user.name=t",
-             "-c", "commit.gpgsign=false",
-             "commit", "-q", "--allow-empty", "--no-verify", "-m", "initial")
+                "-c", "commit.gpgsign=false",
+                "commit", "-q", "--allow-empty", "--no-verify", "-m", "initial")
         job.wt_path = str(wt)
         job.model = None
         job.effort = Effort.MEDIUM

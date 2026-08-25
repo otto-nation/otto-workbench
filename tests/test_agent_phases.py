@@ -109,5 +109,12 @@ class TestPhaseChunkSize:
         assert chunk * scaling.turns_per_item <= scaling.turns_cap
         assert chunk * scaling.budget_per_item <= scaling.budget_cap
 
+    def test_the_ci_pass_chunk_fits_both_caps(self):
+        scaling = PHASES[Phase.CI_FIX].scaling
+        chunk = agent_phases.phase_chunk_size(Phase.CI_FIX)
+        assert chunk * scaling.turns_per_item <= scaling.turns_cap
+        assert chunk * scaling.budget_per_item <= scaling.budget_cap
+
     def test_a_phase_that_scales_with_nothing_bounds_no_chunk(self):
-        assert agent_phases.phase_chunk_size(Phase.CI_FIX) == 0
+        """A prompt-shaped phase is handed one call's worth of work, not a list."""
+        assert agent_phases.phase_chunk_size(Phase.COMMENTS_TRIAGE) == 0

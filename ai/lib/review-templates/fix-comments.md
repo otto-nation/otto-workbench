@@ -2,7 +2,7 @@ Fix PR review comment suggestions for branch ${branch_name} in ${repo}.
 
 ## Comment threads to address
 
-${threads_content}
+${tracking_content}
 
 ## Task
 
@@ -63,3 +63,4 @@ ${worktree_block}
 
 ## Turn budget
 You have ${max_turns} turns. Process threads systematically — batch independent file reads into single turns.
+${main_worktree}

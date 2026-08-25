@@ -138,6 +138,39 @@ Resolving a spec against the config file and the environment is
 ``agent_phases``'s job — that layer needs ``workbench_config``, which needs
 this one.
 
+### fix_engine.py
+
+The pipeline every fix pass runs: batch, invoke, retry, land, record.
+
+`fix_types` says what an item is, `fix_tracking` says how the agent is asked
+about it, `agent_invoke` runs the agent and `land` commits what it produced.
+This is the order those happen in, written once. Three passes sequenced them
+themselves and the sequences disagreed — one batched its checklist and two
+inlined it whole, two retried the items left over and disagreed about which
+ones, and one of them had no partial-progress retry at all.
+
+A domain supplies a :class:`FixAdapter` and nothing else: which phase sizes the
+pass, the items, the prompt substitutions its template needs, the commit it
+wants and what to do with the outcomes. Everything between those is here.
+
+Two rules the passes disagreed on, settled here:
+
+**A batch that stalled has already had its retry.** ``agent_invoke.run_fix``
+gives an unproductive pass a second attempt of its own, so handing that batch's
+deferrals to the partial-progress retry buys a third identical run. One stalled
+batch must not spend the whole pass's retry either, which is why the two are
+partitioned rather than pooled.
+
+**A retry re-decides the items it is handed.** Only ``DEFERRED`` items go into
+it — an agent that declined an item or said it needs a person answered the
+question it was asked — and its answers supersede the first pass's rather than
+being reported alongside them.
+
+The gate is not a parameter. Every pass here runs on an operator's behalf, so
+the commit is unconditional and the push waits for ``--post``; `land`'s own
+docstring makes that argument, and a fix pass that wanted the other split would
+be a fix pass asserting something outward nobody approved.
+
 ### prompt.py
 
 Terminal questions, for the few commands that have one to ask.
@@ -962,10 +995,10 @@ it, and it imports nothing from ``ai/lib`` in return. That is what lets the
 record hang off the base class without the domains and the vocabulary they are
 written in forming a cycle.
 
-Nothing writes a record yet. The engine that will is the shared fix pipeline,
-which replaces the three orchestrations that exist today; this module is the
-type it writes into, landed ahead of it so the passes have one target to
-converge on rather than three to reconcile afterwards.
+The CI pass writes one. It reaches these types through :mod:`fix_engine`, the
+shared pipeline the other two are still being moved onto — so a record is what
+a pass produces once it runs on the engine, and the passes that do not yet keep
+the bespoke shapes they had.
 
 ### pr_state.py
 

@@ -27,9 +27,13 @@ AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import make_ctx  # noqa: E402
+
+import fix_engine  # noqa: E402
 import review_common  # noqa: E402
 import review_findings  # noqa: E402
 import review_prompt  # noqa: E402
+from pr_state import PRIdentity, PRState  # noqa: E402
 from review_preflight import (  # noqa: E402
     MAX_PROMPT_BYTES, PRContext, PRMetadata, PreflightData, ReviewJob,
 )
@@ -390,20 +394,46 @@ def _render_via_build_prompt(template_name: str, job: ReviewJob | None = None) -
     )
 
 
-def _render_fix_ci(cc) -> str:
-    return cc._render_ci_fix_template(
-        branch="user/feat/thing", repo="owner/repo",
-        failures_content="- [ ] test failed", tracking_file="/tmp/ci.md",
-        wt_path="/tmp/wt", max_turns=15,
-    )
+def _render_adapter(adapter) -> str:
+    """Render a fix template the way `fix_engine` renders it for a real pass.
+
+    Going through the engine rather than restating the substitution keeps this
+    honest about what an agent is actually handed: a placeholder the engine
+    stopped supplying would show up here as unsubstituted, not as a passing
+    test against a call nobody makes.
+    """
+    adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
+    adapter.tracking_path.write_text("- [ ] fixed\n")
+    return fix_engine._prompt(adapter, 15)
 
 
-def _render_fix_comments(rt) -> str:
-    return rt._render_fix_template(
-        branch="user/feat/thing", repo="owner/repo",
-        threads_content="- [ ] comment", tracking_file="/tmp/threads.md",
-        wt_path="/tmp/wt", max_turns=15,
+def _render_fix_ci(cc, wt_path) -> str:
+    ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
+                   worktree_root=wt_path, target_dir=wt_path)
+    return _render_adapter(cc.CIFixAdapter(
+        [{"id": "build-1", "job": "build", "kind": "build",
+          "annotation": "test failed", "headline": "test failed"}],
+        {"run_number": 1}, ctx,
+        PRState(identity=PRIdentity(
+            repo="owner/repo", branch="user/feat/thing", pr_number=42,
+            head_sha="abc123", worktree_root=str(wt_path),
+        )),
+    ))
+
+
+def _render_fix_comments(rt, wt_path) -> str:
+    ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
+                   pr_number=1, worktree_root=wt_path, target_dir=wt_path)
+    adapter = rt.CommentFixAdapter(
+        rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
+        fixable=[], fixable_items=[], needs_human=[], dismissed=[],
+        already_addressed=[], resolved=[], triage_replies=0,
+        has_unaccounted=False, has_items=False,
     )
+    # The default-branch checkout is a fetch and a reset against a second
+    # worktree; a render has no business making either.
+    adapter.__dict__["main_wt"] = None
+    return _render_adapter(adapter)
 
 
 def _make_common_sections() -> review_prompt.CommonSections:
@@ -428,12 +458,12 @@ class TestTemplateRendering:
             + ", ".join(f"${{{v}}}" for v in left)
         )
 
-    def test_fix_ci_template_fully_substituted(self, cc):
-        left = _unsubstituted(_render_fix_ci(cc))
+    def test_fix_ci_template_fully_substituted(self, cc, tmp_path):
+        left = _unsubstituted(_render_fix_ci(cc, tmp_path))
         assert not left, f"fix-ci.md left: {left}"
 
-    def test_fix_comments_template_fully_substituted(self, rt):
-        left = _unsubstituted(_render_fix_comments(rt))
+    def test_fix_comments_template_fully_substituted(self, rt, tmp_path):
+        left = _unsubstituted(_render_fix_comments(rt, tmp_path))
         assert not left, f"fix-comments.md left: {left}"
 
     def test_every_template_is_covered(self):
@@ -467,8 +497,11 @@ class TestOutputBlockContract:
         )
 
     @pytest.mark.parametrize("render", ["ci", "comments"])
-    def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt):
-        rendered = _render_fix_ci(cc) if render == "ci" else _render_fix_comments(rt)
+    def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt, tmp_path):
+        rendered = (
+            _render_fix_ci(cc, tmp_path) if render == "ci"
+            else _render_fix_comments(rt, tmp_path)
+        )
         self._assert_no_mandate(render, rendered)
 
     def _assert_no_mandate(self, label, rendered):
@@ -514,9 +547,12 @@ class TestOutputBlockContract:
         assert expected == checked
 
     @pytest.mark.parametrize("render", ["ci", "comments"])
-    def test_fix_templates_share_the_worktree_block(self, render, cc, rt):
-        rendered = _render_fix_ci(cc) if render == "ci" else _render_fix_comments(rt)
-        assert review_common.build_worktree_block("/tmp/wt") in rendered
+    def test_fix_templates_share_the_worktree_block(self, render, cc, rt, tmp_path):
+        rendered = (
+            _render_fix_ci(cc, tmp_path) if render == "ci"
+            else _render_fix_comments(rt, tmp_path)
+        )
+        assert review_common.build_worktree_block(str(tmp_path)) in rendered
 
     def test_fix_findings_shares_the_worktree_block(self):
         rendered = _render_via_build_prompt(review_common.TEMPLATE_FIX)

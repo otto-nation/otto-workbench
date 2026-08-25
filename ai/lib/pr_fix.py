@@ -14,10 +14,10 @@ it, and it imports nothing from ``ai/lib`` in return. That is what lets the
 record hang off the base class without the domains and the vocabulary they are
 written in forming a cycle.
 
-Nothing writes a record yet. The engine that will is the shared fix pipeline,
-which replaces the three orchestrations that exist today; this module is the
-type it writes into, landed ahead of it so the passes have one target to
-converge on rather than three to reconcile afterwards.
+The CI pass writes one. It reaches these types through :mod:`fix_engine`, the
+shared pipeline the other two are still being moved onto — so a record is what
+a pass produces once it runs on the engine, and the passes that do not yet keep
+the bespoke shapes they had.
 """
 
 # doc-group: pr-state

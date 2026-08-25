@@ -141,8 +141,15 @@ class TestPhaseChunking:
         # 60 turns at 5 each allows 12; $5 at $0.50 each allows 10.
         assert PHASES[Phase.COMMENTS_FIX].scaling.chunk_size == 10
 
-    def test_the_ci_fix_pass_scales_with_nothing(self):
-        assert PHASES[Phase.CI_FIX].scaling.chunk_size == 0
+    def test_the_ci_fix_pass_chunks_at_ten(self):
+        """The rates restate the flat budget the pass always had, over ten items.
+
+        Both caps therefore have to land on the same ten, or the flat numbers
+        `phase_turns` and `phase_budget` answer would no longer be what one
+        chunk actually costs.
+        """
+        # 20 turns at 2 each allows 10; $3 at $0.25 each allows 12.
+        assert PHASES[Phase.CI_FIX].scaling.chunk_size == 10
 
 
 class TestPhaseShapes:

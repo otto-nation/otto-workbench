@@ -21,6 +21,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
+import git_client
 import log
 from agent_types import EFFORT_PRESETS, Effort, Phase
 from review_common import (
@@ -708,8 +709,8 @@ def _with_local_diff(pr: PRMetadata, local: PRMetadata) -> PRMetadata:
     """
     if pr.head_sha != local.head_sha:
         log.info(
-            f"Reviewing local HEAD {local.head_sha[:7]} "
-            f"(PR head is {pr.head_sha[:7]})"
+            f"Reviewing local HEAD {git_client.abbrev(local.head_sha)} "
+            f"(PR head is {git_client.abbrev(pr.head_sha)})"
         )
     return replace(
         pr,

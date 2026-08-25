@@ -16,6 +16,7 @@ from datetime import date
 from pathlib import Path
 
 import agent_templates
+import git_client
 import json
 import log
 from agent_types import EFFORT_PRESETS, Effort
@@ -399,7 +400,7 @@ def _build_delta_section(
 ) -> str:
     if not preflight or not preflight.prior_head_sha:
         return ""
-    prior = preflight.prior_head_sha[:7]
+    prior = git_client.abbrev(preflight.prior_head_sha)
     delta_files = preflight.delta_files
     if file_filter:
         filter_set = set(file_filter)
@@ -817,8 +818,8 @@ def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
     if not _is_incremental(job):
         return base_ctx
     pf = job.preflight
-    prior_sha = pf.prior_head_sha[:7]
-    head_sha = job.pr.head_sha[:7]
+    prior_sha = git_client.abbrev(pf.prior_head_sha)
+    head_sha = git_client.abbrev(job.pr.head_sha)
     n_files = len(pf.delta_files)
     incremental_note = (
         f"\n\n**Incremental review note:** {n_files} file(s) changed since the "

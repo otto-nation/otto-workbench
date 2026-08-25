@@ -416,7 +416,9 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
         return empty
     verify = git_client.out("cat-file", "-t", prior_sha, cwd=job.wt_path)
     if verify != "commit":
-        log.warn(f"Prior review SHA {prior_sha[:7]} not reachable — running full review")
+        log.warn(
+            f"Prior review SHA {git_client.abbrev(prior_sha)} not reachable "
+            "— running full review")
         return empty
 
     if job.mode == Mode.SELF:
@@ -433,7 +435,7 @@ def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
     delta_files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(raw_diff)]
     log.info(
         f"Incremental review: {len(delta_files)} files changed since "
-        f"prior review ({prior_sha[:7]}..{job.pr.head_sha[:7]})"
+        f"prior review ({git_client.abbrev(prior_sha)}..{git_client.abbrev(job.pr.head_sha)})"
     )
     return delta_diff, delta_log, delta_files, prior_sha
 

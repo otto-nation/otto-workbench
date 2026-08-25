@@ -201,7 +201,8 @@ def run_describe(
     state = pr_state.load_state(ctx.target_dir)
     last_sha = state.describe.head_sha if state else ""
     if last_sha and last_sha == ctx.head_sha and not force:
-        log.info(f"Description already written for {ctx.head_sha[:7]} — skipping")
+        log.info(
+            f"Description already written for {git_client.abbrev(ctx.head_sha)} — skipping")
         return 0
 
     template, template_path = _load_template(wt_path)

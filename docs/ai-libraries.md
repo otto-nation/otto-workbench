@@ -1438,6 +1438,11 @@ used once belongs at its call site, spelled out with `run`.
 | `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
 | `lines(*args)` | Stdout split into non-empty lines. |
 
+`abbrev` is the one call here that runs no git at all: it shortens a sha already
+in hand for display, the way `head_sha(short=True)` shortens one it just asked
+for. How much of a sha a reader is shown is a convention this module owns, and
+before it did, thirty-one call sites each spelled the seven out for themselves.
+
 There is no `timeout` parameter. The bound follows from the subcommand the same
 way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`
 run `UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so

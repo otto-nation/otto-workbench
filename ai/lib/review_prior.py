@@ -195,7 +195,7 @@ class Reconciliation:
     @property
     def range_label(self) -> str:
         """The pair of trees the reconciliation compared, as far as it knows them."""
-        ends = [sha[:7] for sha in (self.prior_sha, self.head_sha) if sha]
+        ends = [git_client.abbrev(sha) for sha in (self.prior_sha, self.head_sha) if sha]
         return " → ".join(ends) if len(ends) == 2 else (ends[0] if ends else "an unnamed commit")
 
 
@@ -289,7 +289,8 @@ class _Tree:
         """The verdict on a finding by whether the code it quoted survived."""
         quoted = self._quoted(finding, path)
         if not quoted:
-            return _Inference(basis=f"nothing it quotes was in `{path}` at {self.prior_sha[:7]}")
+            return _Inference(
+                basis=f"nothing it quotes was in `{path}` at {git_client.abbrev(self.prior_sha)}")
         after = _norm((Path(self.wt_path) / path).read_text(errors="replace"))
         gone = [span for span in quoted if _norm(span) not in after]
         if not gone:

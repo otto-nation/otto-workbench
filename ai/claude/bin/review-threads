@@ -1546,7 +1546,7 @@ def _post_already_addressed_replies(
             sha = framing.sha
             commit_url = f"https://github.com/{repo}/commit/{sha}"
             lead = "Fixed in" if framing.in_response else "Addressed in"
-            parts.append(f"{lead} [`{sha[:7]}`]({commit_url}).")
+            parts.append(f"{lead} [`{git_client.abbrev(sha)}`]({commit_url}).")
         if len(parts) == 1 and not framing.in_response:
             return (
                 f"{_ADDRESSED_REPLY_PREFIX} in the current implementation: "

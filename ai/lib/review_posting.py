@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 import gh_client
+import git_client
 import proc
 import review_dedup
 import review_format
@@ -191,8 +192,9 @@ def _format_comment_body(
     )
 
     header = (
-        f"> **Note:** This review was written against commit `{review_sha[:7]}`. "
-        f"PR HEAD has since moved to `{head_sha[:7]}` "
+        f"> **Note:** This review was written against commit "
+        f"`{git_client.abbrev(review_sha)}`. "
+        f"PR HEAD has since moved to `{git_client.abbrev(head_sha)}` "
         f"({new_commit_count} new commit{plural(new_commit_count)}). "
         f"Inline positions may be inaccurate — posted as a comment instead of a review.\n"
     )
@@ -245,7 +247,10 @@ def _post_as_comment(
         sys.exit(1)
 
     comment_id = result.get("id", 0)
-    log.info(f"Review posted as comment #{comment_id} (SHA drifted: {review_sha[:7]} → {head_sha[:7]})")
+    log.info(
+        f"Review posted as comment #{comment_id} "
+        f"(SHA drifted: {git_client.abbrev(review_sha)} → {git_client.abbrev(head_sha)})"
+    )
 
     write_post_tracking(args.review_file, PostTracking(
         posted_as=PostedAs.COMMENT.value, status=PostEvent.COMMENT.value,

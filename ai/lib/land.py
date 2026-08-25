@@ -293,7 +293,7 @@ def _recover(
     if push.holds(wt_path, sha):
         return LandResult(CommitStatus.PUSHED, sha=sha)
 
-    log.info(f"Recovered {sha[:7]} — committed outside the pass")
+    log.info(f"Recovered {git_client.abbrev(sha)} — committed outside the pass")
     result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
     push.report(result, wt_path)
     return _landed(wt_path, sha, result)
@@ -350,7 +350,7 @@ def _commit(
         raise RuntimeError("Committed, but could not read the new HEAD")
 
     subject = message.splitlines()[0] if message.strip() else "(no subject)"
-    log.info(f"Committed {sha[:7]} — {subject}")
+    log.info(f"Committed {git_client.abbrev(sha)} — {subject}")
     if trail:
         trail.info("commit", "committed the pass's work", data={"sha": sha})
     return _Commit(sha=sha)

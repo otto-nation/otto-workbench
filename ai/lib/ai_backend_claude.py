@@ -197,10 +197,14 @@ def _failure_detail(result: subprocess.CompletedProcess) -> str:
 
 def prompt(
     text: str, *, cwd: str, model: str | None = None,
+    thinking: str | None = None, provider: str | None = None,
 ) -> tuple[str, int, ai_usage.SessionUsage | None]:
     """Stateless text-in/text-out via claude -p. Returns (text, exit_code, usage).
 
     usage is None when the reply carried no envelope to measure.
+
+    ``thinking`` and ``provider`` are accepted and dropped, as they are on this
+    backend's agent modes: the Claude CLI has a flag for neither.
     """
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,

@@ -1,12 +1,13 @@
-"""Agent invocation, cost tracking, and diagnostics.
+"""What an agent run left behind: its cost, its diagnosis, its salvage.
 
-Delegates actual AI invocation to ai_backend (which dispatches to
-Claude Code CLI or Pi CLI based on AI_BACKEND env var). This module
-adds cost tracking, failure diagnosis, and output recovery on top.
+Everything here reads a session log after the fact. Running the agent is
+``agent_invoke``'s job and resolving which model it ran with is
+``agent_phases``'s; this module is what the pipeline asks once the log exists —
+what the run cost, why it produced nothing, whether the document it was denied
+permission to save can still be recovered.
 
-Which model, thinking level and provider an invocation runs with is
-``agent_phases``'s question, not this one's — it resolves a phase against the
-config file and the environment, and hands the answer here already decided.
+The split matters for the quota retry, whose two halves live apart: this module
+reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
 """
 
 # doc-group: pipeline
@@ -14,19 +15,12 @@ config file and the environment, and hands the answer here already decided.
 from __future__ import annotations
 
 import json
-import threading
-import time
 from dataclasses import replace
 from pathlib import Path
 
-import ai_backend
 import log
-from ai_backend import AgentInvocation
 from ai_backend_events import is_write_tool
-from review_common import (
-    Diagnosis, DiagnosisKind,
-    preserve_log, restore_preserved,
-)
+from review_common import Diagnosis, DiagnosisKind
 
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
@@ -221,38 +215,6 @@ def try_recover_output(log_path: str, output_path: str) -> bool:
     return False
 
 
-# ── Quota throttle ─────────────────────────────────────────────────────────
-
-
-class QuotaThrottle:
-    """Thread-safe throttle shared across pipeline agents.
-
-    When any agent hits a 429, all pending agents wait before launching.
-    """
-
-    def __init__(self, backoff: float = 30.0, max_backoff: float = 120.0):
-        self._lock = threading.Lock()
-        self._resume_at: float = 0.0
-        self._backoff = backoff
-        self._max_backoff = max_backoff
-
-    def report_exhausted(self, model: str) -> float:
-        with self._lock:
-            wait = self._backoff
-            self._resume_at = time.monotonic() + wait
-            self._backoff = min(self._backoff * 2, self._max_backoff)
-        log.warn(f"Quota exhausted on {model} — backing off {wait:.0f}s")
-        return wait
-
-    def wait_if_needed(self) -> None:
-        with self._lock:
-            resume_at = self._resume_at
-        remaining = resume_at - time.monotonic()
-        if remaining > 0:
-            log.info(f"Throttle: waiting {remaining:.0f}s for quota to recover")
-            time.sleep(remaining)
-
-
 # ── Quota detection ────────────────────────────────────────────────────────
 
 def _has_quota_retry(records: list[dict]) -> bool:
@@ -262,7 +224,12 @@ def _has_quota_retry(records: list[dict]) -> bool:
     )
 
 
-def _is_quota_error(log_path: str) -> bool:
+def is_quota_error(log_path: str) -> bool:
+    """Whether this session log shows the API turning the agent away on quota.
+
+    Public because ``agent_invoke`` decides the backoff and this module owns
+    reading a session log — the two halves of the same retry.
+    """
     if not Path(log_path).exists():
         return False
     return _has_quota_retry(_read_jsonl(log_path))
@@ -274,28 +241,3 @@ def _is_quota_error(log_path: str) -> bool:
 def build_add_dirs(wt_path: str, artifact_dir: str) -> list[str]:
     """Directories the agent may read outside its cwd."""
     return [artifact_dir, wt_path]
-
-
-def _invoke_once(inv: AgentInvocation) -> int:
-    prior_log = preserve_log(inv.session_log)
-    rc = ai_backend.invoke_agent(inv)
-    restore_preserved(inv.session_log, prior_log)
-    return rc
-
-
-def invoke_agent(
-    inv: AgentInvocation, *, throttle: QuotaThrottle | None = None,
-) -> int:
-    if throttle:
-        throttle.wait_if_needed()
-
-    rc = ai_backend.invoke_agent(inv)
-    if rc != 0 and inv.model and _is_quota_error(inv.session_log):
-        if throttle:
-            wait = throttle.report_exhausted(inv.model)
-            time.sleep(wait)
-        else:
-            log.warn(f"Quota exhausted on {inv.model} — retrying once after 30s backoff")
-            time.sleep(30)
-        rc = _invoke_once(inv)
-    return rc

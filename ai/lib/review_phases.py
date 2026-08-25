@@ -28,10 +28,12 @@ import agent_retry
 import log
 from agent_registry import PHASES
 from agent_types import EFFORT_PRESETS, Phase, PhaseShape
+from agent_invoke import run_agent
+from ai_backend import AgentInvocation
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD,
-    AgentInvocation, _parse_session_cost, build_add_dirs,
-    diagnose_missing_output, invoke_agent, try_recover_output,
+    _parse_session_cost, build_add_dirs,
+    diagnose_missing_output, try_recover_output,
 )
 from review_common import (
     FILE_STAT_FMT,
@@ -138,7 +140,7 @@ class PhaseRunner:
         """Run one attempt. Positional `(prompt, max_turns)` is the shape
         `agent_retry.retry_missing_output` calls its callback with, so a
         runner can be handed to it directly."""
-        return invoke_agent(
+        return run_agent(
             self.invocation(prompt, max_turns, label=label),
             throttle=self.job.throttle,
         )

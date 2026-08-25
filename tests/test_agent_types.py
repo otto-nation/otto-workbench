@@ -154,4 +154,6 @@ class TestVocabularyIsClosed:
         assert {e.value for e in Effort} == {"low", "medium", "high"}
         assert {t.value for t in Thinking} == {"low", "medium", "high"}
         assert {a.value for a in AgentKind} == {"reviewer", "reviewer-lite"}
-        assert {d.value for d in PhaseDomain} == {"review", "comments", "ci"}
+        assert {d.value for d in PhaseDomain} == {
+            "review", "comments", "ci", "rebase", "describe",
+        }

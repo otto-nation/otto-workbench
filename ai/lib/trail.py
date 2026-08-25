@@ -305,6 +305,17 @@ class Trail:
             data=data,
         )
 
+    @property
+    def context(self) -> dict:
+        """A copy of the subject this run opened against — repo, PR, branch.
+
+        Every record already carries it, so a caller that needs the same
+        attribution for something the trail does not write — a usage ledger
+        entry, say — reads it here rather than keeping a second copy of what
+        ``start`` was handed.
+        """
+        return dict(self._context)
+
     def info(self, action: str, detail: str, data: dict | None = None) -> None:
         self._emit(self._make_event(Level.INFO, EventType.ACTION, action, detail, data=data))
 

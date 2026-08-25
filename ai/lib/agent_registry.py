@@ -86,6 +86,29 @@ _SPECS: tuple[PhaseSpec, ...] = (
         shape=PhaseShape.FIX,
         scales_with_omitted=False,
     ),
+    # The prompt-shaped phases below are one stateless call each: no agent
+    # loop, so no turn budget, no dollar cap and no agent persona to pick.
+    # What they have that a hardcoded call did not is a model and a thinking
+    # level an operator can move, which is the whole reason they are phases.
+    PhaseSpec(
+        Phase.COMMENTS_TRIAGE, PhaseDomain.COMMENTS, "Triage",
+        shape=PhaseShape.PROMPT,
+        scales_with_omitted=False,
+    ),
+    # One phase, six ledger labels: pr-rebase asks for conflict resolutions,
+    # chunked resolutions, stash resolutions, lockfile commands and push-check
+    # fixes. They are the same call sized the same way, and an operator moving
+    # the rebase model means all of them.
+    PhaseSpec(
+        Phase.REBASE, PhaseDomain.REBASE, "Rebase assist",
+        shape=PhaseShape.PROMPT,
+        scales_with_omitted=False,
+    ),
+    PhaseSpec(
+        Phase.DESCRIBE, PhaseDomain.DESCRIBE, "Describe",
+        shape=PhaseShape.PROMPT,
+        scales_with_omitted=False,
+    ),
 )
 
 PHASES: dict[Phase, PhaseSpec] = {s.phase: s for s in _SPECS}

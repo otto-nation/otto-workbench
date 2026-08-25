@@ -2237,7 +2237,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
 
         ro._phase_synthesis(job, "", 3, "merged content")
 
@@ -2256,7 +2256,7 @@ class TestPhaseSynthesis:
                 '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
 
         assert ro._phase_synthesis(job, "", 3, "merged content").cost == 2.5
 
@@ -2271,7 +2271,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(
             monkeypatch, ro,
-            invoke_agent=mock_invoke,
+            run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
 
@@ -2291,7 +2291,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(
             monkeypatch, ro,
-            invoke_agent=mock_invoke,
+            run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
 
@@ -2312,7 +2312,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
 
         merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
         ro._phase_synthesis(job, "", 3, merged)
@@ -2339,7 +2339,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, invoke_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
 
         ro._phase_synthesis(job, "", 3, "merged content")
 
@@ -2364,7 +2364,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(
             monkeypatch, ro,
-            invoke_agent=mock_invoke,
+            run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
 
@@ -2391,7 +2391,7 @@ class TestPhaseSynthesis:
 
         self._patch_pipeline(
             monkeypatch, ro,
-            invoke_agent=mock_invoke,
+            run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
 
@@ -2639,7 +2639,7 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
         monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
 
@@ -2687,7 +2687,7 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
         monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
 
@@ -2716,7 +2716,7 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 1
 
-        monkeypatch.setattr(review_phases, "invoke_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
         monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(
             review_phases, "diagnose_missing_output",
@@ -3279,7 +3279,7 @@ class TestWriteReviewSidecar:
         assert json.loads((tmp_path / "meta.json").read_text())["started_at"] == first
 
 
-# ── _is_quota_error ───────────────────────────────────────────────────
+# ── is_quota_error ───────────────────────────────────────────────────
 
 
 class TestIsQuotaError:
@@ -3289,14 +3289,14 @@ class TestIsQuotaError:
             json.dumps({"type": "system", "subtype": "init"}) + "\n"
             + json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429}) + "\n"
         )
-        assert ro._is_quota_error(str(log)) is True
+        assert ro.is_quota_error(str(log)) is True
 
     def test_ignores_non_429(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text(
             json.dumps({"type": "system", "subtype": "api_retry", "error_status": 500}) + "\n"
         )
-        assert ro._is_quota_error(str(log)) is False
+        assert ro.is_quota_error(str(log)) is False
 
     def test_false_for_normal_session(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
@@ -3304,15 +3304,15 @@ class TestIsQuotaError:
             json.dumps({"type": "system", "subtype": "init"}) + "\n"
             + json.dumps({"type": "result", "subtype": "completed"}) + "\n"
         )
-        assert ro._is_quota_error(str(log)) is False
+        assert ro.is_quota_error(str(log)) is False
 
     def test_false_for_missing_log(self, ro, tmp_path):
-        assert ro._is_quota_error(str(tmp_path / "missing.jsonl")) is False
+        assert ro.is_quota_error(str(tmp_path / "missing.jsonl")) is False
 
     def test_false_for_empty_log(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text("")
-        assert ro._is_quota_error(str(log)) is False
+        assert ro.is_quota_error(str(log)) is False
 
 
 # ── format_preflight_data ──────────────────────────────────────────────

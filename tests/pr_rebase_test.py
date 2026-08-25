@@ -1,5 +1,6 @@
 """Tests for pr-rebase helper functions."""
 
+import contextlib
 import json
 import os
 import subprocess
@@ -775,15 +776,29 @@ def test_parse_resolved_content_allows_equals_mid_line():
 # ── _ai_suggest_regeneration ──────────────────────────────────────────────
 
 
+@contextlib.contextmanager
+def _backend_answering(reply, *, available=True):
+    """Stub both halves of the backend the regeneration helper reaches.
+
+    It asks ``ai_backend.is_available()`` itself but prompts through
+    ``agent_invoke``, which holds its own reference to the module — so these
+    patch the module's attributes rather than replacing a script's alias for it,
+    which would leave the prompt going to a live CLI.
+    """
+    with mock.patch.object(pr_rebase_cli.ai_backend, "is_available",
+                           return_value=available), \
+         mock.patch.object(pr_rebase_cli.ai_backend, "prompt",
+                           return_value=reply):
+        yield
+
+
 def test_ai_suggest_regeneration_returns_command(tmp_path):
     subdir = tmp_path / "ui-admin"
     subdir.mkdir()
     (subdir / "package.json").write_text('{"name": "ui-admin"}')
     (subdir / "pnpm-lock.yaml").write_text("lockfile content")
 
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
-        mock_ai.is_available.return_value = True
-        mock_ai.prompt.return_value = ("pnpm install", 0)
+    with _backend_answering(("pnpm install", 0)):
         result = pr_rebase_cli._ai_suggest_regeneration(
             "ui-admin/generated.css", str(tmp_path),
         )
@@ -792,44 +807,82 @@ def test_ai_suggest_regeneration_returns_command(tmp_path):
 
 
 def test_ai_suggest_regeneration_returns_none_response(tmp_path):
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
-        mock_ai.is_available.return_value = True
-        mock_ai.prompt.return_value = ("NONE", 0)
+    with _backend_answering(("NONE", 0)):
         result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
 
     assert result is None
 
 
 def test_ai_suggest_regeneration_ai_unavailable(tmp_path):
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
-        mock_ai.is_available.return_value = False
+    with _backend_answering(None, available=False):
         result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
 
     assert result is None
 
 
+class TestLedgerAttribution:
+    """A rebase-assist call bills to the PR the run is rebasing.
+
+    The helpers making these calls are several frames below the resolved
+    context, so they read the subject off the run's trail. A call that reaches
+    the ledger with neither repo nor PR cannot be attributed afterwards.
+    """
+
+    @staticmethod
+    def _trail_for(**context):
+        trail = mock.MagicMock()
+        trail.context = dict(context)
+        return trail
+
+    def test_the_runs_repo_and_pr_reach_the_ledger(self, tmp_path):
+        recorded = {}
+        with mock.patch.object(pr_rebase_cli, "_trail",
+                               self._trail_for(repo="org/repo", pr=7,
+                                               branch="feat/x")), \
+             mock.patch.object(pr_rebase_cli.ai_backend, "is_available",
+                               return_value=True), \
+             mock.patch.object(pr_rebase_cli.ai_backend, "prompt",
+                               side_effect=lambda *a, **kw: (
+                                   recorded.update(kw) or ("pnpm install", 0))):
+            pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+        assert (recorded["repo"], recorded["pr"]) == ("org/repo", "7")
+
+    def test_a_branch_with_no_pr_bills_to_the_repo_alone(self, tmp_path):
+        recorded = {}
+        with mock.patch.object(pr_rebase_cli, "_trail",
+                               self._trail_for(repo="org/repo", pr=None,
+                                               branch="feat/x")), \
+             mock.patch.object(pr_rebase_cli.ai_backend, "is_available",
+                               return_value=True), \
+             mock.patch.object(pr_rebase_cli.ai_backend, "prompt",
+                               side_effect=lambda *a, **kw: (
+                                   recorded.update(kw) or ("pnpm install", 0))):
+            pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
+
+        assert (recorded["repo"], recorded["pr"]) == ("org/repo", None)
+
+    def test_no_trail_is_not_an_error(self):
+        """`--help` and the unit tests below run with the global still unset."""
+        assert pr_rebase_cli._billed_to() == {"repo": None, "pr": None}
+
+
 def test_ai_suggest_regeneration_ai_fails(tmp_path):
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
-        mock_ai.is_available.return_value = True
-        mock_ai.prompt.return_value = ("", 1)
+    with _backend_answering(("", 1)):
         result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
 
     assert result is None
 
 
 def test_ai_suggest_regeneration_empty_response(tmp_path):
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
-        mock_ai.is_available.return_value = True
-        mock_ai.prompt.return_value = ("", 0)
+    with _backend_answering(("", 0)):
         result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
 
     assert result is None
 
 
 def test_ai_suggest_regeneration_multiword_command(tmp_path):
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
-        mock_ai.is_available.return_value = True
-        mock_ai.prompt.return_value = ("cargo generate-lockfile", 0)
+    with _backend_answering(("cargo generate-lockfile", 0)):
         result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
 
     assert result == ("cargo", "generate-lockfile")
@@ -837,9 +890,7 @@ def test_ai_suggest_regeneration_multiword_command(tmp_path):
 
 def test_ai_suggest_regeneration_rejects_unknown_binary(tmp_path):
     """AI-suggested command with unknown binary is rejected for safety."""
-    with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
-        mock_ai.is_available.return_value = True
-        mock_ai.prompt.return_value = ("rm -rf /", 0)
+    with _backend_answering(("rm -rf /", 0)):
         result = pr_rebase_cli._ai_suggest_regeneration("file.gen", str(tmp_path))
 
     assert result is None

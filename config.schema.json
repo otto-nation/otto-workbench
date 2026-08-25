@@ -112,7 +112,10 @@
               "disprove",
               "fix",
               "comments_fix",
-              "ci_fix"
+              "comments_triage",
+              "ci_fix",
+              "rebase",
+              "describe"
             ]
           }
         }

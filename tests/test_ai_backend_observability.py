@@ -2,6 +2,11 @@
 
 Only invoke_agent asked for --output-format, so prompt() and invoke_fix() produced
 nothing parseable and every pr-rebase and review-threads call went unmeasured.
+
+The AST guards in the second half share that subject from the other side: what a
+call site has to supply for the record to be worth anything, and — since one
+owner is cheaper to police than thirty — which module is allowed to make the
+call at all.
 """
 
 import ast
@@ -52,6 +57,22 @@ class TestBuildPromptCmd:
     def test_model_still_passed(self):
         cmd = ai_backend_claude._build_prompt_cmd(model="claude-opus-4-6")
         assert cmd[cmd.index("--model") + 1] == "claude-opus-4-6"
+
+    def test_a_thinking_level_is_accepted_and_dropped(self, monkeypatch, tmp_path):
+        """The CLI has no flag for it, and dispatch passes one to both backends.
+
+        Raising here instead would make the prompt shape unrunnable on Claude
+        the moment an operator set a thinking level for one of its phases.
+        """
+        seen = []
+        monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: seen.append(cmd) or
+                            subprocess.CompletedProcess(cmd, 0, "answer", ""))
+        text, code, _ = ai_backend_claude.prompt(
+            "ask", cwd=str(tmp_path), thinking="high", provider="bedrock",
+        )
+        assert (text, code) == ("answer", 0)
+        assert "--thinking" not in seen[0]
+        assert "--provider" not in seen[0]
 
 
 class TestBuildFixCmd:
@@ -425,8 +446,10 @@ class TestAgentCallSitesPassCwd:
             "directory the process was launched from):\n" + "\n".join(offenders)
         )
         # Guard the scanner itself: a matcher that silently matches nothing
-        # would make this test pass forever.
-        assert found >= 8, f"expected to find spawning call sites, found {found}"
+        # would make this test pass forever. The population is small because
+        # `agent_invoke` owns every invocation the workbench makes — what stops
+        # a sixth appearing elsewhere is `TestOneOwnerForBackendCalls`.
+        assert found >= 5, f"expected to find spawning call sites, found {found}"
 
     @pytest.mark.parametrize("src,expected", [
         ('ai_backend.prompt(text, cwd=cwd, task="conflict-resolve")', True),
@@ -456,3 +479,76 @@ class TestAgentCallSitesPassCwd:
         """An alias must not hide a call site — that would silence the guard."""
         node = next(_cwd_bearing_nodes(ast.parse(src)))
         assert _has_kwarg(node, "cwd") is False
+
+
+_SPAWNING = frozenset({"prompt", "invoke_agent", "invoke_fix"})
+
+# The owner, and the two modules deliberately left outside it. An eval scores a
+# named model against a fixed corpus, so resolving the phase would let an
+# operator's config decide what the run measures — the eval would report their
+# settings rather than the model under test.
+_MAY_REACH_THE_BACKEND = {
+    "agent_invoke.py",
+    "eval_scoring_cifix.py",
+    "eval_scoring_skill.py",
+}
+
+
+def _unowned_backend_calls(source: Path) -> list[str]:
+    """"name:line" for every call that reaches a spawning entry point directly."""
+    tree = ast.parse(source.read_text(), filename=str(source))
+    return [
+        f"  - {source.name}:{call.lineno}"
+        for call in _backend_calls(tree, _SPAWNING)
+    ]
+
+
+class TestOneOwnerForBackendCalls:
+    """Only ``agent_invoke`` reaches the three entry points that spend money.
+
+    Each call site used to assemble its own invocation, and each did it slightly
+    differently: a hardcoded model here, a missing retry ceiling there, a ledger
+    label spelled a third way. Every guard in this file exists because one of
+    them forgot something the others remembered — so the durable fix is that
+    there is one place left to forget it in.
+
+    The list of exceptions is short and hand-written on purpose. Unlike the
+    conventions elsewhere in this repo, a new entry here should cost a deliberate
+    edit: adding one is a decision to opt a module out of phase resolution, the
+    usage ledger, and the retry guard at once.
+    """
+
+    def test_no_module_but_the_owner_reaches_the_backend(self):
+        offenders = [
+            line
+            for source in _ai_sources()
+            if source.name not in _MAY_REACH_THE_BACKEND
+            for line in _unowned_backend_calls(source)
+        ]
+        assert not offenders, (
+            "ai_backend entry points reached outside agent_invoke (these skip "
+            "phase resolution, the usage ledger and the retry guard) — call "
+            "agent_invoke.run_prompt/run_agent/run_fix instead:\n"
+            + "\n".join(offenders)
+        )
+
+    def test_the_owner_reaches_all_three(self):
+        """A shape whose runner stopped calling the backend would pass silently."""
+        owner = AI_DIR / "lib" / "agent_invoke.py"
+        tree = ast.parse(owner.read_text(), filename=str(owner))
+        reached = {
+            call.func.attr for call in _backend_calls(tree, _SPAWNING)
+        }
+        assert reached == set(_SPAWNING)
+
+    @pytest.mark.parametrize("src", [
+        "ai_backend.prompt(text, cwd=d)",
+        "import ai_backend as ab\nab.invoke_agent(inv)",
+        "from ai_backend import invoke_fix\ninvoke_fix(inv)",
+    ])
+    def test_scanner_catches_every_spelling(self, src):
+        assert list(_backend_calls(ast.parse(src), _SPAWNING))
+
+    def test_a_call_through_the_owner_is_not_a_backend_call(self):
+        tree = ast.parse("agent_invoke.run_prompt(Phase.DESCRIBE, text, cwd=d)")
+        assert list(_backend_calls(tree, _SPAWNING)) == []

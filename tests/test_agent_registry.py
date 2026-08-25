@@ -48,7 +48,10 @@ class TestPhaseDomains:
             Phase.DISPROVE: PhaseDomain.REVIEW,
             Phase.FIX: PhaseDomain.REVIEW,
             Phase.COMMENTS_FIX: PhaseDomain.COMMENTS,
+            Phase.COMMENTS_TRIAGE: PhaseDomain.COMMENTS,
             Phase.CI_FIX: PhaseDomain.CI,
+            Phase.REBASE: PhaseDomain.REBASE,
+            Phase.DESCRIBE: PhaseDomain.DESCRIBE,
         }
         assert {p: s.domain for p, s in PHASES.items()} == expected
 
@@ -79,11 +82,25 @@ class TestPhaseThinkingDefaults:
             # both called the backend without one and took its default.
             Phase.COMMENTS_FIX: None,
             Phase.CI_FIX: None,
+            # Nor did any prompt-shaped call, which had no way to name one:
+            # ai_backend.prompt took no thinking argument until they became
+            # phases. Their default is still the backend's.
+            Phase.COMMENTS_TRIAGE: None,
+            Phase.REBASE: None,
+            Phase.DESCRIBE: None,
         }
         assert {p: s.thinking for p, s in PHASES.items()} == expected
 
 
 class TestPhaseMaxTurnsDefaults:
+    """Only a phase that runs an agent loop has turns to spend.
+
+    A prompt-shaped phase is one stateless call, so ``run_prompt`` reads
+    neither ``max_turns`` nor ``max_budget`` and whatever the field defaults to
+    is inert. Pinning a number for it here would assert a default nothing
+    reads; that ``run_prompt`` reads neither is ``test_agent_invoke``'s.
+    """
+
     def test_preserves_current_budgets(self):
         expected = {
             Phase.SINGLE: 15,
@@ -96,14 +113,18 @@ class TestPhaseMaxTurnsDefaults:
             Phase.COMMENTS_FIX: 20,
             Phase.CI_FIX: 20,
         }
-        assert {p: s.max_turns for p, s in PHASES.items()} == expected
+        assert {
+            p: s.max_turns for p, s in PHASES.items()
+            if s.shape is not PhaseShape.PROMPT
+        } == expected
 
 
 class TestPhaseBudgetDefaults:
-    """A phase outside a review pins its own dollar cap.
+    """A fix phase outside a review pins its own dollar cap.
 
     There is no ``--effort`` at those entry points, so a ``None`` budget would
-    resolve to nothing at all rather than to a preset.
+    resolve to nothing at all rather than to a preset. A prompt-shaped phase
+    pins nothing because it spends no budget the pipeline caps.
     """
 
     def test_only_the_non_review_phases_pin_a_budget(self):
@@ -131,9 +152,17 @@ class TestPhaseShapes:
         editing = {p for p, s in PHASES.items() if s.shape is PhaseShape.FIX}
         assert editing == {Phase.FIX, Phase.COMMENTS_FIX, Phase.CI_FIX}
 
-    def test_every_other_phase_is_a_tool_using_agent(self):
-        shapes = {s.shape for s in PHASES.values()}
-        assert shapes == {PhaseShape.AGENT, PhaseShape.FIX}
+    def test_only_the_stateless_phases_are_prompts(self):
+        stateless = {p for p, s in PHASES.items() if s.shape is PhaseShape.PROMPT}
+        assert stateless == {
+            Phase.COMMENTS_TRIAGE, Phase.REBASE, Phase.DESCRIBE,
+        }
+
+    def test_every_shape_the_vocabulary_names_is_in_use(self):
+        # The remaining phases are tool-using agents. PhaseShape is closed at
+        # three because ai_backend has three entry points, so a shape no phase
+        # reaches would be a fourth one nothing runs.
+        assert {s.shape for s in PHASES.values()} == set(PhaseShape)
 
 
 class TestPhaseAgentPins:
@@ -155,7 +184,7 @@ class TestPhaseAgentPins:
     def test_effort_derived_phases(self):
         derived = {
             p for p, s in PHASES.items()
-            if s.agent is None and s.shape is not PhaseShape.FIX
+            if s.agent is None and s.shape is PhaseShape.AGENT
         }
         assert derived == {Phase.SINGLE, Phase.HOLISTIC, Phase.SYNTHESIS}
 
@@ -163,6 +192,12 @@ class TestPhaseAgentPins:
         # Every AgentKind is a persona forbidden from touching source files.
         for phase, spec in PHASES.items():
             assert not (spec.shape is PhaseShape.FIX and spec.agent), phase
+
+    def test_no_stateless_phase_pins_an_agent(self):
+        # A prompt runs no agent definition at all, so a pin here would name a
+        # persona the backend is never told about.
+        for phase, spec in PHASES.items():
+            assert not (spec.shape is PhaseShape.PROMPT and spec.agent), phase
 
 
 class TestOmittedTurnBump:

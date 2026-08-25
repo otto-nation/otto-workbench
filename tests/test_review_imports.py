@@ -400,25 +400,25 @@ def test_proxy_setattr_reaches_every_binding(ro):
     Patching only one of them leaves every other module's callers running the
     real implementation, which a test has no way to notice.
     """
-    owners = [mod for mod in ro._SUBMODULES if hasattr(mod, "invoke_agent")]
-    assert len(owners) > 1, "invoke_agent no longer spans modules — pick another seam"
+    owners = [mod for mod in ro._SUBMODULES if hasattr(mod, "run_agent")]
+    assert len(owners) > 1, "run_agent no longer spans modules — pick another seam"
 
-    originals = [mod.invoke_agent for mod in owners]
+    originals = [mod.run_agent for mod in owners]
     sentinel = object()
 
-    with mock.patch.object(ro, "invoke_agent", sentinel):
-        assert [mod.invoke_agent for mod in owners] == [sentinel] * len(owners)
+    with mock.patch.object(ro, "run_agent", sentinel):
+        assert [mod.run_agent for mod in owners] == [sentinel] * len(owners)
 
-    assert [mod.invoke_agent for mod in owners] == originals
+    assert [mod.run_agent for mod in owners] == originals
 
     # mock.patch reaches __delattr__ only because the name was absent from the
     # proxy's own __dict__, which is its business and not a contract. Drive the
     # set-then-delete cycle directly so the restore stays pinned either way.
-    ro.invoke_agent = sentinel
-    assert [mod.invoke_agent for mod in owners] == [sentinel] * len(owners)
+    ro.run_agent = sentinel
+    assert [mod.run_agent for mod in owners] == [sentinel] * len(owners)
 
-    del ro.invoke_agent
-    assert [mod.invoke_agent for mod in owners] == originals
+    del ro.run_agent
+    assert [mod.run_agent for mod in owners] == originals
 
 
 def test_shared_submodule_names_never_diverge(ro):

@@ -401,6 +401,25 @@ class TestTrailSummary:
         assert after["context"] == {"repo": "org/repo", "pr": 1}
 
 
+class TestTrailContext:
+    """The subject a run opened against, readable by whoever else needs it.
+
+    A usage ledger entry bills to the same repo and PR the trail names, and the
+    helpers that write one sit too far below `main` to have been handed either.
+    """
+
+    def test_the_runs_subject_is_readable(self):
+        trail = Trail.start(script="pr", context={"repo": "org/repo", "pr": 1})
+        assert trail.context == {"repo": "org/repo", "pr": 1}
+
+    def test_a_reader_cannot_edit_what_later_events_will_carry(self):
+        trail = Trail.start(script="pr", context={"repo": "org/repo", "pr": 1})
+        trail.context["pr"] = 7
+        trail.info("after", "")
+        after = next(e for e in _read_events() if e["action"] == "after")
+        assert after["context"] == {"repo": "org/repo", "pr": 1}
+
+
 class TestAddTrailArgs:
     def test_adds_debug_flag(self):
         import argparse

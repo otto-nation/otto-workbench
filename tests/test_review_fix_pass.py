@@ -913,7 +913,7 @@ class TestRunFixPassRetry:
     @patch("review_fix._commit_fixes")
     @patch("review_fix._reconcile_checkboxes")
     @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_retries_on_zero_progress_max_turns(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
@@ -927,7 +927,7 @@ class TestRunFixPassRetry:
 
     @patch("review_fix._commit_fixes")
     @patch("review_fix._reconcile_checkboxes")
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_no_retry_when_fixes_applied(
         self, mock_prompt, mock_invoke, mock_reconcile, mock_commit, tmp_path,
@@ -944,7 +944,7 @@ class TestRunFixPassRetry:
 
     @patch("review_fix._commit_fixes")
     @patch("review_fix._reconcile_checkboxes")
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_no_retry_when_skip_reasons_annotated(
         self, mock_prompt, mock_invoke, mock_reconcile, mock_commit, tmp_path,
@@ -966,7 +966,7 @@ class TestRunFixPassRetry:
     @patch("review_fix._commit_fixes")
     @patch("review_fix._reconcile_checkboxes")
     @patch("review_fix.diagnose_missing_output", return_value=_AGENT_ERROR)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_no_retry_on_non_retryable_reason(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
@@ -978,7 +978,7 @@ class TestRunFixPassRetry:
     @patch("review_fix._commit_fixes")
     @patch("review_fix._reconcile_checkboxes")
     @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_retry_uses_increased_turns(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
@@ -1000,7 +1000,7 @@ class TestRunFixPassRetry:
     @patch("review_fix._commit_fixes")
     @patch("review_fix._reconcile_checkboxes")
     @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_never_runs_under_a_read_only_reviewer_agent(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
@@ -1044,7 +1044,7 @@ class TestRunFixPassOnADirtyWorktree:
         return job
 
     @patch("land.push.push", return_value=_PUSHED)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_only_the_agents_own_changes_are_committed_and_credited(
         self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
@@ -1103,7 +1103,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         (git_wt / ".git" / "index").write_bytes(b"garbage")
 
     @patch("land.push.push", return_value=_PUSHED)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_an_unreadable_worktree_stops_the_pass_before_the_agent_runs(
         self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path, capsys,
@@ -1122,7 +1122,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         assert "skipping fix pass" in capsys.readouterr().err
 
     @patch("land.push.push", return_value=_PUSHED)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_the_agents_work_is_not_dropped_when_the_second_snapshot_fails(
         self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path, capsys,
@@ -1146,7 +1146,7 @@ class TestRunFixPassWhenTheSnapshotFails:
 
     @patch("land.push.push", return_value=_PUSHED)
     @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_the_retrys_work_is_not_dropped_when_the_snapshot_fails(
         self, mock_prompt, mock_invoke, mock_diag, mock_push, git_wt, tmp_path,
@@ -1189,7 +1189,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         return job
 
     @patch("land.push.push", return_value=_PUSHED)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_file_the_agent_deletes_is_committed_as_a_deletion(
         self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
@@ -1213,7 +1213,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
     @patch("land.push.push", return_value=_PUSHED)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_rename_commits_both_halves(
         self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
@@ -1255,7 +1255,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
 
     @patch("land.push.push", return_value=_PUSHED)
     @patch("review_fix.diagnose_missing_output", return_value=_AGENT_ERROR)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_path_dirty_before_the_pass_is_not_credited_even_when_edited(
         self, mock_prompt, mock_invoke, mock_diag, mock_push, git_wt, tmp_path,
@@ -1298,7 +1298,7 @@ class TestRunFixPassLeavesDeclinedFindingsAlone:
         job.effort = Effort.MEDIUM
         return job
 
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_review_of_only_declines_never_runs_the_agent(
         self, mock_prompt, mock_invoke, git_wt, tmp_path,
@@ -1312,7 +1312,7 @@ class TestRunFixPassLeavesDeclinedFindingsAlone:
         mock_invoke.assert_not_called()
 
     @patch("land.push.push", return_value=_PUSHED)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_decline_survives_a_pass_that_touches_its_file(
         self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,
@@ -1363,7 +1363,7 @@ class TestRunFixPassLeavesSkippedFindingsOpen:
         return job
 
     @patch("land.push.push", return_value=_PUSHED)
-    @patch("review_phases.invoke_agent")
+    @patch("review_phases.run_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_skip_survives_a_fix_to_its_own_file(
         self, mock_prompt, mock_invoke, mock_push, git_wt, tmp_path,

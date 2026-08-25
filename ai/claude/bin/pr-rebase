@@ -34,7 +34,7 @@ import shutil
 import subprocess
 import sys
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
@@ -43,7 +43,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
-import agent_retry
+import agent_invoke
 import ai_backend
 import gh_client
 import log
@@ -52,6 +52,7 @@ import pr_domains
 import pr_state
 import push
 import timeouts
+from agent_types import Phase
 from pr_domains import RebaseStatus, RebaseSummary
 from tool_parser import ToolParser
 from trail import Trail, add_trail_args
@@ -72,6 +73,19 @@ def _terr(action: str, detail: str, **kwargs) -> None:
 def _tinfo(action: str, detail: str, **kwargs) -> None:
     if _trail:
         _trail.info(action, detail, **kwargs)
+
+
+def _billed_to() -> dict[str, str | None]:
+    """The repo and PR every AI call this run makes bills to in the usage ledger.
+
+    The conflict and pre-push helpers sit several frames below the resolved
+    context, and the trail this run opened already holds the same subject — so
+    they read it from there rather than each signature between them growing two
+    parameters that only get forwarded.
+    """
+    ctx = _trail.context if _trail else {}
+    pr = ctx.get("pr")
+    return {"repo": ctx.get("repo"), "pr": str(pr) if pr else None}
 
 
 # How many unpushed commits a divergence refusal names before it stops. The
@@ -728,28 +742,6 @@ def _has_conflict_markers(text: str) -> str | None:
     return None
 
 
-def _prompt_until_parsable(
-    prompt: str, *, cwd: str, label: str, usable: Callable[[str], bool], task: str,
-) -> tuple[str, int]:
-    """Send a prompt, retrying once if the answer cannot be parsed.
-
-    These calls have no session log, so an unparseable answer is the only
-    evidence that the agent burned a turn without doing the job — the same
-    thrash the review pipeline catches from its logs.
-
-    `task` is required so every prompt lands in the usage ledger under a name;
-    a retry bills twice, which is only visible if both attempts are attributed.
-
-    `cwd` is the resolved worktree, matching every subprocess.run in this file.
-    Without it the agent runs in whichever worktree the process was launched
-    from and edits that branch's files instead.
-    """
-    return agent_retry.retry_blank_response(
-        lambda text: ai_backend.prompt(text, cwd=cwd, task=task),
-        prompt, label=label, usable=usable,
-    )
-
-
 def _resolution_parses(stdout: str) -> bool:
     return _parse_resolved_content(stdout)[0] is not None
 
@@ -981,12 +973,22 @@ def _valid_commit_header(subject: str) -> bool:
     return not types or head.split("(", 1)[0] in types
 
 
+def _generated_subject(reply: str) -> str:
+    """The subject line out of a generation, stripped of fencing and quoting."""
+    lines = reply.strip().splitlines()
+    return lines[0].strip().strip("`").strip() if lines else ""
+
+
 def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
     """Describe what the pre-push fix actually changed.
 
     The branch is squash-merged with COMMIT_MESSAGES, so this subject lands
     verbatim in the commit body on main, where a generic line says nothing.
     Any unusable generation falls back to that generic subject.
+
+    A subject that breaks the repo's conventions is what the retry is for: the
+    rules are in the prompt, so a second ask is the cheapest way to get one
+    that follows them, and only then does the generic line stand.
     """
     diff = subprocess.run(
         ["git", "diff", "--cached"], capture_output=True, text=True, cwd=cwd,
@@ -995,7 +997,8 @@ def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
     if not diff.strip():
         return _FALLBACK_FIX_SUBJECT
 
-    reply, rc = ai_backend.prompt(
+    answer = agent_invoke.run_prompt(
+        Phase.REBASE,
         "Write one conventional-commit subject line for the diff below. It "
         "repairs a check failure left behind by an automated rebase conflict "
         "resolution.\n\n"
@@ -1005,13 +1008,12 @@ def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
         "that a check failed. Output only the subject line.\n\n"
         f"--- DIFF ---\n{diff}",
         cwd=cwd,
+        usable=lambda reply: _valid_commit_header(_generated_subject(reply)),
+        label="pre-push fix commit message",
         task="push-check-fix-message",
+        **_billed_to(),
     )
-    if rc != 0 or not reply.strip():
-        return _FALLBACK_FIX_SUBJECT
-
-    subject = reply.strip().splitlines()[0].strip().strip("`").strip()
-    return subject if _valid_commit_header(subject) else _FALLBACK_FIX_SUBJECT
+    return _generated_subject(answer.text) if answer.ok else _FALLBACK_FIX_SUBJECT
 
 
 def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
@@ -1041,19 +1043,19 @@ def _fix_one_file(filepath: str, cwd: str, check_output: str) -> None:
         f"--- FILE CONTENT ---\n{content}"
     )
 
-    stdout, rc = _prompt_until_parsable(
-        prompt, cwd=cwd, label=f"pre-push fix for {filepath}",
-        usable=_resolution_parses, task="push-check-fix",
+    answer = agent_invoke.run_prompt(
+        Phase.REBASE, prompt, cwd=cwd, label=f"pre-push fix for {filepath}",
+        usable=_resolution_parses, task="push-check-fix", **_billed_to(),
     )
-    if rc != 0:
-        log.error(f"AI fix failed for {filepath} (exit {rc})")
+    if answer.exit_code != 0:
+        log.error(f"AI fix failed for {filepath} (exit {answer.exit_code})")
         _terr(
             "fix_push_failures", f"AI fix failed for {filepath}",
-            data={"filepath": filepath, "exit_code": rc},
+            data={"filepath": filepath, "exit_code": answer.exit_code},
         )
         return
 
-    fixed_content, failure_reason = _parse_resolved_content(stdout)
+    fixed_content, failure_reason = _parse_resolved_content(answer.text)
     if fixed_content is None:
         _terr(
             "fix_push_failures", f"failed to parse fix for {filepath}",
@@ -1207,15 +1209,18 @@ def _resolve_full_file(
         filepath, content, sha, subject, target_ref=target_ref,
         ours_content=ours_content, commit_diff=commit_diff,
     )
-    stdout, rc = _prompt_until_parsable(
-        prompt, cwd=cwd, label=f"conflict resolution for {filepath}",
-        usable=_resolution_parses, task="conflict-resolve",
+    answer = agent_invoke.run_prompt(
+        Phase.REBASE, prompt, cwd=cwd,
+        label=f"conflict resolution for {filepath}",
+        usable=_resolution_parses, task="conflict-resolve", **_billed_to(),
     )
-    if rc != 0:
-        _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
-        log.error(f"ai prompt failed for {filepath} (exit {rc})")
+    if answer.exit_code != 0:
+        _terr("resolve_conflicts", f"AI prompt failed for {filepath}",
+              data={"filepath": filepath, "exit_code": answer.exit_code})
+        log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
         return None
 
+    stdout = answer.text
     resolved_content, failure_reason = _parse_resolved_content(stdout)
     if resolved_content is None:
         _terr(
@@ -1252,17 +1257,20 @@ def _resolve_chunked(
         "chunked_resolve", f"using chunked resolution for {filepath}",
         data={"blocks": len(blocks), "total_lines": content.count("\n") + 1},
     )
-    stdout, rc = _prompt_until_parsable(
-        prompt, cwd=cwd, label=f"chunked resolution for {filepath}",
+    answer = agent_invoke.run_prompt(
+        Phase.REBASE, prompt, cwd=cwd,
+        label=f"chunked resolution for {filepath}",
         usable=lambda s: _parse_chunked_resolutions(s, len(blocks))[0] is not None,
         task="conflict-resolve-chunked",
+        **_billed_to(),
     )
-    if rc != 0:
-        _terr("resolve_conflicts", f"AI prompt failed for {filepath}", data={"filepath": filepath, "exit_code": rc})
-        log.error(f"ai prompt failed for {filepath} (exit {rc})")
+    if answer.exit_code != 0:
+        _terr("resolve_conflicts", f"AI prompt failed for {filepath}",
+              data={"filepath": filepath, "exit_code": answer.exit_code})
+        log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
         return None
 
-    resolutions, failure_reason = _parse_chunked_resolutions(stdout, len(blocks))
+    resolutions, failure_reason = _parse_chunked_resolutions(answer.text, len(blocks))
     if resolutions is None:
         _terr(
             "resolve_conflicts",
@@ -1307,14 +1315,15 @@ def _ai_suggest_regeneration(filepath: str, cwd: str) -> tuple[str, ...] | None:
         "if no regeneration is needed.\n"
     )
 
-    stdout, rc = _prompt_until_parsable(
-        prompt_text, cwd=cwd, label=f"lockfile regeneration command for {filepath}",
-        usable=lambda s: bool(s.strip()), task="lockfile-regen",
+    answer = agent_invoke.run_prompt(
+        Phase.REBASE, prompt_text, cwd=cwd,
+        label=f"lockfile regeneration command for {filepath}",
+        usable=lambda s: bool(s.strip()), task="lockfile-regen", **_billed_to(),
     )
-    if rc != 0 or not stdout.strip():
+    if not answer.ok:
         return None
 
-    response = stdout.strip().strip('"').strip("'")
+    response = answer.text.strip().strip('"').strip("'")
     if response.upper() == "NONE":
         return None
 
@@ -1722,13 +1731,16 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
             f"{_RESOLVE_BEGIN}\n(your resolved content here)\n{_RESOLVE_END}\n\n"
             f"--- FILE CONTENT WITH CONFLICT MARKERS ---\n{content}"
         )
-        stdout, rc = _prompt_until_parsable(
-            prompt, cwd=cwd, label=f"stash conflict resolution for {filepath}",
+        answer = agent_invoke.run_prompt(
+            Phase.REBASE, prompt, cwd=cwd,
+            label=f"stash conflict resolution for {filepath}",
             usable=_resolution_parses, task="stash-conflict-resolve",
+            **_billed_to(),
         )
-        if rc != 0:
+        if answer.exit_code != 0:
             log.error(f"AI resolution failed for stash conflict: {filepath}")
             continue
+        stdout = answer.text
         resolved_content, failure_reason = _parse_resolved_content(stdout)
         if resolved_content is None:
             _terr(

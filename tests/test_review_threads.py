@@ -5961,7 +5961,7 @@ class TestFixPassThrashGuard:
     def test_invoke_passes_the_diagnosable_session_log(self, rt, tmp_path):
         tracking = tmp_path / "tracking.md"
         tracking.write_text("- [x] fixed one\n")
-        with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
+        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
             rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
                 max_turns=10, max_budget=1.0, label="Fix pass",
@@ -5972,7 +5972,7 @@ class TestFixPassThrashGuard:
         """The ledger and the overrides both key on the phase, so it is named."""
         tracking = tmp_path / "tracking.md"
         tracking.write_text("- [x] fixed one\n")
-        with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
+        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
             rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
                 max_turns=10, max_budget=1.0, label="Fix pass",
@@ -5985,7 +5985,7 @@ class TestFixPassThrashGuard:
         tracking.write_text("- [ ] fix the thing\n")
         prompts = []
 
-        with patch.object(rt.ai_backend, "invoke_fix",
+        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=lambda inv: prompts.append(inv.prompt) or 0):
             diagnosis = rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
@@ -6001,7 +6001,7 @@ class TestFixPassThrashGuard:
         tracking = tmp_path / "tracking.md"
         tracking.write_text("- [x] fixed one\n- [ ] not the other\n")
 
-        with patch.object(rt.ai_backend, "invoke_fix", return_value=0) as inv:
+        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
             diagnosis = rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,
                 max_turns=10, max_budget=1.0, label="Fix pass",
@@ -6033,7 +6033,7 @@ class TestTriageThrashGuard:
             return ("not json", 0) if len(prompts) == 1 else ('{"threads": []}', 0)
 
         with (
-            patch.object(rt.ai_backend, "prompt", side_effect=prompt),
+            patch.object(rt.agent_invoke.ai_backend, "prompt", side_effect=prompt),
             patch.object(rt, "_branch_commit_log", return_value=""),
         ):
             result, rc = rt._run_triage(report, tmp_path, {})
@@ -6291,7 +6291,7 @@ class TestFixPassRetryHeadroom:
         tracking.write_text("- [ ] fix the thing\n")
         budgets = []
 
-        with patch.object(rt.ai_backend, "invoke_fix",
+        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
                           side_effect=lambda inv: budgets.append(inv.max_turns) or 0):
             rt._guarded_fix_pass(
                 "PROMPT", tmp_path, None, tracking,

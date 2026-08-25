@@ -374,6 +374,15 @@ pr [global flags] <command> [flags]
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
 | `gc` | Clean up stale PR review artifacts and cached state |
 
+**Every AI call `pr` makes is a phase.** Not only the review pipeline's: the
+conflict resolutions and lockfile commands behind `pr rebase --fix`, the
+description `pr describe` writes, and the thread triage `pr comments` runs each
+resolve their model and thinking level from `PHASES`
+([`ai/lib/agent_registry.py`](../ai/lib/agent_registry.py)) through the same
+chain, so `WORKBENCH_AI_REBASE_MODEL`, `WORKBENCH_AI_DESCRIBE_THINKING` and
+their siblings move calls that used to take whatever the CLI defaulted to. The
+env keys are derived from the phase name, so the list here is the registry's.
+
 **`pr comments` flags fall on two axes — phase and gate:**
 
 The phase flags (`--triage`, `--fix`, `--finish`, `--reply`) choose which work

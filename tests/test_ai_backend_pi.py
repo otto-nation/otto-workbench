@@ -1,5 +1,6 @@
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -259,6 +260,41 @@ class TestProviderFlag:
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "bedrock"
+
+
+class TestPromptCmdThinking:
+    """A stateless prompt is sized the same way the agent modes are.
+
+    ``--thinking`` and ``--provider`` are global Pi flags, so the prompt shape
+    honours both. Before those calls were phases they carried neither: nothing
+    resolved a thinking level for them and the builder had no argument to take
+    one through, so a prompt ran at whatever the CLI defaults to no matter what
+    the operator set.
+    """
+
+    def test_the_thinking_level_reaches_the_flag(self):
+        cmd = ai_backend_pi._build_prompt_cmd(thinking="high")
+        assert cmd[cmd.index("--thinking") + 1] == "high"
+
+    def test_no_flags_when_nothing_was_resolved(self):
+        cmd = ai_backend_pi._build_prompt_cmd()
+        assert "--thinking" not in cmd
+        assert "--provider" not in cmd
+        assert "--model" not in cmd
+
+    def test_prompt_forwards_every_resolved_knob(self, monkeypatch, tmp_path):
+        """The dispatch layer's arguments have to survive the trip to the CLI."""
+        seen = []
+        monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: seen.append(cmd) or
+                            subprocess.CompletedProcess(cmd, 0, "answer", ""))
+        ai_backend_pi.prompt(
+            "ask", cwd=str(tmp_path), model="sonnet",
+            thinking="low", provider="bedrock",
+        )
+        cmd = seen[0]
+        assert cmd[cmd.index("--model") + 1] == "sonnet"
+        assert cmd[cmd.index("--thinking") + 1] == "low"
+        assert cmd[cmd.index("--provider") + 1] == "bedrock"
 
 
 class TestExtensionFlag:

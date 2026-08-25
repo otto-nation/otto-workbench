@@ -1,9 +1,11 @@
-"""Phase registry and executors for the review pipeline.
+"""Phase executors for the review pipeline.
 
-A review is a sequence of agent phases, and this module owns what a phase *is*:
-the built-in spec (`PhaseSpec`, `PHASES`), the resolution of a spec plus an
-effort preset into the seven values an invocation needs (`PhaseRunner`), the
-turn budgets, and the executors that actually run each phase.
+A review is a sequence of agent phases. What a phase *is* — its built-in spec,
+and how that spec resolves against the config file and the environment — is
+`agent_types` and `agent_phases`, which the whole workbench shares. This module
+is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
+one review's worktree, session log and throttle, and the executors that run
+each phase.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
@@ -21,19 +23,18 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+import agent_phases
 import agent_retry
 import log
-import workbench_config
+from agent_types import EFFORT_PRESETS, PHASES, Phase
 from review_agent import (
     CONSECUTIVE_FAIL_THRESHOLD,
-    AgentInvocation, _parse_session_cost, _resolve_model,
-    _resolve_provider, _resolve_thinking_level, build_add_dirs,
+    AgentInvocation, _parse_session_cost, build_add_dirs,
     diagnose_missing_output, invoke_agent, try_recover_output,
 )
 from review_common import (
     FILE_STAT_FMT,
-    AgentKind, Diagnosis, DiagnosisKind, Effort, GroupSkip, Phase, Thinking,
-    EFFORT_PRESETS,
+    Diagnosis, DiagnosisKind, GroupSkip,
     TEMPLATE_DISPROVE, TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT,
     phase_log_path,
     phase_output_path,
@@ -49,181 +50,34 @@ from review_retry import (
 )
 from review_scout import format_leads_block, parse_scout_output
 from review_state import _update_group_done, _update_group_failed
-from workbench_config import WorkbenchConfig
 
 RETRY_MAX_TURNS_GROUP = agent_retry.RETRY_MAX_TURNS
-
-OMITTED_FILE_TURNS = 2
-
-
-# ── Phase registry ───────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class PhaseSpec:
-    """Built-in defaults for one pipeline phase.
-
-    ``agent=None`` means the phase takes whichever agent the effort preset
-    selects. A concrete ``AgentKind`` pins the phase regardless of effort:
-    those phases are handed everything they need up front and do no context
-    gathering, so a higher effort has nothing to buy them.
-
-    ``edits=True`` marks a phase that writes to the branch. Every ``AgentKind``
-    is a reviewer persona instructed never to modify source files, so such a
-    phase runs with no agent at all — the default agent, which can edit.
-
-    ``scales_with_omitted`` says whether ``max_turns`` grows with the files
-    preflight had to leave out of the prompt: a phase that reads branch source
-    must open those itself, and that costs turns. It defaults to on because the
-    opposite default fails asymmetrically — a phase that silently misses the
-    bump is under-budgeted, where one that takes it needlessly finishes early.
-    A phase that reasons only over text already in its prompt opts out.
-    """
-
-    phase: Phase
-    model: str = "sonnet"
-    thinking: Thinking | None = None
-    max_turns: int = 15
-    agent: AgentKind | None = None
-    edits: bool = False
-    scales_with_omitted: bool = True
-
-
-PHASES: dict[Phase, PhaseSpec] = {
-    Phase.SINGLE: PhaseSpec(
-        Phase.SINGLE, thinking=Thinking.MEDIUM, max_turns=15,
-    ),
-    Phase.HOLISTIC: PhaseSpec(
-        Phase.HOLISTIC, thinking=Thinking.MEDIUM, max_turns=15,
-    ),
-    Phase.SCOUT: PhaseSpec(
-        Phase.SCOUT, thinking=Thinking.LOW, max_turns=10,
-        agent=AgentKind.REVIEWER_LITE,
-    ),
-    Phase.GROUP: PhaseSpec(
-        Phase.GROUP, thinking=Thinking.LOW, max_turns=15,
-        agent=AgentKind.REVIEWER_LITE,
-    ),
-    # Synthesis and disprove are handed the findings they judge, so an omitted
-    # file costs them nothing. Fix takes its budget from _fix_turn_budget, which
-    # scales with unchecked findings instead.
-    Phase.SYNTHESIS: PhaseSpec(
-        Phase.SYNTHESIS, thinking=Thinking.MEDIUM, max_turns=15,
-        scales_with_omitted=False,
-    ),
-    Phase.DISPROVE: PhaseSpec(
-        Phase.DISPROVE, thinking=Thinking.MEDIUM, max_turns=15,
-        agent=AgentKind.REVIEWER_LITE,
-        scales_with_omitted=False,
-    ),
-    Phase.FIX: PhaseSpec(
-        Phase.FIX, thinking=Thinking.LOW, max_turns=20,
-        edits=True,
-        scales_with_omitted=False,
-    ),
-}
-
-
-# ── Phase model resolution ───────────────────────────────────────────────────
-
-
-def _config(config: WorkbenchConfig | None) -> WorkbenchConfig:
-    """The caller's config, or the one on disk.
-
-    Callers resolving several values in a row pass the config they already
-    loaded; the default is for the ones resolving a single value.
-    """
-    return config if config is not None else workbench_config.load_config_or_default()
-
-
-def _config_model(phase: Phase, config: WorkbenchConfig) -> str | None:
-    """The model this phase's config asks for: its own entry, else the section."""
-    override = config.review.phases.get(phase)
-    if override is not None and override.model:
-        return override.model
-    return config.review.model
-
-
-def phase_model(
-    phase: Phase, explicit: str | None, config: WorkbenchConfig | None = None,
-) -> str:
-    """Resolve the model for a pipeline phase.
-
-    Precedence, highest first: the explicit argument, the phase env key, the
-    global env key, the config file (phase entry then section), the phase's
-    built-in default. The env layers live in ``_resolve_model``; the config and
-    built-in layers collapse into the default handed to it.
-    """
-    phase = Phase(phase)
-    cfg = _config(config)
-    return _resolve_model(
-        explicit,
-        phase.model_env_key,
-        _config_model(phase, cfg) or PHASES[phase].model,
-    )
-
-
-def collect_phase_models(explicit: str | None) -> dict[str, list[Phase]]:
-    """Map each model the pipeline would use to the phases that requested it.
-
-    Callers use this to check every distinct model once up front and to name
-    the env keys worth changing when one of them is unusable.
-    """
-    models: dict[str, list[Phase]] = {}
-    cfg = workbench_config.load_config_or_default()
-    for phase in PHASES:
-        models.setdefault(phase_model(phase, explicit, cfg), []).append(phase)
-    return models
-
-
-def phase_thinking_default(
-    phase: Phase, effort: Effort, config: WorkbenchConfig | None = None,
-) -> Thinking | None:
-    """The thinking level below the env layers: config, effort preset, spec.
-
-    A phase entry beats the section, and both beat the effort preset — a level
-    written for one phase is more specific than one the preset flattens
-    everything to.
-    """
-    cfg = _config(config)
-    override = cfg.review.phases.get(phase)
-    if override is not None and override.thinking is not None:
-        return override.thinking
-    if cfg.review.thinking is not None:
-        return cfg.review.thinking
-    preset = EFFORT_PRESETS[effort].thinking
-    return preset if preset is not None else PHASES[phase].thinking
-
-
-def resolve_effort(
-    explicit: Effort | None, config: WorkbenchConfig | None = None,
-) -> Effort:
-    """The effort preset: the flag, the config, then medium."""
-    if explicit is not None:
-        return explicit
-    return _config(config).review.effort or Effort.MEDIUM
 
 
 # ── Phase turn budgets ───────────────────────────────────────────────────────
 
 
-def _omitted_turns(job: ReviewJob) -> int:
-    """What this job's omitted files cost a phase that has to open them."""
-    if EFFORT_PRESETS[job.effort].skip_omitted_files:
-        return 0
+def _omitted_files(job: ReviewJob) -> int:
+    """How many files preflight left out of this job's prompt."""
     if not job.preflight or not job.preflight.omitted_files:
         return 0
-    return len(job.preflight.omitted_files) * OMITTED_FILE_TURNS
+    return len(job.preflight.omitted_files)
 
 
 def _omitted_bump(phase: Phase, job: ReviewJob) -> int:
-    """The omitted-file turns this phase is owed — zero unless its spec opts in."""
-    return _omitted_turns(job) if PHASES[phase].scales_with_omitted else 0
+    """This job's omitted-file bump for a phase, zero when its spec opts out."""
+    return agent_phases.phase_omitted_bump(phase, job.effort, _omitted_files(job))
 
 
-def phase_turns(phase: Phase, job: ReviewJob) -> int:
-    """A phase's turn budget for this job: registry default plus its bump."""
-    return PHASES[phase].max_turns + _omitted_bump(phase, job)
+def job_turns(phase: Phase, job: ReviewJob) -> int:
+    """A phase's turn budget for this job: registry default plus its bump.
+
+    Named for the job rather than the phase because ``agent_phases.phase_turns``
+    is the registry's answer and this is the same answer with this job's omitted
+    files folded in — two names so the proxy in ``review-orchestrate`` can patch
+    either without the other going with it.
+    """
+    return agent_phases.phase_turns(phase, job.effort, _omitted_files(job))
 
 
 class PhaseRunner:
@@ -248,16 +102,14 @@ class PhaseRunner:
         # where the single-agent path already sends every record, and the
         # caller may have pointed it outside the review directory.
         self.session_log = phase_log_path(job.review_file, phase, index) or job.session_log
-        self.model = phase_model(phase, job.model, cfg)
-        self.thinking = _resolve_thinking_level(
-            None, phase.thinking_env_key, phase_thinking_default(phase, job.effort, cfg),
-        )
-        self.provider = _resolve_provider() or cfg.review.provider
+        self.model = agent_phases.phase_model(phase, job.model, cfg)
+        self.thinking = agent_phases.phase_thinking(phase, job.effort, cfg)
+        self.provider = agent_phases.resolve_provider() or cfg.agent.provider
         self.budget = preset.agent_budget
         self.agent = None if spec.edits else (
             spec.agent if spec.agent is not None else preset.agent
         )
-        self.max_turns = phase_turns(phase, job)
+        self.max_turns = job_turns(phase, job)
 
     def invocation(
         self, prompt: str, max_turns: int | None = None, *, label: str = "",
@@ -604,11 +456,11 @@ def _run_parallel_reviews(
 
 def _retry_turns(diagnosis: Diagnosis, job: ReviewJob) -> int:
     # The escalated ceiling is not a registry default, so it cannot come from
-    # phase_turns — but its bump still goes through the group spec, so the spec
+    # job_turns — but its bump still goes through the group spec, so the spec
     # remains the only thing that decides whether the group scales at all.
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:
         return RETRY_MAX_TURNS_GROUP + _omitted_bump(Phase.GROUP, job)
-    return phase_turns(Phase.GROUP, job)
+    return job_turns(Phase.GROUP, job)
 
 
 def _retry_failed_groups(

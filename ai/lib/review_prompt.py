@@ -18,9 +18,9 @@ from string import Template
 
 import json
 import log
+from agent_types import EFFORT_PRESETS, Effort
 from pr_domains import ReviewVerdict
 from review_common import (
-    EFFORT_PRESETS, Effort,
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
     PriorDisposition,

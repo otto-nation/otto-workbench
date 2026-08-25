@@ -1,30 +1,12 @@
-"""Agent invocation, cost tracking, model selection, and diagnostics.
+"""Agent invocation, cost tracking, and diagnostics.
 
 Delegates actual AI invocation to ai_backend (which dispatches to
 Claude Code CLI or Pi CLI based on AI_BACKEND env var). This module
 adds cost tracking, failure diagnosis, and output recovery on top.
 
-**Which model a phase uses.** Every review phase resolves its model through one
-chain, most specific first:
-
-1. an explicit ``--model`` on the command
-2. the phase's own key — ``CLAUDE_REVIEW_GROUP_MODEL``,
-   ``CLAUDE_REVIEW_HOLISTIC_MODEL``, ``CLAUDE_REVIEW_SINGLE_MODEL``,
-   ``CLAUDE_REVIEW_SCOUT_MODEL``, ``CLAUDE_REVIEW_DISPROVE_MODEL``,
-   ``CLAUDE_REVIEW_FIX_MODEL``, ``CLAUDE_REVIEW_SYNTHESIS_MODEL``
-3. ``CLAUDE_REVIEW_MODEL``, which covers every phase at once
-4. the phase's built-in default
-
-Whichever wins, a bare tier alias (``sonnet``, ``opus``, ``haiku``) is then
-resolved through ``ANTHROPIC_DEFAULT_SONNET_MODEL`` /
-``ANTHROPIC_DEFAULT_OPUS_MODEL`` / ``ANTHROPIC_DEFAULT_HAIKU_MODEL``. An alias
-names a tier, not a deployment — on Vertex and Bedrock the account provisions a
-specific model ID, and that is where it lives. A concrete model ID anywhere in
-the chain passes through untouched.
-
-The Claude CLI does this resolution itself; the Pi backend does not, so the
-resolution happens here before dispatch and both backends land on the same
-model.
+Which model, thinking level and provider an invocation runs with is
+``agent_phases``'s question, not this one's — it resolves a phase against the
+config file and the environment, and hands the answer here already decided.
 """
 
 # doc-group: pipeline
@@ -32,11 +14,9 @@ model.
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from dataclasses import replace
-from enum import StrEnum
 from pathlib import Path
 
 import ai_backend
@@ -286,82 +266,6 @@ def _is_quota_error(log_path: str) -> bool:
     if not Path(log_path).exists():
         return False
     return _has_quota_retry(_read_jsonl(log_path))
-
-
-# ── Model selection ───────────────────────────────────────────────────────────
-
-# A tier alias names a tier, not a deployment. On Vertex and Bedrock the account
-# provisions a specific model ID, and ANTHROPIC_DEFAULT_* is where that ID lives.
-# The Claude CLI resolves these itself; Pi does not, so resolving here gives both
-# backends the same answer and keeps the precedence chain in one place.
-class ModelAlias(StrEnum):
-    """Short model names that resolve to a concrete model id via env override.
-
-    Anything not listed here is already a concrete id and passes through
-    untouched.
-    """
-
-    SONNET = "sonnet"
-    OPUS = "opus"
-    HAIKU = "haiku"
-
-    @property
-    def env_key(self) -> str:
-        return f"ANTHROPIC_DEFAULT_{self.upper()}_MODEL"
-
-    @classmethod
-    def parse(cls, model: str) -> ModelAlias | None:
-        try:
-            return cls(model)
-        except ValueError:
-            return None
-
-
-def _resolve_alias(model: str) -> str:
-    """Swap a tier alias for the provisioned model ID. Concrete IDs pass through."""
-    alias = ModelAlias.parse(model)
-    if alias is None:
-        return model
-    return os.environ.get(alias.env_key) or model
-
-
-def _select_model(explicit: str | None, env_key: str, default: str) -> str:
-    """The winning model name by precedence, before any alias resolution."""
-    if explicit:
-        return explicit
-    from_env = os.environ.get(env_key)
-    if from_env:
-        return from_env
-    global_env = os.environ.get("CLAUDE_REVIEW_MODEL")
-    if global_env:
-        return global_env
-    return default
-
-
-def _resolve_model(explicit: str | None, env_key: str, default: str) -> str:
-    """Pick the model for a phase, then map any tier alias to its provisioned ID.
-
-    Precedence: explicit argument, the phase's own key, CLAUDE_REVIEW_MODEL, the
-    built-in default. Whichever wins is resolved through ANTHROPIC_DEFAULT_* — so
-    naming a tier anywhere in the chain honors the deployment configured for it.
-    """
-    return _resolve_alias(_select_model(explicit, env_key, default))
-
-
-def _resolve_thinking_level(explicit: str | None, env_key: str, default: str | None) -> str | None:
-    if explicit:
-        return explicit
-    from_env = os.environ.get(env_key)
-    if from_env:
-        return from_env
-    global_env = os.environ.get("CLAUDE_REVIEW_THINKING")
-    if global_env:
-        return global_env
-    return default
-
-
-def _resolve_provider() -> str | None:
-    return os.environ.get("CLAUDE_REVIEW_PROVIDER")
 
 
 # ── Agent invocation ──────────────────────────────────────────────────────────

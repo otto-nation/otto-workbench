@@ -50,26 +50,26 @@ def _clear_git_hook_env():
     os.environ.update(saved)
 
 
-def _review_env_keys() -> list[str]:
-    """The review-config vars exported right now, by the prefix their owner defines.
+def _agent_env_keys() -> list[str]:
+    """The agent-config vars exported right now, by the prefix their owner defines.
 
     Imported lazily, like the other fixtures that reach into ai/lib: a
     module-scope import here would make every test's collection depend on
-    review_common importing cleanly.
+    agent_types importing cleanly.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from review_common import REVIEW_ENV_PREFIX
-    return [k for k in os.environ if k.startswith(REVIEW_ENV_PREFIX)]
+    from agent_types import ENV_PREFIX
+    return [k for k in os.environ if k.startswith(ENV_PREFIX)]
 
 
 @pytest.fixture(autouse=True)
-def _clear_review_env():
-    """Run every test with the review config env unset.
+def _clear_agent_env():
+    """Run every test with the agent config env unset.
 
-    Review model, thinking, and provider settings are read straight from the
+    Model, thinking, and provider settings are read straight from the
     environment with no injection point, so a developer who exports
-    CLAUDE_REVIEW_THINKING for their own runs answers those tests' assertions
+    WORKBENCH_AI_THINKING for their own runs answers those tests' assertions
     from their shell. Modules that resolve config guard themselves today; this
     is the floor, so the next one does not have to remember.
 
@@ -79,9 +79,9 @@ def _clear_review_env():
     left behind before restoring, so a test that writes os.environ directly
     cannot leak into the next one either.
     """
-    saved = {k: os.environ.pop(k) for k in _review_env_keys()}
+    saved = {k: os.environ.pop(k) for k in _agent_env_keys()}
     yield
-    for key in _review_env_keys():
+    for key in _agent_env_keys():
         del os.environ[key]
     os.environ.update(saved)
 
@@ -93,7 +93,7 @@ def _isolate_workbench_config(tmp_path, monkeypatch):
     ``workbench_config`` is layers 4 and 5 of the model, thinking, effort and
     issue-tracker chains, so a developer with a populated
     ``~/.config/workbench/config.yml`` would otherwise answer those tests'
-    assertions from their own settings. Same floor as ``_clear_review_env``,
+    assertions from their own settings. Same floor as ``_clear_agent_env``,
     for the file half of the same precedence chain. Tests that want a config
     write one into this root.
     """
@@ -133,7 +133,7 @@ def _clear_lock_env():
 
     claim_for_process holds its handle until the process exits, which for a
     test process means the rest of the session — so drop those here too.
-    Autouse for the same reason as _clear_review_env: this is the floor, so
+    Autouse for the same reason as _clear_agent_env: this is the floor, so
     the next module that takes a lock does not have to remember.
     """
     if LIB_DIR not in sys.path:

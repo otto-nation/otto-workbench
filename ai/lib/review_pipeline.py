@@ -22,6 +22,7 @@ from datetime import date
 from pathlib import Path
 
 import log
+from agent_types import EFFORT_PRESETS, Effort, Phase
 from review_common import (
     count_severities,
     FILENAME_META,
@@ -29,8 +30,7 @@ from review_common import (
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
     SEVERITY_MUST, SEVERITY_SHOULD,
-    Diagnosis, DiagnosisKind, Effort, GroupSkip, Mode, Phase, ReviewType,
-    EFFORT_PRESETS,
+    Diagnosis, DiagnosisKind, GroupSkip, Mode, ReviewType,
     PRIOR_DATE_RE,
     TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,

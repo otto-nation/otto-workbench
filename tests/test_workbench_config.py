@@ -14,7 +14,7 @@ from conftest import add_worktree, seed_repo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import workbench_config as wc
-from review_common import Effort, Phase, Thinking
+from agent_types import Effort, Phase, Thinking
 
 # The PyYAML write path only exists for a machine without yq, so the tests for
 # it only run where PyYAML is installed — the same shape test_review_profiles
@@ -49,8 +49,8 @@ def test_missing_files_give_built_in_defaults(roots):
     cfg = wc.load_config(project)
     assert cfg.reuse.default is wc.ReuseLevel.FULL
     assert cfg.reuse.level is None
-    assert cfg.review.model is None
-    assert cfg.review.phases == {}
+    assert cfg.agent.model is None
+    assert cfg.agent.phases == {}
     assert cfg.issue_tracker.provider is None
 
 
@@ -61,6 +61,7 @@ reuse:
   level: ultra
 review:
   effort: high
+agent:
   thinking: medium
   phases:
     scout:
@@ -69,34 +70,34 @@ review:
     cfg = wc.load_config(project)
     assert cfg.reuse.level is wc.ReuseLevel.ULTRA
     assert cfg.review.effort is Effort.HIGH
-    assert cfg.review.thinking is Thinking.MEDIUM
-    assert cfg.review.phases[Phase.SCOUT].model == "haiku"
+    assert cfg.agent.thinking is Thinking.MEDIUM
+    assert cfg.agent.phases[Phase.SCOUT].model == "haiku"
 
 
 def test_project_config_wins_over_global(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  model: sonnet\n")
-    _write(project / ".workbench.yml", "review:\n  model: opus\n")
-    assert wc.load_config(project).review.model == "opus"
+    _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
+    _write(project / ".workbench.yml", "agent:\n  model: opus\n")
+    assert wc.load_config(project).agent.model == "opus"
 
 
 def test_project_config_does_not_discard_global_siblings(roots):
     config_root, project = roots
     _write(config_root / "config.yml", """
-review:
+agent:
   model: sonnet
   thinking: medium
 issue_tracker:
   provider: github
   team: ENG
 """)
-    _write(project / ".workbench.yml", "review:\n  phases:\n    fix:\n      model: opus\n")
+    _write(project / ".workbench.yml", "agent:\n  phases:\n    fix:\n      model: opus\n")
     cfg = wc.load_config(project)
-    assert cfg.review.model == "sonnet"
-    assert cfg.review.thinking is Thinking.MEDIUM
+    assert cfg.agent.model == "sonnet"
+    assert cfg.agent.thinking is Thinking.MEDIUM
     assert cfg.issue_tracker.provider is wc.IssueProvider.GITHUB
     assert cfg.issue_tracker.team == "ENG"
-    assert cfg.review.phases[Phase.FIX].model == "opus"
+    assert cfg.agent.phases[Phase.FIX].model == "opus"
 
 
 def test_an_empty_file_is_not_an_error(roots):
@@ -110,9 +111,9 @@ def test_the_yq_fallback_reads_the_same_config(roots, monkeypatch):
     """PyYAML is optional, so the yq path has to produce the same answer."""
     monkeypatch.setattr(wc, "yaml", None)
     config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  model: sonnet\n  effort: high\n")
+    _write(config_root / "config.yml", "agent:\n  model: sonnet\nreview:\n  effort: high\n")
     cfg = wc.load_config(project)
-    assert cfg.review.model == "sonnet"
+    assert cfg.agent.model == "sonnet"
     assert cfg.review.effort is Effort.HIGH
 
 
@@ -120,7 +121,7 @@ def test_the_yq_fallback_reads_the_same_config(roots, monkeypatch):
 def test_the_yq_fallback_rejects_malformed_yaml(roots, monkeypatch):
     monkeypatch.setattr(wc, "yaml", None)
     config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  model: [unclosed\n")
+    _write(config_root / "config.yml", "agent:\n  model: [unclosed\n")
     with pytest.raises(wc.ConfigError):
         wc.load_config(project)
 
@@ -130,7 +131,7 @@ def test_the_yq_fallback_rejects_malformed_yaml(roots, monkeypatch):
 
 def test_unknown_enum_value_is_rejected_by_file_name(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  thinking: turbo\n")
+    _write(config_root / "config.yml", "agent:\n  thinking: turbo\n")
     with pytest.raises(wc.ConfigError) as excinfo:
         wc.load_config(project)
     assert "config.yml" in str(excinfo.value)
@@ -139,20 +140,20 @@ def test_unknown_enum_value_is_rejected_by_file_name(roots):
 
 def test_unknown_phase_key_is_rejected(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  phases:\n    scoot:\n      model: haiku\n")
+    _write(config_root / "config.yml", "agent:\n  phases:\n    scoot:\n      model: haiku\n")
     with pytest.raises(wc.ConfigError, match="scoot"):
         wc.load_config(project)
 
 
 def test_load_config_or_default_survives_a_bad_file(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  thinking: turbo\n")
+    _write(config_root / "config.yml", "agent:\n  thinking: turbo\n")
     assert wc.load_config_or_default(project) == wc.WorkbenchConfig()
 
 
 def test_malformed_yaml_is_rejected(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  model: [unclosed\n")
+    _write(config_root / "config.yml", "agent:\n  model: [unclosed\n")
     with pytest.raises(wc.ConfigError):
         wc.load_config(project)
 
@@ -194,24 +195,24 @@ def test_a_plain_clone_keeps_the_two_scopes_it_always_had(roots, tmp_path):
 
 def test_the_container_file_beats_the_global_one(roots, container):
     config_root, _ = roots
-    _write(config_root / "config.yml", "review:\n  model: sonnet\n")
-    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
-    assert wc.load_config(container / "main").review.model == "opus"
+    _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
+    _write(container / wc.PROJECT_CONFIG_NAME, "agent:\n  model: opus\n")
+    assert wc.load_config(container / "main").agent.model == "opus"
 
 
 def test_the_worktree_file_beats_the_container_one(roots, container):
-    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
-    _write(container / "main" / wc.PROJECT_CONFIG_NAME, "review:\n  model: haiku\n")
-    assert wc.load_config(container / "main").review.model == "haiku"
+    _write(container / wc.PROJECT_CONFIG_NAME, "agent:\n  model: opus\n")
+    _write(container / "main" / wc.PROJECT_CONFIG_NAME, "agent:\n  model: haiku\n")
+    assert wc.load_config(container / "main").agent.model == "haiku"
 
 
 def test_the_container_does_not_discard_global_siblings(roots, container):
     config_root, _ = roots
-    _write(config_root / "config.yml", "review:\n  model: sonnet\n  thinking: medium\n")
-    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
+    _write(config_root / "config.yml", "agent:\n  model: sonnet\n  thinking: medium\n")
+    _write(container / wc.PROJECT_CONFIG_NAME, "agent:\n  model: opus\n")
     cfg = wc.load_config(container / "main")
-    assert cfg.review.model == "opus"
-    assert cfg.review.thinking is Thinking.MEDIUM
+    assert cfg.agent.model == "opus"
+    assert cfg.agent.thinking is Thinking.MEDIUM
 
 
 def test_a_container_value_names_the_container_in_the_report(roots, container):
@@ -313,12 +314,12 @@ def test_a_key_no_file_sets_is_reported_as_a_default(roots):
 def test_a_phase_override_is_reported_under_its_own_key(roots):
     config_root, project = roots
     _write(config_root / "config.yml", """
-review:
+agent:
   phases:
     scout:
       model: haiku
 """)
-    row = _row(wc.config_status(project), "review.phases.scout.model")
+    row = _row(wc.config_status(project), "agent.phases.scout.model")
     assert row.value == "haiku"
     assert row.scope.name == wc.GLOBAL_SCOPE
 
@@ -327,7 +328,7 @@ def test_a_phase_nobody_overrode_is_not_reported(roots):
     """Every phase would bury the ones a file actually names."""
     _, project = roots
     keys = [row.key for row in wc.config_status(project).keys]
-    assert not [key for key in keys if key.startswith("review.phases.")]
+    assert not [key for key in keys if key.startswith("agent.phases.")]
 
 
 def test_the_reported_keys_are_the_documented_keys(roots):
@@ -479,7 +480,7 @@ def test_schema_lists_every_phase_as_a_valid_key():
     import schema_gen
 
     schema = schema_gen.dataclass_to_schema(wc.WorkbenchConfig)
-    phases = schema["properties"]["review"]["properties"]["phases"]
+    phases = schema["properties"]["agent"]["properties"]["phases"]
     assert phases["propertyNames"]["enum"] == [p.value for p in Phase]
 
 
@@ -497,10 +498,10 @@ def test_set_value_creates_and_updates_the_global_file(roots):
 
 def test_set_value_preserves_unrelated_keys(roots):
     config_root, _ = roots
-    _write(config_root / "config.yml", "review:\n  model: sonnet\n")
+    _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
     wc.set_value("reuse.level", "ultra")
     cfg = wc.load_config()
-    assert cfg.review.model == "sonnet"
+    assert cfg.agent.model == "sonnet"
     assert cfg.reuse.level is wc.ReuseLevel.ULTRA
 
 
@@ -529,13 +530,13 @@ def test_the_modeline_survives_later_writes(roots):
     """yq is the writer precisely because it carries comments through."""
     config_root, _ = roots
     wc.set_value("reuse.level", "ultra")
-    wc.set_value("review.model", "sonnet")
+    wc.set_value("agent.model", "sonnet")
     text = (config_root / "config.yml").read_text()
     assert text.startswith(wc.CONFIG_HEADER)
     assert text.count(wc.CONFIG_HEADER) == 1
     cfg = wc.load_config()
     assert cfg.reuse.level is wc.ReuseLevel.ULTRA
-    assert cfg.review.model == "sonnet"
+    assert cfg.agent.model == "sonnet"
 
 
 def test_a_modeline_only_file_reads_as_an_empty_config(roots):
@@ -557,11 +558,11 @@ def test_the_pyyaml_fallback_puts_the_modeline_back(roots, monkeypatch):
     config_root, _ = roots
     monkeypatch.setattr(wc.shutil, "which", lambda _: None)
     wc.set_value("reuse.level", "ultra")
-    wc.set_value("review.model", "sonnet")
+    wc.set_value("agent.model", "sonnet")
     text = (config_root / "config.yml").read_text()
     assert text.startswith(wc.CONFIG_HEADER)
     assert text.count(wc.CONFIG_HEADER) == 1
-    assert wc.load_config().review.model == "sonnet"
+    assert wc.load_config().agent.model == "sonnet"
 
 
 @needs_yaml
@@ -569,7 +570,7 @@ def test_the_pyyaml_fallback_adds_no_modeline_to_a_file_without_one(
     roots, monkeypatch,
 ):
     config_root, _ = roots
-    _write(config_root / "config.yml", "review:\n  model: sonnet\n")
+    _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
     monkeypatch.setattr(wc.shutil, "which", lambda _: None)
     wc.set_value("reuse.level", "ultra")
     assert wc.CONFIG_HEADER not in (config_root / "config.yml").read_text()
@@ -583,14 +584,14 @@ def phase_cfg(roots):
     """A config that sets a phase model at both scopes, for layering tests."""
     config_root, project = roots
     _write(config_root / "config.yml", """
-review:
+agent:
   model: global-section
   phases:
     scout:
       model: global-phase
 """)
     _write(project / ".workbench.yml", """
-review:
+agent:
   phases:
     scout:
       model: project-phase
@@ -599,106 +600,106 @@ review:
 
 
 def test_layer_5_global_config_beats_the_built_in(roots):
-    import review_phases
+    import agent_phases
 
     config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  model: from-global\n")
+    _write(config_root / "config.yml", "agent:\n  model: from-global\n")
     cfg = wc.load_config(project)
-    assert review_phases.phase_model(Phase.SCOUT, None, cfg) == "from-global"
+    assert agent_phases.phase_model(Phase.SCOUT, None, cfg) == "from-global"
 
 
 def test_layer_4_project_config_beats_the_global(phase_cfg):
-    import review_phases
+    import agent_phases
 
     cfg = wc.load_config(phase_cfg)
-    assert review_phases.phase_model(Phase.SCOUT, None, cfg) == "project-phase"
+    assert agent_phases.phase_model(Phase.SCOUT, None, cfg) == "project-phase"
 
 
 def test_a_phase_entry_beats_the_section_within_one_file(roots):
-    import review_phases
+    import agent_phases
 
     config_root, project = roots
     _write(config_root / "config.yml", """
-review:
+agent:
   model: section
   phases:
     scout:
       model: phase
 """)
     cfg = wc.load_config(project)
-    assert review_phases.phase_model(Phase.SCOUT, None, cfg) == "phase"
-    assert review_phases.phase_model(Phase.FIX, None, cfg) == "section"
+    assert agent_phases.phase_model(Phase.SCOUT, None, cfg) == "phase"
+    assert agent_phases.phase_model(Phase.FIX, None, cfg) == "section"
 
 
 def test_layer_3_global_env_beats_the_config(phase_cfg, monkeypatch):
-    import review_phases
+    import agent_phases
 
-    monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "from-env")
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "from-env")
     cfg = wc.load_config(phase_cfg)
-    assert review_phases.phase_model(Phase.SCOUT, None, cfg) == "from-env"
+    assert agent_phases.phase_model(Phase.SCOUT, None, cfg) == "from-env"
 
 
 def test_layer_2_phase_env_beats_the_global_env(phase_cfg, monkeypatch):
-    import review_phases
+    import agent_phases
 
-    monkeypatch.setenv("CLAUDE_REVIEW_MODEL", "from-env")
-    monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "from-phase-env")
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", "from-env")
+    monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "from-phase-env")
     cfg = wc.load_config(phase_cfg)
-    assert review_phases.phase_model(Phase.SCOUT, None, cfg) == "from-phase-env"
+    assert agent_phases.phase_model(Phase.SCOUT, None, cfg) == "from-phase-env"
 
 
 def test_layer_1_explicit_beats_every_env_and_file(phase_cfg, monkeypatch):
-    import review_phases
+    import agent_phases
 
-    monkeypatch.setenv("CLAUDE_REVIEW_SCOUT_MODEL", "from-phase-env")
+    monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "from-phase-env")
     cfg = wc.load_config(phase_cfg)
-    assert review_phases.phase_model(Phase.SCOUT, "explicit", cfg) == "explicit"
+    assert agent_phases.phase_model(Phase.SCOUT, "explicit", cfg) == "explicit"
 
 
 def test_phase_model_loads_the_config_itself_when_not_given_one(roots):
     """The default argument is what a single-value caller relies on."""
-    import review_phases
+    import agent_phases
 
     config_root, _ = roots
-    _write(config_root / "config.yml", "review:\n  model: from-disk\n")
-    assert review_phases.phase_model(Phase.SCOUT, None) == "from-disk"
+    _write(config_root / "config.yml", "agent:\n  model: from-disk\n")
+    assert agent_phases.phase_model(Phase.SCOUT, None) == "from-disk"
 
 
 def test_thinking_layers_the_same_way(roots):
-    import review_phases
+    import agent_phases
 
     config_root, project = roots
     _write(config_root / "config.yml", """
-review:
+agent:
   thinking: low
   phases:
     scout:
       thinking: high
 """)
     cfg = wc.load_config(project)
-    assert review_phases.phase_thinking_default(Phase.SCOUT, Effort.MEDIUM, cfg) is Thinking.HIGH
-    assert review_phases.phase_thinking_default(Phase.FIX, Effort.MEDIUM, cfg) is Thinking.LOW
+    assert agent_phases.phase_thinking_default(Phase.SCOUT, Effort.MEDIUM, cfg) is Thinking.HIGH
+    assert agent_phases.phase_thinking_default(Phase.FIX, Effort.MEDIUM, cfg) is Thinking.LOW
 
 
 def test_thinking_falls_back_to_the_effort_preset(roots):
-    import review_phases
-    from review_common import EFFORT_PRESETS
+    import agent_phases
+    from agent_types import EFFORT_PRESETS
 
     _, project = roots
     cfg = wc.load_config(project)
-    assert review_phases.phase_thinking_default(
+    assert agent_phases.phase_thinking_default(
         Phase.SCOUT, Effort.HIGH, cfg,
     ) == EFFORT_PRESETS[Effort.HIGH].thinking
 
 
 def test_effort_falls_back_from_config_to_the_built_in(roots):
-    import review_phases
+    import agent_phases
 
     config_root, project = roots
     _write(config_root / "config.yml", "review:\n  effort: high\n")
-    assert review_phases.resolve_effort(None, wc.load_config(project)) is Effort.HIGH
-    assert review_phases.resolve_effort(Effort.LOW, wc.load_config(project)) is Effort.LOW
-    assert review_phases.resolve_effort(None, wc.WorkbenchConfig()) is Effort.MEDIUM
+    assert agent_phases.resolve_effort(None, wc.load_config(project)) is Effort.HIGH
+    assert agent_phases.resolve_effort(Effort.LOW, wc.load_config(project)) is Effort.LOW
+    assert agent_phases.resolve_effort(None, wc.WorkbenchConfig()) is Effort.MEDIUM
 
 
 # ── Per-repo adoption of .claude/review.yml ─────────────────────────────────
@@ -957,11 +958,11 @@ def test_an_unreadable_installed_schema_leaves_the_local_surface(roots, tmp_path
 
 
 def test_an_enum_keyed_section_is_writable_by_its_declared_keys(roots):
-    """`review.phases.<phase>` is a dict, so the guard reads propertyNames."""
-    wc.set_value(f"review.phases.{Phase.SCOUT}.model", "sonnet")
-    assert wc.load_config().review.phases[Phase.SCOUT].model == "sonnet"
+    """`agent.phases.<phase>` is a dict, so the guard reads propertyNames."""
+    wc.set_value(f"agent.phases.{Phase.SCOUT}.model", "sonnet")
+    assert wc.load_config().agent.phases[Phase.SCOUT].model == "sonnet"
     with pytest.raises(wc.ConfigKeyError):
-        wc.set_value("review.phases.nosuchphase.model", "sonnet")
+        wc.set_value("agent.phases.nosuchphase.model", "sonnet")
 
 
 def test_check_key_says_which_surface_refused(stale_install):

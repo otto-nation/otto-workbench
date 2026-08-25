@@ -136,12 +136,12 @@ Every key any of them accepts:
 |-----|--------|---------|
 | `reuse.level` | `lite`, `full`, `ultra` | — |
 | `reuse.default` | `lite`, `full`, `ultra` | `full` |
-| `review.model` | string | — |
-| `review.thinking` | `low`, `medium`, `high` | — |
-| `review.provider` | string | — |
+| `agent.model` | string | — |
+| `agent.thinking` | `low`, `medium`, `high` | — |
+| `agent.provider` | string | — |
+| `agent.phases.<phase>.model` | string | — |
+| `agent.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
 | `review.effort` | `low`, `medium`, `high` | — |
-| `review.phases.<phase>.model` | string | — |
-| `review.phases.<phase>.thinking` | `low`, `medium`, `high` | — |
 | `issue_tracker.provider` | `linear`, `github`, `jira` | — |
 | `issue_tracker.team` | string | — |
 | `issue_tracker.jira_url` | string | — |
@@ -177,18 +177,18 @@ merges the scopes and returns the result, so an inherited value and a local
 one are indistinguishable afterwards, and a key written under a name nothing
 reads is dropped in silence by both the loader and the reader waiting on it.
 
-Six layers decide a review value, highest first:
+Six layers decide an agent value, highest first:
 
 | # | Layer | Example |
 |---|-------|---------|
 | 1 | Explicit flag | `--model opus`, `--effort high` |
-| 2 | Phase env var | `CLAUDE_REVIEW_SCOUT_MODEL` |
-| 3 | Global env var | `CLAUDE_REVIEW_MODEL` |
+| 2 | Phase env var | `WORKBENCH_AI_SCOUT_MODEL` |
+| 3 | Global env var | `WORKBENCH_AI_MODEL` |
 | 4 | Project config | `<worktree>/.workbench.yml` |
 | 5 | Container config | `<container>/.workbench.yml` |
 | 6 | Global config | `config.yml` |
 
-Within one file a `review.phases.<phase>` entry outranks the `review.*` section
+Within one file an `agent.phases.<phase>` entry outranks the `agent.*` section
 it sits under. Layers 4 through 6 deep-merge, so a project file that sets one
 phase keeps every sibling the layers below it set.
 

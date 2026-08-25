@@ -16,7 +16,8 @@ import review_findings
 import review_fix
 from pr_fix import CommitStatus
 from proc import TIMEOUT_RETURNCODE, CmdResult
-from review_common import Diagnosis, DiagnosisKind, Effort, Phase
+from agent_types import Effort, Phase
+from review_common import Diagnosis, DiagnosisKind
 from review_findings import Finding
 
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)

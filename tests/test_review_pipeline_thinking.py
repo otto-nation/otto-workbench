@@ -5,35 +5,35 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import review_agent
+import agent_phases
 
 
-class TestResolveThinkingLevel:
+class TestResolveThinking:
     def test_explicit_wins(self, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        assert review_agent._resolve_thinking_level("high", "CLAUDE_REVIEW_GROUP_THINKING", "low") == "high"
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        assert agent_phases.resolve_thinking("high", "WORKBENCH_AI_GROUP_THINKING", "low") == "high"
 
     def test_phase_env_overrides_default(self, monkeypatch):
-        monkeypatch.setenv("CLAUDE_REVIEW_GROUP_THINKING", "medium")
-        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        assert review_agent._resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING", "low") == "medium"
+        monkeypatch.setenv("WORKBENCH_AI_GROUP_THINKING", "medium")
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "medium"
 
     def test_global_env_overrides_default(self, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
-        monkeypatch.setenv("CLAUDE_REVIEW_THINKING", "xhigh")
-        assert review_agent._resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING", "low") == "xhigh"
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
+        monkeypatch.setenv("WORKBENCH_AI_THINKING", "xhigh")
+        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "xhigh"
 
     def test_default_when_no_env(self, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        assert review_agent._resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING", "low") == "low"
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "low"
 
     def test_phase_env_beats_global(self, monkeypatch):
-        monkeypatch.setenv("CLAUDE_REVIEW_GROUP_THINKING", "medium")
-        monkeypatch.setenv("CLAUDE_REVIEW_THINKING", "xhigh")
-        assert review_agent._resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING", "low") == "medium"
+        monkeypatch.setenv("WORKBENCH_AI_GROUP_THINKING", "medium")
+        monkeypatch.setenv("WORKBENCH_AI_THINKING", "xhigh")
+        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "medium"
 
     def test_none_explicit_falls_through(self, monkeypatch):
-        monkeypatch.delenv("CLAUDE_REVIEW_GROUP_THINKING", raising=False)
-        monkeypatch.delenv("CLAUDE_REVIEW_THINKING", raising=False)
-        assert review_agent._resolve_thinking_level(None, "CLAUDE_REVIEW_GROUP_THINKING", None) is None
+        monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
+        monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
+        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", None) is None

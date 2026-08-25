@@ -17,9 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import log
 from trail import Trail, add_trail_args
+from agent_types import Phase
 from review_common import (
     META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
-    Mode, Phase, ReviewType,
+    Mode, ReviewType,
 )
 from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,

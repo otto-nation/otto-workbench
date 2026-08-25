@@ -5,7 +5,6 @@ import itertools
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -391,15 +390,6 @@ _CONTENTION_HINT = (
 )
 
 
-def _signal_description(returncode: int) -> str:
-    """`SIGPIPE (signal 13)` for a death the platform has a name for."""
-    number = -returncode
-    try:
-        return f"{signal.Signals(number).name} (signal {number})"
-    except ValueError:
-        return f"signal {number}"
-
-
 def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
     """Run *argv* to completion and return it, failing the test unless it exits 0.
 
@@ -409,10 +399,19 @@ def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
     The failure paths are what this exists for. A non-zero exit raises an
     ``AssertionError`` quoting the command's own stdout and stderr — a bare
     ``check=True`` renders as the exit code alone, which arrives without the
-    message that says what broke. A death on a signal or a timeout raises
-    ``MachineContention`` instead, which names the signal and says plainly that
-    the machine, not the test, is the thing that failed.
+    message that says what broke. A death on an external signal (SIGKILL,
+    SIGPIPE, ...) or a timeout raises ``MachineContention`` instead, which
+    names the signal and says plainly that the machine, not the test, is the
+    thing that failed. A fault signal (SIGSEGV, SIGABRT, ...) still raises
+    ``AssertionError`` — that kind of death does point at the command, and
+    ``ai/lib/proc.py``'s ``EXTERNAL_SIGNALS`` is the shared list of which
+    signals get which treatment, so this stays in step with ``failure_message``
+    without a second copy of the split.
     """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import proc
+
     shown = " ".join(str(a) for a in argv)
     where = f" in {cwd}" if cwd else ""
     try:
@@ -424,10 +423,15 @@ def run_checked(argv, *, cwd=None, timeout=GIT_TIMEOUT, env=None):
         raise MachineContention(
             f"{shown} timed out after {timeout}s{where}\n{_CONTENTION_HINT}"
         ) from exc
-    if result.returncode < 0:
+    if result.returncode < 0 and -result.returncode in proc.EXTERNAL_SIGNALS:
         raise MachineContention(
-            f"{shown} was killed by {_signal_description(result.returncode)}{where}\n"
+            f"{shown} was killed by {proc.signal_description(result.returncode)}{where}\n"
             f"{_CONTENTION_HINT}"
+        )
+    if result.returncode < 0:
+        raise AssertionError(
+            f"{shown} was killed by {proc.signal_description(result.returncode)}{where}\n"
+            f"stdout: {result.stdout.strip()}\nstderr: {result.stderr.strip()}"
         )
     if result.returncode != 0:
         raise AssertionError(

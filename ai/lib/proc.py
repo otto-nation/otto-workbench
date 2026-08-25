@@ -96,7 +96,12 @@ TIMEOUT_RETURNCODE = 124
 # SIGBUS, SIGABRT, SIGILL, SIGFPE — are deliberately absent: those do point at
 # the command, and telling a reader otherwise is the misdirection this exists
 # to prevent.
-_EXTERNAL_SIGNALS = frozenset({
+#
+# Public (no leading underscore) so a caller with its own signal-death
+# reporting — `tests/conftest.py`'s `run_checked`, which cannot import a test
+# fixture's stdlib-only helper from anywhere else — classifies from this set
+# rather than hand-copying it and drifting from a future addition here.
+EXTERNAL_SIGNALS = frozenset({
     signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGPIPE,
     signal.SIGTERM, signal.SIGKILL, signal.SIGXCPU,
 })
@@ -107,11 +112,13 @@ _EXTERNAL_SIGNALS = frozenset({
 _EXTERNAL_KILL_NOTE = "the machine ended it, not the command — re-run rather than bisect"
 
 
-def _signal_description(returncode: int) -> str:
+def signal_description(returncode: int) -> str:
     """`SIGPIPE (signal 13)` for the signal behind a negative return code.
 
     Falls back to the bare number for a signal this platform has no name for,
     which is rarer than a `ValueError` escaping into an error path is welcome.
+    Public for the same reason as `EXTERNAL_SIGNALS`: `tests/conftest.py`
+    reuses it rather than keeping its own copy.
     """
     number = -returncode
     try:
@@ -223,8 +230,8 @@ def _killed_message(action: str, r: CmdResult) -> str:
     part-way through often explains the state it was left in — but the signal
     leads, because it is what the exit code cannot say.
     """
-    killed = f"{action} — killed by {_signal_description(r.returncode)}"
-    if -r.returncode in _EXTERNAL_SIGNALS:
+    killed = f"{action} — killed by {signal_description(r.returncode)}"
+    if -r.returncode in EXTERNAL_SIGNALS:
         killed = f"{killed}; {_EXTERNAL_KILL_NOTE}"
     if not r.detail:
         return killed

@@ -1,6 +1,7 @@
 """Tests for agent_types — the phase registry and the vocabulary around it."""
 
 import dataclasses
+import re
 import sys
 from pathlib import Path
 
@@ -27,6 +28,29 @@ class TestPhasesRegistry:
 
     def test_every_phase_defaults_to_sonnet(self):
         assert {s.model for s in agent_types.PHASES.values()} == {"sonnet"}
+
+
+class TestPhaseEnvKeys:
+    """One phase, one spelling — the config key and the env keys agree."""
+
+    def test_both_keys_derive_from_the_phase_value(self):
+        for phase in Phase:
+            assert phase.model_env_key == f"WORKBENCH_AI_{phase.value.upper()}_MODEL"
+            assert phase.thinking_env_key == f"WORKBENCH_AI_{phase.value.upper()}_THINKING"
+
+    def test_every_phase_value_is_a_usable_env_key_fragment(self):
+        """A hyphenated value would build an env key no shell can export.
+
+        The config key takes the value verbatim, so a phase named ``ci-fix``
+        would read fine from YAML and produce ``WORKBENCH_AI_CI-FIX_MODEL``,
+        which nothing can set. Underscores are the separator a new phase takes.
+        """
+        for phase in Phase:
+            assert re.fullmatch(r"[a-z][a-z0-9_]*", phase.value), phase
+
+    def test_keys_are_distinct_across_phases(self):
+        keys = [p.model_env_key for p in Phase] + [p.thinking_env_key for p in Phase]
+        assert len(set(keys)) == len(keys)
 
 
 class TestPhaseThinkingDefaults:

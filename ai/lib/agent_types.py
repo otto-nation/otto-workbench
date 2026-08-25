@@ -34,10 +34,12 @@ ENV_PREFIX = "WORKBENCH_AI_"
 class Phase(StrEnum):
     """One agent invocation the workbench sizes from a registry entry.
 
-    Override env keys are derived from the member name and config keys from its
+    Both the config key and the override env keys are derived from the member's
     value, so adding a phase means one member here plus one ``PHASES`` entry —
     callers, preflight checks, and failure hints all read the derived keys
-    rather than spelling them out.
+    rather than spelling them out. Deriving both from one place is what keeps
+    ``agent.phases.<phase>`` and ``WORKBENCH_AI_<PHASE>_*`` naming the same
+    phase; the member name is a second spelling that could drift from it.
     """
 
     SINGLE = "single"
@@ -50,11 +52,11 @@ class Phase(StrEnum):
 
     @property
     def model_env_key(self) -> str:
-        return f"{ENV_PREFIX}{self.name}_MODEL"
+        return f"{ENV_PREFIX}{self.upper()}_MODEL"
 
     @property
     def thinking_env_key(self) -> str:
-        return f"{ENV_PREFIX}{self.name}_THINKING"
+        return f"{ENV_PREFIX}{self.upper()}_THINKING"
 
     @property
     def _stem(self) -> str:

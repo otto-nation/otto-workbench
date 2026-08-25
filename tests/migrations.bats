@@ -1615,12 +1615,12 @@ lift_in_fake() {
 
 @test "lift keeps a review section holding other settings" {
   mkdir -p "$FAKE_CONFIG"
-  printf 'review:\n  model: opus\n  issue_tracker:\n    provider: jira\n' \
+  printf 'review:\n  effort: high\n  issue_tracker:\n    provider: jira\n' \
     > "$FAKE_CONFIG/config.yml"
 
   run lift_in_fake
   [ "$status" -eq 0 ]
-  [ "$(yq -r '.review.model' "$FAKE_CONFIG/config.yml")" = "opus" ]
+  [ "$(yq -r '.review.effort' "$FAKE_CONFIG/config.yml")" = "high" ]
   [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "jira" ]
 }
 
@@ -1656,4 +1656,133 @@ lift_in_fake() {
   run lift_in_fake
   [ "$status" -eq 3 ]
   [ "$(yq -r '.issue_tracker.provider' "$FAKE_CONFIG/config.yml")" = "github" ]
+}
+
+# ─── Agent config section ────────────────────────────────────────────────────
+
+agent_section_in_fake() {
+  (
+    export WORKBENCH_CONFIG_DIR="$FAKE_CONFIG"
+    . "$FAKE_ROOT/lib/ui.sh"
+    . "$REPO_ROOT/lib/constants.sh"
+    # For the status names the migration body returns, as in lift_in_fake above.
+    . "$REPO_ROOT/lib/migrations.sh"
+    . "$REPO_ROOT/bin/migrations/20260824-agent-config-section.sh"
+    migration_20260824_agent_config_section
+  )
+}
+
+@test "agent section defers while there is no config.yml" {
+  # Deferred, not recorded: a session that writes the legacy shape into a new
+  # config.yml after this sync still has the move waiting for it.
+  run agent_section_in_fake
+  [ "$status" -eq 4 ]
+  [ ! -f "$FAKE_CONFIG/config.yml" ]
+}
+
+@test "agent section is a no-op when review holds none of the keys" {
+  # Recorded rather than deferred: the file is here and holds no legacy key, and
+  # nothing writes review.model any more.
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  effort: high\n' > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.review.effort' "$FAKE_CONFIG/config.yml")" = "high" ]
+}
+
+@test "agent section picks up a config.yml written after a deferred sync" {
+  run agent_section_in_fake
+  [ "$status" -eq 4 ]
+
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  model: opus\n' > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.agent.model' "$FAKE_CONFIG/config.yml")" = "opus" ]
+}
+
+@test "agent section moves every sizing key across" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  model: opus\n  thinking: high\n  provider: pi\n  effort: high\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.agent.model' "$FAKE_CONFIG/config.yml")" = "opus" ]
+  [ "$(yq -r '.agent.thinking' "$FAKE_CONFIG/config.yml")" = "high" ]
+  [ "$(yq -r '.agent.provider' "$FAKE_CONFIG/config.yml")" = "pi" ]
+  [ "$(yq -r '.review.model // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+  [ "$(yq -r '.review.thinking // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+  [ "$(yq -r '.review.provider // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "agent section moves the phases mapping whole" {
+  # phases is the one nested value: every per-phase entry has to survive the
+  # move, not just the key naming them.
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  phases:\n    scout:\n      model: haiku\n    group:\n      thinking: low\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.agent.phases.scout.model' "$FAKE_CONFIG/config.yml")" = "haiku" ]
+  [ "$(yq -r '.agent.phases.group.thinking' "$FAKE_CONFIG/config.yml")" = "low" ]
+  [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "agent section keeps effort behind in review" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  effort: low\n  model: sonnet\n' > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.review.effort' "$FAKE_CONFIG/config.yml")" = "low" ]
+  [ "$(yq -r '.agent.model' "$FAKE_CONFIG/config.yml")" = "sonnet" ]
+}
+
+@test "agent section drops a review section it emptied" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  model: opus\n' > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "agent section keeps a value already written against the new schema" {
+  # A machine that hand-wrote agent.model before the sync reached it: the value
+  # under the key the loader now reads is the one the operator chose last.
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  model: opus\nagent:\n  model: sonnet\n' > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(yq -r '.agent.model' "$FAKE_CONFIG/config.yml")" = "sonnet" ]
+  [ "$(yq -r '.review // "absent"' "$FAKE_CONFIG/config.yml")" = "absent" ]
+}
+
+@test "agent section preserves the schema modeline and hand-written comments" {
+  mkdir -p "$FAKE_CONFIG"
+  printf '# yaml-language-server: $schema=https://example/config.schema.json\n# opus reviews better\nreview:\n  model: opus\n' \
+    > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 0 ]
+  run head -1 "$FAKE_CONFIG/config.yml"
+  [[ "$output" == "# yaml-language-server: \$schema="* ]]
+  grep -q "# opus reviews better" "$FAKE_CONFIG/config.yml"
+}
+
+@test "agent section re-run after a move is a no-op" {
+  mkdir -p "$FAKE_CONFIG"
+  printf 'review:\n  model: opus\n  effort: high\n' > "$FAKE_CONFIG/config.yml"
+
+  run agent_section_in_fake
+  [ "$status" -eq 0 ]
+  run agent_section_in_fake
+  [ "$status" -eq 3 ]
+  [ "$(yq -r '.agent.model' "$FAKE_CONFIG/config.yml")" = "opus" ]
+  [ "$(yq -r '.review.effort' "$FAKE_CONFIG/config.yml")" = "high" ]
 }

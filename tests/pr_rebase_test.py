@@ -3916,7 +3916,11 @@ def test_force_push_ai_fix_fails_returns_error():
 
 
 def test_force_push_logs_the_final_retry_error():
-    """The post-fix retry captures its output — a failure must still be shown."""
+    """The post-fix retry captures its output — a failure must still be shown.
+
+    The resume it offers is the rebase's own push: a plain one would be refused
+    again, this time as non-fast-forward.
+    """
     def fake_run(cmd, **kwargs):
         if cmd[:2] == ["git", "push"]:
             return subprocess.CompletedProcess(
@@ -3930,8 +3934,9 @@ def test_force_push_logs_the_final_retry_error():
         rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
 
     assert rc == 1
-    assert mock_dim.call_count == 2
-    assert mock_dim.call_args[0][0] == "still broken"
+    dimmed = [call[0][0] for call in mock_dim.call_args_list]
+    assert dimmed.count("still broken") == 2
+    assert dimmed[-1] == "Resume: git -C '/fake' push --force-with-lease"
 
 
 def test_force_push_no_resolved_files_skips_ai_fix():

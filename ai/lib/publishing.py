@@ -20,6 +20,15 @@ instead, prefixed `DRAFT (not published)`. Code fixes and the commit are
 unaffected: they are local and undoable, and they are what makes the work
 reviewable at all. The gate covers what leaves the machine.
 
+`pr ci --fix` and `pr review --fix` answer to the same flag and mean the same
+thing by it. Both commit what their agent fixed and both draft the push without
+it, so `--post` reads as "publish what this run produces" wherever it appears
+next to a fix pass — as against `pr review --post` on its own, which publishes
+the review already on disk. The review fix pass runs inside
+`review-orchestrate`, a subprocess spawned before any posting decision would
+otherwise be made, so `claude-review` forwards the flag to it rather than
+opening a gate the pass would never see.
+
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.
 

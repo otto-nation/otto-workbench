@@ -9,16 +9,44 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import land
 import push
 import review_common
 import review_findings
 import review_fix
+from pr_fix import CommitStatus
 from proc import TIMEOUT_RETURNCODE, CmdResult
 from review_common import Diagnosis, DiagnosisKind, Effort, Phase
 from review_findings import Finding
 
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)
 _AGENT_ERROR = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded")
+
+# What the push owner answers when the fix pass's commit reached the remote.
+# The pass no longer pushes for itself — `land` does — so stubbing the owner is
+# how a test keeps a real commit and no network.
+_PUSHED = push.PushResult(
+    push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x", remote_sha="9bc3f64ab",
+)
+
+
+def _recordinggit_out(calls: list[list[str]]):
+    """A `git_client.run` that records its argv and answers `rev-parse` with a sha.
+
+    `land` reads HEAD back after the commit and raises when it cannot, so a
+    blanket success stub is not enough to get through it.
+    """
+    def run(*args, **kwargs):
+        calls.append(list(args))
+        return CmdResult(0, "9bc3f64ab\n" if args[0] == "rev-parse" else "")
+
+    return run
+
+
+def _commit_message(calls: list[list[str]]) -> str:
+    """The `-m` argument of the `git commit` in a recorded run of `land`."""
+    commit = next(call for call in calls if call[0] == "commit")
+    return commit[commit.index("-m") + 1]
 
 
 @pytest.fixture
@@ -68,44 +96,53 @@ class TestCommitFixes:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_fix.git_client.run")
+    @patch("land.git_client.run")
     def test_no_agent_changes_returns_early(self, mock_run, tmp_path):
-        review_fix._commit_fixes(self._make_job(tmp_path), set(), fixed=3, skipped=1)
+        landed = review_fix._commit_fixes(
+            self._make_job(tmp_path), set(), fixed=3, skipped=1,
+        )
+        assert landed.status is CommitStatus.NO_CHANGES
         mock_run.assert_not_called()
 
-    @patch("review_fix._push_fixes")
-    @patch("review_fix.git_client.run")
-    def test_commits_with_counts(self, mock_run, mock_push, tmp_path):
-        job = self._make_job(tmp_path)
-        mock_run.side_effect = [CmdResult(), CmdResult()]
-        review_fix._commit_fixes(job, {"a.go"}, fixed=3, skipped=1)
-        commit_args = mock_run.call_args_list[1].args
-        msg = commit_args[commit_args.index("-m") + 1]
-        assert "3 fixed, 1 skipped" in msg
+    @patch("land.push.push", return_value=_PUSHED)
+    def test_commits_with_counts(self, mock_push, tmp_path):
+        calls: list[list[str]] = []
+        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+            review_fix._commit_fixes(
+                self._make_job(tmp_path), {"a.go"}, fixed=3, skipped=1,
+            )
+        assert "3 fixed, 1 skipped" in _commit_message(calls)
 
-    @patch("review_fix._push_fixes")
-    @patch("review_fix.git_client.run")
-    def test_zero_fixed_omits_count_from_message(
-        self, mock_run, mock_push, tmp_path,
-    ):
-        job = self._make_job(tmp_path)
-        mock_run.side_effect = [CmdResult(), CmdResult()]
-        review_fix._commit_fixes(job, {"a.go"}, fixed=0, skipped=2)
-        commit_args = mock_run.call_args_list[1].args
-        msg = commit_args[commit_args.index("-m") + 1]
-        assert msg == "fix: self-review findings"
+    @patch("land.push.push", return_value=_PUSHED)
+    def test_zero_fixed_omits_count_from_message(self, mock_push, tmp_path):
+        calls: list[list[str]] = []
+        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+            review_fix._commit_fixes(
+                self._make_job(tmp_path), {"a.go"}, fixed=0, skipped=2,
+            )
+        assert _commit_message(calls) == "fix: self-review findings"
 
-    @patch("review_fix._push_fixes")
-    @patch("review_fix.git_client.run")
-    def test_stages_only_the_named_paths(self, mock_run, mock_push, tmp_path):
+    @patch("land.push.push", return_value=_PUSHED)
+    def test_stages_only_the_named_paths(self, mock_push, tmp_path):
         """`git add -A` swept up whatever else was sitting in the worktree."""
-        job = self._make_job(tmp_path)
-        mock_run.side_effect = [CmdResult(), CmdResult()]
-        review_fix._commit_fixes(job, {"b.go", "a.go"}, fixed=1, skipped=0)
-        add_call = list(mock_run.call_args_list[0].args)
+        calls: list[list[str]] = []
+        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+            review_fix._commit_fixes(
+                self._make_job(tmp_path), {"b.go", "a.go"}, fixed=1, skipped=0,
+            )
+        add_call = next(call for call in calls if call[0] == "add")
         assert add_call[-3:] == ["--", ":(literal)a.go", ":(literal)b.go"]
         assert "-A" not in add_call
-        assert mock_run.call_count == 2
+
+    @patch("land.push.push", return_value=_PUSHED)
+    def test_the_pass_pushes_gated(self, mock_push, tmp_path):
+        """A fix pass runs on the operator's behalf, so its push waits for `--post`."""
+        calls: list[list[str]] = []
+        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+            review_fix._commit_fixes(
+                self._make_job(tmp_path), {"a.go"}, fixed=1, skipped=0,
+            )
+        assert mock_push.call_args.kwargs["gated"] is True
 
 
 class TestCommitFixesStaging:
@@ -116,7 +153,7 @@ class TestCommitFixesStaging:
         job.wt_path = str(wt)
         return job
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     def test_pre_existing_untracked_file_stays_out(self, mock_push, git_wt):
         (git_wt / "tsconfig.tsbuildinfo").write_text("stale cache\n")
         (git_wt / "tests_new.py").write_text("def test_x(): pass\n")
@@ -128,7 +165,7 @@ class TestCommitFixesStaging:
         assert _committed_paths(git_wt) == {"tests_new.py"}
         assert "tsconfig.tsbuildinfo" in git_out(git_wt, "status", "--porcelain")
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     def test_agent_created_file_is_committed(self, mock_push, git_wt):
         (git_wt / "fixture.json").write_text("{}\n")
         review_fix._commit_fixes(
@@ -136,7 +173,7 @@ class TestCommitFixesStaging:
         )
         assert _committed_paths(git_wt) == {"fixture.json"}
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     def test_content_staged_before_the_pass_is_not_committed(self, mock_push, git_wt):
         (git_wt / "src.py").write_text("operator work in progress\n")
         git_out(git_wt, "add", "src.py")
@@ -149,7 +186,7 @@ class TestCommitFixesStaging:
         assert _committed_paths(git_wt) == {"fixture.json"}
         assert git_out(git_wt, "show", "HEAD:src.py") == "original\n"
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     def test_a_glob_metacharacter_in_a_name_matches_only_itself(
         self, mock_push, git_wt,
     ):
@@ -169,8 +206,8 @@ class TestCommitFixesStaging:
         assert _committed_paths(git_wt) == {"report[1].md"}
         assert "report1.md" in git_out(git_wt, "status", "--porcelain")
 
-    @patch("review_fix.log")
-    @patch("review_fix._push_fixes")
+    @patch("land.log")
+    @patch("land.push.push", return_value=_PUSHED)
     def test_nothing_is_pushed_when_the_commit_fails(
         self, mock_push, mock_log, git_wt, tmp_path, live_git_hooks,
     ):
@@ -184,13 +221,14 @@ class TestCommitFixesStaging:
         _install_failing_pre_commit(tmp_path)
         (git_wt / "fixture.json").write_text("{}\n")
 
-        review_fix._commit_fixes(
+        landed = review_fix._commit_fixes(
             self._make_job(git_wt), {"fixture.json"}, fixed=1, skipped=0,
         )
 
+        assert landed.status is CommitStatus.COMMIT_FAILED
         mock_push.assert_not_called()
         assert git_out(git_wt, "log", "--oneline").count("\n") == 1
-        assert "gate refused" in mock_log.warn.call_args[0][0]
+        assert "gate refused" in mock_log.error.call_args[0][0]
 
 
 class TestParseCheckboxState:
@@ -488,27 +526,27 @@ class TestCommitFixesWithSummary:
         job.review_file = str(tmp_path / "review.md")
         return job
 
-    @patch("review_fix._push_fixes")
-    @patch("review_fix.git_client.run")
-    def test_commit_includes_summary(self, mock_run, mock_push, tmp_path):
-        job = self._make_job(tmp_path)
-        mock_run.side_effect = [CmdResult(), CmdResult()]
+    @patch("land.push.push", return_value=_PUSHED)
+    def test_commit_includes_summary(self, mock_push, tmp_path):
+        calls: list[list[str]] = []
         summary = "Fixed:\n  - [M1] corrected condition\nSkipped:\n  - [S1] needs design"
-        review_fix._commit_fixes(job, {"a.go"}, fixed=1, skipped=1, summary=summary)
-        commit_args = mock_run.call_args_list[1].args
-        msg = commit_args[commit_args.index("-m") + 1]
+        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+            review_fix._commit_fixes(
+                self._make_job(tmp_path), {"a.go"}, fixed=1, skipped=1, summary=summary,
+            )
+        msg = _commit_message(calls)
         assert "1 fixed, 1 skipped" in msg
         assert "corrected condition" in msg
         assert "needs design" in msg
 
-    @patch("review_fix._push_fixes")
-    @patch("review_fix.git_client.run")
-    def test_commit_without_summary(self, mock_run, mock_push, tmp_path):
-        job = self._make_job(tmp_path)
-        mock_run.side_effect = [CmdResult(), CmdResult()]
-        review_fix._commit_fixes(job, {"a.go"}, fixed=2, skipped=0, summary="")
-        commit_args = mock_run.call_args_list[1].args
-        msg = commit_args[commit_args.index("-m") + 1]
+    @patch("land.push.push", return_value=_PUSHED)
+    def test_commit_without_summary(self, mock_push, tmp_path):
+        calls: list[list[str]] = []
+        with patch("land.git_client.run", side_effect=_recordinggit_out(calls)):
+            review_fix._commit_fixes(
+                self._make_job(tmp_path), {"a.go"}, fixed=2, skipped=0, summary="",
+            )
+        msg = _commit_message(calls)
         assert "2 fixed, 0 skipped" in msg
         assert msg.count("\n\n") == 1
 
@@ -561,138 +599,93 @@ class TestCommittedNothing:
     """
 
     def test_an_empty_commit_is_not_a_rejection(self, git_wt):
-        result = review_fix.git_client.run("commit", "-m", "x", cwd=git_wt)
+        result = land.git_client.run("commit", "-m", "x", cwd=git_wt)
         assert not result.ok
-        assert review_common.committed_nothing(result) is True
+        assert land.committed_nothing(result) is True
 
     def test_staged_but_unchanged_content_is_not_a_rejection(self, git_wt):
         """`add` of an unmodified file stages nothing, so the commit is empty."""
         git_out(git_wt, "add", "src.py")
-        result = review_fix.git_client.run("commit", "-m", "x", cwd=git_wt)
+        result = land.git_client.run("commit", "-m", "x", cwd=git_wt)
         assert not result.ok
-        assert review_common.committed_nothing(result) is True
+        assert land.committed_nothing(result) is True
 
     def test_a_hook_rejection_is_a_rejection(self, git_wt, tmp_path, live_git_hooks):
         """`live_git_hooks` is what lets the hook run — the suite disowns them."""
         _install_failing_pre_commit(tmp_path)
         (git_wt / "src.py").write_text("edited\n")
         git_out(git_wt, "add", "src.py")
-        result = review_fix.git_client.run("commit", "-m", "x", cwd=git_wt)
+        result = land.git_client.run("commit", "-m", "x", cwd=git_wt)
         assert not result.ok
-        assert review_common.committed_nothing(result) is False
+        assert land.committed_nothing(result) is False
 
 
-class TestPushFixes:
-    """The advice each refusal earns.
+class TestWhatALandedPassReports:
+    """What each push outcome leaves the pass holding.
 
-    The classifier itself moved to the push owner and is tested in
-    `push_test.py`; what these assert is that the pass still says the right
-    thing about each outcome the owner hands it — including the one it could
-    not see before, a push that git reported as a success.
+    The advice itself is the push owner's — `push.report` prints it and
+    `push.resume_command` renders the command, both tested in `push_test.py`.
+    What matters here is that the pass records the outcome rather than
+    reconstructing one, and carries the resume command a caller has to surface.
     """
 
-    def _make_job(self, tmp_path):
+    def _make_job(self, wt):
         job = MagicMock()
-        job.wt_path = str(tmp_path / "worktree")
+        job.wt_path = str(wt)
         return job
 
-    def _refused(self, refusal, output, sha="9bc3f64ab"):
-        return push.PushResult(
-            push.PushStatus.REFUSED, sha=sha, branch="feat/x",
-            refusal=refusal, output=output,
-        )
+    def _land(self, git_wt, result):
+        (git_wt / "fixture.json").write_text("{}\n")
+        with patch("land.push.push", return_value=result):
+            return review_fix._commit_fixes(
+                self._make_job(git_wt), {"fixture.json"}, fixed=1, skipped=0,
+            )
 
-    @patch("review_fix.log")
-    @patch("review_fix.push.push")
-    def test_diverged_push_suggests_force_with_lease(self, mock_push, mock_log, tmp_path):
-        mock_push.return_value = self._refused(
-            push.Refusal.DIVERGED, "! [rejected] main -> main (non-fast-forward)"
-        )
-        review_fix._push_fixes(self._make_job(tmp_path))
-        msg = mock_log.error.call_args[0][0]
-        assert "diverged" in msg
-        assert "--force-with-lease" in msg
+    def test_a_landed_push_is_citable(self, git_wt):
+        landed = self._land(git_wt, _PUSHED)
+        assert landed.status is CommitStatus.PUSHED
+        assert landed.citable is True
+        assert landed.resume == ""
 
-    @patch("review_fix.log")
-    @patch("review_fix.push.push")
-    def test_hook_failure_does_not_suggest_force_push(self, mock_push, mock_log, tmp_path):
+    def test_a_held_push_leaves_a_sha_that_may_not_be_cited(self, git_wt):
+        """The commit exists locally; a reviewer following a link to it gets a 404."""
+        landed = self._land(
+            git_wt, push.PushResult(push.PushStatus.HELD, sha="", branch="feat/x"),
+        )
+        assert landed.status is CommitStatus.PUSH_HELD
+        assert landed.sha
+        assert landed.citable is False
+        assert landed.resume.endswith("push")
+
+    def test_a_diverged_refusal_carries_the_force_push_to_the_caller(self, git_wt):
+        landed = self._land(git_wt, push.PushResult(
+            push.PushStatus.REFUSED, sha="9bc3f64ab", branch="feat/x",
+            refusal=push.Refusal.DIVERGED,
+            output="! [rejected] main -> main (non-fast-forward)",
+        ))
+        assert landed.status is CommitStatus.PUSH_FAILED
+        assert "--force-with-lease" in landed.resume
+
+    def test_a_hook_refusal_does_not_carry_a_force_push(self, git_wt):
         """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
-        mock_push.return_value = self._refused(
-            push.Refusal.HOOK,
-            "SC2164 (warning): Use 'cd ... || exit'\nerror: failed to push some refs",
-        )
-        review_fix._push_fixes(self._make_job(tmp_path))
-        msg = mock_log.error.call_args[0][0]
-        assert "--force-with-lease" not in msg
+        landed = self._land(git_wt, push.PushResult(
+            push.PushStatus.REFUSED, sha="9bc3f64ab", branch="feat/x",
+            refusal=push.Refusal.HOOK,
+            output="✗ Pytest failed\nerror: failed to push some refs",
+        ))
+        assert "--force-with-lease" not in landed.resume
+        assert "Pytest failed" in landed.error
 
-    @patch("review_fix.log")
-    @patch("review_fix.push.push")
-    def test_hook_rejection_names_the_gate_the_commit_and_the_repair(
-        self, mock_push, mock_log, tmp_path,
-    ):
-        """The fixes are committed but failed the repo's own checks — say so."""
-        mock_push.return_value = self._refused(
-            push.Refusal.HOOK,
-            "FAILED tests/test_review_threads.py::TestRunReply::test_errors\n"
-            "✗ Pytest failed\nerror: failed to push some refs to 'github.com:o/r.git'",
-        )
-        review_fix._push_fixes(self._make_job(tmp_path))
-        msg = mock_log.error.call_args[0][0]
-        assert "pre-push checks" in msg
-        assert "9bc3f64" in msg
-        assert "Pytest failed" in msg
-        assert "FAILED tests/test_review_threads.py" in msg
-        assert "Repair, then: git -C" in msg
-
-    @patch("review_fix.log")
-    @patch("review_fix.push.push")
-    def test_transport_failure_is_not_reported_as_a_failed_gate(
-        self, mock_push, mock_log, tmp_path,
-    ):
-        """Nothing is wrong with the commit when the network is what broke."""
-        mock_push.return_value = self._refused(
-            push.Refusal.TRANSPORT,
-            "ssh: Could not resolve hostname github.com\n"
-            "fatal: Could not read from remote repository.\n"
-            "error: failed to push some refs to 'github.com:o/r.git'",
-        )
-        review_fix._push_fixes(self._make_job(tmp_path))
-        msg = mock_log.error.call_args[0][0]
-        assert "pre-push checks" not in msg
-        assert "committed locally but not pushed" in msg
-
-    @patch("review_fix.log")
-    @patch("review_fix.push.push")
-    def test_successful_push_logs_no_error(self, mock_push, mock_log, tmp_path):
-        mock_push.return_value = push.PushResult(
-            push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x",
-            remote_sha="9bc3f64ab",
-        )
-        review_fix._push_fixes(self._make_job(tmp_path))
-        mock_log.error.assert_not_called()
-
-    @patch("review_fix.push.push")
-    def test_a_push_that_never_landed_is_reported(self, mock_push, tmp_path, capsys):
-        """git exited zero, so the old code called this a success and moved on."""
-        mock_push.return_value = push.PushResult(
+    def test_a_push_that_never_landed_is_reported(self, git_wt, capsys):
+        """git exited zero, so the pass once called this a success and moved on."""
+        landed = self._land(git_wt, push.PushResult(
             push.PushStatus.LOST, sha="9bc3f64ab", branch="feat/x",
             remote_sha="1111111aa",
-        )
-        review_fix._push_fixes(self._make_job(tmp_path))
+        ))
+        assert landed.status is CommitStatus.PUSH_LOST
+        assert landed.citable is False
         printed = capsys.readouterr().err
         assert "the remote did not move" in printed
-        assert "9bc3f64" in printed
-        assert "1111111" in printed
-
-    @patch("review_fix.push.push")
-    def test_the_pass_pushes_ungated(self, mock_push, tmp_path):
-        """The fix pass has no publishing gate; a gated call would draft instead."""
-        mock_push.return_value = push.PushResult(
-            push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x",
-            remote_sha="9bc3f64ab",
-        )
-        review_fix._push_fixes(self._make_job(tmp_path))
-        assert mock_push.call_args.kwargs["gated"] is False
 
 
 class TestReconcileCheckboxes:
@@ -1069,7 +1062,7 @@ class TestRunFixPassOnADirtyWorktree:
         job.effort = Effort.MEDIUM
         return job
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_only_the_agents_own_changes_are_committed_and_credited(
@@ -1128,7 +1121,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         """Make every later read of the worktree's state fail, as a lock would."""
         (git_wt / ".git" / "index").write_bytes(b"garbage")
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_an_unreadable_worktree_stops_the_pass_before_the_agent_runs(
@@ -1147,7 +1140,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         mock_push.assert_not_called()
         assert "skipping fix pass" in capsys.readouterr().err
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_the_agents_work_is_not_dropped_when_the_second_snapshot_fails(
@@ -1170,7 +1163,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         assert "nothing was committed or pushed" in err
         assert str(git_wt) in err
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_fix.diagnose_missing_output", return_value=_MAX_TURNS)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
@@ -1214,7 +1207,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
             job.review_file = str(review_file)
         return job
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_file_the_agent_deletes_is_committed_as_a_deletion(
@@ -1238,7 +1231,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         assert git_out(git_wt, "status", "--porcelain").strip() == ""
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_rename_commits_both_halves(
@@ -1261,7 +1254,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         assert git_out(git_wt, "status", "--porcelain").strip() == ""
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     def test_a_path_git_would_escape_is_staged_verbatim(self, mock_push, git_wt):
         """`core.quotePath=false` is what keeps the name a pathspec git resolves.
 
@@ -1279,7 +1272,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         )
         assert _committed_paths(git_wt) == {"café brûlé.py"}
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_fix.diagnose_missing_output", return_value=_AGENT_ERROR)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
@@ -1337,7 +1330,7 @@ class TestRunFixPassLeavesDeclinedFindingsAlone:
         review_fix.run_fix_pass(job)
         mock_invoke.assert_not_called()
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_decline_survives_a_pass_that_touches_its_file(
@@ -1388,7 +1381,7 @@ class TestRunFixPassLeavesSkippedFindingsOpen:
         job.effort = Effort.MEDIUM
         return job
 
-    @patch("review_fix._push_fixes")
+    @patch("land.push.push", return_value=_PUSHED)
     @patch("review_phases.invoke_agent")
     @patch("review_fix.build_prompt", return_value="prompt")
     def test_a_skip_survives_a_fix_to_its_own_file(

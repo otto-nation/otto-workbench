@@ -303,6 +303,33 @@ def test_a_mode_acting_on_an_existing_review_does_not_fetch(mode):
     assert need == pr_cli.Need(pr_cli._REMOTE, update=False, lock=True)
 
 
+def test_post_beside_fix_is_a_modifier_and_not_a_mode():
+    """`--fix --post` asks to publish what this run produces, not a review on disk.
+
+    Read as a mode it would route to the poster, silently drop the fix pass, and
+    publish a review nobody asked to publish.
+    """
+    assert pr_cli._review_modes(["--fix", "--post"]) == []
+    assert pr_cli._review_modes(["--post"]) == ["--post"]
+
+
+def test_a_fix_run_that_may_publish_still_fetches():
+    """It is about to review and push, so it wants the branch current — the
+    no-fetch rule is for a mode reading a review already on disk."""
+    need = pr_cli._need_for(pr_cli._COMMANDS["review"], ["--fix", "--post"])
+    assert need == pr_cli.Need(pr_cli._REMOTE, update=True, lock=True)
+
+
+def test_a_fix_run_is_not_recorded_as_a_post_invocation():
+    """The trail names what ran; `pr review --post` is a different command."""
+    assert pr_cli._invocation("review", ["--fix", "--post"]) == "pr review"
+    assert pr_cli._invocation("review", ["--post"]) == "pr review --post"
+
+
+def test_a_fix_run_serves_no_post_schema():
+    assert pr_cli._served_schema_versions("review", ["--fix", "--post"]) == ()
+
+
 def test_every_mode_flag_declares_a_need():
     """The default is a real Need rather than a "take review's" sentinel, so a
     mode added without thinking about the axes lands on not-fetching — the safe

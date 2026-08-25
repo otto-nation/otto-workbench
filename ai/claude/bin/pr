@@ -112,6 +112,30 @@ _REVIEW_DEFAULT_NEED = Need(_REMOTE, update=True, lock=True)
 _REVIEW_MODE_NEED = Need(_REMOTE, update=False, lock=True)
 
 
+def _review_modes(argv: list[str]) -> list[str]:
+    """The mode flags in *argv*, in table order.
+
+    The one place that reads a mode off an argv, so the exclusivity check, the
+    routing, the need resolver, and the error that quotes the invocation back
+    all agree about what was asked for.
+
+    `--post` is a mode on its own — publish the review already on disk — and a
+    modifier beside `--fix`, where it means publish what this run produces:
+    post the findings, and push the commit the fix pass makes. Those are
+    different requests, and only the first is a mode. Reading `--fix --post` as
+    one would route to the poster, silently drop the fix pass, and publish a
+    review nobody asked to publish.
+
+    `_REVIEW_MODES` is defined further down, beside the handlers it names —
+    this runs per invocation, long after import.
+    """
+    given = set(argv)
+    modes = [flag for flag in _REVIEW_MODES if flag in given]
+    if "--fix" in given:
+        return [flag for flag in modes if flag != "--post"]
+    return modes
+
+
 def _review_need(argv: list[str]) -> Need:
     """`review`'s need, which its mode flag decides.
 
@@ -121,15 +145,9 @@ def _review_need(argv: list[str]) -> Need:
     differs between them. Reading the declaration off the mode table is what
     keeps each mode off the paths it does not need structurally, rather than by
     an exemption someone has to remember.
-
-    `_REVIEW_MODES` is defined further down, beside the handlers it names —
-    this runs per invocation, long after import.
     """
-    for token in argv:
-        mode = _REVIEW_MODES.get(token)
-        if mode:
-            return mode.need
-    return _REVIEW_DEFAULT_NEED
+    modes = _review_modes(argv)
+    return _REVIEW_MODES[modes[0]].need if modes else _REVIEW_DEFAULT_NEED
 
 
 _COMMANDS = {
@@ -427,7 +445,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                schema_version: int | None = None,
                **_kw) -> int:
     """Run a review, or handle one of the mode flags in `_REVIEW_MODES`."""
-    given = [flag for flag in _REVIEW_MODES if flag in set(argv)]
+    given = _review_modes(argv)
     if len(given) > 1:
         log.error(f"{SCRIPT}: {_mode_flags_prose()} are mutually exclusive")
         return 1
@@ -606,9 +624,8 @@ def _invocation(command: str, argv: list[str]) -> str:
     --list` are different commands to everyone but argparse — so an error about
     one has to name the flag or it reads as being about the other.
     """
-    mode = next((t for t in argv if t in _REVIEW_MODES), "") \
-        if command == "review" else ""
-    return " ".join(filter(None, [SCRIPT, command, mode]))
+    modes = _review_modes(argv) if command == "review" else []
+    return " ".join(filter(None, [SCRIPT, command, *modes[:1]]))
 
 
 def _schema_contracts() -> list[str]:
@@ -626,11 +643,8 @@ def _served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
     """The row-schema versions *command* can serve for this argv, if any."""
     if command != "review":
         return ()
-    for token in argv:
-        mode = _REVIEW_MODES.get(token)
-        if mode:
-            return mode.schema_versions
-    return ()
+    modes = _review_modes(argv)
+    return _REVIEW_MODES[modes[0]].schema_versions if modes else ()
 
 
 def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:

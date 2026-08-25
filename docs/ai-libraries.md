@@ -337,6 +337,10 @@ one. Everything outside the difference goes uncommitted, so an unreadable
 worktree spelled the same way as an unchanged one is how a pass reports success
 having left the agent's fixes behind.
 
+The commit always happens; the push waits for `--post`. `land` owns both, and
+the split is its: a local commit asserts nothing to anybody, while a push puts
+the pass's work on a branch somebody else is reading.
+
 It sits downstream of the pipeline rather than inside it — nothing here runs
 during a review, and a fix pass needs only a finished review file to work from.
 
@@ -450,6 +454,15 @@ issues, the PR description, and the push are all printed to stderr as drafts
 instead, prefixed `DRAFT (not published)`. Code fixes and the commit are
 unaffected: they are local and undoable, and they are what makes the work
 reviewable at all. The gate covers what leaves the machine.
+
+`pr ci --fix` and `pr review --fix` answer to the same flag and mean the same
+thing by it. Both commit what their agent fixed and both draft the push without
+it, so `--post` reads as "publish what this run produces" wherever it appears
+next to a fix pass — as against `pr review --post` on its own, which publishes
+the review already on disk. The review fix pass runs inside
+`review-orchestrate`, a subprocess spawned before any posting decision would
+otherwise be made, so `claude-review` forwards the flag to it rather than
+opening a gate the pass would never see.
 
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.
@@ -1375,6 +1388,60 @@ otherwise be indistinguishable from a genuinely dirty tree. Whether any other
 failed read is worth logging stays the caller's decision, and most of them have
 already decided it is not.
 
+### land.py
+
+The owner of every commit a fix pass makes, and of the push under it.
+
+`push` answers whether a commit reached the remote. Nothing owned the step
+before it, so each pass wrote its own: stage, build a message, run `commit`,
+decide what an empty commit means, read HEAD back, push, and turn all of that
+into a status. Four passes did it four ways, and the differences were not
+choices — one forgot the empty-commit case, one never named a resume command,
+one read HEAD and one did not, and only one of them consulted the publishing
+gate.
+
+Landing is one act with one result. `land` performs it and `LandResult` is what
+it did, in the `CommitStatus` vocabulary `pr_fix` already defines, so a pass
+records an outcome rather than reconstructing one from a `CmdResult` and a
+`PushResult` it has to reconcile itself.
+
+Three rules the passes disagreed on, settled here:
+
+1. **Every outcome has a status.** `_PUSH_STATUS` maps the push owner's five
+   answers onto the commit vocabulary and a test asserts it covers the enum, so
+   a new `PushStatus` cannot arrive as a silently missing key.
+2. **Every unfinished outcome names its resume command.** `resume` is the exact
+   thing to run, as data — `push.resume_command` renders it, and a caller
+   passes it to a reviewer, a summary, or `pr status` without knowing which of
+   five ways the push fell short.
+3. **A SHA is citable only once it is on the remote.** `citable` is that rule as
+   a property. A commit link that 404s for the reviewer reading it is worse than
+   a reply deferred a round, and `PUSH_HELD`, `PUSH_LOST` and `PUSH_UNVERIFIED`
+   all leave a SHA that only exists locally.
+
+The commit is ungated and the push is gated, which is the split every caller
+wants and only one of them implemented. A local commit asserts nothing to
+anybody: it makes the pass's work reviewable and durable, and it keeps the next
+round from reading its own dirty tree as a refused commit. The push is the
+outward act, so it waits for the same permission every posted comment waits for.
+`gated=True` is therefore the answer for a pass that runs on somebody's behalf,
+and the entry point opens the gate under `--post`.
+
+`paths` decides the commit's scope. `None` stages the whole tree, which is what
+a pass owning the worktree wants. A list stages exactly those paths as literal
+pathspecs, which is what a pass that computed a snapshot difference wants — it
+is the only thing keeping a build artifact or unrelated work in progress out of
+a commit the pass then pushes.
+
+Two conditions raise rather than returning a status, because neither is an
+outcome: a `git add` that fails, and a HEAD that will not read back after a
+commit git said it made. Both mean the repository is not answering, and a pass
+that treats them as "nothing to commit" reports success having lost the work.
+
+Regenerating hooks are not handled here yet. `review-threads` and `pr-rebase`
+each own a commit-the-regenerated-files-and-retry recovery, and folding them
+into one belongs with the change that moves those two callers across.
+
 ### log.py
 
 Centralized human-facing stderr output for otto-workbench AI scripts.
@@ -1487,10 +1554,17 @@ does not perform the hook-regenerated-files recovery that `review-threads` and
 `pr-rebase` each own — those sit above it, which is what keeps this module's
 answer to "did it land" independent of any caller's idea of how to fix it.
 
-`gated` is required and has no default. Only `pr comments` opens the publishing
-gate; `pr ci`, `pr rebase` and the review fix pass never do, so a gate-by-default
-owner would silently stop three entrypoints pushing, and a `False` default would
-let the next call site inherit the wrong answer by omitting the argument.
+`gated` is required and has no default. `pr comments`, `pr ci --fix` and the
+review fix pass all pass `True` and open the gate only under `--post`; `pr
+rebase` and the `pr:create` bridge below pass `False`, because pushing is the
+command rather than a side effect of it. A `False` default would let the next
+call site inherit the ungated answer by omitting the argument, which is how
+three of those four came to push without ever asking.
+
+Every outcome but `PUSHED` names the command that would finish it, and
+`resume_command` is where that mapping lives — one place rather than a line of
+prose per call site, and data rather than a log line, so `land` can carry it
+into `pr status` and the MCP result.
 
 Two outcomes change what the operator does. A `LOST` push is a hard stop and
 nothing downstream may run: `pr comments` records it as `push_lost` rather than

@@ -38,10 +38,17 @@ does not perform the hook-regenerated-files recovery that `review-threads` and
 `pr-rebase` each own — those sit above it, which is what keeps this module's
 answer to "did it land" independent of any caller's idea of how to fix it.
 
-`gated` is required and has no default. Only `pr comments` opens the publishing
-gate; `pr ci`, `pr rebase` and the review fix pass never do, so a gate-by-default
-owner would silently stop three entrypoints pushing, and a `False` default would
-let the next call site inherit the wrong answer by omitting the argument.
+`gated` is required and has no default. `pr comments`, `pr ci --fix` and the
+review fix pass all pass `True` and open the gate only under `--post`; `pr
+rebase` and the `pr:create` bridge below pass `False`, because pushing is the
+command rather than a side effect of it. A `False` default would let the next
+call site inherit the ungated answer by omitting the argument, which is how
+three of those four came to push without ever asking.
+
+Every outcome but `PUSHED` names the command that would finish it, and
+`resume_command` is where that mapping lives — one place rather than a line of
+prose per call site, and data rather than a log line, so `land` can carry it
+into `pr status` and the MCP result.
 
 Two outcomes change what the operator does. A `LOST` push is a hard stop and
 nothing downstream may run: `pr comments` records it as `push_lost` rather than
@@ -114,6 +121,10 @@ class PushResult:
     `remote_sha` is what `ls-remote` reported at verification time: the pushed
     commit on success, whatever the remote holds instead on `LOST`, and empty
     when the ref is absent or was never asked for.
+
+    `args` is what the caller passed through to `git push`, kept so
+    `resume_command` can name the same push rather than a plainer one the remote
+    would refuse for a second reason.
     """
 
     status: PushStatus
@@ -123,6 +134,8 @@ class PushResult:
     refusal: Refusal | None = None
     output: str = ""
     retry: Retry = Retry.NONE
+    remote: str = "origin"
+    args: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -220,10 +233,13 @@ def _verify(
     """Ask the remote what it holds, and turn that into an outcome."""
     held = remote_head(wt_path, branch, remote=remote)
     if held is None:
-        return PushResult(PushStatus.UNVERIFIED, sha, branch, output=output)
+        return PushResult(PushStatus.UNVERIFIED, sha, branch,
+                          output=output, remote=remote)
     if held == sha:
-        return PushResult(PushStatus.PUSHED, sha, branch, remote_sha=held, output=output)
-    return PushResult(PushStatus.LOST, sha, branch, remote_sha=held, output=output)
+        return PushResult(PushStatus.PUSHED, sha, branch, remote_sha=held,
+                          output=output, remote=remote)
+    return PushResult(PushStatus.LOST, sha, branch, remote_sha=held,
+                      output=output, remote=remote)
 
 
 def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
@@ -273,7 +289,7 @@ def _retry_lost(
         )
 
     verified = _verify(wt_path, lost.sha, lost.branch, remote, r.combined_output)
-    return dataclasses.replace(verified, retry=Retry.ATTEMPTED)
+    return dataclasses.replace(verified, retry=Retry.ATTEMPTED, args=lost.args)
 
 
 def push(
@@ -299,26 +315,28 @@ def push(
     That is why a held result carries only what the caller passed in — no caller
     reads a SHA off one, and the gate's own draft names the command instead.
     """
+    argv = tuple(args)
     if gated and not publishing.enabled():
-        publishing.draft("push", f"git -C '{wt_path}' push")
-        return PushResult(PushStatus.HELD, sha, branch)
+        publishing.draft("push", _push_command(wt_path, argv))
+        return PushResult(PushStatus.HELD, sha, branch, remote=remote, args=argv)
 
     sha = sha or git_client.head_sha(cwd=wt_path)
     branch = branch or git_client.current_branch(cwd=wt_path)
 
-    r = git_client.run("push", *args, cwd=wt_path)
+    r = git_client.run("push", *argv, cwd=wt_path)
     if not r.ok:
         output = r.combined_output
         if trail:
             trail.error("push", "git refused the push",
                         data={"sha": sha, "branch": branch, "error": output[:500]})
-        return PushResult(PushStatus.REFUSED, sha, branch,
-                          refusal=classify(output), output=output)
+        return PushResult(PushStatus.REFUSED, sha, branch, refusal=classify(output),
+                          output=output, remote=remote, args=argv)
 
-    result = _verify(wt_path, sha, branch, remote, r.combined_output)
+    verified = _verify(wt_path, sha, branch, remote, r.combined_output)
+    result = dataclasses.replace(verified, args=argv)
     if result.status is not PushStatus.LOST:
         return result
-    return _retry_lost(wt_path, result, remote, args, trail)
+    return _retry_lost(wt_path, result, remote, argv, trail)
 
 
 _HOOK_OUTPUT_LINES = 20
@@ -339,6 +357,45 @@ def output_tail(output: str, *, indent: str = "") -> str:
     return "\n".join(f"{indent}{line}" for line in lines[-_HOOK_OUTPUT_LINES:])
 
 
+def _push_command(wt_path: str | Path, args: Sequence[str]) -> str:
+    """The `git push` the caller asked for, spelled out for a human to re-run."""
+    return " ".join(["git", "-C", f"'{wt_path}'", "push", *args])
+
+
+def _forced(args: Sequence[str]) -> bool:
+    """Whether these push arguments already overwrite what the remote holds."""
+    return any(arg == "-f" or arg.startswith("--force") for arg in args)
+
+
+def resume_command(result: PushResult, wt_path: str | Path) -> str:
+    """The command that finishes what this push held, refused, or lost.
+
+    Data rather than a log line, so `land.LandResult` can carry it into
+    `pr status` and the MCP result — the two readers that most need to know what
+    would complete the job and could surface none of the six prose variants this
+    replaces. Empty only for `PUSHED`, which needs nothing.
+
+    The arguments the caller pushed with are replayed, because a resume that
+    drops them is a second refusal waiting to happen: `pr rebase` pushes with
+    `--force-with-lease`, and after its pre-push hook is fixed a plain `git push`
+    is still non-fast-forward. A divergence adds that flag when the push did not
+    already carry it — this names it and never runs it, since reconciling with a
+    remote somebody else may have moved is the operator's call.
+
+    `UNVERIFIED` is the one answer that is a check rather than a retry — the push
+    has very likely landed, so re-pushing it would be acting on a question
+    `ls-remote` answers in one round trip.
+    """
+    if result.status is PushStatus.PUSHED:
+        return ""
+    if result.status is PushStatus.UNVERIFIED:
+        return f"git -C '{wt_path}' ls-remote {result.remote} {result.branch}"
+    args = list(result.args)
+    if result.refusal is Refusal.DIVERGED and not _forced(args):
+        args.append("--force-with-lease")
+    return _push_command(wt_path, args)
+
+
 def report(result: PushResult, wt_path: str | Path) -> None:
     """Say what happened, in the terms the reader has to act on."""
     if result.status is PushStatus.PUSHED:
@@ -349,10 +406,12 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     if result.status is PushStatus.HELD:
         return
 
+    resume = resume_command(result, wt_path)
+
     if result.status is PushStatus.UNVERIFIED:
         log.warn(
             f"pushed {result.sha[:7]} but could not reach the remote to confirm "
-            f"it landed — check with: git ls-remote origin {result.branch}"
+            f"it landed — check with: {resume}"
         )
         return
 
@@ -360,6 +419,7 @@ def report(result: PushResult, wt_path: str | Path) -> None:
         log.error(f"push refused ({result.refusal}) — nothing reached the remote")
         for line in output_tail(result.output).splitlines():
             log.dim(line)
+        log.dim(f"Resume: {resume}")
         return
 
     log.error("push reported success but the remote did not move")
@@ -367,7 +427,7 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     log.dim(f"expected: {result.sha[:7]}")
     log.dim(f"origin:   {result.remote_sha[:7] or 'no such ref'}")
     log.dim(_RETRY_NOTE[result.retry])
-    log.dim(f"Re-run: git -C '{wt_path}' push")
+    log.dim(f"Resume: {resume}")
 
 
 # The bash half of `pr:create` reads these rather than parsing output. HELD

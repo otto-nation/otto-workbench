@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
+from conftest import add_worktree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -190,6 +191,28 @@ def test_ensure_issue_provider_records_the_answer_for_the_repo(tmp_path):
     assert result.name == "github"
     assert "provider: github" in (tmp_path / ".workbench.yml").read_text()
     assert not (tmp_path / "workbench-config" / "config.yml").exists()
+
+
+def test_ensure_issue_provider_records_the_repo_answer_in_the_container(container):
+    """A worktree is the one thing about a repo that does not last: `wt remove`
+    deletes the answer with it, and the branch cut tomorrow starts with nothing
+    recorded. The container sits above every checkout and outlives all of them."""
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", side_effect=["github", "repo"]):
+        result = ensure_issue_provider(str(container / "main"))
+    assert result.name == "github"
+    assert "provider: github" in (container / ".workbench.yml").read_text()
+    assert not (container / "main" / ".workbench.yml").exists()
+
+
+def test_the_container_answer_is_read_by_a_worktree_that_did_not_record_it(container):
+    with patch("review_issue.prompt.interactive", return_value=True), \
+         patch("review_issue.prompt.ask", side_effect=["github", "repo"]):
+        ensure_issue_provider(str(container / "main"))
+    feature = add_worktree(container, "feature")
+    with patch("review_issue.prompt.ask") as asked:
+        assert ensure_issue_provider(str(feature)).name == "github"
+    asked.assert_not_called()
 
 
 def test_ensure_issue_provider_records_the_answer_for_all_repos(tmp_path):

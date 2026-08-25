@@ -58,14 +58,17 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 
 _LIB_DIR = os.path.dirname(os.path.realpath(__file__))
 if _LIB_DIR not in sys.path:
     sys.path.insert(0, _LIB_DIR)
-from gitenv import git_env_clear  # noqa: E402
+# Re-exported rather than defined here: the container is a fact about the
+# worktree layout, not about permissions, and the config scope reads the same
+# one. `lib/git_layout.py` owns both. Callers keep importing them from this
+# module, which is where they were before there was a second reader.
+from git_layout import container_dir, git  # noqa: E402,F401
 
 BASH_RULE = re.compile(r'^Bash\((.*)\)$', re.DOTALL)
 
@@ -399,54 +402,6 @@ def discover_settings(repo_root: str) -> list[str]:
         found.extend(os.path.join(dirpath, f) for f in names)
 
     return sorted(p for p in found if declares_bash_rules(p))
-
-
-def git(repo_root: str, *args: str) -> str | None:
-    """Run a read-only git query in the repo, or None if git cannot answer.
-
-    The environment is cleared of git's own overrides first, because they beat
-    `-C`. The pre-push hook exports `GIT_DIR`, and with one set every question
-    below is answered for the hook's repository instead of the directory asked
-    about — `rev-parse --show-toplevel` at the container answers the container,
-    so the no-working-tree guard holds and the container is skipped in exactly
-    the run that had to see it.
-    """
-    try:
-        result = subprocess.run(('git', '-C', repo_root, *args),
-                                capture_output=True, text=True, check=False,
-                                env=git_env_clear())
-    except OSError:
-        return None
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
-def container_dir(repo_root: str) -> str | None:
-    """The directory holding the shared git dir, when it is not the worktree.
-
-    In a bare-repo worktree layout every worktree is a peer of the bare `.git`
-    inside a container directory, so a `.claude/` written at the container sits
-    above anything a walk rooted in a worktree can see — and Claude Code roots
-    a session wherever it was launched, the container included.
-
-    `--git-common-dir` names the shared git dir and its parent is the
-    container.  In a normal clone that parent is the worktree itself, so the
-    comparison makes the extra scan a no-op instead of a special case.  It is
-    the comparison rather than an unconditional `..` because the parent of a
-    plain checkout belongs to somebody else.
-
-    A container holds no working tree, which is the second half of the test:
-    linked worktrees added to an ordinary clone put the shared git dir inside
-    the main checkout, and that checkout's `.claude/settings.json` is a tracked
-    file with an owner, not an unreviewed local one.
-    """
-    common = git(repo_root, 'rev-parse', '--git-common-dir')
-    toplevel = git(repo_root, 'rev-parse', '--show-toplevel')
-    if not common or not toplevel:
-        return None
-    container = os.path.dirname(os.path.realpath(os.path.join(repo_root, common)))
-    if container == os.path.realpath(toplevel):
-        return None
-    return None if git(container, 'rev-parse', '--show-toplevel') else container
 
 
 def discover_container_settings(container: str | None) -> list[str]:

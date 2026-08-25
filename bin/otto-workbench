@@ -120,8 +120,8 @@ COMMANDS_AI=(
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS_CONFIG=(
-  "set KEY VALUE [--project]"  "Write KEY — globally, or into this repo's file"
-  "status"                     "Show every scope, every value, and the file it came from"
+  "set KEY VALUE [--project|--container]"  "Write KEY — globally, into this checkout, or above its worktrees"
+  "status"                                 "Show every scope, every value, and the file it came from"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
@@ -774,13 +774,15 @@ _config_usage() {
   cat <<EOF
 Usage: otto-workbench config <command>
 
-Read and write the hand-authorable config — the global $WORKBENCH_CONFIG_NAME, and a
-repo's $WORKBENCH_PROJECT_CONFIG_NAME.
+Read and write the hand-authorable config — the global $WORKBENCH_CONFIG_NAME, a
+repo's $WORKBENCH_PROJECT_CONFIG_NAME, and the $WORKBENCH_PROJECT_CONFIG_NAME above a bare repo's
+worktrees, which every one of them reads and wt remove cannot delete.
 
-A key the workbench does not read is refused rather than written. Both files
-are shared — the global one by every repo on this machine, a project one by
-everybody who clones the repo — and an unrecognised key is dropped on the way
-back in, so a write nothing checks loses the value without saying so.
+A key the workbench does not read is refused rather than written. Every one of
+those files is shared — the global one by every repo on this machine, a project
+one by everybody who clones the repo, a container one by every worktree — and
+an unrecognised key is dropped on the way back in, so a write nothing checks
+loses the value without saying so.
 
 status reports the other side: each scope in precedence order, the value of
 every key with the file that supplied it, and any key a file holds that

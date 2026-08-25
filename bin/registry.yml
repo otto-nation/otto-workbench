@@ -106,11 +106,16 @@ tools:
         scope: "Project"
         when: "The answer belongs to this repo and should be committed with it"
         detail: "Same key check. The file is committed, so a key nothing reads travels to everyone who clones."
+      - name: "config set KEY VALUE --container"
+        description: "Write one key into the .workbench.yml above a bare repo's worktrees"
+        scope: "Project"
+        when: "The answer belongs to this repo but cannot be committed to it"
+        detail: "The container holds the bare .git and every worktree as a peer, so a file written there is read by all of them, needs no gitignore entry, and survives `wt remove`. Same key check. Refused in a plain clone, which has no container."
       - name: "config status"
         description: "Show every scope, every resolved value, and the file each came from"
         scope: "Project"
         when: "A setting is not taking effect, or you need to know which file to edit"
-        detail: "The loader deep-merges every scope and returns only the result, so a value inherited from the machine-wide file looks identical to one this repo set, and a key written under a name nothing reads looks identical to a key nobody ever set. This prints the scopes in precedence order with their paths, each key with the file that supplied it, and any key a file holds that the config surface does not have."
+        detail: "The loader deep-merges every scope and returns only the result, so a value inherited from the machine-wide file looks identical to one this repo set, and a key written under a name nothing reads looks identical to a key nobody ever set. This prints the scopes in precedence order with their paths — global, container, project — each key with the file that supplied it, and any key a file holds that the config surface does not have."
 
   - name: mem-analyze
     permission: true

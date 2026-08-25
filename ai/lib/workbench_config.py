@@ -1,16 +1,33 @@
 """The workbench's typed configuration.
 
-One file per scope — global ``config.yml`` under the config root and project
-``.workbench.yml`` at a repo root — deep-merged and typed into
-``WorkbenchConfig``. The dataclasses here are the single definition: they type
-the runtime lookups, they generate ``config.schema.json``
-(``bin/local/generate-config-schema``), and their ``Phase``-keyed maps make a
-phase a valid config key the moment it becomes an enum member.
+One file per scope, deep-merged and typed into ``WorkbenchConfig``. The
+dataclasses here are the single definition: they type the runtime lookups, they
+generate ``config.schema.json`` (``bin/local/generate-config-schema``), and
+their ``Phase``-keyed maps make a phase a valid config key the moment it
+becomes an enum member.
 
-The config is layers 4 and 5 of the precedence chain, behind CLI flags and env
+Three scopes, most specific first:
+
+    project    ``.workbench.yml`` at the work-tree root — this checkout
+    container  ``.workbench.yml`` beside a bare repo's worktrees — this repo
+    global     ``config.yml`` under the config root — every repo
+
+The container scope exists only in the bare-repo worktree layout, where every
+checkout is a peer of the bare ``.git`` inside a container directory. It is the
+scope for an answer that belongs to the repo but cannot be committed to it: a
+worktree file has to be copied into each of the ~100 checkouts a monorepo
+accumulates, is absent in whichever one ``wt switch -c`` cut this morning, and
+is deleted with the worktree by ``wt remove``. A file at the container is
+outside every checkout, so it needs no gitignore entry and survives all three.
+
+Ordered by specificity, so the checkout in front of you outranks the repo and
+the repo outranks the machine. A repo that is a plain clone has no container
+and keeps exactly the two scopes it always had.
+
+Those are layers 4 through 6 of the precedence chain, behind CLI flags and env
 vars:
 
-    CLI flag > CLAUDE_REVIEW_<PHASE>_* > CLAUDE_REVIEW_* > project > global
+    CLI flag > CLAUDE_REVIEW_<PHASE>_* > CLAUDE_REVIEW_* > project > container > global
 
 so nothing here overrides a value a caller passed or exported.
 """
@@ -24,6 +41,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -33,6 +51,15 @@ import serde
 import timeouts
 import workbench_paths
 from review_common import Effort, Phase, Thinking
+
+# `git_layout` is a workbench-wide module rather than an `ai/lib` one, because
+# the permission mirror reads the same layout. In a checkout that is one
+# directory up; in the otto-ai-tools tarball, which flattens both into one
+# `lib/`, it is already beside this file and the path below does not exist.
+_WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent / "lib"
+if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
+    sys.path.insert(0, str(_WORKBENCH_LIB))
+from git_layout import container_dir  # noqa: E402
 
 try:
     import yaml
@@ -44,8 +71,11 @@ CONFIG_NAME = "config.yml"
 PROJECT_CONFIG_NAME = ".workbench.yml"
 
 # What a reader calls each scope. Beside the filenames because they name the
-# same two things, and because ``config_scopes`` pairs them up.
+# same files, and because ``config_scopes`` pairs them up. The container scope
+# reuses ``PROJECT_CONFIG_NAME``: it is the same file in a directory one level
+# out, so a copy moved up from a worktree keeps working.
 GLOBAL_SCOPE = "global"
+CONTAINER_SCOPE = "container"
 PROJECT_SCOPE = "project"
 
 # Where the generated schema lives, repo-relative, and the raw URL that serves
@@ -335,6 +365,7 @@ def docs_reference() -> str:
         "| Scope | File |",
         "|-------|------|",
         f"| Global | `{CONFIG_NAME}` under the [config root](#rootssh) |",
+        f"| Container | `{PROJECT_CONFIG_NAME}` beside a bare repo's worktrees |",
         f"| Project | `{PROJECT_CONFIG_NAME}` at a repo toplevel |",
         "",
         f"A new config file is born holding one line, the modeline that points an "
@@ -345,7 +376,7 @@ def docs_reference() -> str:
         CONFIG_HEADER,
         "```",
         "",
-        "Every key both files accept:",
+        "Every key any of them accepts:",
         "",
         "| Key | Values | Default |",
         "|-----|--------|---------|",
@@ -365,6 +396,24 @@ def global_config_path() -> Path:
 
 def project_config_path(project_root: Path | str) -> Path:
     return Path(project_root) / PROJECT_CONFIG_NAME
+
+
+def container_config_path(project_root: Path | str) -> Path | None:
+    """The config file above a bare repo's worktrees, or ``None`` for a clone.
+
+    ``git_layout.container_dir`` decides whether there is one, so this scope
+    appears exactly where the permission mirror already writes and nowhere
+    else. A plain clone, a linked worktree of one, and a directory in no repo
+    at all each answer ``None``, which is what keeps a repo outside the layout
+    on the two scopes it has always had.
+
+    Shells out to git, so a caller resolving the same root repeatedly should
+    hold on to the answer. Nothing does today: the scope list is built once per
+    ``load_config``, and the hooks that run on every prompt load the global
+    scope alone.
+    """
+    container = container_dir(str(project_root))
+    return None if container is None else Path(container) / PROJECT_CONFIG_NAME
 
 
 def read_yaml(path: Path) -> dict:
@@ -466,10 +515,20 @@ def config_scopes(project_root: Path | str | None = None) -> list[ConfigScope]:
     The one owner of which files there are. ``load_config`` merges these and
     ``config_status`` reports on them, so a scope cannot be added to the merge
     without appearing in the report that explains where a value came from.
+
+    The container sits between the two older scopes: it speaks for one repo
+    where the global file speaks for every repo, and the checkout in front of
+    you speaks for itself. A repo outside the bare-repo layout has no container
+    and contributes no third scope, rather than a scope naming a file that
+    could never exist.
     """
     scopes = [ConfigScope(GLOBAL_SCOPE, global_config_path())]
-    if project_root is not None:
-        scopes.append(ConfigScope(PROJECT_SCOPE, project_config_path(project_root)))
+    if project_root is None:
+        return scopes
+    container = container_config_path(project_root)
+    if container is not None:
+        scopes.append(ConfigScope(CONTAINER_SCOPE, container))
+    scopes.append(ConfigScope(PROJECT_SCOPE, project_config_path(project_root)))
     return scopes
 
 
@@ -894,6 +953,28 @@ def set_project_value(key: str, value: str, project_root: Path | str) -> None:
     write as a non-event.
     """
     set_value(key, value, project_config_path(project_root))
+
+
+def set_container_value(key: str, value: str, project_root: Path | str) -> None:
+    """Write one dotted key into the file above a bare repo's worktrees.
+
+    Raises ``ConfigError`` when the repo has no container, rather than falling
+    back to the worktree. The two files differ in what survives: a worktree one
+    is deleted by ``wt remove`` and unseen by every sibling checkout, so a
+    caller that asked for the durable scope and silently got the disposable one
+    has been told the opposite of what happened.
+
+    Same ``set_value`` and therefore the same key check as the other two. This
+    file is not committed, which makes the check matter more rather than less:
+    nobody reviews it, so a key nothing reads is never noticed by anyone.
+    """
+    path = container_config_path(project_root)
+    if path is None:
+        raise ConfigError(
+            f"{project_root} is not a bare-repo worktree, so it has no "
+            f"container to write {PROJECT_CONFIG_NAME} into",
+        )
+    set_value(key, value, path)
 
 
 def _set_value_with_pyyaml(path: Path, key: str, value: str) -> None:

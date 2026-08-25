@@ -282,6 +282,28 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
             workbench_config.set_value(workbench_config.ISSUE_PROVIDER_KEY, provider)
             log.ok(f"Recorded {provider} as the tracker for all repos")
             return
+        _record_for_repo(provider, wt_path)
+    except workbench_config.ConfigKeyError as exc:
+        log.error(str(exc))
+        log.dim(f"using {provider} for this run — this checkout cannot record it")
+    except workbench_config.ConfigError as exc:
+        log.dim(f"could not record the tracker ({exc}) — using {provider} for this run")
+
+
+def _record_for_repo(provider: str, wt_path: str) -> None:
+    """Write the answer where every worktree of this repo will read it.
+
+    The container when the repo is in the bare-repo layout, because the
+    worktree the question was asked in is the one thing about this repo that
+    does not last: ``wt remove`` deletes it and the answer with it, and the
+    branch cut tomorrow starts with nothing recorded. The container file sits
+    outside every checkout, so it needs no gitignore entry either — which is
+    what makes it usable in a repo that will not take the file in its tree.
+
+    A plain clone has no container and keeps the committed file it always had.
+    """
+    container = workbench_config.container_config_path(wt_path)
+    if container is None:
         workbench_config.set_project_value(
             workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
         )
@@ -289,11 +311,11 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
             f"Recorded {provider} in {workbench_config.PROJECT_CONFIG_NAME} "
             f"— commit it so the repo keeps the answer",
         )
-    except workbench_config.ConfigKeyError as exc:
-        log.error(str(exc))
-        log.dim(f"using {provider} for this run — this checkout cannot record it")
-    except workbench_config.ConfigError as exc:
-        log.dim(f"could not record the tracker ({exc}) — using {provider} for this run")
+        return
+    workbench_config.set_container_value(
+        workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
+    )
+    log.ok(f"Recorded {provider} in {container} — every worktree of this repo reads it")
 
 
 def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:

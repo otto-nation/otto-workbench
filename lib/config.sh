@@ -14,7 +14,7 @@
 # `WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only.
 #
 # [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed
-# owner of the same two files: it deep-merges them into a `WorkbenchConfig` and
+# owner of the same files: it deep-merges them into a `WorkbenchConfig` and
 # rejects an unknown enum value or phase key rather than silently dropping it. It
 # spells those same names a second time for Python, and `tests/config.bats` fails
 # when a pair drifts. The scope and key tables below are generated from the
@@ -33,7 +33,8 @@
 # modeline is a courtesy on creation, not something sync re-imposes.
 #
 # Writes go through `otto-workbench config set KEY VALUE` (`--project` for the
-# repo's own file), which is
+# repo's own committed file, `--container` for the one above its worktrees),
+# which is
 # [`lib/config_cli.py`](../lib/config_cli.py) over `set_value`. It refuses a key
 # neither this checkout nor the *installed* workbench reads: a checkout can be
 # weeks behind `main` and still write the file every repo on the machine shares,
@@ -51,19 +52,32 @@
 # one are indistinguishable afterwards, and a key written under a name nothing
 # reads is dropped in silence by both the loader and the reader waiting on it.
 #
-# Five layers decide a review value, highest first:
+# Six layers decide a review value, highest first:
 #
 # | # | Layer | Example |
 # |---|-------|---------|
 # | 1 | Explicit flag | `--model opus`, `--effort high` |
 # | 2 | Phase env var | `CLAUDE_REVIEW_SCOUT_MODEL` |
 # | 3 | Global env var | `CLAUDE_REVIEW_MODEL` |
-# | 4 | Project config | `.workbench.yml` |
-# | 5 | Global config | `config.yml` |
+# | 4 | Project config | `<worktree>/.workbench.yml` |
+# | 5 | Container config | `<container>/.workbench.yml` |
+# | 6 | Global config | `config.yml` |
 #
 # Within one file a `review.phases.<phase>` entry outranks the `review.*` section
-# it sits under. Layers 4 and 5 deep-merge, so a project file that sets one phase
-# keeps every global sibling.
+# it sits under. Layers 4 through 6 deep-merge, so a project file that sets one
+# phase keeps every sibling the layers below it set.
+#
+# Layer 5 exists only in the bare-repo worktree layout, where every checkout is
+# a peer of the bare `.git` inside a container directory — the same directory
+# `otto-workbench permissions mirror` writes a repo's grants into. It is the
+# scope for an answer that belongs to the repo but cannot be committed to it: a
+# worktree file has to be copied into every checkout, is missing from whichever
+# one `wt switch -c` just cut, and is deleted along with the worktree by `wt
+# remove`. Ordered by specificity — this checkout, then this repo, then this
+# machine. A plain clone has no container and keeps exactly two layers.
+#
+# `wb_config_get` below reads layers 4 and 6 only; the typed loader reads all
+# three. `otto-workbench config status` is where all three are visible.
 #
 # A repo still holding the legacy `.claude/review.yml` is converted to
 # `.workbench.yml` the first time a review reads its issue tracker; the old file
@@ -134,6 +148,16 @@ _wb_config_valid_key() {
 
 # wb_config_get KEY [DEFAULT] — a dotted config key, project scope first. KEY
 # must be a literal string.
+#
+# ceiling: two scopes, not the three the typed loader merges — the container
+# layer is skipped. Deriving the container is a `--git-common-dir` read, a
+# realpath, and a no-working-tree probe, and a bash copy of that is a second
+# definition of the layout in a language that cannot report a file it failed to
+# parse. The one key read from here — github.ssh_over_443 — is machine-wide, so
+# no caller can currently see the gap. Upgrade trigger: when a second key is
+# read through this function, or when a caller in the bare-repo layout needs a
+# per-repo answer, this must resolve the container through the same owner
+# `lib/git_layout.py` gives Python rather than a second implementation.
 wb_config_get() {
   local key="$1" fallback="${2:-}" value project
 

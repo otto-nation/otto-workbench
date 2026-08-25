@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import add_worktree, seed_repo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -161,6 +162,90 @@ def test_a_non_mapping_file_is_rejected(roots):
     _write(config_root / "config.yml", "- one\n- two\n")
     with pytest.raises(wc.ConfigError, match="mapping"):
         wc.load_config(project)
+
+
+# ── The container scope ─────────────────────────────────────────────────────
+
+
+def test_a_worktree_of_a_bare_repo_gains_a_container_scope(roots, container):
+    config_root, _ = roots
+    assert [s.path for s in wc.config_scopes(container / "main")] == [
+        config_root / wc.CONFIG_NAME,
+        container / wc.PROJECT_CONFIG_NAME,
+        container / "main" / wc.PROJECT_CONFIG_NAME,
+    ]
+
+
+def test_the_container_sits_between_the_two_older_scopes(roots, container):
+    """Merge order, so the report's precedence order is its reverse."""
+    assert [s.name for s in wc.config_scopes(container / "main")] == [
+        wc.GLOBAL_SCOPE, wc.CONTAINER_SCOPE, wc.PROJECT_SCOPE,
+    ]
+    assert [s.name for s in wc.config_status(container / "main").scopes] == [
+        wc.PROJECT_SCOPE, wc.CONTAINER_SCOPE, wc.GLOBAL_SCOPE,
+    ]
+
+
+def test_a_plain_clone_keeps_the_two_scopes_it_always_had(roots, tmp_path):
+    clone = seed_repo(tmp_path / "clone")
+    assert wc.container_config_path(clone) is None
+    assert [s.name for s in wc.config_scopes(clone)] == [wc.GLOBAL_SCOPE, wc.PROJECT_SCOPE]
+
+
+def test_the_container_file_beats_the_global_one(roots, container):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "review:\n  model: sonnet\n")
+    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
+    assert wc.load_config(container / "main").review.model == "opus"
+
+
+def test_the_worktree_file_beats_the_container_one(roots, container):
+    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
+    _write(container / "main" / wc.PROJECT_CONFIG_NAME, "review:\n  model: haiku\n")
+    assert wc.load_config(container / "main").review.model == "haiku"
+
+
+def test_the_container_does_not_discard_global_siblings(roots, container):
+    config_root, _ = roots
+    _write(config_root / "config.yml", "review:\n  model: sonnet\n  thinking: medium\n")
+    _write(container / wc.PROJECT_CONFIG_NAME, "review:\n  model: opus\n")
+    cfg = wc.load_config(container / "main")
+    assert cfg.review.model == "opus"
+    assert cfg.review.thinking is Thinking.MEDIUM
+
+
+def test_a_container_value_names_the_container_in_the_report(roots, container):
+    _write(container / wc.PROJECT_CONFIG_NAME, "issue_tracker:\n  provider: github\n")
+    status = wc.config_status(container / "main")
+    assert _row(status, "issue_tracker.provider").scope.name == wc.CONTAINER_SCOPE
+
+
+def test_set_container_value_writes_above_the_worktrees(roots, container):
+    wc.set_container_value("issue_tracker.provider", "github", container / "main")
+    assert not (container / "main" / wc.PROJECT_CONFIG_NAME).exists()
+    assert "github" in (container / wc.PROJECT_CONFIG_NAME).read_text()
+
+
+def test_a_sibling_worktree_reads_what_the_container_recorded(roots, container):
+    """The reason the scope exists: `wt switch -c` cuts a checkout holding
+    nothing, and a worktree file would have to be copied into it by hand."""
+    wc.set_container_value("issue_tracker.provider", "github", container / "main")
+    feature = add_worktree(container, "feature")
+    assert wc.load_config(feature).issue_tracker.provider is wc.IssueProvider.GITHUB
+
+
+def test_set_container_value_refuses_a_plain_clone(roots, tmp_path):
+    """Falling back to the worktree would answer the opposite of what was asked:
+    that file is deleted by `wt remove` and unseen by every sibling checkout."""
+    clone = seed_repo(tmp_path / "clone")
+    with pytest.raises(wc.ConfigError, match="container"):
+        wc.set_container_value("issue_tracker.provider", "github", clone)
+    assert not (clone / wc.PROJECT_CONFIG_NAME).exists()
+
+
+def test_set_container_value_refuses_the_same_keys(roots, container):
+    with pytest.raises(wc.ConfigKeyError):
+        wc.set_container_value("issue_tracker.providr", "github", container / "main")
 
 
 # ── Status ──────────────────────────────────────────────────────────────────

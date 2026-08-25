@@ -33,6 +33,11 @@ MANIFEST_KEY="ai/claude"
 # sources only these.
 BASH_MODULES=(output.sh prompts.sh roots.sh)
 
+# Python modules from lib/ rather than ai/lib/, because a second subsystem
+# outside ai/ reads them too. The tarball flattens both directories into one
+# lib/, so they land beside the ai/lib modules that import them.
+WORKBENCH_PY_MODULES=(git_layout.py gitenv.py)
+
 # Files excluded from bin/ discovery (this script + support files)
 BIN_EXCLUDE="${0##*/}|_version.py"
 
@@ -125,6 +130,11 @@ done
 # Library files — bash modules required at runtime
 for sh in "${BASH_MODULES[@]}"; do
   cp "$WORKBENCH_ROOT/lib/$sh" "$DEST/lib/"
+done
+
+# Library files — the Python modules ai/lib imports from the workbench lib
+for py in "${WORKBENCH_PY_MODULES[@]}"; do
+  cp "$WORKBENCH_ROOT/lib/$py" "$DEST/lib/"
 done
 
 # Templates — all .md files in the templates directory

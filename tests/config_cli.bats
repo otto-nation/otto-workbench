@@ -119,6 +119,56 @@ json.dump(schema, open(sys.argv[2], "w"))
   [[ "$output" == *"needs a git repo"* ]]
 }
 
+# _make_container — the bare-repo layout under TMPDIR, and the shell standing in
+# its `main` worktree.
+_make_container() {
+  mkdir -p "$TMPDIR/seed"
+  printf 'x\n' > "$TMPDIR/seed/a.sh"
+  make_container_seed "$TMPDIR/seed"
+  make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
+  cd "$TMPDIR/container/main" || return 1
+  _assert_not_real_repo || return 1
+}
+
+@test "set --container writes above the worktrees, not into the checkout" {
+  _make_container
+
+  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provider github --container
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$TMPDIR/container/.workbench.yml"* ]]
+  [[ "$output" == *"every worktree"* ]]
+
+  run grep -c "github" "$TMPDIR/container/.workbench.yml"
+  [ "$status" -eq 0 ]
+  [ ! -f "$TMPDIR/container/main/.workbench.yml" ]
+  [ ! -f "$CONFIG" ]
+}
+
+@test "set --container in a plain clone refuses instead of writing the worktree" {
+  _make_repo
+
+  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provider github --container
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no container"* ]]
+  [ ! -f "$TMPDIR/repo/.workbench.yml" ]
+}
+
+@test "set --container outside a repo refuses instead of guessing a root" {
+  cd "$TMPDIR" || return 1
+  run "$REPO_ROOT/bin/otto-workbench" config set reuse.level ultra --container
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--container needs a git repo"* ]]
+}
+
+@test "--project and --container are mutually exclusive" {
+  _make_container
+
+  run "$REPO_ROOT/bin/otto-workbench" config set reuse.level ultra --project --container
+  [ "$status" -eq 2 ]
+  [ ! -f "$TMPDIR/container/.workbench.yml" ]
+  [ ! -f "$TMPDIR/container/main/.workbench.yml" ]
+}
+
 # ─── The report ──────────────────────────────────────────────────────────────
 #
 # What each scope resolved to is Python and is covered by
@@ -141,6 +191,26 @@ _make_repo() {
   [[ "$output" == *"global"*"$CONFIG"* ]]
   # Precedence order, not alphabetical or merge order.
   [[ "${output#*project}" == *global* ]]
+}
+
+@test "status lists the container between the two older scopes" {
+  _make_container
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"container"*"$TMPDIR/container/.workbench.yml"* ]]
+  [[ "${output#*project}" == *container* ]]
+  [[ "${output#*container}" == *global* ]]
+}
+
+@test "status names the container as the source of a value it set" {
+  _make_container
+  run "$REPO_ROOT/bin/otto-workbench" config set issue_tracker.provider github --container
+  [ "$status" -eq 0 ]
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"issue_tracker.provider"*"github"*"container"* ]]
 }
 
 @test "status marks a scope with no file" {

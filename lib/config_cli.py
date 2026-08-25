@@ -1,7 +1,7 @@
 """Read and write the workbench config, checked against the keys it reads.
 
-Usage: python3 lib/config_cli.py set KEY VALUE [--project]
-       otto-workbench config set KEY VALUE [--project]
+Usage: python3 lib/config_cli.py set KEY VALUE [--project|--container]
+       otto-workbench config set KEY VALUE [--project|--container]
        otto-workbench config status
 
 `status` answers the two questions the files themselves cannot: what is the
@@ -11,6 +11,13 @@ and a value set by the repo in front of you look identical afterwards — and a
 key written under a name nothing reads looks exactly like a key nobody ever
 set, in both directions, for as long as it takes somebody to notice the rule
 it was meant to turn on is not applying.
+
+`set` writes one of the three scopes `status` reports: the machine-wide file by
+default, `--project` for the checkout's committed `.workbench.yml`, and
+`--container` for the file beside a bare repo's worktrees, which every one of
+them reads and `wt remove` cannot delete.  Every scope the report can show has
+a flag that writes it — a scope a reader can see and not set is a diagnosis
+with no fix at the end of it.
 
 The config files are hand-authorable and the schema modeline is there so an
 editor completes them, so for a person this command is a convenience.  For an
@@ -83,9 +90,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     setter = sub.add_parser("set", help="write one dotted key")
     setter.add_argument("key", help="dotted key, e.g. issue_tracker.provider")
     setter.add_argument("value", help="the value to record")
-    setter.add_argument(
+    scope = setter.add_mutually_exclusive_group()
+    scope.add_argument(
         "--project", action="store_true",
         help="write the current repo's .workbench.yml instead of the global file",
+    )
+    scope.add_argument(
+        "--container", action="store_true",
+        help="write the .workbench.yml above a bare repo's worktrees",
     )
     setter.set_defaults(run=_write)
     reporter = sub.add_parser(
@@ -106,10 +118,11 @@ def _status(_args: argparse.Namespace) -> int:
     status = workbench_config.config_status(_project_root())
 
     print(f"{BOLD}Scopes{NC} {DIM}— highest precedence first{NC}")
+    name_width = max(len(scope.name) for scope in status.scopes)
     for scope in status.scopes:
         mark = f"{GREEN}✓{NC}" if scope.exists else f"{DIM}·{NC}"
         note = "" if scope.exists else f"  {DIM}(no file){NC}"
-        print(f"  {mark} {scope.name:<8} {scope.path}{note}")
+        print(f"  {mark} {scope.name:<{name_width}} {scope.path}{note}")
 
     for problem in status.problems:
         print(f"  {RED}✗{NC} {problem}")
@@ -134,20 +147,41 @@ def _status(_args: argparse.Namespace) -> int:
 
 
 def _write(args: argparse.Namespace) -> int:
-    if not args.project:
+    if not (args.project or args.container):
         workbench_config.set_value(args.key, args.value)
-        print(f"{GREEN}✓{NC} {args.key} = {args.value}")
-        print(f"  {DIM}{workbench_config.global_config_path()} — every repo{NC}")
-        return 0
+        return _wrote(args, workbench_config.global_config_path(), "every repo")
 
     root = _project_root()
     if root is None:
-        print(f"{RED}✗{NC} --project needs a git repo, and this is not one", file=sys.stderr)
+        flag = "--container" if args.container else "--project"
+        print(f"{RED}✗{NC} {flag} needs a git repo, and this is not one", file=sys.stderr)
         return 1
+    if args.container:
+        return _write_container(args, root)
     workbench_config.set_project_value(args.key, args.value, root)
-    target = workbench_config.project_config_path(root)
+    return _wrote(args, workbench_config.project_config_path(root),
+                  "commit it so the repo keeps the answer")
+
+
+def _write_container(args: argparse.Namespace, root: Path) -> int:
+    """Write the file above a bare repo's worktrees, or say there is none.
+
+    The path is resolved here rather than left to ``set_container_value``'s own
+    refusal so the message can name the flag the caller passed. The write still
+    goes through that function, which is where the scope's rules live.
+    """
+    target = workbench_config.container_config_path(root)
+    if target is None:
+        print(f"{RED}✗{NC} --container needs a bare-repo worktree — {root} is a "
+              f"plain checkout, whose repo has no container", file=sys.stderr)
+        return 1
+    workbench_config.set_container_value(args.key, args.value, root)
+    return _wrote(args, target, "every worktree of this repo")
+
+
+def _wrote(args: argparse.Namespace, target: Path, reach: str) -> int:
     print(f"{GREEN}✓{NC} {args.key} = {args.value}")
-    print(f"  {DIM}{target} — commit it so the repo keeps the answer{NC}")
+    print(f"  {DIM}{target} — {reach}{NC}")
     return 0
 
 

@@ -23,6 +23,9 @@ used once belongs at its call site, spelled out with `run`.
 in hand for display, the way `head_sha(short=True)` shortens one it just asked
 for. How much of a sha a reader is shown is a convention this module owns, and
 before it did, thirty-one call sites each spelled the seven out for themselves.
+`bin/local/validate-magic-values` keeps it that way: under `ai/`, slicing
+anything named for a sha to a literal length is rejected whatever the length,
+since a site free to pick eight is a site free to disagree with the rest.
 
 There is no `timeout` parameter. The bound follows from the subcommand the same
 way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`

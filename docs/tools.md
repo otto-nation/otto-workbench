@@ -63,6 +63,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-cli-flags` | Validates CLI flag conventions — no --repo alias, --pr/--branch mutual exclusivity |
 | `validate-worktree-guards` | Validates that ctx.worktree_root is never dereferenced without a guard or require_worktree() |
 | `validate-timeouts` | Validates that every subprocess timeout comes from the ai/lib/timeouts.py tiers |
+| `validate-magic-values` | Validates that an abbreviated sha, an exit code, and a truncation cap are spelled by the module that owns them |
 | `validate-frozen-roots` | Validates that no module freezes a workbench root into an import-time constant |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
 | `validate-script-loading` | Validates that only tests/conftest.py executes a module out of a file, so one script never has two module objects |

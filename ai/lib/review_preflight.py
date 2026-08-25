@@ -294,6 +294,13 @@ MAX_DELTA_LOG_BYTES = 20_000
 NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
 MIN_DIFF_BYTES = 20_000
 
+# How much of somebody else's prose a prompt quotes back: a prior review's body,
+# a review comment, the root of a thread being re-reviewed. Each one is a
+# gist — enough for the agent to recognise what was said and go read the thread
+# — and there is no bound on how many of them a busy PR contributes, which is
+# why the cap is per-body rather than on the section they land in.
+MAX_REVIEW_BODY_LEN = 200
+
 FILE_CONTENT_DENSITY_THRESHOLD = 0.15
 FILE_CONTENT_MIN_SIZE = 5120
 
@@ -1156,7 +1163,7 @@ def fetch_reply_threads(
             "finding_id": finding_id,
             "path": thread.get("path", ""),
             "line": thread.get("line"),
-            "root_body": root.get("body", "")[:200],
+            "root_body": root.get("body", "")[:MAX_REVIEW_BODY_LEN],
             "replies": [
                 {
                     "author": (r.get("author") or {}).get("login", ""),

@@ -38,7 +38,8 @@ from review_scout import (
     is_scout_output, parse_scout_output,
 )
 from review_preflight import (
-    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
+    MAX_PROMPT_BYTES, MAX_REVIEW_BODY_LEN, MIN_DIFF_BYTES,
+    NON_PREFLIGHT_OVERHEAD_BYTES,
     PRContext, PRMetadata, PreflightData, ReviewJob,
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
@@ -97,9 +98,6 @@ def _build_pr_header(
             lines += ["", "### File breakdown (sorted by churn)", file_stats]
 
     return "\n".join(lines)
-
-
-MAX_REVIEW_BODY_LEN = 200
 
 
 def _format_reviews(raw_json: str) -> str:
@@ -213,7 +211,7 @@ def _format_thread_item(t: dict, state: str) -> list[str]:
     lines = [f"- {label}`{loc}`" if loc else f"- {label}(general comment)"]
     if state in (THREAD_CONTESTED, THREAD_REPLIED):
         for r in t.get("replies", []):
-            body = r.get("body", "").replace("\n", " ")[:200]
+            body = r.get("body", "").replace("\n", " ")[:MAX_REVIEW_BODY_LEN]
             lines.append(f"  > @{r.get('author', '?')}: {body}")
     return lines
 

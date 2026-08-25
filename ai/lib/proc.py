@@ -52,6 +52,14 @@ the call sites that has none; as a result code it degrades through
 than an implementation detail: the eval scorers tell a timed-out case from a
 failed one by it.
 
+The exit codes and `DETAIL_LIMIT` are conventions rather than choices, so
+`bin/local/validate-magic-values` holds their monopoly: anywhere under `ai/`, a
+literal 124, 127 or 130 written where something exits with it or reads it back
+is rejected, and so is a slice bound that respells one of the caps —
+`DETAIL_LIMIT` here or `trail.EXCERPT_LIMIT` next door. It reads the values out
+of the modules that define them, so renaming a constant fails that check rather
+than quietly retiring it.
+
 Named `proc` rather than `cmd`: `ai/lib` goes on `sys.path` ahead of the
 standard library, and a module called `cmd` there would shadow the stdlib
 `cmd` that `pdb` imports.

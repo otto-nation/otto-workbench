@@ -12,7 +12,7 @@ import agent_phases
 import review_common
 import review_pipeline
 import review_phases
-from agent_types import AgentKind, Effort, Phase, Thinking
+from agent_types import REVIEW_PHASES, AgentKind, Effort, Phase, Thinking
 
 
 class TestPhaseLogPath:
@@ -320,7 +320,7 @@ class TestNoDuplicateDefaults:
         # directory that happens to share the phase's name.
         artifact_names = {
             name
-            for p in Phase
+            for p in REVIEW_PHASES
             for name in (p.log_filename, p.output_filename)
             if name
         }
@@ -407,20 +407,22 @@ def _capture_invocations(monkeypatch):
 class TestPhaseTurnBudgets:
     """`job_turns` is the single owner, and `PhaseRunner` reports what it says.
 
-    Driven off the registry rather than a list of phases, so a phase added
-    later is covered here without an edit.
+    Driven off the review domain rather than a list of phases, so a review
+    phase added later is covered here without an edit. A phase belonging to
+    another entry point has no `ReviewJob` to be sized against.
     """
 
     def test_every_phase_matches_its_spec(self, tmp_path):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
         bump = 2 * agent_phases.OMITTED_FILE_TURNS
-        for phase, spec in review_phases.PHASES.items():
+        for phase in REVIEW_PHASES:
+            spec = review_phases.PHASES[phase]
             expected = spec.max_turns + (bump if spec.scales_with_omitted else 0)
             assert review_phases.job_turns(phase, job) == expected, phase
 
     def test_the_runner_reports_what_job_turns_resolves(self, tmp_path):
         job = _omitted_job(tmp_path, omitted=["big.py"])
-        for phase in review_phases.PHASES:
+        for phase in REVIEW_PHASES:
             # A fan-out phase derives its log from an index, so it needs one.
             index = 1 if "{}" in phase.log_filename else None
             runner = review_pipeline.PhaseRunner(job, phase, index)
@@ -428,13 +430,15 @@ class TestPhaseTurnBudgets:
 
     def test_nothing_bumps_with_no_omitted_files(self, tmp_path):
         job = _omitted_job(tmp_path)
-        for phase, spec in review_phases.PHASES.items():
+        for phase in REVIEW_PHASES:
+            spec = review_phases.PHASES[phase]
             assert review_phases.job_turns(phase, job) == spec.max_turns, phase
 
     def test_an_opted_out_effort_bumps_nothing(self, tmp_path):
         """`--effort low` skips omitted files entirely, so no phase pays for them."""
         job = _omitted_job(tmp_path, omitted=["big.py"], effort=Effort.LOW)
-        for phase, spec in review_phases.PHASES.items():
+        for phase in REVIEW_PHASES:
+            spec = review_phases.PHASES[phase]
             assert review_phases.job_turns(phase, job) == spec.max_turns, phase
 
 

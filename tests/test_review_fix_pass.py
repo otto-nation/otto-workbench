@@ -9,6 +9,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
+import agent_phases
 import land
 import push
 import review_common
@@ -833,34 +834,6 @@ class TestChangedSourceFiles:
         assert review_fix._changed_source_files(str(git_wt)) == {"real.py"}
 
 
-class TestTurnBudgetScaling:
-    def test_small_review_uses_default(self):
-        turns = review_fix._fix_turn_budget(5)
-        assert turns == review_fix.PHASES[Phase.FIX].max_turns
-
-    def test_large_review_scales_up(self):
-        turns = review_fix._fix_turn_budget(25)
-        assert turns == 50
-
-    def test_very_large_review_caps(self):
-        turns = review_fix._fix_turn_budget(100)
-        assert turns == review_fix.MAX_TURNS_FIX_CAP
-
-
-class TestFixRetryBudget:
-    def test_small_budget_gets_minimum_retry(self):
-        assert review_fix._fix_retry_budget(20) == 40
-
-    def test_medium_budget_adds_headroom(self):
-        assert review_fix._fix_retry_budget(30) == 50
-
-    def test_large_budget_caps_at_max(self):
-        assert review_fix._fix_retry_budget(50) == 60
-
-    def test_already_at_cap_stays_at_cap(self):
-        assert review_fix._fix_retry_budget(60) == 60
-
-
 class TestFixPassMadeProgress:
     def _finding(self, fid, checked=False, skip_reason=""):
         sev = fid[0]
@@ -1010,11 +983,18 @@ class TestRunFixPassRetry:
     def test_retry_uses_increased_turns(
         self, mock_prompt, mock_invoke, mock_diag, mock_reconcile, mock_commit, tmp_path,
     ):
+        """Both budgets come off the fix phase, sized by the findings left.
+
+        The review has two unchecked findings, so the count the registry scales
+        against is 2 — not the finding total, and not a number this module
+        keeps of its own.
+        """
         job = self._make_job(tmp_path)
         review_fix.run_fix_pass(job)
-        retry_call = mock_invoke.call_args_list[1]
-        assert retry_call[0][0].max_turns == review_fix._fix_retry_budget(
-            review_fix._fix_turn_budget(2),
+        first_turns = agent_phases.phase_turns(Phase.FIX, items=2)
+        assert mock_invoke.call_args_list[0][0][0].max_turns == first_turns
+        assert mock_invoke.call_args_list[1][0][0].max_turns == (
+            agent_phases.phase_retry_turns(Phase.FIX, first_turns)
         )
 
     @patch("review_fix._commit_fixes")

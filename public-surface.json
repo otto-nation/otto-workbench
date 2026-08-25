@@ -32,6 +32,8 @@
     "config:agent.phases.*.thinking=high",
     "config:agent.phases.*.thinking=low",
     "config:agent.phases.*.thinking=medium",
+    "config:agent.phases=ci_fix",
+    "config:agent.phases=comments_fix",
     "config:agent.phases=disprove",
     "config:agent.phases=fix",
     "config:agent.phases=group",

@@ -31,12 +31,13 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import agent_phases
 import git_client
 import land
 import log
 import proc
 from review_agent import diagnose_missing_output
-from agent_types import PHASES, Phase
+from agent_types import Phase
 from review_common import (
     TEMPLATE_FIX,
     preserve_log, restore_preserved,
@@ -48,9 +49,6 @@ from review_phases import PhaseRunner
 from review_preflight import ReviewJob
 from review_prompt import build_prompt
 from review_retry import _FIX_RETRY_HINT, _has_output, _is_retryable
-
-MAX_TURNS_FIX_CAP = 60
-RETRY_MAX_TURNS_FIX = 40
 
 
 def _commit_fixes(
@@ -236,14 +234,6 @@ def _format_fix_summary(result: FixPassResult) -> str:
     return "\n".join(lines)
 
 
-def _fix_turn_budget(unchecked: int) -> int:
-    return min(max(PHASES[Phase.FIX].max_turns, unchecked * 2), MAX_TURNS_FIX_CAP)
-
-
-def _fix_retry_budget(original_budget: int) -> int:
-    return min(max(RETRY_MAX_TURNS_FIX, original_budget + 20), MAX_TURNS_FIX_CAP)
-
-
 def _fix_pass_made_progress(result: FixPassResult) -> bool:
     if result.fixed_count > 0:
         return True
@@ -281,7 +271,7 @@ def run_fix_pass(job: ReviewJob):
         log.info("No findings left to fix — skipping fix pass")
         return
 
-    max_turns = _fix_turn_budget(before_unchecked)
+    max_turns = agent_phases.phase_turns(Phase.FIX, items=before_unchecked)
 
     prompt = build_prompt(
         TEMPLATE_FIX, job, max_turns=max_turns,
@@ -320,7 +310,7 @@ def run_fix_pass(job: ReviewJob):
     result = _diff_findings(before_findings, after_findings)
 
     if _should_retry(result, fix_log):
-        retry_turns = _fix_retry_budget(max_turns)
+        retry_turns = agent_phases.phase_retry_turns(Phase.FIX, max_turns)
         retry_prompt = _FIX_RETRY_HINT + build_prompt(
             TEMPLATE_FIX, job, max_turns=retry_turns,
         )

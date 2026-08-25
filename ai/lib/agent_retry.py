@@ -22,14 +22,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 import log
+from agent_types import DEFAULT_RETRY_CEILING
 from review_agent import diagnose_missing_output, try_recover_output
 from review_common import (
     Diagnosis, DiagnosisKind, preserve_log, restore_preserved,
 )
-
-# Ceiling for a retry's turn budget. Group reviews arrived at this number and
-# every other phase inherited it; a single shared cap keeps the guard uniform.
-RETRY_MAX_TURNS = 30
 
 # Kinds a second attempt could plausibly clear. Turn exhaustion and a run that
 # never called a write tool are the two the hints address directly; the rest are
@@ -107,18 +104,18 @@ def hint_for(diagnosis: Diagnosis) -> str:
 
 
 def turns_for(
-    diagnosis: Diagnosis, max_turns: int, *, ceiling: int = RETRY_MAX_TURNS,
+    diagnosis: Diagnosis, max_turns: int, *, ceiling: int = DEFAULT_RETRY_CEILING,
 ) -> int:
     """Turn budget for a retry.
 
     Only turn exhaustion earns a bigger budget — a transient API error or a
     missing result record would fail identically with more turns.
 
-    `ceiling` belongs to the caller, not to the module: RETRY_MAX_TURNS is
-    sized for the review pipeline's group phases, where 15 turns double to 30.
-    A caller already operating above that — the fix pass runs at 60 — would see
-    the doubling silently cancelled, so the result is floored at the original
-    budget and such a caller passes a ceiling scaled to its own work.
+    `ceiling` belongs to the phase, not to this module: the default is sized
+    for the review pipeline's group phases, where 15 turns double to 30. A
+    phase already operating above that — the comments fix pass runs at 60 —
+    would see the doubling silently cancelled, so the result is floored at the
+    original budget and the phase's own `retry.ceiling` is passed in instead.
     """
     if diagnosis.kind is not DiagnosisKind.MAX_TURNS:
         return max_turns
@@ -135,7 +132,7 @@ def retry_unproductive(
     produced: Callable[[], bool],
     recover: Callable[[], None] | None = None,
     hint_select: Callable[[Diagnosis], str] = hint_for,
-    ceiling: int = RETRY_MAX_TURNS,
+    ceiling: int = DEFAULT_RETRY_CEILING,
 ) -> Diagnosis | None:
     """Give an agent that produced nothing a second attempt.
 
@@ -185,7 +182,7 @@ def run_guarded(
     produced: Callable[[], bool],
     recover: Callable[[], None] | None = None,
     hint_select: Callable[[Diagnosis], str] = hint_for,
-    ceiling: int = RETRY_MAX_TURNS,
+    ceiling: int = DEFAULT_RETRY_CEILING,
 ) -> Diagnosis | None:
     """Run an agent and guard the result with `retry_unproductive`.
 

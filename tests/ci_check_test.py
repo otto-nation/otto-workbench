@@ -1048,7 +1048,7 @@ def _run_fix_with_tracking(tmp_path, tracking_body, invoke_fix):
          patch("ci_check._render_ci_fix_template", return_value="PROMPT"), \
          patch("ci_check._commit_and_push",
                return_value=land.LandResult(CommitStatus.NO_CHANGES)), \
-         patch("ci_check.ai_backend.invoke_fix", side_effect=invoke_fix) as inv:
+         patch("ci_check.agent_invoke.ai_backend.invoke_fix", side_effect=invoke_fix) as inv:
         ci_check._run_fix(MagicMock(), report, ctx)
     return inv
 
@@ -1094,7 +1094,7 @@ def _run_fix_landing(landed, tmp_path):
          patch("ci_check._rebase_if_behind", return_value=False), \
          patch("ci_check._render_ci_fix_template", return_value="PROMPT"), \
          patch("ci_check._commit_and_push", return_value=landed), \
-         patch("ci_check.ai_backend.invoke_fix", return_value=0):
+         patch("ci_check.agent_invoke.ai_backend.invoke_fix", return_value=0):
         rc = ci_check._run_fix(trail, {"failures": [{"job": "build"}]}, ctx)
     return rc, trail
 

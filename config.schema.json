@@ -110,7 +110,9 @@
               "group",
               "synthesis",
               "disprove",
-              "fix"
+              "fix",
+              "comments_fix",
+              "ci_fix"
             ]
           }
         }

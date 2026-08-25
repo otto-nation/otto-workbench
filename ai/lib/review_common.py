@@ -48,7 +48,8 @@ import log
 import serde
 import timeouts
 import workbench_paths
-from agent_types import REVIEW_PHASES, Phase
+from agent_registry import PHASES, REVIEW_PHASES
+from agent_types import Phase
 from ai_usage import SessionUsage, parse_session_log
 from pr_domains import ReviewStatus, ReviewVerdict
 from pr_state import now_iso
@@ -493,7 +494,7 @@ def phase_log_path(review_file: str, phase: Phase, index: int | None = None) -> 
     Empty for a phase that names no log of its own — the caller falls back to
     the job's.
     """
-    name = phase.log_filename
+    name = PHASES[phase].log_filename
     if index is not None and "{}" not in name:
         raise ValueError(f"{phase} writes a single log — do not pass an index")
     if not name:
@@ -515,12 +516,12 @@ def phase_artifacts(review_dir: Path) -> list[Path]:
     writes into that entry point's own tracking directory, and asking it for an
     artifact name raises rather than minting one that would never match.
     """
-    # Only GROUP's stem carries a "{}" placeholder (see Phase._stem); the
+    # Only GROUP's stem carries a "{}" placeholder (see PhaseSpec._stem); the
     # format call is a no-op for every other phase's plain filename.
     patterns = [
         name.format("*")
         for p in REVIEW_PHASES
-        for name in (p.output_filename, p.log_filename)
+        for name in (PHASES[p].output_filename, PHASES[p].log_filename)
         if name
     ]
     return [f for pat in patterns for f in review_dir.glob(pat) if f.is_file()]
@@ -533,7 +534,7 @@ def phase_output_path(review_file: str, phase: Phase, index: int | None = None) 
     missing log there is nothing to fall back to, and an empty name would
     derive to the review directory — a wrong path that reads as a real one.
     """
-    name = phase.output_filename
+    name = PHASES[phase].output_filename
     if not name:
         raise ValueError(f"{phase} writes the review file, not an artifact of its own")
     if index is not None and "{}" not in name:

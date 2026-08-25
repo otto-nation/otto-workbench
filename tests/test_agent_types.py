@@ -1,4 +1,9 @@
-"""Tests for agent_types — the phase registry and the vocabulary around it."""
+"""Tests for agent_types — the vocabulary an agent invocation is described in.
+
+Everything here is provable without knowing which phases exist: the env keys a
+phase name derives, and the rules a ``PhaseSpec`` applies to whatever it is
+handed. What the nine real phases are set to is ``test_agent_registry``.
+"""
 
 import dataclasses
 import re
@@ -9,71 +14,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import agent_types
 from agent_types import (
-    REVIEW_PHASES, AgentKind, Effort, Phase, PhaseDomain, Thinking,
+    AgentKind, Effort, Phase, PhaseDomain, PhaseShape, PhaseSpec, ItemScaling,
+    Thinking,
 )
-
-
-class TestPhasesRegistry:
-    def test_covers_every_phase(self):
-        assert set(agent_types.PHASES) == set(Phase)
-
-    def test_key_matches_spec_phase(self):
-        for phase, spec in agent_types.PHASES.items():
-            assert spec.phase is phase
-
-    def test_spec_is_frozen(self):
-        spec = agent_types.PHASES[Phase.GROUP]
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            spec.max_turns = 99
-
-    def test_every_phase_defaults_to_sonnet(self):
-        assert {s.model for s in agent_types.PHASES.values()} == {"sonnet"}
-
-    def test_every_phase_carries_a_label(self):
-        assert all(s.label for s in agent_types.PHASES.values())
-
-
-class TestPhaseDomains:
-    """Which entry point runs a phase is registry data, not a naming guess."""
-
-    def test_preserves_current_domains(self):
-        expected = {
-            Phase.SINGLE: PhaseDomain.REVIEW,
-            Phase.HOLISTIC: PhaseDomain.REVIEW,
-            Phase.SCOUT: PhaseDomain.REVIEW,
-            Phase.GROUP: PhaseDomain.REVIEW,
-            Phase.SYNTHESIS: PhaseDomain.REVIEW,
-            Phase.DISPROVE: PhaseDomain.REVIEW,
-            Phase.FIX: PhaseDomain.REVIEW,
-            Phase.COMMENTS_FIX: PhaseDomain.COMMENTS,
-            Phase.CI_FIX: PhaseDomain.CI,
-        }
-        assert {p: s.domain for p, s in agent_types.PHASES.items()} == expected
-
-    def test_the_property_reads_the_registry(self):
-        for phase, spec in agent_types.PHASES.items():
-            assert phase.domain is spec.domain
-
-    def test_review_phases_are_the_review_domain(self):
-        assert set(REVIEW_PHASES) == {
-            p for p, s in agent_types.PHASES.items()
-            if s.domain is PhaseDomain.REVIEW
-        }
-
-    def test_a_phase_outside_review_names_no_review_artifact(self):
-        """It writes into its own entry point's tracking directory.
-
-        Answering with a `comments_fix.md` nobody writes would read as a real
-        path — the review sweep would glob for it and the fix pass would look
-        for its log where it never lands.
-        """
-        for phase in (Phase.COMMENTS_FIX, Phase.CI_FIX):
-            with pytest.raises(ValueError, match="entry point"):
-                phase.output_filename
-            with pytest.raises(ValueError, match="entry point"):
-                phase.log_filename
 
 
 class TestPhaseEnvKeys:
@@ -98,199 +42,116 @@ class TestPhaseEnvKeys:
         keys = [p.model_env_key for p in Phase] + [p.thinking_env_key for p in Phase]
         assert len(set(keys)) == len(keys)
 
+    def test_a_member_answers_nothing_that_needs_the_registry(self):
+        """The vocabulary imports nothing, so it cannot reach the inventory.
 
-class TestPhaseThinkingDefaults:
-    def test_preserves_current_levels(self):
-        expected = {
-            Phase.SINGLE: Thinking.MEDIUM,
-            Phase.HOLISTIC: Thinking.MEDIUM,
-            Phase.SCOUT: Thinking.LOW,
-            Phase.GROUP: Thinking.LOW,
-            Phase.SYNTHESIS: Thinking.MEDIUM,
-            Phase.DISPROVE: Thinking.MEDIUM,
-            Phase.FIX: Thinking.LOW,
-            # Neither fix pass named a thinking level before it was a phase —
-            # both called the backend without one and took its default.
-            Phase.COMMENTS_FIX: None,
-            Phase.CI_FIX: None,
-        }
-        actual = {p: s.thinking for p, s in agent_types.PHASES.items()}
-        assert actual == expected
+        `Phase.domain` used to read `PHASES[self]`, which made the enum depend
+        on the module that depends on it. Those questions belong to the spec.
+        """
+        for name in ("domain", "log_filename", "output_filename"):
+            assert not hasattr(Phase.GROUP, name), name
 
 
-class TestPhaseMaxTurnsDefaults:
-    def test_preserves_current_budgets(self):
-        expected = {
-            Phase.SINGLE: 15,
-            Phase.HOLISTIC: 15,
-            Phase.SCOUT: 10,
-            Phase.GROUP: 15,
-            Phase.SYNTHESIS: 15,
-            Phase.DISPROVE: 15,
-            Phase.FIX: 20,
-            Phase.COMMENTS_FIX: 20,
-            Phase.CI_FIX: 20,
-        }
-        actual = {p: s.max_turns for p, s in agent_types.PHASES.items()}
-        assert actual == expected
+class TestPhaseSpecDefaults:
+    def test_is_frozen(self):
+        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            spec.max_turns = 99
+
+    def test_a_new_phase_inherits_the_omitted_bump(self):
+        """The default is on, so forgetting the flag over-budgets rather than under."""
+        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        assert spec.scales_with_omitted is True
+
+    def test_a_new_phase_is_a_tool_using_agent(self):
+        """The shape a phase gets by default is the one with no special powers.
+
+        Defaulting to FIX would hand the workspace to a phase nobody said may
+        write to it; defaulting to PROMPT would silently drop the tools a
+        forgetful declaration still expects to have.
+        """
+        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        assert spec.shape is PhaseShape.AGENT
+
+    def test_a_new_phase_takes_no_pinned_agent_or_budget(self):
+        spec = PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
+        assert spec.agent is None
+        assert spec.max_budget is None
+        assert spec.thinking is None
 
 
-class TestPhaseBudgetDefaults:
-    """A phase outside a review pins its own dollar cap.
+class TestPhaseShapes:
+    def test_a_shape_exists_for_each_backend_entry_point(self):
+        """ai_backend does three things, so a phase can be one of three shapes.
 
-    There is no ``--effort`` at those entry points, so a ``None`` budget would
-    resolve to nothing at all rather than to a preset.
-    """
-
-    def test_only_the_non_review_phases_pin_a_budget(self):
-        pinned = {
-            p for p, s in agent_types.PHASES.items() if s.max_budget is not None
-        }
-        assert pinned == {Phase.COMMENTS_FIX, Phase.CI_FIX}
-
-    def test_preserves_current_caps(self):
-        assert agent_types.PHASES[Phase.COMMENTS_FIX].max_budget == 2.0
-        assert agent_types.PHASES[Phase.CI_FIX].max_budget == 3.0
+        A fourth member here would be a shape no entry point can run.
+        """
+        assert {s.value for s in PhaseShape} == {"prompt", "agent", "fix"}
 
 
 class TestItemScaling:
     def test_chunk_size_is_the_tightest_cap(self):
         # 60 turns at 5 each allows 12; $5 at $0.50 each allows 10.
-        scaling = agent_types.PHASES[Phase.COMMENTS_FIX].scaling
+        scaling = ItemScaling(turns_per_item=5, turns_cap=60,
+                              budget_per_item=0.5, budget_cap=5.0)
         assert scaling.chunk_size == 10
 
+    def test_one_scaling_resource_bounds_the_chunk_alone(self):
+        assert ItemScaling(turns_per_item=2, turns_cap=60).chunk_size == 30
+
     def test_a_phase_that_scales_with_nothing_bounds_no_chunk(self):
-        assert agent_types.PHASES[Phase.CI_FIX].scaling.chunk_size == 0
+        assert ItemScaling().chunk_size == 0
 
 
-class TestPhaseAgentPins:
-    """Three phases are pinned to reviewer-lite regardless of --effort.
+class TestPhaseSpecArtifactNames:
+    """A spec derives its filenames from its own phase, not from a lookup.
 
-    They receive pre-collected data and do no context gathering, so raising
-    effort must not upgrade them. A change to this mapping should be a
-    deliberate edit to this test, not an incidental side effect.
+    These assert the derivation rules against specs built here; that the nine
+    real phases still resolve to the names they always had is pinned in
+    test_agent_registry.
     """
 
-    def test_pinned_phases(self):
-        pinned = {p for p, s in agent_types.PHASES.items() if s.agent is not None}
-        assert pinned == {Phase.GROUP, Phase.SCOUT, Phase.DISPROVE}
+    @staticmethod
+    def _review(phase: Phase) -> PhaseSpec:
+        return PhaseSpec(phase, PhaseDomain.REVIEW, "label")
 
-    def test_pinned_phases_use_reviewer_lite(self):
-        for phase in (Phase.GROUP, Phase.SCOUT, Phase.DISPROVE):
-            assert agent_types.PHASES[phase].agent is AgentKind.REVIEWER_LITE
+    def test_both_names_share_the_phase_as_their_stem(self):
+        spec = self._review(Phase.HOLISTIC)
+        assert spec.log_filename == "holistic.jsonl"
+        assert spec.output_filename == "holistic.md"
 
-    def test_effort_derived_phases(self):
-        derived = {
-            p for p, s in agent_types.PHASES.items()
-            if s.agent is None and not s.edits
-        }
-        assert derived == {Phase.SINGLE, Phase.HOLISTIC, Phase.SYNTHESIS}
-
-    def test_only_the_fix_phases_edit(self):
-        editing = {p for p, s in agent_types.PHASES.items() if s.edits}
-        assert editing == {Phase.FIX, Phase.COMMENTS_FIX, Phase.CI_FIX}
-
-    def test_no_editing_phase_pins_a_reviewer_agent(self):
-        # Every AgentKind is a persona forbidden from touching source files.
-        for phase, spec in agent_types.PHASES.items():
-            assert not (spec.edits and spec.agent), phase
-
-
-class TestOmittedTurnBumpRegistry:
-    """Which phases pay for omitted files is a property of the spec.
-
-    Before, it was the presence or absence of `+ _omitted_turns(job)` at each
-    call site — which is how the parallel group fan-out lost its bump. Changing
-    this mapping should be a deliberate edit to this test.
-    """
-
-    def test_source_reading_phases_scale(self):
-        scaling = {
-            p for p, s in agent_types.PHASES.items() if s.scales_with_omitted
-        }
-        assert scaling == {Phase.SINGLE, Phase.HOLISTIC, Phase.SCOUT, Phase.GROUP}
-
-    def test_a_new_phase_inherits_the_bump(self):
-        """The default is on, so forgetting the flag over-budgets rather than under."""
-        spec = agent_types.PhaseSpec(Phase.GROUP, PhaseDomain.REVIEW, "Group review")
-        assert spec.scales_with_omitted is True
-
-
-class TestPhaseLogNames:
-    """Each review phase's session log is named after the phase.
-
-    Adding a phase must not mean naming its log by hand, so these assert the
-    convention over the review domain rather than a hand-written list. The
-    exception is the pinning test: it is what proves the convention renamed
-    nothing.
-    """
-
-    def test_preserves_current_filenames(self):
-        expected = {
-            Phase.SINGLE: "",
-            Phase.HOLISTIC: "holistic.jsonl",
-            Phase.SCOUT: "scout.jsonl",
-            Phase.GROUP: "group-{}.jsonl",
-            Phase.SYNTHESIS: "synthesis.jsonl",
-            Phase.DISPROVE: "disprove.jsonl",
-            Phase.FIX: "fix.jsonl",
-        }
-        assert {p: p.log_filename for p in REVIEW_PHASES} == expected
-
-    def test_every_phase_but_single_has_a_distinct_log(self):
-        names = [p.log_filename for p in REVIEW_PHASES if p is not Phase.SINGLE]
-        assert all(names)
-        assert len(set(names)) == len(names)
+    def test_the_fan_out_phase_carries_an_index(self):
+        spec = self._review(Phase.GROUP)
+        assert spec.log_filename == "group-{}.jsonl"
+        assert spec.output_filename == "group-{}.md"
 
     def test_single_names_no_log_of_its_own(self):
         # It writes to the job's log, which the caller may point anywhere.
-        assert Phase.SINGLE.log_filename == ""
+        assert self._review(Phase.SINGLE).log_filename == ""
 
-    def test_group_is_the_only_indexed_phase(self):
-        indexed = {p for p in REVIEW_PHASES if "{}" in p.log_filename}
-        assert indexed == {Phase.GROUP}
+    def test_a_phase_that_writes_the_review_file_names_no_artifact(self):
+        for phase in (Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX):
+            assert self._review(phase).output_filename == ""
+
+    def test_a_phase_outside_review_names_no_review_artifact(self):
+        """It writes into its own entry point's tracking directory.
+
+        Answering with a `comments_fix.md` nobody writes would read as a real
+        path — the review sweep would glob for it and the fix pass would look
+        for its log where it never lands.
+        """
+        spec = PhaseSpec(Phase.COMMENTS_FIX, PhaseDomain.COMMENTS, "Fix pass")
+        with pytest.raises(ValueError, match="entry point"):
+            spec.output_filename
+        with pytest.raises(ValueError, match="entry point"):
+            spec.log_filename
 
 
-class TestPhaseOutputNames:
-    """Each review phase's findings artifact is named after the phase.
+class TestVocabularyIsClosed:
+    """These enums name choices, so an unrecognised string is not one of them."""
 
-    Mirrors TestPhaseLogNames: assert the convention over the review domain
-    rather than a hand-written list, with one pinning test proving the
-    convention renamed nothing.
-    """
-
-    def test_preserves_current_filenames(self):
-        expected = {
-            Phase.SINGLE: "",
-            Phase.HOLISTIC: "holistic.md",
-            Phase.SCOUT: "scout.md",
-            Phase.GROUP: "group-{}.md",
-            Phase.SYNTHESIS: "",
-            Phase.DISPROVE: "disprove.md",
-            Phase.FIX: "",
-        }
-        assert {p: p.output_filename for p in REVIEW_PHASES} == expected
-
-    def test_phases_that_write_the_review_file_name_no_artifact(self):
-        # single and synthesis produce review.md; fix edits it in place.
-        empty = {p for p in REVIEW_PHASES if not p.output_filename}
-        assert empty == {Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX}
-
-    def test_every_artifact_name_is_distinct(self):
-        names = [p.output_filename for p in REVIEW_PHASES if p.output_filename]
-        assert len(set(names)) == len(names)
-
-    def test_group_is_the_only_indexed_phase(self):
-        indexed = {p for p in REVIEW_PHASES if "{}" in p.output_filename}
-        assert indexed == {Phase.GROUP}
-
-    def test_stem_is_shared_with_the_log(self):
-        # The two properties differ only by extension. Sharing the stem is
-        # what stops them drifting the way the constants drifted from the
-        # logs — a phase renamed for one is renamed for both.
-        both = [p for p in REVIEW_PHASES if p.log_filename and p.output_filename]
-        assert both
-        for phase in both:
-            assert phase.log_filename.removesuffix(".jsonl") == (
-                phase.output_filename.removesuffix(".md")
-            )
+    def test_every_member_set_is_pinned(self):
+        assert {e.value for e in Effort} == {"low", "medium", "high"}
+        assert {t.value for t in Thinking} == {"low", "medium", "high"}
+        assert {a.value for a in AgentKind} == {"reviewer", "reviewer-lite"}
+        assert {d.value for d in PhaseDomain} == {"review", "comments", "ci"}

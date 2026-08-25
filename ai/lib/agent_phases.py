@@ -1,6 +1,6 @@
 """What a phase resolves to here: the spec, the config file, the environment.
 
-``agent_types`` says what a phase's built-in defaults are. This module answers
+``agent_registry`` says what a phase's built-in defaults are. This module answers
 the question a caller actually has — which model, thinking level, provider and
 turn budget *this* invocation runs with — by layering the config file and the
 environment over that spec.
@@ -31,9 +31,10 @@ import os
 from enum import StrEnum
 
 import workbench_config
+from agent_registry import PHASES, REVIEW_PHASES
 from agent_types import (
     ENV_PREFIX,
-    EFFORT_PRESETS, PHASES, REVIEW_PHASES,
+    EFFORT_PRESETS,
     Effort, Phase, Thinking,
 )
 from workbench_config import WorkbenchConfig

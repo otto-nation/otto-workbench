@@ -13,7 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent_phases
-from agent_types import PHASES, Effort, Phase
+from agent_registry import PHASES
+from agent_types import Effort, Phase
 
 
 class TestPhaseTurns:

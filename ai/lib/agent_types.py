@@ -2,9 +2,15 @@
 
 A phase is one agent invocation the workbench knows how to size: what model it
 runs, how hard it thinks, how many turns it gets, which agent definition it
-adopts. This module owns the names for those things — ``Phase``, ``Thinking``,
-``AgentKind``, ``Effort`` — and the built-in spec each phase resolves from
-(``PhaseSpec``, ``PHASES``).
+adopts. This module owns the names for those things — ``Phase``,
+``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort`` — and ``PhaseSpec``,
+the shape a phase's built-in defaults take.
+
+Which phases exist, and what each one's defaults are, is ``agent_registry``'s
+job. The vocabulary is a closed set of names that grows only when a new kind of
+knob appears; the registry is an inventory that grows with the workbench.
+Keeping them apart is also what stops the enum reaching back into the registry
+to answer questions about itself — a ``PhaseSpec`` answers those now.
 
 It imports nothing but the standard library, and that is the point. The
 vocabulary used to live in ``review_common``, which reaches the PR state
@@ -51,15 +57,35 @@ class PhaseDomain(StrEnum):
     CI = "ci"
 
 
+class PhaseShape(StrEnum):
+    """Which backend entry point a phase is run through.
+
+    The three shapes are the three things ``ai_backend`` can do, so a phase's
+    shape decides which ``agent_invoke`` function will accept it. A read-only
+    reviewer handed to the fix runner, or a stateless prompt handed a session
+    log it will never write, is a mistake the shape catches at the owner rather
+    than in a backend argument that is silently ignored.
+    """
+
+    PROMPT = "prompt"
+    AGENT = "agent"
+    FIX = "fix"
+
+
 class Phase(StrEnum):
     """One agent invocation the workbench sizes from a registry entry.
 
     Both the config key and the override env keys are derived from the member's
-    value, so adding a phase means one member here plus one ``PHASES`` entry —
-    callers, preflight checks, and failure hints all read the derived keys
-    rather than spelling them out. Deriving both from one place is what keeps
-    ``agent.phases.<phase>`` and ``WORKBENCH_AI_<PHASE>_*`` naming the same
-    phase; the member name is a second spelling that could drift from it.
+    value, so adding a phase means one member here plus one ``agent_registry``
+    entry — callers, preflight checks, and failure hints all read the derived
+    keys rather than spelling them out. Deriving both from one place is what
+    keeps ``agent.phases.<phase>`` and ``WORKBENCH_AI_<PHASE>_*`` naming the
+    same phase; the member name is a second spelling that could drift from it.
+
+    A member is a name and nothing more. Everything else about a phase — the
+    entry point that runs it, its defaults, the files it writes — lives on its
+    ``PhaseSpec``, so the vocabulary answers no question that needs the
+    inventory.
     """
 
     SINGLE = "single"
@@ -80,51 +106,11 @@ class Phase(StrEnum):
     def thinking_env_key(self) -> str:
         return f"{ENV_PREFIX}{self.upper()}_THINKING"
 
-    @property
-    def domain(self) -> PhaseDomain:
-        """The entry point that runs this phase, from its registry entry."""
-        return PHASES[self].domain
 
-    @property
-    def _stem(self) -> str:
-        """The filename stem this phase's artifacts share: the phase's own name.
-
-        ``group`` is the one fan-out phase, so its stem carries the index.
-        """
-        if self.domain is not PhaseDomain.REVIEW:
-            raise ValueError(
-                f"{self} runs under the {self.domain} entry point and writes no "
-                "review artifact; ask its own domain where its files live"
-            )
-        return f"{self}-{{}}" if self is Phase.GROUP else str(self)
-
-    @property
-    def log_filename(self) -> str:
-        """The session log this phase writes into the review directory.
-
-        ``single`` names no file of its own: it writes to the job's session
-        log, which ``review-orchestrate --session-log`` may point outside the
-        review directory. Raises for a phase outside the review domain, whose
-        session log belongs to whichever entry point runs it.
-        """
-        return "" if self is Phase.SINGLE else f"{self._stem}.jsonl"
-
-    @property
-    def output_filename(self) -> str:
-        """The findings artifact this phase writes into the review directory.
-
-        Empty for a phase that writes into the review document rather than an
-        artifact of its own: ``single`` and ``synthesis`` produce ``review.md``
-        and ``fix`` edits it in place. Raises for a phase outside the review
-        domain, as ``log_filename`` does.
-        """
-        return "" if self in _WRITES_REVIEW_FILE else f"{self._stem}.md"
-
-
-# The phases whose output is the review document itself. Lives below the class
-# because it names members; read at call time, so the forward reference in
-# `output_filename` resolves.
+# The phases whose output is the review document itself, and the one fan-out
+# phase whose artifacts carry an index. Both are read by `PhaseSpec` below.
 _WRITES_REVIEW_FILE = frozenset({Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX})
+_INDEXED = frozenset({Phase.GROUP})
 
 
 class Effort(StrEnum):
@@ -292,9 +278,11 @@ class PhaseSpec:
     those phases are handed everything they need up front and do no context
     gathering, so a higher effort has nothing to buy them.
 
-    ``edits=True`` marks a phase that writes to the branch. Every ``AgentKind``
-    is a reviewer persona instructed never to modify source files, so such a
-    phase runs with no agent at all — the default agent, which can edit.
+    ``shape`` names the backend entry point the phase runs through, and so
+    which ``agent_invoke`` function will accept it. ``FIX`` is the shape that
+    writes to the branch; every ``AgentKind`` is a reviewer persona instructed
+    never to modify source files, so such a phase runs with no agent at all —
+    the default agent, which can edit.
 
     ``scales_with_omitted`` says whether ``max_turns`` grows with the files
     preflight had to leave out of the prompt: a phase that reads branch source
@@ -312,76 +300,44 @@ class PhaseSpec:
     max_turns: int = 15
     max_budget: float | None = None
     agent: AgentKind | None = None
-    edits: bool = False
+    shape: PhaseShape = PhaseShape.AGENT
     scales_with_omitted: bool = True
     scaling: ItemScaling = ItemScaling()
     retry: RetryBudget = RetryBudget()
 
+    @property
+    def _stem(self) -> str:
+        """The filename stem this phase's artifacts share: the phase's own name.
 
-PHASES: dict[Phase, PhaseSpec] = {
-    Phase.SINGLE: PhaseSpec(
-        Phase.SINGLE, PhaseDomain.REVIEW, "Review",
-        thinking=Thinking.MEDIUM, max_turns=15,
-    ),
-    Phase.HOLISTIC: PhaseSpec(
-        Phase.HOLISTIC, PhaseDomain.REVIEW, "Holistic scan",
-        thinking=Thinking.MEDIUM, max_turns=15,
-    ),
-    Phase.SCOUT: PhaseSpec(
-        Phase.SCOUT, PhaseDomain.REVIEW, "Scout",
-        thinking=Thinking.LOW, max_turns=10,
-        agent=AgentKind.REVIEWER_LITE,
-    ),
-    Phase.GROUP: PhaseSpec(
-        Phase.GROUP, PhaseDomain.REVIEW, "Group review",
-        thinking=Thinking.LOW, max_turns=15,
-        agent=AgentKind.REVIEWER_LITE,
-    ),
-    # Synthesis and disprove are handed the findings they judge, so an omitted
-    # file costs them nothing. The three fix phases scale with the items on
-    # their checklist instead, through `scaling`.
-    Phase.SYNTHESIS: PhaseSpec(
-        Phase.SYNTHESIS, PhaseDomain.REVIEW, "Synthesis",
-        thinking=Thinking.MEDIUM, max_turns=15,
-        scales_with_omitted=False,
-    ),
-    Phase.DISPROVE: PhaseSpec(
-        Phase.DISPROVE, PhaseDomain.REVIEW, "Disprove",
-        thinking=Thinking.MEDIUM, max_turns=15,
-        agent=AgentKind.REVIEWER_LITE,
-        scales_with_omitted=False,
-    ),
-    Phase.FIX: PhaseSpec(
-        Phase.FIX, PhaseDomain.REVIEW, "Fix pass",
-        thinking=Thinking.LOW, max_turns=20,
-        edits=True,
-        scales_with_omitted=False,
-        scaling=ItemScaling(turns_per_item=2, turns_cap=60),
-        retry=RetryBudget(ceiling=60, turns_min=40, bump=20),
-    ),
-    # The comments fix pass runs outside a review, so no effort preset sets its
-    # dollar cap: it scales with the checklist it is handed, between a floor
-    # that covers a single item and a cap one agent can finish inside.
-    Phase.COMMENTS_FIX: PhaseSpec(
-        Phase.COMMENTS_FIX, PhaseDomain.COMMENTS, "Fix pass",
-        max_turns=20, max_budget=2.0,
-        edits=True,
-        scales_with_omitted=False,
-        scaling=ItemScaling(turns_per_item=5, turns_cap=60,
-                            budget_per_item=0.5, budget_cap=5.0),
-        retry=RetryBudget(ceiling=120, turns_min=30, bump=15),
-    ),
-    Phase.CI_FIX: PhaseSpec(
-        Phase.CI_FIX, PhaseDomain.CI, "CI fix pass",
-        max_turns=20, max_budget=3.0,
-        edits=True,
-        scales_with_omitted=False,
-    ),
-}
+        ``group`` is the one fan-out phase, so its stem carries the index.
+        """
+        if self.domain is not PhaseDomain.REVIEW:
+            raise ValueError(
+                f"{self.phase} runs under the {self.domain} entry point and "
+                "writes no review artifact; ask its own domain where its files "
+                "live"
+            )
+        stem = str(self.phase)
+        return f"{stem}-{{}}" if self.phase in _INDEXED else stem
 
-# The phases a review runs, in registry order. Preflight, artifact globbing and
-# the review directory's filenames all cover exactly these — derived from the
-# domain so a phase added for another entry point joins neither by accident.
-REVIEW_PHASES: tuple[Phase, ...] = tuple(
-    p for p, s in PHASES.items() if s.domain is PhaseDomain.REVIEW
-)
+    @property
+    def log_filename(self) -> str:
+        """The session log this phase writes into the review directory.
+
+        ``single`` names no file of its own: it writes to the job's session
+        log, which ``review-orchestrate --session-log`` may point outside the
+        review directory. Raises for a phase outside the review domain, whose
+        session log belongs to whichever entry point runs it.
+        """
+        return "" if self.phase is Phase.SINGLE else f"{self._stem}.jsonl"
+
+    @property
+    def output_filename(self) -> str:
+        """The findings artifact this phase writes into the review directory.
+
+        Empty for a phase that writes into the review document rather than an
+        artifact of its own: ``single`` and ``synthesis`` produce ``review.md``
+        and ``fix`` edits it in place. Raises for a phase outside the review
+        domain, as ``log_filename`` does.
+        """
+        return "" if self.phase in _WRITES_REVIEW_FILE else f"{self._stem}.md"

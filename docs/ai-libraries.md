@@ -33,7 +33,7 @@ those differ; going through here is what stops them.
 
 What a phase resolves to here: the spec, the config file, the environment.
 
-``agent_types`` says what a phase's built-in defaults are. This module answers
+``agent_registry`` says what a phase's built-in defaults are. This module answers
 the question a caller actually has — which model, thinking level, provider and
 turn budget *this* invocation runs with — by layering the config file and the
 environment over that spec.
@@ -54,6 +54,27 @@ specific model ID, and that is where it lives. A concrete model ID anywhere in
 the chain passes through untouched. The Claude CLI does this resolution itself;
 the Pi backend does not, so it happens here before dispatch and both backends
 land on the same model.
+
+### agent_registry.py
+
+Every phase the workbench knows how to run, and what each one defaults to.
+
+``agent_types`` says what a phase *is*; this module says which ones there are.
+One entry per phase, and the entry is the whole declaration — the config key,
+the ``WORKBENCH_AI_*`` override keys, the review directory's filenames and the
+preflight model list are all derived from it, so adding a phase is a member on
+``Phase`` and a spec here.
+
+The registry is a dict keyed by phase, but it is written as a tuple and keyed
+afterwards: a literal keyed by hand spells every phase name twice and can drift
+between the two spellings, which is a whole class of bug that no longer has
+anywhere to live.
+
+Nothing here is required to reach a caller through ``PHASES``. A ``PhaseSpec``
+is an ordinary value, and an invocation that must not be operator-tunable —
+a benchmark whose numbers stop comparing if a config file can move them — is
+better served by a spec of its own than by an entry here that quietly ignores
+the keys it advertises.
 
 ### agent_retry.py
 
@@ -92,9 +113,15 @@ The vocabulary every agent invocation is described in.
 
 A phase is one agent invocation the workbench knows how to size: what model it
 runs, how hard it thinks, how many turns it gets, which agent definition it
-adopts. This module owns the names for those things — ``Phase``, ``Thinking``,
-``AgentKind``, ``Effort`` — and the built-in spec each phase resolves from
-(``PhaseSpec``, ``PHASES``).
+adopts. This module owns the names for those things — ``Phase``,
+``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort`` — and ``PhaseSpec``,
+the shape a phase's built-in defaults take.
+
+Which phases exist, and what each one's defaults are, is ``agent_registry``'s
+job. The vocabulary is a closed set of names that grows only when a new kind of
+knob appears; the registry is an inventory that grows with the workbench.
+Keeping them apart is also what stops the enum reaching back into the registry
+to answer questions about itself — a ``PhaseSpec`` answers those now.
 
 It imports nothing but the standard library, and that is the point. The
 vocabulary used to live in ``review_common``, which reaches the PR state
@@ -164,7 +191,7 @@ Phase executors for the review pipeline.
 
 A review is a sequence of agent phases. What a phase *is* — its built-in spec,
 and how that spec resolves against the config file and the environment — is
-`agent_types` and `agent_phases`, which the whole workbench shares. This module
+`agent_registry` and `agent_phases`, which the whole workbench shares. This module
 is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
 one review's worktree, session log and throttle, and the executors that run
 each phase.

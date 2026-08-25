@@ -2768,6 +2768,11 @@ class TestResolutionsReachThePersistedTally:
         assert comments.by_state[ThreadState.NEW] == 0
         assert comments.by_state[ThreadState.RESOLVED] == 2
 
+    def test_an_undercounted_bucket_says_so(self, rt, publishing_on, capsys):
+        """The clamp is a floor, not a reason to stay quiet about the mismatch."""
+        self._drain(rt, {"new": 1})
+        assert "no new left to move" in capsys.readouterr().err
+
 
 class TestFixPassResolutionsReachTheTally:
     """The fix pass resolves after the counts were saved, same as the drain.

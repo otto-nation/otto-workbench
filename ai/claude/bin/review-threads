@@ -2324,8 +2324,17 @@ def _record_resolutions(
     for prior in priors:
         if prior == ThreadState.RESOLVED:
             continue
+        # Clamped rather than allowed to go negative: a count below zero would
+        # be read as a real tally by everything downstream, where a floor is at
+        # worst an undercount. It means the snapshot and the threads we resolved
+        # disagree, so say so instead of absorbing it.
         if by_state.get(prior, 0) > 0:
             by_state[prior] -= 1
+        else:
+            log.warn(
+                f"Thread tally has no {prior} left to move — "
+                "counts were snapshotted against a different thread set"
+            )
         moved += 1
     if not moved:
         return

@@ -34,9 +34,10 @@ transfer rather than the gates; that is not a gate bypass, because the gates
 already passed for this exact commit, and the guard is what keeps that true.
 
 This module pushes, verifies, retries, and reports. It does not commit, and it
-does not perform the hook-regenerated-files recovery that `review-threads` and
-`pr-rebase` each own — those sit above it, which is what keeps this module's
-answer to "did it land" independent of any caller's idea of how to fix it.
+does not perform the hook-regenerated-files recovery `land` owns — that sits
+above it, which is what keeps this module's answer to "did it land" independent
+of any caller's idea of how to fix it. `holds` is the same question asked of a
+commit nobody is pushing right now: whether the remote already has it.
 
 `gated` is required and has no default. `pr comments`, `pr ci --fix` and the
 review fix pass all pass `True` and open the gate only under `--post`; `pr
@@ -225,6 +226,28 @@ def remote_head(
         if name.strip() == ref:
             return sha.strip()
     return ""
+
+
+def holds(wt_path: str | Path, sha: str, *, remote: str = "origin") -> bool:
+    """Whether *remote* already has *sha*, asked of the remote itself.
+
+    The question a caller asks before pushing something again, and before citing
+    a commit outward. Empty for a remote that could not be reached or whose tip
+    this worktree does not have — every caller reads that as "still pending",
+    which defers a citation rather than publishing a link that 404s.
+
+    `git branch -r --contains` reads the local remote-tracking ref, which a push
+    git reported and the remote dropped leaves pointing at the commit that never
+    arrived — so it answers yes for exactly the failure this guards against.
+
+    Ancestry, not equality: a commit from an earlier round is on the remote once
+    a later one carrying it is, so the question is whether the remote's tip
+    descends from *sha*.
+    """
+    tip = remote_head(wt_path, git_client.current_branch(cwd=wt_path), remote=remote)
+    if not tip:
+        return False
+    return git_client.ok("merge-base", "--is-ancestor", sha, tip, cwd=wt_path)
 
 
 def _verify(

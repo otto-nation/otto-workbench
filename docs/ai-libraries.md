@@ -1530,9 +1530,21 @@ outcome: a `git add` that fails, and a HEAD that will not read back after a
 commit git said it made. Both mean the repository is not answering, and a pass
 that treats them as "nothing to commit" reports success having lost the work.
 
-Regenerating hooks are not handled here yet. `review-threads` and `pr-rebase`
-each own a commit-the-regenerated-files-and-retry recovery, and folding them
-into one belongs with the change that moves those two callers across.
+Two things can happen around a landing that are not the landing, and both are
+options rather than defaults, because a caller that does not ask for them wants
+the plain answer:
+
+- `regen` — a pre-push hook that rewrites generated files leaves the tree dirty
+  and the push refused, and the commit underneath it was fine. Naming a message
+  commits what the hook wrote and pushes once more. The retry reports the
+  original commit, which is the one the caller's entries are stamped with; the
+  regeneration rides above it.
+- `recover_from` — the agent a fix pass ran committed its own work, so the pass
+  finds nothing to commit and has a commit it did not make to account for.
+  Naming the HEAD from before the pass lets the owner attribute and push it.
+  Recovery only ever *adds* information: it never overwrites what the caller's
+  own commit attempt concluded, because reporting `no_changes` over a commit a
+  hook rejected publishes "nothing needed doing" about work that was refused.
 
 ### log.py
 
@@ -1642,9 +1654,10 @@ transfer rather than the gates; that is not a gate bypass, because the gates
 already passed for this exact commit, and the guard is what keeps that true.
 
 This module pushes, verifies, retries, and reports. It does not commit, and it
-does not perform the hook-regenerated-files recovery that `review-threads` and
-`pr-rebase` each own — those sit above it, which is what keeps this module's
-answer to "did it land" independent of any caller's idea of how to fix it.
+does not perform the hook-regenerated-files recovery `land` owns — that sits
+above it, which is what keeps this module's answer to "did it land" independent
+of any caller's idea of how to fix it. `holds` is the same question asked of a
+commit nobody is pushing right now: whether the remote already has it.
 
 `gated` is required and has no default. `pr comments`, `pr ci --fix` and the
 review fix pass all pass `True` and open the gate only under `--post`; `pr

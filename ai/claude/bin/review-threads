@@ -896,154 +896,46 @@ def _commit_unpushed(status: str) -> bool:
     return status in _UNPUSHED_STATUSES
 
 
-def _push_commit(wt_path: Path, trail: Trail | None) -> push.PushResult:
-    """Push through the owner, consulting the gate, and say what happened.
+def _pass_commit(wt_path: Path, result: land.LandResult) -> CommitPushResult:
+    """The owner's landing, as the pass records and renders it.
 
-    The owner reads full HEAD for itself rather than taking the short SHA the
-    pass carries: `ls-remote` answers in full SHAs, and comparing one against an
-    abbreviation reports every push as lost.
+    The SHA is abbreviated because every other SHA this command persists is —
+    the snapshot HEAD, each thread's `commit_sha`, each `read_sha`. A state file
+    that mixed the two widths would make one commit recorded twice look like
+    two, which is exactly the comparison `_attribute_commit` turns on.
     """
-    result = push.push(wt_path, gated=True, trail=trail)
-    push.report(result, wt_path)
-    return result
-
-
-def _pushed(sha: str | None, result: push.PushResult) -> CommitPushResult:
-    """What the pass records for a push the owner has already reported."""
-    return CommitPushResult(
-        sha, land.commit_status(result.status),
-        "" if result.ok else result.output.strip(),
-    )
-
-
-def _report_diverged_push(
-    wt_path: Path, result: push.PushResult, trail: Trail | None,
-) -> None:
-    """Add the force-push advice when a refusal was a divergence.
-
-    The recovery is a force-push, which this deliberately prints rather than
-    runs — a force-push is the user's call, not the pass's. The owner has
-    already said the push was refused, so this only adds what to do about it.
-    """
-    if result.refusal is not push.Refusal.DIVERGED:
-        return
-    log.error(
-        f"push failed — branch has diverged. Run:\n"
-        f"  git -C '{wt_path}' push --force-with-lease"
-    )
-    if trail:
-        trail.error("push", "push failed",
-                    data={"sha": result.sha, "error": result.output[:500]})
-
-
-def _commit_regen_and_retry_push(
-    wt_path: Path, trail: Trail | None,
-) -> CommitPushResult | None:
-    """If pre-push hooks left regenerated files uncommitted, commit and retry.
-
-    Returns a successful CommitPushResult on retry success, None otherwise.
-    """
-    # `run` rather than `lines`: the marker this reads is in the first two
-    # columns, and stripping the output would take the leading space off the
-    # first line and leave it looking like anything but a modification.
-    status = git_client.run(
-        "status", "--porcelain", "--untracked-files=no", cwd=wt_path,
-    )
-    modified = [
-        line[3:] for line in status.stdout.splitlines()
-        if line.startswith(" M ")
-    ]
-    if not modified:
-        return None
-
-    log.info("Committing regenerated files...")
-    if trail:
-        trail.info("push", "committing regenerated files before retry",
-                    data={"files": modified})
-    if not git_client.ok("add", "-u", cwd=wt_path):
-        log.error("Failed to stage regenerated files.")
-        return None
-    committed = git_client.run(
-        "commit", "-m", "chore: regenerate after review comment fixes", cwd=wt_path,
-    )
-    if not committed.ok:
-        return None
-
-    sha = _get_head_sha(wt_path)
-    result = _push_commit(wt_path, trail)
-    if not result.ok:
-        return None
-
-    log.info("Pushed fixes (with regenerated files)")
-    return _pushed(sha, result)
-
-
-def _commit_and_push(
-    wt_path: Path, fixed: int, deferred: int, trail: Trail | None = None,
-) -> CommitPushResult:
-    """Commit and push fixes. Returns structured result with status."""
-    if not review_common.has_uncommitted_changes(wt_path):
-        return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
-
-    staged = git_client.run("add", "-A", cwd=wt_path)
-    if not staged.ok:
-        raise RuntimeError(proc.failure_message("Failed to stage fixes", staged))
-
-    msg = "fix: address review comments"
-    if fixed:
-        msg += f"\n\n{fixed} fixed, {deferred} deferred"
-
-    result = git_client.run("commit", "-m", msg, cwd=wt_path)
-    if not result.ok:
-        # See land.committed_nothing for why this isn't a failure.
-        if land.committed_nothing(result):
-            return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
-        err = result.stderr.strip()
-        log.error(f"commit failed: {err}")
-        if trail:
-            trail.error("commit", "commit failed", data={"error": err[:500]})
-        return CommitPushResult(None, CommitStatus.COMMIT_FAILED, err)
-
-    sha = _get_head_sha(wt_path)
-
-    log.info(f"Committed fixes ({fixed} fixed, {deferred} deferred)")
-
-    # The commit is ungated on purpose: it is local, undoable, and it is what
-    # makes the work reviewable at all. The push is the outward act, so it waits
-    # for the same permission every reply and comment waits for — which is what
-    # the owner's `gated` argument asks.
-    result = _push_commit(wt_path, trail)
-    if result.status is not push.PushStatus.REFUSED:
-        return _pushed(sha, result)
-
-    # Pre-push hooks may regenerate files (e.g. proto → .pb.go, OpenAPI specs),
-    # leaving uncommitted changes that cause the push to fail. Commit and retry.
-    # Only a refusal can be that: a push the remote dropped left nothing behind
-    # to commit, and the owner has already retried it once.
-    retried = _commit_regen_and_retry_push(wt_path, trail)
-    if retried:
-        return retried
-
-    _report_diverged_push(wt_path, result, trail)
-    return _pushed(sha, result)
+    short = git_client.out(
+        "rev-parse", "--short", result.sha, cwd=wt_path,
+    ) if result.sha else ""
+    return CommitPushResult(short or None, result.status, result.error)
 
 
 def _commit_fixes(
     wt_path: Path, fixed: int, deferred: int, head_before: str,
     trail: Trail | None = None,
 ) -> CommitPushResult:
-    """Commit the pass's work, and recover a commit the agent made itself.
+    """Land the pass's work through the owner, and say what became of it.
 
-    A hold does not reach this far, and that is deliberate: a local commit
-    asserts nothing to a reviewer, because it only becomes visible on
-    push and the push is what the hold stops. Leaving the fixes uncommitted
-    instead would make them fragile, and would leave the next `--fix` round
-    reading its own dirty tree as a refused commit.
+    A hold does not stop the commit, and that is deliberate: a local commit
+    asserts nothing to a reviewer, because it only becomes visible on push and
+    the push is what the hold stops. Leaving the fixes uncommitted instead would
+    make them fragile, and would leave the next `--fix` round reading its own
+    dirty tree as a refused commit. That split is what the owner's `gated`
+    argument asks for.
+
+    Two things happen around this landing rather than in it, and both are the
+    owner's: a pre-push hook that rewrites generated files (`regen`), and a fix
+    agent that committed its own work (`recover_from`, HEAD as it stood before
+    the agent ran).
     """
-    cp = _commit_and_push(wt_path, fixed, deferred, trail=trail)
-    if cp.status in (CommitStatus.NO_CHANGES, CommitStatus.COMMIT_FAILED):
-        cp = _recover_agent_commit(wt_path, head_before, trail, prior=cp)
-    return cp
+    msg = "fix: address review comments"
+    if fixed:
+        msg += f"\n\n{fixed} fixed, {deferred} deferred"
+    return _pass_commit(wt_path, land.land(
+        wt_path, message=msg, gated=True, trail=trail,
+        regen="chore: regenerate after review comment fixes",
+        recover_from=head_before,
+    ))
 
 
 def _our_last_reply_id(thread: ReportThread | None) -> int | None:
@@ -2241,15 +2133,19 @@ def _push_held_commit(
     if not fix.commit_sha or not _commit_unpushed(fix.commit_status):
         return
 
-    if _is_pushed(wt_path, fix.commit_sha):
+    if push.holds(wt_path, fix.commit_sha):
         fix.commit_status = CommitStatus.PUSHED
         return
 
-    result = _push_commit(wt_path, trail)
+    # No SHA is handed down: the owner reads full HEAD for itself, and
+    # `ls-remote` answers in full SHAs, so comparing one against the abbreviation
+    # this state file carries reports every push as lost. `report` names the
+    # force-push remedy for a divergence, so nothing is added on top of it.
+    result = push.push(wt_path, gated=True, trail=trail)
+    push.report(result, wt_path)
     if result.status is push.PushStatus.HELD:
         return
     if not result.ok:
-        _report_diverged_push(wt_path, result, trail)
         fix.commit_status = land.commit_status(result.status)
         return
 
@@ -3811,7 +3707,7 @@ def _post_pending_fix_replies(
     # committed nothing leaves entries citing the commits that did — already on
     # the remote — and the triage buckets cite HEAD rather than a fix commit,
     # so there is nothing for either to wait on.
-    if fix.commit_sha and not _is_pushed(wt_path, fix.commit_sha):
+    if fix.commit_sha and not push.holds(wt_path, fix.commit_sha):
         log.info("Push still pending — skipping deferred replies")
         return
 
@@ -3902,7 +3798,7 @@ def _reconciled_commit(
     current = _get_head_sha(wt_path)
     if not current or current == fix.head_sha:
         return CommitPushResult(None, status, "")
-    if not _is_pushed(wt_path, current):
+    if not push.holds(wt_path, current):
         return CommitPushResult(None, CommitStatus.RECONCILED, "")
     landed = _commits_since(wt_path, fix.head_sha, current)
     if len(landed) > 1:
@@ -3952,7 +3848,7 @@ def _render_deferred_summary(
 
     status = fix.commit_status
     if _commit_unpushed(fix.commit_status) and fix.commit_sha:
-        if not wt_path or not _is_pushed(wt_path, fix.commit_sha):
+        if not wt_path or not push.holds(wt_path, fix.commit_sha):
             log.info("Push still pending — keeping summary deferred")
             return
         status = CommitStatus.PUSHED
@@ -4105,26 +4001,6 @@ def _get_head_sha(wt_path: Path) -> str:
     return git_client.head_sha(cwd=wt_path, short=True)
 
 
-def _is_pushed(wt_path: Path, sha: str) -> bool:
-    """Whether the remote holds *sha*, asked of the remote itself.
-
-    `git branch -r --contains` reads the local remote-tracking ref, which a push
-    git reported and the remote dropped leaves pointing at the commit that never
-    arrived — so it answers yes for exactly the failure this guards against, and
-    the reply it unblocks cites a commit link that 404s.
-
-    Ancestry, not equality: a commit from an earlier round is on the remote once
-    a later one carrying it is, so the question is whether the remote's tip
-    descends from *sha*. A remote that cannot be reached, or whose tip is a
-    commit this worktree does not have, answers no — every caller reads that as
-    "still pending", which defers a reply rather than publishing a dead link.
-    """
-    tip = push.remote_head(wt_path, git_client.current_branch(cwd=wt_path))
-    if not tip:
-        return False
-    return git_client.ok("merge-base", "--is-ancestor", sha, tip, cwd=wt_path)
-
-
 def _rewritten_away(wt_path: Path, sha: str) -> bool:
     """Whether HEAD's history no longer reaches *sha* — a rewrite orphaned it.
 
@@ -4189,7 +4065,7 @@ def _replayed_commit(wt_path: Path, sha: str) -> str:
 
     Matched on the patch the commit carries, because the header carries nothing
     that tells two fix commits apart: every pass commits under one static
-    subject (`_commit_and_push`), and two rounds close enough together — a
+    subject (`_commit_fixes`), and two rounds close enough together — a
     retry, a fast CI loop — share an author date to the second as well. Content
     is the only field a rebase preserves that is also the commit's own, and it
     survives an amend and a conflict resolution that a subject match would not.
@@ -4214,56 +4090,6 @@ def _replayed_commit(wt_path: Path, sha: str) -> str:
     if len(replays) != 1:
         return ""
     return git_client.out("rev-parse", "--short", replays[0], cwd=wt_path)
-
-
-def _unrecovered_commit(
-    wt_path: Path, prior: CommitPushResult | None,
-) -> CommitPushResult:
-    """What the pass knows when recovery found no commit of the agent's.
-
-    Recovery exists to *add* information. When it finds none, whatever the
-    caller already established stands: overwriting a `commit_failed` with
-    `no_changes` here publishes "Fix applied (no commit needed)" over a commit
-    a pre-commit hook rejected.
-
-    With nothing prior to preserve, the tree itself distinguishes the two
-    remaining readings. Changes still sitting there after a commit was
-    attempted mean something refused it, not that there was nothing to commit.
-    """
-    if prior is not None and prior.status != CommitStatus.NO_CHANGES:
-        return prior
-    if review_common.has_uncommitted_changes(wt_path):
-        return CommitPushResult(
-            None, CommitStatus.COMMIT_FAILED, "changes remain uncommitted in the worktree",
-        )
-    return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
-
-
-def _recover_agent_commit(
-    wt_path: Path, head_before: str, trail: Trail | None = None,
-    prior: CommitPushResult | None = None,
-) -> CommitPushResult:
-    """Detect and push commits made directly by the fix agent.
-
-    `prior` is what the caller's own commit attempt concluded, and it is never
-    downgraded — see `_unrecovered_commit`.
-    """
-    head_after = _get_head_sha(wt_path)
-    if head_after == head_before:
-        return _unrecovered_commit(wt_path, prior)
-
-    if _is_pushed(wt_path, head_after):
-        return CommitPushResult(head_after, CommitStatus.PUSHED, "")
-
-    result = _push_commit(wt_path, trail)
-    if result.ok:
-        log.info("Pushed agent-committed fixes")
-    elif result.status is not push.PushStatus.HELD:
-        log.error("push failed after agent commit")
-        if trail:
-            trail.error("push", "push failed after agent commit",
-                        data={"sha": head_after, "error": result.output[:500]})
-    return _pushed(head_after, result)
 
 
 def _build_thread_outcomes(

@@ -123,6 +123,59 @@ def test_remote_head_is_not_fooled_by_a_branch_ending_in_the_same_name(pushable)
     assert push.remote_head(wt, "main") == on_main
 
 
+# ── holds ───────────────────────────────────────────────────────────────────
+
+
+def test_holds_answers_for_the_commit_the_remote_has(pushable):
+    wt, _ = pushable
+    assert push.holds(wt, git_client.head_sha(cwd=wt)) is True
+
+
+def test_holds_answers_for_an_earlier_commit_a_later_push_carried_out(pushable):
+    """Ancestry, not equality — a round's commit rides out on the next one's push."""
+    wt, _ = pushable
+    earlier = git_client.head_sha(cwd=wt)
+    _commit(wt, "a later round")
+    git_in(wt, "push", "-q", "origin", "main")
+
+    assert push.holds(wt, earlier) is True
+
+
+def test_holds_declines_a_commit_that_never_left(pushable):
+    wt, _ = pushable
+    local = _commit(wt, "not pushed")
+    assert push.holds(wt, local) is False
+
+
+def test_holds_declines_a_branch_the_remote_does_not_have(pushable):
+    wt, _ = pushable
+    git_in(wt, "checkout", "-q", "-b", "feat/unpushed")
+    assert push.holds(wt, _commit(wt, "on a new branch")) is False
+
+
+def test_an_unreachable_remote_reads_as_pending(pushable):
+    """Deferring a citation is the safe answer; publishing a dead link is not."""
+    wt, _ = pushable
+    sha = git_client.head_sha(cwd=wt)
+    git_in(wt, "remote", "set-url", "origin", str(wt / "nope.git"))
+    assert push.holds(wt, sha) is False
+
+
+def test_holds_reads_the_remote_rather_than_the_tracking_ref(pushable):
+    """A lost push leaves `origin/main` pointing at the commit that never arrived.
+
+    Which is exactly the failure a caller asks this to rule out, so answering
+    from the local tracking ref would answer yes for it.
+    """
+    wt, remote = pushable
+    _lose_pushes(remote)
+    lost = _commit(wt, "the push that vanishes")
+    git_in(wt, "push", "-q", "origin", "main")
+
+    assert git_client.out("rev-parse", "origin/main", cwd=wt) == lost
+    assert push.holds(wt, lost) is False
+
+
 # ── the five outcomes ───────────────────────────────────────────────────────
 
 

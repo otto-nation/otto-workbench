@@ -695,144 +695,70 @@ def _answering_the_owner(mock_run, sha="abc1234"):
     return run
 
 
-class TestCommitAndPush:
-    """Test _commit_and_push returns correct CommitPushResult for each failure mode."""
+class TestCommitFixes:
+    """The pass's boundary onto the landing owner.
 
-    def _commit(self, rt, mock_run, dirty=True, remote_sha="abc1234"):
-        """Run _commit_and_push with a stubbed git and a known worktree state.
+    What the commit, the push, the regeneration retry and the recovery each do
+    is the owner's, and `land_test.py` holds it against a real repo. What is
+    this command's is the request it makes and the record it keeps of the
+    answer.
+    """
 
-        `remote_sha` is what the remote answers the push owner with. It defaults
-        to the SHA these stubs commit, so a push reads as landed.
-        """
-        with patch.object(rt.git_client, "run",
-                          side_effect=_answering_the_owner(mock_run, remote_sha)), \
-                patch.object(rt.review_common, "has_uncommitted_changes",
-                             return_value=dirty):
-            return rt._commit_and_push(Path("/fake"), 1, 0)
+    @staticmethod
+    def _land(rt, landed, *, short="abc1234", fixed=1, deferred=0):
+        with patch.object(rt.land, "land", return_value=landed) as landing, \
+                patch.object(rt.git_client, "run",
+                             return_value=_git_ran(0, stdout=f"{short}\n")):
+            result = rt._commit_fixes(Path("/fake"), fixed, deferred, "9999999")
+        return result, landing.call_args
 
-    def test_no_changes(self, rt):
-        """A clean worktree → no_changes."""
-        result = self._commit(rt, lambda *cmd, **kw: _git_ran(0), dirty=False)
-        assert result.status == "no_changes"
-        assert result.sha is None
+    def test_the_owner_is_asked_for_the_retry_and_the_recovery(self, rt):
+        """Both are options, and a pass that did not ask would get neither."""
+        landed = rt.land.LandResult(rt.CommitStatus.PUSHED, sha="abc1234def")
+        _, call = self._land(rt, landed)
 
-    def test_untracked_only_changes_still_commit(self, rt, publishing_on):
-        """A fix that only adds files leaves the tracked diff empty — still commit."""
-        calls = []
+        assert call.kwargs["gated"] is True
+        assert call.kwargs["recover_from"] == "9999999"
+        assert call.kwargs["regen"]
 
-        def mock_run(*cmd, **kwargs):
-            calls.append(cmd)
-            if "rev-parse" in cmd:
-                return _git_ran(0, stdout="abc1234\n")
-            return _git_ran(0)
+    def test_the_counts_ride_in_the_commit_message(self, rt):
+        landed = rt.land.LandResult(rt.CommitStatus.PUSHED, sha="abc1234def")
+        _, call = self._land(rt, landed, fixed=2, deferred=3)
 
-        result = self._commit(rt, mock_run)
+        subject, _, body = call.kwargs["message"].partition("\n\n")
+        assert subject == "fix: address review comments"
+        assert body == "2 fixed, 3 deferred"
+
+    def test_a_pass_that_fixed_nothing_says_only_what_it_did(self, rt):
+        landed = rt.land.LandResult(rt.CommitStatus.NO_CHANGES)
+        _, call = self._land(rt, landed, fixed=0, deferred=4)
+
+        assert call.kwargs["message"] == "fix: address review comments"
+
+    def test_the_sha_is_recorded_at_the_width_the_state_file_uses(self, rt):
+        """A commit recorded twice at two widths reads as two commits."""
+        landed = rt.land.LandResult(rt.CommitStatus.PUSHED, sha="abc1234def56789")
+        result, _ = self._land(rt, landed)
+
+        assert result.sha == "abc1234"
         assert result.status == "pushed"
-        assert calls[0] == ("add", "-A")
 
-    def test_a_refused_stage_is_not_swallowed(self, rt):
-        """`git add` failing means the commit would be of the wrong thing."""
-        def mock_run(*cmd, **kwargs):
-            if "add" in cmd:
-                return _git_ran(1, stderr="index.lock exists\n")
-            return _git_ran(0)
+    def test_a_landing_with_no_commit_records_no_sha(self, rt):
+        landed = rt.land.LandResult(rt.CommitStatus.NO_CHANGES)
+        result, _ = self._land(rt, landed)
 
-        with pytest.raises(RuntimeError, match="index.lock"):
-            self._commit(rt, mock_run)
-
-    def test_an_empty_commit_after_an_unreadable_status_is_no_changes(self, rt):
-        """The gate answers "dirty" when git could not read the worktree.
-
-        Reaching the commit therefore no longer proves there was work: git
-        declining an empty change is that ambiguity resolving, and reporting it
-        as commit_failed would put a rejection in front of the reviewer that
-        nobody made.
-        """
-        def mock_run(*cmd, **kwargs):
-            if "commit" in cmd:
-                return _git_ran(
-                    1, stdout="On branch main\nnothing to commit, working tree clean\n",
-                )
-            return _git_ran(0)
-
-        result = self._commit(rt, mock_run)
+        assert result.sha is None
         assert result.status == "no_changes"
-        assert result.sha is None
 
-    def test_commit_failed(self, rt):
-        """git commit returns non-zero → commit_failed with error text."""
-        def mock_run(*cmd, **kwargs):
-            if "commit" in cmd:
-                return _git_ran(1, stderr="hook failed\n")
-            return _git_ran(0)
+    def test_what_went_wrong_is_carried_through(self, rt):
+        landed = rt.land.LandResult(
+            rt.CommitStatus.PUSH_FAILED, sha="abc1234def", error="rejected",
+        )
+        result, _ = self._land(rt, landed)
 
-        result = self._commit(rt, mock_run)
-        assert result.status == "commit_failed"
-        assert result.sha is None
-        assert "hook failed" in result.error
-
-    def test_push_failed(self, rt, publishing_on):
-        """git push returns non-zero → push_failed with SHA preserved."""
-        def mock_run(*cmd, **kwargs):
-            if "rev-parse" in cmd:
-                return _git_ran(0, stdout="abc1234\n")
-            if "push" in cmd:
-                return _git_ran(1, stderr="rejected\n")
-            return _git_ran(0)
-
-        result = self._commit(rt, mock_run)
         assert result.status == "push_failed"
         assert result.sha == "abc1234"
         assert "rejected" in result.error
-
-    def test_success(self, rt, publishing_on):
-        """git push returns 0 → pushed with SHA."""
-        def mock_run(*cmd, **kwargs):
-            if "rev-parse" in cmd:
-                return _git_ran(0, stdout="abc1234\n")
-            return _git_ran(0)
-
-        result = self._commit(rt, mock_run)
-        assert result.status == "pushed"
-        assert result.sha == "abc1234"
-        assert result.error == ""
-
-    def test_a_push_the_remote_never_took_is_push_lost(self, rt, publishing_on):
-        """git said the push succeeded and the remote does not hold the commit.
-
-        Recorded apart from `push_failed`: nothing failed as far as the terminal
-        went, and a reply citing this SHA would point at a commit no one can
-        open. The owner retries once before settling on this.
-        """
-        pushes = []
-
-        def mock_run(*cmd, **kwargs):
-            if "rev-parse" in cmd:
-                return _git_ran(0, stdout="abc1234\n")
-            if "push" in cmd:
-                pushes.append(cmd)
-            return _git_ran(0)
-
-        result = self._commit(rt, mock_run, remote_sha=_LOST_SHA)
-        assert result.status == "push_lost"
-        assert result.sha == "abc1234"
-        assert len(pushes) == 2
-
-    def test_draft_commits_but_holds_the_push(self, rt):
-        """The commit is local and undoable; the push is the outward act."""
-        calls = []
-
-        def mock_run(*cmd, **kwargs):
-            calls.append(cmd)
-            if "rev-parse" in cmd:
-                return _git_ran(0, stdout="abc1234\n")
-            return _git_ran(0)
-
-        result = self._commit(rt, mock_run)
-        assert result.status == "push_held"
-        assert result.sha == "abc1234"
-        assert not any("push" in cmd for cmd in calls)
-        assert any("commit" in cmd for cmd in calls)
 
 
 # ── _get_head_sha ────────────────────────────────────────────────────────────
@@ -844,115 +770,6 @@ class TestGetHeadSha:
                           return_value=_git_ran(0, stdout="abc1234\n")):
             result = rt._get_head_sha(Path("/fake"))
         assert result == "abc1234"
-
-
-# ── _is_pushed ───────────────────────────────────────────────────────────────
-
-
-class TestIsPushed:
-    """The question is put to the remote, and it is about ancestry."""
-
-    @staticmethod
-    def _ask(rt, tip="def5678", ancestor=True):
-        def mock_run(*cmd, **kwargs):
-            if cmd[:1] == ("merge-base",):
-                return _git_ran(0 if ancestor else 1)
-            return _git_ran(0, stdout="topic\n")
-
-        with patch.object(rt.git_client, "run",
-                          side_effect=_answering_the_owner(mock_run, tip)):
-            return rt._is_pushed(Path("/fake"), "abc1234")
-
-    def test_the_remote_tip_descends_from_the_sha(self, rt):
-        """A later round's commit carries the earlier ones out with it."""
-        assert self._ask(rt) is True
-
-    def test_a_tip_that_does_not_contain_it(self, rt):
-        assert self._ask(rt, ancestor=False) is False
-
-    def test_a_branch_the_remote_does_not_have(self, rt):
-        assert self._ask(rt, tip="") is False
-
-    def test_an_unreachable_remote_reads_as_pending(self, rt):
-        """Deferring a reply is the safe answer; publishing a dead link is not."""
-        with patch.object(rt.git_client, "run", return_value=_git_ran(1)):
-            assert rt._is_pushed(Path("/fake"), "abc1234") is False
-
-
-# ── _recover_agent_commit ────────────────────────────────────────────────────
-
-
-class TestRecoverAgentCommit:
-    """Three distinct branches: no change, already pushed, push attempt."""
-
-    def test_no_change_when_sha_unchanged(self, rt):
-        """head_after == head_before, clean tree → no_changes, no push."""
-        with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
-             patch.object(rt.review_common, "has_uncommitted_changes",
-                          return_value=False):
-            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
-        assert result.status == "no_changes"
-        assert result.sha is None
-
-    def test_a_known_failure_is_never_downgraded(self, rt):
-        """Recovery adds information, it does not overwrite it."""
-        prior = rt.CommitPushResult(None, "commit_failed", "hook rejected")
-        with patch.object(rt, "_get_head_sha", return_value="abc1234"):
-            result = rt._recover_agent_commit(Path("/fake"), "abc1234", prior=prior)
-        assert result.status == "commit_failed"
-        assert result.error == "hook rejected"
-
-    def test_a_dirty_tree_is_a_refused_commit_not_an_empty_one(self, rt):
-        """Nothing committed with changes still there means something said no."""
-        with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
-             patch.object(rt.review_common, "has_uncommitted_changes",
-                          return_value=True):
-            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
-        assert result.status == "commit_failed"
-        assert result.sha is None
-
-    def test_already_pushed_skips_push(self, rt):
-        """head changed and SHA already on remote → pushed without a new push."""
-        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
-             patch.object(rt, "_is_pushed", return_value=True):
-            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
-        assert result.status == "pushed"
-        assert result.sha == "def5678"
-
-    def test_push_success(self, rt, publishing_on):
-        """head changed, not yet on remote, push succeeds → pushed."""
-        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
-             patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.git_client, "run",
-                          side_effect=_answering_the_owner(
-                              lambda *c, **kw: _git_ran(0, stdout="def5678\n"),
-                              "def5678")):
-            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
-        assert result.status == "pushed"
-        assert result.sha == "def5678"
-
-    def test_push_failure(self, rt, publishing_on):
-        """head changed, not yet on remote, push fails → push_failed with error."""
-        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
-             patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.git_client, "run",
-                          return_value=_git_ran(1, stderr="rejected\n")):
-            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
-        assert result.status == "push_failed"
-        assert result.sha == "def5678"
-        assert "rejected" in result.error
-
-    def test_draft_holds_the_agent_commit_too(self, rt):
-        """The agent committing directly is not a way around the gate."""
-        def boom(*a, **kw):
-            raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
-
-        with patch.object(rt, "_get_head_sha", return_value="def5678"), \
-             patch.object(rt, "_is_pushed", return_value=False), \
-             patch.object(rt.git_client, "run", boom):
-            result = rt._recover_agent_commit(Path("/fake"), "abc1234")
-        assert result.status == "push_held"
-        assert result.sha == "def5678"
 
 
 # ── _fixed_status_text ──────────────────────────────────────────────────────
@@ -1529,7 +1346,7 @@ class TestRenderDeferredSummary:
         state = _make_state(fix)
         report = PRReport()
         with patch("pr_comments.post_issue_comment") as mock_post:
-            with patch.object(rt, "_is_pushed", return_value=False):
+            with patch.object(rt.push, "holds", return_value=False):
                 rt._render_deferred_summary(state, report, "owner/repo", 1, {})
         mock_post.assert_not_called()
         assert fix.summary_deferred is True
@@ -1546,7 +1363,7 @@ class TestRenderDeferredSummary:
         state = _make_state(fix)
         report = PRReport()
         with patch("pr_comments.post_issue_comment", return_value="https://github.com/comment/1") as mock_post:
-            with patch.object(rt, "_is_pushed", return_value=True):
+            with patch.object(rt.push, "holds", return_value=True):
                 rt._render_deferred_summary(state, report, "owner/repo", 1, {})
         mock_post.assert_called_once()
         assert fix.summary_deferred is False
@@ -1567,7 +1384,7 @@ class TestRenderDeferredSummary:
         )
         state = _make_state(fix)
         with patch("pr_comments.post_issue_comment") as mock_post:
-            with patch.object(rt, "_is_pushed", return_value=False):
+            with patch.object(rt.push, "holds", return_value=False):
                 rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         mock_post.assert_not_called()
         assert fix.summary_deferred is True
@@ -1583,7 +1400,7 @@ class TestRenderDeferredSummary:
             summary_deferred=True,
         )
         state = _make_state(fix)
-        with patch.object(rt, "_is_pushed", return_value=True):
+        with patch.object(rt.push, "holds", return_value=True):
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         assert fix.commit_status == "push_failed"
         assert fix.summary_deferred is True
@@ -1754,7 +1571,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             summary_deferred=True,
         )
         with patch.object(rt, "_get_head_sha", return_value="bbb2222"), \
-             patch.object(rt, "_is_pushed", return_value=True), \
+             patch.object(rt.push, "holds", return_value=True), \
              patch("pr_comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
@@ -1777,7 +1594,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             summary_deferred=True,
         )
         with patch.object(rt, "_get_head_sha", return_value="ccc3333"), \
-             patch.object(rt, "_is_pushed", return_value=True), \
+             patch.object(rt.push, "holds", return_value=True), \
              patch.object(rt, "_commits_since", return_value=["ccc3333", "bbb2222"]), \
              patch("pr_comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
@@ -1807,7 +1624,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
             summary_deferred=True,
         )
         with patch.object(rt, "_get_head_sha", return_value="bbb2222"), \
-             patch.object(rt, "_is_pushed", return_value=False), \
+             patch.object(rt.push, "holds", return_value=False), \
              patch("pr_comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
@@ -1959,7 +1776,7 @@ class TestPushHeldCommit:
 
     def test_pushes_and_marks_it_pushed(self, rt, publishing_on):
         state = self._state()
-        with patch.object(rt, "_is_pushed", return_value=False), \
+        with patch.object(rt.push, "holds", return_value=False), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))) as run:
@@ -1980,7 +1797,7 @@ class TestPushHeldCommit:
             return _git_ran(0, stdout="abc1234\n")
 
         state = self._state()
-        with patch.object(rt, "_is_pushed", return_value=False), \
+        with patch.object(rt.push, "holds", return_value=False), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(
                               clean_tree, _LOST_SHA)) as run:
@@ -1995,7 +1812,7 @@ class TestPushHeldCommit:
             raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
 
         state = self._state()
-        with patch.object(rt, "_is_pushed", return_value=False), \
+        with patch.object(rt.push, "holds", return_value=False), \
              patch.object(rt.git_client, "run", boom):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "push_held"
@@ -2009,14 +1826,14 @@ class TestPushHeldCommit:
             raise AssertionError(f"a subprocess ran while the gate was shut: {a}")
 
         state = self._state()
-        with patch.object(rt, "_is_pushed", return_value=False), \
+        with patch.object(rt.push, "holds", return_value=False), \
              patch.object(rt.git_client, "run", boom):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "push_held"
 
     def test_a_failed_push_is_recorded_as_such(self, rt, publishing_on):
         state = self._state()
-        with patch.object(rt, "_is_pushed", return_value=False), \
+        with patch.object(rt.push, "holds", return_value=False), \
              patch.object(rt.git_client, "run",
                           return_value=_git_ran(1, stderr="rejected\n")):
             rt._push_held_commit(state, Path("/fake"))
@@ -2026,7 +1843,7 @@ class TestPushHeldCommit:
         """Same as the two sibling push paths — a failure here is not silent."""
         trail = MagicMock()
         state = self._state()
-        with patch.object(rt, "_is_pushed", return_value=False), \
+        with patch.object(rt.push, "holds", return_value=False), \
              patch.object(rt.git_client, "run",
                           return_value=_git_ran(1, stderr="rejected\n")):
             rt._push_held_commit(state, Path("/fake"), trail)
@@ -2039,7 +1856,7 @@ class TestPushHeldCommit:
             raise AssertionError(f"pushed a commit the remote already had: {a}")
 
         state = self._state()
-        with patch.object(rt, "_is_pushed", return_value=True), \
+        with patch.object(rt.push, "holds", return_value=True), \
              patch.object(rt.git_client, "run", boom):
             rt._push_held_commit(state, Path("/fake"))
         assert state.fix.commit_status == "pushed"
@@ -2071,7 +1888,7 @@ def _short_sha(path, rev="HEAD") -> str:
     ).stdout.strip()
 
 
-# What every fix pass commits under (`_commit_and_push`), so two rounds on one
+# What every fix pass commits under (`_commit_fixes`), so two rounds on one
 # branch are indistinguishable by subject — which is why identity is content.
 _FIX_SUBJECT = "fix: address review comments"
 
@@ -2209,10 +2026,10 @@ class TestFollowHistoryRewrite:
     def test_the_replay_is_what_the_remote_has(self, rt, tmp_path):
         """The point of following it: the hold is over a name, not the work."""
         repo = _held_fix_branch(tmp_path)
-        assert rt._is_pushed(repo.path, repo.held) is False
+        assert rt.push.holds(repo.path, repo.held) is False
         state = self._state(repo)
         rt._follow_history_rewrite(state, repo.path)
-        assert rt._is_pushed(repo.path, state.fix.commit_sha) is True
+        assert rt.push.holds(repo.path, state.fix.commit_sha) is True
 
     def test_the_closeout_stops_holding_after_a_rebase(
         self, rt, tmp_path, publishing_on,
@@ -2295,7 +2112,7 @@ class TestFollowHistoryRewrite:
         state = self._state(repo)
         rt._follow_history_rewrite(state, repo.path)
         assert state.fix.commit_sha == repo.replay
-        assert rt._is_pushed(repo.path, state.fix.commit_sha) is False
+        assert rt.push.holds(repo.path, state.fix.commit_sha) is False
         rt._push_held_commit(state, repo.path)
         assert state.fix.commit_status == CommitStatus.PUSH_HELD
 
@@ -2305,7 +2122,7 @@ class TestFollowHistoryRewrite:
         state = self._state(repo)
         rt._follow_history_rewrite(state, repo.path)
         assert state.fix.commit_sha == repo.held
-        assert rt._is_pushed(repo.path, state.fix.commit_sha) is False
+        assert rt.push.holds(repo.path, state.fix.commit_sha) is False
         rt._push_held_commit(state, repo.path)
         assert state.fix.commit_status == CommitStatus.PUSH_HELD
 
@@ -2456,7 +2273,7 @@ class TestPendingFixReplies:
     def test_posts_fix_replies_and_resolves_when_push_confirmed(self, rt, publishing_on):
         fix, threads_by_id = self._queue(2, commit_status="push_failed", summary_deferred=True)
         state = _make_state(fix)
-        with patch.object(rt, "_is_pushed", return_value=True), \
+        with patch.object(rt.push, "holds", return_value=True), \
              patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2467,7 +2284,7 @@ class TestPendingFixReplies:
     def test_skips_when_still_unpushed(self, rt):
         fix, _ = self._queue(commit_status="push_failed", summary_deferred=True)
         state = _make_state(fix)
-        with patch.object(rt, "_is_pushed", return_value=False), \
+        with patch.object(rt.push, "holds", return_value=False), \
              patch("pr_comments.post_thread_reply") as mock_reply:
             rt._post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
@@ -2483,7 +2300,7 @@ class TestPendingFixReplies:
     def test_draft_run_keeps_the_queue_for_a_later_post(self, rt):
         fix, threads_by_id = self._queue(commit_status="push_failed", summary_deferred=True)
         state = _make_state(fix)
-        with patch.object(rt, "_is_pushed", return_value=True):
+        with patch.object(rt.push, "holds", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.commit_status == "push_failed"
 
@@ -2495,7 +2312,7 @@ class TestPendingFixReplies:
         """
         fix, threads_by_id = self._queue(commit_status="pushed", replies_pending=True)
         state = _make_state(fix)
-        with patch.object(rt, "_is_pushed", return_value=True), \
+        with patch.object(rt.push, "holds", return_value=True), \
              patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr_comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2508,7 +2325,7 @@ class TestPendingFixReplies:
             2, commit_status="pushed", replies_pending=True, replies_posted=0,
         )
         state = _make_state(fix)
-        with patch.object(rt, "_is_pushed", return_value=True), \
+        with patch.object(rt.push, "holds", return_value=True), \
              patch("pr_comments.post_thread_reply", return_value=True), \
              patch("pr_comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2520,7 +2337,7 @@ class TestPendingFixReplies:
             commit_status="pushed", replies_pending=True, replies_posted=0,
         )
         state = _make_state(fix)
-        with patch.object(rt, "_is_pushed", return_value=True):
+        with patch.object(rt.push, "holds", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         assert fix.replies_posted == 0
 
@@ -2545,7 +2362,7 @@ class TestPendingFixReplies:
         )
         state = _make_state(fix)
         with patch.object(rt, "_get_head_sha", return_value="def5678"), \
-             patch.object(rt, "_is_pushed", return_value=True), \
+             patch.object(rt.push, "holds", return_value=True), \
              patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr_comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2564,7 +2381,7 @@ class TestPendingFixReplies:
         )
         state = _make_state(fix)
         with patch.object(rt, "_get_head_sha", return_value="abc1234"), \
-             patch.object(rt, "_is_pushed", return_value=True), \
+             patch.object(rt.push, "holds", return_value=True), \
              patch.object(rt, "_find_addressing_commit", return_value=None), \
              patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
              patch("pr_comments.resolve_thread", return_value=True):
@@ -2657,7 +2474,7 @@ class TestTriageOnlyPassQueue:
         """These replies cite HEAD, not a fix commit, so there is nothing to wait for."""
         fix, threads_by_id = self._queue(ThreadAction.ALREADY_ADDRESSED)
         state = _make_state(fix)
-        with patch.object(rt, "_is_pushed", return_value=False) as mock_pushed, \
+        with patch.object(rt.push, "holds", return_value=False) as mock_pushed, \
              patch.object(rt, "_get_head_sha", return_value="deadbee"), \
              patch.object(rt, "_find_addressing_commit", return_value=None), \
              patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
@@ -2736,7 +2553,7 @@ class TestResolutionsReachThePersistedTally:
         }
         state = _make_state(fix)
         state.comments.by_state = dict(by_state)
-        with patch.object(rt, "_is_pushed", return_value=True), \
+        with patch.object(rt.push, "holds", return_value=True), \
              patch("pr_comments.post_thread_reply", side_effect=_gated), \
              patch("pr_comments.resolve_thread", side_effect=_gated):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
@@ -2854,7 +2671,7 @@ class TestReplyAttributionAcrossRounds:
                                comments=[{"databaseId": 100 + n}])
             for n, o in enumerate(outcomes)
         }
-        with patch.object(rt, "_is_pushed", return_value=True), \
+        with patch.object(rt.push, "holds", return_value=True), \
              patch("pr_comments.post_thread_reply", return_value=True) as reply, \
              patch("pr_comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(_make_state(fix), "owner/repo", 1, threads_by_id)
@@ -5978,7 +5795,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
             threads=[], commit_status=CommitStatus.NO_CHANGES,
             head_sha=branch.snapshot,
         )
-        with patch.object(rt, "_is_pushed", return_value=True):
+        with patch.object(rt.push, "holds", return_value=True):
             cp = rt._reconciled_commit(fix, CommitStatus.NO_CHANGES, branch.path)
         assert cp.claim is rt.CommitClaim.UNDETERMINED, "fixture must reach the gap"
         return cp

@@ -314,3 +314,240 @@ def test_an_ungated_pass_pushes_with_the_gate_shut(landable):
 
     assert landed.status is CommitStatus.PUSHED
     assert _remote_head(remote) == landed.sha
+
+
+# ── regen: the hook that rewrites generated files ───────────────────────────
+
+_REGENERATING_HOOK = """#!/bin/sh
+if [ -f .git/regenerated ]; then exit 0; fi
+: > .git/regenerated
+echo 'regenerated' > gen.txt
+echo 'docs are stale — regenerated them' >&2
+exit 1
+"""
+
+
+@pytest.fixture
+def regenerating(landable, tmp_path, live_git_hooks):
+    """`landable` with a tracked generated file and a pre-push hook that rewrites it.
+
+    The hook refuses the first push and passes the second, which is the whole
+    shape the retry exists for: the commit underneath was fine, and what the
+    hook wrote is what the remote was missing.
+    """
+    wt, remote = landable
+    (wt / "gen.txt").write_text("stale\n")
+    git_out(wt, "add", "gen.txt")
+    git_out(wt, "commit", "-qm", "chore: add generated file")
+    git_out(wt, "push", "-q", "origin", "main")
+
+    hook = tmp_path / "hooks" / "pre-push"
+    hook.write_text(_REGENERATING_HOOK)
+    hook.chmod(0o755)
+    return wt, remote
+
+
+def test_a_regenerating_hook_is_committed_and_the_push_retried(regenerating):
+    wt, remote = regenerating
+    (wt / "src.py").write_text("edited\n")
+
+    landed = land.land(
+        wt, message="fix: work", gated=False, regen="chore: regenerate",
+    )
+
+    assert landed.status is CommitStatus.PUSHED
+    assert (wt / "gen.txt").read_text() == "regenerated\n"
+    assert _remote_head(remote) == git_out(wt, "rev-parse", "HEAD").strip()
+    assert git_out(wt, "log", "-1", "--pretty=%s").strip() == "chore: regenerate"
+
+
+def test_the_retry_reports_the_commit_the_pass_made(regenerating):
+    """The caller's entries are stamped with its own commit — the regen rides above it."""
+    wt, _ = regenerating
+    (wt / "src.py").write_text("edited\n")
+
+    landed = land.land(
+        wt, message="fix: work", gated=False, regen="chore: regenerate",
+    )
+
+    assert landed.sha == git_out(wt, "rev-parse", "HEAD~1").strip()
+    assert git_out(wt, "log", "-1", "--pretty=%s", landed.sha).strip() == "fix: work"
+
+
+def test_a_caller_that_did_not_ask_for_the_retry_keeps_the_refusal(regenerating):
+    wt, remote = regenerating
+    before = _remote_head(remote)
+    (wt / "src.py").write_text("edited\n")
+
+    landed = land.land(wt, message="fix: work", gated=False)
+
+    assert landed.status is CommitStatus.PUSH_FAILED
+    assert landed.citable is False
+    assert landed.resume
+    assert _remote_head(remote) == before
+
+
+def test_a_refusal_that_regenerated_nothing_stands(landable, tmp_path, live_git_hooks):
+    """A hook can refuse for its own reasons — a failing test suite, most often."""
+    wt, remote = landable
+    before = _remote_head(remote)
+    hook = tmp_path / "hooks" / "pre-push"
+    hook.write_text("#!/bin/sh\necho '✗ Pytest failed' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    (wt / "src.py").write_text("edited\n")
+
+    landed = land.land(
+        wt, message="fix: work", gated=False, regen="chore: regenerate",
+    )
+
+    assert landed.status is CommitStatus.PUSH_FAILED
+    assert "Pytest failed" in landed.error
+    assert _remote_head(remote) == before
+
+
+def test_a_retry_that_falls_short_too_reports_the_original_push(regenerating,
+                                                                tmp_path):
+    """The commit the caller made is still the one its work is in.
+
+    The hook here regenerates once and refuses twice — a suite that stays red
+    after the generated files are current.
+    """
+    wt, remote = regenerating
+    before = _remote_head(remote)
+    hook = tmp_path / "hooks" / "pre-push"
+    hook.write_text(_REGENERATING_HOOK.replace("exit 0", "exit 1"))
+    (wt / "src.py").write_text("edited\n")
+
+    landed = land.land(
+        wt, message="fix: work", gated=False, regen="chore: regenerate",
+    )
+
+    assert landed.status is CommitStatus.PUSH_FAILED
+    assert landed.sha == git_out(wt, "rev-parse", "HEAD~1").strip()
+    assert git_out(wt, "log", "-1", "--pretty=%s").strip() == "chore: regenerate"
+    assert _remote_head(remote) == before
+
+
+def test_a_lost_push_is_not_read_as_a_regenerating_hook(wt):
+    """Nothing was left behind to commit, and `push` has already retried that one."""
+    (wt / "src.py").write_text("edited\n")
+    lost = push.PushResult(push.PushStatus.LOST, sha="9bc3f64ab", branch="main")
+
+    landed, mock_push = _land(wt, result=lost, regen="chore: regenerate")
+
+    assert landed.status is CommitStatus.PUSH_LOST
+    assert mock_push.call_count == 1
+
+
+# ── recover_from: the commit the caller did not make ────────────────────────
+
+
+def _agent_commit(repo: Path, message: str = "fix: the agent's own commit") -> str:
+    """A commit made outside the pass, the way a fix agent leaves one."""
+    (repo / "src.py").write_text("the agent's edit\n")
+    git_out(repo, "add", "-A")
+    git_out(repo, "commit", "-qm", message)
+    return git_out(repo, "rev-parse", "HEAD").strip()
+
+
+def test_a_commit_the_pass_did_not_make_is_attributed_and_pushed(landable):
+    wt, remote = landable
+    before = git_out(wt, "rev-parse", "HEAD").strip()
+    sha = _agent_commit(wt)
+
+    landed = land.land(wt, message="fix: work", gated=False, recover_from=before)
+
+    assert landed.status is CommitStatus.PUSHED
+    assert landed.sha == sha
+    assert _remote_head(remote) == sha
+
+
+def test_recovery_reads_an_abbreviated_head_the_caller_recorded(landable):
+    """What a caller holding a SHA for a reviewer has is the abbreviation."""
+    wt, _ = landable
+    before = git_out(wt, "rev-parse", "--short", "HEAD").strip()
+    sha = _agent_commit(wt)
+
+    landed = land.land(wt, message="fix: work", gated=False, recover_from=before)
+
+    assert landed.sha == sha
+
+
+def test_an_unmoved_head_leaves_no_changes_alone(landable):
+    wt, _ = landable
+    before = git_out(wt, "rev-parse", "HEAD").strip()
+
+    landed = land.land(wt, message="fix: work", gated=False, recover_from=before)
+
+    assert landed.status is CommitStatus.NO_CHANGES
+    assert landed.sha == ""
+
+
+def test_a_commit_the_remote_already_holds_is_not_pushed_again(landable):
+    wt, _ = landable
+    before = git_out(wt, "rev-parse", "HEAD").strip()
+    sha = _agent_commit(wt)
+    git_out(wt, "push", "-q", "origin", "main")
+
+    with patch("land.push.push", side_effect=AssertionError("pushed again")):
+        landed = land.land(wt, message="fix: work", gated=False, recover_from=before)
+
+    assert landed.status is CommitStatus.PUSHED
+    assert landed.sha == sha
+
+
+def test_a_recovered_commit_waits_for_the_gate_like_any_other(landable):
+    wt, remote = landable
+    at_remote = _remote_head(remote)
+    before = git_out(wt, "rev-parse", "HEAD").strip()
+    sha = _agent_commit(wt)
+
+    landed = land.land(wt, message="fix: work", gated=True, recover_from=before)
+
+    assert landed.status is CommitStatus.PUSH_HELD
+    assert landed.sha == sha
+    assert landed.resume
+    assert _remote_head(remote) == at_remote
+
+
+def test_a_dirty_tree_under_no_changes_is_a_refused_commit(wt):
+    """Changes still sitting there after a commit was attempted mean something refused it.
+
+    `NO_CHANGES` alone cannot say which of the two happened, and reporting
+    "nothing needed doing" over refused work is the reading that misleads.
+    """
+    before = git_out(wt, "rev-parse", "HEAD").strip()
+
+    with patch("land.git_client.is_dirty", return_value=True):
+        landed = land.land(
+            wt, message="fix: work", gated=False, paths=[], recover_from=before,
+        )
+
+    assert landed.status is CommitStatus.COMMIT_FAILED
+    assert landed.error == "changes remain uncommitted in the worktree"
+
+
+def test_recovery_never_overwrites_a_commit_the_hook_refused(wt, tmp_path,
+                                                             live_git_hooks):
+    """A refused commit is information recovery has nothing better to replace."""
+    _install_failing_pre_commit(tmp_path)
+    before = git_out(wt, "rev-parse", "HEAD").strip()
+    (wt / "src.py").write_text("edited\n")
+
+    landed, mock_push = _land(wt, recover_from=before)
+
+    assert landed.status is CommitStatus.COMMIT_FAILED
+    assert "gate refused" in landed.error
+    mock_push.assert_not_called()
+
+
+def test_a_caller_that_did_not_ask_recovers_nothing(landable):
+    wt, remote = landable
+    at_remote = _remote_head(remote)
+    _agent_commit(wt)
+
+    landed = land.land(wt, message="fix: work", gated=False)
+
+    assert landed.status is CommitStatus.NO_CHANGES
+    assert landed.sha == ""
+    assert _remote_head(remote) == at_remote

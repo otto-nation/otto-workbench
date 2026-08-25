@@ -708,6 +708,57 @@ CI failure lifecycle tracking.
 Handles failure classification, progression tracking, and rendering for the
 ci-failures skill. State persistence is delegated to pr_domains.CIDomain.
 
+### fix_tracking.py
+
+The tracking file a fix pass hands its agent, rendered and read back.
+
+A fix pass cannot watch an agent work, so it gives it a checklist and reads the
+checklist afterwards to find out what happened. That file is the interface
+between the two, and this module is both halves of it: :func:`render` writes
+one from :class:`~fix_types.FixItem`s, :func:`parse` reads one back as
+:class:`~pr_fix.ItemOutcome`s, and the format itself is stated once, here.
+
+Three properties the formats this replaces did not have:
+
+**Every section carries its id**, in an HTML comment the agent has no reason to
+touch. A parse therefore returns outcomes keyed by item rather than a count of
+ticked boxes, which is what lets a pass say *which* work it did and lets a later
+round reconcile against it.
+
+**The vocabulary is** :class:`~pr_fix.FixOutcome`. A single checkbox is a
+boolean, and a boolean cannot tell an agent that ran out of turns from one that
+read the item and disagreed with it. Three boxes can, and every domain gets the
+distinction rather than only the one whose format happened to encode it.
+
+**An untouched item reads as work still owed.** No box checked parses to
+`DEFERRED`, matching `ItemOutcome`'s own default and for the same reason: a
+tracking file the agent never wrote to is not evidence that anything was fixed.
+
+The format is deliberately plain markdown. The agent edits it with the same
+tool it edits source with, and an operator reading the file afterwards sees
+what the agent saw.
+
+### fix_types.py
+
+What a fix pass is handed, in terms no one domain owns.
+
+`pr_fix` says what became of an item; this says what the item was. The two sit
+either side of the agent: a domain fetches its own work — reviewer threads, CI
+failures, review findings — and turns each unit of it into a
+:class:`FixItem`, the agent is handed those, and what comes back is an
+:class:`~pr_fix.ItemOutcome` per id.
+
+A `FixItem` carries only what the tracking file needs to render a section and
+key it back: an id, where the work is, a one-line label, and the body the
+domain rendered. A reviewer login, a CI job name and a finding's severity are
+the domain's own, and stay on the domain's own item type — the same argument
+`ItemOutcome` already makes for the outcome side. What crosses this boundary is
+what every domain can answer.
+
+Like `pr_fix`, this sits below the domains: it imports the standard library and
+nothing else from ``ai/lib``, so the shared fix machinery can depend on it
+without pulling a review or comments layer in behind it.
+
 ### pr_comments_fix.py
 
 The comment fix pass's record, and the vocabulary it is written in.

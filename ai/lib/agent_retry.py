@@ -54,8 +54,8 @@ NO_WRITE_HINT = (
 FIX_RETRY_HINT = (
     "IMPORTANT: A previous attempt ran out of turns reading files without applying any fixes. "
     "Start with the highest-severity fixable findings and apply edits IMMEDIATELY. "
-    "Skip findings that require design decisions — annotate them with *(skipped — reason)* "
-    "and move on.\n\n"
+    "A finding that needs a design decision is not yours to apply — record that "
+    "verdict on it the way the instructions below spell it, and move on.\n\n"
 )
 
 CI_FIX_RETRY_HINT = (

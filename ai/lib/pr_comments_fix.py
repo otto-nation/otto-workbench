@@ -26,11 +26,22 @@ from serde import from_dict as _serde_from_dict
 
 
 class ThreadAction(StrEnum):
+    """What became of one thread, in the comment pass's own words.
+
+    Every member is spelled the same as its :class:`~pr_fix.FixOutcome`
+    counterpart, so an outcome the shared machinery reports can be recorded here
+    without a translation table between the two vocabularies.
+    """
+
     FIXED = "fixed"
     DEFERRED = "deferred"
     NEEDS_HUMAN = "needs_human"
     DISMISSED = "dismissed"
     ALREADY_ADDRESSED = "already_addressed"
+    # The agent read the comment and disagreed with it. Distinct from DEFERRED,
+    # which is work still owed, and from DISMISSED, which triage decided before
+    # any agent saw the thread.
+    DECLINED = "declined"
 
 
 @dataclass
@@ -253,6 +264,7 @@ class FixSummary(Domain):
             (ThreadAction.FIXED, "**{n} fixed**"),
             (ThreadAction.DEFERRED, "{n} deferred"),
             (ThreadAction.NEEDS_HUMAN, "{n} need discussion"),
+            (ThreadAction.DECLINED, "{n} declined"),
             (ThreadAction.DISMISSED, "{n} dismissed"),
             (ThreadAction.ALREADY_ADDRESSED, "{n} already addressed"),
         ]

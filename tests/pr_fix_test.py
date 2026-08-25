@@ -37,11 +37,11 @@ def test_fix_outcome_keeps_the_strings_thread_action_persists():
 
 
 def test_fix_outcome_adds_only_what_no_thread_has():
-    """The two extra members are the ones the other two passes need."""
+    """SKIPPED alone — DECLINED became a thread action when the pass adopted it."""
     extra = {o.name for o in pr_fix.FixOutcome} - {
         a.name for a in pr_comments_fix.ThreadAction
     }
-    assert extra == {"SKIPPED", "DECLINED"}
+    assert extra == {"SKIPPED"}
 
 
 def test_fix_outcome_serializes_as_its_string():

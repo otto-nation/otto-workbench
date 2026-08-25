@@ -34,6 +34,7 @@ import git_client
 import log
 import serde
 from review_common import (
+    DISPOSITION_TAIL_PUNCTUATION,
     FILENAME_PRIOR_FINDINGS,
     PRIOR_DATE_RE,
     PRIOR_SHA_RE,
@@ -86,19 +87,53 @@ class DispositionSource(StrEnum):
         return self in (DispositionSource.LEDGER, DispositionSource.CARRIED)
 
 
+class UndecidedReason(StrEnum):
+    """Why a finding reached no verdict.
+
+    Undecided is only a useful warning while it means "the review passed this
+    by". Three of the four members below are something else — two of them a
+    line this pipeline could not read, one a check it was in no position to run
+    — and lumping them in with the omissions is what turns the warning into
+    noise the reader learns to skip.
+
+    Declaration order is the order `report` prints the groups: the ones a
+    reader can act on come first.
+    """
+
+    UNREADABLE_VERDICT = "unreadable verdict"
+    NO_LOCATION = "no location parsed"
+    NOT_MENTIONED = "not accounted for"
+    NOT_CHECKABLE = "not checkable"
+
+    @property
+    def heading(self) -> str:
+        """How the group reads above the findings in it."""
+        return _UNDECIDED_HEADINGS[self]
+
+
+_UNDECIDED_HEADINGS = {
+    UndecidedReason.UNREADABLE_VERDICT: "the ledger names these but states no verdict this could read",
+    UndecidedReason.NO_LOCATION: "these name no file this could read, so nothing could be checked",
+    UndecidedReason.NOT_MENTIONED: "neither this review nor the tree accounts for these",
+    UndecidedReason.NOT_CHECKABLE: "there was nothing to check these against",
+}
+
+
 @dataclass(frozen=True)
 class PriorRecord:
     """One prior finding, what became of it, and how that was settled.
 
-    `disposition` is None when nothing settled it — including when the ledger
-    named the finding but stated no verdict this can read, which `source` and
-    `basis` are what tell apart from the ledger never mentioning it.
+    `disposition` is None when nothing settled it, and `reason` then says which
+    kind of nothing — the ledger naming the finding without a verdict this can
+    read is a different failure from the review never mentioning it, and only
+    the second is the review's.
     """
 
     ref: FindingRef = field(default_factory=FindingRef)
     disposition: PriorDisposition | None = None
     source: DispositionSource = DispositionSource.NONE
     basis: str = ""
+    reason: UndecidedReason | None = None
 
     @property
     def decided(self) -> bool:
@@ -124,6 +159,15 @@ class Reconciliation:
     def unaccounted(self) -> list[str]:
         """How the undecided findings read in a log line."""
         return [record.ref.label for record in self.undecided]
+
+    @property
+    def undecided_groups(self) -> list[tuple[UndecidedReason, list[PriorRecord]]]:
+        """The undecided findings by why they are, in the order they are reported."""
+        return [
+            (reason, [record for record in self.undecided if record.reason is reason])
+            for reason in UndecidedReason
+            if any(record.reason is reason for record in self.undecided)
+        ]
 
     @property
     def inferred(self) -> int:
@@ -157,10 +201,16 @@ class Reconciliation:
 
 @dataclass(frozen=True)
 class _Inference:
-    """What the tree says about a prior finding, and why it says it."""
+    """What the tree says about a prior finding, and why it says it.
+
+    `reason` is what the finding falls to when the tree settles nothing, and
+    defaults to the review's own omission because that is what most of the
+    tree's silences mean: it looked, and found the finding's subject intact.
+    """
 
     disposition: PriorDisposition | None = None
     basis: str = ""
+    reason: UndecidedReason = UndecidedReason.NOT_MENTIONED
 
 
 @dataclass
@@ -180,11 +230,20 @@ class _Tree:
         """What the tree makes of `finding`, or why it makes nothing of it."""
         path = finding.ref.path
         if not self.wt_path:
-            return _Inference(basis="there was no worktree to check it against")
+            return _Inference(
+                basis="there was no worktree to check it against",
+                reason=UndecidedReason.NOT_CHECKABLE,
+            )
         if not path:
-            return _Inference(basis="it names no file")
+            return _Inference(
+                basis="it names no file",
+                reason=UndecidedReason.NO_LOCATION,
+            )
         if not self.prior_sha:
-            return _Inference(basis="the prior review names no commit to compare against")
+            return _Inference(
+                basis="the prior review names no commit to compare against",
+                reason=UndecidedReason.NOT_CHECKABLE,
+            )
         if not (Path(self.wt_path) / path).is_file():
             return self._absent(path)
         return self._quotes(finding, path)
@@ -284,8 +343,10 @@ def _settle(
                            inference.basis)
     if entry:
         return PriorRecord(finding.ref, None, DispositionSource.LEDGER,
-                           f"the ledger names it but states no verdict: {entry.text.strip()}")
-    return PriorRecord(finding.ref, None, DispositionSource.NONE, inference.basis)
+                           f'the ledger line reads "{entry.text.strip()}"',
+                           UndecidedReason.UNREADABLE_VERDICT)
+    return PriorRecord(finding.ref, None, DispositionSource.NONE, inference.basis,
+                       inference.reason)
 
 
 def reconcile(
@@ -330,6 +391,12 @@ def report(reconciliation: Reconciliation, sidecar: str = "") -> None:
     so the line says what was checked before it says what was missed — a
     warning that only ever names findings reads as a defect report and trains
     the reader to skip it.
+
+    The undecided are then printed by `UndecidedReason` rather than as one
+    list, because they are not one thing: a line this could not read is a
+    defect here and says what shape would have parsed, while a finding the
+    review passed by is a defect there. Run together they read as the second,
+    which is how six unreadable verdicts once reported as six omissions.
     """
     if not reconciliation.records:
         return
@@ -342,15 +409,30 @@ def report(reconciliation: Reconciliation, sidecar: str = "") -> None:
     if not undecided:
         log.info(f"Reconciled {scope}")
         return
-    log.warn(
-        f"{len(undecided)} of {total} prior finding{plural(total)} undecided — "
-        "neither this review nor the tree accounts for them"
-    )
+    log.warn(f"{len(undecided)} of {total} prior finding{plural(total)} undecided")
     log.dim(f"checked {scope}")
-    for record in undecided:
-        log.dim(f"{record.ref.label} — {record.basis}")
+    for reason, records in reconciliation.undecided_groups:
+        _report_group(reason, records)
     if sidecar:
         log.dim(f"recorded in {sidecar}")
+
+
+def _report_group(reason: UndecidedReason, records: list[PriorRecord]) -> None:
+    """Print one reason's findings under a heading saying what the reason means."""
+    log.dim(f"{reason.heading} ({len(records)}):")
+    for record in records:
+        log.dim(f"  {record.ref.label} — {record.basis}")
+    if reason is UndecidedReason.UNREADABLE_VERDICT:
+        log.dim(f"  {_VERDICT_SHAPE}")
+
+
+# What to write instead, for the reader who has just been shown a line that did
+# not parse. Both the words and the punctuation come from what the parser
+# accepts, so this cannot describe a shape the parser would reject.
+_VERDICT_SHAPE = (
+    f"write one of {', '.join(d.value for d in PriorDisposition)} first, then "
+    f"end the line or break with one of: {' '.join(DISPOSITION_TAIL_PUNCTUATION)}"
+)
 
 
 def record_prior_findings(

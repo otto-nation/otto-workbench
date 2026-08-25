@@ -259,7 +259,14 @@ class FindingRef:
 
     @property
     def label(self) -> str:
-        """How the reference reads in a log line."""
+        """How the reference reads in a log line.
+
+        A reference with no path is the ID alone rather than the ID and an
+        empty pair of backticks — the line is already reporting that nothing
+        read a path off the finding, and printing `` there says it twice.
+        """
+        if not self.path:
+            return self.finding_id
         return f"{self.finding_id} `{self.path}`".strip()
 
 

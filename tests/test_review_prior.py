@@ -24,7 +24,7 @@ from review_common import (
     FILENAME_PRIOR_FINDINGS, SECTION_PRIOR_FINDINGS, PriorDisposition,
 )
 from review_findings import compute_stable_id
-from review_prior import DispositionSource
+from review_prior import DispositionSource, UndecidedReason
 
 PRIOR_ONE_FINDING = (
     "## Must fix\n"
@@ -187,13 +187,20 @@ class TestAccountedByTheReview:
         record = _by_id(review_prior.reconcile(PRIOR_ONE_FINDING, review), "M1")
         assert record.disposition is None
         assert record.source is DispositionSource.LEDGER
-        assert "states no verdict" in record.basis
+        assert record.reason is UndecidedReason.UNREADABLE_VERDICT
+        assert "moved to a follow-up" in record.basis
 
     def test_nothing_is_inferred_without_a_worktree(self):
         review = "## Summary\nnothing to say.\n"
         record = _by_id(review_prior.reconcile(PRIOR_ONE_FINDING, review), "M1")
         assert record.source is DispositionSource.NONE
+        assert record.reason is UndecidedReason.NOT_CHECKABLE
         assert record.basis == "there was no worktree to check it against"
+
+    def test_a_decided_finding_carries_no_undecided_reason(self):
+        review = _ledger("- **[M1]** `handler.go` — Fixed")
+        assert _by_id(review_prior.reconcile(PRIOR_ONE_FINDING, review), "M1").reason is None
+
 
 
 # ── What the tree settles on its own ─────────────────────────────────────────
@@ -211,6 +218,16 @@ class TestInferredFromTheTree:
         assert record.disposition is PriorDisposition.FIXED
         assert record.source is DispositionSource.TREE
         assert "no longer in the tree" in record.basis
+
+    def test_a_location_the_parser_could_not_read_is_its_own_reason(self, repo):
+        """Not the review's omission — nothing here read the line it wrote."""
+        (repo / "handler.go").write_text(_BEFORE)
+        prior_sha = _commit(repo, "before")
+
+        prior = _prior("- **[N1]** the retry loop never terminates\n", sha=prior_sha)
+        record = _by_id(review_prior.reconcile(prior, "", str(repo)), "N1")
+        assert record.reason is UndecidedReason.NO_LOCATION
+        assert record.basis == "it names no file"
 
     def test_a_file_in_neither_tree_settles_nothing(self, repo):
         (repo / "handler.go").write_text(_BEFORE)
@@ -423,6 +440,41 @@ class TestRecordPriorFindings:
         assert f"{prior_sha[:7]} → " in err
         assert "1 Fixed, 1 Undecided, 1 inferred from the tree" in err
 
+    def test_an_unreadable_verdict_is_grouped_apart_from_an_omission(
+        self, repo, capsys,
+    ):
+        """The two are different failures, and only one is the review's."""
+        prior_sha = self._observed(repo)
+        review = repo / "review.md"
+        review.write_text(
+            "## Summary\nBoth looked at.\n"
+            + _ledger("- **[S2]** `docs.py` — moved to a follow-up")
+        )
+
+        review_prior.record_prior_findings(
+            str(review), self._prior_text(prior_sha), str(repo),
+        )
+        err = capsys.readouterr().err
+        assert UndecidedReason.UNREADABLE_VERDICT.heading in err
+        assert "- **[S2]** `docs.py` — moved to a follow-up" in err
+        assert UndecidedReason.NOT_MENTIONED.heading not in err
+
+    def test_the_unreadable_group_says_what_shape_would_have_parsed(
+        self, repo, capsys,
+    ):
+        prior_sha = self._observed(repo)
+        review = repo / "review.md"
+        review.write_text(
+            "## Summary\nBoth looked at.\n"
+            + _ledger("- **[S2]** `docs.py` — moved to a follow-up")
+        )
+
+        review_prior.record_prior_findings(
+            str(review), self._prior_text(prior_sha), str(repo),
+        )
+        err = capsys.readouterr().err
+        assert "Fixed" in err and "Still open" in err and "Declined" in err
+
     def test_the_record_outlives_the_run(self, repo):
         prior_sha = self._observed(repo)
         review = repo / "review.md"
@@ -437,8 +489,10 @@ class TestRecordPriorFindings:
         by_id = {r["ref"]["finding_id"]: r for r in sidecar["records"]}
         assert by_id["S1"]["disposition"] == PriorDisposition.FIXED.value
         assert by_id["S1"]["source"] == DispositionSource.TREE.value
+        assert by_id["S1"]["reason"] is None
         assert by_id["S2"]["disposition"] is None
         assert by_id["S2"]["source"] == DispositionSource.NONE.value
+        assert by_id["S2"]["reason"] == UndecidedReason.NOT_MENTIONED.value
 
     def test_no_prior_review_records_nothing(self, repo):
         review = repo / "review.md"

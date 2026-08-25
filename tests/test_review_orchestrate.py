@@ -556,6 +556,14 @@ class TestPriorDisposition:
         assert ro.PriorDisposition.parse("Fixed, but only on the happy path") is None
         assert ro.PriorDisposition.parse("Fixed in a follow-up branch") is None
 
+    def test_a_verdict_ending_a_sentence_is_still_a_verdict(self, ro):
+        """The form a review writes when the explanation is prose, not a clause."""
+        assert (
+            ro.PriorDisposition.parse("Fixed. `check_key` now calls it directly.")
+            is ro.PriorDisposition.FIXED
+        )
+        assert ro.PriorDisposition.parse("Still open.") is ro.PriorDisposition.STILL_OPEN
+
     def test_parses_a_declined_verdict(self, ro):
         assert ro.PriorDisposition.parse("Declined") is ro.PriorDisposition.DECLINED
         assert (

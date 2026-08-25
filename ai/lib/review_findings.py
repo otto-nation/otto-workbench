@@ -259,7 +259,14 @@ class FindingRef:
 
     @property
     def label(self) -> str:
-        """How the reference reads in a log line."""
+        """How the reference reads in a log line.
+
+        A reference with no path is the ID alone rather than the ID and an
+        empty pair of backticks — the line is already reporting that nothing
+        read a path off the finding, and printing `` there says it twice.
+        """
+        if not self.path:
+            return self.finding_id
         return f"{self.finding_id} `{self.path}`".strip()
 
 
@@ -1060,6 +1067,24 @@ _ANNOTATE_FINDING_RE = re.compile(
 
 
 def _extract_finding_path(line: str, after: str) -> str:
+    """The file a finding line names, or "" when it names none.
+
+    `_extract_path` answers first because it is the same reading the rest of
+    the parser gives a location, and it is the only rung that recognises a
+    plain-backtick file with no `:<line>` after it — the shape a review writes
+    whenever the finding is about a file rather than a line of one. Reading
+    that as no path at all left the finding with no stable ID either, so
+    neither carry-forward nor the tree could account for it.
+
+    The two rungs below it are what this function used to be, kept because
+    they read locations `_extract_path` declines: a bold span that is a label
+    rather than a filename, and a bare `path:12` in no span at all. Identity
+    is the point here — a finding whose location is `**Documentation**` still
+    has to hash to the same thing across reviews to be carried forward.
+    """
+    path, _, _ = _extract_path(after)
+    if path:
+        return path
     path_m = _FINDING_PATH_RE.match(line)
     if path_m:
         path_str = (path_m.group(1) or path_m.group(2) or "").replace("\\_", "_").strip()

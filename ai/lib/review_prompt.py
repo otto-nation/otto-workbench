@@ -576,6 +576,12 @@ def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
 # internal sid marker, which nothing downstream requires the agent to echo. The
 # verdict words come from the enum the ledger is parsed with, so asking for
 # a word the parser does not know is not expressible here.
+#
+# Where the verdict sits in the line is not so protected: an example the parser
+# rejects is expressible, and stays invisible until a re-review's bookkeeping
+# is lost. So the instruction says where the verdict goes as well as what it
+# is, and `TestLedgerInstructionParses` reads every example back through
+# `_parse_ledger_line` to hold the two together.
 _LEDGER_INSTRUCTION = f"""
 End your output with a `## {SECTION_PRIOR_FINDINGS}` section listing EVERY prior
 finding above, one line each, copying its ID and path exactly as written there:
@@ -588,6 +594,10 @@ finding above, one line each, copying its ID and path exactly as written there:
   itself already recorded as declined. Carry it forward too, but annotated
   `*(declined — one-line reason)*` so it is not raised or auto-fixed again. A
   declined finding stays declined: never downgrade one to {PriorDisposition.STILL_OPEN}
+Write the verdict word first, before any explanation of it, and let it end the
+line or be followed by a dash, a colon or a full stop. A verdict qualified in
+the same breath ("{PriorDisposition.FIXED}, but only on the happy path") is not
+read as a verdict at all.
 This section is bookkeeping — it is stripped before the review is published, and
 a prior finding missing from it is reported as unaccounted for."""
 

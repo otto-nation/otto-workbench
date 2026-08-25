@@ -1,5 +1,6 @@
 """Tests for review_prompt: scoped prompt section builders."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -13,12 +14,13 @@ from review_preflight import (
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES,
 )
 from review_common import (
-    Effort,
+    Effort, PriorDisposition,
     TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SYNTHESIS,
 )
+from review_findings import _parse_ledger_line
 from review_prompt import (
-    _PROMPT_HANDLERS, _build_ci_failure_items, _build_common_sections, _build_delta_section,
-    _build_pr_header, _compute_diff_budget,
+    _LEDGER_INSTRUCTION, _PROMPT_HANDLERS, _build_ci_failure_items,
+    _build_common_sections, _build_delta_section, _build_pr_header, _compute_diff_budget,
 )
 from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr_domains import CIDomain
@@ -264,3 +266,39 @@ class TestSharedPromptBodies:
         assert set(self_) - set(pr) == {"branch_name"}
         common_keys = set(pr) & set(self_)
         assert all(pr[k] == self_[k] for k in common_keys)
+
+
+# ── The ledger instruction and the ledger parser ────────────────────────────
+
+
+class TestLedgerInstructionParses:
+    """The form asked for and the form accepted cannot drift apart.
+
+    The instruction is the only description of the ledger an agent ever reads,
+    and reconciliation is the only thing that reads what it writes back. An
+    example the parser rejects is therefore invisible until a whole re-review's
+    bookkeeping is lost, which is what happened when the verdicts the reviews
+    wrote ended in a full stop and the examples all used an em dash.
+    """
+
+    def _examples(self):
+        """The ledger lines the instruction shows, as an agent would copy them.
+
+        Each is a backticked span whose own backticks are escaped, so the one
+        that closes it is the first that no backslash precedes.
+        """
+        spans = (re.match(r"^- `(.+?)(?<!\\)`", line)
+                 for line in _LEDGER_INSTRUCTION.split("\n"))
+        return [m.group(1).replace("\\`", "`") for m in spans if m]
+
+    def test_the_instruction_shows_every_verdict(self):
+        shown = [e for e in self._examples() for d in PriorDisposition if d.value in e]
+        assert len(shown) == len(list(PriorDisposition))
+
+    def test_every_example_parses_to_the_verdict_it_names(self):
+        examples = self._examples()
+        assert examples, "the instruction shows no ledger lines"
+        for example in examples:
+            entry = _parse_ledger_line(example)
+            assert entry, f"the instruction's example does not parse: {example}"
+            assert entry.disposition and entry.disposition.value in example

@@ -405,8 +405,7 @@ def test_a_refusal_that_regenerated_nothing_stands(landable, tmp_path, live_git_
     assert _remote_head(remote) == before
 
 
-def test_a_retry_that_falls_short_too_reports_the_original_push(regenerating,
-                                                                tmp_path):
+def test_a_retry_that_falls_short_too_keeps_the_original(regenerating, tmp_path):
     """The commit the caller made is still the one its work is in.
 
     The hook here regenerates once and refuses twice — a suite that stays red

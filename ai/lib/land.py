@@ -235,11 +235,12 @@ def _retry_after_regen(
     if not git_client.run("commit", "-m", message, cwd=wt_path).ok:
         return None
 
+    # Reported whichever way it went: a second push happened, and the operator
+    # who watched the first one refused is owed the same line about this one —
+    # including the resume command, when it fell short too.
     result = push.push(wt_path, gated=gated, args=args, trail=trail)
-    if not result.ok:
-        return None
-    log.info("Pushed (with regenerated files)")
-    return result
+    push.report(result, wt_path)
+    return result if result.ok else None
 
 
 def _moved_head(wt_path: str | Path, before: str) -> str:

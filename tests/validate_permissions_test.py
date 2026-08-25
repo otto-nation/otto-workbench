@@ -8,14 +8,12 @@ is here for the handful the validator has no call for — a name it imported onl
 to be tested through would be an unused import standing in for a test seam.
 """
 
-import importlib.machinery
-import importlib.util
 import json
 import sys
 from pathlib import Path
 
 import pytest
-from conftest import git_in, seed_repo
+from conftest import git_in, load_script, seed_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-permissions"
@@ -23,11 +21,7 @@ SCRIPT = REPO_ROOT / "bin" / "local" / "validate-permissions"
 sys.path.insert(0, str(REPO_ROOT / "lib"))
 import permissions as perms  # noqa: E402
 
-_loader = importlib.machinery.SourceFileLoader("validate_permissions", str(SCRIPT))
-_spec = importlib.util.spec_from_loader("validate_permissions", _loader)
-vp = importlib.util.module_from_spec(_spec)
-sys.modules["validate_permissions"] = vp
-_spec.loader.exec_module(vp)
+vp = load_script("validate_permissions", SCRIPT)
 
 
 def _dead(*rules):

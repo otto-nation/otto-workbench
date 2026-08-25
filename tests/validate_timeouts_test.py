@@ -1,20 +1,15 @@
 """Tests for bin/local/validate-timeouts."""
 
-import importlib.machinery
-import importlib.util
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-timeouts"
 
-_loader = importlib.machinery.SourceFileLoader("validate_timeouts", str(SCRIPT))
-_spec = importlib.util.spec_from_loader("validate_timeouts", _loader)
-vt = importlib.util.module_from_spec(_spec)
-sys.modules["validate_timeouts"] = vt
-_spec.loader.exec_module(vt)
+vt = load_script("validate_timeouts", SCRIPT)
 
 
 def _check(tmp_path, source):

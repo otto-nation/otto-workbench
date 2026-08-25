@@ -20,23 +20,22 @@ import git_client  # noqa: E402
 import proc  # noqa: E402
 import timeouts  # noqa: E402
 
-from conftest import init_worktree  # noqa: E402
+from conftest import git_in, init_worktree  # noqa: E402
 
 
 def _commit(path: Path, name: str = "f.txt", content: str = "one") -> str:
     """Write a file and commit it, returning the resulting SHA.
 
-    `git_client.run` never raises on a non-zero exit, so a rejected commit would
-    otherwise reach the test as `head_sha`'s empty-repo answer and fail whatever
-    assertion came next — naming a SHA lookup rather than the commit.
+    Setup runs through the shared runner rather than `git_client.run`, which is
+    the subject here and never raises on a non-zero exit: a rejected commit
+    would otherwise reach the test as `head_sha`'s empty-repo answer and fail
+    whatever assertion came next, naming a SHA lookup rather than the commit.
+    Identity is passed per command, never written into the repo's config.
     """
     (path / name).write_text(content)
-    git_client.run("add", "--", name, cwd=path)
-    result = git_client.run(
-        "commit", "-m", f"add {name}", cwd=path,
-        config={"user.email": "t@example.com", "user.name": "T"},
-    )
-    assert result.ok, f"commit failed: {result.stderr or result.stdout}"
+    git_in(path, "add", "--", name)
+    git_in(path, "-c", "user.email=t@example.com", "-c", "user.name=T",
+           "commit", "-m", f"add {name}")
     return git_client.head_sha(cwd=path)
 
 
@@ -189,7 +188,7 @@ def test_current_branch_names_the_checked_out_branch(repo):
 
 def test_current_branch_answers_head_when_detached(repo):
     sha = _commit(repo)
-    git_client.run("checkout", "--detach", sha, cwd=repo)
+    git_in(repo, "checkout", "--detach", sha)
     assert git_client.current_branch(cwd=repo) == "HEAD"
 
 
@@ -207,7 +206,7 @@ def test_is_dirty_sees_an_untracked_file(repo):
 def test_is_dirty_sees_a_staged_change(repo):
     _commit(repo)
     (repo / "f.txt").write_text("two")
-    git_client.run("add", "--", "f.txt", cwd=repo)
+    git_in(repo, "add", "--", "f.txt")
     assert git_client.is_dirty(cwd=repo)
 
 

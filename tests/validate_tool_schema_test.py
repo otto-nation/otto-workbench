@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
 import stat
-import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
 import pytest
+from conftest import load_script, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-tool-schema"
@@ -21,11 +19,7 @@ sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 import server  # noqa: E402
 import tool_registry  # noqa: E402
 
-_loader = importlib.machinery.SourceFileLoader("validate_tool_schema", str(SCRIPT))
-_spec = importlib.util.spec_from_loader("validate_tool_schema", _loader)
-vts = importlib.util.module_from_spec(_spec)
-sys.modules["validate_tool_schema"] = vts
-_spec.loader.exec_module(vts)
+vts = load_script("validate_tool_schema", SCRIPT)
 
 
 def _write_script(root: Path, relpath: str, body: str) -> Path:
@@ -383,9 +377,7 @@ def test_validator_root_defaults_to_the_checkout(monkeypatch):
 
 def test_validate_all_discovers_this_validator():
     """The entry point globs bin/local/validate-*, so no list needs editing."""
-    listed = subprocess.run(
-        [str(REPO_ROOT / "bin" / "local" / "validate-all"), "--list"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-    )
+    listed = run_checked([str(REPO_ROOT / "bin" / "local" / "validate-all"), "--list"],
+                         cwd=REPO_ROOT)
 
     assert str(SCRIPT) in listed.stdout.splitlines()

@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Validate that only tests/conftest.py executes a module out of a file.
+
+Usage: bin/local/validate-script-loading [--quiet] [file...]
+
+Scripts under bin/, bin/local/ and ai/claude/bin/ carry no .py extension, so a
+test reaches one by executing the file rather than importing it. Two callers
+executing the same file hold two module objects for one script, and the two are
+not interchangeable: `mock.patch("<name>.f")` rewrites whatever
+`sys.modules[<name>]` points at, while a caller holding its own reference never
+consults that table. The patch lands on a copy nothing calls, the mock silently
+does nothing, and the assertion fails somewhere else entirely.
+
+Nothing about that failure is deterministic. It needs both callers live in one
+process, which under `pytest -n` depends on how xdist distributed the files
+across workers, so the same tree passes and fails run to run. Detecting it
+after the fact means reproducing a distribution; forbidding the second executor
+means it cannot be written.
+
+tests/conftest.py owns the loading:
+
+    load_script(name, path)   one module per extensionless script, shared
+    exec_fresh(name, path)    a throwaway copy, for a test about import time
+    _load_lib(name)           the same, for lib/<name>.py
+
+Exit code: 0 if all files pass, 1 if any have violations.
+"""
+
+import argparse
+import ast
+import os
+import sys
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, DIM, NC  # noqa: E402
+
+# The one owner. Everything it does is what the rest of the suite must not.
+OWNER = 'tests/conftest.py'
+
+# The importlib calls that build a module object out of a path, plus the one
+# that runs its body. Matched on the attribute name alone, so an `import
+# importlib.util` and a `from importlib.machinery import SourceFileLoader`
+# reach the same rule.
+LOADER_CALLS = frozenset({
+    'SourceFileLoader',
+    'spec_from_file_location',
+    'spec_from_loader',
+    'module_from_spec',
+    'exec_module',
+})
+
+# Writing the table is the other half: a module registered under a name another
+# module already answers for is the collision, whoever built it.
+MODULE_TABLE_WRITES = frozenset({'setdefault', 'pop', '__setitem__'})
+
+SKIP_DIRS = {'__pycache__'}
+
+
+def _called_name(node: ast.Call) -> str | None:
+    """The attribute or bare name being called, ignoring what it hangs off."""
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return None
+
+
+def _is_sys_modules(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr == 'modules'
+            and isinstance(node.value, ast.Name) and node.value.id == 'sys')
+
+
+def _subscript_targets(node: ast.AST):
+    """The subscript targets of an assignment or a del, flattened."""
+    if isinstance(node, ast.Assign):
+        return node.targets
+    if isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+        return [node.target]
+    if isinstance(node, ast.Delete):
+        return node.targets
+    return []
+
+
+def _call_violation(node: ast.AST) -> str | None:
+    """What kind of module execution this call is, or None if it is not one."""
+    if not isinstance(node, ast.Call):
+        return None
+    name = _called_name(node)
+    if name in LOADER_CALLS:
+        return f'{name}()'
+    is_table_method = isinstance(node.func, ast.Attribute) and _is_sys_modules(node.func.value)
+    return f'sys.modules.{name}()' if name in MODULE_TABLE_WRITES and is_table_method else None
+
+
+def _writes_module_table(node: ast.AST) -> bool:
+    """Whether this statement assigns into or deletes from `sys.modules`."""
+    return any(isinstance(target, ast.Subscript) and _is_sys_modules(target.value)
+               for target in _subscript_targets(node))
+
+
+def check_source(source: str, filename: str) -> list[tuple[int, str]]:
+    """Return (line_number, what) for every module-execution site in *source*."""
+    try:
+        tree = ast.parse(source, filename)
+    except SyntaxError as exc:
+        # Silence here would read as "clean" for a file this check never saw.
+        print(f'{RED}!{NC} {filename}: unparseable, not checked ({exc})',
+              file=sys.stderr)
+        return []
+
+    violations = []
+
+    for node in ast.walk(tree):
+        called = _call_violation(node)
+        if called is not None:
+            violations.append((node.lineno, called))
+        if _writes_module_table(node):
+            violations.append((node.lineno, 'writes sys.modules[...]'))
+
+    return sorted(set(violations))
+
+
+def check_file(filepath: str) -> list[tuple[int, str]]:
+    with open(filepath, errors='replace') as f:
+        return check_source(f.read(), filepath)
+
+
+def discover_files(repo_root: str) -> list[str]:
+    """Every Python test module, which is where the duplicate copies come from.
+
+    The whole tree under `tests/`, not its top level: a module in a
+    subdirectory runs in the same interpreter as the rest of the suite, so a
+    second copy built there collides exactly as one beside it would. A walk that
+    stopped at the top level would leave the subdirectories as the one place the
+    rule is unenforced, which is where the next hand-rolled loader lands.
+    """
+    tests_dir = os.path.join(repo_root, 'tests')
+    if not os.path.isdir(tests_dir):
+        return []
+    found = []
+    for dirpath, dirnames, filenames in os.walk(tests_dir):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        found += [os.path.join(dirpath, f) for f in filenames if f.endswith('.py')]
+    return sorted(found)
+
+
+def _report_violations(relpath: str, violations: list[tuple[int, str]]) -> None:
+    print(f'{RED}✗{NC} {relpath}: executes a module of its own', file=sys.stderr)
+    for lineno, what in violations:
+        print(f'      line {lineno}: {what}', file=sys.stderr)
+    print(f'    {DIM}use load_script / exec_fresh / _load_lib from conftest{NC}',
+          file=sys.stderr)
+
+
+def _print_summary(files_checked: int, errors: int) -> None:
+    print()
+    if errors == 0:
+        print(f'{GREEN}✓{NC} {files_checked} files checked, module loading stays in conftest')
+    else:
+        print(f'{RED}✗{NC} {errors} of {files_checked} files execute a module outside {OWNER}',
+              file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Validate that only tests/conftest.py executes a module out of a file.')
+    parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
+    parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
+    args = parser.parse_args()
+
+    repo_root = _WORKBENCH_DIR
+    files = args.files if args.files else discover_files(repo_root)
+
+    errors = 0
+    checked = 0
+
+    for filepath in files:
+        relpath = os.path.relpath(filepath, repo_root)
+        # The one exact path, never the basename: the walk reaches a
+        # `tests/<subdir>/conftest.py` too, and that file is a test module like
+        # any other rather than a second owner.
+        if relpath == OWNER:
+            continue
+
+        checked += 1
+        violations = check_file(filepath)
+
+        if violations:
+            errors += 1
+            _report_violations(relpath, violations)
+        elif not args.quiet:
+            print(f'  {GREEN}✓{NC} {relpath}')
+
+    _print_summary(checked, errors)
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

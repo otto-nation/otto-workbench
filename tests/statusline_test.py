@@ -1,13 +1,11 @@
 """Tests for the workbench status line's PR segment."""
 
-import importlib.machinery
-import importlib.util
 import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from conftest import run_checked
+from conftest import load_script, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
@@ -15,16 +13,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-# Import the extensionless script via importlib. argv is pinned because the
-# module exits at import time when it sees --help.
-_path = str(BIN_DIR / "workbench-statusline")
-_loader = importlib.machinery.SourceFileLoader("workbench_statusline", _path)
-_spec = importlib.util.spec_from_loader("workbench_statusline", _loader, origin=_path)
-statusline = importlib.util.module_from_spec(_spec)
-statusline.__file__ = _path
-with patch.object(sys, "argv", ["workbench-statusline"]):
-    _spec.loader.exec_module(statusline)
-sys.modules.setdefault("workbench_statusline", statusline)
+statusline = load_script("workbench_statusline", BIN_DIR / "workbench-statusline")
 
 import pr_domains  # noqa: E402
 import pr_state  # noqa: E402

@@ -6,27 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO_ROOT
+from conftest import REPO_ROOT, load_script
 
 SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "validate-review-positions"
 
 
-# --- Load the module without a .py extension ---
-
 @pytest.fixture(scope="session")
 def vp():
-    import importlib.machinery
-    import importlib.util
-
-    loader = importlib.machinery.SourceFileLoader(
-        "validate_review_positions", str(SCRIPT)
-    )
-    spec = importlib.util.spec_from_loader("validate_review_positions", loader)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["validate_review_positions"] = mod
-    spec.loader.exec_module(mod)
-    yield mod
-    del sys.modules["validate_review_positions"]
+    return load_script("validate_review_positions", SCRIPT)
 
 
 # --- Helpers ---

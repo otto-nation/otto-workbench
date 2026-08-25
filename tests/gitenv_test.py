@@ -1,19 +1,15 @@
 """Tests for lib/gitenv.py, and that it still agrees with lib/gitenv.sh."""
 
-import importlib.util
 import os
 import re
-import sys
 from pathlib import Path
 
+from conftest import _load_lib
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MODULE = REPO_ROOT / "lib" / "gitenv.py"
 SHELL = REPO_ROOT / "lib" / "gitenv.sh"
 
-_spec = importlib.util.spec_from_file_location("gitenv", MODULE)
-gitenv = importlib.util.module_from_spec(_spec)
-sys.modules["gitenv"] = gitenv
-_spec.loader.exec_module(gitenv)
+gitenv = _load_lib("gitenv")
 
 
 def _shell_overrides():

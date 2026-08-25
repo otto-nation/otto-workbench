@@ -1,6 +1,5 @@
 """Tests for claude-review Python script — helper functions, archive, GC, summary."""
 
-import importlib.util
 import json
 import os
 import sys
@@ -27,24 +26,19 @@ from review_common import (
 import review_gc
 
 from conftest import (
-    make_ctx, run_checked, supersession_context, supersession_evidence,
+    load_script, make_ctx, run_checked, supersession_context, supersession_evidence,
     supersession_verdict,
 )
 
 
 @pytest.fixture(scope="session")
 def cr():
+    # The script imports its siblings by bare name, so its own directory has to
+    # answer those imports before the body runs.
     bin_dir = str(SCRIPT_PATH.parent)
     if bin_dir not in sys.path:
         sys.path.insert(0, bin_dir)
-    from importlib.machinery import SourceFileLoader
-    loader = SourceFileLoader("claude_review", str(SCRIPT_PATH))
-    spec = importlib.util.spec_from_loader("claude_review", loader, origin=str(SCRIPT_PATH))
-    mod = importlib.util.module_from_spec(spec)
-    mod.__file__ = str(SCRIPT_PATH)
-    sys.modules["claude_review"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_script("claude_review", SCRIPT_PATH)
 
 
 @pytest.fixture

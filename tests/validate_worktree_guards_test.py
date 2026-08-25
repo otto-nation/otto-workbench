@@ -1,21 +1,16 @@
 """Tests for bin/local/validate-worktree-guards."""
 
-import importlib.machinery
-import importlib.util
 import os
 import sys
 from pathlib import Path
 
 import pytest
+from conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-worktree-guards"
 
-_loader = importlib.machinery.SourceFileLoader("validate_worktree_guards", str(SCRIPT))
-_spec = importlib.util.spec_from_loader("validate_worktree_guards", _loader)
-vwg = importlib.util.module_from_spec(_spec)
-sys.modules["validate_worktree_guards"] = vwg
-_spec.loader.exec_module(vwg)
+vwg = load_script("validate_worktree_guards", SCRIPT)
 
 
 def _check(tmp_path, source):

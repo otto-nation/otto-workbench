@@ -4,14 +4,14 @@ run-auto-task and the Taskfile's AI_COMMAND cannot route through ai_backend, so 
 tool is the only thing standing between those calls and an unmeasured pipeline.
 """
 
-import importlib.machinery
-import importlib.util
 import io
 import json
 import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import load_script
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
@@ -23,13 +23,7 @@ BIN = REPO_ROOT / "ai" / "claude" / "bin" / "ai-usage-log"
 
 @pytest.fixture(scope="session")
 def aul():
-    loader = importlib.machinery.SourceFileLoader("ai_usage_log", str(BIN))
-    spec = importlib.util.spec_from_loader("ai_usage_log", loader)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["ai_usage_log"] = mod
-    spec.loader.exec_module(mod)
-    yield mod
-    del sys.modules["ai_usage_log"]
+    return load_script("ai_usage_log", BIN)
 
 
 RESULT_RECORD = {

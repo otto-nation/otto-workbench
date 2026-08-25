@@ -5,12 +5,12 @@ Python resolvers agree on the *same* rung is asserted separately, in
 tests/workbench_roots.bats.
 """
 
-import importlib.machinery
-import importlib.util
 import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import exec_fresh
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -18,24 +18,6 @@ MCP_SERVER = REPO_ROOT / "ai" / "claude" / "mcps" / "server.py"
 sys.path.insert(0, str(LIB_DIR))
 
 import workbench_paths  # noqa: E402
-
-
-def _load_module(name: str, path: Path):
-    """Execute *path* as a fresh module, so import-time state reads today's env.
-
-    Registered in ``sys.modules`` for the duration of the exec — dataclass field
-    resolution looks its own module up by name — then removed, so the copy the
-    rest of the suite imports stays the canonical one.
-    """
-    loader = importlib.machinery.SourceFileLoader(name, str(path))
-    spec = importlib.util.spec_from_loader(name, loader)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        del sys.modules[name]
-    return module
 
 
 ROOT_VARS = (
@@ -209,7 +191,7 @@ class TestConsumers:
         """
         monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "config"))
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-        server = _load_module("mcp_server", MCP_SERVER)
+        server = exec_fresh("mcp_server", MCP_SERVER)
 
         roots = [tmp_path / "config", tmp_path / "state"]
         paths = [v for v in vars(server).values() if isinstance(v, Path)]

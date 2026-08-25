@@ -7,13 +7,11 @@ container speaks for it, merging a generated file with whatever is already
 there, and producing a file this repo's own gate accepts.
 """
 
-import importlib.machinery
-import importlib.util
 import json
 import sys
 from pathlib import Path
 
-from conftest import add_worktree, git_in
+from conftest import add_worktree, git_in, load_script
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "lib"))
@@ -22,11 +20,7 @@ import permission_mirror as pm  # noqa: E402
 import permissions as perms  # noqa: E402
 
 _SCRIPT = REPO_ROOT / "bin" / "local" / "validate-permissions"
-_loader = importlib.machinery.SourceFileLoader("validate_permissions_for_mirror", str(_SCRIPT))
-_spec = importlib.util.spec_from_loader("validate_permissions_for_mirror", _loader)
-vp = importlib.util.module_from_spec(_spec)
-sys.modules["validate_permissions_for_mirror"] = vp
-_spec.loader.exec_module(vp)
+vp = load_script("validate_permissions", _SCRIPT)
 
 # The shape of a real tracked project file: a wildcard granting the repo's own
 # scripts, and an ask rule gating the one that reaches credentials.

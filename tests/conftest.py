@@ -95,12 +95,31 @@ def exec_fresh(name: str, path):
     environment while its body runs answers whatever the environment said then,
     so a test that changes the environment has to execute it again. The name is
     registered for the duration of the execution only — the same dataclass
-    lookup `load_script` describes — and dropped afterwards, so the copy the
-    rest of the suite shares stays the one `load_script` owns.
+    lookup `load_script` describes — and whatever `sys.modules` answered with
+    beforehand is put back, on a failed execution as well as a clean one.
+
+    A name `load_script` already owns is refused rather than borrowed. Running a
+    throwaway copy under it would point `sys.modules[name]` at that copy for the
+    duration while `_SCRIPTS` still held the shared one, which is the split
+    between a string patch target and a held reference this owner exists to
+    close.
     """
-    module = _exec_module(name, Path(path).resolve())
-    del sys.modules[name]
-    return module
+    owned = _SCRIPTS.get(name)
+    if owned is not None:
+        raise RuntimeError(
+            f"module name {name!r} is owned by load_script ({owned.__file__}), so "
+            f"executing a throwaway copy under it would displace the module the "
+            f"rest of the suite shares. Give the copy a name of its own."
+        )
+    displaced = sys.modules.get(name)
+    try:
+        return _exec_module(name, Path(path).resolve())
+    finally:
+        # pop rather than del: a failed execution has already released the name.
+        if displaced is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = displaced
 
 
 def _exec_module(name: str, path: Path):

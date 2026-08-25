@@ -16,6 +16,7 @@ whose subject is what a module does while its body runs.
 """
 
 import sys
+import types
 from unittest import mock
 
 import pytest
@@ -117,6 +118,49 @@ def test_exec_fresh_does_not_claim_the_name(tmp_path):
     exec_fresh("unclaimed_probe", script)
 
     assert "unclaimed_probe" not in sys.modules
+
+
+def test_exec_fresh_refuses_a_name_load_script_owns(tmp_path):
+    """Borrowing an owned name is the one route back to the defect: for the
+    length of the execution `sys.modules` would answer with the throwaway copy
+    while `_SCRIPTS` still held the shared module, so a patch and a call would
+    once again reach different objects."""
+    script = _script(tmp_path, "value = 1\n", name="owned")
+    owned = load_script("owned_name_probe", script)
+    before = dict(sys.modules)
+
+    with pytest.raises(RuntimeError, match="owned by load_script"):
+        exec_fresh("owned_name_probe", script)
+
+    assert sys.modules["owned_name_probe"] is owned
+    assert sys.modules == before
+
+
+def test_exec_fresh_puts_back_a_name_it_displaced(tmp_path, monkeypatch):
+    """Only `load_script` owns a name here, but an ordinary import holds one
+    too. Deleting the entry outright would drop that module out of the table
+    and leave whoever imported it holding a reference nothing resolves to."""
+    script = _script(tmp_path, "value = 1\n", name="displaced")
+    placeholder = types.ModuleType("displaced_name_probe")
+    monkeypatch.setitem(sys.modules, "displaced_name_probe", placeholder)
+
+    fresh = exec_fresh("displaced_name_probe", script)
+
+    assert fresh is not placeholder
+    assert sys.modules["displaced_name_probe"] is placeholder
+
+
+def test_a_failed_exec_fresh_puts_the_displaced_name_back(tmp_path, monkeypatch):
+    """The restore is in a finally for the same reason `load_script` releases a
+    half-executed name: a raising body must not leave the table rearranged."""
+    broken = _script(tmp_path, "raise RuntimeError('boom')\n", name="broken")
+    placeholder = types.ModuleType("failed_fresh_probe")
+    monkeypatch.setitem(sys.modules, "failed_fresh_probe", placeholder)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        exec_fresh("failed_fresh_probe", broken)
+
+    assert sys.modules["failed_fresh_probe"] is placeholder
 
 
 def test_the_ci_check_fixture_and_its_test_module_share_one_object(cc):

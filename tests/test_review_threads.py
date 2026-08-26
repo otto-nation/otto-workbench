@@ -3795,6 +3795,393 @@ class TestRunReply:
         assert "empty" in messages[2]
 
 
+# ── --settle ──────────────────────────────────────────────────────────────
+
+
+def _hand_fixed(tmp_path, *, pushed=True):
+    """A `feature` branch whose one commit changed line 1 of `a.py` by hand.
+
+    Real git rather than a stub, because settle-time attribution is exactly the
+    pair of questions no stub can stand in for: which commit changed this line,
+    and does the remote have it. The second only has an honest answer when there
+    is a remote to ask, which is why the origin is a real bare repo.
+    """
+    origin = tmp_path / "origin"
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(origin)],
+                   check=True, capture_output=True, timeout=10)
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", str(origin), str(work)],
+                   check=True, capture_output=True, timeout=10)
+    git_in(work, "config", "user.email", "t@example.com")
+    git_in(work, "config", "user.name", "Test")
+    (work / "a.py").write_text("one\ntwo\n")
+    git_in(work, "add", "-A")
+    git_in(work, "commit", "-q", "--no-verify", "-m", "base")
+    git_in(work, "push", "-q", "-u", "origin", "main")
+    git_in(work, "checkout", "-q", "-b", "feature")
+    (work / "a.py").write_text("ONE\ntwo\n")
+    git_in(work, "commit", "-q", "--no-verify", "-am", "fix line one by hand")
+    if pushed:
+        git_in(work, "push", "-q", "-u", "origin", "feature")
+    return SimpleNamespace(path=work, sha=git_out(work, "rev-parse", "HEAD").strip())
+
+
+class TestSettleFlagParsing:
+    def test_settle_is_repeatable(self, rt):
+        args = rt._build_parser().parse_args(["--settle", "t1", "--settle", "t2"])
+        assert args.settle == ["t1", "t2"]
+
+    def test_settle_records_a_fix_unless_told_otherwise(self, rt):
+        """The ending an operator who was offered "fix it" chose."""
+        args = rt._build_parser().parse_args(["--settle", "t1"])
+        assert args.settle_as == FixOutcome.FIXED.value
+
+    @pytest.mark.parametrize("outcome", [o.value for o in (
+        FixOutcome.FIXED, FixOutcome.DISMISSED, FixOutcome.ALREADY_ADDRESSED)])
+    def test_every_bucket_the_closeout_can_reply_to_is_offered(self, rt, outcome):
+        args = rt._build_parser().parse_args(["--settle", "t1", "--as", outcome])
+        assert args.settle_as == outcome
+
+    def test_deferral_is_not_a_settlement(self, rt):
+        """--track already files work still owed; --settle records work finished."""
+        with pytest.raises(SystemExit):
+            rt._build_parser().parse_args(["--settle", "t1", "--as", "deferred"])
+
+    def test_nothing_is_settled_unless_asked(self, rt):
+        assert rt._build_parser().parse_args(["--finish"]).settle == []
+
+
+class TestSettleFlagValidation:
+    """A flag the recorded outcome will never read is refused, not ignored."""
+
+    def test_a_dismissal_needs_its_reason(self, rt):
+        assert "--reason" in rt._settle_flag_error(FixOutcome.DISMISSED, "", "")
+
+    def test_a_dismissal_that_gives_the_reviewer_something_to_answer_passes(self, rt):
+        assert rt._settle_flag_error(FixOutcome.DISMISSED, "not our layer", "") == ""
+
+    @pytest.mark.parametrize("kind", [FixOutcome.FIXED, FixOutcome.ALREADY_ADDRESSED])
+    def test_a_reason_no_reply_renders_is_refused(self, rt, kind):
+        assert "--reason is only read" in rt._settle_flag_error(kind, "because", "")
+
+    @pytest.mark.parametrize("kind,reason", [
+        (FixOutcome.DISMISSED, "not our layer"),
+        (FixOutcome.ALREADY_ADDRESSED, ""),
+    ])
+    def test_a_commit_no_row_cites_is_refused(self, rt, kind, reason):
+        assert "--commit is only read" in rt._settle_flag_error(kind, reason, "abc1234")
+
+    def test_a_fix_may_name_the_commit_that_carries_it(self, rt):
+        assert rt._settle_flag_error(FixOutcome.FIXED, "", "abc1234") == ""
+
+
+class TestSettleTargets:
+    """Every id is checked before any outcome is written."""
+
+    def _record(self):
+        return FixRecord(items=[
+            ItemOutcome(id="t1", outcome=FixOutcome.NEEDS_HUMAN),
+            ItemOutcome(id="t2", outcome=FixOutcome.FIXED),
+            ItemOutcome(id="t3", outcome=FixOutcome.DEFERRED),
+        ])
+
+    def test_resolves_the_named_outcomes(self, rt):
+        picked = rt._settle_targets(self._record(), ["t3", "t1"])
+        assert [o.id for o in picked] == ["t3", "t1"]
+
+    def test_one_unknown_id_settles_none_of_them(self, rt, capsys):
+        """"Settled nothing" and "settled the thread you meant" read alike."""
+        assert rt._settle_targets(self._record(), ["t1", "typo"]) is None
+        assert "typo" in capsys.readouterr().err
+
+    def test_the_error_names_the_threads_still_waiting_on_a_person(self, rt, capsys):
+        rt._settle_targets(self._record(), ["typo"])
+        err = capsys.readouterr().err
+        assert "t1, t3" in err
+        assert "t2" not in err
+
+    def test_a_snapshot_with_nothing_left_to_settle_says_so(self, rt, capsys):
+        record = FixRecord(items=[ItemOutcome(id="t2", outcome=FixOutcome.FIXED)])
+        assert rt._settle_targets(record, ["typo"]) is None
+        assert "No thread in the fix snapshot is waiting" in capsys.readouterr().err
+
+
+class TestRecordSettlement:
+
+    def _outcome(self):
+        return ItemOutcome(id="t1", outcome=FixOutcome.NEEDS_HUMAN,
+                           reason="too complex to auto-fix")
+
+    def test_a_dismissal_carries_the_operators_own_words(self, rt):
+        """Its reply is the one a reviewer may argue with, so it is theirs to write."""
+        outcome = self._outcome()
+        assert rt._record_settlement(outcome, FixOutcome.DISMISSED, "not our layer", "")
+        assert outcome.outcome is FixOutcome.DISMISSED
+        assert outcome.reason == "not our layer"
+
+    def test_a_fix_records_where_the_settlement_came_from(self, rt):
+        outcome = self._outcome()
+        assert rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        assert outcome.reason == rt._SETTLED_REASON
+        assert outcome.commit_sha == "abc1234"
+
+    def test_saying_the_same_thing_twice_is_a_no_op(self, rt):
+        outcome = self._outcome()
+        rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        assert rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234") is False
+
+    def test_a_commit_that_has_since_become_resolvable_is_a_change(self, rt):
+        """Reporting it as a no-op would leave a row uncited that can now cite."""
+        outcome = self._outcome()
+        rt._record_settlement(outcome, FixOutcome.FIXED, "", "")
+        assert rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+
+    def test_an_earlier_attribution_survives_a_re_settle_that_found_none(self, rt):
+        outcome = self._outcome()
+        rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        rt._record_settlement(outcome, FixOutcome.FIXED, "", "")
+        assert outcome.commit_sha == "abc1234"
+
+    @pytest.mark.parametrize("kind,reason", [
+        (FixOutcome.DISMISSED, "not our layer"),
+        (FixOutcome.ALREADY_ADDRESSED, ""),
+    ])
+    def test_an_ending_that_cites_no_commit_drops_the_one_it_replaced(
+        self, rt, kind, reason,
+    ):
+        """"Dismissed, fixed in abc1234" is not a state the operator can have meant."""
+        outcome = self._outcome()
+        rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        assert rt._record_settlement(outcome, kind, reason, "")
+        assert outcome.commit_sha == ""
+
+
+class TestResolveSettledCommit:
+    """Which commit a hand-landed fix may cite, asked while the answer exists."""
+
+    def _outcome(self, line=1):
+        return ItemOutcome(id="t1", outcome=FixOutcome.NEEDS_HUMAN,
+                           file="a.py", line=line)
+
+    def test_infers_the_commit_that_changed_the_threads_own_line(self, rt, tmp_path):
+        repo = _hand_fixed(tmp_path)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "")
+        assert resolved.ok
+        assert resolved.sha == repo.sha[:7]
+
+    def test_an_unpushed_fix_is_still_recorded_but_cites_nothing(self, rt, tmp_path):
+        """A link into a commit the remote never saw is a 404 for the reviewer."""
+        repo = _hand_fixed(tmp_path, pushed=False)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "")
+        assert resolved.ok
+        assert resolved.sha == ""
+
+    def test_a_thread_with_no_line_cites_nothing_and_is_no_error(self, rt, tmp_path):
+        repo = _hand_fixed(tmp_path)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"):
+            resolved = rt._resolve_settled_commit(repo.path, self._outcome(line=0), "")
+        assert resolved.ok
+        assert resolved.sha == ""
+
+    def test_a_commit_this_worktree_does_not_have_stops_the_run(self, rt, tmp_path):
+        repo = _hand_fixed(tmp_path)
+        resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "nosuchref")
+        assert not resolved.ok
+        assert "nosuchref" in resolved.error
+
+    def test_an_unpushed_commit_the_operator_named_stops_the_run(self, rt, tmp_path):
+        """They asked for this citation, so declining it quietly is the wrong answer."""
+        repo = _hand_fixed(tmp_path, pushed=False)
+        resolved = rt._resolve_settled_commit(repo.path, self._outcome(), repo.sha)
+        assert not resolved.ok
+        assert "404" in resolved.error
+
+    def test_the_named_commit_is_taken_over_the_inferred_one(self, rt, tmp_path):
+        """The point of --commit: a fix that landed away from the anchored line."""
+        repo = _hand_fixed(tmp_path)
+        with patch.object(rt, "_find_addressing_commit") as infer:
+            resolved = rt._resolve_settled_commit(repo.path, self._outcome(), "HEAD")
+        infer.assert_not_called()
+        assert resolved.sha == repo.sha[:7]
+
+
+class TestRunSettle:
+    """The ending the fix pass cannot see, told to the CLI rather than to state.json."""
+
+    def _ctx(self, tmp_path):
+        return make_ctx(branch="feature", worktree_root=tmp_path / "wt",
+                        head_sha="abc1234", target_dir=tmp_path / "target")
+
+    @staticmethod
+    def _needs_human(tid="t1"):
+        return ItemOutcome(id=tid, outcome=FixOutcome.NEEDS_HUMAN,
+                           summary="contested", reason="too complex to auto-fix",
+                           file="a.py", line=1)
+
+    def _save(self, ctx, *items):
+        pr_state.save_state(ctx.target_dir, _make_state(_fix(list(items))))
+
+    def _reload(self, ctx):
+        return pr_state.load_state(ctx.target_dir).fix
+
+    def _resolves_to(self, rt, sha):
+        return patch.object(rt, "_resolve_settled_commit",
+                            return_value=rt._SettledCommit(sha=sha))
+
+    def test_a_settled_thread_rejoins_the_ordinary_closeout(self, rt, tmp_path):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human())
+        assert rt._run_settle(ctx, ["t1"], "dismissed", "not our layer", "") == 0
+        fix = self._reload(ctx)
+        assert fix.fix.items[0].outcome is FixOutcome.DISMISSED
+        assert fix.fix.items[0].reason == "not our layer"
+        # Both gates --finish reads before it does anything, and both of what
+        # puts `⚠ closeout owed` back on `pr status`.
+        assert fix.replies_pending
+        assert fix.summary_deferred
+
+    def test_a_settled_fix_is_attributed_to_the_commit_carrying_it(self, rt, tmp_path):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human())
+        with self._resolves_to(rt, "abc1234"):
+            assert rt._run_settle(ctx, ["t1"], "fixed", "", "") == 0
+        outcome = self._reload(ctx).fix.items[0]
+        assert outcome.outcome is FixOutcome.FIXED
+        assert outcome.commit_sha == "abc1234"
+        assert outcome.reason == rt._SETTLED_REASON
+
+    def test_it_publishes_nothing_and_names_the_step_that_does(self, rt, tmp_path, capsys):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human())
+        with patch("proc.subprocess.run") as run:
+            assert rt._run_settle(ctx, ["t1"], "already_addressed", "", "") == 0
+        run.assert_not_called()
+        assert rt.pr_comments_fix.CLOSEOUT_COMMAND in capsys.readouterr().err
+
+    def test_a_dismissal_with_no_reason_writes_nothing(self, rt, tmp_path):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human())
+        assert rt._run_settle(ctx, ["t1"], "dismissed", "", "") == 1
+        assert self._reload(ctx).fix.items[0].outcome is FixOutcome.NEEDS_HUMAN
+
+    def test_no_fix_snapshot_names_the_pass_that_makes_one(self, rt, tmp_path, capsys):
+        assert rt._run_settle(self._ctx(tmp_path), ["t1"], "fixed", "", "") == 1
+        assert "pr comments --fix" in capsys.readouterr().err
+
+    def test_an_unknown_id_leaves_every_other_thread_alone(self, rt, tmp_path):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human("t1"), self._needs_human("t2"))
+        with self._resolves_to(rt, "abc1234"):
+            assert rt._run_settle(ctx, ["t1", "typo"], "fixed", "", "") == 1
+        assert [o.outcome for o in self._reload(ctx).fix.items] == \
+            [FixOutcome.NEEDS_HUMAN] * 2
+
+    def test_an_unresolvable_commit_discards_the_whole_run(self, rt, tmp_path):
+        """Half a run recorded is the state surgery this command exists to replace."""
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human("t1"), self._needs_human("t2"))
+        answers = [rt._SettledCommit(sha="abc1234"),
+                   rt._SettledCommit(error="--commit names no commit")]
+        with patch.object(rt, "_resolve_settled_commit", side_effect=answers):
+            assert rt._run_settle(ctx, ["t1", "t2"], "fixed", "", "") == 1
+        assert [o.outcome for o in self._reload(ctx).fix.items] == \
+            [FixOutcome.NEEDS_HUMAN] * 2
+
+    def test_recording_the_same_settlement_twice_rewrites_nothing(
+        self, rt, tmp_path, capsys,
+    ):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human())
+        rt._run_settle(ctx, ["t1"], "dismissed", "not our layer", "")
+        state_file = ctx.target_dir / pr_state.STATE_FILE
+        before = state_file.read_text()
+        capsys.readouterr()
+        assert rt._run_settle(ctx, ["t1"], "dismissed", "not our layer", "") == 0
+        assert "already recorded as dismissed" in capsys.readouterr().err
+        assert state_file.read_text() == before
+
+    def test_a_different_ending_replaces_the_first_and_says_which(
+        self, rt, tmp_path, capsys,
+    ):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human())
+        rt._run_settle(ctx, ["t1"], "dismissed", "not our layer", "")
+        capsys.readouterr()
+        with self._resolves_to(rt, "abc1234"):
+            assert rt._run_settle(ctx, ["t1"], "fixed", "", "") == 0
+        assert "(was dismissed)" in capsys.readouterr().err
+        assert self._reload(ctx).fix.items[0].outcome is FixOutcome.FIXED
+
+    def test_a_fix_with_no_pushed_commit_says_how_its_row_will_read(
+        self, rt, tmp_path, capsys,
+    ):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human())
+        with self._resolves_to(rt, ""):
+            assert rt._run_settle(ctx, ["t1"], "fixed", "", "") == 0
+        err = capsys.readouterr().err
+        assert rt._RECONCILED_STATUS_TEXT in err
+        assert "--commit" in err
+
+
+class TestSettleIsNotAPublishingPhase:
+    """Recording is its own step, the way --post gates every other write."""
+
+    @pytest.mark.parametrize("flag", ["--post", "--finish", "--fix", "--triage"])
+    def test_it_refuses_to_run_alongside_a_phase_that_publishes(self, rt, capsys, flag):
+        argv = ["review-threads", "--settle", "t1", flag]
+        with patch.object(sys, "argv", argv), \
+             patch.object(rt.pr_context, "resolve") as resolve, \
+             pytest.raises(SystemExit) as exc:
+            rt.main()
+        assert exc.value.code == 1
+        resolve.assert_not_called()
+        assert flag in capsys.readouterr().err
+
+    def test_the_conflict_named_is_the_one_that_was_typed(self, rt, capsys):
+        """--fix widens itself into --triage; the operator did not type --triage."""
+        with patch.object(sys, "argv", ["review-threads", "--settle", "t1", "--fix"]), \
+             patch.object(rt.pr_context, "resolve"), \
+             pytest.raises(SystemExit):
+            rt.main()
+        err = capsys.readouterr().err
+        assert "--fix" in err
+        assert "--triage" not in err
+
+    def test_it_does_not_announce_a_draft_run_it_is_not(self, rt, capsys):
+        """Nothing here was ever going to be posted, drafted or otherwise."""
+        with patch.object(sys, "argv", ["review-threads", "--settle", "t1"]), \
+             patch.object(rt.pr_context, "resolve", return_value=make_ctx()), \
+             patch.object(rt, "_run_settle", return_value=0) as settle, \
+             pytest.raises(SystemExit) as exc:
+            rt.main()
+        assert exc.value.code == 0
+        assert "Draft mode" not in capsys.readouterr().err
+        assert settle.call_args[0][1] == ["t1"]
+
+
+class TestSettledRowsAreNotCreditedToThePass:
+    """The fix pass did not land this work, so its commit must not be named for it."""
+
+    def test_an_uncitable_settled_row_says_the_work_was_handled(self, rt):
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
+                            reason=rt._SETTLED_REASON)
+        cp = rt.CommitPushResult("aaa1111", "pushed", "")
+        cell = rt._fixed_status_for(entry, cp, "owner/repo")
+        assert cell == rt._RECONCILED_STATUS_TEXT
+        assert cell != rt._UNATTRIBUTED_STATUS_TEXT
+
+    def test_a_settled_row_that_resolved_a_commit_cites_that_one(self, rt):
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
+                            reason=rt._SETTLED_REASON, commit_sha="bbb2222")
+        cp = rt.CommitPushResult("aaa1111", "pushed", "")
+        cell = rt._fixed_status_for(entry, cp, "owner/repo")
+        assert "bbb2222" in cell
+        assert "aaa1111" not in cell
+
+
 # ── _post_deferred_replies ────────────────────────────────────────────────
 
 
@@ -6198,7 +6585,7 @@ class TestEvidencePermalinks:
 
 
 class TestWorktreeGuard:
-    """Both entry points fail the same actionable way with no worktree."""
+    """Every entry point fails the same actionable way with no worktree."""
 
     def _ctx(self):
         return make_ctx(branch="isaac/feat/x", worktree_root=None,
@@ -6211,6 +6598,11 @@ class TestWorktreeGuard:
     def test_finish_deferred_work_exits_with_guidance(self, rt, capsys):
         assert_no_worktree_exit(capsys, "isaac/feat/x",
                                 rt._finish_deferred_work, self._ctx(), PRReport())
+
+    def test_settle_exits_before_reading_the_snapshot(self, rt, capsys):
+        """A settled fix is attributed to a commit, which needs a checkout to find."""
+        assert_no_worktree_exit(capsys, "isaac/feat/x",
+                                rt._run_settle, self._ctx(), ["t1"], "fixed", "", "")
 
 
 class TestCommentTrackingRoundTrip:

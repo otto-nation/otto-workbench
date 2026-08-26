@@ -18,9 +18,9 @@ thread resolutions, and deferral issues are drafted to stderr; `--post` is what
 publishes them, and it is only ever passed after the user has read the drafts.
 
 `--post` is a gate, not a step. The phase flags — `--fix`, `--finish`,
-`--reply` — choose which work the run does; `--post` decides whether that work
-leaves the machine. Neither implies the other, so `--finish --post` is not
-saying "publish" twice.
+`--reply`, `--settle` — choose which work the run does; `--post` decides whether
+that work leaves the machine. Neither implies the other, so `--finish --post` is
+not saying "publish" twice.
 
 Run with `/pr-comments`, `/pr-comments <pr_number>`, or `/pr-comments <branch_name>`.
 
@@ -176,7 +176,8 @@ done — no further action needed.
 
 **If `needs_human` is non-empty:** present each with its reason and summary.
 Ask the user what to do for each:
-- **Fix it** — apply the edit inline, then commit and push
+- **Fix it** — apply the edit inline, commit and push, then record it with
+  `--settle` (Step 3a)
 - **Skip** — move on
 - **Reply** — compose a reply to the reviewer
 
@@ -199,6 +200,34 @@ the reviewer's premise was factually wrong.
 **Fallback for raw comments**: if `comment_items` is empty but unseen
 `issue_comments` or `review_body_comments` exist (e.g., when running without
 `--fix`/`--triage`), present unseen ones with the author and a summary as before.
+
+### Step 3a: Record threads settled by hand
+
+Whenever the user chose **Fix it** for a `needs_human` or `deferred` thread —
+the edit is applied, committed, and pushed — record that against the snapshot
+before Step 4. Nothing else tells the CLI it happened, and `--finish` would
+otherwise reply to nobody, resolve nothing, and publish a summary saying the
+thread still needs discussion.
+
+```bash
+pr comments --settle <thread_id> [--settle <thread_id> ...] [--repo-dir <PATH>]
+```
+
+`--settle` is repeatable and records `fixed` by default. `--as dismissed
+--reason "<text>"` records that the user rejected the reviewer's point — the
+reason becomes the reply, so it is required — and `--as already_addressed`
+records that the code already satisfied it. Only these three; a thread still
+awaiting an answer is not settled and stays as it is.
+
+`--as fixed` finds the commit from the branch history of the thread's line and
+cites it only once the remote holds it. Add `--commit <sha>` when the fix landed
+away from that line. If the run says it found no pushed commit, have the user
+push and re-run `--settle` rather than letting the row publish uncited.
+
+Recording is not publishing: `--settle` writes local state only and refuses
+`--post` and every other phase flag. Read back what it reports — it names the
+outcome it wrote for each thread, and says so when a thread already carried it —
+then continue to Step 4.
 
 ### Step 4: Present drafts and get approval
 
@@ -299,6 +328,12 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
   The queue is intact, and regenerating it means `--post` publishes text they
   never saw — the same violation as posting before approval
 - Never apply fixes without user confirmation for `needs_human` items
+- Never hand-edit `ignore/pr-comments/state.json` to mark a thread settled.
+  `--settle` is the supported path and resolves the commit the row will cite;
+  editing the file by hand is how a summary comes to claim a fix nobody can open
+- Never leave a thread the user fixed by hand unrecorded. `--finish` renders
+  from the snapshot, so an unrecorded fix publishes a summary that contradicts
+  the branch and keeps `pr status` reporting `⚠ closeout owed`
 - One reply per thread. If our position changed, revise the existing reply via
   `--reply` — a second comment leaves the reviewer holding two answers and no
   way to tell which one stands

@@ -1905,7 +1905,7 @@ def test_build_orchestrate_args_passes_recover_sha(cr, tmp_path):
     args = cr._build_orchestrate_args(
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        issue_context="", max_parallel=1, max_cost=None,
         model=None, recover_sha="abc1234", target_dir=tmp_path / "state",
     )
     assert args[args.index("--recover-sha") + 1] == "abc1234"
@@ -1915,7 +1915,7 @@ def test_build_orchestrate_args_omits_empty_recover_sha(cr, tmp_path):
     args = cr._build_orchestrate_args(
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        issue_context="", max_parallel=1, max_cost=None,
         model=None, target_dir=tmp_path / "state",
     )
     assert "--recover-sha" not in args
@@ -1927,7 +1927,7 @@ def test_build_orchestrate_args_passes_target_dir(cr, tmp_path):
     args = cr._build_orchestrate_args(
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        issue_context="", max_parallel=1, max_cost=None,
         model=None, target_dir=target,
     )
     assert args[args.index("--target-dir") + 1] == str(target)
@@ -1938,7 +1938,7 @@ def test_build_orchestrate_args_omits_an_unset_effort(cr, tmp_path):
     args = cr._build_orchestrate_args(
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        issue_context="", max_parallel=1, max_cost=None,
         model=None, target_dir=tmp_path / "state",
     )
     assert "--effort" not in args
@@ -1949,7 +1949,7 @@ def test_build_orchestrate_args_forwards_an_explicit_medium(cr, tmp_path):
     args = cr._build_orchestrate_args(
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        issue_context="", max_parallel=1, max_cost=None,
         model=None, effort="medium", target_dir=tmp_path / "state",
     )
     assert args[args.index("--effort") + 1] == "medium"
@@ -1959,7 +1959,7 @@ def test_build_orchestrate_args_omits_post_by_default(cr, tmp_path):
     args = cr._build_orchestrate_args(
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        issue_context="", max_parallel=1, max_cost=None,
         model=None, target_dir=tmp_path / "state",
     )
     assert "--post" not in args
@@ -1971,7 +1971,7 @@ def test_build_orchestrate_args_forwards_post(cr, tmp_path):
     args = cr._build_orchestrate_args(
         pr_number="1", repo="owner/repo", review_file=tmp_path / "review.md",
         wt_path="/wt", session_log="", prior_review_path="", issue_link="",
-        issue_context="", max_parallel=1, no_holistic=False, max_cost=None,
+        issue_context="", max_parallel=1, max_cost=None,
         model=None, target_dir=tmp_path / "state", post=True,
     )
     assert "--post" in args
@@ -2072,7 +2072,7 @@ def test_self_review_body_validates_recover(cr, tmp_path):
     with pytest.raises(SystemExit) as exc:
         cr._run_self_review_body(
             "owner/repo", "", str(tmp_path), "", 1,
-            False, None, None, False, MagicMock(),
+            None, None, False, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
             recover=True, head_sha="abc1234",
             ctx=_self_ctx(tmp_path), trail=MagicMock(),
@@ -2105,7 +2105,7 @@ def test_self_review_body_runs_recover_in_pinned_worktree(cr, tmp_path, monkeypa
     with pytest.raises(SystemExit):
         cr._run_self_review_body(
             "owner/repo", "", str(tmp_path), "", 1,
-            False, None, None, False, MagicMock(),
+            None, None, False, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
             recover=True, head_sha="def5678",
             ctx=_self_ctx(tmp_path), trail=MagicMock(),
@@ -2125,7 +2125,7 @@ def test_self_review_body_rejects_fix_on_drifted_recover(cr, tmp_path, monkeypat
     with pytest.raises(SystemExit) as exc:
         cr._run_self_review_body(
             "owner/repo", "", str(tmp_path), "", 1,
-            False, None, None, True, MagicMock(),
+            None, None, True, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
             recover=True, head_sha="def5678",
             ctx=_self_ctx(tmp_path), trail=MagicMock(),
@@ -2153,7 +2153,7 @@ def test_self_review_body_allows_fix_when_recover_has_not_drifted(cr, tmp_path, 
     with pytest.raises(SystemExit):
         cr._run_self_review_body(
             "owner/repo", "", str(tmp_path), "", 1,
-            False, None, None, True, MagicMock(),
+            None, None, True, MagicMock(),
             self_review_dir=tmp_path, branch_name="feat/x",
             recover=True, head_sha="abc1234",
             ctx=_self_ctx(tmp_path), trail=MagicMock(),
@@ -2485,7 +2485,7 @@ def test_self_review_refuses_before_it_fetches_anything(cr, tmp_path, monkeypatc
     with pytest.raises(SystemExit) as exc:
         cr._run_self_review_body(
             "acme/widget", None, str(tmp_path), "", 1,
-            False, None, None, False, _self_review_args(),
+            None, None, False, _self_review_args(),
             tmp_path, "feat/x",
             ctx=make_ctx(branch="feat/x", pr_number=None), trail=MagicMock(),
         )
@@ -2504,7 +2504,7 @@ def test_self_review_recovery_is_not_refused(cr, tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cr._run_self_review_body(
             "acme/widget", None, str(tmp_path), "", 1,
-            False, None, None, False, _self_review_args(recover=True),
+            None, None, False, _self_review_args(recover=True),
             tmp_path, "feat/x", recover=True,
             ctx=make_ctx(branch="feat/x", pr_number=None), trail=MagicMock(),
         )

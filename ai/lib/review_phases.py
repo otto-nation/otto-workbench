@@ -394,11 +394,19 @@ def _log_disprove_falsified(summary: dict) -> None:
 
 
 def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> bool:
+    """Whether the gate runs, with `--disprove` beating the effort preset.
+
+    `--no-disprove` is read off `skip_phases` rather than `skipped`, so the two
+    flags keep their precedence: `--disprove` buys back the gate a low-effort
+    preset dropped, and nothing buys back one the operator switched off.
+    """
+    if Phase.DISPROVE in job.skip_phases:
+        return False
     if explicit_disprove is True:
         return True
     if explicit_disprove is False:
         return False
-    return not EFFORT_PRESETS[job.effort].skip_disprove
+    return Phase.DISPROVE not in job.skipped
 
 
 # ── Group fan-out ────────────────────────────────────────────────────────────

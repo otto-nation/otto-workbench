@@ -28,7 +28,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import workbench_config
-from agent_types import Effort, Mode
+from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from pr_state import now_iso
 
 
@@ -362,6 +362,11 @@ class ReviewJob:
     preflight: PreflightData | None = None
     model: str = ""
     effort: Effort = Effort.MEDIUM
+    # What `--no-<phase>` switched off, kept apart from the effort preset's own
+    # skips rather than merged into them at construction: `--disprove` overrides
+    # the preset and must still lose to an explicit `--no-disprove`, which it
+    # cannot do once the two sources read the same.
+    skip_phases: frozenset[Phase] = frozenset()
     include_generated: bool = False
     reply_threads: dict = field(default_factory=dict)
     verification: dict | None = None
@@ -384,6 +389,16 @@ class ReviewJob:
         review rather than once per runner.
         """
         return workbench_config.load_config_or_default(self.wt_path)
+
+    @property
+    def skipped(self) -> frozenset[Phase]:
+        """Every phase this run will not run: the operator's plus the preset's.
+
+        The two sources are indistinguishable to a phase deciding whether to
+        run, and only the disprove gate — where ``--disprove`` beats the preset
+        — needs to tell them apart. It reads ``skip_phases`` directly.
+        """
+        return self.skip_phases | EFFORT_PRESETS[self.effort].skips
 
     @property
     def artifact_dir(self) -> str:

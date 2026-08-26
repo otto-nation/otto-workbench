@@ -97,6 +97,36 @@ def enum_arg(enum_cls: type[_EnumT]) -> Callable[[str], _EnumT]:
     return parse
 
 
+# ── Switching a phase off from the command line ──────────────────────────────
+#
+# `claude-review` and `review-orchestrate` both offer the flags and one forwards
+# them to the other, so all three sides are generated from the same registry
+# read: a phase declared `optional` gets its flag, its parse and its argv entry
+# at once, and nothing can offer a flag the pipeline has no path around.
+
+def _switchable() -> tuple[Phase, ...]:
+    return tuple(p for p in REVIEW_PHASES if PHASES[p].optional)
+
+
+def add_phase_skip_flags(parser: argparse.ArgumentParser) -> None:
+    """Add a ``--no-<phase>`` for every review phase that may be switched off."""
+    for phase in _switchable():
+        parser.add_argument(
+            f"--no-{phase}", action="store_true",
+            help=f"Skip the {PHASES[phase].label.lower()} phase",
+        )
+
+
+def phase_skips(args: argparse.Namespace) -> frozenset[Phase]:
+    """The phases ``--no-<phase>`` switched off on this command line."""
+    return frozenset(p for p in _switchable() if getattr(args, f"no_{p}", False))
+
+
+def phase_skip_argv(skips: frozenset[Phase]) -> list[str]:
+    """``skips`` as the flags that reproduce it on a child process's argv."""
+    return [f"--no-{p}" for p in _switchable() if p in skips]
+
+
 # ── Shared prompt blocks ─────────────────────────────────────────────────────
 #
 # Owned here rather than hand-copied into each template: every template that

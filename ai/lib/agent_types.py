@@ -172,6 +172,12 @@ class EffortPreset:
 
     ``thinking=None`` means the phase's own default stands; a level here
     flattens every phase to it, matching what WORKBENCH_AI_THINKING does.
+
+    ``skips`` names the phases the preset drops, rather than carrying a bool per
+    phase: a preset is a statement about how deep a review goes, and a phase
+    that becomes skippable should not need a field added to all three presets
+    before it can be. Only a phase whose spec is ``optional`` belongs in here —
+    ``test_agent_registry`` holds the presets to that.
     """
 
     thinking: Thinking | None
@@ -179,10 +185,7 @@ class EffortPreset:
     max_groups: int
     multi_phase_line_threshold: int
     multi_phase_file_threshold: int
-    skip_synthesis: bool
-    skip_holistic: bool
-    skip_scout: bool
-    skip_disprove: bool
+    skips: frozenset[Phase]
     skip_omitted_files: bool
     agent: AgentKind
 
@@ -197,10 +200,11 @@ EFFORT_PRESETS: dict[Effort, EffortPreset] = {
         max_groups=6,
         multi_phase_line_threshold=1000,
         multi_phase_file_threshold=15,
-        skip_synthesis=True,
-        skip_holistic=True,
-        skip_scout=True,
-        skip_disprove=True,
+        # Both scans, so phase 1 drops out entirely rather than falling back to
+        # the more expensive of the two.
+        skips=frozenset({
+            Phase.HOLISTIC, Phase.SCOUT, Phase.SYNTHESIS, Phase.DISPROVE,
+        }),
         skip_omitted_files=True,
         agent=AgentKind.REVIEWER_LITE,
     ),
@@ -210,10 +214,7 @@ EFFORT_PRESETS: dict[Effort, EffortPreset] = {
         max_groups=8,
         multi_phase_line_threshold=500,
         multi_phase_file_threshold=10,
-        skip_synthesis=False,
-        skip_holistic=False,
-        skip_scout=False,
-        skip_disprove=False,
+        skips=frozenset(),
         skip_omitted_files=False,
         agent=AgentKind.REVIEWER,
     ),
@@ -223,10 +224,7 @@ EFFORT_PRESETS: dict[Effort, EffortPreset] = {
         max_groups=16,
         multi_phase_line_threshold=500,
         multi_phase_file_threshold=10,
-        skip_synthesis=False,
-        skip_holistic=False,
-        skip_scout=False,
-        skip_disprove=False,
+        skips=frozenset(),
         skip_omitted_files=False,
         agent=AgentKind.REVIEWER,
     ),
@@ -315,12 +313,19 @@ class PhaseSpec:
     PR differently. Read it through ``template_for``, never directly: the
     mapping is the reason the caller-side ``if mode is SELF`` branches existed,
     and the point of declaring it here is that they do not have to.
+
+    ``optional`` says the phase may be switched off — by an effort preset's
+    ``skips`` or by the ``--no-<phase>`` flag generated from this field. It
+    defaults to off because that is the answer that cannot mislead: a phase
+    nobody marked optional keeps running, where the opposite default would offer
+    a flag for a phase the pipeline has no path around.
     """
 
     phase: Phase
     domain: PhaseDomain
     label: str
     template: str | Mapping[Mode, str] = ""
+    optional: bool = False
     model: str = "sonnet"
     thinking: Thinking | None = None
     max_turns: int = 15

@@ -295,7 +295,8 @@ claude-review post <pr_url_or_number>
 | `--self` | Self-review mode: output to `~/.local/state/workbench/reviews/<repo>-self-<branch>/review.md` | — |
 | `--skip-user-verification` | Skip ownership check in self-review mode | — |
 | `--force` | Skip pending review and stale review warnings | — |
-| `--no-holistic` | Skip holistic phase in multi-phase reviews | — |
+| `--no-<phase>` | Skip an optional phase of a multi-phase review — see below | — |
+| `--disprove` | Run the disprove gate even when the effort preset drops it | effort-based |
 | `--json-summary` | Suppress human output; emit JSON summary to stdout | — |
 | `--issue <link>` | Attach an issue link for reviewer context | — |
 | `--max-parallel <N>` | Max concurrent group reviews | `4` |
@@ -306,6 +307,16 @@ claude-review post <pr_url_or_number>
 | `-h`, `--help` | Show help | — |
 
 `--no-post` and `--post` are mutually exclusive.
+
+#### Switching a phase off
+
+Every phase the multi-phase pipeline has a path around is marked `optional` in `PHASES` ([`ai/lib/agent_registry.py`](../ai/lib/agent_registry.py)), and each one gets a `--no-<phase>` flag generated from that mark: `--no-holistic`, `--no-scout`, `--no-group`, `--no-synthesis`, `--no-disprove`. Marking a new phase optional is the whole change — the flag, its forwarding to `review-orchestrate`, and the pipeline's skip all read the same field.
+
+Phase 1 is one scan chosen from two candidates, so `--no-holistic` alone falls back to the scout scan and `--no-scout` alone falls back to the holistic scan. Only both together drop phase 1.
+
+`--no-group` and `--no-synthesis` leave the review partial rather than clean: the merge still runs and reports every group as `skipped`, and the status header says `partial`. A review that reviewed nothing must not read like one that found nothing.
+
+The `--effort` preset drops phases the same way — `low` skips the phase-1 scans, synthesis, and the disprove gate. `--disprove` buys the gate back from a preset that dropped it; `--no-disprove` beats `--disprove` and switches it off outright.
 
 #### What self-review reads
 

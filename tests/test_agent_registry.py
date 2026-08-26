@@ -13,7 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent_registry
 from agent_registry import PHASES, REVIEW_PHASES
-from agent_types import AgentKind, Phase, PhaseDomain, PhaseShape, Thinking
+from agent_types import (
+    EFFORT_PRESETS, AgentKind, Phase, PhaseDomain, PhaseShape, Thinking,
+)
 
 
 class TestPhasesRegistry:
@@ -170,6 +172,35 @@ class TestPhaseShapes:
         # three because ai_backend has three entry points, so a shape no phase
         # reaches would be a fourth one nothing runs.
         assert {s.shape for s in PHASES.values()} == set(PhaseShape)
+
+
+class TestOptionalPhases:
+    """`optional` is what earns a phase a `--no-<phase>` and a place in `skips`.
+
+    Nothing else decides either, so a phase marked optional by accident offers
+    the operator a flag the pipeline has no path around.
+    """
+
+    def test_the_optional_review_phases(self):
+        optional = {p for p in REVIEW_PHASES if PHASES[p].optional}
+        assert optional == {
+            Phase.HOLISTIC, Phase.SCOUT, Phase.GROUP,
+            Phase.SYNTHESIS, Phase.DISPROVE,
+        }
+
+    def test_single_is_not_optional(self):
+        # A review with no reviewing phase is not a shallower review.
+        assert PHASES[Phase.SINGLE].optional is False
+
+    def test_phases_default_to_required(self):
+        outside = {p for p, s in PHASES.items() if p not in REVIEW_PHASES}
+        assert outside
+        assert not any(PHASES[p].optional for p in outside)
+
+    def test_every_preset_skip_is_optional(self):
+        for effort, preset in EFFORT_PRESETS.items():
+            for phase in preset.skips:
+                assert PHASES[phase].optional, f"{effort} skips required {phase}"
 
 
 class TestPhaseAgentPins:

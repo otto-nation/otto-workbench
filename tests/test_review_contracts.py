@@ -32,6 +32,8 @@ from conftest import make_ctx  # noqa: E402
 import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
 import review_common  # noqa: E402
+from agent_registry import PHASES  # noqa: E402
+from agent_types import Mode, Phase  # noqa: E402
 import review_findings  # noqa: E402
 import review_fix  # noqa: E402
 import review_prompt  # noqa: E402
@@ -46,29 +48,17 @@ from review_types import (  # noqa: E402
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _extract_template_assign(node: ast.Assign) -> tuple[str, str] | None:
-    """If node is a TEMPLATE_* = "..." assignment, return (name, value)."""
-    for target in node.targets:
-        if not isinstance(target, ast.Name):
-            continue
-        if not target.id.startswith("TEMPLATE_"):
-            continue
-        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            return (target.id, node.value.value)
-    return None
+def _declared_templates() -> dict[Phase, set[str]]:
+    """Return {phase: every template it renders} for the phases declaring one.
 
-
-def _collect_template_constants() -> dict[str, str]:
-    """Return {constant_name: value} for all TEMPLATE_* constants in review_common."""
-    tree = ast.parse((LIB_DIR / "review_common.py").read_text())
-    constants: dict[str, str] = {}
-    for node in ast.iter_child_nodes(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        pair = _extract_template_assign(node)
-        if pair:
-            constants[pair[0]] = pair[1]
-    return constants
+    Asked through `template_for` for each mode rather than off the field, so a
+    mode-keyed spec that names a template for one mode and not the other fails
+    here rather than at the review that reaches for the missing one.
+    """
+    return {
+        phase: {spec.template_for(mode) for mode in Mode}
+        for phase, spec in PHASES.items() if spec.template
+    }
 
 
 def _template_files() -> set[str]:
@@ -103,33 +93,30 @@ def _python_scripts_with_shebang() -> list[Path]:
 
 
 class TestTemplateFileConsistency:
-    """Every TEMPLATE_* constant maps to a file and vice versa."""
+    """Every template a phase declares maps to a file and vice versa."""
 
-    def test_every_template_constant_has_a_file(self):
-        constants = _collect_template_constants()
-        md_constants = {
-            name: val for name, val in constants.items() if val.endswith(".md")
-        }
-        assert md_constants, "No TEMPLATE_* constants ending in .md found"
+    def test_every_declared_template_has_a_file(self):
+        declared = _declared_templates()
+        assert declared, "No phase in the registry declares a template"
 
         files = _template_files()
         missing = {
-            name: val for name, val in md_constants.items() if val not in files
+            phase: sorted(names - files)
+            for phase, names in declared.items() if names - files
         }
         assert not missing, (
-            "TEMPLATE_* constants reference files that do not exist:\n"
-            + "\n".join(f"  - {name} = {val!r}" for name, val in sorted(missing.items()))
+            "Phases declare templates that do not exist:\n"
+            + "\n".join(f"  - {p}: {n}" for p, n in sorted(missing.items()))
         )
 
-    def test_every_template_file_has_a_constant(self):
-        constants = _collect_template_constants()
-        constant_values = {val for val in constants.values() if val.endswith(".md")}
+    def test_every_template_file_is_declared(self):
+        declared = set().union(*_declared_templates().values())
         files = _template_files()
         assert files, "No .md files found in review-templates/"
 
-        unreferenced = sorted(files - constant_values)
+        unreferenced = sorted(files - declared)
         assert not unreferenced, (
-            "Template files not referenced by any TEMPLATE_* constant:\n"
+            "Template files no phase declares:\n"
             + "\n".join(f"  - {f}" for f in unreferenced)
         )
 
@@ -366,24 +353,28 @@ def _make_review_job(**overrides) -> ReviewJob:
 
 # Extra kwargs each handler-backed template needs, keyed by template filename.
 _BUILD_PROMPT_EXTRAS = {
-    review_common.TEMPLATE_SINGLE: {},
-    review_common.TEMPLATE_SELF_REVIEW: {"branch_name": "user/feat/thing"},
-    review_common.TEMPLATE_HOLISTIC: {"holistic_output": "/tmp/reviews/holistic.md"},
-    review_common.TEMPLATE_SCOUT: {"scout_output": "/tmp/reviews/scout.md"},
-    review_common.TEMPLATE_DISPROVE: {
+    PHASES[Phase.SINGLE].template_for(): {},
+    PHASES[Phase.SINGLE].template_for(Mode.SELF): {
+        "branch_name": "user/feat/thing",
+    },
+    PHASES[Phase.HOLISTIC].template_for(): {
+        "holistic_output": "/tmp/reviews/holistic.md",
+    },
+    PHASES[Phase.SCOUT].template_for(): {"scout_output": "/tmp/reviews/scout.md"},
+    PHASES[Phase.DISPROVE].template_for(): {
         "disprove_output": "/tmp/reviews/disprove.md",
         "review_content": "- [M1] something",
     },
-    review_common.TEMPLATE_GROUP: {
+    PHASES[Phase.GROUP].template_for(): {
         "group_idx": 1, "group_count": 2, "group_name": "core",
         "group_files_formatted": "- a.py",
         "group_file_paths": ["a.py"],
         "group_output": "/tmp/reviews/group-1.md",
     },
-    review_common.TEMPLATE_SYNTHESIS: {
+    PHASES[Phase.SYNTHESIS].template_for(): {
         "group_count": 2, "merged_content": "## Must fix\n",
     },
-    review_common.TEMPLATE_SELF_SYNTHESIS: {
+    PHASES[Phase.SYNTHESIS].template_for(Mode.SELF): {
         "group_count": 2, "merged_content": "## Must fix\n",
         "branch_name": "user/feat/thing",
     },
@@ -498,8 +489,9 @@ class TestTemplateRendering:
     def test_every_template_is_covered(self):
         """A new template must be added to this file's render coverage."""
         covered = set(_BUILD_PROMPT_EXTRAS) | {
-            review_common.TEMPLATE_FIX,
-            review_common.TEMPLATE_FIX_CI, review_common.TEMPLATE_FIX_COMMENTS,
+            PHASES[Phase.FIX].template_for(),
+            PHASES[Phase.CI_FIX].template_for(),
+            PHASES[Phase.COMMENTS_FIX].template_for(),
         }
         uncovered = sorted(
             name for name in _template_files() - covered
@@ -541,14 +533,16 @@ class TestOutputBlockContract:
     # b.output(...) call, so the assertion compares against the block the
     # builder actually produces rather than a restated copy of its wording.
     _OUTPUT_BLOCKS = [
-        (review_common.TEMPLATE_HOLISTIC, "/tmp/reviews/holistic.md", False),
-        (review_common.TEMPLATE_SCOUT, "/tmp/reviews/scout.md", False),
-        (review_common.TEMPLATE_DISPROVE, "/tmp/reviews/disprove.md", False),
-        (review_common.TEMPLATE_GROUP, "/tmp/reviews/group-1.md", False),
-        (review_common.TEMPLATE_SYNTHESIS, "/tmp/reviews/review.md", False),
-        (review_common.TEMPLATE_SELF_SYNTHESIS, "/tmp/reviews/review.md", False),
-        (review_common.TEMPLATE_SINGLE, "/tmp/reviews/review.md", True),
-        (review_common.TEMPLATE_SELF_REVIEW, "/tmp/reviews/review.md", True),
+        (PHASES[Phase.HOLISTIC].template_for(), "/tmp/reviews/holistic.md", False),
+        (PHASES[Phase.SCOUT].template_for(), "/tmp/reviews/scout.md", False),
+        (PHASES[Phase.DISPROVE].template_for(), "/tmp/reviews/disprove.md", False),
+        (PHASES[Phase.GROUP].template_for(), "/tmp/reviews/group-1.md", False),
+        (PHASES[Phase.SYNTHESIS].template_for(), "/tmp/reviews/review.md", False),
+        (PHASES[Phase.SYNTHESIS].template_for(Mode.SELF),
+         "/tmp/reviews/review.md", False),
+        (PHASES[Phase.SINGLE].template_for(), "/tmp/reviews/review.md", True),
+        (PHASES[Phase.SINGLE].template_for(Mode.SELF),
+         "/tmp/reviews/review.md", True),
     ]
 
     @pytest.mark.parametrize(
@@ -658,11 +652,12 @@ class TestPromptBudgetAccounting:
             for p in self._PATHS
         )
         job.preflight.file_contents = {}
-        extra = dict(_BUILD_PROMPT_EXTRAS[review_common.TEMPLATE_GROUP])
+        group_template = PHASES[Phase.GROUP].template_for()
+        extra = dict(_BUILD_PROMPT_EXTRAS[group_template])
         extra["group_file_paths"] = list(self._PATHS)
         extra["group_files_formatted"] = files_formatted
         return review_prompt.build_prompt(
-            review_common.TEMPLATE_GROUP, job, max_turns=15, **extra,
+            group_template, job, max_turns=15, **extra,
         )
 
     def test_large_section_shrinks_the_diff_instead_of_the_prompt_budget(self):

@@ -18,14 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import log
 from trail import Trail, add_trail_args
 from agent_registry import PHASES
-from agent_types import Phase
+from agent_types import Mode, Phase
 from review_common import (
     META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
 )
 from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,
 )
-from review_types import Mode, ReviewType
+from review_types import ReviewType
 
 SCRIPT = Path(__file__).name
 REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."

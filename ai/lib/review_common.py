@@ -2,9 +2,9 @@
 
 This module is the contract between review-orchestrate and review-post.
 Both scripts import from here instead of defining their own constants. The
-vocabulary they name those constants alongside — severities, modes, findings,
-the job a run threads through — is `review_types`', so a consumer that only
-needs a noun does not take the artifact layout with it.
+vocabulary they name those constants alongside — severities, findings, the job
+a run threads through — is `review_types`', so a consumer that only needs a
+noun does not take the artifact layout with it.
 
 Each review owns a directory under `~/.local/state/workbench/reviews/` —
 `review.md` plus its session logs, group outputs, and pipeline state. The
@@ -95,21 +95,6 @@ def enum_arg(enum_cls: type[_EnumT]) -> Callable[[str], _EnumT]:
             ) from None
 
     return parse
-
-
-# ── Templates ────────────────────────────────────────────────────────────────
-
-TEMPLATE_SINGLE = "single-agent.md"
-TEMPLATE_HOLISTIC = "holistic.md"
-TEMPLATE_GROUP = "group.md"
-TEMPLATE_SYNTHESIS = "synthesis.md"
-TEMPLATE_SELF_REVIEW = "self-review.md"
-TEMPLATE_SELF_SYNTHESIS = "self-review-synthesis.md"
-TEMPLATE_SCOUT = "scout.md"
-TEMPLATE_DISPROVE = "disprove.md"
-TEMPLATE_FIX = "fix-findings.md"
-TEMPLATE_FIX_COMMENTS = "fix-comments.md"
-TEMPLATE_FIX_CI = "fix-ci.md"
 
 
 # ── Shared prompt blocks ─────────────────────────────────────────────────────

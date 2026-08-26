@@ -51,7 +51,7 @@ import proc  # noqa: E402
 import publishing  # noqa: E402
 
 from pr_context import detect_repo  # noqa: E402
-from agent_types import Effort  # noqa: E402
+from agent_types import Effort, Mode  # noqa: E402
 from review_common import (  # noqa: E402
     FILENAME_SESSION, PIPELINE_MULTI, PIPELINE_SINGLE,
     _derive_path, enum_arg, stamp_reviewed,
@@ -59,7 +59,7 @@ from review_common import (  # noqa: E402
 from review_preflight import (  # noqa: E402
     DEFAULT_MAX_PARALLEL, collect_preflight_data, fetch_reply_threads,
 )
-from review_types import Mode, ReviewJob, ViewerRole  # noqa: E402
+from review_types import ReviewJob, ViewerRole  # noqa: E402
 from agent_invoke import QuotaThrottle  # noqa: E402
 from review_fix import run_fix_pass  # noqa: E402
 from review_gc import cleaned_on_success  # noqa: E402

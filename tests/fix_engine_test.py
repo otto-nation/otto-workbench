@@ -25,8 +25,8 @@ import agent_invoke  # noqa: E402
 import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
 import land  # noqa: E402
-import review_common  # noqa: E402
 from agent_diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
+from agent_registry import PHASES  # noqa: E402
 from agent_types import Phase  # noqa: E402
 from fix_types import FixItem  # noqa: E402
 from pr_fix import CommitStatus, FixOutcome  # noqa: E402
@@ -38,13 +38,12 @@ from pr_fix import CommitStatus, FixOutcome  # noqa: E402
 class StubAdapter(fix_engine.FixAdapter):
     """A domain that hands over `count` items and records what came back.
 
-    `fix-ci.md` is borrowed as the template because it asks for nothing beyond
-    the substitutions the engine supplies — `template_vars` returning nothing
-    is then a real statement rather than a stub's convenience.
+    `ci_fix` is borrowed as the phase because its template asks for nothing
+    beyond the substitutions the engine supplies — `template_vars` returning
+    nothing is then a real statement rather than a stub's convenience.
     """
 
-    phase = Phase.COMMENTS_FIX
-    template = review_common.TEMPLATE_FIX_CI
+    phase = Phase.CI_FIX
     title = "Stub Fix Tracking"
     action = "fixing things"
     item_noun = "item"
@@ -139,7 +138,7 @@ def test_a_pass_with_no_items_runs_nothing(tmp_path, landed, head):
 
 def test_work_over_the_chunk_size_is_split(tmp_path, landed, head):
     """One prompt holding every item is what starved the pass of turns."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(Phase.COMMENTS_FIX)
+    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     run, inv = _run(adapter)
 
@@ -149,7 +148,7 @@ def test_work_over_the_chunk_size_is_split(tmp_path, landed, head):
 
 def test_every_item_is_answered_exactly_once_across_batches(tmp_path, landed, head):
     """A batch rewrites the shared file, so a lost batch would read as deferred."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(Phase.COMMENTS_FIX)
+    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 3)
     run, _ = _run(adapter)
 
@@ -159,30 +158,31 @@ def test_every_item_is_answered_exactly_once_across_batches(tmp_path, landed, he
 
 def test_a_batch_is_named_by_its_position(tmp_path, landed, head):
     """An operator watching the log has to be able to tell them apart."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(Phase.COMMENTS_FIX)
+    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     _, inv = _run(adapter)
 
+    label = PHASES[StubAdapter.phase].label
     labels = [c.kwargs["label"] for c in inv.call_args_list]
-    assert labels == ["Fix pass (batch 1/2)", "Fix pass (batch 2/2)"]
+    assert labels == [f"{label} (batch 1/2)", f"{label} (batch 2/2)"]
 
 
 def test_a_single_batch_is_not_numbered(tmp_path, landed, head):
     _, inv = _run(StubAdapter(tmp_path, count=2))
-    assert inv.call_args.kwargs["label"] == "Fix pass"
+    assert inv.call_args.kwargs["label"] == PHASES[StubAdapter.phase].label
 
 
 def test_the_batch_budget_is_sized_to_the_batch(tmp_path, landed, head):
     """The remainder chunk must not be charged for the whole pass's items."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(Phase.COMMENTS_FIX)
+    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     run, inv = _run(adapter)
 
     turns = [c.kwargs["max_turns"] for c in inv.call_args_list]
     assert turns[0] == fix_engine.agent_phases.phase_turns(
-        Phase.COMMENTS_FIX, items=chunk)
+        StubAdapter.phase, items=chunk)
     assert turns[1] == fix_engine.agent_phases.phase_turns(
-        Phase.COMMENTS_FIX, items=1)
+        StubAdapter.phase, items=1)
     # The pass reports the largest batch's budget, not the remainder's.
     assert run.max_turns == max(turns)
 
@@ -295,7 +295,7 @@ def test_a_stalled_batch_has_already_had_its_retry(tmp_path, landed, head):
 
 def test_one_stalled_batch_does_not_cost_the_others_their_retry(tmp_path, landed, head):
     """The bug the partition exists for: a stalled batch swallowing the retry."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(Phase.COMMENTS_FIX)
+    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     calls = []
 
@@ -410,7 +410,7 @@ def test_a_backend_failure_reaches_the_caller(tmp_path, landed, head):
 
 def test_the_worst_batch_s_exit_code_wins(tmp_path, landed, head):
     """A clean second batch must not paper over a first one that died."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(Phase.COMMENTS_FIX)
+    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     calls = []
 
@@ -497,7 +497,7 @@ def test_the_pass_is_billed_to_the_phase_and_the_pr(tmp_path, landed, head):
     adapter.pr = "42"
     _, inv = _run(adapter)
 
-    assert inv.call_args.args[0] is Phase.COMMENTS_FIX
+    assert inv.call_args.args[0] is StubAdapter.phase
     assert inv.call_args.kwargs["repo"] == "owner/repo"
     assert inv.call_args.kwargs["pr"] == "42"
 

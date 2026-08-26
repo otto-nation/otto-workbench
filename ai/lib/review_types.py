@@ -1,9 +1,8 @@
 """The review subsystem's vocabulary: the nouns, with no behaviour around them.
 
-A severity, a mode, a disposition, a finding, a review's attribution, and the
-job a run threads through every phase. Everything here is a type or a constant
-that names one — the modules above hold the code that parses, renders, merges
-and runs.
+A severity, a disposition, a finding, a review's attribution, and the job a run
+threads through every phase. Everything here is a type or a constant that names
+one — the modules above hold the code that parses, renders, merges and runs.
 
 The split is about fan-in. `Finding` had 14 consumers and lived beside evidence
 verification and document surgery, so wanting the dataclass meant importing all
@@ -29,7 +28,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import workbench_config
-from agent_types import Effort
+from agent_types import Effort, Mode
 from pr_state import now_iso
 
 
@@ -146,14 +145,7 @@ DISPOSITION_TAIL_PUNCTUATION = "—–:(-."
 _DISPOSITION_TAIL_RE = re.compile(rf"^\s*(?:[{re.escape(DISPOSITION_TAIL_PUNCTUATION)}]|$)")
 
 
-# ── Modes ────────────────────────────────────────────────────────────────────
-
-
-class Mode(StrEnum):
-    """What the review is reviewing: an open PR or the working branch."""
-
-    PR = "pr"
-    SELF = "self"
+# ── Coverage ─────────────────────────────────────────────────────────────────
 
 
 class ReviewType(StrEnum):

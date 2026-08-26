@@ -23,26 +23,33 @@ the keys it advertises.
 from __future__ import annotations
 
 from agent_types import (
-    AgentKind, ItemScaling, Phase, PhaseDomain, PhaseShape, PhaseSpec,
+    AgentKind, ItemScaling, Mode, Phase, PhaseDomain, PhaseShape, PhaseSpec,
     RetryBudget, Thinking,
 )
 
 _SPECS: tuple[PhaseSpec, ...] = (
+    # `single` and `synthesis` are the two phases a self-review prompts
+    # differently: there is no PR description to read and no author to address,
+    # so each names a template per mode rather than one for both.
     PhaseSpec(
         Phase.SINGLE, PhaseDomain.REVIEW, "Review",
+        template={Mode.PR: "single-agent.md", Mode.SELF: "self-review.md"},
         thinking=Thinking.MEDIUM, max_turns=15,
     ),
     PhaseSpec(
         Phase.HOLISTIC, PhaseDomain.REVIEW, "Holistic scan",
+        template="holistic.md",
         thinking=Thinking.MEDIUM, max_turns=15,
     ),
     PhaseSpec(
         Phase.SCOUT, PhaseDomain.REVIEW, "Scout",
+        template="scout.md",
         thinking=Thinking.LOW, max_turns=10,
         agent=AgentKind.REVIEWER_LITE,
     ),
     PhaseSpec(
         Phase.GROUP, PhaseDomain.REVIEW, "Group review",
+        template="group.md",
         thinking=Thinking.LOW, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
     ),
@@ -51,17 +58,21 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # their checklist instead, through `scaling`.
     PhaseSpec(
         Phase.SYNTHESIS, PhaseDomain.REVIEW, "Synthesis",
+        template={Mode.PR: "synthesis.md",
+                  Mode.SELF: "self-review-synthesis.md"},
         thinking=Thinking.MEDIUM, max_turns=15,
         scales_with_omitted=False,
     ),
     PhaseSpec(
         Phase.DISPROVE, PhaseDomain.REVIEW, "Disprove",
+        template="disprove.md",
         thinking=Thinking.MEDIUM, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
         scales_with_omitted=False,
     ),
     PhaseSpec(
         Phase.FIX, PhaseDomain.REVIEW, "Fix pass",
+        template="fix-findings.md",
         thinking=Thinking.LOW, max_turns=20,
         shape=PhaseShape.FIX,
         scales_with_omitted=False,
@@ -73,6 +84,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # that covers a single item and a cap one agent can finish inside.
     PhaseSpec(
         Phase.COMMENTS_FIX, PhaseDomain.COMMENTS, "Fix pass",
+        template="fix-comments.md",
         max_turns=20, max_budget=2.0,
         shape=PhaseShape.FIX,
         scales_with_omitted=False,
@@ -88,6 +100,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # passes of that budget rather than one prompt holding all forty.
     PhaseSpec(
         Phase.CI_FIX, PhaseDomain.CI, "CI fix pass",
+        template="fix-ci.md",
         max_turns=20, max_budget=3.0,
         shape=PhaseShape.FIX,
         scales_with_omitted=False,

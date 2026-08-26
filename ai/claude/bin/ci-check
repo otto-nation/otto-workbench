@@ -37,7 +37,6 @@ import pr_domains
 import pr_state
 import publishing
 import run_lock
-import review_common
 import log
 import timeouts
 from agent_types import Phase
@@ -595,7 +594,6 @@ class CIFixAdapter(fix_engine.FixAdapter):
     """
 
     phase = Phase.CI_FIX
-    template = review_common.TEMPLATE_FIX_CI
     action = "fixing CI failures"
     item_noun = "failure"
     # The shared hint is written for review findings. This one names the same

@@ -13,10 +13,8 @@ from review_preflight import MAX_PROMPT_BYTES, MIN_DIFF_BYTES
 from review_types import (
     PRContext, PreflightData, PRMetadata, PriorDisposition, ReviewJob,
 )
-from agent_types import Effort
-from review_common import (
-    TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SYNTHESIS,
-)
+from agent_registry import PHASES
+from agent_types import Effort, Mode, Phase
 from review_findings import _parse_ledger_line
 from review_prompt import (
     _LEDGER_INSTRUCTION, _PROMPT_HANDLERS, _build_ci_failure_items,
@@ -252,16 +250,19 @@ class TestSharedPromptBodies:
         return builder.vars
 
     def test_scout_and_holistic_differ_only_in_output_target(self):
-        holistic = self._vars(TEMPLATE_HOLISTIC, holistic_output="/tmp/h.md")
-        scout = self._vars(TEMPLATE_SCOUT, scout_output="/tmp/s.md")
+        holistic = self._vars(PHASES[Phase.HOLISTIC].template_for(),
+                             holistic_output="/tmp/h.md")
+        scout = self._vars(PHASES[Phase.SCOUT].template_for(),
+                          scout_output="/tmp/s.md")
         assert holistic.keys() == scout.keys()
         differing = [k for k in holistic if holistic[k] != scout[k]]
         assert differing == ["output_block"]
 
     def test_synthesis_variants_differ_only_in_identity_and_prior_reviews(self):
         shared_extra = dict(group_count=2, merged_content="m", holistic_content="h")
-        pr = self._vars(TEMPLATE_SYNTHESIS, **shared_extra)
-        self_ = self._vars(TEMPLATE_SELF_SYNTHESIS, **shared_extra)
+        pr = self._vars(PHASES[Phase.SYNTHESIS].template_for(), **shared_extra)
+        self_ = self._vars(PHASES[Phase.SYNTHESIS].template_for(Mode.SELF),
+                            **shared_extra)
         assert set(pr) - set(self_) == {"pr_number", "pr_title", "reviews_section"}
         assert set(self_) - set(pr) == {"branch_name"}
         common_keys = set(pr) & set(self_)

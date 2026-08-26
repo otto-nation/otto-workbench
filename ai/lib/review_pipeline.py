@@ -24,7 +24,8 @@ from pathlib import Path
 import git_client
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
-from agent_types import EFFORT_PRESETS, Effort, Phase
+from agent_registry import PHASES
+from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from review_common import (
     count_severities,
     FILENAME_META,
@@ -32,8 +33,6 @@ from review_common import (
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
     PRIOR_DATE_RE,
-    TEMPLATE_SELF_REVIEW,
-    TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
     phase_log_path,
     phase_output_path,
@@ -56,7 +55,7 @@ from review_preflight import (
 from review_prior import record_prior_findings
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD,
-    Group, GroupSkip, Mode, PRContext, PRMetadata, ReviewJob, ReviewType,
+    Group, GroupSkip, PRContext, PRMetadata, ReviewJob, ReviewType,
 )
 from review_prompt import (
     _is_incremental, _scope_prior_review,
@@ -125,11 +124,11 @@ def _write_review_sidecar(job: ReviewJob):
 
 
 def run_single_agent(job: ReviewJob, disprove: bool | None = None):
-    template = TEMPLATE_SELF_REVIEW if job.mode == Mode.SELF else TEMPLATE_SINGLE
     runner = PhaseRunner(job, Phase.SINGLE)
     max_turns = runner.max_turns
     prompt = build_prompt(
-        template, job, max_turns=max_turns, branch_name=job.pr.head,
+        PHASES[Phase.SINGLE].template_for(job.mode), job,
+        max_turns=max_turns, branch_name=job.pr.head,
     )
     label = f"branch {job.pr.head}" if job.mode == Mode.SELF else f"PR #{job.pr_number} ({job.pr.title})"
     log.info(f"Running review agent on {label}...")
@@ -265,13 +264,12 @@ def _phase_synthesis(
     group_count: int, merged_content: str,
     skipped_groups: int = 0,
 ) -> PhaseResult:
-    synthesis_template = TEMPLATE_SELF_SYNTHESIS if job.mode == Mode.SELF else TEMPLATE_SYNTHESIS
-
     Path(job.review_file).write_text("")
 
     max_turns = _synthesis_max_turns(merged_content)
     prompt = build_prompt(
-        synthesis_template, job, max_turns=max_turns,
+        PHASES[Phase.SYNTHESIS].template_for(job.mode), job,
+        max_turns=max_turns,
         holistic_content=holistic_content, group_count=group_count,
         merged_content=merged_content, branch_name=job.pr.head,
     )

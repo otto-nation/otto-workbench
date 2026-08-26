@@ -19,14 +19,12 @@ import agent_templates
 import git_client
 import json
 import log
-from agent_types import EFFORT_PRESETS, Effort
+from agent_registry import PHASES
+from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from pr_domains import ReviewVerdict
 from review_common import (
     FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
-    TEMPLATE_DISPROVE,
-    TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
-    TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path, build_output_block, build_worktree_block,
 )
 from review_findings import (
@@ -1016,14 +1014,14 @@ def _prompt_disprove(job, common, extra):
 
 
 _PROMPT_HANDLERS = {
-    TEMPLATE_SELF_REVIEW: _prompt_self_review,
-    TEMPLATE_SELF_SYNTHESIS: _prompt_self_synthesis,
-    TEMPLATE_SINGLE: _prompt_single,
-    TEMPLATE_HOLISTIC: _prompt_holistic,
-    TEMPLATE_SCOUT: _prompt_scout,
-    TEMPLATE_GROUP: _prompt_group,
-    TEMPLATE_SYNTHESIS: _prompt_synthesis,
-    TEMPLATE_DISPROVE: _prompt_disprove,
+    PHASES[Phase.SINGLE].template_for(Mode.SELF): _prompt_self_review,
+    PHASES[Phase.SYNTHESIS].template_for(Mode.SELF): _prompt_self_synthesis,
+    PHASES[Phase.SINGLE].template_for(Mode.PR): _prompt_single,
+    PHASES[Phase.HOLISTIC].template_for(): _prompt_holistic,
+    PHASES[Phase.SCOUT].template_for(): _prompt_scout,
+    PHASES[Phase.GROUP].template_for(): _prompt_group,
+    PHASES[Phase.SYNTHESIS].template_for(Mode.PR): _prompt_synthesis,
+    PHASES[Phase.DISPROVE].template_for(): _prompt_disprove,
 }
 
 

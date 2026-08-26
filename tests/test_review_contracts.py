@@ -52,7 +52,7 @@ def _declared_templates() -> dict[Phase, set[str]]:
     """Return {phase: every template it renders} for the phases declaring one.
 
     Asked through `template_for` for each mode rather than off the field, so a
-    mode-keyed spec that names a template for one mode and not the other fails
+    mode-keyed spec that names a template for one mode and not the other raises
     here rather than at the review that reaches for the missing one.
     """
     return {

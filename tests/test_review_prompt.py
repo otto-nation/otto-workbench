@@ -261,10 +261,8 @@ class TestSharedPromptBodies:
     def test_synthesis_variants_differ_only_in_identity_and_prior_reviews(self):
         shared_extra = dict(group_count=2, merged_content="m", holistic_content="h")
         pr = self._vars(PHASES[Phase.SYNTHESIS].template_for(), **shared_extra)
-        holistic = self._vars(
-            PHASES[Phase.HOLISTIC].template_for(), holistic_output="/tmp/h.md")
-        scout = self._vars(
-            PHASES[Phase.SCOUT].template_for(), scout_output="/tmp/s.md")
+        self_ = self._vars(
+            PHASES[Phase.SYNTHESIS].template_for(Mode.SELF), **shared_extra)
         assert set(pr) - set(self_) == {"pr_number", "pr_title", "reviews_section"}
         assert set(self_) - set(pr) == {"branch_name"}
         common_keys = set(pr) & set(self_)

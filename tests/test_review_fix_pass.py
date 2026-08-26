@@ -111,6 +111,14 @@ def _tracking(job: ReviewJob) -> Path:
     return Path(job.artifact_dir) / fix_engine.TRACKING_FILENAME
 
 
+def _is_heading(line: str) -> bool:
+    return line.startswith("## <!-- fix:")
+
+
+def _heading_id(line: str) -> str:
+    return line.split("fix:")[1].split(" ")[0]
+
+
 def _answer(job: ReviewJob, boxes: dict[str, str], *, work=None):
     """A `run_fix` stub that ticks `boxes` on the checklist it finds on disk.
 
@@ -127,17 +135,24 @@ def _answer(job: ReviewJob, boxes: dict[str, str], *, work=None):
     def run_fix(_phase, _prompt, **_kwargs):
         if work:
             work()
+        text = tracking.read_text()
+        owed = {_heading_id(ln) for ln in text.splitlines() if _is_heading(ln)} & set(boxes)
         item = ""
-        out = []
-        for line in tracking.read_text().splitlines(keepends=True):
-            if line.startswith("## <!-- fix:"):
-                item = line.split("fix:")[1].split(" ")[0]
+        out: list[str] = []
+        for line in text.splitlines(keepends=True):
+            if _is_heading(line):
+                item = _heading_id(line)
             answer = boxes.get(item, "")
             label = answer.split(" — ")[0]
             if answer and line.startswith(f"- [ ] {label}"):
                 line = f"- [x] {answer}\n"
+                owed.discard(item)
             out.append(line)
         tracking.write_text("".join(out))
+        # A label this checklist has no box for ticks nothing, and the engine
+        # reads the silence as a deferral — which several assertions here would
+        # take for the answer they asked for. Fail on the typo instead.
+        assert not owed, f"no box matched the answer for: {sorted(owed)}"
         return agent_invoke.FixResult(0, None)
 
     return run_fix

@@ -156,8 +156,9 @@ def _describe(finding: Finding | None, outcome: ItemOutcome) -> str:
     """The one line a fixed finding is reported under.
 
     Its first body line, truncated, and its path when the body is empty. An id
-    the review no longer holds falls back to whatever the tracking file recorded
-    for it, which is the location it was rendered at.
+    the review no longer holds has no description to report, so the line names
+    the location the tracking file recorded for it — or, failing that, nothing
+    but the id.
     """
     if finding is None:
         return outcome.file or outcome.id

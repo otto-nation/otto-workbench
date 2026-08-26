@@ -25,6 +25,7 @@ import git_client
 import log
 import pr_context
 from agent_types import Mode
+from agent_types import Mode
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_common import PRIOR_SHA_RE
 from review_dedup import _get_bot_login

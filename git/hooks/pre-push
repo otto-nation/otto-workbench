@@ -86,6 +86,32 @@ nesting_base() {
   default_base_ref
 }
 
+# nesting_bases_common SHA... — the one commit every remote sha in $@ should be
+# measured against, on stdout, or nothing.
+#
+# `git push origin feat:main feat:release` moves the checked-out commit onto two
+# remote refs at once, and each destination has its own remote sha: one may be a
+# branch the remote already has, the other a new one falling back to the trunk.
+# A line the push adds is new to whichever destination is further behind, so the
+# common ancestor of the two bases is the only one that measures all of them.
+# Taking the last ref off stdin instead would let the other's lines through, on
+# an ordering nobody chose.
+nesting_bases_common() {
+  local rsha resolved
+  local -a bases=()
+  for rsha in "$@"; do
+    resolved="$(nesting_base "$rsha")" || return 1
+    bases+=("$resolved")
+  done
+  if [[ "${#bases[@]}" -eq 1 ]]; then
+    printf '%s\n' "${bases[0]}"
+    return 0
+  fi
+  # Unrelated bases have no ancestor to share, and merge-base says so with a
+  # non-zero status — which the caller reads as "no base", the whole-tree scan.
+  git merge-base --octopus "${bases[@]}"
+}
+
 # A push answers for the lines it adds, not for the state of the repository it
 # lands in. Measuring the whole tree refuses a push over violations that predate
 # it — debt the push cannot clear and did not create, in a gate whose purpose is
@@ -99,11 +125,18 @@ nesting_base() {
 # rather than passed off as checked. Tags and other non-branch refs are left
 # alone: their commits reached the remote through the branch that carried them.
 run_nesting_check() {
-  local head lref lsha rsha base tip="" adds=0 on_head=0 skipped=""
+  local head lref lsha rsha base adds=0 skipped=""
+  local -a tips=()
   head="$(git rev-parse --verify --quiet HEAD)" || head=""
   # <local ref> <local sha> <remote ref> <remote sha> — the remote ref is unread.
   while read -r lref lsha _ rsha; do
-    if [[ "$lref" != refs/heads/* ]]; then
+    # Tags and other non-branch refs are left alone, per the note above. `git
+    # push origin HEAD:main` is not one of them: git writes the local ref as
+    # the literal `HEAD`, and a `refs/heads/*` test alone drops that line —
+    # leaving a routine spelling of a branch push silently unmeasured. Anything
+    # outside refs/ falls through to the `lsha == head` test below, which is
+    # what actually decides whether the working tree answers for it.
+    if [[ "$lref" == refs/* && "$lref" != refs/heads/* ]]; then
       continue
     fi
     # An all-zero local sha is a deletion: it carries no lines to check.
@@ -112,8 +145,7 @@ run_nesting_check() {
     fi
     adds=$((adds + 1))
     if [[ -n "$head" && "$lsha" == "$head" ]]; then
-      on_head=1
-      tip="$rsha"
+      tips+=("$rsha")
       continue
     fi
     skipped="$skipped ${lref#refs/heads/}"
@@ -122,10 +154,10 @@ run_nesting_check() {
   if [[ -n "$skipped" ]]; then
     printf '⚠ nesting not checked for%s — not the checked-out commit\n' "$skipped" >&2
   fi
-  if [[ "$adds" -eq 0 || "$on_head" -eq 0 ]]; then
+  if [[ "$adds" -eq 0 || "${#tips[@]}" -eq 0 ]]; then
     return 0
   fi
-  base="$(nesting_base "$tip")" || base=""
+  base="$(nesting_bases_common "${tips[@]}")" || base=""
   if [[ -z "$base" ]]; then
     validate-nesting --quiet
     return

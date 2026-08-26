@@ -83,7 +83,7 @@ def resolve_default_branch(cwd: str | None = None) -> str:
 
 
 def default_base_ref(cwd: str | None = None) -> str | None:
-    """"GIT_REMOTE/<default branch>" when that ref resolves in `cwd`, else None.
+    """The `GIT_REMOTE/<default branch>` ref for `cwd`, or None if it resolves to nothing.
 
     The fallible half of the pair, for callers about to hand the answer to `git
     diff` or `git merge-base`. Composed from the two above rather than walking

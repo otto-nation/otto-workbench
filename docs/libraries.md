@@ -303,11 +303,11 @@ pre-push hook, and the surface-compatibility gate. Three of them spelled
 `origin/master` by hand, so a `master` repo got a different answer depending
 on which one asked.
 
-Two contracts, deliberately separate. [`resolve_default_branch`](#resolve_default_branch)
-always answers, because a caller printing a hint needs a name even when it is
-a guess. [`default_base_ref`](#default_base_ref) refuses to answer unless the
-ref is really there, because a caller about to diff against it turns a wrong
-guess into a failure with somebody else's error message on it.
+Two contracts, deliberately separate. `resolve_default_branch` always answers,
+because a caller printing a hint needs a name even when it is a guess.
+`default_base_ref` refuses to answer unless the ref is really there, because a
+caller about to diff against it turns a wrong guess into a failure with
+somebody else's error message on it.
 
 It has no dependencies, so a caller that has not loaded the facade can source
 it on its own — which the global pre-push hook does, since `lib/ai/core.sh`

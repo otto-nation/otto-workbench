@@ -184,6 +184,8 @@ commit_deep_script() {
   git -C "$TMPDIR/wt" checkout -q main
 
   run git -C "$TMPDIR/wt" push origin other:other
+  # Reported, and still allowed: unmeasured is not the same verdict as failed.
+  [ "$status" -eq 0 ]
   [[ "$output" == *"nesting not checked for other"* ]]
 }
 
@@ -193,6 +195,34 @@ commit_deep_script() {
   commit_deep_script deep.sh
 
   run git -C "$TMPDIR/wt" push origin main side
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
+}
+
+@test "one commit pushed to two destinations is measured against the older one" {
+  # The destinations disagree about what is new: `release` already holds the
+  # violation, `main` has never seen it. Both ref lines carry the checked-out
+  # sha, so taking whichever came last off stdin measures against `release` and
+  # lets the violation through. The common ancestor of the two bases is the one
+  # every added line is actually new to.
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script deep.sh
+  git -C "$TMPDIR/wt" push -q --no-verify origin main:release
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+
+  run git -C "$TMPDIR/wt" push origin main:release main:main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
+}
+
+@test "a HEAD:branch push is measured, not filtered out as a non-branch ref" {
+  # git writes the local ref of `HEAD:main` as the literal `HEAD`, so a
+  # refs/heads/ test alone drops the line and the gate never runs — on a
+  # spelling that pushes the checked-out commit like any other.
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script deep.sh
+
+  run git -C "$TMPDIR/wt" push origin HEAD:main
   [ "$status" -ne 0 ]
   [[ "$output" == *"nesting exceeds"* ]]
 }

@@ -3502,7 +3502,8 @@ def _fix_lands(result: land.LandResult | None = None):
     `tests/land_test.py`.
     """
     return mock.patch.object(
-        pr_rebase_cli.land, "land", return_value=result or _pushed(),
+        pr_rebase_cli.land, "land",
+        return_value=_pushed() if result is None else result,
     )
 
 

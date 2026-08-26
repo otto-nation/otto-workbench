@@ -120,7 +120,7 @@ def _git_step(git: list[str], step: list[str], env: dict[str, str]) -> None:
     `proc.run` rather than `git_client`: the client has no `env` parameter, and
     the whole point here is running with the inherited `GIT_DIR` and friends
     stripped. It also derives its bound from the subcommand, which would put
-    `init` and `checkout` on `LOCAL`.
+    `init` and `remote add` on `LOCAL`.
     """
     r = proc.run(git + step, env=env, timeout=timeouts.UNBOUNDED)
     if not r.ok:

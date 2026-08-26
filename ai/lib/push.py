@@ -42,7 +42,7 @@ commit nobody is pushing right now: whether the remote already has it.
 `gated` is required and has no default. Every caller in `ai/` passes `True` and
 differs only in what opens the gate: `pr comments`, `pr ci --fix` and the review
 fix pass open it under `--post`, and `pr rebase` opens it unless `--no-push`,
-because there force-pushing is the command rather than a side effect of it. The
+because there force-pushing is the command itself rather than a side effect. The
 gate is where that difference belongs — expressed as an entry point's decision
 rather than as an argument one caller passes differently, `--no-push` gets the
 drafted command and the resume line every other held push already gets. Only the

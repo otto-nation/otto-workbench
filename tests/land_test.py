@@ -239,20 +239,18 @@ def test_a_sha_the_remote_may_not_hold_is_never_citable(wt, status):
     assert landed.resume
 
 
-@pytest.mark.parametrize("status,held", [
-    (CommitStatus.PUSH_HELD, True),
-    (CommitStatus.PUSHED, False),
-    (CommitStatus.PUSH_FAILED, False),
-    (CommitStatus.NO_CHANGES, False),
-])
-def test_a_held_push_is_its_own_answer_rather_than_a_failure(status, held):
+@pytest.mark.parametrize("status", list(CommitStatus))
+def test_a_held_push_is_its_own_answer_rather_than_a_failure(status):
     """`--no-push` finishing as asked and a push that fell over are not one case.
 
     Read off `ok` alone the two are indistinguishable, and the caller that most
     needs them apart is `pr rebase`, whose held landing is the run succeeding.
+    Over the whole enum rather than a sample, so a status that starts answering
+    `held` — or `ok` — cannot arrive unnoticed.
     """
     landed = land.LandResult(status)
-    assert landed.held is held
+    assert landed.held is (status is CommitStatus.PUSH_HELD)
+    assert landed.ok is (status is CommitStatus.PUSHED)
     assert not (landed.held and landed.ok)
 
 

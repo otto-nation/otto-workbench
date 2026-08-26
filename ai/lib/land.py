@@ -15,7 +15,9 @@ records an outcome rather than reconstructing one from a `CmdResult` and a
 
 `land_head` is the same act for a caller whose commits already exist — `pr
 rebase` replays the branch's own, so it has nothing to stage and everything
-after that in common.
+after that in common. It is also the caller that reads `LandResult.held`: with
+the gate shut, a held landing is `pr rebase --no-push` finishing exactly as
+asked rather than a push that fell short, and `resume` is the line it prints.
 
 Three rules the passes disagreed on, settled here:
 

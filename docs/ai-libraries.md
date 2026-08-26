@@ -1556,7 +1556,9 @@ way `core.quotePath` does — `fetch` takes `TRANSFER`, the subcommands that wri
 the tree or run somebody's hooks run `UNBOUNDED`, and everything else is a
 flat-cost metadata read at `LOCAL` — so the knowledge lives with the client that
 owns it rather than at every call site, one of which used to pass a number of
-its own.
+its own. Where a single subcommand spans both classes the second argv word
+decides: `checkout --theirs <file>` and `stash drop` are named exceptions to the
+tier their subcommand otherwise takes.
 
 `config={"key": "value"}` becomes `-c key=value` ahead of the subcommand.
 `diff`, `ls-files` and `status` get `core.quotePath=false` by default: git
@@ -1613,7 +1615,9 @@ records an outcome rather than reconstructing one from a `CmdResult` and a
 
 `land_head` is the same act for a caller whose commits already exist — `pr
 rebase` replays the branch's own, so it has nothing to stage and everything
-after that in common.
+after that in common. It is also the caller that reads `LandResult.held`: with
+the gate shut, a held landing is `pr rebase --no-push` finishing exactly as
+asked rather than a push that fell short, and `resume` is the line it prints.
 
 Three rules the passes disagreed on, settled here:
 
@@ -1791,7 +1795,7 @@ commit nobody is pushing right now: whether the remote already has it.
 `gated` is required and has no default. Every caller in `ai/` passes `True` and
 differs only in what opens the gate: `pr comments`, `pr ci --fix` and the review
 fix pass open it under `--post`, and `pr rebase` opens it unless `--no-push`,
-because there force-pushing is the command rather than a side effect of it. The
+because there force-pushing is the command itself rather than a side effect. The
 gate is where that difference belongs — expressed as an entry point's decision
 rather than as an argument one caller passes differently, `--no-push` gets the
 drafted command and the resume line every other held push already gets. Only the
@@ -1960,7 +1964,7 @@ actually predicts the right answer is **what bounds the cost**:
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
-| `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash` | A bound would be wrong, not merely large. |
+| `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add` | A bound would be wrong, not merely large. |
 
 For the first three tiers the cost is the same whatever the repository holds, so
 a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —

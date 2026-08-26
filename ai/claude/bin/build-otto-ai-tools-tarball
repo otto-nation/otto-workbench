@@ -36,7 +36,7 @@ BASH_MODULES=(output.sh prompts.sh roots.sh)
 # Python modules from lib/ rather than ai/lib/, because a second subsystem
 # outside ai/ reads them too. The tarball flattens both directories into one
 # lib/, so they land beside the ai/lib modules that import them.
-WORKBENCH_PY_MODULES=(git_layout.py gitenv.py)
+WORKBENCH_PY_MODULES=(git_layout.py gitenv.py git_remote.py)
 
 # Files excluded from bin/ discovery (this script + support files)
 BIN_EXCLUDE="${0##*/}|_version.py"

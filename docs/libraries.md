@@ -292,6 +292,47 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 
 Loaded via `ui.sh`.
 
+### git_remote.sh
+
+The remote, its default branch, and whether a branch exists on it.
+
+One ladder for "which branch is trunk", because four callers had grown their
+own: the AI automation in `lib/ai/`, the global pre-push hook, this repo's own
+pre-push hook, and the surface-compatibility gate. Three of them spelled
+`main` as a literal and the fourth walked `origin/HEAD`, `origin/main`,
+`origin/master` by hand, so a `master` repo got a different answer depending
+on which one asked.
+
+Two contracts, deliberately separate. [`resolve_default_branch`](#resolve_default_branch)
+always answers, because a caller printing a hint needs a name even when it is
+a guess. [`default_base_ref`](#default_base_ref) refuses to answer unless the
+ref is really there, because a caller about to diff against it turns a wrong
+guess into a failure with somebody else's error message on it.
+
+It has no dependencies, so a caller that has not loaded the facade can source
+it on its own — which the global pre-push hook does, since `lib/ai/core.sh`
+would drag the whole AI configuration surface into every push on the machine:
+
+```bash
+. "$WORKBENCH_DIR/lib/git_remote.sh"
+base="$(default_base_ref)" || base=""
+```
+
+Every function takes the repository directory as its last optional argument,
+defaulting to `.`. `git -C .` is the cwd, so a caller that has already changed
+directory passes nothing and reads exactly as it did before. A positional and
+not a `-C` flag, so no bash array is needed to pass it on — see below.
+
+POSIX only, for the same reason `conventions.sh` is: `lib/ai/core.sh` sources
+both, and go-task runs the tasks that source it under `/bin/sh`. So no `[[`,
+no `<<<`, no arrays, no pattern-replacement expansion.
+
+| Function | Purpose |
+|----------|---------|
+| `resolve_default_branch [DIR]` | Resolves the remote's default branch and prints the name to stdout. DIR is the repository to ask, defaulting to the current directory. Always answers. |
+| `remote_branch_ref_exists BRANCH [DIR]` | True when BRANCH has a remote-tracking ref under $GIT_REMOTE (refs/remotes/$GIT_REMOTE/BRANCH) in DIR, which defaults to the current directory. |
+| `default_base_ref [DIR]` | Prints "$GIT_REMOTE/<default branch>" for DIR (default: the current directory) when that remote-tracking ref resolves, and returns 1 without printing when it does not. |
+
 ### gitenv.sh
 
 The inherited git environment, and how to stop it choosing the repository.
@@ -819,8 +860,6 @@ State set by its functions: `AI_COMMAND`, `AI_RESPONSE`.
 
 | Function | Purpose |
 |----------|---------|
-| `resolve_default_branch` | Resolves the remote's default branch and prints it to stdout. |
-| `remote_branch_ref_exists BRANCH` | True when BRANCH has a remote-tracking ref under $GIT_REMOTE (refs/remotes/$GIT_REMOTE/BRANCH). |
 | `load_ai_command` | Finds the AI config and validates the binary exists. Sets AI_COMMAND. Returns 1 on failure. |
 | `load_gh_token` | Resolves GH_TOKEN with per-org routing support. Returns 1 on failure. |
 | `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. When AGENT_OVERRIDE is provided, replaces --agent <name> in AI_COMMAND so different tasks can route to the appropriate agent. TASK_LABEL names the call in the usage ledger. Sets AI_RESPONSE. |

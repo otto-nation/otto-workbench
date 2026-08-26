@@ -524,8 +524,11 @@ Not-Breaking: command:beta — never installed"
   mkdir -p "$TMPDIR/notarepo"
   run "$GATE" --repo-dir "$TMPDIR/notarepo"
   [ "$status" -eq 128 ]
-  [[ "$output" == *"Could not resolve a merge base"* ]]
+  [[ "$output" == *"not a git repository"* ]]
   [[ "$output" != *"skipping surface comparison"* ]]
+  # Not the "no trunk ref to default --base to" refusal, whose advice is to
+  # fetch one — there is no repository here for a fetch to land in.
+  [[ "$output" != *"Fetch one with"* ]]
 }
 
 # jq's status is passed through rather than translated, so this asserts the

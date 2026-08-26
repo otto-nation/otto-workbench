@@ -23,6 +23,7 @@ from pathlib import Path
 import gh_client
 import git_client
 import log
+import pr_context
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_common import PRIOR_SHA_RE
 from review_dedup import _get_bot_login
@@ -41,8 +42,6 @@ MAX_GROUP_LINES = 800
 MAX_GROUP_FILES = 15
 DEFAULT_MAX_PARALLEL = 1
 HOLISTIC_MIN_GROUPS = 8
-
-DEFAULT_BASE_BRANCH = "main"
 
 GROUP_TIER1 = "tier1-critical"
 GROUP_TIER3 = "tier3-generated"
@@ -338,7 +337,7 @@ def _fit_to_budget(
 
 def collect_preflight_data(job: ReviewJob) -> PreflightData:
     wt = Path(job.wt_path)
-    base = job.pr.base or DEFAULT_BASE_BRANCH
+    base = job.pr.base or pr_context.default_branch(wt)
 
     diff, commit_log = _collect_git_data(
         job.wt_path, base, job.pr.files, include_worktree=job.mode == Mode.SELF,
@@ -671,7 +670,12 @@ def _parse_numstat(numstat: str) -> tuple[list[dict], int, int]:
     return files, total_add, total_del
 
 
-def fetch_branch_metadata(wt_path: str, base: str = DEFAULT_BASE_BRANCH) -> PRMetadata:
+def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
+    # Resolved rather than defaulted to "main" in the signature: this is the
+    # no-PR self-review path, so nothing upstream has named a base, and a
+    # `master` repository was previously fetched and diffed against a branch it
+    # does not have.
+    base = base or pr_context.default_branch(wt_path)
     _fetch_base(wt_path, base)
     head_sha = git_client.head_sha(cwd=wt_path)
     branch = git_client.current_branch(cwd=wt_path)

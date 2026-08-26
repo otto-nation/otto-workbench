@@ -492,10 +492,18 @@ def _code_context_for_thread(file_path: str, line: int | str, repo_dir: Path) ->
     return f"```\n{snippet}\n```" if snippet else ""
 
 
-def _diff_context_for_file(file_path: str, wt_path: Path, default_branch: str = "main") -> str:
-    """Get the PR diff for a file, truncated to DIFF_CONTEXT_MAX_LINES."""
+def _diff_context_for_file(
+    file_path: str, wt_path: Path, default_branch: str | None = None,
+) -> str:
+    """Get the PR diff for a file, truncated to DIFF_CONTEXT_MAX_LINES.
+
+    An omitted default_branch is resolved rather than assumed to be "main", so a
+    caller that does not know the trunk gets the same answer as one that does
+    instead of an empty diff from `origin/main` in a `master` repository.
+    """
     if not file_path:
         return ""
+    default_branch = default_branch or _resolve_default_branch(wt_path)
     diff = git_client.out("diff", f"origin/{default_branch}", "--", file_path, cwd=wt_path)
     if not diff:
         return ""
@@ -512,7 +520,7 @@ def _fix_items(
     threads_by_id: dict[str, ReportThread],
     repo_dir: Path,
     fixable_items: list[CommentItem] | None = None,
-    default_branch: str = "main",
+    default_branch: str | None = None,
 ) -> list[fix_types.FixItem]:
     """The checklist entries this domain hands the fix agent.
 

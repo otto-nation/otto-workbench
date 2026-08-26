@@ -11,6 +11,7 @@
 # core.hooksPath holds a symlink to this checkout's hook, exactly as
 # step_global_hooks installs it. Nothing here can reach the developer's own hook
 # path, state root, or repositories.
+bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
@@ -120,6 +121,56 @@ commit_deep_script() {
 
   run git -C "$TMPDIR/wt" push origin :doomed
   [ "$status" -eq 0 ]
+}
+
+@test "a repository whose trunk is master is measured against origin/master" {
+  # The hook used to walk origin/HEAD, origin/main, origin/master itself, one of
+  # four hand-rolled answers to "which branch is trunk". lib/git_remote.sh owns
+  # the ladder now, and this is the rung a `master` repository lands on: without
+  # it there is no base, the whole tree is measured instead, and the legacy
+  # violation below refuses a push that did not create it.
+  git -C "$TMPDIR/wt" branch -m master
+  git -C "$TMPDIR/wt" push -q origin master
+  commit_deep_script legacy.sh
+  git -C "$TMPDIR/wt" -c core.hooksPath=/dev/null push -q origin master
+
+  git -C "$TMPDIR/wt" checkout -q -b feature
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+  run git -C "$TMPDIR/wt" push origin feature
+  [ "$status" -eq 0 ]
+}
+
+@test "a trunk that is neither main nor master is found through origin/HEAD" {
+  # Neither candidate exists here, so only the symref can answer. It is the rung
+  # a `git remote set-head` repository depends on, and the one a caller spelling
+  # `origin/main` as a literal never reaches.
+  git -C "$TMPDIR/wt" branch -m trunk
+  git -C "$TMPDIR/wt" push -q origin trunk
+  git -C "$TMPDIR/wt" remote set-head origin trunk
+  run ! git -C "$TMPDIR/wt" show-ref --verify --quiet refs/remotes/origin/main
+  run ! git -C "$TMPDIR/wt" show-ref --verify --quiet refs/remotes/origin/master
+
+  commit_deep_script legacy.sh
+  git -C "$TMPDIR/wt" -c core.hooksPath=/dev/null push -q origin trunk
+
+  git -C "$TMPDIR/wt" checkout -q -b feature
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+  run git -C "$TMPDIR/wt" push origin feature
+  [ "$status" -eq 0 ]
+}
+
+@test "a new branch in a repository with no fetched trunk is measured whole" {
+  # default_base_ref refuses rather than handing `git diff` the literal "main"
+  # this repository does not have, and the gate falls back to the whole tree —
+  # the one case where a violation the push did not add still refuses it,
+  # because with no base there is no way to tell new debt from old.
+  commit_deep_script legacy.sh
+  git -C "$TMPDIR/wt" checkout -q -b feature
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+
+  run git -C "$TMPDIR/wt" push origin feature
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
 }
 
 @test "a push of a branch that is not checked out is reported, not measured" {

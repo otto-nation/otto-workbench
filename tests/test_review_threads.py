@@ -4659,6 +4659,20 @@ class TestDiffContextForFile:
         mock_run.return_value = _git_ran(1)
         assert rt._diff_context_for_file("src/foo.go", Path("/wt")) == ""
 
+    @patch("git_client.run")
+    def test_an_omitted_branch_is_resolved_not_assumed_to_be_main(self, mock_run, rt):
+        """The signature used to default to the literal "main".
+
+        Every production caller passes the resolved trunk, so the literal only
+        ever fired for one that forgot — and then silently, as an empty diff
+        from a ref the repository does not have.
+        """
+        mock_run.return_value = _git_ran(0, stdout="+ added line\n")
+        with patch.object(rt, "_resolve_default_branch", return_value="trunk"):
+            rt._diff_context_for_file("src/foo.go", Path("/wt"))
+
+        assert "origin/trunk" in mock_run.call_args[0]
+
 
 # ── triage_result_from_dict ──────────────────────────────────────────────
 

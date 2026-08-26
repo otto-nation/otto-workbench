@@ -53,7 +53,7 @@ from ai_usage import SessionUsage, parse_session_log
 from pr_domains import ReviewVerdict
 from pr_state import now_iso
 from review_types import (
-    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Mode, ReviewMeta, ReviewType,
+    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, ReviewMeta,
     review_meta_from_dict,
 )
 

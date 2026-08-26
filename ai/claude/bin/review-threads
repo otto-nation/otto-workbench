@@ -27,10 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import log
 import agent_invoke
-import agent_phases
-import agent_retry
-import agent_templates
-import fix_tracking
+import fix_engine
 import fix_types
 import git_client
 import land
@@ -45,13 +42,11 @@ import run_lock
 import publishing
 import push
 from pr_comments_state import ThreadRecord, ThreadState
-from pr_fix import CommitStatus, FixOutcome
+from pr_fix import CommitStatus, FixOutcome, ItemOutcome
 import review_common
 import review_issue
 import timeouts
-from agent_registry import PHASES
 from agent_types import Phase
-from review_common import Diagnosis
 from pr_thread_models import (
     ClassificationResult,
     CommentFixResult,
@@ -96,14 +91,6 @@ _GENERATED_FOLLOWUP_RE = re.compile(
     r"(?:Fixed in|Result is in|Current behaviour is at|Addressed in|See|"
     r"Tracked in|Unchanged at) .+\.$",
     re.DOTALL,
-)
-# Not agent_retry.FIX_RETRY_HINT, which scolds an agent that produced nothing.
-# This one addresses an agent that produced something and is being handed the
-# remainder, so it points at the checklist rather than at the write mechanism.
-_FIX_RESUME_HINT = (
-    "This is a RETRY of a prior fix pass. The tracking file below holds only the "
-    "threads that pass left unanswered — everything it settled is already gone "
-    "from it. Work efficiently.\n\n"
 )
 
 
@@ -519,16 +506,14 @@ def _diff_context_for_file(file_path: str, wt_path: Path, default_branch: str = 
     return "```diff\n" + "\n".join(lines) + "\n```"
 
 
-def _build_tracking_file(
-    tracking_path: Path,
+def _fix_items(
     fixable: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
     repo_dir: Path,
-    pr_number: int,
     fixable_items: list[CommentItem] | None = None,
     default_branch: str = "main",
-) -> None:
-    """Build the tracking markdown file for the fix agent.
+) -> list[fix_types.FixItem]:
+    """The checklist entries this domain hands the fix agent.
 
     This domain's whole contribution to the file is the body of each section —
     the conversation, the code around the line, and the PR's diff for the file.
@@ -570,9 +555,7 @@ def _build_tracking_file(
             body=body + _shared_context(item.file, item.line),
         ))
 
-    fix_tracking.write(
-        tracking_path, f"Comment Fix Tracking — PR #{pr_number}", items,
-    )
+    return items
 
 
 def _pr_body_draft(wt_path: Path) -> Path:
@@ -587,31 +570,21 @@ def _pr_body_draft(wt_path: Path) -> Path:
     return wt_path / "ignore" / "pr-comments" / "pr-description.md"
 
 
-def _render_fix_template(
-    branch: str, repo: str, threads_content: str,
-    tracking_file: str, wt_path: str, max_turns: int,
-    main_wt_path: str = "",
-) -> str:
-    """Render the fix-comments.md template."""
-    result = agent_templates.render(
-        review_common.TEMPLATE_FIX_COMMENTS,
-        branch_name=branch,
-        repo=repo,
-        threads_content=threads_content,
-        tracking_file=tracking_file,
-        pr_body_file=str(_pr_body_draft(Path(wt_path))),
-        worktree_block=review_common.build_worktree_block(wt_path),
-        max_turns=str(max_turns),
+def _main_worktree_block(main_wt: Path | None) -> str:
+    """What the prompt says about the default-branch checkout, when there is one.
+
+    Empty otherwise: a fix pass with no second worktree must not be told to read
+    from a path that does not exist.
+    """
+    if not main_wt:
+        return ""
+    return (
+        "## Main branch (read-only reference)\n"
+        f"Checked out at: {main_wt}\n\n"
+        "When a reviewer comment references code outside the PR diff — imports, "
+        "callers, existing patterns, or shared utilities — read from this path "
+        "to understand the baseline. Do not modify files in this worktree.\n"
     )
-    if main_wt_path:
-        result += (
-            "\n## Main branch (read-only reference)\n"
-            f"Checked out at: {main_wt_path}\n\n"
-            "When a reviewer comment references code outside the PR diff — imports, "
-            "callers, existing patterns, or shared utilities — read from this path "
-            "to understand the baseline. Do not modify files in this worktree.\n"
-        )
-    return result
 
 
 @functools.cache
@@ -642,138 +615,6 @@ def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
     return main_wt
 
 
-def _fix_turn_budget(item_count: int) -> int:
-    return agent_phases.phase_turns(Phase.COMMENTS_FIX, items=item_count)
-
-
-def _fix_budget_usd(item_count: int) -> float:
-    return agent_phases.phase_budget(Phase.COMMENTS_FIX, items=item_count)
-
-
-def _fix_chunks(items: list, size: int) -> list[list]:
-    """Split work into runs a single agent pass can actually finish."""
-    return [items[i:i + size] for i in range(0, len(items), size)]
-
-
-def _fix_batches(threads: list, items: list) -> list[tuple[list, list]]:
-    """Split threads and comment items into batches the phase's chunk size allows.
-
-    Chunked as one combined list rather than two, because the budget the chunk
-    size protects is spent on the batch as a whole — chunking each kind on its
-    own and pairing them up would put twice the cap in front of one agent.
-    """
-    tagged = [(True, t) for t in threads] + [(False, i) for i in items]
-    return [
-        ([w for is_thread, w in chunk if is_thread],
-         [w for is_thread, w in chunk if not is_thread])
-        for chunk in _fix_chunks(tagged, agent_phases.phase_chunk_size(Phase.COMMENTS_FIX))
-    ]
-
-
-def _fix_session_log(wt_path: Path) -> str:
-    """Where the fix agent streams its session, so a thrash can be diagnosed."""
-    return str(wt_path / "ignore" / "pr-comments" / "fix-session.jsonl")
-
-
-def _guarded_fix_pass(
-    prompt: str, wt_path: Path, main_wt: Path | None, tracking_file: Path,
-    *, max_turns: int, max_budget: float, label: str,
-    repo: str | None = None, pr_number: int | None = None,
-) -> Diagnosis | None:
-    """Run the fix agent, retrying once if it checked nothing off.
-
-    An agent that finishes having touched no box and called no write tool was
-    thrashing, and the shared guard's retry names the write mechanism.  Partial
-    progress is not this function's business — `_retry_fix_pass` handles that,
-    and the guard stays out of its way by treating a single checked box as
-    output.  Returns the diagnosis, or None when the pass produced work.
-    """
-    dirs = [str(wt_path)] + ([str(main_wt)] if main_wt else [])
-    return agent_invoke.run_fix(
-        Phase.COMMENTS_FIX, prompt,
-        cwd=wt_path,
-        session_log=_fix_session_log(wt_path),
-        produced=lambda: fix_tracking.checked(tracking_file) > 0,
-        add_dirs=dirs,
-        max_turns=max_turns, max_budget=max_budget,
-        label=label,
-        hint_select=lambda diagnosis: agent_retry.FIX_RETRY_HINT,
-        repo=repo, pr=str(pr_number) if pr_number else None,
-    ).unproductive
-
-
-@dataclass
-class FixBatchResult:
-    """What one batch of the fix pass produced."""
-
-    tracking: TrackingResult
-    unproductive: Diagnosis | None
-    max_turns: int
-    max_budget: float
-
-
-def _run_fix_batch(
-    chunk_threads: list, chunk_items: list, threads_by_id: dict,
-    tracking_file: Path, wt_path: Path, main_wt: Path | None,
-    ctx, pr_number: int, *, label: str, default_branch: str,
-) -> FixBatchResult:
-    """Run the fix agent over one batch and parse what it checked off.
-
-    The tracking file is rebuilt per batch so the agent is handed only the items
-    its budget covers — inlining the whole list is what let a 169 KB checklist
-    reach a single 60-turn pass.
-    """
-    _build_tracking_file(
-        tracking_file, chunk_threads, threads_by_id,
-        wt_path, pr_number,
-        fixable_items=chunk_items,
-        default_branch=default_branch,
-    )
-    chunk_count = len(chunk_threads) + len(chunk_items)
-    chunk_turns = _fix_turn_budget(chunk_count)
-    chunk_budget = _fix_budget_usd(chunk_count)
-    prompt = _render_fix_template(
-        branch=ctx.branch,
-        repo=ctx.repo,
-        threads_content=tracking_file.read_text(),
-        tracking_file=str(tracking_file),
-        wt_path=str(wt_path),
-        max_turns=chunk_turns,
-        main_wt_path=str(main_wt) if main_wt else "",
-    )
-    log.info(f"{label} — applying review comment suggestions...")
-    unproductive = _guarded_fix_pass(
-        prompt, wt_path, main_wt, tracking_file,
-        max_turns=chunk_turns, max_budget=chunk_budget,
-        label=label, repo=ctx.repo, pr_number=pr_number,
-    )
-    log.blank()
-    return FixBatchResult(
-        tracking=_parse_tracking_results(
-            tracking_file, chunk_threads, fixable_items=chunk_items,
-        ),
-        unproductive=unproductive,
-        max_turns=chunk_turns,
-        max_budget=chunk_budget,
-    )
-
-
-def _partition_batches(
-    results: list[FixBatchResult],
-) -> tuple[TrackingResult, TrackingResult]:
-    """Split batch results into retry-eligible and already-retried totals.
-
-    A batch the guard retried to no effect has had its second attempt, and
-    handing its items to `_retry_fix_pass` would be a third identical run.
-    Deferrals from batches that did produce work have only had one attempt, so
-    one stalled batch must not spend the whole pass's retry.
-    """
-    retryable, stalled = TrackingResult(), TrackingResult()
-    for batch in results:
-        (stalled if batch.unproductive else retryable).merge(batch.tracking)
-    return retryable, stalled
-
-
 # What a verdict means when the agent ticked its box without saying why. FIXED
 # is absent deliberately: the change itself is the reason, and an entry that
 # needs no explanation should carry whatever triage already put on it.
@@ -794,25 +635,26 @@ _NEEDS_A_PERSON = (
 
 
 def _parse_tracking_results(
-    tracking_path: Path, fixable: list[CommentItem],
+    outcomes: list[ItemOutcome], fixable: list[CommentItem],
     fixable_items: list[CommentItem] | None = None,
 ) -> TrackingResult:
     """Sort the agent's recorded outcomes back onto the entries they belong to.
 
-    Reading the file is `fix_tracking`'s job; what this adds is the domain's own
+    Reading the file is `fix_engine`'s job; what this adds is the domain's own
     entries. An outcome carries an id and a verdict, while the reviewer, the
     summary and the conversation behind that id live on the `CommentItem` the
     pass started from — so the outcome selects the bucket and the entry is what
     goes in it.
 
-    An id the pass did not hand over is skipped. The file is agent-editable, and
-    a section that names no thread is a section with no reviewer to reply to.
+    An id the pass did not hand over is skipped. The file the outcomes were read
+    from is agent-editable, and a section that names no thread is a section with
+    no reviewer to reply to.
     """
     fixable_by_id = {t.id: t for t in fixable}
     items_by_id = {it.id: it for it in (fixable_items or [])}
     result = TrackingResult()
 
-    for recorded in fix_tracking.parse(tracking_path):
+    for recorded in outcomes:
         source = fixable_by_id.get(recorded.id) or items_by_id.get(recorded.id)
         if not source:
             continue
@@ -900,34 +742,6 @@ def _pass_commit(wt_path: Path, result: land.LandResult) -> CommitPushResult:
         "rev-parse", "--short", result.sha, cwd=wt_path,
     ) if result.sha else ""
     return CommitPushResult(short or None, result.status, result.error)
-
-
-def _commit_fixes(
-    wt_path: Path, fixed: int, deferred: int, head_before: str,
-    trail: Trail | None = None,
-) -> CommitPushResult:
-    """Land the pass's work through the owner, and say what became of it.
-
-    A hold does not stop the commit, and that is deliberate: a local commit
-    asserts nothing to a reviewer, because it only becomes visible on push and
-    the push is what the hold stops. Leaving the fixes uncommitted instead would
-    make them fragile, and would leave the next `--fix` round reading its own
-    dirty tree as a refused commit. That split is what the owner's `gated`
-    argument asks for.
-
-    Two things happen around this landing rather than in it, and both are the
-    owner's: a pre-push hook that rewrites generated files (`regen`), and a fix
-    agent that committed its own work (`recover_from`, HEAD as it stood before
-    the agent ran).
-    """
-    msg = "fix: address review comments"
-    if fixed:
-        msg += f"\n\n{fixed} fixed, {deferred} deferred"
-    return _pass_commit(wt_path, land.land(
-        wt_path, message=msg, gated=True, trail=trail,
-        regen="chore: regenerate after review comment fixes",
-        recover_from=head_before,
-    ))
 
 
 def _our_last_reply_id(thread: ReportThread | None) -> int | None:
@@ -4067,7 +3881,7 @@ def _replayed_commit(wt_path: Path, sha: str) -> str:
 
     Matched on the patch the commit carries, because the header carries nothing
     that tells two fix commits apart: every pass commits under one static
-    subject (`_commit_fixes`), and two rounds close enough together — a
+    subject (`CommentFixAdapter.landing`), and two rounds close enough together — a
     retry, a fast CI loop — share an author date to the second as well. Content
     is the only field a rebase preserves that is also the commit's own, and it
     survives an amend and a conflict resolution that a subject match would not.
@@ -4207,87 +4021,6 @@ def _accounted_thread_ids(
     }
 
 
-def _retry_fix_pass(
-    deferred_threads: list[CommentItem],
-    deferred_items: list[CommentItem],
-    original_fixable: list[CommentItem],
-    original_fixable_items: list[CommentItem],
-    threads_by_id: dict[str, ReportThread],
-    wt_path: Path,
-    pr_number: int,
-    ctx: pr_context.ResolvedContext,
-    main_wt: Path | None,
-    original_turns: int,
-    trail: Trail | None = None,
-    default_branch: str = "main",
-) -> TrackingResult:
-    """Retry fix pass with only deferred items and increased budget.
-
-    Only `DEFERRED` entries come here. An agent that declined an item or said it
-    needs a person answered the question it was asked, and running it again over
-    the same item buys a second copy of the same answer.
-    """
-    fixable_by_id = {t.id: t for t in original_fixable}
-    items_by_id = {it.id: it for it in original_fixable_items}
-
-    retry_fixable = [fixable_by_id[e.id] for e in deferred_threads
-                     if e.id in fixable_by_id]
-    retry_items = [items_by_id[e.id] for e in deferred_items
-                   if e.id in items_by_id]
-
-    if not retry_fixable and not retry_items:
-        unchanged = TrackingResult()
-        for entry in deferred_threads:
-            unchanged.add(FixOutcome.DEFERRED, entry)
-        for entry in deferred_items:
-            unchanged.add(FixOutcome.DEFERRED, entry, item=True)
-        return unchanged
-
-    tracking_dir = wt_path / "ignore" / "pr-comments"
-    tracking_file = tracking_dir / "fix-tracking.md"
-
-    _build_tracking_file(
-        tracking_file, retry_fixable, threads_by_id,
-        wt_path, pr_number,
-        fixable_items=retry_items,
-        default_branch=default_branch,
-    )
-
-    retry_count = len(retry_fixable) + len(retry_items)
-    retry_turns = agent_phases.phase_retry_turns(Phase.COMMENTS_FIX, original_turns)
-
-    prompt = _FIX_RESUME_HINT + _render_fix_template(
-        branch=ctx.branch,
-        repo=ctx.repo,
-        threads_content=tracking_file.read_text(),
-        tracking_file=str(tracking_file),
-        wt_path=str(wt_path),
-        max_turns=retry_turns,
-        main_wt_path=str(main_wt) if main_wt else "",
-    )
-
-    log.info(f"Retry pass — {retry_count} deferred items (max_turns={retry_turns})...")
-    _guarded_fix_pass(
-        prompt, wt_path, main_wt, tracking_file,
-        max_turns=retry_turns, max_budget=_fix_budget_usd(retry_count),
-        label=f"{PHASES[Phase.COMMENTS_FIX].label} retry",
-        repo=ctx.repo, pr_number=pr_number,
-    )
-    log.blank()
-
-    result = _parse_tracking_results(
-        tracking_file, retry_fixable, fixable_items=retry_items,
-    )
-
-    if trail:
-        trail.info("fix_retry", "retry pass complete",
-                    data={"fixed": len(result.bucket(FixOutcome.FIXED)),
-                          "fixed_items": len(result.bucket(FixOutcome.FIXED, item=True)),
-                          "still_deferred": len(result.both(FixOutcome.DEFERRED))})
-
-    return result
-
-
 def _hold_if_superseded(
     verdict: supersession.Verdict, trail: Trail | None = None,
 ) -> None:
@@ -4301,7 +4034,8 @@ def _hold_if_superseded(
 
     The hold is the same one an open thread places, and reaches the same acts:
     the push, the `Fixed in <sha>` replies, the thread resolutions, and the
-    summary. The local commit is not one of them — see `_commit_fixes`.
+    summary. The local commit is not one of them — see `fix_engine`, whose gate
+    is fixed at commit-but-do-not-push for exactly this reason.
     """
     supersession.report(verdict)
     if not verdict.superseded:
@@ -4361,6 +4095,215 @@ def _triage_replies_drafted(
     approved round goes missing.
     """
     return bool(already_addressed or dismissed) and not publishing.enabled()
+
+
+class CommentFixAdapter(fix_engine.FixAdapter):
+    """The comments pass, in the terms `fix_engine` runs one in.
+
+    Everything before the agent arrives here settled: triage has classified the
+    threads, the supersession and contested holds have been placed, and the
+    replies triage itself owed have gone out. What is left is the two halves the
+    engine cannot supply — the checklist entries, and everything this pass owes a
+    reviewer once its work has landed.
+
+    Only the fixable entries reach `items`. The rest are carried so `record` can
+    account for them: a summary that named only what the agent saw would read as
+    if the dismissed and the contested were never triaged.
+    """
+
+    phase = Phase.COMMENTS_FIX
+    template = review_common.TEMPLATE_FIX_COMMENTS
+    action = "applying review comment suggestions"
+
+    def __init__(
+        self,
+        report: PRReport,
+        ctx: pr_context.ResolvedContext,
+        wt_path: Path,
+        *,
+        fixable: list[CommentItem],
+        fixable_items: list[CommentItem],
+        needs_human: list[CommentItem],
+        dismissed: list[CommentItem],
+        already_addressed: list[CommentItem],
+        resolved: list[ThreadState],
+        triage_replies: int,
+        has_unaccounted: bool,
+        has_items: bool,
+        trail: Trail | None = None,
+    ) -> None:
+        self.workdir = wt_path
+        self.artifacts = wt_path / "ignore" / "pr-comments"
+        self.title = f"Comment Fix Tracking — PR #{report.pr_number}"
+        self.branch = ctx.branch
+        self.repo = ctx.repo
+        self.pr = str(report.pr_number)
+        self.report = report
+        self.ctx = ctx
+        self.trail = trail
+        self.threads_by_id = {t.id: t for t in report.threads}
+        self.fixable = fixable
+        self.fixable_items = fixable_items
+        self.needs_human = needs_human
+        self.dismissed = dismissed
+        self.already_addressed = already_addressed
+        self.resolved = resolved
+        self.triage_replies = triage_replies
+        self.has_unaccounted = has_unaccounted
+        self.has_items = has_items
+        # `record` builds this and `_run_comment_fix` returns it.
+        self.result = CommentFixResult()
+
+    @functools.cached_property
+    def main_wt(self) -> Path | None:
+        """The default-branch checkout, fetched and reset, or None if there is none.
+
+        Resolved on first use rather than at construction: finding it updates a
+        second worktree from the remote, which a pass that turns out to have
+        nothing to fix has no business doing.
+        """
+        return _find_and_update_main_worktree(self.workdir)
+
+    def add_dirs(self) -> list[Path]:
+        """The branch worktree, plus the default-branch one when it exists."""
+        return [self.workdir] + ([self.main_wt] if self.main_wt else [])
+
+    def items(self) -> list[fix_types.FixItem]:
+        return _fix_items(
+            self.fixable, self.threads_by_id, self.workdir,
+            fixable_items=self.fixable_items,
+            default_branch=_resolve_default_branch(self.workdir),
+        )
+
+    def template_vars(self) -> dict[str, str]:
+        return {
+            "pr_body_file": str(_pr_body_draft(self.workdir)),
+            "main_worktree": _main_worktree_block(self.main_wt),
+        }
+
+    def landing(self, outcomes: list[ItemOutcome]) -> fix_engine.LandSpec:
+        """Commit the whole tree under one static subject.
+
+        `recover` because this agent edits a repo whose own conventions it
+        follows, and a fix pass in a repo that commits its work leaves the
+        landing nothing to stage — see `_replayed_commit`, which is what finds
+        that commit again after a rebase.
+        """
+        fixed = sum(1 for o in outcomes if o.outcome is FixOutcome.FIXED)
+        deferred = sum(1 for o in outcomes if o.outcome is FixOutcome.DEFERRED)
+        msg = "fix: address review comments"
+        if fixed:
+            msg += f"\n\n{fixed} fixed, {deferred} deferred"
+        return fix_engine.LandSpec(
+            message=msg,
+            regen="chore: regenerate after review comment fixes",
+            recover=True,
+        )
+
+    def record(self, run: fix_engine.FixRun) -> None:
+        """Everything this pass owes once its work is committed.
+
+        The replies, the resolutions, the PR description the agent may have
+        rewritten, the reviewer-facing summary and the state file, in that order:
+        each of the outward acts is gated, and the state file has to record which
+        of them actually went out.
+        """
+        FA = pr_comments_fix.ThreadAction
+        cp = _pass_commit(self.workdir, run.landed)
+        tracking = _parse_tracking_results(
+            run.outcomes, self.fixable, fixable_items=self.fixable_items,
+        )
+
+        # Recorded here rather than left for the pass envelope to imply: from
+        # this point on, "no SHA on the entry" means the entry did not land in
+        # this commit, which is what lets a later round tell its own rows from
+        # an earlier round's.
+        fixed_threads = tracking.bucket(FixOutcome.FIXED)
+        all_fixed = tracking.both(FixOutcome.FIXED)
+        _stamp_pass_commit(all_fixed, cp.sha or "")
+
+        replies_posted = self.triage_replies
+        resolved = list(self.resolved)
+        if fixed_threads and cp.status == CommitStatus.PUSHED:
+            replies_posted += _reply_to_fixed(
+                fixed_threads, self.threads_by_id, self.repo,
+                self.report.pr_number, cp, self.workdir,
+            )
+            resolved += _resolve_fixed_threads(fixed_threads, self.threads_by_id)
+
+        all_deferred = tracking.both(FixOutcome.DEFERRED)
+        # Two verdicts the agent reached and one triage did. They part company
+        # in the state file, where the reason each carries is worth telling
+        # apart, and travel together to every reviewer-facing surface — see
+        # `_NEEDS_A_PERSON`.
+        agent_needs_human = tracking.both(FixOutcome.NEEDS_HUMAN)
+        declined = tracking.both(FixOutcome.DECLINED)
+        open_to_a_person = self.needs_human + agent_needs_human + declined
+
+        pr_body_pending = _deliver_pr_body(
+            self.workdir, self.repo, self.report.pr_number,
+        )
+
+        pending_deferred = _summary_still_owed(
+            all_fixed, open_to_a_person, all_deferred, self.dismissed,
+            cp.status, self.has_unaccounted,
+        )
+
+        summary_url = _post_or_defer_summary(
+            all_fixed, open_to_a_person, all_deferred, cp,
+            self.repo, self.report.pr_number,
+            self.threads_by_id, dismissed=self.dismissed,
+            already_addressed=self.already_addressed,
+            issue_comments=self.report.issue_comments,
+            review_body_comments=self.report.review_body_comments,
+            has_comment_items=self.has_items,
+            head_sha=cp.sha or self.ctx.head_sha,
+            activity_at=_newest_reviewer_activity(self.report),
+            wt_path=self.workdir,
+        )
+
+        _persist_fix_state(pr_comments_fix.FixSummary(
+            threads=_build_thread_outcomes({
+                FA.FIXED: all_fixed,
+                FA.DEFERRED: all_deferred,
+                FA.NEEDS_HUMAN: self.needs_human + agent_needs_human,
+                FA.DECLINED: declined,
+                FA.DISMISSED: self.dismissed,
+                FA.ALREADY_ADDRESSED: self.already_addressed,
+            }, commit_sha=cp.sha or ""),
+            commit_sha=cp.sha or "",
+            commit_status=cp.status,
+            # HEAD after the pass, not ctx.head_sha: the fix pass commits, so
+            # the snapshot must name the commit its outcomes were measured
+            # against.
+            head_sha=_get_head_sha(self.workdir),
+            replies_posted=replies_posted,
+            replies_pending=(
+                bool(fixed_threads) and not publishing.enabled()
+                or _triage_replies_drafted(self.already_addressed, self.dismissed)
+            ),
+            pr_body_pending=pr_body_pending,
+            summary_url=summary_url or "",
+            summary_deferred=summary_url is None and pending_deferred,
+            has_comment_items=self.has_items,
+            updated_at=pr_state.now_iso(),
+        ), self.workdir, self.ctx, self.trail, resolved=resolved)
+
+        self.result = CommentFixResult(
+            fixed=all_fixed,
+            needs_human=open_to_a_person,
+            dismissed=self.dismissed,
+            already_addressed=self.already_addressed,
+            deferred=all_deferred,
+            commit_sha=cp.sha,
+            commit_status=cp.status,
+            replies_posted=replies_posted,
+            summary_url=summary_url,
+            summary_deferred=summary_url is None and pending_deferred,
+            max_turns=run.max_turns,
+            max_budget=run.max_budget,
+            batches=run.batches,
+        )
 
 
 def _run_comment_fix(
@@ -4486,147 +4429,21 @@ def _run_comment_fix(
         ), wt_path, ctx, trail, resolved=resolved)
         return empty_result
 
-    tracking_dir = wt_path / "ignore" / "pr-comments"
-    tracking_file = tracking_dir / "fix-tracking.md"
-
-    default_branch = _resolve_default_branch(wt_path)
-
-    total_items = len(fixable) + len(fixable_items or [])
-
-    head_before = _get_head_sha(wt_path)
-
-    main_wt = _find_and_update_main_worktree(wt_path)
-
-    batches = _fix_batches(list(fixable), list(fixable_items or []))
-    if len(batches) > 1:
-        log.info(
-            f"Fix pass — {total_items} items in {len(batches)} batches "
-            f"of up to {agent_phases.phase_chunk_size(Phase.COMMENTS_FIX)}..."
-        )
-
-    results = []
-    name = PHASES[Phase.COMMENTS_FIX].label
-    for n, (chunk_threads, chunk_items) in enumerate(batches, start=1):
-        label = name if len(batches) == 1 else f"{name} (batch {n}/{len(batches)})"
-        results.append(_run_fix_batch(
-            chunk_threads, chunk_items, threads_by_id, tracking_file,
-            wt_path, main_wt, ctx, report.pr_number,
-            label=label, default_branch=default_branch,
-        ))
-
-    retryable, stalled = _partition_batches(results)
-    # The largest batch's budget, not the last one's — the remainder chunk is
-    # usually the smallest and would understate what a pass was given.
-    max_turns = max((r.max_turns for r in results), default=0)
-    max_budget = max((r.max_budget for r in results), default=0.0)
-
-    tracking = TrackingResult()
-    tracking.merge(stalled)
-
-    if retryable.both(FixOutcome.DEFERRED):
-        retry_result = _retry_fix_pass(
-            retryable.bucket(FixOutcome.DEFERRED),
-            retryable.bucket(FixOutcome.DEFERRED, item=True),
-            fixable, fixable_items or [],
-            threads_by_id, wt_path, report.pr_number,
-            ctx, main_wt, max_turns, trail,
-            default_branch=default_branch,
-        )
-        # The retry re-decided every entry it was handed, so the first pass's
-        # deferrals are superseded rather than reported alongside the second's.
-        retryable.drop(FixOutcome.DEFERRED)
-        tracking.merge(retry_result)
-    tracking.merge(retryable)
-
-    fixed_count = len(tracking.both(FixOutcome.FIXED))
-    deferred_count = len(tracking.both(FixOutcome.DEFERRED))
-
-    cp = _commit_fixes(wt_path, fixed_count, deferred_count, head_before, trail)
-
-    # Recorded here rather than left for the pass envelope to imply: from this
-    # point on, "no SHA on the entry" means the entry did not land in this
-    # commit, which is what lets a later round tell its own rows from an
-    # earlier round's.
-    fixed_threads = tracking.bucket(FixOutcome.FIXED)
-    all_fixed = tracking.both(FixOutcome.FIXED)
-    _stamp_pass_commit(all_fixed, cp.sha or "")
-
-    replies_posted = triage_replies
-    if fixed_threads and cp.status == CommitStatus.PUSHED:
-        replies_posted += _reply_to_fixed(
-            fixed_threads, threads_by_id, ctx.repo, report.pr_number, cp, wt_path,
-        )
-        resolved += _resolve_fixed_threads(fixed_threads, threads_by_id)
-
-    all_deferred = tracking.both(FixOutcome.DEFERRED)
-    # Two verdicts the agent reached and one triage did. They part company in
-    # the state file, where the reason each carries is worth telling apart, and
-    # travel together to every reviewer-facing surface — see `_NEEDS_A_PERSON`.
-    agent_needs_human = tracking.both(FixOutcome.NEEDS_HUMAN)
-    declined = tracking.both(FixOutcome.DECLINED)
-    open_to_a_person = all_needs_human + agent_needs_human + declined
-
-    pr_body_pending = _deliver_pr_body(wt_path, ctx.repo, report.pr_number)
-
-    pending_deferred = _summary_still_owed(
-        all_fixed, open_to_a_person, all_deferred, all_dismissed,
-        cp.status, has_unaccounted,
-    )
-
-    summary_url = _post_or_defer_summary(
-        all_fixed, open_to_a_person, all_deferred, cp,
-        ctx.repo, report.pr_number,
-        threads_by_id, dismissed=all_dismissed,
-        already_addressed=all_addressed,
-        issue_comments=report.issue_comments,
-        review_body_comments=report.review_body_comments,
-        has_comment_items=has_items,
-        head_sha=cp.sha or ctx.head_sha,
-        activity_at=_newest_reviewer_activity(report),
-        wt_path=wt_path,
-    )
-
-    _persist_fix_state(pr_comments_fix.FixSummary(
-        threads=_build_thread_outcomes({
-            FA.FIXED: all_fixed,
-            FA.DEFERRED: all_deferred,
-            FA.NEEDS_HUMAN: all_needs_human + agent_needs_human,
-            FA.DECLINED: declined,
-            FA.DISMISSED: all_dismissed,
-            FA.ALREADY_ADDRESSED: all_addressed,
-        }, commit_sha=cp.sha or ""),
-        commit_sha=cp.sha or "",
-        commit_status=cp.status,
-        # HEAD after the pass, not ctx.head_sha: the fix pass commits, so the
-        # snapshot must name the commit its outcomes were measured against.
-        head_sha=_get_head_sha(wt_path),
-        replies_posted=replies_posted,
-        replies_pending=(
-            bool(fixed_threads) and not publishing.enabled()
-            or _triage_replies_drafted(all_addressed, all_dismissed)
-        ),
-        pr_body_pending=pr_body_pending,
-        summary_url=summary_url or "",
-        summary_deferred=summary_url is None and pending_deferred,
-        has_comment_items=has_items,
-        updated_at=pr_state.now_iso(),
-    ), wt_path, ctx, trail, resolved=resolved)
-
-    return CommentFixResult(
-        fixed=all_fixed,
-        needs_human=open_to_a_person,
+    adapter = CommentFixAdapter(
+        report, ctx, wt_path,
+        fixable=fixable,
+        fixable_items=list(fixable_items or []),
+        needs_human=all_needs_human,
         dismissed=all_dismissed,
         already_addressed=all_addressed,
-        deferred=all_deferred,
-        commit_sha=cp.sha,
-        commit_status=cp.status,
-        replies_posted=replies_posted,
-        summary_url=summary_url,
-        summary_deferred=summary_url is None and pending_deferred,
-        max_turns=max_turns,
-        max_budget=max_budget,
-        batches=len(batches),
+        resolved=resolved,
+        triage_replies=triage_replies,
+        has_unaccounted=has_unaccounted,
+        has_items=has_items,
+        trail=trail,
     )
+    fix_engine.run(adapter, trail=trail)
+    return adapter.result
 
 
 def _run_threads(trail, args, ctx) -> None:

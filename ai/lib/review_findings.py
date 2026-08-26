@@ -172,8 +172,8 @@ _SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
 # Matched at the head or tail of the finding body for the same reason
 # `DECLINED_HEAD_RE`/`DECLINED_TAIL_RE` are anchored below: matched anywhere, a
 # finding whose prose quotes the annotation — this file's own docs do,
-# verbatim — would be misread as carrying it and barred from
-# `_reconcile_checkboxes` forever.
+# verbatim — would be misread as carrying it, and the fix pass would leave the
+# line untouched forever rather than recording what its agent answered.
 SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
 SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
 

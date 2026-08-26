@@ -24,7 +24,6 @@ from review_common import Diagnosis, DiagnosisKind
 _has_output = agent_retry.has_output
 
 _RETRY_HINT = agent_retry.RETRY_HINT
-_FIX_RETRY_HINT = agent_retry.FIX_RETRY_HINT
 _NO_WRITE_HINT = agent_retry.NO_WRITE_HINT
 
 _retry_hint_for = agent_retry.hint_for

@@ -25,7 +25,7 @@ from review_common import (
     FILE_STAT_FMT, FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
     PriorDisposition,
-    TEMPLATE_DISPROVE, TEMPLATE_FIX,
+    TEMPLATE_DISPROVE,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path, build_output_block, build_worktree_block,
@@ -1001,20 +1001,6 @@ def _prompt_synthesis(job, common, extra):
     )
 
 
-def _prompt_fix(job, common, extra):
-    review_content = ""
-    if Path(job.review_file).exists():
-        review_content = Path(job.review_file).read_text()
-    b = PromptBuilder(common)
-    b.shared("max_turns")
-    b.set("branch_name", job.pr.head)
-    b.set("repo", job.repo)
-    b.set("review_content", review_content)
-    b.set("review_file", job.review_file)
-    b.worktree(job.wt_path)
-    return b, ""
-
-
 def _prompt_scout(job, common, extra):
     return _survey_prompt(job, common, extra, "scout_output")
 
@@ -1036,7 +1022,6 @@ _PROMPT_HANDLERS = {
     TEMPLATE_GROUP: _prompt_group,
     TEMPLATE_SYNTHESIS: _prompt_synthesis,
     TEMPLATE_DISPROVE: _prompt_disprove,
-    TEMPLATE_FIX: _prompt_fix,
 }
 
 

@@ -14,10 +14,12 @@ it, and it imports nothing from ``ai/lib`` in return. That is what lets the
 record hang off the base class without the domains and the vocabulary they are
 written in forming a cycle.
 
-Nothing writes a record yet. The engine that will is the shared fix pipeline,
-which replaces the three orchestrations that exist today; this module is the
-type it writes into, landed ahead of it so the passes have one target to
-converge on rather than three to reconcile afterwards.
+The CI pass writes one, through :mod:`fix_engine` — the shared pipeline all
+three now run on, and the thing that produces the :class:`ItemOutcome` list a
+record is assembled from. Running on the engine is not the same as recording
+through these types: the comment pass keeps the summary shape it had, and the
+review-findings pass re-renders the review document from its outcomes rather
+than writing a record at all.
 """
 
 # doc-group: pr-state

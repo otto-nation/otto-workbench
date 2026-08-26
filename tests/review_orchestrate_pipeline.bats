@@ -625,6 +625,20 @@ print(f'fix_exists={os.path.exists(\"$TMPDIR/fix.jsonl\")}')
   [ "$result" = "fix_exists=False" ]
 }
 
+@test "cleanup_intermediates: sweeps the --fix pass's tracking file too" {
+  # The checklist the agent answers on is named rather than derived: it belongs
+  # to the fix engine, not the phase registry, so the glob never reaches it.
+  echo "review" > "$TMPDIR/review.md"
+  echo "## <!-- fix:M1 -->" > "$TMPDIR/fix-tracking.md"
+
+  result=$(_py "
+import os, pathlib
+mod.cleanup_intermediates(pathlib.Path('$TMPDIR'))
+print(f'tracking_exists={os.path.exists(\"$TMPDIR/fix-tracking.md\")}')
+")
+  [ "$result" = "tracking_exists=False" ]
+}
+
 @test "cleanup_intermediates: preserves the deliverable and its sidecars" {
   echo "review" > "$TMPDIR/review.md"
   echo '{"type":"result"}' > "$TMPDIR/session.jsonl"

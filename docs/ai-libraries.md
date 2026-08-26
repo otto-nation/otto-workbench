@@ -138,6 +138,39 @@ Resolving a spec against the config file and the environment is
 ``agent_phases``'s job — that layer needs ``workbench_config``, which needs
 this one.
 
+### fix_engine.py
+
+The pipeline every fix pass runs: batch, invoke, retry, land, record.
+
+`fix_types` says what an item is, `fix_tracking` says how the agent is asked
+about it, `agent_invoke` runs the agent and `land` commits what it produced.
+This is the order those happen in, written once. Three passes sequenced them
+themselves and the sequences disagreed — one batched its checklist and two
+inlined it whole, two retried the items left over and disagreed about which
+ones, and one of them had no partial-progress retry at all.
+
+A domain supplies a :class:`FixAdapter` and nothing else: which phase sizes the
+pass, the items, the prompt substitutions its template needs, the commit it
+wants and what to do with the outcomes. Everything between those is here.
+
+Two rules the passes disagreed on, settled here:
+
+**A batch that stalled has already had its retry.** ``agent_invoke.run_fix``
+gives an unproductive pass a second attempt of its own, so handing that batch's
+deferrals to the partial-progress retry buys a third identical run. One stalled
+batch must not spend the whole pass's retry either, which is why the two are
+partitioned rather than pooled.
+
+**A retry re-decides the items it is handed.** Only ``DEFERRED`` items go into
+it — an agent that declined an item or said it needs a person answered the
+question it was asked — and its answers supersede the first pass's rather than
+being reported alongside them.
+
+The gate is not a parameter. Every pass here runs on an operator's behalf, so
+the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
+module docstring makes that argument, and a pass that wanted the other split would
+be a fix pass asserting something outward nobody approved.
+
 ### prompt.py
 
 Terminal questions, for the few commands that have one to ask.
@@ -414,9 +447,11 @@ declare it, and the merge-wide pass is the first place that can tell.
 
 Fix pass for claude-review.
 
-Runs after a review is written and `--fix` is set: hands the review document to
-an agent that applies what it can, reconciles the checkboxes against the files
-the agent changed, then commits and pushes the result.
+Runs after a review is written and `--fix` is set. `fix_engine` owns the
+pipeline — the batching, the agent, the retry, the commit — and what stays here
+is the three things only a review can answer: which findings are still open,
+which files the pass is allowed to commit, and how the review document reads
+once the agent has answered.
 
 What the agent changed is a snapshot difference: the worktree's dirty set is
 recorded before the agent runs and again after, and only the paths that appear
@@ -428,6 +463,14 @@ A snapshot git could not take stops the pass rather than reading as an empty
 one. Everything outside the difference goes uncommitted, so an unreadable
 worktree spelled the same way as an unchanged one is how a pass reports success
 having left the agent's fixes behind.
+
+The agent answers on a tracking file, not on the review document. That document
+is the deliverable — a reviewer reads it and a re-review reconciles against it —
+and letting the agent edit it in place made the pass's evidence about itself the
+same text it was editing: a box nobody ticked read as a skip, an annotation
+phrased loosely read as no annotation at all, and the pass had to guess which
+findings its own agent had touched. `record` re-renders the document from the
+outcomes instead, so what it says is what the pass decided.
 
 The commit always happens; the push waits for `--post`. `land` owns both, and
 the split is its: a local commit asserts nothing to anybody, while a push puts
@@ -962,10 +1005,12 @@ it, and it imports nothing from ``ai/lib`` in return. That is what lets the
 record hang off the base class without the domains and the vocabulary they are
 written in forming a cycle.
 
-Nothing writes a record yet. The engine that will is the shared fix pipeline,
-which replaces the three orchestrations that exist today; this module is the
-type it writes into, landed ahead of it so the passes have one target to
-converge on rather than three to reconcile afterwards.
+The CI pass writes one, through :mod:`fix_engine` — the shared pipeline all
+three now run on, and the thing that produces the :class:`ItemOutcome` list a
+record is assembled from. Running on the engine is not the same as recording
+through these types: the comment pass keeps the summary shape it had, and the
+review-findings pass re-renders the review document from its outcomes rather
+than writing a record at all.
 
 ### pr_state.py
 

@@ -61,8 +61,8 @@ FIX_RETRY_HINT = (
 CI_FIX_RETRY_HINT = (
     "IMPORTANT: A previous attempt ran out of turns investigating without fixing "
     "any failure. Start with the first failing check and apply edits IMMEDIATELY. "
-    "Skip failures that need a human decision — annotate them with "
-    "*(skipped — reason)* and move on.\n\n"
+    "A failure that needs a human decision is not yours to apply — record that "
+    "verdict on it the way the instructions below spell it, and move on.\n\n"
 )
 
 BLANK_RESPONSE_HINT = (

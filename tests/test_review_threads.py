@@ -24,21 +24,23 @@ if str(LIB_DIR) not in sys.path:
 from conftest import (
     assert_no_worktree_exit, git_in, git_out, make_ctx, run_checked,
     supersession_context, supersession_evidence, supersession_verdict,
-    write_thrash_log,
 )
+import agent_retry
+import fix_engine
+import fix_tracking
 import pr_state
 import proc
 from proc import CmdResult
 from pr_comments_state import ThreadState
 from pr_comments_fix import FixSummary, ThreadAction, ThreadOutcome
 from pr_domains import SupersessionKind
-from pr_fix import CommitStatus, FixOutcome
+from pr_fix import CommitStatus, FixOutcome, ItemOutcome
 from pr_state import PRIdentity, PRState
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
     TriageStats, triage_result_from_dict,
 )
-from review_common import SECTION_PRIOR_FINDINGS, Diagnosis, DiagnosisKind
+from review_common import SECTION_PRIOR_FINDINGS
 from review_issue import CreatedIssue, IssueDelivery, IssueResult
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
@@ -695,57 +697,92 @@ def _answering_the_owner(mock_run, sha="abc1234"):
     return run
 
 
-class TestCommitFixes:
+def _tick_every_fix(wt_path):
+    """An `invoke_fix` stub that answers every entry `fixed`.
+
+    `fix_engine` rewrites the checklist immediately before each invocation, so
+    an agent that answers anything has to answer it from inside the call —
+    a file ticked beforehand is overwritten before the agent ever sees it.
+    """
+    tracking = Path(wt_path) / "ignore" / "pr-comments" / "fix-tracking.md"
+
+    def invoke(_invocation):
+        tracking.write_text(tracking.read_text().replace("- [ ] fixed", "- [x] fixed"))
+        return 0
+    return invoke
+
+
+def _fix_adapter(rt, wt_path, **overrides):
+    """A CommentFixAdapter over an otherwise empty pass.
+
+    Every bucket defaults to empty so a test names only the one it is about.
+    """
+    report = overrides.pop("report", None) or PRReport(repo="owner/repo", pr_number=1)
+    ctx = overrides.pop("ctx", None) or make_ctx(
+        repo="owner/repo", pr_number=1, worktree_root=wt_path, target_dir=wt_path,
+    )
+    kwargs = dict(
+        fixable=[], fixable_items=[], needs_human=[], dismissed=[],
+        already_addressed=[], resolved=[], triage_replies=0,
+        has_unaccounted=False, has_items=False,
+    )
+    kwargs.update(overrides)
+    return rt.CommentFixAdapter(report, ctx, wt_path, **kwargs)
+
+
+class TestCommentFixLanding:
     """The pass's boundary onto the landing owner.
 
     What the commit, the push, the regeneration retry and the recovery each do
-    is the owner's, and `land_test.py` holds it against a real repo. What is
-    this command's is the request it makes and the record it keeps of the
-    answer.
+    is the owner's, and `land_test.py` holds it against a real repo; asking for
+    them is `fix_engine`'s, and `fix_engine_test.py` holds that. What is left to
+    this command is the spec it hands over and the record it keeps of the answer.
     """
 
     @staticmethod
-    def _land(rt, landed, *, short="abc1234", fixed=1, deferred=0):
-        with patch.object(rt.land, "land", return_value=landed) as landing, \
-                patch.object(rt.git_client, "run",
-                             return_value=_git_ran(0, stdout=f"{short}\n")):
-            result = rt._commit_fixes(Path("/fake"), fixed, deferred, "9999999")
-        return result, landing.call_args
+    def _spec(rt, tmp_path, *, fixed=1, deferred=0):
+        outcomes = (
+            [ItemOutcome(id=f"f{n}", outcome=FixOutcome.FIXED) for n in range(fixed)]
+            + [ItemOutcome(id=f"d{n}", outcome=FixOutcome.DEFERRED)
+               for n in range(deferred)]
+        )
+        return _fix_adapter(rt, tmp_path).landing(outcomes)
 
-    def test_the_owner_is_asked_for_the_retry_and_the_recovery(self, rt):
+    @staticmethod
+    def _recorded(rt, landed, *, short="abc1234"):
+        with patch.object(rt.git_client, "run",
+                          return_value=_git_ran(0, stdout=f"{short}\n")):
+            return rt._pass_commit(Path("/fake"), landed)
+
+    def test_the_owner_is_asked_for_the_retry_and_the_recovery(self, rt, tmp_path):
         """Both are options, and a pass that did not ask would get neither."""
-        landed = rt.land.LandResult(rt.CommitStatus.PUSHED, sha="abc1234def")
-        _, call = self._land(rt, landed)
+        spec = self._spec(rt, tmp_path)
 
-        assert call.kwargs["gated"] is True
-        assert call.kwargs["recover_from"] == "9999999"
-        assert call.kwargs["regen"]
+        assert spec.recover is True
+        assert spec.regen
 
-    def test_the_counts_ride_in_the_commit_message(self, rt):
-        landed = rt.land.LandResult(rt.CommitStatus.PUSHED, sha="abc1234def")
-        _, call = self._land(rt, landed, fixed=2, deferred=3)
+    def test_the_counts_ride_in_the_commit_message(self, rt, tmp_path):
+        spec = self._spec(rt, tmp_path, fixed=2, deferred=3)
 
-        subject, _, body = call.kwargs["message"].partition("\n\n")
+        subject, _, body = spec.message.partition("\n\n")
         assert subject == "fix: address review comments"
         assert body == "2 fixed, 3 deferred"
 
-    def test_a_pass_that_fixed_nothing_says_only_what_it_did(self, rt):
-        landed = rt.land.LandResult(rt.CommitStatus.NO_CHANGES)
-        _, call = self._land(rt, landed, fixed=0, deferred=4)
+    def test_a_pass_that_fixed_nothing_says_only_what_it_did(self, rt, tmp_path):
+        spec = self._spec(rt, tmp_path, fixed=0, deferred=4)
 
-        assert call.kwargs["message"] == "fix: address review comments"
+        assert spec.message == "fix: address review comments"
 
     def test_the_sha_is_recorded_at_the_width_the_state_file_uses(self, rt):
         """A commit recorded twice at two widths reads as two commits."""
         landed = rt.land.LandResult(rt.CommitStatus.PUSHED, sha="abc1234def56789")
-        result, _ = self._land(rt, landed)
+        result = self._recorded(rt, landed)
 
         assert result.sha == "abc1234"
         assert result.status == "pushed"
 
     def test_a_landing_with_no_commit_records_no_sha(self, rt):
-        landed = rt.land.LandResult(rt.CommitStatus.NO_CHANGES)
-        result, _ = self._land(rt, landed)
+        result = self._recorded(rt, rt.land.LandResult(rt.CommitStatus.NO_CHANGES))
 
         assert result.sha is None
         assert result.status == "no_changes"
@@ -754,7 +791,7 @@ class TestCommitFixes:
         landed = rt.land.LandResult(
             rt.CommitStatus.PUSH_FAILED, sha="abc1234def", error="rejected",
         )
-        result, _ = self._land(rt, landed)
+        result = self._recorded(rt, landed)
 
         assert result.status == "push_failed"
         assert result.sha == "abc1234"
@@ -1523,11 +1560,9 @@ class TestFailedCommitIsNotReportedAsNoCommit:
                 return _git_ran(1, stderr="pre-commit hook failed\n")
             return _git_ran(0, stdout="aaa1111\n")
 
-        batch = rt.FixBatchResult(
-            tracking=TrackingResult(threads={FixOutcome.FIXED: threads}),
-            unproductive=False, max_turns=10, max_budget=1.0,
-        )
-        with patch.object(rt, "_run_fix_batch", return_value=batch), \
+        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
+                          side_effect=_tick_every_fix(tmp_path)), \
+             patch.object(rt, "_diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(rt, "_resolve_default_branch", return_value="main"), \
              patch.object(rt, "_persist_fix_state") as persist, \
@@ -2214,10 +2249,12 @@ class TestDeliverPrBody:
 
     def test_the_fix_prompt_names_the_file_the_delivery_reads(self, rt, worktree):
         """One path, two ends: the agent writes where `_deliver_pr_body` looks."""
-        prompt = rt._render_fix_template(
-            branch="b", repo="owner/repo", threads_content="",
-            tracking_file="t.md", wt_path=str(worktree), max_turns=10,
-        )
+        adapter = _fix_adapter(rt, worktree)
+        adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
+        adapter.tracking_path.write_text("")
+        with patch.object(rt, "_find_and_update_main_worktree", return_value=None):
+            prompt = fix_engine._prompt(adapter, 10)
+
         assert str(rt._pr_body_draft(worktree)) in prompt
         assert "${pr_body_file}" not in prompt
 
@@ -4182,33 +4219,6 @@ class TestBlockingReviewers:
         assert self._extract_blocking([]) == []
 
 
-# ── _fix_turn_budget / _fix_budget_usd ─────────────────────────────────────
-
-class TestFixTurnBudget:
-    def test_minimum_floor(self, rt):
-        assert rt._fix_turn_budget(1) == 20
-
-    def test_scales_with_items(self, rt):
-        assert rt._fix_turn_budget(5) == 25
-
-    def test_caps_at_maximum(self, rt):
-        assert rt._fix_turn_budget(100) == 60
-
-    def test_zero_items(self, rt):
-        assert rt._fix_turn_budget(0) == 20
-
-
-class TestFixBudgetUsd:
-    def test_minimum_floor(self, rt):
-        assert rt._fix_budget_usd(1) == 2.0
-
-    def test_scales_with_items(self, rt):
-        assert rt._fix_budget_usd(6) == 3.0
-
-    def test_caps_at_maximum(self, rt):
-        assert rt._fix_budget_usd(100) == 5.0
-
-
 # ── _diff_context_for_file ─────────────────────────────────────────────────
 
 class TestDiffContextForFile:
@@ -4541,11 +4551,9 @@ class TestFixPassHoldsWhenContested:
                 commits.append(cmd)
             return _git_ran(0, stdout="abc1234\n")
 
-        batch = rt.FixBatchResult(
-            tracking=TrackingResult(threads={FixOutcome.FIXED: [threads[0]]}),
-            unproductive=False, max_turns=10, max_budget=1.0,
-        )
-        with patch.object(rt, "_run_fix_batch", return_value=batch), \
+        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
+                          side_effect=_tick_every_fix(tmp_path)), \
+             patch.object(rt, "_diff_context_for_file", return_value=""), \
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(rt, "_resolve_default_branch", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
@@ -5964,79 +5972,6 @@ class TestCommitLookupsUseDefaultBranch:
 # ── shared thrash guard wiring ──────────────────────────────────────────────
 
 
-class TestFixPassThrashGuard:
-    """A fix agent that checked nothing off was thrashing, not working."""
-
-    def test_session_log_lives_under_the_worktree(self, rt, tmp_path):
-        assert rt._fix_session_log(tmp_path) == str(
-            tmp_path / "ignore" / "pr-comments" / "fix-session.jsonl")
-
-    def test_invoke_passes_the_diagnosable_session_log(self, rt, tmp_path):
-        tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [x] fixed\n")
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
-            rt._guarded_fix_pass(
-                "PROMPT", tmp_path, None, tracking,
-                max_turns=10, max_budget=1.0, label="Fix pass",
-            )
-        assert inv.call_args.args[0].session_log == rt._fix_session_log(tmp_path)
-
-    def test_the_pass_runs_under_the_comments_fix_phase(self, rt, tmp_path):
-        """The ledger and the overrides both key on the phase, so it is named."""
-        tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [x] fixed\n")
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
-            rt._guarded_fix_pass(
-                "PROMPT", tmp_path, None, tracking,
-                max_turns=10, max_budget=1.0, label="Fix pass",
-            )
-        assert inv.call_args.args[0].task == rt.Phase.COMMENTS_FIX
-
-    def test_pass_that_checks_nothing_off_is_retried_with_the_fix_hint(self, rt, tmp_path):
-        write_thrash_log(Path(rt._fix_session_log(tmp_path)))
-        tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [ ] fixed\n")
-        prompts = []
-
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
-                          side_effect=lambda inv: prompts.append(inv.prompt) or 0):
-            diagnosis = rt._guarded_fix_pass(
-                "PROMPT", tmp_path, None, tracking,
-                max_turns=10, max_budget=1.0, label="Fix pass",
-            )
-
-        assert prompts == ["PROMPT", rt.agent_retry.FIX_RETRY_HINT + "PROMPT"]
-        assert diagnosis.no_write_tool
-
-    def test_a_single_checked_box_counts_as_work(self, rt, tmp_path):
-        """Partial progress belongs to `_retry_fix_pass`, not to the guard."""
-        write_thrash_log(Path(rt._fix_session_log(tmp_path)))
-        tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [x] fixed\n- [ ] declined — <why>\n")
-
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
-            diagnosis = rt._guarded_fix_pass(
-                "PROMPT", tmp_path, None, tracking,
-                max_turns=10, max_budget=1.0, label="Fix pass",
-            )
-
-        assert diagnosis is None
-        assert inv.call_count == 1
-
-    def test_missing_tracking_file_counts_as_no_work(self, rt, tmp_path):
-        """A pass that never wrote the file it was given produced nothing."""
-        write_thrash_log(Path(rt._fix_session_log(tmp_path)))
-
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix", return_value=0) as inv:
-            diagnosis = rt._guarded_fix_pass(
-                "PROMPT", tmp_path, None, tmp_path / "absent.md",
-                max_turns=10, max_budget=1.0, label="Fix pass",
-            )
-
-        assert inv.call_count == 2
-        assert diagnosis.no_write_tool
-
-
 class TestTriageThrashGuard:
     """Triage has no session log — an unparseable answer is the only signal."""
 
@@ -6063,7 +5998,7 @@ class TestTriageThrashGuard:
         assert rc == 0
         assert result is not None
         assert len(prompts) == 2
-        assert prompts[1].startswith(rt.agent_retry.BLANK_RESPONSE_HINT)
+        assert prompts[1].startswith(agent_retry.BLANK_RESPONSE_HINT)
 
 
 # ── permalink-backed claims ─────────────────────────────────────────────────
@@ -6246,116 +6181,6 @@ class TestWorktreeGuard:
                                 rt._finish_deferred_work, self._ctx(), PRReport())
 
 
-class TestFixChunks:
-    def test_splits_into_chunks_of_at_most_size(self, rt):
-        chunks = rt._fix_chunks(list(range(41)), 10)
-        assert [len(c) for c in chunks] == [10, 10, 10, 10, 1]
-
-    def test_exact_multiple_has_no_empty_trailing_chunk(self, rt):
-        chunks = rt._fix_chunks(list(range(20)), 10)
-        assert [len(c) for c in chunks] == [10, 10]
-
-    def test_short_list_is_one_chunk(self, rt):
-        assert rt._fix_chunks([1, 2, 3], 10) == [[1, 2, 3]]
-
-    def test_empty_list_is_no_chunks(self, rt):
-        assert rt._fix_chunks([], 10) == []
-
-    def test_chunks_preserve_order_and_lose_nothing(self, rt):
-        items = list(range(41))
-        assert [x for c in rt._fix_chunks(items, 10) for x in c] == items
-
-
-class TestFixBatches:
-    """Threads and items share one budget, so they share one chunk."""
-
-    def _chunk_size(self, rt):
-        return rt.agent_phases.phase_chunk_size(rt.Phase.COMMENTS_FIX)
-
-    def test_a_batch_never_exceeds_the_chunk_size(self, rt):
-        batches = rt._fix_batches(list(range(30)), list(range(30, 55)))
-        assert all(
-            len(threads) + len(items) <= self._chunk_size(rt)
-            for threads, items in batches
-        )
-
-    def test_mixed_work_is_not_chunked_kind_by_kind(self, rt):
-        """Chunking each kind separately would put 2x the cap in one pass."""
-        size = self._chunk_size(rt)
-        batches = rt._fix_batches(list(range(size)),
-                                  list(range(100, 100 + size)))
-        assert len(batches) == 2
-
-    def test_nothing_is_lost_or_reordered(self, rt):
-        threads, items = list(range(7)), list(range(100, 106))
-        batches = rt._fix_batches(threads, items)
-        assert [t for ts, _ in batches for t in ts] == threads
-        assert [i for _, its in batches for i in its] == items
-
-    def test_no_work_is_no_batches(self, rt):
-        assert rt._fix_batches([], []) == []
-
-
-class TestFixPassRetryHeadroom:
-    """The bug: a turn-exhausted retry was handed the budget that just ran out."""
-
-    def _max_turns_log(self, path, turns):
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
-            "type": "result", "subtype": "error_max_turns", "num_turns": turns,
-        }) + "\n")
-
-    def test_retry_of_a_capped_pass_gets_more_turns(self, rt, tmp_path):
-        cap = rt.PHASES[rt.Phase.COMMENTS_FIX].scaling.turns_cap
-        self._max_turns_log(rt._fix_session_log(tmp_path), cap)
-        tracking = tmp_path / "tracking.md"
-        tracking.write_text("- [ ] fixed\n")
-        budgets = []
-
-        with patch.object(rt.agent_invoke.ai_backend, "invoke_fix",
-                          side_effect=lambda inv: budgets.append(inv.max_turns) or 0):
-            rt._guarded_fix_pass(
-                "PROMPT", tmp_path, None, tracking,
-                max_turns=cap, max_budget=1.0, label="Fix pass",
-            )
-
-        assert budgets == [cap, cap * 2]
-
-
-class TestRunFixBatch:
-    """A batch is budgeted for its own items, not for the whole pass."""
-
-    def _ctx(self):
-        return SimpleNamespace(branch="isaac/feat/x", repo="owner/repo")
-
-    def _run(self, rt, tmp_path, threads, items):
-        with patch.object(rt, "_build_tracking_file") as build, \
-             patch.object(rt, "_render_fix_template", return_value="PROMPT"), \
-             patch.object(rt, "_guarded_fix_pass", return_value=None) as guarded, \
-             patch.object(rt, "_parse_tracking_results",
-                          return_value=rt.TrackingResult()):
-            (tmp_path / "tracking.md").write_text("")
-            result = rt._run_fix_batch(
-                threads, items, {}, tmp_path / "tracking.md", tmp_path, None,
-                self._ctx(), 42, label="Fix pass (batch 1/5)",
-                default_branch="main",
-            )
-        return result, build, guarded
-
-    def test_budget_is_sized_to_the_chunk(self, rt, tmp_path):
-        result, _, guarded = self._run(rt, tmp_path, list(range(3)), [])
-        assert result.max_turns == rt._fix_turn_budget(3)
-        assert result.max_budget == rt._fix_budget_usd(3)
-        assert guarded.call_args.kwargs["max_turns"] == rt._fix_turn_budget(3)
-
-    def test_tracking_file_is_rebuilt_with_only_this_chunk(self, rt, tmp_path):
-        threads = list(range(3))
-        _, build, _ = self._run(rt, tmp_path, threads, [9])
-        assert build.call_args.args[1] == threads
-        assert build.call_args.kwargs["fixable_items"] == [9]
-
-
 class TestCommentTrackingRoundTrip:
     """What the agent records comes back on the thread that earned it.
 
@@ -6369,13 +6194,18 @@ class TestCommentTrackingRoundTrip:
                            summary="rename it")
 
     def _built(self, rt, tmp_path, threads, comment_items=()):
-        path = tmp_path / "ignore" / "pr-comments" / "fix-tracking.md"
-        with patch.object(rt, "_diff_context_for_file", return_value=""):
-            rt._build_tracking_file(
-                path, list(threads), {}, tmp_path, 42,
-                fixable_items=list(comment_items),
+        """Write the checklist the way `fix_engine` writes it for this adapter."""
+        adapter = _fix_adapter(
+            rt, tmp_path,
+            report=PRReport(repo="owner/repo", pr_number=42),
+            fixable=list(threads), fixable_items=list(comment_items),
+        )
+        with patch.object(rt, "_diff_context_for_file", return_value=""), \
+             patch.object(rt, "_resolve_default_branch", return_value="main"):
+            fix_tracking.write(
+                adapter.tracking_path, adapter.title, adapter.items(),
             )
-        return path
+        return adapter.tracking_path
 
     def _answer(self, path, label, reason=""):
         """Tick one box the way the agent's Edit would."""
@@ -6387,7 +6217,8 @@ class TestCommentTrackingRoundTrip:
 
     def _parsed(self, rt, path, threads, comment_items=()):
         return rt._parse_tracking_results(
-            path, list(threads), fixable_items=list(comment_items),
+            fix_tracking.parse(path), list(threads),
+            fixable_items=list(comment_items),
         )
 
     def test_the_section_carries_the_id_the_reviewer_and_the_context(self, rt, tmp_path):
@@ -6474,40 +6305,6 @@ class TestMergeTracking:
         total.drop(FixOutcome.DEFERRED)
         assert total.both(FixOutcome.DEFERRED) == []
         assert total.bucket(FixOutcome.FIXED) == ["k"]
-
-
-class TestPartitionBatches:
-    """One stalled batch must not spend every other batch's retry."""
-
-    def _batch(self, rt, deferred, *, unproductive):
-        return rt.FixBatchResult(
-            tracking=rt.TrackingResult(threads={FixOutcome.DEFERRED: deferred}),
-            unproductive=Diagnosis(DiagnosisKind.MAX_TURNS) if unproductive else None,
-            max_turns=50, max_budget=5.0,
-        )
-
-    def test_a_stalled_batch_does_not_block_the_others(self, rt):
-        retryable, stalled = rt._partition_batches([
-            self._batch(rt, ["a"], unproductive=False),
-            self._batch(rt, ["b"], unproductive=True),
-        ])
-        assert retryable.bucket(FixOutcome.DEFERRED) == ["a"]
-        assert stalled.bucket(FixOutcome.DEFERRED) == ["b"]
-
-    def test_all_productive_leaves_nothing_stalled(self, rt):
-        retryable, stalled = rt._partition_batches([
-            self._batch(rt, ["a"], unproductive=False),
-            self._batch(rt, ["b"], unproductive=False),
-        ])
-        assert retryable.bucket(FixOutcome.DEFERRED) == ["a", "b"]
-        assert stalled.bucket(FixOutcome.DEFERRED) == []
-
-    def test_all_stalled_leaves_nothing_retryable(self, rt):
-        retryable, stalled = rt._partition_batches([
-            self._batch(rt, ["a"], unproductive=True),
-        ])
-        assert retryable.bucket(FixOutcome.DEFERRED) == []
-        assert stalled.bucket(FixOutcome.DEFERRED) == ["a"]
 
 
 # ── HumanReason ─────────────────────────────────────────────────────────────

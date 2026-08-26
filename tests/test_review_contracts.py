@@ -27,9 +27,15 @@ AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import make_ctx  # noqa: E402
+
+import fix_engine  # noqa: E402
+import fix_tracking  # noqa: E402
 import review_common  # noqa: E402
 import review_findings  # noqa: E402
+import review_fix  # noqa: E402
 import review_prompt  # noqa: E402
+from pr_state import PRIdentity, PRState  # noqa: E402
 from review_preflight import (  # noqa: E402
     MAX_PROMPT_BYTES, PRContext, PRMetadata, PreflightData, ReviewJob,
 )
@@ -359,7 +365,6 @@ def _make_review_job(**overrides) -> ReviewJob:
 # Extra kwargs each handler-backed template needs, keyed by template filename.
 _BUILD_PROMPT_EXTRAS = {
     review_common.TEMPLATE_SINGLE: {},
-    review_common.TEMPLATE_FIX: {},
     review_common.TEMPLATE_SELF_REVIEW: {"branch_name": "user/feat/thing"},
     review_common.TEMPLATE_HOLISTIC: {"holistic_output": "/tmp/reviews/holistic.md"},
     review_common.TEMPLATE_SCOUT: {"scout_output": "/tmp/reviews/scout.md"},
@@ -390,20 +395,68 @@ def _render_via_build_prompt(template_name: str, job: ReviewJob | None = None) -
     )
 
 
-def _render_fix_ci(cc) -> str:
-    return cc._render_ci_fix_template(
-        branch="user/feat/thing", repo="owner/repo",
-        failures_content="- [ ] test failed", tracking_file="/tmp/ci.md",
-        wt_path="/tmp/wt", max_turns=15,
-    )
+def _render_adapter(adapter) -> str:
+    """Render a fix template the way `fix_engine` renders it for a real pass.
+
+    Going through the engine rather than restating the substitution keeps this
+    honest about what an agent is actually handed: a placeholder the engine
+    stopped supplying would show up here as unsubstituted, not as a passing
+    test against a call nobody makes.
+    """
+    adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
+    adapter.tracking_path.write_text("- [ ] fixed\n")
+    return fix_engine._prompt(adapter, 15)
 
 
-def _render_fix_comments(rt) -> str:
-    return rt._render_fix_template(
-        branch="user/feat/thing", repo="owner/repo",
-        threads_content="- [ ] comment", tracking_file="/tmp/threads.md",
-        wt_path="/tmp/wt", max_turns=15,
+def _render_fix_ci(cc, wt_path) -> str:
+    ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
+                   worktree_root=wt_path, target_dir=wt_path)
+    return _render_adapter(cc.CIFixAdapter(
+        [{"id": "build-1", "job": "build", "kind": "build",
+          "annotation": "test failed", "headline": "test failed"}],
+        {"run_number": 1}, ctx,
+        PRState(identity=PRIdentity(
+            repo="owner/repo", branch="user/feat/thing", pr_number=42,
+            head_sha="abc123", worktree_root=str(wt_path),
+        )),
+    ))
+
+
+def _render_fix_comments(rt, wt_path) -> str:
+    ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
+                   pr_number=1, worktree_root=wt_path, target_dir=wt_path)
+    adapter = rt.CommentFixAdapter(
+        rt.PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
+        fixable=[], fixable_items=[], needs_human=[], dismissed=[],
+        already_addressed=[], resolved=[], triage_replies=0,
+        has_unaccounted=False, has_items=False,
     )
+    # The default-branch checkout is a fetch and a reset against a second
+    # worktree; a render has no business making either.
+    adapter.__dict__["main_wt"] = None
+    return _render_adapter(adapter)
+
+
+def _render_fix_findings(wt_path) -> str:
+    job = _make_review_job(
+        wt_path=str(wt_path),
+        review_file=str(wt_path / "reviews" / "review.md"),
+    )
+    finding = review_findings.Finding(
+        id="M1", severity=review_common.SEVERITY_MUST, seq=1,
+        path="a.py", line=3, end_line=None, body="the guard is missing",
+    )
+    return _render_adapter(review_fix.ReviewFixAdapter(job, [finding], set()))
+
+
+# Every fix template, keyed the way the parametrized contracts below name them.
+# One list, so a fourth domain adopting the engine is added to the contracts by
+# adding its renderer here rather than to each test in turn.
+_FIX_RENDERERS = {
+    "ci": lambda cc, rt, wt: _render_fix_ci(cc, wt),
+    "comments": lambda cc, rt, wt: _render_fix_comments(rt, wt),
+    "findings": lambda cc, rt, wt: _render_fix_findings(wt),
+}
 
 
 def _make_common_sections() -> review_prompt.CommonSections:
@@ -428,17 +481,22 @@ class TestTemplateRendering:
             + ", ".join(f"${{{v}}}" for v in left)
         )
 
-    def test_fix_ci_template_fully_substituted(self, cc):
-        left = _unsubstituted(_render_fix_ci(cc))
+    def test_fix_ci_template_fully_substituted(self, cc, tmp_path):
+        left = _unsubstituted(_render_fix_ci(cc, tmp_path))
         assert not left, f"fix-ci.md left: {left}"
 
-    def test_fix_comments_template_fully_substituted(self, rt):
-        left = _unsubstituted(_render_fix_comments(rt))
+    def test_fix_comments_template_fully_substituted(self, rt, tmp_path):
+        left = _unsubstituted(_render_fix_comments(rt, tmp_path))
         assert not left, f"fix-comments.md left: {left}"
+
+    def test_fix_findings_template_fully_substituted(self, tmp_path):
+        left = _unsubstituted(_render_fix_findings(tmp_path))
+        assert not left, f"fix-findings.md left: {left}"
 
     def test_every_template_is_covered(self):
         """A new template must be added to this file's render coverage."""
         covered = set(_BUILD_PROMPT_EXTRAS) | {
+            review_common.TEMPLATE_FIX,
             review_common.TEMPLATE_FIX_CI, review_common.TEMPLATE_FIX_COMMENTS,
         }
         uncovered = sorted(
@@ -466,10 +524,9 @@ class TestOutputBlockContract:
             template_name, _render_via_build_prompt(template_name),
         )
 
-    @pytest.mark.parametrize("render", ["ci", "comments"])
-    def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt):
-        rendered = _render_fix_ci(cc) if render == "ci" else _render_fix_comments(rt)
-        self._assert_no_mandate(render, rendered)
+    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt, tmp_path):
+        self._assert_no_mandate(render, _FIX_RENDERERS[render](cc, rt, tmp_path))
 
     def _assert_no_mandate(self, label, rendered):
         match = self._WRITE_MANDATE.search(rendered)
@@ -513,14 +570,26 @@ class TestOutputBlockContract:
         }
         assert expected == checked
 
-    @pytest.mark.parametrize("render", ["ci", "comments"])
-    def test_fix_templates_share_the_worktree_block(self, render, cc, rt):
-        rendered = _render_fix_ci(cc) if render == "ci" else _render_fix_comments(rt)
-        assert review_common.build_worktree_block("/tmp/wt") in rendered
+    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    def test_fix_templates_share_the_worktree_block(self, render, cc, rt, tmp_path):
+        rendered = _FIX_RENDERERS[render](cc, rt, tmp_path)
+        assert review_common.build_worktree_block(str(tmp_path)) in rendered
 
-    def test_fix_findings_shares_the_worktree_block(self):
-        rendered = _render_via_build_prompt(review_common.TEMPLATE_FIX)
-        assert review_common.build_worktree_block("/tmp/wt") in rendered
+    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    def test_fix_templates_explain_every_box_the_checklist_offers(
+        self, render, cc, rt, tmp_path,
+    ):
+        """The boxes are `fix_tracking`'s; the prose explaining them is per-domain.
+
+        Every template spells out the same three answers in its own words, so a
+        box renamed or added in `fix_tracking` leaves prose behind that describes
+        a checklist the agent is not looking at. No template has to say it the
+        same way — each only has to still be talking about all of them.
+        """
+        task = _FIX_RENDERERS[render](cc, rt, tmp_path).split("## Task", 1)[1]
+        for label, outcome in fix_tracking._BOXES:
+            why = f" — {fix_tracking._WHY}" if outcome in fix_tracking._REASONED else ""
+            assert f"`- [x] {label}{why}`" in task, label
 
 
 class TestSharedSectionNames:

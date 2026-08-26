@@ -208,7 +208,7 @@ def _run_phases(trail, args, job) -> str:
     if args.fix and Path(job.review_file).exists():
         trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
         with trail.span("fix_pass"):
-            run_fix_pass(job)
+            run_fix_pass(job, trail)
     elif args.fix:
         trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
 

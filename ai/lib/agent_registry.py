@@ -80,11 +80,19 @@ _SPECS: tuple[PhaseSpec, ...] = (
                             budget_per_item=0.5, budget_cap=5.0),
         retry=RetryBudget(ceiling=120, turns_min=30, bump=15),
     ),
+    # The CI fix pass gets the same 20 turns and $3 whatever it is handed: the
+    # rates below sit at exactly that flat budget divided by the ten failures it
+    # was always implicitly sized for, and the caps match the flat numbers, so
+    # `phase_turns` and `phase_budget` answer what they always did. Naming the
+    # ten is what buys the chunk — a run with forty failures now gets four
+    # passes of that budget rather than one prompt holding all forty.
     PhaseSpec(
         Phase.CI_FIX, PhaseDomain.CI, "CI fix pass",
         max_turns=20, max_budget=3.0,
         shape=PhaseShape.FIX,
         scales_with_omitted=False,
+        scaling=ItemScaling(turns_per_item=2, turns_cap=20,
+                            budget_per_item=0.25, budget_cap=3.0),
     ),
     # The prompt-shaped phases below are one stateless call each: no agent
     # loop, so no turn budget, no dollar cap and no agent persona to pick.

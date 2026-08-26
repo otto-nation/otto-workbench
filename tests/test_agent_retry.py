@@ -45,7 +45,6 @@ class TestPipelineDelegatesToSharedGuard:
     def test_hints_are_the_same_strings(self):
         assert review_retry._NO_WRITE_HINT is agent_retry.NO_WRITE_HINT
         assert review_retry._RETRY_HINT is agent_retry.RETRY_HINT
-        assert review_retry._FIX_RETRY_HINT is agent_retry.FIX_RETRY_HINT
 
     def test_group_retry_ceiling_comes_from_the_group_spec(self):
         assert review_phases.RETRY_MAX_TURNS_GROUP == PHASES[Phase.GROUP].retry.ceiling

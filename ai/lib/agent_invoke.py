@@ -33,7 +33,7 @@ import ai_backend
 import log
 import review_agent
 from agent_registry import PHASES
-from agent_types import Phase, PhaseShape
+from agent_types import Effort, Phase, PhaseShape
 from ai_backend import AgentInvocation
 from review_common import Diagnosis, preserve_log, restore_preserved
 from workbench_config import WorkbenchConfig
@@ -62,10 +62,20 @@ class _Knobs:
     provider: str | None
 
 
-def _resolved(phase: Phase, config: WorkbenchConfig | None) -> _Knobs:
+def _resolved(
+    phase: Phase, config: WorkbenchConfig | None, *,
+    effort: Effort | None = None, model: str | None = None,
+) -> _Knobs:
+    """The three settings, with whatever the caller resolved above them.
+
+    ``effort`` and ``model`` are the two layers a phase cannot supply itself:
+    the preset a review was launched at and the ``--model`` its operator typed.
+    A caller outside a review has neither and passes neither, which is the same
+    resolution this made before they existed.
+    """
     return _Knobs(
-        model=agent_phases.phase_model(phase, None, config),
-        thinking=agent_phases.phase_thinking(phase, None, config),
+        model=agent_phases.phase_model(phase, model, config),
+        thinking=agent_phases.phase_thinking(phase, effort, config),
         provider=agent_phases.phase_provider(config),
     )
 
@@ -243,6 +253,8 @@ def run_fix(
     repo: str | None = None,
     pr: str | None = None,
     config: WorkbenchConfig | None = None,
+    effort: Effort | None = None,
+    model: str | None = None,
 ) -> FixResult:
     """Run a phase that edits the workspace, retrying once if it produced nothing.
 
@@ -252,7 +264,10 @@ def run_fix(
     and ``max_budget`` override what the phase resolves to, which is how a
     caller that sized the pass against its own checklist keeps the number it
     already put in the prompt. ``add_dirs`` defaults to ``cwd`` alone; ``label``
-    and ``task`` to the phase's own.
+    and ``task`` to the phase's own. ``effort`` and ``model`` are the review
+    layers above the phase's own resolution — a fix pass running inside a review
+    passes what the review was launched with, and one running outside passes
+    neither.
 
     Only phases shaped ``FIX`` may come through here: the retry hints and the
     ``produced()`` contract are both about work landing in the worktree, and a
@@ -265,7 +280,7 @@ def run_fix(
     budget = agent_phases.phase_budget(phase) if max_budget is None else max_budget
     dirs = [str(d) for d in add_dirs] if add_dirs else [work_dir]
     name = label or spec.label
-    knobs = _resolved(phase, config)
+    knobs = _resolved(phase, config, effort=effort, model=model)
 
     exit_code = 0
 

@@ -2,10 +2,10 @@
   "name": "pr-comments-approved",
   "task": "skill",
   "skill": "pr-comments",
-  "description": "Publishes what was approved, and only that",
+  "description": "Resumes an approved pass and drafts the closeout it would file, publishing none of it",
   "prompt": "Address the review comments on PR 42. I have already read the drafts from an earlier pass and I approve publishing them. File thread T-3 on the tracking issue, and nothing else.",
-  "requires": [["--finish", "--post", "--track", "T-3"]],
-  "forbids": [["pr", "comments", "--fix"], ["--track-all"], ["gh", "api"]],
+  "requires": [["--finish", "--track", "T-3"]],
+  "forbids": [["pr", "comments", "--fix"], ["--post"], ["--track-all"], ["gh", "api"]],
   "false_positives_max": 0,
   "tags": ["skill", "pr-comments"]
 }

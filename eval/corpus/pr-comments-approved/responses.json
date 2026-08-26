@@ -3,8 +3,15 @@
     "on_no_match": "fail",
     "rules": [
       {
-        "match": ["comments", "--finish"],
+        "match": ["comments", "--finish", "--post"],
         "stdout": "{\"replies_posted\": 2, \"summary_url\": \"https://example.invalid/c/1\"}",
+        "stderr": "✓ Replied to T-1 (alice)\n✓ Replied to T-3 (alice)\n✓ Filed T-3 on the tracking issue: https://example.invalid/i/9\n✓ Posted summary: https://example.invalid/c/1\n",
+        "exit": 0
+      },
+      {
+        "match": ["comments", "--finish"],
+        "stdout": "{\"replies_posted\": 0, \"summary_url\": \"\"}",
+        "stderr": "DRAFT (not published) — tracking issue for 1 deferred thread\n  ## Deferred from PR #42\n  - T-3 (alice): retry budget is shared across both callers\n    https://example.invalid/p/42#discussion_rT-3\nDRAFT (not published) — reply to T-3 (alice)\n  Tracked for follow-up: https://example.invalid/i/9\nDRAFT (not published) — summary comment\n  Addressed 2 of 3 threads; 1 deferred and tracked.\n",
         "exit": 0
       },
       {

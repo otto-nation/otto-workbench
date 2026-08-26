@@ -164,14 +164,42 @@ resumed rebase (one already paused in the worktree) waives the conflict budget
 on its own: the conflicts are already there to resolve, and refusing would
 strand the worktree mid-rebase.
 
-**Exit 1 — error.** Report the error from stderr.
+**Exit 1 — error.** Report the error from stderr. Two of its shapes leave the
+rebase done and only the push outstanding — both end at step 3, never at a
+`git push`:
 
-When the failure is `Recovery left uncommitted changes — not pushing`, the rebase
-itself succeeded but a push-recovery step left edits outside any commit, so the
-branch was deliberately left unpushed (`force_pushed` is `false`). Pre-push hooks
-validate the worktree rather than the commits, so pushing there would green-light
-a HEAD no hook saw. Report the listed paths and let the user commit or discard
-them before re-running.
+- **The pre-push hook refused the push.** The JSON reads `"status": "completed"`
+  with `"force_pushed": false`, and the hook output above it names the check that
+  failed. Diagnose that check, fix it, commit the fix, then finish at step 3.
+  Re-running with `--fix` only repeats the AI recovery that already failed here.
+- **`Recovery left uncommitted changes — not pushing`.** A push-recovery step left
+  edits outside any commit, so the branch was deliberately left unpushed
+  (`force_pushed` is `false`). Pre-push hooks validate the worktree rather than the
+  commits, so pushing there would green-light a HEAD no hook saw. Report the listed
+  paths, let the user commit or discard them, then finish at step 3.
+
+### 3. Finish the push
+
+A run that ends with the rebase complete and `force_pushed` false is finished
+through the owner, once whatever blocked the push is committed:
+
+```bash
+pr rebase --branch <branch>
+```
+
+This is the same command step 1 calls `--no-fix` mode, and it is not report-only
+here: the flag governs conflict resolution, not the push. A replay with nothing
+to resolve force-pushes either way, and there is nothing left to resolve once the
+rebase has completed. So the run re-fetches, replays nothing unless the base
+moved again, and pushes — which puts the pre-push hooks on the HEAD that is
+actually going out. This is how the skill ends. Never run `git push --force-with-lease` yourself,
+and never hand it to the user as the remaining step: `pr rebase` prints a
+`Resume: git -C '<worktree>' push --force-with-lease` line when a push is refused,
+and that hint is for a human at a terminal, not an instruction to you.
+
+The one exception is `--no-push`, where the user asked for the push to be withheld
+— report the printed command as the script gave it, and come back here only if
+they then ask for the branch to be pushed.
 
 ---
 
@@ -179,8 +207,10 @@ them before re-running.
 
 - Always call `pr rebase` (the dispatcher, two words), never `pr-rebase`
   (the backing script) — the dispatcher handles context resolution and routing
-- Never run raw `git push --force-with-lease` — `pr rebase` force-pushes by default,
-  and with `--no-push` it prints the command for the user rather than issuing it
+- Never run raw `git push --force-with-lease`, and never end a run by handing that
+  command to the user — `pr rebase` force-pushes by default, and step 3 finishes any
+  run that ended unpushed. `--no-push` is the only run that ends on the printed
+  command, because that is what the user asked for
 - A fresh rebase auto-stashes the worktree, untracked files included, and restores
   it afterwards; the pre-push hooks then validate the branch alone. A resumed
   rebase cannot stash (the index is mid-rebase), so uncommitted work is still

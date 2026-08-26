@@ -1,0 +1,11 @@
+# Which services may call svc-api, and on which methods.
+service: svc-api
+
+methods:
+  ListJobs:
+    callers:
+      - orchestrator
+      - worker  # Retry path re-reads the job list
+  GetJob:
+    callers:
+      - orchestrator

@@ -13,6 +13,10 @@ it did, in the `CommitStatus` vocabulary `pr_fix` already defines, so a pass
 records an outcome rather than reconstructing one from a `CmdResult` and a
 `PushResult` it has to reconcile itself.
 
+`land_head` is the same act for a caller whose commits already exist — `pr
+rebase` replays the branch's own, so it has nothing to stage and everything
+after that in common.
+
 Three rules the passes disagreed on, settled here:
 
 1. **Every outcome has a status.** `_PUSH_STATUS` maps the push owner's five
@@ -54,7 +58,10 @@ the plain answer:
   and the push refused, and the commit underneath it was fine. Naming a message
   commits what the hook wrote and pushes once more. The retry reports the
   original commit, which is the one the caller's entries are stamped with; the
-  regeneration rides above it.
+  regeneration rides above it. The retry is abandoned rather than attempted when
+  committing the regenerated files leaves the tree dirty anyway — a hook reads
+  the worktree and not the commits under it, so pushing then sends a HEAD the
+  green run never saw.
 - `recover_from` — the agent a fix pass ran committed its own work, so the pass
   finds nothing to commit and has a commit it did not make to account for.
   Naming the HEAD from before the pass lets the owner attribute and push it.
@@ -153,6 +160,17 @@ class LandResult:
         return self.status is CommitStatus.PUSHED
 
     @property
+    def held(self) -> bool:
+        """Nothing was attempted, because the publishing gate was shut.
+
+        Not a failure, and separate from `ok` because the two callers that
+        matter act on it differently: a fix pass reports a held push as work
+        still owed, and `pr rebase --no-push` reports it as the run finishing
+        exactly as asked, with `resume` as the line it prints.
+        """
+        return self.status is CommitStatus.PUSH_HELD
+
+    @property
     def citable(self) -> bool:
         """Whether the SHA may be named outward. Rule 3, as a property."""
         return self.ok
@@ -206,6 +224,40 @@ def _regenerated(wt_path: str | Path) -> list[str]:
     return [line[3:] for line in status.stdout.splitlines() if line.startswith(" M ")]
 
 
+def _validated(wt_path: str | Path, trail: Trail | None) -> bool:
+    """Whether the tree the pre-push hooks read is the one about to be pushed.
+
+    A hook validates the worktree, not the commits under it, so a recovery that
+    leaves anything uncommitted lets the hooks pass on content no commit holds —
+    and the green run then says nothing about the HEAD that reaches the remote.
+    `add -u` reaches tracked files only, so a hook that writes a *new* generated
+    file leaves exactly that gap.
+
+    A `status` that cannot be read counts as dirty, for the reason `is_dirty`
+    gives: this answer gates a push, and "don't know" must not be spelled the
+    same way as "clean".
+    """
+    r = git_client.run("status", "--porcelain", cwd=wt_path)
+    if not r.ok:
+        log.error(proc.failure_message(
+            "Cannot tell whether the recovery left the worktree dirty — not pushing", r,
+        ))
+        if trail:
+            trail.error("push", "worktree state unreadable before retry")
+        return False
+
+    leftover = [line[3:] for line in r.stdout.splitlines() if line.strip()]
+    if not leftover:
+        return True
+    if trail:
+        trail.error("push", "recovery left the worktree dirty",
+                    data={"files": leftover})
+    log.error("Recovery left uncommitted changes — not pushing:")
+    for path in leftover:
+        log.dim(f"  {path}")
+    return False
+
+
 def _retry_after_regen(
     wt_path: str | Path,
     message: str,
@@ -216,10 +268,11 @@ def _retry_after_regen(
 ) -> PushResult | None:
     """Commit what a pre-push hook regenerated and push once more, or None.
 
-    None whenever the recovery does not apply or does not complete — nothing was
-    regenerated, staging or committing it failed, or the second push fell short
-    too. The caller then reports its original push, which is the honest answer:
-    the commit it made is still the one its work is in.
+    None whenever the recovery does not apply or never reaches a second push —
+    nothing was regenerated, staging or committing it failed, or the commit left
+    the tree dirty anyway. The caller then reports its original push, which is
+    the honest answer: the commit it made is still the one its work is in. When
+    the retry does run, its own result comes back whatever it says.
     """
     modified = _regenerated(wt_path)
     if not modified:
@@ -234,13 +287,15 @@ def _retry_after_regen(
         return None
     if not git_client.run("commit", "-m", message, cwd=wt_path).ok:
         return None
+    if not _validated(wt_path, trail):
+        return None
 
     # Reported whichever way it went: a second push happened, and the operator
     # who watched the first one refused is owed the same line about this one —
     # including the resume command, when it fell short too.
     result = push.push(wt_path, gated=gated, args=args, trail=trail)
     push.report(result, wt_path)
-    return result if result.ok else None
+    return result
 
 
 def _moved_head(wt_path: str | Path, before: str) -> str:
@@ -357,6 +412,40 @@ def _commit(
     return _Commit(sha=sha)
 
 
+def _push_and_retry(
+    wt_path: str | Path,
+    sha: str,
+    *,
+    gated: bool,
+    args: Sequence[str],
+    trail: Trail | None,
+    regen: str | None,
+) -> LandResult:
+    """Push *sha*, recovering once from a pre-push hook that rewrote the tree.
+
+    The half of a landing that does not depend on who made the commit, so
+    `land` and `land_head` reach the remote the same way.
+
+    A retry that ran is the answer reported, because its checks are what a
+    caller repairing the tree has to satisfy and the first attempt's went stale
+    the moment the regenerated files were committed. One exception: a retry that
+    printed nothing leaves the original standing, so a report is never emptied
+    out by a second attempt that failed silently. The SHA is the caller's
+    either way — the regeneration rides above it.
+    """
+    result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
+    push.report(result, wt_path)
+    # Only a refusal can be a regenerating hook: a push the remote dropped left
+    # nothing behind to commit, and `push` has already retried that one itself.
+    if result.status is not PushStatus.REFUSED or regen is None:
+        return _landed(wt_path, sha, result)
+
+    retried = _retry_after_regen(wt_path, regen, gated=gated, args=args, trail=trail)
+    if retried is not None and (retried.ok or retried.output.strip()):
+        return _landed(wt_path, sha, retried)
+    return _landed(wt_path, sha, result)
+
+
 def land(
     wt_path: str | Path,
     *,
@@ -390,14 +479,31 @@ def land(
         return _recover(wt_path, made.outcome, recover_from,
                         gated=gated, args=args, trail=trail)
 
-    result = push.push(wt_path, gated=gated, sha=made.sha, args=args, trail=trail)
-    push.report(result, wt_path)
-    # Only a refusal can be a regenerating hook: a push the remote dropped left
-    # nothing behind to commit, and `push` has already retried that one itself.
-    if result.status is PushStatus.REFUSED and regen is not None:
-        retried = _retry_after_regen(
-            wt_path, regen, gated=gated, args=args, trail=trail,
-        )
-        if retried:
-            return _landed(wt_path, made.sha, retried)
-    return _landed(wt_path, made.sha, result)
+    return _push_and_retry(
+        wt_path, made.sha, gated=gated, args=args, trail=trail, regen=regen,
+    )
+
+
+def land_head(
+    wt_path: str | Path,
+    *,
+    gated: bool,
+    args: Sequence[str] = (),
+    trail: Trail | None = None,
+    regen: str | None = None,
+) -> LandResult:
+    """Push the commit HEAD already points at, and say what became of it.
+
+    `land` for a caller whose work is already committed. `pr rebase` replays the
+    branch's own commits, so there is nothing left to stage and a commit of its
+    own would be an empty one — but everything after the commit is the same act,
+    with the same `regen` recovery and the same result. Sharing it is what keeps
+    the rebase path from reconstructing a `CommitStatus` and a resume command out
+    of a `PushResult` itself, which is how it came to have neither.
+
+    `gated`, `args`, `trail` and `regen` mean what they mean in `land`.
+    """
+    return _push_and_retry(
+        wt_path, git_client.head_sha(cwd=wt_path),
+        gated=gated, args=args, trail=trail, regen=regen,
+    )

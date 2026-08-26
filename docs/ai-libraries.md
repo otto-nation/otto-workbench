@@ -1552,10 +1552,11 @@ anything named for a sha to a literal length is rejected whatever the length,
 since a site free to pick eight is a site free to disagree with the rest.
 
 There is no `timeout` parameter. The bound follows from the subcommand the same
-way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`
-run `UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so
-the knowledge lives with the client that owns it rather than at every call site,
-one of which used to pass a number of its own.
+way `core.quotePath` does — `fetch` takes `TRANSFER`, the subcommands that write
+the tree or run somebody's hooks run `UNBOUNDED`, and everything else is a
+flat-cost metadata read at `LOCAL` — so the knowledge lives with the client that
+owns it rather than at every call site, one of which used to pass a number of
+its own.
 
 `config={"key": "value"}` becomes `-c key=value` ahead of the subcommand.
 `diff`, `ls-files` and `status` get `core.quotePath=false` by default: git
@@ -1610,6 +1611,10 @@ it did, in the `CommitStatus` vocabulary `pr_fix` already defines, so a pass
 records an outcome rather than reconstructing one from a `CmdResult` and a
 `PushResult` it has to reconcile itself.
 
+`land_head` is the same act for a caller whose commits already exist — `pr
+rebase` replays the branch's own, so it has nothing to stage and everything
+after that in common.
+
 Three rules the passes disagreed on, settled here:
 
 1. **Every outcome has a status.** `_PUSH_STATUS` maps the push owner's five
@@ -1651,7 +1656,10 @@ the plain answer:
   and the push refused, and the commit underneath it was fine. Naming a message
   commits what the hook wrote and pushes once more. The retry reports the
   original commit, which is the one the caller's entries are stamped with; the
-  regeneration rides above it.
+  regeneration rides above it. The retry is abandoned rather than attempted when
+  committing the regenerated files leaves the tree dirty anyway — a hook reads
+  the worktree and not the commits under it, so pushing then sends a HEAD the
+  green run never saw.
 - `recover_from` — the agent a fix pass ran committed its own work, so the pass
   finds nothing to commit and has a commit it did not make to account for.
   Naming the HEAD from before the pass lets the owner attribute and push it.
@@ -1780,12 +1788,18 @@ above it, which is what keeps this module's answer to "did it land" independent
 of any caller's idea of how to fix it. `holds` is the same question asked of a
 commit nobody is pushing right now: whether the remote already has it.
 
-`gated` is required and has no default. `pr comments`, `pr ci --fix` and the
-review fix pass all pass `True` and open the gate only under `--post`; `pr
-rebase` and the `pr:create` bridge below pass `False`, because pushing is the
-command rather than a side effect of it. A `False` default would let the next
-call site inherit the ungated answer by omitting the argument, which is how
-three of those four came to push without ever asking.
+`gated` is required and has no default. Every caller in `ai/` passes `True` and
+differs only in what opens the gate: `pr comments`, `pr ci --fix` and the review
+fix pass open it under `--post`, and `pr rebase` opens it unless `--no-push`,
+because there force-pushing is the command rather than a side effect of it. The
+gate is where that difference belongs — expressed as an entry point's decision
+rather than as an argument one caller passes differently, `--no-push` gets the
+drafted command and the resume line every other held push already gets. Only the
+`pr:create` bridge below still passes `False`, because it is bash reaching in
+from a command that has already decided to publish and has no gate to open. A
+`False` default would let the next call site inherit the ungated answer by
+omitting the argument, which is how three of those four came to push without
+ever asking.
 
 Every outcome but `PUSHED` names the command that would finish it, and
 `resume_command` is where that mapping lives — one place rather than a line of
@@ -1946,7 +1960,7 @@ actually predicts the right answer is **what bounds the cost**:
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
-| `UNBOUNDED` | `worktree add`, `commit`, `push` | A bound would be wrong, not merely large. |
+| `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash` | A bound would be wrong, not merely large. |
 
 For the first three tiers the cost is the same whatever the repository holds, so
 a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —

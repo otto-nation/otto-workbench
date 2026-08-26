@@ -39,12 +39,18 @@ above it, which is what keeps this module's answer to "did it land" independent
 of any caller's idea of how to fix it. `holds` is the same question asked of a
 commit nobody is pushing right now: whether the remote already has it.
 
-`gated` is required and has no default. `pr comments`, `pr ci --fix` and the
-review fix pass all pass `True` and open the gate only under `--post`; `pr
-rebase` and the `pr:create` bridge below pass `False`, because pushing is the
-command rather than a side effect of it. A `False` default would let the next
-call site inherit the ungated answer by omitting the argument, which is how
-three of those four came to push without ever asking.
+`gated` is required and has no default. Every caller in `ai/` passes `True` and
+differs only in what opens the gate: `pr comments`, `pr ci --fix` and the review
+fix pass open it under `--post`, and `pr rebase` opens it unless `--no-push`,
+because there force-pushing is the command rather than a side effect of it. The
+gate is where that difference belongs — expressed as an entry point's decision
+rather than as an argument one caller passes differently, `--no-push` gets the
+drafted command and the resume line every other held push already gets. Only the
+`pr:create` bridge below still passes `False`, because it is bash reaching in
+from a command that has already decided to publish and has no gate to open. A
+`False` default would let the next call site inherit the ungated answer by
+omitting the argument, which is how three of those four came to push without
+ever asking.
 
 Every outcome but `PUSHED` names the command that would finish it, and
 `resume_command` is where that mapping lives — one place rather than a line of

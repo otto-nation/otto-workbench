@@ -28,10 +28,11 @@ anything named for a sha to a literal length is rejected whatever the length,
 since a site free to pick eight is a site free to disagree with the rest.
 
 There is no `timeout` parameter. The bound follows from the subcommand the same
-way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`
-run `UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so
-the knowledge lives with the client that owns it rather than at every call site,
-one of which used to pass a number of its own.
+way `core.quotePath` does — `fetch` takes `TRANSFER`, the subcommands that write
+the tree or run somebody's hooks run `UNBOUNDED`, and everything else is a
+flat-cost metadata read at `LOCAL` — so the knowledge lives with the client that
+owns it rather than at every call site, one of which used to pass a number of
+its own.
 
 `config={"key": "value"}` becomes `-c key=value` ahead of the subcommand.
 `diff`, `ls-files` and `status` get `core.quotePath=false` by default: git
@@ -99,7 +100,14 @@ _PATH_LISTING = frozenset({"diff", "ls-files", "status"})
 # being operated on, which is routinely a secret scan, a linter, or a full test
 # suite; this repo's own pre-push runs three gates. Killing a push part-way is
 # also the worst available outcome, since it leaves the remote's state in doubt.
-_UNBOUNDED = frozenset({"worktree", "commit", "push"})
+#
+# `rebase` is both at once: it replays commits — each one a `commit`, hooks
+# included — and rewrites the tree between them. `checkout` and `stash` are the
+# `worktree add` case without the clone, writing or restoring as much of the
+# tree as the switch touches. Killing any of the three mid-run is the same bad
+# outcome as a killed push, only locally: a half-replayed rebase, a detached
+# index, or a stash entry holding work the tree no longer has.
+_UNBOUNDED = frozenset({"worktree", "commit", "push", "rebase", "checkout", "stash"})
 
 # Data-proportional like the above, but over a socket that can genuinely stall,
 # so a generous bound still catches a failure that waiting will not fix.

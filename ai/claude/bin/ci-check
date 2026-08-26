@@ -597,6 +597,7 @@ class CIFixAdapter(fix_engine.FixAdapter):
     phase = Phase.CI_FIX
     template = review_common.TEMPLATE_FIX_CI
     action = "fixing CI failures"
+    item_noun = "failure"
     # The shared hint is written for review findings. This one names the same
     # mechanism in CI's terms; both point the agent at the three boxes below.
     fix_hint = agent_retry.CI_FIX_RETRY_HINT

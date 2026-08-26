@@ -45,6 +45,15 @@ def _tick(text: str, section_id: str, label: str, reason: str = "") -> str:
     return head + marker + body + rest
 
 
+def _shown_boxes(text: str) -> list[str]:
+    """The ticked spellings the instruction shows, in the order it shows them."""
+    return [
+        line.split("`")[1]
+        for line in text.splitlines()
+        if line.startswith("- `- [x] ")
+    ]
+
+
 class TestRender:
     def test_every_section_carries_its_id_and_the_three_boxes(self):
         text = fix_tracking.render("Comment Fix Tracking — PR #7", _items())
@@ -161,6 +170,45 @@ class TestParse:
         fix_tracking.write(path, "t", [FixItem(id="A")])
         path.write_text(path.read_text().replace("- [ ] fixed", "- [X] fixed"))
         assert fix_tracking.parse(path)[0].outcome == FixOutcome.FIXED
+
+
+class TestInstructions:
+    def test_it_spells_every_box_the_render_writes(self):
+        boxes = _shown_boxes(fix_tracking.instructions("finding"))
+        assert boxes == [
+            "- [x] fixed",
+            "- [x] declined — <why>",
+            "- [x] needs a person — <why>",
+        ]
+
+    def test_the_domain_s_own_word_for_an_item_is_what_the_agent_reads(self):
+        text = fix_tracking.instructions("thread")
+        assert "Every thread above carries three boxes" in text
+        assert "finding" not in text
+        assert "{noun}" not in text
+
+    def test_an_answer_spelled_the_way_the_instruction_shows_parses_back(self, tmp_path):
+        """The instruction is only true while the parse agrees with it.
+
+        A box the prompt names one way and the reader looks for another way ticks
+        nothing the parse can see, so every item comes back reading as work still
+        owed and no gate fails. The spelling is round tripped rather than asserted
+        against a second copy of itself for the same reason the rest of this file
+        is: a copy agrees with whatever it was written beside.
+        """
+        outcomes = []
+        for i, box in enumerate(_shown_boxes(fix_tracking.instructions("finding"))):
+            path = tmp_path / f"t{i}.md"
+            fix_tracking.write(path, "t", [FixItem(id="A")])
+            answered = box.replace("<why>", "the premise does not hold")
+            path.write_text(path.read_text().replace(
+                box.replace("- [x]", "- [ ]", 1), answered, 1,
+            ))
+            outcomes.append(fix_tracking.parse(path)[0].outcome)
+
+        assert outcomes == [
+            FixOutcome.FIXED, FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN,
+        ]
 
 
 class TestChecked:

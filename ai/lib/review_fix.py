@@ -241,6 +241,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
     template = TEMPLATE_FIX
     title = "Review Fix Tracking"
     action = "applying review findings"
+    item_noun = "finding"
 
     def __init__(
         self, job: ReviewJob, findings: list[Finding], before: set[str],

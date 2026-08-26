@@ -4167,6 +4167,33 @@ class TestFetchBranchMetadata:
         assert [f["path"] for f in pr.files] == ["feat.go"]
         assert pr.base == "develop"
 
+    def test_an_omitted_base_resolves_the_trunk_instead_of_assuming_main(
+        self, ro, tmp_path,
+    ):
+        """A `master` repository is diffed against origin/master.
+
+        This is the no-PR self-review path, where nothing upstream names a base.
+        The signature used to default to the literal "main", so every range here
+        was against a ref the repository does not have.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git_out(repo, "init", "-b", "master", "-q")
+        git_out(repo, "config", "user.email", "test@test.com")
+        git_out(repo, "config", "user.name", "Test")
+        git_out(repo, "config", "commit.gpgsign", "false")
+        (repo / "main.go").write_text("package main\n")
+        self._commit_all(repo, "init")
+        git_out(repo, "remote", "add", "origin", str(repo))
+        git_out(repo, "fetch", "-q", "origin", "master")
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        self._commit_all(repo, "add feat")
+
+        pr = ro.fetch_branch_metadata(str(repo))
+        assert pr.base == "master"
+        assert [f["path"] for f in pr.files] == ["feat.go"]
+
 
 # ── self-review metadata ──────────────────────────────────────────────
 

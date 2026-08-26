@@ -29,12 +29,14 @@
 # Exit codes:
 #   0    every removal is declared, or there was nothing to compare
 #   1    a removal is undeclared, or a `!` header carries no footer
-#   2    a usage error, or the snapshot path is a tree at the base. A symlink
-#        is mode 120000 and cat-file -t calls it a blob, so it is not caught
-#        here — jq fails on the link target and the run ends at 5 instead.
+#   2    a usage error, no default branch ref to default --base to, or the
+#        snapshot path is a tree at the base. A symlink is mode 120000 and
+#        cat-file -t calls it a blob, so it is not caught here — jq fails on
+#        the link target and the run ends at 5 instead.
 #   5    jq aborted on a malformed snapshot (.entries not an array, or
 #        .package missing or not a string) — jq's own status, passed through
-#   128  git's status from an unresolvable merge base (bad ref, not a repo)
+#   128  git's status, from a repo dir that is not a repository or from an
+#        unresolvable merge base (a --base naming a ref that does not exist)
 # 0 and 1 are the gate's verdict; everything above is "the check never
 # happened", and callers must not read those as a pass. Both current callers
 # (git/hooks/pre-push-workbench and the surface-compat CI job) treat any
@@ -65,6 +67,8 @@ REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 . "$REPO_ROOT/lib/ui.sh"
 # shellcheck source=../../lib/conventions.sh
 . "$REPO_ROOT/lib/conventions.sh"
+# shellcheck source=../../lib/git_remote.sh
+. "$REPO_ROOT/lib/git_remote.sh"
 
 # jq program shared by every snapshot read, always run with -s (slurp). A
 # snapshot whose .entries is missing or not an array must abort, not read as
@@ -92,14 +96,14 @@ Usage: $(basename "$0") [--base REF] [--repo-dir DIR] [--quiet]
 Fail when a public surface entry is removed without a declaration.
 
 Options:
-  --base REF      Base ref to compare against (default: origin/main)
+  --base REF      Base ref to compare against (default: the repo's default branch)
   --repo-dir DIR  Repository to inspect (default: the current repo)
   --quiet         Suppress output on success
   -h, --help      Show this help
 EOF
 }
 
-BASE="origin/main"
+BASE=""
 REPO_DIR=""
 QUIET=false
 
@@ -126,6 +130,33 @@ git_env_clear
 
 if [[ -z "$REPO_DIR" ]]; then
   REPO_DIR="$(git rev-parse --show-toplevel)"
+fi
+
+# A --repo-dir that names no repository fails here, with git's own message and
+# status, rather than falling through to the base resolution below. Both would
+# refuse, but that one's advice is "fetch a trunk ref", which is the fix for a
+# repository that has none — not for a directory that is not one.
+git -C "$REPO_DIR" rev-parse --git-dir >/dev/null
+
+# Resolved here rather than spelled `origin/main` as an initialiser, because it
+# needs both the cleared environment above and REPO_DIR, and because a `master`
+# repository was previously gated against a ref it does not have. `git
+# merge-base` answers that with exit 128 and a "not a valid object name", which
+# reads as a broken repository rather than as a base nobody fetched.
+#
+# On the left of nothing: default_base_ref returns 1 as a verdict, like the
+# `git merge-base` and `git cat-file -e` calls below, so it is one of the three
+# places this script suspends errexit deliberately.
+BASE_STATUS=0
+if [[ -z "$BASE" ]]; then
+  BASE=$(default_base_ref "$REPO_DIR") || BASE_STATUS=$?
+fi
+
+if [[ "$BASE_STATUS" -ne 0 ]]; then
+  err "No default branch ref to compare against in $REPO_DIR"
+  echo "  Fetch one with: git fetch $GIT_REMOTE" >&2
+  echo "  Or name the base explicitly: $(basename "$0") --base REF" >&2
+  exit 2
 fi
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

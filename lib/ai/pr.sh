@@ -142,7 +142,7 @@ load_pr_context() {
   fi
 
   BRANCH=$(git branch --show-current)
-  # See resolve_default_branch in lib/ai/core.sh for why this isn't rev-parse --abbrev-ref.
+  # See resolve_default_branch in lib/git_remote.sh for why this isn't rev-parse --abbrev-ref.
   DEFAULT_BRANCH=$(resolve_default_branch)
 
   # Keyed on DEFAULT_BRANCH, not the effective base below: this guards against running PR

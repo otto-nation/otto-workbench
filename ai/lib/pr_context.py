@@ -89,6 +89,16 @@ import timeouts
 # consumers nothing.
 from proc import failure_message  # noqa: F401
 
+# `git_remote` is a workbench-wide module rather than an `ai/lib` one, because
+# the pre-push hooks and the surface gate resolve the same default branch. In a
+# checkout that is one directory up; in the otto-ai-tools tarball, which
+# flattens both into one `lib/`, it is already beside this file and the path
+# below does not exist.
+_WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent / "lib"
+if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
+    sys.path.insert(0, str(_WORKBENCH_LIB))
+import git_remote  # noqa: E402
+
 _PR_URL_RE = re.compile(r"/pull/(\d+)")
 _PR_NUMBER_RE = re.compile(r"^\d+$")
 
@@ -921,23 +931,18 @@ def parse_wt_switch_path(stdout: str) -> str | None:
 
 
 def default_branch(cwd: str | Path | None = None) -> str:
-    """The repo's default branch name, from origin/HEAD.
+    """The repo's default branch name, via lib/git_remote.py's shared ladder.
 
     Falls back to "main" whenever git cannot answer — an unfetched clone has no
     origin/HEAD, and every caller needs a base ref more than it needs an error.
+    Before the shared ladder this stopped at the symref, so a repository whose
+    trunk is `master` was told its default branch was one it does not have.
 
     Deliberately uncached: this is imported by every `pr` script, and a
     module-level cache here would outlive the tests that set up their own repos.
     Call sites that need it per-file wrap it in their own cache.
     """
-    try:
-        ref = subprocess.run(
-            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-        ).stdout.strip()
-    except Exception:
-        return "main"
-    return ref.replace("refs/remotes/origin/", "") if ref else "main"
+    return git_remote.resolve_default_branch(str(cwd) if cwd is not None else None)
 
 
 def find_bare_repo_worktree(

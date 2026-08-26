@@ -520,12 +520,42 @@ Not-Breaking: command:beta — never installed"
   [[ "$output" != *"invalid object name"* ]]
 }
 
+@test "refuses with a named fix when no default branch ref resolves" {
+  # The rung default_base_ref ends on: the trunk is `develop`, so neither
+  # origin/main nor origin/master exists and nothing ever pointed origin/HEAD.
+  # Defaulting --base to the literal "main" here draws "unknown revision" out of
+  # git merge-base, which reads as a broken repository rather than as a base
+  # nobody fetched — so the gate has to name the fix itself.
+  _make_repo_no_default_branch "$TMPDIR/notrunk" "develop"
+
+  run "$GATE" --repo-dir "$TMPDIR/notrunk/repo"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"No default branch ref to compare against"* ]]
+  [[ "$output" == *"git fetch origin"* ]]
+  [[ "$output" == *"--base REF"* ]]
+  # Not a pass, and not the "nothing to compare" skip either.
+  [[ "$output" != *"public surface compatible"* ]]
+  [[ "$output" != *"skipping surface comparison"* ]]
+}
+
+@test "an explicit --base is still honoured with no default branch ref" {
+  # The escape hatch the refusal above points at has to actually work.
+  _make_repo_no_default_branch "$TMPDIR/notrunk" "develop"
+
+  run "$GATE" --repo-dir "$TMPDIR/notrunk/repo" --base origin/develop
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"No default branch ref"* ]]
+}
+
 @test "fails with git's own status when the repo dir is not a git repository" {
   mkdir -p "$TMPDIR/notarepo"
   run "$GATE" --repo-dir "$TMPDIR/notarepo"
   [ "$status" -eq 128 ]
-  [[ "$output" == *"Could not resolve a merge base"* ]]
+  [[ "$output" == *"not a git repository"* ]]
   [[ "$output" != *"skipping surface comparison"* ]]
+  # Not the "no trunk ref to default --base to" refusal, whose advice is to
+  # fetch one — there is no repository here for a fetch to land in.
+  [[ "$output" != *"Fetch one with"* ]]
 }
 
 # jq's status is passed through rather than translated, so this asserts the

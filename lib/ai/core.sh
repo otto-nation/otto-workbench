@@ -35,6 +35,12 @@ else
 fi
 # shellcheck source=/dev/null
 . "$(dirname "$_ai_core_dir")/conventions.sh"
+# GIT_REMOTE, resolve_default_branch, remote_branch_ref_exists and
+# default_base_ref come from lib/git_remote.sh, which owns "which branch is
+# trunk" for every caller. It lives outside lib/ai/ because the global pre-push
+# hook needs the same answer and must not pay for this module to get it.
+# shellcheck source=/dev/null
+. "$(dirname "$_ai_core_dir")/git_remote.sh"
 # The workbench checkout, kept because lib/ai/pr.sh runs with the *target* repo
 # as its cwd and still has to find ai/lib/push.py. `_ai_core_dir` is <root>/lib/ai.
 WORKBENCH_ROOT="$(dirname "$(dirname "$_ai_core_dir")")"
@@ -50,9 +56,6 @@ DIFF_MAX_CHARS=8000
 # Set by parse_pr_flags; pass --no-issue after -- in task invocations.
 SKIP_ISSUE=false
 
-# Git remote name used for push/fetch/range operations.
-GIT_REMOTE="origin"
-
 # Global env file path — single source of truth is lib/constants.sh (TASKFILE_ENV).
 # When sourced via Taskfile tasks (sh, not bash), lib/constants.sh is not available,
 # so we fall back to the same value defined there.
@@ -66,48 +69,6 @@ AI_LOCAL_ENV_PATH=".taskfile/taskfile.env"
 PR_TITLE_MARKER="TITLE:"
 PR_DESCRIPTION_MARKER="DESCRIPTION:"
 # ──────────────────────────────────────────────────────────────────────────────
-
-# resolve_default_branch
-# Resolves the remote's default branch and prints it to stdout.
-#
-# An unfetched clone, a `wt-init`-converted repo, or any remote whose HEAD was
-# never pointed with `git remote set-head origin -a` all lack the symref this
-# depends on. When it is missing, a remote-tracking ref that actually exists
-# beats a literal guess: "main" then "master" via a local `show-ref` (no
-# network call), and only when neither is present does the literal "main" win.
-#
-# symbolic-ref, not rev-parse --abbrev-ref: when refs/remotes/$GIT_REMOTE/HEAD is
-# missing, rev-parse still echoes "$GIT_REMOTE/HEAD" to stdout (then exits 128), so
-# the string survives a sed strip as a non-empty "HEAD" and defeats a "${VAR:-main}"
-# fallback. symbolic-ref prints nothing on failure, so the fallback here actually fires.
-resolve_default_branch() {
-  local branch
-  branch=$(git symbolic-ref "refs/remotes/$GIT_REMOTE/HEAD" 2>/dev/null | sed "s@^refs/remotes/$GIT_REMOTE/@@")
-  if [[ -n "$branch" ]]; then
-    printf '%s\n' "$branch"
-    return
-  fi
-
-  local candidate
-  for candidate in main master; do
-    git show-ref --verify --quiet "refs/remotes/$GIT_REMOTE/$candidate" || continue
-    printf '%s\n' "$candidate"
-    return
-  done
-  printf 'main\n'
-}
-
-# remote_branch_ref_exists BRANCH
-# True when BRANCH has a remote-tracking ref under $GIT_REMOTE (refs/remotes/$GIT_REMOTE/BRANCH).
-#
-# Companion to resolve_default_branch: that function derives a branch name — guessing when
-# the origin/HEAD symref is missing — and this answers whether the result actually exists as
-# a ref. Takes the branch as an argument (not just the resolved default) so callers can also
-# validate an explicit override, such as a user-supplied --base.
-remote_branch_ref_exists() {
-  local branch="$1"
-  git show-ref --verify --quiet "refs/remotes/$GIT_REMOTE/$branch"
-}
 
 # _resolve_env_file — finds the active env file (local override or global).
 # Prints the path to stdout. Returns 1 if neither exists.

@@ -11,6 +11,7 @@
 # core.hooksPath holds a symlink to this checkout's hook, exactly as
 # step_global_hooks installs it. Nothing here can reach the developer's own hook
 # path, state root, or repositories.
+bats_require_minimum_version 1.5.0
 
 setup() {
   load 'test_helper'
@@ -25,6 +26,12 @@ setup() {
 
   mkdir -p "$TMPDIR/hooks"
   ln -sf "$REPO_ROOT/git/hooks/pre-push" "$TMPDIR/hooks/pre-push"
+
+  # The nesting gate below is about which validate-nesting the hook finds, so it
+  # has to be this checkout's rather than whichever one the machine installed —
+  # on a machine with none, `command -v` would skip the gate and a case asserting
+  # a refusal would pass for the wrong reason.
+  PATH="$REPO_ROOT/bin:$PATH"
 
   export GIT_CONFIG_GLOBAL="$TMPDIR/gitconfig"
   export GIT_CONFIG_SYSTEM=/dev/null
@@ -55,6 +62,169 @@ write_local_hook() {
   mkdir -p "$TMPDIR/wt/.git/hooks"
   printf '#!/usr/bin/env bash\n%s\n' "$1" > "$TMPDIR/wt/.git/hooks/pre-push"
   chmod +x "$TMPDIR/wt/.git/hooks/pre-push"
+}
+
+# commit_deep_script NAME — commit a bash script nested past the depth limit.
+commit_deep_script() {
+  printf '%s\n' '#!/usr/bin/env bash' 'f() {' '  if true; then' \
+    '    if true; then' '      if true; then' '        echo deep' \
+    '      fi' '    fi' '  fi' '}' > "$TMPDIR/wt/$1"
+  git -C "$TMPDIR/wt" add "$1"
+  git -C "$TMPDIR/wt" commit -q -m "add $1"
+}
+
+# ── Nesting gate ─────────────────────────────────────────────────────────────
+
+@test "a push carrying new excessive nesting is refused" {
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script deep.sh
+  run git -C "$TMPDIR/wt" push origin main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
+}
+
+@test "a clean push is allowed over nesting that predates it" {
+  # The bug this covers: measuring the whole tree refuses every later push in a
+  # repository that already carries a violation, however unrelated. The offender
+  # reaches the remote with the hook bypassed, standing in for debt that landed
+  # before the gate existed.
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script legacy.sh
+  git -C "$TMPDIR/wt" -c core.hooksPath=/dev/null push -q origin main
+
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "unrelated"
+  run git -C "$TMPDIR/wt" push origin main
+  [ "$status" -eq 0 ]
+}
+
+@test "a new branch is measured against the default branch, not the whole tree" {
+  # A branch the remote has never seen arrives with an all-zero remote sha, so
+  # there is no pushed base to diff against and the fallback decides whether the
+  # repository's existing debt is charged to it.
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script legacy.sh
+  git -C "$TMPDIR/wt" -c core.hooksPath=/dev/null push -q origin main
+
+  git -C "$TMPDIR/wt" checkout -q -b feature
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+  run git -C "$TMPDIR/wt" push origin feature
+  [ "$status" -eq 0 ]
+}
+
+@test "a branch deletion is not measured for nesting" {
+  # A deletion adds no lines, so there is nothing for the gate to charge it
+  # with — including the debt sitting uncommitted-to-the-remote on the branch
+  # that happens to be checked out, which a default-branch base would surface.
+  git -C "$TMPDIR/wt" push -q origin main:doomed
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script legacy.sh
+
+  run git -C "$TMPDIR/wt" push origin :doomed
+  [ "$status" -eq 0 ]
+}
+
+@test "a repository whose trunk is master is measured against origin/master" {
+  # The hook used to walk origin/HEAD, origin/main, origin/master itself, one of
+  # four hand-rolled answers to "which branch is trunk". lib/git_remote.sh owns
+  # the ladder now, and this is the rung a `master` repository lands on: without
+  # it there is no base, the whole tree is measured instead, and the legacy
+  # violation below refuses a push that did not create it.
+  git -C "$TMPDIR/wt" branch -m master
+  git -C "$TMPDIR/wt" push -q origin master
+  commit_deep_script legacy.sh
+  git -C "$TMPDIR/wt" -c core.hooksPath=/dev/null push -q origin master
+
+  git -C "$TMPDIR/wt" checkout -q -b feature
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+  run git -C "$TMPDIR/wt" push origin feature
+  [ "$status" -eq 0 ]
+}
+
+@test "a trunk that is neither main nor master is found through origin/HEAD" {
+  # Neither candidate exists here, so only the symref can answer. It is the rung
+  # a `git remote set-head` repository depends on, and the one a caller spelling
+  # `origin/main` as a literal never reaches.
+  git -C "$TMPDIR/wt" branch -m trunk
+  git -C "$TMPDIR/wt" push -q origin trunk
+  git -C "$TMPDIR/wt" remote set-head origin trunk
+  run ! git -C "$TMPDIR/wt" show-ref --verify --quiet refs/remotes/origin/main
+  run ! git -C "$TMPDIR/wt" show-ref --verify --quiet refs/remotes/origin/master
+
+  commit_deep_script legacy.sh
+  git -C "$TMPDIR/wt" -c core.hooksPath=/dev/null push -q origin trunk
+
+  git -C "$TMPDIR/wt" checkout -q -b feature
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+  run git -C "$TMPDIR/wt" push origin feature
+  [ "$status" -eq 0 ]
+}
+
+@test "a new branch in a repository with no fetched trunk is measured whole" {
+  # default_base_ref refuses rather than handing `git diff` the literal "main"
+  # this repository does not have, and the gate falls back to the whole tree —
+  # the one case where a violation the push did not add still refuses it,
+  # because with no base there is no way to tell new debt from old.
+  commit_deep_script legacy.sh
+  git -C "$TMPDIR/wt" checkout -q -b feature
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+
+  run git -C "$TMPDIR/wt" push origin feature
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
+}
+
+@test "a push of a branch that is not checked out is reported, not measured" {
+  # validate-nesting reads the working tree, so a diff against it would answer
+  # for the wrong branch's lines, and the tree does not hold the pushed ones
+  # either. Neither number is about this push, so the ref is named instead of
+  # being passed off as checked.
+  git -C "$TMPDIR/wt" push -q origin main
+  git -C "$TMPDIR/wt" checkout -q -b other
+  commit_deep_script deep.sh
+  git -C "$TMPDIR/wt" checkout -q main
+
+  run git -C "$TMPDIR/wt" push origin other:other
+  # Reported, and still allowed: unmeasured is not the same verdict as failed.
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nesting not checked for other"* ]]
+}
+
+@test "a multi-ref push still measures the checked-out branch" {
+  git -C "$TMPDIR/wt" branch -q side
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script deep.sh
+
+  run git -C "$TMPDIR/wt" push origin main side
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
+}
+
+@test "one commit pushed to two destinations is measured against the older one" {
+  # The destinations disagree about what is new: `release` already holds the
+  # violation, `main` has never seen it. Both ref lines carry the checked-out
+  # sha, so taking whichever came last off stdin measures against `release` and
+  # lets the violation through. The common ancestor of the two bases is the one
+  # every added line is actually new to.
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script deep.sh
+  git -C "$TMPDIR/wt" push -q --no-verify origin main:release
+  git -C "$TMPDIR/wt" commit -q --allow-empty -m "clean work"
+
+  run git -C "$TMPDIR/wt" push origin main:release main:main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
+}
+
+@test "a HEAD:branch push is measured, not filtered out as a non-branch ref" {
+  # git writes the local ref of `HEAD:main` as the literal `HEAD`, so a
+  # refs/heads/ test alone drops the line and the gate never runs — on a
+  # spelling that pushes the checked-out commit like any other.
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script deep.sh
+
+  run git -C "$TMPDIR/wt" push origin HEAD:main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
 }
 
 # ── Recording ────────────────────────────────────────────────────────────────

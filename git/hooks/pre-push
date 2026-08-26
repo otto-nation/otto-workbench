@@ -23,6 +23,20 @@ set -euo pipefail
 _self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _workbench="$(cd "$(dirname "$_self")/../.." 2>/dev/null && pwd)" || _workbench=""
 
+# "Which branch is trunk" has one owner, and this is how the hook reaches it
+# without loading lib/ai/core.sh — that module resolves TASKFILE_DIR and the AI
+# configuration, which is not something to do on every push in every repository
+# on the machine.
+#
+# Guarded on the file being there, not just on `set -e` tolerating the source:
+# the same moved checkout that empties `_workbench` above would otherwise refuse
+# every push here instead. Without it, nesting_base finds no default_base_ref
+# and reports no base, which the gate already knows how to handle.
+# shellcheck source=../../lib/git_remote.sh
+if [[ -n "$_workbench" && -f "$_workbench/lib/git_remote.sh" ]]; then
+  . "$_workbench/lib/git_remote.sh"
+fi
+
 # ── Pushed refs ─────────────────────────────────────────────────────────────
 
 # git writes the refs this push carries to the hook's stdin, one
@@ -49,8 +63,110 @@ replay_refs() {
 
 # ── Global checks ───────────────────────────────────────────────────────────
 
+# nesting_base — the commit a branch at remote sha $1 should be measured
+# against, on stdout, or nothing.
+#
+# A remote sha of all zeros is a branch the remote does not have yet, and a sha
+# the remote does have may be one this checkout has never fetched — neither can
+# be diffed against, so both fall through to the default branch.
+#
+# The fallback is lib/git_remote.sh's, not a ref list of this hook's own: a
+# repository whose trunk is `master`, or whose origin/HEAD points at something
+# else entirely, has to get the same answer here that the AI automation and the
+# surface gate give it. `default_base_ref` refuses rather than guessing when no
+# such ref is fetched, which is the distinction the caller below needs — and the
+# same refusal covers the checkout that could not source the library at all.
+nesting_base() {
+  local rsha=$1
+  if git cat-file -e "$rsha^{commit}" 2>/dev/null; then
+    printf '%s\n' "$rsha"
+    return 0
+  fi
+  declare -F default_base_ref >/dev/null || return 1
+  default_base_ref
+}
+
+# nesting_bases_common SHA... — the one commit every remote sha in $@ should be
+# measured against, on stdout, or nothing.
+#
+# `git push origin feat:main feat:release` moves the checked-out commit onto two
+# remote refs at once, and each destination has its own remote sha: one may be a
+# branch the remote already has, the other a new one falling back to the trunk.
+# A line the push adds is new to whichever destination is further behind, so the
+# common ancestor of the two bases is the only one that measures all of them.
+# Taking the last ref off stdin instead would let the other's lines through, on
+# an ordering nobody chose.
+nesting_bases_common() {
+  local rsha resolved
+  local -a bases=()
+  for rsha in "$@"; do
+    resolved="$(nesting_base "$rsha")" || return 1
+    bases+=("$resolved")
+  done
+  if [[ "${#bases[@]}" -eq 1 ]]; then
+    printf '%s\n' "${bases[0]}"
+    return 0
+  fi
+  # Unrelated bases have no ancestor to share, and merge-base says so with a
+  # non-zero status — which the caller reads as "no base", the whole-tree scan.
+  git merge-base --octopus "${bases[@]}"
+}
+
+# A push answers for the lines it adds, not for the state of the repository it
+# lands in. Measuring the whole tree refuses a push over violations that predate
+# it — debt the push cannot clear and did not create, in a gate whose purpose is
+# to stop new debt arriving. Only when no base resolves, and there is therefore
+# no way to tell new from old, does the whole tree stand in for the diff.
+#
+# `validate-nesting --diff BASE` reads the working tree, so it can only answer
+# for a branch whose tip is the commit that is checked out. `git push origin
+# other:other` moves a branch this checkout is not on, and neither the diff nor
+# the tree holds those commits' lines — such a ref is reported as unmeasured
+# rather than passed off as checked. Tags and other non-branch refs are left
+# alone: their commits reached the remote through the branch that carried them.
+run_nesting_check() {
+  local head lref lsha rsha base adds=0 skipped=""
+  local -a tips=()
+  head="$(git rev-parse --verify --quiet HEAD)" || head=""
+  # <local ref> <local sha> <remote ref> <remote sha> — the remote ref is unread.
+  while read -r lref lsha _ rsha; do
+    # Tags and other non-branch refs are left alone, per the note above. `git
+    # push origin HEAD:main` is not one of them: git writes the local ref as
+    # the literal `HEAD`, and a `refs/heads/*` test alone drops that line —
+    # leaving a routine spelling of a branch push silently unmeasured. Anything
+    # outside refs/ falls through to the `lsha == head` test below, which is
+    # what actually decides whether the working tree answers for it.
+    if [[ "$lref" == refs/* && "$lref" != refs/heads/* ]]; then
+      continue
+    fi
+    # An all-zero local sha is a deletion: it carries no lines to check.
+    if [[ "$lsha" =~ ^0+$ ]]; then
+      continue
+    fi
+    adds=$((adds + 1))
+    if [[ -n "$head" && "$lsha" == "$head" ]]; then
+      tips+=("$rsha")
+      continue
+    fi
+    skipped="$skipped ${lref#refs/heads/}"
+  done < <(replay_refs)
+
+  if [[ -n "$skipped" ]]; then
+    printf '⚠ nesting not checked for%s — not the checked-out commit\n' "$skipped" >&2
+  fi
+  if [[ "$adds" -eq 0 || "${#tips[@]}" -eq 0 ]]; then
+    return 0
+  fi
+  base="$(nesting_bases_common "${tips[@]}")" || base=""
+  if [[ -z "$base" ]]; then
+    validate-nesting --quiet
+    return
+  fi
+  validate-nesting --quiet --diff "$base"
+}
+
 if command -v validate-nesting >/dev/null 2>&1; then
-  validate-nesting --quiet
+  run_nesting_check
 fi
 
 # ── Repo-local delegation ──────────────────────────────────────────────────

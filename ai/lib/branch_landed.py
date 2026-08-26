@@ -164,6 +164,11 @@ def by_git(cwd: str | Path, *, target_ref: str, rev: str = "HEAD") -> Landed | N
     # A rev with no commits of its own has nothing that could have landed, and
     # both signals below read as "already upstream" for it — vacuously, for the
     # freshly branched worktree that is the common case.
+    #
+    # The same count is also what a merge commit leaves, where the rev really is
+    # upstream. The two are indistinguishable from here, so this answers None for
+    # both and a caller that reads ancestry as evidence asks for it directly —
+    # `push_intent._landed_elsewhere` does, before it reaches this.
     if ahead == 0:
         return None
 

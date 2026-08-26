@@ -290,24 +290,24 @@ def _answer(intent: PushIntent) -> Reconciled:
     return Reconciled(intent, Outcome.LOST, remote_sha=held)
 
 
-def _built_upon(intent: PushIntent, held: str) -> bool:
-    """Whether the remote moved past the recorded commit rather than without it.
+def _built_upon(intent: PushIntent, ref: str) -> bool:
+    """Whether *ref* has the recorded commit in its history rather than without it.
 
-    A branch somebody else pushed to after this push landed holds a descendant
-    of the recorded commit, not the commit itself. Reporting that as a lost push
-    is the false alarm this one local question avoids, and the delay between
-    recording and reconciling is what makes it a real case rather than a
-    hypothetical one.
+    Asked of two refs, for the same reason each time. A branch somebody else
+    pushed to after this push landed holds a descendant of the recorded commit,
+    not the commit itself; and a merge commit on the default branch holds the
+    branch tip whole, which is stronger evidence than any tree comparison —
+    the commit is upstream, not merely something that looks like it.
 
     Only answerable when the repository holds both commits: a remote sha it has
     never fetched makes `merge-base` exit non-zero, which reads here as "not an
     ancestor". That is the safe direction — an unanswerable question is not a
     reason to call a push landed.
     """
-    if not held:
+    if not ref:
         return False
     return git_client.ok(
-        "merge-base", "--is-ancestor", intent.sha, held, cwd=intent.repo,
+        "merge-base", "--is-ancestor", intent.sha, ref, cwd=intent.repo,
     )
 
 
@@ -322,9 +322,16 @@ def _landed_elsewhere(intent: PushIntent) -> bool:
     and is deleted would otherwise be reported as a push that vanished, which is
     the whole population of merged PRs in a repo configured this way.
 
-    `branch_landed` owns the evidence and `pr rebase` reads the same three
-    signals. The two cheap ones are asked first and answer while the base is
-    still near the merge; the tracker is the only one that survives the base
+    Ancestry is asked first and separately, because it is the one signal
+    `branch_landed` cannot answer for a caller naming a commit. A merge commit
+    leaves the recorded commit reachable from the base, which reads there as a
+    rev with nothing of its own — indistinguishable from a freshly cut worktree,
+    which `pr rebase` must not refuse. The question is the same one `_built_upon`
+    just asked of the branch's own ref; only the ref it is asked of differs.
+
+    `branch_landed` owns the rest of the evidence and `pr rebase` reads the same
+    three signals. The two cheap ones are asked first and answer while the base
+    is still near the merge; the tracker is the only one that survives the base
     moving on, and is reached only when they do not.
 
     Three questions are refused rather than guessed at, all of them in the
@@ -346,6 +353,8 @@ def _landed_elsewhere(intent: PushIntent) -> bool:
     base = git_remote.default_base_ref(intent.repo)
     if base is None:
         return False
+    if _built_upon(intent, base):
+        return True
     return branch_landed.check(
         intent.repo, target_ref=base, branch=intent.branch, rev=intent.sha,
     ) is not None

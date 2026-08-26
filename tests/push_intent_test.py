@@ -335,6 +335,34 @@ def test_the_tracker_settles_a_squash_the_base_has_moved_past(
     assert not push_intent.intents_path().exists()
 
 
+def test_a_merge_commit_leaves_the_recorded_commit_upstream(pushable, capsys):
+    """The other merge style: the commit itself is in the base, whole.
+
+    No tree comparison and no patch id can see it — a rev with nothing of its
+    own over the base reads to `branch_landed` as a worktree that has not
+    committed yet. Ancestry is the evidence, and the tracker is never asked.
+    """
+    wt, remote = pushable
+    git_in(wt, "checkout", "-q", "-b", _FEATURE)
+    sha = _commit_file(wt, "f.txt")
+    git_in(wt, "push", "-q", "origin", _FEATURE)
+
+    git_in(wt, "checkout", "-q", "main")
+    git_in(wt, "-c", "user.name=t", "-c", "user.email=t@t",
+           "merge", "-q", "--no-ff", "--no-verify", "-m", "merge", _FEATURE)
+    git_in(wt, "push", "-q", "origin", "main")
+    git_in(remote, "update-ref", "-d", f"refs/heads/{_FEATURE}")
+    git_in(wt, "fetch", "-q", "--prune", "origin")
+    _record_feature(wt, sha)
+
+    with mock.patch.object(branch_landed, "merged_pr") as gh:
+        push_intent.reconcile()
+
+    gh.assert_not_called()
+    assert capsys.readouterr().err == ""
+    assert not push_intent.intents_path().exists()
+
+
 def test_a_branch_whose_work_reached_nothing_is_still_reported(pushable, capsys):
     """The report the check must not swallow: pushed, then gone, and unlanded."""
     wt, remote = pushable

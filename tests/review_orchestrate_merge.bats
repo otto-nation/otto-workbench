@@ -374,10 +374,9 @@ job = mod.ReviewJob(
     session_log='/tmp/session.jsonl',
     prior_review='## Must fix\n- [ ] **[M1]** src/auth.go:10 — auth bug\n- [ ] **[M2]** src/db.go:20 — db bug',
 )
-group_template = mod.PHASES[mod.Phase.GROUP].template_for()
-result = mod.build_prompt(group_template, job, max_turns=15,
+result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     group_idx=1, group_count=2, group_name='auth',
-    group_files_formatted='src/auth.go', group_output='/tmp/out.md',
+    group_files_formatted='src/auth.go',
     holistic_content='', group_file_paths=['src/auth.go'],
 )
 print('[M1]' in result and '[M2]' not in result)

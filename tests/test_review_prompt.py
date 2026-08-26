@@ -13,11 +13,10 @@ from review_preflight import MAX_PROMPT_BYTES, MIN_DIFF_BYTES
 from review_types import (
     PRContext, PreflightData, PRMetadata, PriorDisposition, ReviewJob,
 )
-from agent_registry import PHASES
 from agent_types import Effort, Mode, Phase
 from review_findings import _parse_ledger_line
 from review_prompt import (
-    _LEDGER_INSTRUCTION, _PROMPT_HANDLERS, _build_ci_failure_items,
+    _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, _build_ci_failure_items,
     _build_common_sections, _build_delta_section, _build_pr_header, _compute_diff_budget,
 )
 from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
@@ -188,7 +187,7 @@ class TestBuildCiFailureItems:
 # ── _compute_diff_budget ────────────────────────────────────────────────────
 
 
-def _make_job(preflight=None):
+def _make_job(preflight=None, mode=Mode.PR):
     pr = PRMetadata(
         title="T", body="B", head="h", base="main", head_sha="abc",
         additions=10, deletions=5, changed_files=1,
@@ -199,7 +198,7 @@ def _make_job(preflight=None):
         repo="r", pr_number="1", pr=pr, ctx=ctx,
         wt_path="/tmp/w", review_file="/tmp/r.md",
         session_log="/tmp/l.jsonl",
-        preflight=preflight,
+        preflight=preflight, mode=mode,
     )
 
 
@@ -241,28 +240,43 @@ class TestComputeDiffBudget:
 
 
 class TestSharedPromptBodies:
-    """The paired handlers must stay interchangeable apart from their variant."""
+    """The paired prompts must stay interchangeable apart from their variant."""
 
-    def _vars(self, template, **extra):
-        job = _make_job(_make_preflight())
+    def _vars(self, phase, output, mode=Mode.PR, **extra):
+        job = _make_job(_make_preflight(), mode=mode)
         common = _build_common_sections(job, max_turns=10)
-        builder, _ = _PROMPT_HANDLERS[template](job, common, extra)
+        builder, _ = _PROMPT_BUILDERS[phase](job, common, extra, output)
         return builder.vars
 
-    def test_scout_and_holistic_differ_only_in_output_target(self):
-        holistic = self._vars(
-            PHASES[Phase.HOLISTIC].template_for(), holistic_output="/tmp/h.md")
-        scout = self._vars(
-            PHASES[Phase.SCOUT].template_for(), scout_output="/tmp/s.md")
+    def test_scout_and_holistic_are_the_same_prompt(self):
+        """One builder, two artifacts: the phase spec is the whole difference.
+
+        The two are alternative first passes over identical inputs, so sharing
+        the builder is what keeps them that way — a section added for one is
+        added for both, and the file each writes is the spec's answer.
+        """
+        assert _PROMPT_BUILDERS[Phase.HOLISTIC] is _PROMPT_BUILDERS[Phase.SCOUT]
+        holistic = self._vars(Phase.HOLISTIC, "/tmp/h.md")
+        scout = self._vars(Phase.SCOUT, "/tmp/s.md")
         assert holistic.keys() == scout.keys()
         differing = [k for k in holistic if holistic[k] != scout[k]]
         assert differing == ["output_block"]
 
+    def test_single_variants_differ_only_in_identity_and_the_verdict(self):
+        pr = self._vars(Phase.SINGLE, "/tmp/r.md")
+        self_ = self._vars(Phase.SINGLE, "/tmp/r.md", mode=Mode.SELF)
+        assert set(pr) - set(self_) == {
+            "pr_number", "reviews_section", "verdict_options",
+        }
+        assert set(self_) - set(pr) == {"branch_name"}
+        # The re-review preamble is worded per mode, so it is expected to differ.
+        common_keys = (set(pr) & set(self_)) - {"prior_section"}
+        assert all(pr[k] == self_[k] for k in common_keys)
+
     def test_synthesis_variants_differ_only_in_identity_and_prior_reviews(self):
-        shared_extra = dict(group_count=2, merged_content="m", holistic_content="h")
-        pr = self._vars(PHASES[Phase.SYNTHESIS].template_for(), **shared_extra)
-        self_ = self._vars(
-            PHASES[Phase.SYNTHESIS].template_for(Mode.SELF), **shared_extra)
+        shared = dict(group_count=2, merged_content="m", holistic_content="h")
+        pr = self._vars(Phase.SYNTHESIS, "/tmp/r.md", **shared)
+        self_ = self._vars(Phase.SYNTHESIS, "/tmp/r.md", mode=Mode.SELF, **shared)
         assert set(pr) - set(self_) == {"pr_number", "pr_title", "reviews_section"}
         assert set(self_) - set(pr) == {"branch_name"}
         common_keys = set(pr) & set(self_)

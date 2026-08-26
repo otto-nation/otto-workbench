@@ -3540,7 +3540,7 @@ class TestBuildPromptPreflight:
             session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
-        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        result = ro.build_prompt(ro.Phase.SINGLE, job, max_turns=15)
         assert "Pre-collected data" in result
         assert "package main" in result
         assert "--- a/a.go" in result
@@ -3560,7 +3560,7 @@ class TestBuildPromptPreflight:
             wt_path="/tmp/wt", review_file="/tmp/review.md",
             session_log="/tmp/session.jsonl",
         )
-        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        result = ro.build_prompt(ro.Phase.SINGLE, job, max_turns=15)
         assert "Pre-collected data" not in result
 
     def test_synthesis_includes_reviews_section(self, ro):
@@ -3581,7 +3581,7 @@ class TestBuildPromptPreflight:
             session_log="/tmp/session.jsonl",
         )
         result = ro.build_prompt(
-            "synthesis.md", job, max_turns=15,
+            ro.Phase.SYNTHESIS, job, max_turns=15,
             holistic_content="assessment",
             group_count=1,
             merged_content="## Must fix\n- [M1] bug",
@@ -3614,10 +3614,9 @@ class TestBuildPromptPreflight:
             preflight=preflight,
         )
         result = ro.build_prompt(
-            "group.md", job, max_turns=15,
+            ro.Phase.GROUP, job, max_turns=15,
             group_idx=1, group_count=2, group_name="pkg",
             group_files_formatted="  - a.go (+10 -5)",
-            group_output="/tmp/g1.md",
             holistic_content="",
             group_file_paths=["a.go"],
         )
@@ -3648,10 +3647,7 @@ class TestBuildPromptPreflight:
             session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
-        result = ro.build_prompt(
-            "holistic.md", job, max_turns=15,
-            holistic_output="/tmp/h.md",
-        )
+        result = ro.build_prompt(ro.Phase.HOLISTIC, job, max_turns=15)
         assert "Pre-collected data" in result
         assert "package main" in result
 
@@ -3674,12 +3670,9 @@ class TestBuildPromptPreflight:
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
             wt_path="/tmp/wt", review_file="/tmp/review.md",
             session_log="/tmp/session.jsonl",
-            preflight=preflight,
+            preflight=preflight, mode=ro.Mode.SELF,
         )
-        result = ro.build_prompt(
-            "self-review.md", job, max_turns=15,
-            branch_name="feat",
-        )
+        result = ro.build_prompt(ro.Phase.SINGLE, job, max_turns=15)
         assert "Pre-collected data" in result
         assert "package main" in result
 
@@ -3705,7 +3698,7 @@ class TestBuildPromptPreflight:
             session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
-        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        result = ro.build_prompt(ro.Phase.SINGLE, job, max_turns=15)
         assert "NOT in the PR" in result
         assert "Files not pre-collected" not in result
         assert "Read source files directly" not in result
@@ -3736,7 +3729,7 @@ class TestBuildPromptPreflight:
             session_log="/tmp/session.jsonl",
             preflight=preflight,
         )
-        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        result = ro.build_prompt(ro.Phase.SINGLE, job, max_turns=15)
         assert "NOT in the PR" not in result
         assert "must be read directly" in result
         assert "Read source files directly" not in result
@@ -3756,7 +3749,7 @@ class TestBuildPromptPreflight:
             wt_path="/tmp/wt", review_file="/tmp/review.md",
             session_log="/tmp/session.jsonl",
         )
-        result = ro.build_prompt("single-agent.md", job, max_turns=15)
+        result = ro.build_prompt(ro.Phase.SINGLE, job, max_turns=15)
         assert "NOT in the PR" not in result
         assert "must be read directly" not in result
         assert "Read source files directly" in result

@@ -34,7 +34,7 @@ import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
 import review_common  # noqa: E402
 from agent_registry import PHASES, REVIEW_PHASES  # noqa: E402
-from agent_types import Mode, Phase  # noqa: E402
+from agent_types import Mode, Phase, PhaseShape  # noqa: E402
 import review_findings  # noqa: E402
 import review_fix  # noqa: E402
 import review_prompt  # noqa: E402
@@ -414,40 +414,44 @@ def _make_review_job(**overrides) -> ReviewJob:
     return ReviewJob(**defaults)
 
 
-# Extra kwargs each handler-backed template needs, keyed by template filename.
+# Extra kwargs each prompt needs, keyed by the (phase, mode) pair `build_prompt`
+# is called with. A phase whose two modes render different templates appears
+# twice; one that renders the same template either way appears once. No entry
+# names an output path — the phase spec answers that, and a test supplying one
+# would only be checking the value it handed in.
 _BUILD_PROMPT_EXTRAS = {
-    PHASES[Phase.SINGLE].template_for(): {},
-    PHASES[Phase.SINGLE].template_for(Mode.SELF): {
-        "branch_name": "user/feat/thing",
-    },
-    PHASES[Phase.HOLISTIC].template_for(): {
-        "holistic_output": "/tmp/reviews/holistic.md",
-    },
-    PHASES[Phase.SCOUT].template_for(): {"scout_output": "/tmp/reviews/scout.md"},
-    PHASES[Phase.DISPROVE].template_for(): {
-        "disprove_output": "/tmp/reviews/disprove.md",
-        "review_content": "- [M1] something",
-    },
-    PHASES[Phase.GROUP].template_for(): {
+    (Phase.SINGLE, Mode.PR): {},
+    (Phase.SINGLE, Mode.SELF): {},
+    (Phase.HOLISTIC, Mode.PR): {},
+    (Phase.SCOUT, Mode.PR): {},
+    (Phase.DISPROVE, Mode.PR): {"review_content": "- [M1] something"},
+    (Phase.GROUP, Mode.PR): {
         "group_idx": 1, "group_count": 2, "group_name": "core",
         "group_files_formatted": "- a.py",
         "group_file_paths": ["a.py"],
-        "group_output": "/tmp/reviews/group-1.md",
     },
-    PHASES[Phase.SYNTHESIS].template_for(): {
+    (Phase.SYNTHESIS, Mode.PR): {
         "group_count": 2, "merged_content": "## Must fix\n",
     },
-    PHASES[Phase.SYNTHESIS].template_for(Mode.SELF): {
+    (Phase.SYNTHESIS, Mode.SELF): {
         "group_count": 2, "merged_content": "## Must fix\n",
-        "branch_name": "user/feat/thing",
     },
 }
 
 
-def _render_via_build_prompt(template_name: str, job: ReviewJob | None = None) -> str:
+def _template_of(key: tuple[Phase, Mode]) -> str:
+    """The template a `(phase, mode)` key renders — also its parametrize id."""
+    phase, mode = key
+    return PHASES[phase].template_for(mode)
+
+
+def _render_via_build_prompt(
+    key: tuple[Phase, Mode], job: ReviewJob | None = None,
+) -> str:
+    phase, mode = key
     return review_prompt.build_prompt(
-        template_name, job or _make_review_job(), max_turns=15,
-        **_BUILD_PROMPT_EXTRAS[template_name],
+        phase, job or _make_review_job(mode=mode), max_turns=15,
+        **_BUILD_PROMPT_EXTRAS[key],
     )
 
 
@@ -525,15 +529,44 @@ def _unsubstituted(rendered: str) -> list[str]:
     return sorted(set(re.findall(r"\$\{(\w+)\}", rendered)))
 
 
+class TestPromptBuilderRegistry:
+    """`_PROMPT_BUILDERS` and the phase registry name the same phases.
+
+    Keying the builders by `Phase` is what makes this checkable at all: while
+    they were keyed by template filename the two tables shared no name, so a
+    phase could name a template and reach `build_prompt` with nothing behind it.
+    """
+
+    def test_every_agent_shaped_review_phase_has_a_builder(self):
+        expected = {
+            phase for phase in REVIEW_PHASES
+            if PHASES[phase].shape is PhaseShape.AGENT
+        }
+        assert set(review_prompt._PROMPT_BUILDERS) == expected
+
+    def test_a_phase_with_no_builder_is_refused(self):
+        """The fix pass is a review phase, but `fix_engine` builds its prompt."""
+        with pytest.raises(ValueError, match="renders no review prompt"):
+            review_prompt.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
+
+    def test_every_builder_is_reached_by_the_extras_table(self):
+        """Coverage below is per (phase, mode), so no builder goes unrendered."""
+        assert {phase for phase, _ in _BUILD_PROMPT_EXTRAS} == set(
+            review_prompt._PROMPT_BUILDERS,
+        )
+
+
 class TestTemplateRendering:
     """Every template renders with all placeholders substituted."""
 
-    @pytest.mark.parametrize("template_name", sorted(_BUILD_PROMPT_EXTRAS))
-    def test_build_prompt_templates_fully_substituted(self, template_name):
-        rendered = _render_via_build_prompt(template_name)
+    @pytest.mark.parametrize(
+        "key", sorted(_BUILD_PROMPT_EXTRAS), ids=_template_of,
+    )
+    def test_build_prompt_templates_fully_substituted(self, key):
+        rendered = _render_via_build_prompt(key)
         left = _unsubstituted(rendered)
         assert not left, (
-            f"{template_name} rendered with unsubstituted placeholders: "
+            f"{_template_of(key)} rendered with unsubstituted placeholders: "
             + ", ".join(f"${{{v}}}" for v in left)
         )
 
@@ -551,7 +584,7 @@ class TestTemplateRendering:
 
     def test_every_template_is_covered(self):
         """A new template must be added to this file's render coverage."""
-        covered = set(_BUILD_PROMPT_EXTRAS) | {
+        covered = {_template_of(key) for key in _BUILD_PROMPT_EXTRAS} | {
             PHASES[Phase.FIX].template_for(),
             PHASES[Phase.CI_FIX].template_for(),
             PHASES[Phase.COMMENTS_FIX].template_for(),
@@ -575,11 +608,11 @@ class TestOutputBlockContract:
         re.IGNORECASE,
     )
 
-    @pytest.mark.parametrize("template_name", sorted(_BUILD_PROMPT_EXTRAS))
-    def test_no_write_tool_mandate(self, template_name):
-        self._assert_no_mandate(
-            template_name, _render_via_build_prompt(template_name),
-        )
+    @pytest.mark.parametrize(
+        "key", sorted(_BUILD_PROMPT_EXTRAS), ids=_template_of,
+    )
+    def test_no_write_tool_mandate(self, key):
+        self._assert_no_mandate(_template_of(key), _render_via_build_prompt(key))
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt, tmp_path):
@@ -592,40 +625,39 @@ class TestOutputBlockContract:
             f"({match.group(0)!r}) — it does not exist under --bare"
         )
 
-    # (template, output path, stdout_warning) — mirrors each handler's
-    # b.output(...) call, so the assertion compares against the block the
-    # builder actually produces rather than a restated copy of its wording.
+    # ((phase, mode), output path, stdout_warning) — the paths are spelled out
+    # rather than asked of `phase_output_path`, so a spec that renames an
+    # artifact is caught here instead of agreeing with itself. `build_prompt`
+    # derives them from the same `review_file` every job here carries.
     _OUTPUT_BLOCKS = [
-        (PHASES[Phase.HOLISTIC].template_for(), "/tmp/reviews/holistic.md", False),
-        (PHASES[Phase.SCOUT].template_for(), "/tmp/reviews/scout.md", False),
-        (PHASES[Phase.DISPROVE].template_for(), "/tmp/reviews/disprove.md", False),
-        (PHASES[Phase.GROUP].template_for(), "/tmp/reviews/group-1.md", False),
-        (PHASES[Phase.SYNTHESIS].template_for(), "/tmp/reviews/review.md", False),
-        (PHASES[Phase.SYNTHESIS].template_for(Mode.SELF),
-         "/tmp/reviews/review.md", False),
-        (PHASES[Phase.SINGLE].template_for(), "/tmp/reviews/review.md", True),
-        (PHASES[Phase.SINGLE].template_for(Mode.SELF),
-         "/tmp/reviews/review.md", True),
+        ((Phase.HOLISTIC, Mode.PR), "/tmp/reviews/holistic.md", False),
+        ((Phase.SCOUT, Mode.PR), "/tmp/reviews/scout.md", False),
+        ((Phase.DISPROVE, Mode.PR), "/tmp/reviews/disprove.md", False),
+        ((Phase.GROUP, Mode.PR), "/tmp/reviews/group-1.md", False),
+        ((Phase.SYNTHESIS, Mode.PR), "/tmp/reviews/review.md", False),
+        ((Phase.SYNTHESIS, Mode.SELF), "/tmp/reviews/review.md", False),
+        ((Phase.SINGLE, Mode.PR), "/tmp/reviews/review.md", True),
+        ((Phase.SINGLE, Mode.SELF), "/tmp/reviews/review.md", True),
     ]
 
     @pytest.mark.parametrize(
-        "template_name, output_path, stdout_warning", _OUTPUT_BLOCKS,
-        ids=[t for t, _, _ in _OUTPUT_BLOCKS],
+        "key, output_path, stdout_warning", _OUTPUT_BLOCKS,
+        ids=[_template_of(k) for k, _, _ in _OUTPUT_BLOCKS],
     )
-    def test_output_block_rendered_verbatim(
-        self, template_name, output_path, stdout_warning,
-    ):
-        rendered = _render_via_build_prompt(template_name)
+    def test_output_block_rendered_verbatim(self, key, output_path, stdout_warning):
+        rendered = _render_via_build_prompt(key)
         expected = review_common.build_output_block(
             output_path, stdout_warning=stdout_warning,
         )
         assert expected in rendered
 
     def test_every_output_writing_template_is_checked(self):
-        checked = {t for t, _, _ in self._OUTPUT_BLOCKS}
+        checked = {key for key, _, _ in self._OUTPUT_BLOCKS}
         expected = {
-            name for name in _BUILD_PROMPT_EXTRAS
-            if "output_block" in _extract_template_vars(TEMPLATE_DIR / name)
+            key for key in _BUILD_PROMPT_EXTRAS
+            if "output_block" in _extract_template_vars(
+                TEMPLATE_DIR / _template_of(key),
+            )
         }
         assert expected == checked
 
@@ -715,12 +747,11 @@ class TestPromptBudgetAccounting:
             for p in self._PATHS
         )
         job.preflight.file_contents = {}
-        group_template = PHASES[Phase.GROUP].template_for()
-        extra = dict(_BUILD_PROMPT_EXTRAS[group_template])
+        extra = dict(_BUILD_PROMPT_EXTRAS[(Phase.GROUP, Mode.PR)])
         extra["group_file_paths"] = list(self._PATHS)
         extra["group_files_formatted"] = files_formatted
         return review_prompt.build_prompt(
-            group_template, job, max_turns=15, **extra,
+            Phase.GROUP, job, max_turns=15, **extra,
         )
 
     def test_large_section_shrinks_the_diff_instead_of_the_prompt_budget(self):

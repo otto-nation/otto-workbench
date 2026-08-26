@@ -291,8 +291,12 @@ only the profiles relevant to their files.
 
 Prompt construction and template rendering for claude-review.
 
-Handles building prompts for each review template: single, holistic, group,
-synthesis, self-review, and self-review-synthesis. Includes section builders,
+`build_prompt` renders the prompt for one review phase: a caller names the
+`Phase` and hands over what the phase cannot derive for itself. Which template
+that renders, and which file the agent is told to write, both come off the
+phase's registry entry. Six phases sit in front of eight templates, because two
+of them read an open PR and the working branch differently — which template a
+mode picks is the spec's answer, not the caller's. Includes section builders,
 budget computation, and prompt size logging.
 
 ### review_retry.py

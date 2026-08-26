@@ -152,7 +152,7 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl",
 )
-result = mod.build_prompt("single-agent.md", job, max_turns=15)
+result = mod.build_prompt(mod.Phase.SINGLE, job, max_turns=15)
 print(result)
 ')
   [[ "$result" == *"PR #99"* ]]
@@ -172,10 +172,9 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl",
 )
-result = mod.build_prompt("group.md", job, max_turns=15,
+result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
-    group_output="/tmp/g1.md",
     holistic_content="Watch for API mismatches",
 )
 print("FOUND" if "Holistic context" in result else "MISSING")
@@ -196,10 +195,9 @@ job = mod.ReviewJob(
     wt_path="/tmp/wt", review_file="/tmp/review.md",
     session_log="/tmp/session.jsonl",
 )
-result = mod.build_prompt("group.md", job, max_turns=15,
+result = mod.build_prompt(mod.Phase.GROUP, job, max_turns=15,
     group_idx=1, group_count=3, group_name="pkg",
     group_files_formatted="  - a.go (+10 -5)",
-    group_output="/tmp/g1.md",
     holistic_content="",
 )
 print("FOUND" if "Holistic context" in result else "MISSING")

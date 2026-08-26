@@ -233,11 +233,11 @@ def _review_group(
     )
 
     group_prompt = build_prompt(
-        PHASES[Phase.GROUP].template_for(), job, max_turns=max_turns,
+        Phase.GROUP, job, max_turns=max_turns,
         group_idx=i, group_count=group_count, group_name=grp.name,
         group_files_formatted=group_files_formatted,
         group_file_paths=grp.files,
-        group_output=group_output, holistic_content=holistic_content,
+        holistic_content=holistic_content,
     )
     group_prompt = retry_hint + group_prompt
 
@@ -270,10 +270,7 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> PhaseResult:
     runner = PhaseRunner(job, Phase.HOLISTIC)
     holistic_log = runner.session_log
     max_turns = runner.max_turns
-    prompt = build_prompt(
-        PHASES[Phase.HOLISTIC].template_for(), job,
-        max_turns=max_turns, holistic_output=holistic_output,
-    )
+    prompt = build_prompt(Phase.HOLISTIC, job, max_turns=max_turns)
 
     log.info(f"Phase 1/{group_count}: Holistic scan...")
     log.blank()
@@ -306,10 +303,7 @@ def _phase_scout(job: ReviewJob, group_count: int) -> PhaseResult:
     runner = PhaseRunner(job, Phase.SCOUT)
     scout_log = runner.session_log
     max_turns = runner.max_turns
-    prompt = build_prompt(
-        PHASES[Phase.SCOUT].template_for(), job,
-        max_turns=max_turns, scout_output=scout_output,
-    )
+    prompt = build_prompt(Phase.SCOUT, job, max_turns=max_turns)
 
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
     log.blank()
@@ -350,8 +344,8 @@ def _phase_disprove(job: ReviewJob) -> PhaseResult:
     disprove_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
-        PHASES[Phase.DISPROVE].template_for(), job, max_turns=max_turns,
-        disprove_output=disprove_output, review_content=review_content,
+        Phase.DISPROVE, job, max_turns=max_turns,
+        review_content=review_content,
     )
 
     log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")

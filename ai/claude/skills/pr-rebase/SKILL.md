@@ -187,9 +187,12 @@ through the owner, once whatever blocked the push is committed:
 pr rebase --branch <branch>
 ```
 
-Default mode re-fetches, replays nothing unless the base moved again, and
-force-pushes, so the pre-push hooks run against the HEAD that is actually going
-out. This is how the skill ends. Never run `git push --force-with-lease` yourself,
+This is the same command step 1 calls `--no-fix` mode, and it is not report-only
+here: the flag governs conflict resolution, not the push. A replay with nothing
+to resolve force-pushes either way, and there is nothing left to resolve once the
+rebase has completed. So the run re-fetches, replays nothing unless the base
+moved again, and pushes — which puts the pre-push hooks on the HEAD that is
+actually going out. This is how the skill ends. Never run `git push --force-with-lease` yourself,
 and never hand it to the user as the remaining step: `pr rebase` prints a
 `Resume: git -C '<worktree>' push --force-with-lease` line when a push is refused,
 and that hint is for a human at a terminal, not an instruction to you.

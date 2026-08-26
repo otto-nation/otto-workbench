@@ -32,10 +32,11 @@ import agent_retry
 import ai_backend
 import log
 import review_agent
+from agent_diagnosis import Diagnosis
 from agent_registry import PHASES
 from agent_types import Effort, Phase, PhaseShape
 from ai_backend import AgentInvocation
-from review_common import Diagnosis, preserve_log, restore_preserved
+from review_common import preserve_log, restore_preserved
 from workbench_config import WorkbenchConfig
 
 

@@ -51,8 +51,8 @@ from review_common import (
     ReviewEntryKind,
     iter_review_entries,
     phase_artifacts,
-    read_pipeline_status,
 )
+from review_state import read_pipeline_status
 from trail import Trail
 
 GC_STALE_DAYS = 7

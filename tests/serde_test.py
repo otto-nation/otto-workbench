@@ -15,7 +15,7 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
 from pr_state import PRState
-from review_preflight import PipelineState
+from review_state import PipelineState
 from serde import from_dict, load_file, to_dict, write_json
 
 

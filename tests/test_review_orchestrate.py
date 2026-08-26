@@ -4321,7 +4321,7 @@ class TestPipelineStateFailureRoundTrip:
         return job
 
     def _state(self, ro, groups_failed):
-        from review_preflight import PipelineState
+        from review_state import PipelineState
         return PipelineState(
             head_sha="abc", group_names=["ui"], groups_failed=groups_failed,
         )
@@ -4403,7 +4403,7 @@ class TestPipelineStateFailureRoundTrip:
 
 class TestBuildFailuresSection:
     def test_no_failures_returns_empty(self):
-        from review_preflight import PipelineState
+        from review_state import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
@@ -4413,8 +4413,8 @@ class TestBuildFailuresSection:
         assert build_failures_section(state) == ""
 
     def test_group_failures_produce_table(self):
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["ui-components", "api-routes", "tests"],
@@ -4434,8 +4434,8 @@ class TestBuildFailuresSection:
         assert "pr review --recover" in result
 
     def test_synthesis_fallback_in_table(self):
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
@@ -4453,8 +4453,8 @@ class TestBuildFailuresSection:
         The check this replaced compared the whole rendered reason against the
         marker tuple, so it never fired on `agent error: permission denied`.
         """
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
@@ -4470,8 +4470,8 @@ class TestBuildFailuresSection:
         assert "pr review --recover" not in result
 
     def test_recover_hint_survives_one_recoverable_failure(self):
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
@@ -4485,8 +4485,8 @@ class TestBuildFailuresSection:
         assert "pr review --recover" in build_failures_section(state)
 
     def test_no_recover_hint_when_every_group_is_unrecoverable(self):
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import build_failures_section
         denial = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied")
         state = PipelineState(
@@ -4497,8 +4497,8 @@ class TestBuildFailuresSection:
         assert "pr review --recover" not in build_failures_section(state)
 
     def test_recover_hint_offered_for_max_turns(self):
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
@@ -4508,8 +4508,8 @@ class TestBuildFailuresSection:
         assert "pr review --recover" in build_failures_section(state)
 
     def test_synthesis_failure_alone_stays_recoverable(self):
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
@@ -4530,8 +4530,8 @@ def test_meta_status_constant_format():
 class TestFailuresSectionInReview:
     def test_mechanical_fallback_includes_failures(self, tmp_path):
         """When synthesis falls back, the review includes ## Agent Failures."""
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import build_failures_section
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
@@ -4567,8 +4567,8 @@ class TestInjectFailuresAndStatus:
 
     def test_replaces_existing_status_line(self, tmp_path):
         """I1: status already present as 'completed' is updated to 'partial' on synthesis failure."""
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import _inject_failures_and_status
 
         # Write a review file that already has a 'completed' status line
@@ -4597,8 +4597,8 @@ class TestInjectFailuresAndStatus:
 
     def test_inserts_status_when_absent(self, tmp_path):
         """Status line is inserted before the generator line when not already present."""
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import _inject_failures_and_status
 
         review_file = tmp_path / "review.md"
@@ -4622,8 +4622,8 @@ class TestInjectFailuresAndStatus:
 
     def test_replaces_status_not_duplicated(self, tmp_path):
         """Replacing an existing status line does not add a second status line."""
-        from review_common import Diagnosis, DiagnosisKind
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_state import PipelineState
         from review_state import _inject_failures_and_status
 
         review_file = tmp_path / "review.md"
@@ -4766,8 +4766,9 @@ class TestCleanupScope:
         groups that did succeed, so a sweep here would strand the recovery.
         """
         import serde
-        from review_common import Diagnosis, DiagnosisKind, FILENAME_PIPELINE_STATE
-        from review_preflight import PipelineState
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+        from review_common import FILENAME_PIPELINE_STATE
+        from review_state import PipelineState
 
         def _partial(job, **_kwargs):
             review_dir = Path(job.artifact_dir)

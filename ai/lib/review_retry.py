@@ -18,8 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import agent_retry
+from agent_diagnosis import Diagnosis, DiagnosisKind
 from review_agent import CONSECUTIVE_FAIL_THRESHOLD, _is_model_error
-from review_common import Diagnosis, DiagnosisKind
 
 _has_output = agent_retry.has_output
 

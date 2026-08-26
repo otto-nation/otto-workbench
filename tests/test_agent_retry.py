@@ -19,7 +19,7 @@ from agent_registry import PHASES
 from agent_types import DEFAULT_RETRY_CEILING, Phase
 import review_phases
 import review_retry
-from review_common import Diagnosis, DiagnosisKind
+from agent_diagnosis import Diagnosis, DiagnosisKind
 
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)

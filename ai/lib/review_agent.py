@@ -19,8 +19,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import log
+from agent_diagnosis import Diagnosis, DiagnosisKind
 from ai_backend_events import is_write_tool
-from review_common import Diagnosis, DiagnosisKind
 
 CONSECUTIVE_FAIL_THRESHOLD = 3
 

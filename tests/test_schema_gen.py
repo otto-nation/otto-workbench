@@ -377,7 +377,7 @@ def test_a_diagnosis_schema_accepts_the_legacy_string_form():
     `dict[int, Diagnosis]`, so its keys must parse as integers and its values
     are whatever `Diagnosis._from_raw` reads — an object or the rendered string
     an older run wrote."""
-    from review_preflight import PipelineState
+    from review_state import PipelineState
 
     failed = dataclass_to_schema(PipelineState)["properties"]["groups_failed"]
     assert failed["propertyNames"] == {"pattern": r"^-?[0-9]+$"}

@@ -15,10 +15,30 @@ if str(LIB_DIR) not in sys.path:
 import pr_comments_fix
 import pr_domains
 from pr_comments_fix import CLOSEOUT_COMMAND
+from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome
 
 # When the run being described happened. Any non-empty stamp means "written",
 # which is the only thing render_status and readiness read it for.
 _FIX_RUN = "2026-07-14T00:00:00+00:00"
+
+
+def _summary(*outcomes: FixOutcome, **kwargs) -> pr_comments_fix.FixSummary:
+    """A comment fix pass that recorded one outcome per argument, in order.
+
+    Ids are positional, so a caller that only cares about the verdicts does not
+    have to invent them — the counts every renderer here reads come off the
+    outcomes, and the ids only have to be distinct enough not to fold together.
+    That is why this takes verdicts where the `_fix` helpers in
+    `pr_state_test` and `test_review_threads` take whole `ItemOutcome`s: those
+    suites are about what the record holds, and this one is about what the
+    domain says over it.
+    """
+    record = kwargs.pop("fix", FixRecord())
+    record.items = [
+        ItemOutcome(id=f"t{n}", outcome=outcome)
+        for n, outcome in enumerate(outcomes, start=1)
+    ]
+    return pr_comments_fix.FixSummary(fix=record, updated_at=_FIX_RUN, **kwargs)
 
 
 def test_fix_render_not_run():
@@ -26,15 +46,9 @@ def test_fix_render_not_run():
 
 
 def test_fix_render_with_data():
-    lines = pr_comments_fix.FixSummary(
-        threads=[
-            pr_comments_fix.ThreadOutcome(id="t1", action=pr_comments_fix.ThreadAction.FIXED),
-            pr_comments_fix.ThreadOutcome(id="t2", action=pr_comments_fix.ThreadAction.FIXED),
-            pr_comments_fix.ThreadOutcome(id="t3", action=pr_comments_fix.ThreadAction.DEFERRED),
-            pr_comments_fix.ThreadOutcome(id="t4", action=pr_comments_fix.ThreadAction.DISMISSED),
-        ],
-        commit_sha="abc1234", commit_status="pushed",
-        updated_at=_FIX_RUN,
+    lines = _summary(
+        FixOutcome.FIXED, FixOutcome.FIXED, FixOutcome.DEFERRED, FixOutcome.DISMISSED,
+        fix=FixRecord(commit_sha="abc1234", commit_status=CommitStatus.PUSHED),
     ).render_status()
     assert "**2 fixed**" in lines[0]
     assert "1 deferred" in lines[0]
@@ -44,34 +58,20 @@ def test_fix_render_with_data():
 
 
 def test_fix_render_needs_human():
-    lines = pr_comments_fix.FixSummary(
-        threads=[
-            pr_comments_fix.ThreadOutcome(id="t1", action=pr_comments_fix.ThreadAction.NEEDS_HUMAN),
-            pr_comments_fix.ThreadOutcome(id="t2", action=pr_comments_fix.ThreadAction.NEEDS_HUMAN),
-        ],
-        updated_at=_FIX_RUN,
-    ).render_status()
+    lines = _summary(FixOutcome.NEEDS_HUMAN, FixOutcome.NEEDS_HUMAN).render_status()
     assert "2 need discussion" in lines[0]
 
 
 def test_fix_render_already_addressed():
-    lines = pr_comments_fix.FixSummary(
-        threads=[
-            pr_comments_fix.ThreadOutcome(id="t1", action=pr_comments_fix.ThreadAction.ALREADY_ADDRESSED),
-        ],
-        updated_at=_FIX_RUN,
-    ).render_status()
+    lines = _summary(FixOutcome.ALREADY_ADDRESSED).render_status()
     assert "1 already addressed" in lines[0]
 
 
 def test_fix_render_deferred_issue():
-    lines = pr_comments_fix.FixSummary(
-        threads=[
-            pr_comments_fix.ThreadOutcome(id="t1", action=pr_comments_fix.ThreadAction.DEFERRED),
-        ],
-        commit_sha="abc", commit_status="pushed",
+    lines = _summary(
+        FixOutcome.DEFERRED,
+        fix=FixRecord(commit_sha="abc", commit_status=CommitStatus.PUSHED),
         deferred_issue_id="ENG-456",
-        updated_at=_FIX_RUN,
     ).render_status()
     assert any("ENG-456" in line for line in lines)
     assert any("tracked in" in line for line in lines)
@@ -82,15 +82,12 @@ def test_fix_render_deferred_issue():
 
 def _fix_with_closeout(**kwargs) -> pr_comments_fix.FixSummary:
     """A pushed fix pass with three reply-owing outcomes and one that owes none."""
-    return pr_comments_fix.FixSummary(
-        threads=[
-            pr_comments_fix.ThreadOutcome(id="t1", action=pr_comments_fix.ThreadAction.FIXED),
-            pr_comments_fix.ThreadOutcome(id="t2", action=pr_comments_fix.ThreadAction.ALREADY_ADDRESSED),
-            pr_comments_fix.ThreadOutcome(id="t3", action=pr_comments_fix.ThreadAction.DISMISSED),
-            pr_comments_fix.ThreadOutcome(id="t4", action=pr_comments_fix.ThreadAction.NEEDS_HUMAN),
-        ],
-        commit_sha="abc1234", commit_status="pushed",
-        updated_at=_FIX_RUN,
+    return _summary(
+        FixOutcome.FIXED,
+        FixOutcome.ALREADY_ADDRESSED,
+        FixOutcome.DISMISSED,
+        FixOutcome.NEEDS_HUMAN,
+        fix=FixRecord(commit_sha="abc1234", commit_status=CommitStatus.PUSHED),
         **kwargs,
     )
 
@@ -174,11 +171,7 @@ def test_fix_render_warns_for_an_unfiled_tracking_issue():
 
 
 def test_fix_render_singularises_a_one_reply_queue():
-    f = pr_comments_fix.FixSummary(
-        threads=[pr_comments_fix.ThreadOutcome(id="t1", action=pr_comments_fix.ThreadAction.FIXED)],
-        replies_pending=True,
-        updated_at=_FIX_RUN,
-    )
+    f = _summary(FixOutcome.FIXED, replies_pending=True)
     assert _closeout_line(f.render_status()) == (
         f"  ⚠ closeout owed: 1 reply — run: {CLOSEOUT_COMMAND}"
     )
@@ -186,9 +179,7 @@ def test_fix_render_singularises_a_one_reply_queue():
 
 def test_fix_render_says_replies_when_no_outcome_carries_the_count():
     """A queue whose outcomes were pruned still says replies are owed, not zero."""
-    f = pr_comments_fix.FixSummary(
-        threads=[], replies_pending=True, updated_at=_FIX_RUN,
-    )
+    f = _summary(replies_pending=True)
     assert _closeout_line(f.render_status()) == (
         f"  ⚠ closeout owed: replies — run: {CLOSEOUT_COMMAND}"
     )

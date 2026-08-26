@@ -804,22 +804,31 @@ without pulling a review or comments layer in behind it.
 
 ### pr_comments_fix.py
 
-The comment fix pass's record, and the vocabulary it is written in.
+The comment fix pass's domain, and the closeout it owes the PR.
 
-This is the one fix pass that already records per-item outcomes as state, and it
-records them in its own terms: a thread, a reviewer, an action from a set only
-reviewer comments have. ``pr_fix`` holds the generic shape all three passes are
-converging on; everything here is the comment-shaped instance of it, kept
-whole because a state file in flight carries a cycle's accumulated thread
-outcomes — a deferred issue url, an undelivered summary — that renaming the
-field would silently drop.
+What the pass did about each thread is a :class:`~pr_fix.FixRecord` on this
+domain, in the :class:`~pr_fix.ItemOutcome` vocabulary all three fix passes
+write — so a consumer asking "what became of this item" reads one shape
+whichever pass produced it. What is left here is what only this pass has: a
+reply queue, a summary comment, a PR description draft and a deferred-issue
+trio, none of which the other domains have anything to say about.
+
+``reviewers`` is here for the same reason. Which login opened a thread is the
+item as GitHub handed it over, not a fact about what the pass did with it, so
+it stays on the domain rather than widening the record every pass shares — the
+line :class:`~pr_fix.ItemOutcome` draws for a CI job name and a finding's
+severity too. It is keyed by outcome id, so the two accumulate together.
 
 The module is above ``pr_domains`` rather than inside it: ``FixSummary`` is a
 :class:`~pr_domains.Domain` and needs the base class, while the generic record
 that base class carries has to be declared below it. Splitting on that line
-keeps the imports one-way and puts the transitional half in a file of its own,
-which is what the shared fix engine deletes when the comment pass starts writing
-``CommentsSummary.fix`` instead.
+keeps the imports one-way.
+
+A state file written before the fold records its outcomes as ``threads``, in a
+vocabulary of its own, beside a top-level ``commit_sha``/``commit_status``/
+``head_sha``. :meth:`FixSummary._from_raw` reads that shape into the record, so
+a review cycle in flight keeps the outcomes, the reply queue and the deferred
+issue it had accumulated rather than resuming from an empty one.
 
 ### pr_comments_state.py
 
@@ -938,8 +947,8 @@ the vocabulary it is written in, and imports nothing back.
 
 ``pr_state`` holds the envelope over these, the registry and the state file
 I/O, and imports this module — never the other way round. So does
-``pr_comments_fix``, which holds the one fix record that predates the generic
-one and is still written in the comment pass's own terms.
+``pr_comments_fix``, which holds the comment pass's domain: the closeout only
+that pass owes, over the same record every domain here carries.
 
 #### Rebase refusals
 
@@ -992,11 +1001,11 @@ there is one waiver mechanism rather than two.
 What a fix pass did, in terms no one domain owns.
 
 Three fix passes run in this workbench — reviewer comments, CI failures, and
-review findings — and each one records its result differently: one writes typed
-thread outcomes into state, one writes checkbox counts, one rewrites checkboxes
-inside the review markdown. The types here are the shape all three settle on. A
-pass records one :class:`ItemOutcome` per item it was handed and one
-:class:`FixRecord` per run, and every domain carries a record because
+review findings — and each one used to record its result differently: one wrote
+typed thread outcomes into state, one wrote checkbox counts, one rewrote
+checkboxes inside the review markdown. The types here are the shape all three
+settle on. A pass records one :class:`ItemOutcome` per item it was handed and
+one :class:`FixRecord` per run, and every domain carries a record because
 :class:`~pr_domains.Domain` declares the field — so a domain that gains a fix
 pass gains somewhere to record it by declaring nothing.
 
@@ -1005,12 +1014,12 @@ it, and it imports nothing from ``ai/lib`` in return. That is what lets the
 record hang off the base class without the domains and the vocabulary they are
 written in forming a cycle.
 
-The CI pass writes one, through :mod:`fix_engine` — the shared pipeline all
-three now run on, and the thing that produces the :class:`ItemOutcome` list a
-record is assembled from. Running on the engine is not the same as recording
-through these types: the comment pass keeps the summary shape it had, and the
-review-findings pass re-renders the review document from its outcomes rather
-than writing a record at all.
+The CI and comment passes both write one, through :mod:`fix_engine` — the
+shared pipeline all three now run on, and the thing that produces the
+:class:`ItemOutcome` list a record is assembled from. Running on the engine is
+not the same as recording through these types: the review-findings pass
+re-renders the review document from its outcomes rather than writing a record
+at all.
 
 ### pr_state.py
 
@@ -1024,8 +1033,8 @@ State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on t
 run's target — see ``pr_target.target_dir``, which owns that path.
 
 The domains this is an envelope over live in ``pr_domains`` — and one of them,
-the comment pass's fix record, in ``pr_comments_fix``. This module imports both;
-neither imports it.
+the comment pass's, in ``pr_comments_fix``. This module imports both; neither
+imports it.
 
 ### pr_target.py
 

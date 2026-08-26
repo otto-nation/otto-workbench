@@ -13,8 +13,7 @@ from dataclasses import dataclass, field
 
 import serde
 from pr_comments_state import ThreadState
-from pr_comments_fix import ThreadAction, ThreadOutcome
-from pr_fix import FixOutcome
+from pr_fix import FixOutcome, ItemOutcome
 
 
 # ── Core types ─────────────────────────────────────────────────────────────
@@ -49,7 +48,7 @@ class CommentItem:
     evidence_file: str = ""
     evidence_line: int = 0
     # The commit that fixed this entry, when it is known to be an older one than
-    # the pass now running. Set when an entry is rebuilt from a ThreadOutcome to
+    # the pass now running. Set when an entry is rebuilt from an ItemOutcome to
     # drain a deferred reply queue; empty for an entry the current pass fixed,
     # which the pass's own SHA covers.
     commit_sha: str = ""
@@ -70,18 +69,52 @@ class CommentItem:
         return bool(self.evidence_file) and self.evidence_line > 0
 
     def to_outcome(
-        self, action: ThreadAction, reason: str = "",
-    ) -> ThreadOutcome:
-        return ThreadOutcome(
+        self, outcome: FixOutcome, reason: str = "",
+    ) -> ItemOutcome:
+        """This entry as the record writes it — everything but the reviewer.
+
+        The login is the item as GitHub handed it over rather than a fact about
+        what the pass did, so it is recorded beside the record in
+        `FixSummary.reviewers` and does not travel here. `from_outcome` is what
+        puts the two back together.
+        """
+        return ItemOutcome(
             id=self.id,
             file=self.file,
             line=self.line,
-            reviewer=self.reviewer,
             summary=self.summary,
-            action=action,
+            outcome=outcome,
             reason=reason or self.reason or self.reasoning,
             commit_sha=self.commit_sha,
             read_sha=self.read_sha,
+        )
+
+    @classmethod
+    def from_outcome(
+        cls, outcome: ItemOutcome, reviewer: str = "", *, reason_field: str = "reason",
+    ) -> "CommentItem":
+        """A recorded outcome as an entry again, for a surface that renders one.
+
+        The replay path for everything `--finish` picks up out of state: the
+        reply queue, the deferred tracking issue, the re-rendered summary. Each
+        of those reads entries rather than records, so a round drained from disk
+        goes through here and every renderer downstream sees one type.
+
+        `reason_field` is which of the two the outcome's reason lands in. The
+        reply templates read `reasoning` — a dismissal's justification is the
+        body of the reply — while the summary table and the tracking issue read
+        `reason`, so the caller names the one its surface will look at rather
+        than filling both and letting a renderer pick the wrong half.
+        """
+        return cls(
+            id=outcome.id,
+            file=outcome.file,
+            line=outcome.line,
+            reviewer=reviewer,
+            summary=outcome.summary,
+            commit_sha=outcome.commit_sha,
+            read_sha=outcome.read_sha,
+            **{reason_field: outcome.reason},
         )
 
 

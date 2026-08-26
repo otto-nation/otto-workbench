@@ -13,7 +13,7 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 import pr_state
-from pr_comments_fix import FixSummary, ThreadAction, ThreadOutcome
+from pr_comments_fix import CLOSEOUT_COMMAND, FixSummary
 from pr_domains import (
     CIDomain,
     CommentsSummary, TriageSummary, RebaseSummary,
@@ -21,7 +21,7 @@ from pr_domains import (
     ReviewSummary, ReviewVerdict, ReviewStatus,
     SupersessionDomain, SupersessionKind, SupersessionSignal,
 )
-from pr_fix import CommitStatus
+from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome
 from pr_state import (
     PRIdentity, PRCloseState, PRClosure,
     PendingComment, PRState, load_state, save_state, new_state, update_identity,
@@ -205,16 +205,21 @@ def test_commit_status_wire_values_are_the_strings_state_files_hold():
 
 def test_a_commit_status_survives_a_state_roundtrip_as_a_plain_string():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    apply(state, FixSummary(commit_status=CommitStatus.PUSH_HELD))
+    apply(state, FixSummary(fix=FixRecord(commit_status=CommitStatus.PUSH_HELD)))
 
     restored = state_from_dict(json.loads(json.dumps(state_to_dict(state))))
 
-    assert restored.fix.commit_status == CommitStatus.PUSH_HELD
-    assert restored.fix.commit_status == "push_held"
+    assert restored.fix.fix.commit_status == CommitStatus.PUSH_HELD
+    assert restored.fix.fix.commit_status == "push_held"
 
 
 def test_a_status_read_from_an_older_state_file_still_compares():
-    """Loaded values are plain strings; the code compares them against members."""
+    """Loaded values are plain strings; the code compares them against members.
+
+    The status is also where the pre-fold comment domain kept it — at the top
+    level of the domain rather than on the record — so this is the migration's
+    path too.
+    """
     state = state_from_dict({
         "version": STATE_VERSION,
         "identity": {
@@ -223,7 +228,7 @@ def test_a_status_read_from_an_older_state_file_still_compares():
         },
         "fix": {"commit_status": "push_held"},
     })
-    assert state.fix.commit_status == CommitStatus.PUSH_HELD
+    assert state.fix.fix.commit_status == CommitStatus.PUSH_HELD
 
 
 def test_state_roundtrip_with_seen_issue_comment_ids():
@@ -996,41 +1001,10 @@ def test_apply_state_update_unknown_domain(worktree):
 # ── FixSummary ─────────────────────────────────────────────────────────────
 
 
-def test_fix_thread_outcome_defaults():
-    t = ThreadOutcome()
-    assert t.id == ""
-    assert t.file == ""
-    assert t.line == 0
-    assert t.action == ThreadAction.FIXED
-    assert t.reason == ""
-
-
-def test_fix_thread_outcome_from_entry():
-    entry = {
-        "id": "t1", "file": "src/foo.go", "line": 42,
-        "reviewer": "alice", "summary": "fix it", "reasoning": "not applicable",
-    }
-    t = ThreadOutcome.from_entry(entry, ThreadAction.DISMISSED, reason_key="reasoning")
-    assert t.id == "t1"
-    assert t.file == "src/foo.go"
-    assert t.line == 42
-    assert t.action == ThreadAction.DISMISSED
-    assert t.reason == "not applicable"
-
-
-def test_fix_thread_outcome_from_entry_defaults():
-    t = ThreadOutcome.from_entry({}, ThreadAction.FIXED)
-    assert t.id == ""
-    assert t.file == ""
-    assert t.action == ThreadAction.FIXED
-    assert t.reason == ""
-
-
 def test_fix_summary_defaults():
     f = FixSummary()
-    assert f.threads == []
-    assert f.commit_sha == ""
-    assert f.commit_status == ""
+    assert f.fix == FixRecord()
+    assert f.reviewers == {}
     assert f.replies_posted == 0
     assert f.summary_url == ""
     assert f.summary_deferred is False
@@ -1043,10 +1017,10 @@ def test_fix_summary_round_trips_head_sha(worktree):
     state = PRState(
         identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
                             head_sha="abc1234", worktree_root=str(worktree)),
-        fix=FixSummary(head_sha="abc1234"),
+        fix=FixSummary(fix=FixRecord(head_sha="abc1234")),
     )
     save_state(worktree, state)
-    assert load_state(worktree).fix.head_sha == "abc1234"
+    assert load_state(worktree).fix.fix.head_sha == "abc1234"
 
 
 def test_fix_summary_head_sha_defaults_empty_on_legacy_state(worktree):
@@ -1054,39 +1028,39 @@ def test_fix_summary_head_sha_defaults_empty_on_legacy_state(worktree):
     state = PRState(
         identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
                             head_sha="abc1234", worktree_root=str(worktree)),
-        fix=FixSummary(head_sha="abc1234"),
+        fix=FixSummary(fix=FixRecord(head_sha="abc1234")),
     )
     save_state(worktree, state)
     path = worktree / "state.json"
     raw = json.loads(path.read_text())
-    del raw["fix"]["head_sha"]
+    del raw["fix"]["fix"]["head_sha"]
     path.write_text(json.dumps(raw))
-    assert load_state(worktree).fix.head_sha == ""
+    assert load_state(worktree).fix.fix.head_sha == ""
 
 
-def test_thread_outcome_round_trips_commit_sha(worktree):
+def test_an_outcome_round_trips_commit_sha(worktree):
     state = PRState(
         identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
                             head_sha="abc1234", worktree_root=str(worktree)),
-        fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
+        fix=FixSummary(fix=FixRecord(items=[ItemOutcome(id="t1", commit_sha="deadbee")])),
     )
     save_state(worktree, state)
-    assert load_state(worktree).fix.threads[0].commit_sha == "deadbee"
+    assert load_state(worktree).fix.fix.items[0].commit_sha == "deadbee"
 
 
-def test_thread_outcome_commit_sha_defaults_empty_on_legacy_state(worktree):
+def test_an_outcome_commit_sha_defaults_empty_on_legacy_state(worktree):
     """State written before this field must still load."""
     state = PRState(
         identity=PRIdentity(repo="o/r", branch="b", pr_number=1,
                             head_sha="abc1234", worktree_root=str(worktree)),
-        fix=FixSummary(threads=[ThreadOutcome(id="t1", commit_sha="deadbee")]),
+        fix=FixSummary(fix=FixRecord(items=[ItemOutcome(id="t1", commit_sha="deadbee")])),
     )
     save_state(worktree, state)
     path = worktree / "state.json"
     raw = json.loads(path.read_text())
-    del raw["fix"]["threads"][0]["commit_sha"]
+    del raw["fix"]["fix"]["items"][0]["commit_sha"]
     path.write_text(json.dumps(raw))
-    assert load_state(worktree).fix.threads[0].commit_sha == ""
+    assert load_state(worktree).fix.fix.items[0].commit_sha == ""
 
 
 # ── SupersessionDomain ──────────────────────────────────────────────────────
@@ -1140,14 +1114,33 @@ def test_a_verdict_keyed_on_an_empty_sha_matches_nothing():
     assert not SupersessionDomain(head_sha="a" * 40).matches("a" * 40, "")
 
 
+def _fix(
+    *items: ItemOutcome, commit_sha="", commit_status=None, head_sha="", **kwargs,
+) -> FixSummary:
+    """A comment fix pass carrying one record, spelled as the domain now holds it.
+
+    Same shape as `test_review_threads._fix`: the record's envelope fields stay
+    keywords rather than a nested `FixRecord` literal, so a caller that only
+    cares about the outcomes names none of them and one that names a commit is
+    making a point about the commit, not about which object holds it.
+    """
+    return FixSummary(
+        fix=FixRecord(
+            items=list(items), commit_sha=commit_sha,
+            commit_status=commit_status, head_sha=head_sha,
+        ),
+        **kwargs,
+    )
+
+
 def test_legacy_thread_id_key_loads_as_id():
     """Outcomes written before the field was renamed carry `thread_id`."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     d = state_to_dict(state)
     d["fix"] = {"threads": [{"thread_id": "t1", "file": "f.go", "action": "fixed"}]}
     restored = state_from_dict(d)
-    assert restored.fix.threads[0].id == "t1"
-    assert restored.fix.threads[0].file == "f.go"
+    assert restored.fix.fix.items[0].id == "t1"
+    assert restored.fix.fix.items[0].file == "f.go"
 
 
 def test_the_thread_id_rename_does_not_mutate_the_caller():
@@ -1163,31 +1156,16 @@ def test_the_thread_id_rename_does_not_mutate_the_caller():
 def test_accumulated_outcomes_keep_their_own_shas():
     """The whole point: round two must not relabel round one's commit."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, FixSummary(
+    apply(state, _fix(
+        ItemOutcome(id="t1", commit_sha="1111111", outcome=FixOutcome.FIXED),
         commit_sha="1111111",
-        threads=[ThreadOutcome(id="t1", commit_sha="1111111",
-                               action=ThreadAction.FIXED)],
     ))
-    apply(state, FixSummary(
+    apply(state, _fix(
+        ItemOutcome(id="t2", commit_sha="2222222", outcome=FixOutcome.FIXED),
         commit_sha="2222222",
-        threads=[ThreadOutcome(id="t2", commit_sha="2222222",
-                               action=ThreadAction.FIXED)],
     ))
-    by_id = {t.id: t.commit_sha for t in state.fix.threads}
+    by_id = {o.id: o.commit_sha for o in state.fix.fix.items}
     assert by_id == {"t1": "1111111", "t2": "2222222"}
-
-
-def test_thread_outcome_from_entry_carries_commit_sha():
-    """Both branches of from_entry — attribute objects and raw dicts."""
-    entry = SimpleNamespace(
-        id="t1", file="a.go", line=7, reviewer="kgn", summary="rename it",
-        reason="", commit_sha="deadbee",
-    )
-    assert ThreadOutcome.from_entry(
-        entry, ThreadAction.FIXED).commit_sha == "deadbee"
-    assert ThreadOutcome.from_entry(
-        {"id": "t1", "commit_sha": "deadbee"}, ThreadAction.FIXED,
-    ).commit_sha == "deadbee"
 
 
 def test_pr_state_has_fix_field():
@@ -1196,94 +1174,110 @@ def test_pr_state_has_fix_field():
         head_sha="", worktree_root="",
     )
     state = PRState(identity=ident)
-    assert state.fix.threads == []
-    assert state.fix.commit_sha == ""
+    assert state.fix.fix == FixRecord()
 
 
 def test_apply_fix_replaces_scalar_fields():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
-        commit_sha="abc", commit_status="pushed",
+    apply(state, _fix(
+        ItemOutcome(id="t1", outcome=FixOutcome.FIXED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         updated_at="t1",
     ))
-    assert state.fix.commit_sha == "abc"
-    assert len(state.fix.threads) == 1
-    assert state.fix.threads[0].action == ThreadAction.FIXED
-    apply(state, FixSummary(
-        threads=[], commit_sha="", commit_status="no_changes",
+    assert state.fix.fix.commit_sha == "abc"
+    assert len(state.fix.fix.items) == 1
+    assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
+    apply(state, _fix(
+        commit_sha="", commit_status=CommitStatus.NO_CHANGES,
         updated_at="t2",
     ))
-    assert state.fix.commit_sha == ""
-    assert state.fix.commit_status == "no_changes"
+    assert state.fix.fix.commit_sha == ""
+    assert state.fix.fix.commit_status == CommitStatus.NO_CHANGES
     assert state.fix.updated_at == "t2"
 
 
-def test_apply_fix_accumulates_threads_across_rounds():
-    """A later pass must not drop threads processed in an earlier one."""
+def test_apply_fix_accumulates_outcomes_across_rounds():
+    """A later pass must not drop the items an earlier one recorded."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, FixSummary(
-        threads=[
-            ThreadOutcome(id="t1", action=ThreadAction.FIXED),
-            ThreadOutcome(id="t2", action=ThreadAction.DISMISSED),
-        ],
-        commit_sha="abc", commit_status="pushed", updated_at="t1",
-    ))
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t3", action=ThreadAction.ALREADY_ADDRESSED)],
-        commit_status="no_changes", updated_at="t2",
-    ))
-    assert [t.id for t in state.fix.threads] == ["t1", "t2", "t3"]
-    assert state.fix.threads[2].action == ThreadAction.ALREADY_ADDRESSED
-
-
-def test_apply_fix_supersedes_same_thread():
-    """Re-processing a thread replaces its earlier outcome rather than duplicating it."""
-    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t1", action=ThreadAction.DEFERRED, reason="too complex")],
+    apply(state, _fix(
+        ItemOutcome(id="t1", outcome=FixOutcome.FIXED),
+        ItemOutcome(id="t2", outcome=FixOutcome.DISMISSED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         updated_at="t1",
     ))
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
-        commit_sha="abc", commit_status="pushed", updated_at="t2",
+    apply(state, _fix(
+        ItemOutcome(id="t3", outcome=FixOutcome.ALREADY_ADDRESSED),
+        commit_status=CommitStatus.NO_CHANGES,
+        updated_at="t2",
     ))
-    assert len(state.fix.threads) == 1
-    assert state.fix.threads[0].action == ThreadAction.FIXED
-    assert state.fix.threads[0].reason == ""
+    assert [o.id for o in state.fix.fix.items] == ["t1", "t2", "t3"]
+    assert state.fix.fix.items[2].outcome == FixOutcome.ALREADY_ADDRESSED
+
+
+def test_apply_fix_supersedes_the_same_item():
+    """Re-processing an item replaces its earlier outcome rather than duplicating it."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, _fix(
+        ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED, reason="too complex"),
+        updated_at="t1",
+    ))
+    apply(state, _fix(
+        ItemOutcome(id="t1", outcome=FixOutcome.FIXED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
+        updated_at="t2",
+    ))
+    assert len(state.fix.fix.items) == 1
+    assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
+    assert state.fix.fix.items[0].reason == ""
 
 
 def test_apply_fix_does_not_mutate_caller_summary():
     """The merged list is a new object — the caller's FixSummary stays untouched."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, FixSummary(threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)]))
-    incoming = FixSummary(threads=[ThreadOutcome(id="t2", action=ThreadAction.DISMISSED)])
+    apply(state, _fix(ItemOutcome(id="t1", outcome=FixOutcome.FIXED)))
+    incoming = _fix(ItemOutcome(id="t2", outcome=FixOutcome.DISMISSED))
     apply(state, incoming)
-    assert [t.id for t in incoming.threads] == ["t2"]
-    assert [t.id for t in state.fix.threads] == ["t1", "t2"]
+    assert [o.id for o in incoming.fix.items] == ["t2"]
+    assert [o.id for o in state.fix.fix.items] == ["t1", "t2"]
+
+
+def test_apply_fix_accumulates_the_reviewers_beside_the_outcomes():
+    """The login a reply is addressed to outlives the round that recorded it.
+
+    It rides beside the record rather than on the outcome, so nothing in
+    `FixRecord.merge_into` carries it across — this is the domain's own fold.
+    """
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, _fix(
+        ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED),
+        reviewers={"t1": "alice"}, updated_at="t1",
+    ))
+    apply(state, _fix(
+        ItemOutcome(id="t2", outcome=FixOutcome.FIXED),
+        reviewers={"t2": "bob"}, updated_at="t2",
+    ))
+    assert state.fix.reviewers == {"t1": "alice", "t2": "bob"}
 
 
 def test_state_roundtrip_with_fix_data():
     state = new_state("owner/repo", "feat", pr_number=42, head_sha="def", worktree_root="/wt")
-    apply(state, FixSummary(
-        threads=[
-            ThreadOutcome(
-                id="t1", file="src/foo.go", line=10,
-                reviewer="alice", summary="fix the thing",
-                action=ThreadAction.FIXED,
-            ),
-            ThreadOutcome(
-                id="t2", file="src/bar.go", line=20,
-                reviewer="bob", summary="add validation",
-                action=ThreadAction.DEFERRED, reason="agent could not auto-fix",
-            ),
-            ThreadOutcome(
-                id="t3", file="src/baz.go", line=30,
-                reviewer="charlie", summary="needs design",
-                action=ThreadAction.NEEDS_HUMAN, reason="contested",
-            ),
-        ],
-        commit_sha="abc1234", commit_status="pushed",
+    apply(state, _fix(
+        ItemOutcome(
+            id="t1", file="src/foo.go", line=10,
+            summary="fix the thing", outcome=FixOutcome.FIXED,
+        ),
+        ItemOutcome(
+            id="t2", file="src/bar.go", line=20,
+            summary="add validation",
+            outcome=FixOutcome.DEFERRED, reason="agent could not auto-fix",
+        ),
+        ItemOutcome(
+            id="t3", file="src/baz.go", line=30,
+            summary="needs design",
+            outcome=FixOutcome.NEEDS_HUMAN, reason="contested",
+        ),
+        commit_sha="abc1234", commit_status=CommitStatus.PUSHED,
+        reviewers={"t1": "alice", "t2": "bob", "t3": "charlie"},
         replies_posted=2, summary_url="https://github.com/r/p/issues/1#comment",
         deferred_issue_id="ENG-456",
         deferred_issue_url="https://linear.app/team/issue/ENG-456/slug",
@@ -1293,15 +1287,16 @@ def test_state_roundtrip_with_fix_data():
     d = state_to_dict(state)
     restored = state_from_dict(d)
 
-    assert len(restored.fix.threads) == 3
-    assert restored.fix.threads[0].id == "t1"
-    assert restored.fix.threads[0].action == ThreadAction.FIXED
-    assert restored.fix.threads[0].file == "src/foo.go"
-    assert restored.fix.threads[1].action == ThreadAction.DEFERRED
-    assert restored.fix.threads[1].reason == "agent could not auto-fix"
-    assert restored.fix.threads[2].action == ThreadAction.NEEDS_HUMAN
-    assert restored.fix.commit_sha == "abc1234"
-    assert restored.fix.commit_status == "pushed"
+    assert len(restored.fix.fix.items) == 3
+    assert restored.fix.fix.items[0].id == "t1"
+    assert restored.fix.fix.items[0].outcome == FixOutcome.FIXED
+    assert restored.fix.fix.items[0].file == "src/foo.go"
+    assert restored.fix.fix.items[1].outcome == FixOutcome.DEFERRED
+    assert restored.fix.fix.items[1].reason == "agent could not auto-fix"
+    assert restored.fix.fix.items[2].outcome == FixOutcome.NEEDS_HUMAN
+    assert restored.fix.fix.commit_sha == "abc1234"
+    assert restored.fix.fix.commit_status == CommitStatus.PUSHED
+    assert restored.fix.reviewers == {"t1": "alice", "t2": "bob", "t3": "charlie"}
     assert restored.fix.replies_posted == 2
     assert restored.fix.deferred_issue_id == "ENG-456"
     assert restored.fix.summary_url == "https://github.com/r/p/issues/1#comment"
@@ -1310,38 +1305,36 @@ def test_state_roundtrip_with_fix_data():
 
 def test_save_preserves_fix_data(worktree):
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
-    apply(state, FixSummary(
-        threads=[
-            ThreadOutcome(id="t1", file="a.go", action=ThreadAction.FIXED),
-            ThreadOutcome(id="t2", file="b.go", action=ThreadAction.DISMISSED, reason="invalid"),
-        ],
-        commit_sha="def456", commit_status="pushed",
+    apply(state, _fix(
+        ItemOutcome(id="t1", file="a.go", outcome=FixOutcome.FIXED),
+        ItemOutcome(id="t2", file="b.go", outcome=FixOutcome.DISMISSED, reason="invalid"),
+        commit_sha="def456", commit_status=CommitStatus.PUSHED,
         replies_posted=1,
         updated_at="2026-07-14T00:00:00+00:00",
     ))
     save_state(worktree, state)
     loaded = load_state(worktree)
     assert loaded is not None
-    assert len(loaded.fix.threads) == 2
-    assert loaded.fix.threads[0].action == ThreadAction.FIXED
-    assert loaded.fix.threads[1].reason == "invalid"
-    assert loaded.fix.commit_sha == "def456"
+    assert len(loaded.fix.fix.items) == 2
+    assert loaded.fix.fix.items[0].outcome == FixOutcome.FIXED
+    assert loaded.fix.fix.items[1].reason == "invalid"
+    assert loaded.fix.fix.commit_sha == "def456"
 
 
-def test_already_addressed_action_roundtrips(worktree):
+def test_already_addressed_outcome_roundtrips(worktree):
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc", worktree_root=str(worktree))
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(
-            id="t1", file="a.go", action=ThreadAction.ALREADY_ADDRESSED,
+    apply(state, _fix(
+        ItemOutcome(
+            id="t1", file="a.go", outcome=FixOutcome.ALREADY_ADDRESSED,
             reason="the constructor already injects the logger",
-        )],
-        commit_status="no_changes",
+        ),
+        commit_status=CommitStatus.NO_CHANGES,
         updated_at="2026-07-14T00:00:00+00:00",
     ))
     save_state(worktree, state)
     loaded = load_state(worktree)
     assert loaded is not None
-    assert loaded.fix.threads[0].action == ThreadAction.ALREADY_ADDRESSED
+    assert loaded.fix.fix.items[0].outcome == FixOutcome.ALREADY_ADDRESSED
 
 
 def test_load_state_without_fix_defaults_empty(worktree):
@@ -1354,8 +1347,7 @@ def test_load_state_without_fix_defaults_empty(worktree):
     path.write_text(json.dumps(data))
     loaded = load_state(worktree)
     assert loaded is not None
-    assert loaded.fix.threads == []
-    assert loaded.fix.commit_sha == ""
+    assert loaded.fix.fix == FixRecord()
 
 
 def test_apply_state_update_fix(worktree):
@@ -1363,32 +1355,33 @@ def test_apply_state_update_fix(worktree):
         target_dir=worktree, repo="owner/repo", branch="feat",
         pr_number=1, head_sha="abc", domain="fix",
         data={
-            "threads": [
-                {"thread_id": "t1", "file": "f.go", "action": "fixed"},
-            ],
-            "commit_sha": "xyz", "commit_status": "pushed",
+            "fix": {
+                "items": [{"id": "t1", "file": "f.go", "outcome": "fixed"}],
+                "commit_sha": "xyz", "commit_status": "pushed",
+            },
             "updated_at": "t",
         },
     )
     loaded = load_state(worktree)
     assert loaded is not None
-    assert loaded.fix.commit_sha == "xyz"
-    assert len(loaded.fix.threads) == 1
-    assert loaded.fix.threads[0].action == ThreadAction.FIXED
+    assert loaded.fix.fix.commit_sha == "xyz"
+    assert len(loaded.fix.fix.items) == 1
+    assert loaded.fix.fix.items[0].outcome == FixOutcome.FIXED
 
 
 def test_apply_fix_preserves_deferred_issue_across_rounds():
     """A later round must not clear the tracking issue, or it opens a duplicate."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t1", action=ThreadAction.DEFERRED)],
+    apply(state, _fix(
+        ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED),
         deferred_issue_id="ENG-456",
         deferred_issue_url="https://linear.app/team/issue/ENG-456",
         updated_at="t1",
     ))
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t2", action=ThreadAction.FIXED)],
-        commit_sha="abc", commit_status="pushed", updated_at="t2",
+    apply(state, _fix(
+        ItemOutcome(id="t2", outcome=FixOutcome.FIXED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
+        updated_at="t2",
     ))
     assert state.fix.deferred_issue_id == "ENG-456"
     assert state.fix.deferred_issue_url == "https://linear.app/team/issue/ENG-456"
@@ -1397,13 +1390,14 @@ def test_apply_fix_preserves_deferred_issue_across_rounds():
 def test_apply_fix_preserves_an_unfiled_deferred_issue_across_rounds():
     """Only the phase that files the issue settles the debt, not the next pass."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t1", action=ThreadAction.DEFERRED)],
+    apply(state, _fix(
+        ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED),
         deferred_issue_pending=True, updated_at="t1",
     ))
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t2", action=ThreadAction.FIXED)],
-        commit_sha="abc", commit_status="pushed", updated_at="t2",
+    apply(state, _fix(
+        ItemOutcome(id="t2", outcome=FixOutcome.FIXED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
+        updated_at="t2",
     ))
     assert state.fix.deferred_issue_pending is True
 
@@ -1419,18 +1413,18 @@ def test_apply_fix_replaces_deferred_issue_when_supplied():
 def test_apply_fix_preserves_summary_url_across_quiet_rounds():
     """A round that posts nothing must not erase the summary already on the PR."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
-    apply(state, FixSummary(
-        threads=[ThreadOutcome(id="t1", action=ThreadAction.FIXED)],
-        commit_sha="abc", commit_status="pushed",
+    apply(state, _fix(
+        ItemOutcome(id="t1", outcome=FixOutcome.FIXED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         summary_url="https://github.com/r/p/pull/1#issuecomment-1",
         updated_at="t1",
     ))
-    apply(state, FixSummary(
-        threads=[], commit_status="no_changes", updated_at="t2",
+    apply(state, _fix(
+        commit_status=CommitStatus.NO_CHANGES, updated_at="t2",
     ))
     assert state.fix.summary_url == "https://github.com/r/p/pull/1#issuecomment-1"
     assert state.fix.summary_deferred is False
-    assert [t.id for t in state.fix.threads] == ["t1"]
+    assert [o.id for o in state.fix.fix.items] == ["t1"]
 
 
 def test_apply_fix_replaces_summary_url_when_supplied():
@@ -1438,6 +1432,156 @@ def test_apply_fix_replaces_summary_url_when_supplied():
     apply(state, FixSummary(summary_url="u1"))
     apply(state, FixSummary(summary_url="u2"))
     assert state.fix.summary_url == "u2"
+
+
+# ── The pre-fold comment domain ─────────────────────────────────────────────
+#
+# `FixSummary` used to hold `threads: list[ThreadOutcome]` beside its own
+# `commit_sha`/`commit_status`/`head_sha`, where it now carries a `FixRecord`
+# like every other domain. State files on disk still hold the old shape, and
+# what they report after loading has to be what they reported before — so these
+# read one through the three surfaces the fold has to be right at: `pr status`
+# (`render_status`), `pr comments --finish` (`readiness`), and `closeout_debt`.
+
+_PRE_FOLD_STATE = {
+    "version": STATE_VERSION,
+    "identity": {
+        "repo": "owner/repo", "branch": "feat", "pr_number": 42,
+        "head_sha": "abc1234", "worktree_root": "/wt",
+    },
+    "fix": {
+        "threads": [
+            {"thread_id": "t1", "file": "a.go", "line": 10, "reviewer": "alice",
+             "summary": "rename it", "action": "fixed", "commit_sha": "abc1234",
+             "read_sha": "abc1234"},
+            {"thread_id": "t2", "file": "b.go", "line": 20, "reviewer": "bob",
+             "summary": "add validation", "action": "deferred",
+             "reason": "agent could not auto-fix"},
+            {"thread_id": "t3", "file": "c.go", "line": 30, "reviewer": "carol",
+             "summary": "wrong premise", "action": "dismissed", "reason": "invalid"},
+            {"thread_id": "t4", "file": "d.go", "line": 40, "reviewer": "dave",
+             "summary": "needs design", "action": "needs_human", "reason": "contested"},
+            {"thread_id": "t5", "file": "e.go", "line": 50, "reviewer": "erin",
+             "summary": "guard the nil", "action": "already_addressed",
+             "reason": "the constructor already does"},
+        ],
+        "commit_sha": "abc1234",
+        "commit_status": "pushed",
+        "head_sha": "abc1234",
+        "replies_pending": True,
+        "summary_deferred": True,
+        "updated_at": "2026-07-14T00:00:00+00:00",
+    },
+}
+
+
+def _loaded_pre_fold(**fix_overrides) -> FixSummary:
+    raw = json.loads(json.dumps(_PRE_FOLD_STATE))
+    raw["fix"].update(fix_overrides)
+    return state_from_dict(raw).fix
+
+
+def test_a_pre_fold_state_file_lands_its_threads_on_the_record():
+    fix = _loaded_pre_fold()
+    assert [(o.id, o.outcome) for o in fix.fix.items] == [
+        ("t1", FixOutcome.FIXED),
+        ("t2", FixOutcome.DEFERRED),
+        ("t3", FixOutcome.DISMISSED),
+        ("t4", FixOutcome.NEEDS_HUMAN),
+        ("t5", FixOutcome.ALREADY_ADDRESSED),
+    ]
+    assert fix.fix.items[1].reason == "agent could not auto-fix"
+    assert fix.fix.items[0].commit_sha == "abc1234"
+    assert fix.fix.items[0].read_sha == "abc1234"
+
+
+def test_a_pre_fold_state_file_lands_its_envelope_on_the_record():
+    fix = _loaded_pre_fold()
+    assert fix.fix.commit_sha == "abc1234"
+    assert fix.fix.commit_status == CommitStatus.PUSHED
+    assert fix.fix.head_sha == "abc1234"
+    assert fix.fix.updated_at == "2026-07-14T00:00:00+00:00"
+
+
+def test_a_pre_fold_state_file_keeps_its_reviewers():
+    """The one field with no counterpart on the record, so it moves rather than folds."""
+    assert _loaded_pre_fold().reviewers == {
+        "t1": "alice", "t2": "bob", "t3": "carol", "t4": "dave", "t5": "erin",
+    }
+
+
+def test_a_pre_fold_state_file_reports_the_same_status_line():
+    """`pr status`, which reads the counts off whatever holds the outcomes."""
+    line = _loaded_pre_fold().render_status()[0]
+    assert "**1 fixed**" in line
+    assert "1 deferred" in line
+    assert "1 dismissed" in line
+    assert "1 need discussion" in line
+    assert "1 already addressed" in line
+    assert "abc1234" in line
+    assert "pushed" in line
+
+
+def test_a_pre_fold_state_file_still_owes_the_closeout_it_owed():
+    """`closeout_debt` — the three reply-owing outcomes, not the two that owe none."""
+    debt = _loaded_pre_fold().closeout_debt()
+    assert debt.owed is True
+    assert debt.summary is True
+    assert debt.replies is True
+    assert debt.reply_count == 3
+
+
+def test_a_pre_fold_state_file_still_blocks_the_merge_it_blocked():
+    """`pr comments --finish` — readiness reads the same undelivered closeout."""
+    answer = _loaded_pre_fold().readiness()
+    assert answer.blockers == (
+        f"closeout not delivered (run: {CLOSEOUT_COMMAND})",
+    )
+
+
+def test_a_pre_fold_state_file_with_an_unrun_pass_still_loads():
+    """The empty status is the load hazard.
+
+    `CommitStatus("")` raises, and `serde.load_file` answers a raising load by
+    discarding the whole file — so a domain that never ran would take every
+    other domain's state down with it.
+    """
+    fix = _loaded_pre_fold(threads=[], commit_sha="", commit_status="", head_sha="")
+    assert fix.fix.commit_status is None
+    assert fix.fix.items == []
+    assert fix.render_status()[0].startswith("**Fix**:")
+
+
+def test_a_post_fold_state_file_is_left_alone():
+    """The migration reads the old keys; a file without them is not rewritten."""
+    raw = json.loads(json.dumps(_PRE_FOLD_STATE))
+    raw["fix"] = {
+        "fix": {
+            "items": [{"id": "t1", "outcome": "fixed"}],
+            "commit_sha": "def5678", "commit_status": "push_held",
+        },
+        "reviewers": {"t1": "alice"},
+        "updated_at": "2026-07-14T00:00:00+00:00",
+    }
+    fix = state_from_dict(raw).fix
+    assert fix.fix.commit_sha == "def5678"
+    assert fix.fix.commit_status == CommitStatus.PUSH_HELD
+    assert fix.reviewers == {"t1": "alice"}
+
+
+def test_a_pre_fold_state_file_survives_a_round_trip(worktree):
+    """Loaded once and saved back, it is the folded shape and reports the same."""
+    path = worktree / "state.json"
+    path.write_text(json.dumps(_PRE_FOLD_STATE))
+    save_state(worktree, load_state(worktree))
+
+    raw = json.loads(path.read_text())
+    assert "threads" not in raw["fix"]
+    assert [o["id"] for o in raw["fix"]["fix"]["items"]] == ["t1", "t2", "t3", "t4", "t5"]
+
+    reloaded = load_state(worktree).fix
+    assert reloaded.render_status() == _loaded_pre_fold().render_status()
+    assert reloaded.closeout_debt() == _loaded_pre_fold().closeout_debt()
 
 
 # ── ReviewVerdict ───────────────────────────────────────────────────────────

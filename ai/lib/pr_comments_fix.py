@@ -1,134 +1,37 @@
-"""The comment fix pass's record, and the vocabulary it is written in.
+"""The comment fix pass's domain, and the closeout it owes the PR.
 
-This is the one fix pass that already records per-item outcomes as state, and it
-records them in its own terms: a thread, a reviewer, an action from a set only
-reviewer comments have. ``pr_fix`` holds the generic shape all three passes are
-converging on; everything here is the comment-shaped instance of it, kept
-whole because a state file in flight carries a cycle's accumulated thread
-outcomes — a deferred issue url, an undelivered summary — that renaming the
-field would silently drop.
+What the pass did about each thread is a :class:`~pr_fix.FixRecord` on this
+domain, in the :class:`~pr_fix.ItemOutcome` vocabulary all three fix passes
+write — so a consumer asking "what became of this item" reads one shape
+whichever pass produced it. What is left here is what only this pass has: a
+reply queue, a summary comment, a PR description draft and a deferred-issue
+trio, none of which the other domains have anything to say about.
+
+``reviewers`` is here for the same reason. Which login opened a thread is the
+item as GitHub handed it over, not a fact about what the pass did with it, so
+it stays on the domain rather than widening the record every pass shares — the
+line :class:`~pr_fix.ItemOutcome` draws for a CI job name and a finding's
+severity too. It is keyed by outcome id, so the two accumulate together.
 
 The module is above ``pr_domains`` rather than inside it: ``FixSummary`` is a
 :class:`~pr_domains.Domain` and needs the base class, while the generic record
 that base class carries has to be declared below it. Splitting on that line
-keeps the imports one-way and puts the transitional half in a file of its own,
-which is what the shared fix engine deletes when the comment pass starts writing
-``CommentsSummary.fix`` instead.
+keeps the imports one-way.
+
+A state file written before the fold records its outcomes as ``threads``, in a
+vocabulary of its own, beside a top-level ``commit_sha``/``commit_status``/
+``head_sha``. :meth:`FixSummary._from_raw` reads that shape into the record, so
+a review cycle in flight keeps the outcomes, the reply queue and the deferred
+issue it had accumulated rather than resuming from an empty one.
 """
 
 # doc-group: pr-state
 
 from dataclasses import dataclass, field, replace as dataclass_replace
-from enum import StrEnum
 
 from pr_domains import Domain, Readiness
+from pr_fix import FixOutcome
 from serde import from_dict as _serde_from_dict
-
-
-class ThreadAction(StrEnum):
-    """What became of one thread, in the comment pass's own words.
-
-    Every member is spelled the same as its :class:`~pr_fix.FixOutcome`
-    counterpart, so an outcome the shared machinery reports can be recorded here
-    without a translation table between the two vocabularies.
-    """
-
-    FIXED = "fixed"
-    DEFERRED = "deferred"
-    NEEDS_HUMAN = "needs_human"
-    DISMISSED = "dismissed"
-    ALREADY_ADDRESSED = "already_addressed"
-    # The agent read the comment and disagreed with it. Distinct from DEFERRED,
-    # which is work still owed, and from DISMISSED, which triage decided before
-    # any agent saw the thread.
-    DECLINED = "declined"
-
-
-@dataclass
-class ThreadOutcome:
-    """Per-thread outcome from a comment processing pass."""
-    id: str = ""
-    file: str = ""
-    line: int = 0
-    reviewer: str = ""
-    summary: str = ""
-    action: ThreadAction = ThreadAction.FIXED
-    reason: str = ""
-    # The commit that landed this thread's fix. Per-outcome rather than
-    # per-pass: FixSummary accumulates outcomes across rounds, so one envelope
-    # SHA would relabel every earlier round's work with the latest round's
-    # commit — or, when the latest round commits nothing, with none at all.
-    commit_sha: str = ""
-    # The tree `line` was read in, carried so a later round's replies can tell
-    # whether the anchor still points at the code the reviewer meant. Empty on
-    # an outcome written before this was recorded, which reads as "cannot
-    # anchor" rather than as "anchor is current".
-    read_sha: str = ""
-
-    @classmethod
-    def from_entry(
-        cls, entry, action: ThreadAction, reason_key: str = "reason",
-    ) -> "ThreadOutcome":
-        if hasattr(entry, "id"):
-            return cls(
-                id=entry.id,
-                file=entry.file,
-                line=entry.line,
-                reviewer=entry.reviewer,
-                summary=entry.summary,
-                action=action,
-                reason=getattr(entry, reason_key, ""),
-                commit_sha=getattr(entry, "commit_sha", ""),
-                read_sha=getattr(entry, "read_sha", ""),
-            )
-        return cls(
-            id=entry.get("id", entry.get("thread_id", "")),
-            file=entry.get("file", ""),
-            line=entry.get("line", 0),
-            reviewer=entry.get("reviewer", ""),
-            summary=entry.get("summary", ""),
-            action=action,
-            reason=entry.get(reason_key, ""),
-            commit_sha=entry.get("commit_sha", ""),
-            read_sha=entry.get("read_sha", ""),
-        )
-
-    @classmethod
-    def _from_raw(cls, raw) -> "ThreadOutcome":
-        """Rebuild an outcome from an instance or a dict, renaming a legacy key.
-
-        `serde` hands the whole field over here rather than assuming the
-        current key names: an outcome written before the field was renamed
-        carries `thread_id` where the dataclass now declares `id`. Copying
-        rather than popping leaves the caller's dict alone — `apply_state_update`
-        is handed a payload it does not expect this function to rewrite.
-
-        `serde` hands a `null` here too rather than dropping the field, so a
-        list holding one keeps the outcomes beside it. An entry recording
-        nothing reconstructs as the default — DEFERRED, which reads as work
-        still owed rather than as a thread this pass claimed.
-        """
-        if isinstance(raw, cls):
-            return raw
-        data = dict(raw or {})
-        if "thread_id" in data and "id" not in data:
-            data["id"] = data.pop("thread_id")
-        return _serde_from_dict(cls, data)
-
-    @classmethod
-    def _raw_schema(cls, object_schema: dict) -> dict:
-        """What `_from_raw` accepts, for the schema `pr --tool-schema` publishes.
-
-        Reachable from PRState through `FixSummary.threads`, so this is a live
-        contract, not a latent one: without the legacy alias the published
-        schema calls a document invalid that `_from_raw` reads without
-        complaint. Same key, same type — `id` under the name it used to have.
-        """
-        properties = object_schema["properties"]
-        return {
-            **object_schema,
-            "properties": {**properties, "thread_id": properties["id"]},
-        }
 
 
 # The one command that drains the queue. Spelled once so the status line, the
@@ -138,9 +41,12 @@ CLOSEOUT_COMMAND = "pr comments --finish --post"
 # The three reply buckets --finish drains (`_post_pending_fix_replies` in
 # review-threads). Threads with any other outcome owe no reply, so they must
 # not inflate the count the operator is quoted.
-_REPLY_ACTIONS = frozenset({
-    ThreadAction.FIXED, ThreadAction.ALREADY_ADDRESSED, ThreadAction.DISMISSED,
+_REPLY_OUTCOMES = frozenset({
+    FixOutcome.FIXED, FixOutcome.ALREADY_ADDRESSED, FixOutcome.DISMISSED,
 })
+
+# The record fields a pre-fold state file wrote at the top level of this domain.
+_LEGACY_RECORD_KEYS = ("commit_sha", "commit_status", "head_sha")
 
 
 @dataclass(frozen=True)
@@ -206,16 +112,12 @@ class CloseoutDebt:
 @dataclass
 class FixSummary(Domain):
     """Snapshot written by comment fix pass."""
-    threads: list[ThreadOutcome] = field(default_factory=list)
-    commit_sha: str = ""
-    # Loaded from JSON as a plain string, written as one, and compared against
-    # `CommitStatus` members — which are strings, so both directions work.
-    commit_status: str = ""
-    # The HEAD this snapshot describes. --finish compares it against current
-    # HEAD: outcomes recorded against a commit that is no longer checked out
-    # describe work that may since have been done, undone, or superseded by
-    # hand, and must be reconciled before anything is published.
-    head_sha: str = ""
+
+    # The login that opened each outcome, keyed by the outcome's id. Kept beside
+    # the record rather than on it: an entry is written whenever GitHub named a
+    # reviewer, and one it did not name has no key here rather than an empty
+    # one, so a lookup misses instead of asserting an anonymous reviewer.
+    reviewers: dict[str, str] = field(default_factory=dict)
     replies_posted: int = 0
     # The fix pass produced per-thread replies but did not deliver them — the
     # push failed, or the run was a draft. --finish drains the queue. Covers
@@ -241,6 +143,94 @@ class FixSummary(Domain):
     deferred_issue_pending: bool = False
     has_comment_items: bool = False
 
+    @classmethod
+    def _from_raw(cls, raw) -> "FixSummary":
+        """Rebuild the domain, folding a pre-fold snapshot into the record.
+
+        A state file written before the fold holds this pass's outcomes as
+        ``threads`` — `thread_id` or `id`, an `action` where the record says
+        `outcome`, and a `reviewer` the record does not carry — beside a
+        top-level `commit_sha`, `commit_status` and `head_sha`. Reading them
+        here is what lets a review cycle already in flight keep the rounds it
+        accumulated: dropping them would resume from an empty record and
+        re-report a cycle's worth of settled threads as never having been
+        looked at.
+
+        The legacy `commit_status` is a plain string and an unrun pass wrote
+        `""`, which is no `CommitStatus` member. Left in place it would raise
+        out of `serde.load_file` and discard the whole state file — every
+        domain's state lost to one empty string — so a falsy one is dropped and
+        the record's own `None` stands for "no pass has run".
+
+        What the stored record already says wins over the legacy fields. Only a
+        file this hook has never seen carries both, but a merge that preferred
+        the older half would be a downgrade rather than a migration.
+        """
+        if isinstance(raw, cls):
+            return raw
+        data = dict(raw or {})
+        if "threads" not in data and not any(k in data for k in _LEGACY_RECORD_KEYS):
+            return _serde_from_dict(cls, data)
+
+        record = dict(data.pop("fix", None) or {})
+        reviewers = dict(data.pop("reviewers", None) or {})
+        items = []
+        for entry in data.pop("threads", None) or []:
+            thread = dict(entry or {})
+            if "thread_id" in thread and "id" not in thread:
+                thread["id"] = thread.pop("thread_id")
+            reviewer = thread.pop("reviewer", "")
+            if thread.get("id") and reviewer:
+                reviewers.setdefault(thread["id"], reviewer)
+            if "action" in thread and "outcome" not in thread:
+                thread["outcome"] = thread.pop("action")
+            items.append(thread)
+
+        if items and not record.get("items"):
+            record["items"] = items
+        for key in _LEGACY_RECORD_KEYS:
+            legacy = data.pop(key, "")
+            if legacy and not record.get(key):
+                record[key] = legacy
+        if not record.get("updated_at"):
+            record["updated_at"] = data.get("updated_at", "")
+        data["fix"] = record
+        data["reviewers"] = reviewers
+        return _serde_from_dict(cls, data)
+
+    @classmethod
+    def _raw_schema(cls, object_schema: dict) -> dict:
+        """What `_from_raw` accepts, for the schema `pr --tool-schema` publishes.
+
+        Reachable from PRState, so this is a live contract rather than a latent
+        one: without the pre-fold form the published schema calls a state file
+        invalid that `_from_raw` reads without complaint.
+        """
+        properties = object_schema["properties"]
+        record = properties["fix"]["properties"]
+        outcome = record["items"]["items"]
+        outcome_properties = outcome["properties"]
+        return {
+            **object_schema,
+            "properties": {
+                **properties,
+                "threads": {"type": "array", "items": {
+                    **outcome,
+                    "properties": {
+                        **outcome_properties,
+                        "thread_id": outcome_properties["id"],
+                        "reviewer": {"type": "string"},
+                        "action": outcome_properties["outcome"],
+                    },
+                }},
+                "commit_sha": record["commit_sha"],
+                # A plain string, not the enum the record holds: an unrun pass
+                # wrote "" here and `_from_raw` drops it.
+                "commit_status": {"type": "string"},
+                "head_sha": record["head_sha"],
+            },
+        }
+
     def closeout_debt(self) -> CloseoutDebt:
         """The undelivered closeout this fix pass recorded.
 
@@ -250,30 +240,32 @@ class FixSummary(Domain):
             summary=self.summary_deferred,
             replies=self.replies_pending,
             deferred_issue=self.deferred_issue_pending,
-            reply_count=sum(1 for t in self.threads if t.action in _REPLY_ACTIONS),
+            reply_count=sum(
+                1 for o in self.fix.items if o.outcome in _REPLY_OUTCOMES
+            ),
             description=self.pr_body_pending,
         )
 
     def render_status(self) -> list[str]:
         if not self.updated_at:
             return ["**Fix**: not run yet"]
-        by_action: dict[str, int] = {}
-        for t in self.threads:
-            by_action[t.action] = by_action.get(t.action, 0) + 1
+        by_outcome: dict[str, int] = {}
+        for o in self.fix.items:
+            by_outcome[o.outcome] = by_outcome.get(o.outcome, 0) + 1
         labels = [
-            (ThreadAction.FIXED, "**{n} fixed**"),
-            (ThreadAction.DEFERRED, "{n} deferred"),
-            (ThreadAction.NEEDS_HUMAN, "{n} need discussion"),
-            (ThreadAction.DECLINED, "{n} declined"),
-            (ThreadAction.DISMISSED, "{n} dismissed"),
-            (ThreadAction.ALREADY_ADDRESSED, "{n} already addressed"),
+            (FixOutcome.FIXED, "**{n} fixed**"),
+            (FixOutcome.DEFERRED, "{n} deferred"),
+            (FixOutcome.NEEDS_HUMAN, "{n} need discussion"),
+            (FixOutcome.DECLINED, "{n} declined"),
+            (FixOutcome.DISMISSED, "{n} dismissed"),
+            (FixOutcome.ALREADY_ADDRESSED, "{n} already addressed"),
         ]
-        parts = [tmpl.format(n=by_action[action])
-                 for action, tmpl in labels if by_action.get(action, 0)]
+        parts = [tmpl.format(n=by_outcome[outcome])
+                 for outcome, tmpl in labels if by_outcome.get(outcome, 0)]
         summary = " · ".join(parts) if parts else "no threads"
         lines = [f"**Fix**: {summary}"]
-        if self.commit_sha:
-            lines[0] += f" (commit: {self.commit_sha}, {self.commit_status})"
+        if self.fix.commit_sha:
+            lines[0] += f" (commit: {self.fix.commit_sha}, {self.fix.commit_status})"
         debt = self.closeout_debt()
         if debt.owed:
             lines.append(f"  ⚠ closeout owed: {debt.describe()} — run: {debt.command}")
@@ -293,18 +285,19 @@ class FixSummary(Domain):
     def merge_into(self, prior: "FixSummary") -> "FixSummary":
         """Merge this fix pass into the accumulated summary.
 
-        Four things are cycle-scoped rather than per-round, for the same reason:
-        a review cycle spans several rounds, and a round that did not touch one
-        of them says nothing about it rather than clearing it.
+        Outcomes accumulate in the record `Domain.merge_into` folds — keyed by
+        id, so a later pass supersedes an earlier outcome for the same thread
+        but never drops threads it did not touch. The reviewers travel with
+        them: a round that says nothing about a thread must not lose the login
+        an earlier round recorded for it, or the summary republishes that row
+        with no reviewer against it.
 
-        Thread outcomes accumulate across rounds, keyed by thread id — a later
-        pass supersedes an earlier outcome for the same thread, but never drops
-        threads it did not touch.  A review cycle spans several rounds and the
-        summary comment must account for all of them, not just the most recent
-        pass.
+        Four more things are cycle-scoped rather than per-round, for the same
+        reason: a review cycle spans several rounds, and a round that did not
+        touch one of them says nothing about it rather than clearing it.
 
-        The deferred tracking issue is likewise cycle-scoped: it is created once
-        and updated on later rounds.  A fix pass builds its FixSummary before
+        The deferred tracking issue is one of them: it is created once and
+        updated on later rounds.  A fix pass builds its FixSummary before
         knowing about it, so an empty id/url means "not set this round", not
         "cleared" — dropping it would make the next deferred round open a
         duplicate issue.  A pending one is owed for the same span: only the
@@ -329,22 +322,9 @@ class FixSummary(Domain):
 
         Every other field is per-round and comes from this pass.
         """
-        merged = {t.id: t for t in prior.threads if t.id}
-        no_id: list[ThreadOutcome] = [t for t in prior.threads if not t.id]
-        for outcome in self.threads:
-            if outcome.id:
-                merged[outcome.id] = outcome
-            else:
-                # Entries without an id cannot be de-duplicated; append rather than
-                # colliding every one onto the "" key and losing all but the last.
-                # ceiling: this list only grows across rounds. No-id outcomes are
-                # rare and a cycle's rounds are bounded, so the growth is bounded in
-                # practice — de-dup on content if a cycle ever accumulates enough to
-                # bloat the state file or the summary comment.
-                no_id.append(outcome)
         return dataclass_replace(
             super().merge_into(prior),
-            threads=list(merged.values()) + no_id,
+            reviewers={**prior.reviewers, **self.reviewers},
             deferred_issue_id=self.deferred_issue_id or prior.deferred_issue_id,
             deferred_issue_url=self.deferred_issue_url or prior.deferred_issue_url,
             deferred_issue_pending=(

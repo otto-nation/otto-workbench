@@ -163,7 +163,7 @@ messages on stderr.
 - Lib modules stack in one direction: `ai/lib/pr_fix.py` holds the fix vocabulary
   (`FixOutcome`, `ItemOutcome`, `FixRecord`, `CommitStatus`) and imports none of the
   others; `ai/lib/pr_domains.py` holds the domains and imports it;
-  `ai/lib/pr_comments_fix.py` holds the comment pass's own fix record and imports
+  `ai/lib/pr_comments_fix.py` holds the comment domain and imports
   the domains; `ai/lib/pr_state.py` holds the envelope over them, the registry and
   the state file I/O, and imports both — never the other way round
 - Each domain is a `pr_domains.Domain` subclass (e.g., `CIDomain`, `RebaseSummary`)
@@ -178,8 +178,10 @@ messages on stderr.
   more to accumulate overrides `merge_into` and chains through `super()` (see
   `FixSummary` in `pr_comments_fix.py`)
 - What a fix pass did about one item is a `pr_fix.ItemOutcome` on that record, not
-  a new field on the domain. `pr_comments_fix` predates it and still speaks in
-  `ThreadOutcome`; nothing new should
+  a new field on the domain. A fact about the item as the domain fetched it — a
+  reviewer login, a job name — is not an outcome; keep it on the domain keyed by
+  outcome id (see `FixSummary.reviewers`) rather than widening `ItemOutcome` with
+  a field the other passes leave empty
 - Scripts own their state updates — Python scripts import `pr_state` directly
 - **Every reader goes through `pr_state.load_state()`** — never `json.load` on
   `state.json`. The dataclasses in `pr_domains.py` are the schema; a raw-dict

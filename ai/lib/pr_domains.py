@@ -20,8 +20,8 @@ the vocabulary it is written in, and imports nothing back.
 
 ``pr_state`` holds the envelope over these, the registry and the state file
 I/O, and imports this module — never the other way round. So does
-``pr_comments_fix``, which holds the one fix record that predates the generic
-one and is still written in the comment pass's own terms.
+``pr_comments_fix``, which holds the comment pass's domain: the closeout only
+that pass owes, over the same record every domain here carries.
 
 #### Rebase refusals
 

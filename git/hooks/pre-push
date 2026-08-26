@@ -49,8 +49,47 @@ replay_refs() {
 
 # ── Global checks ───────────────────────────────────────────────────────────
 
+# nesting_base — the commit the pushed work should be measured against, on
+# stdout, or nothing.
+#
+# Reads the same ref lines git wrote to the hook. A local sha of all zeros is a
+# deletion and carries no lines to check. A remote sha of all zeros is a branch
+# the remote does not have yet, and a sha the remote does have may be one this
+# checkout has never fetched — neither can be diffed against, so both fall
+# through to the default branch.
+nesting_base() {
+  local lsha rsha ref
+  # <local ref> <local sha> <remote ref> <remote sha> — only the shas are read.
+  while read -r _ lsha _ rsha; do
+    if [[ "$lsha" =~ ^0+$ ]]; then
+      continue
+    fi
+    git cat-file -e "$rsha^{commit}" 2>/dev/null || continue
+    printf '%s\n' "$rsha"
+    return 0
+  done
+  for ref in origin/HEAD origin/main origin/master; do
+    if git rev-parse --verify --quiet "$ref^{commit}"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# A push answers for the lines it adds, not for the state of the repository it
+# lands in. Measuring the whole tree refuses a push over violations that predate
+# it — debt the push cannot clear and did not create, in a gate whose purpose is
+# to stop new debt arriving. Only when no base resolves, and there is therefore
+# no way to tell new from old, does the whole tree stand in for the diff.
+run_nesting_check() {
+  local base
+  base="$(replay_refs | nesting_base)" || base=""
+  [[ -n "$base" ]] || { validate-nesting --quiet; return; }
+  validate-nesting --quiet --diff "$base"
+}
+
 if command -v validate-nesting >/dev/null 2>&1; then
-  validate-nesting --quiet
+  run_nesting_check
 fi
 
 # ── Repo-local delegation ──────────────────────────────────────────────────

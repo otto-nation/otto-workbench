@@ -68,9 +68,12 @@ make_repo() {
 
 # ─── The Issues column ───────────────────────────────────────────────────────
 #
-# Read from each repo's own .workbench.yml as the row is written, so the
-# registry — machine-local and built from observed use — holds no copy that
-# could disagree with the repo.
+# Resolved through the typed loader as the table is written, so the registry —
+# machine-local and built from observed use — holds no copy that could disagree
+# with the repo, and so the column cannot disagree with the SessionStart line
+# either. Every scope the loader reads is a scope this column reports: a value
+# the repo declared reads bare, one it only inherits from the machine is tagged,
+# and nothing at all reads "unset".
 
 # profile_row NAME — the registry row for the repo called NAME.
 profile_row() {
@@ -86,6 +89,37 @@ profile_row() {
   [ "$status" -eq 0 ]
   grep -q '^| Project | Path | Stack | Issues | Memory |$' "$TMPDIR/home/.claude/machine/machine.md"
   [[ "$(profile_row alpha)" == *"| github |"* ]]
+}
+
+@test "the machine profile reads a tracker recorded above a repo's worktrees" {
+  # The bug the delegation exists to fix. A bare-repo container holds the answer
+  # for every worktree of the repo, none of which has a .workbench.yml of its
+  # own — so a reader of the project file alone called all of them unset while
+  # the SessionStart line in the same session named the tracker correctly.
+  mkdir -p "$TMPDIR/seed"
+  printf 'seed\n' > "$TMPDIR/seed/README.md"
+  make_container_seed "$TMPDIR/seed"
+  make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
+  printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/container/.workbench.yml"
+  project_register "$TMPDIR/container/main"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  [[ "$(profile_row main)" == *"| linear |"* ]]
+}
+
+@test "the machine profile tags a tracker the repo only inherits" {
+  # A machine-wide default is an answer, so the row is not "unset" — but it is
+  # not the repo's answer either, and a reader deciding whether the repo still
+  # owes one has to be able to tell the two apart.
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'issue_tracker:\n  provider: github\n' > "$WORKBENCH_CONFIG_FILE"
+  make_repo "$TMPDIR/zeta"
+  project_register "$TMPDIR/zeta"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  [[ "$(profile_row zeta)" == *"| github (global) |"* ]]
 }
 
 @test "the machine profile renders an undeclared issue tracker as unset" {

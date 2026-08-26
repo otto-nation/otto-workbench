@@ -75,6 +75,32 @@ short_version() {
   echo "$1" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
 }
 
+# issues_cell SCOPE VALUE OUT — the Issues cell for one resolved record,
+# assigned to the variable named by OUT. SCOPE and VALUE are the first two
+# fields of an `otto-workbench config get` record.
+#
+# A repo that declared its own tracker gets the bare value; one that only
+# inherits the machine-wide answer is tagged, because the two are different
+# facts and a reader acting on the column needs to know which it has. Anything
+# else reads as "unset" rather than as a guess or as the "—" the Stack column
+# uses for none: an undeclared tracker is an answer still owed, and this table
+# is where the set of repos owing one becomes visible. That marker absorbs every
+# way the read can come back unusable — a directory deleted since
+# project_registered listed it, a config that is missing, unreadable, or
+# malformed, and a value that could not occupy a table cell without breaking the
+# row. Degrading one row beats failing the profile over a repo the reader was
+# not asking about.
+issues_cell() {
+  local scope="$1" value="$2"
+  local -n __cell="$3"
+  if [[ ! "$value" =~ ^[A-Za-z0-9._-]+$ ]]; then __cell="unset"; return 0; fi
+  if [[ "$scope" == "$WORKBENCH_GLOBAL_SCOPE" ]]; then
+    __cell="$value (global)"
+    return 0
+  fi
+  __cell="$value"
+}
+
 # ── Collect system facts ──────────────────────────────────────────────────────
 
 os_name=$(sw_vers -productName 2>/dev/null || uname -s)
@@ -155,8 +181,37 @@ for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
   fi
 done
 
-declare -a project_rows=()
+declare -a registered=()
 while IFS= read -r repo_dir; do
+  registered+=("$repo_dir")
+done < <(project_registered | sort)
+
+# Where each repo files its issues, resolved for the whole registry in one pass
+# and read back keyed by the directory the resolver echoed. Reading at render
+# time rather than recording a copy in the registry is what makes the column
+# unable to disagree with the repo: the registry is machine-local and built from
+# observed use, and a repo fact kept there would go stale the moment the repo
+# edited its config.
+#
+# The resolver is the typed loader, reached through lib/config_cli.py, because
+# it is the only reader that knows all three scopes. A bash reader of the
+# project file alone is what used to print "unset" for a repo whose tracker is
+# recorded above its worktrees — every checkout of it, on a machine whose
+# SessionStart line named the tracker correctly in the same session.
+declare -A repo_issues=()
+# Written through namerefs below, which is not an assignment shellcheck can see.
+declare scope value dir cell
+if [[ ${#registered[@]} -gt 0 ]]; then
+  while IFS= read -r record; do
+    wb_config_split_record "$record" scope value dir
+    issues_cell "$scope" "$value" cell
+    repo_issues["$dir"]="$cell"
+  done < <(python3 "$WORKBENCH_DIR/lib/config_cli.py" get \
+    "$ISSUE_PROVIDER_CONFIG_KEY" "${registered[@]}")
+fi
+
+declare -a project_rows=()
+for repo_dir in "${registered[@]}"; do
   local_path="${repo_dir/#$HOME/~}"
   name=$(basename "$repo_dir")
   slug="${repo_dir//\//-}"
@@ -173,29 +228,11 @@ while IFS= read -r repo_dir; do
   [[ $(find "$repo_dir" -maxdepth 2 -name '*.sh' 2>/dev/null | wc -l) -gt 3 ]] && \
     [[ -z "$stack" ]] && stack="bash"
   [[ -z "$stack" ]] && stack="—"
-  # Where the repo files its issues, read from the repo's own .workbench.yml
-  # every time the profile is written. The registry records no copy: it is
-  # machine-local and built from observed use, and a repo fact kept there would
-  # go stale the moment the repo edited its config. Reading at render time is
-  # what makes the column unable to disagree with the repo.
-  #
-  # A repo that has not declared one reads as "unset" rather than as a guess or
-  # as the "—" the Stack column above uses for none — an undeclared tracker is
-  # an answer still owed, and this table is where the set of repos owing one
-  # becomes visible. The same marker absorbs every way the read can come back
-  # unusable: a directory deleted since project_registered listed it, a config
-  # that is missing, unreadable, or malformed, and a value that could not
-  # occupy a table cell without breaking the row. Degrading one row beats
-  # failing the profile over a repo the reader was not asking about.
-  #
-  # ceiling: one yq fork per registered repo, on a table of tens of rows the
-  # Stop hook rebuilds at most once a day. Batch the reads into a single pass if
-  # the registry ever reaches a few hundred repos, or if profile generation
-  # shows up as something the user waits on.
-  issues=$(wb_config_project_get "$repo_dir" "$ISSUE_PROVIDER_CONFIG_KEY")
-  [[ "$issues" =~ ^[A-Za-z0-9._-]+$ ]] || issues="unset"
+  # A repo missing from the map got no record back at all, which the same
+  # "unset" covers — see issues_cell for what that marker stands for.
+  issues="${repo_issues[$repo_dir]:-unset}"
   project_rows+=("| $name | $local_path | $stack | $issues | $mem |")
-done < <(project_registered | sort)
+done
 
 # ── Write profile ─────────────────────────────────────────────────────────────
 

@@ -50,9 +50,9 @@ _make_project() {
   [ "$output" = "ultra" ]
 }
 
-@test "wb_config_get prints nothing for a missing key" {
+@test "wb_config_get prints nothing for a key no scope sets" {
   printf 'reuse:\n  level: ultra\n' > "$WORKBENCH_CONFIG_FILE"
-  run wb_config_get "review.model"
+  run wb_config_get "agent.model"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
@@ -70,18 +70,18 @@ _make_project() {
 }
 
 @test "wb_config_get prefers the project file over the global one" {
-  printf 'review:\n  model: sonnet\n' > "$WORKBENCH_CONFIG_FILE"
-  _make_project 'review:
+  printf 'agent:\n  model: sonnet\n' > "$WORKBENCH_CONFIG_FILE"
+  _make_project 'agent:
   model: opus
 '
-  run wb_config_get "review.model"
+  run wb_config_get "agent.model"
   [ "$status" -eq 0 ]
   [ "$output" = "opus" ]
 }
 
 @test "wb_config_get falls back to the global file for a key the project omits" {
-  printf 'review:\n  model: sonnet\n  effort: high\n' > "$WORKBENCH_CONFIG_FILE"
-  _make_project 'review:
+  printf 'agent:\n  model: sonnet\nreview:\n  effort: high\n' > "$WORKBENCH_CONFIG_FILE"
+  _make_project 'agent:
   model: opus
 '
   run wb_config_get "review.effort"
@@ -89,81 +89,33 @@ _make_project() {
   [ "$output" = "high" ]
 }
 
-@test "wb_config_get rejects a key that is not a literal path" {
+# The scope bash could not see before the delegation, and the one this whole
+# change exists for: an answer recorded beside a bare repo's worktrees, read
+# from a checkout that has no .workbench.yml of its own.
+@test "wb_config_get reads the container scope" {
+  mkdir -p "$TMPDIR/seed"
+  printf 'seed\n' > "$TMPDIR/seed/README.md"
+  make_container_seed "$TMPDIR/seed"
+  make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
+  printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/container/.workbench.yml"
+  cd "$TMPDIR/container/main" || return 1
+  run wb_config_get "issue_tracker.provider"
+  [ "$status" -eq 0 ]
+  [ "$output" = "linear" ]
+}
+
+@test "wb_config_get refuses a key the config surface does not define" {
   printf 'reuse:\n  level: ultra\n' > "$WORKBENCH_CONFIG_FILE"
   run wb_config_get 'reuse.level | ("x")'
   [ "$status" -eq 1 ]
-  [[ "$output" == *"invalid config key"* ]]
+  [[ "$output" == *"is not a key WorkbenchConfig defines"* ]]
 }
 
 @test "wb_config_get survives a malformed config file" {
-  printf 'review:\n  model: [unclosed\n' > "$WORKBENCH_CONFIG_FILE"
-  run wb_config_get "review.model" "sonnet"
+  printf 'agent:\n  model: [unclosed\n' > "$WORKBENCH_CONFIG_FILE"
+  run wb_config_get "agent.model" "sonnet"
   [ "$status" -eq 0 ]
   [ "$output" = "sonnet" ]
-}
-
-# ─── Reading one named repo's scope ──────────────────────────────────────────
-#
-# wb_config_project_get answers for a repo the caller names rather than the one
-# it is standing in, which is what a report covering every registered repo
-# needs. Each test below stays in the sandbox rather than the repo it reads, so
-# a result that leaked in from $PWD would show up as a failure here.
-
-@test "wb_config_project_get reads the named repo's own config" {
-  _make_project 'issue_tracker:
-  provider: github
-'
-  cd "$TMPDIR" || return 1
-  run wb_config_project_get "$TMPDIR/project" "issue_tracker.provider"
-  [ "$status" -eq 0 ]
-  [ "$output" = "github" ]
-}
-
-@test "wb_config_project_get ignores the global file" {
-  # The whole point of the by-path reader: a machine-wide answer is not the
-  # repo's declaration, and reporting it as one is the staleness to avoid.
-  printf 'issue_tracker:\n  provider: linear\n' > "$WORKBENCH_CONFIG_FILE"
-  _make_project 'review:
-  model: opus
-'
-  cd "$TMPDIR" || return 1
-  run wb_config_project_get "$TMPDIR/project" "issue_tracker.provider"
-  [ "$status" -eq 0 ]
-  [ -z "$output" ]
-}
-
-@test "wb_config_project_get prints nothing for a repo with no project config" {
-  mkdir -p "$TMPDIR/bare"
-  run wb_config_project_get "$TMPDIR/bare" "issue_tracker.provider"
-  [ "$status" -eq 0 ]
-  [ -z "$output" ]
-}
-
-@test "wb_config_project_get prints nothing for a directory that is gone" {
-  run wb_config_project_get "$TMPDIR/never-existed" "issue_tracker.provider"
-  [ "$status" -eq 0 ]
-  [ -z "$output" ]
-}
-
-@test "wb_config_project_get survives a malformed project config" {
-  _make_project 'issue_tracker:
-  provider: [unclosed
-'
-  cd "$TMPDIR" || return 1
-  run wb_config_project_get "$TMPDIR/project" "issue_tracker.provider"
-  [ "$status" -eq 0 ]
-  [ -z "$output" ]
-}
-
-@test "wb_config_project_get rejects a key that is not a literal path" {
-  _make_project 'issue_tracker:
-  provider: github
-'
-  cd "$TMPDIR" || return 1
-  run wb_config_project_get "$TMPDIR/project" 'issue_tracker.provider | ("x")'
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"invalid config key"* ]]
 }
 
 # ─── Seeding (SSOT guard) ────────────────────────────────────────────────────
@@ -222,6 +174,10 @@ print(workbench_config.$1, end='')
 @test "the config keys bash reads match ai/lib/workbench_config.py" {
   [ "$GITHUB_SSH_443_CONFIG_KEY" = "$(resolve_python GITHUB_SSH_443_KEY)" ]
   [ "$ISSUE_PROVIDER_CONFIG_KEY" = "$(resolve_python ISSUE_PROVIDER_KEY)" ]
+}
+
+@test "the scope name bash matches on is the one the resolver prints" {
+  [ "$WORKBENCH_GLOBAL_SCOPE" = "$(resolve_python GLOBAL_SCOPE)" ]
 }
 
 @test "lib/config.sh refuses to load without the constants" {

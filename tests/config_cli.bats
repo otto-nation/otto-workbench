@@ -60,6 +60,7 @@ json.dump(schema, open(sys.argv[2], "w"))
   [[ "$output" == *"Usage: otto-workbench config"* ]]
   [[ "$output" == *"set KEY VALUE"* ]]
   [[ "$output" == *"status"* ]]
+  [[ "$output" == *"get KEY"* ]]
 }
 
 @test "config with no subcommand prints usage and fails" {
@@ -264,6 +265,60 @@ _make_repo() {
 @test "status takes no arguments" {
   run "$REPO_ROOT/bin/otto-workbench" config status extra
   [ "$status" -eq 2 ]
+}
+
+# ─── The read ────────────────────────────────────────────────────────────────
+#
+# Which scope answers for a key is Python and is covered by
+# tests/config_cli_get_test.py. These are the dispatch and the exit codes — that
+# a bash caller reaching this through the launcher gets a record it can split.
+
+@test "get prints one record for the repo the caller is standing in" {
+  _make_repo
+  printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/repo/.workbench.yml"
+
+  run "$REPO_ROOT/bin/otto-workbench" config get issue_tracker.provider
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'project\tgithub\t%s' "$TMPDIR/repo")" ]
+}
+
+@test "get prints one record per named repo, in the order given" {
+  _make_repo
+  git init --quiet "$TMPDIR/other"
+  printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/other/.workbench.yml"
+
+  run "$REPO_ROOT/bin/otto-workbench" config get issue_tracker.provider \
+    "$TMPDIR/other" "$TMPDIR/repo"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "$(printf 'project\tlinear\t%s' "$TMPDIR/other")" ]
+  [ "${lines[1]}" = "$(printf 'default\t\t%s' "$TMPDIR/repo")" ]
+}
+
+@test "get needs a key" {
+  run "$REPO_ROOT/bin/otto-workbench" config get
+  [ "$status" -eq 2 ]
+}
+
+@test "get refuses a key nothing reads" {
+  _make_repo
+  run "$REPO_ROOT/bin/otto-workbench" config get reuse.levl
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"reuse.levl"* ]]
+}
+
+@test "get is not blocked by a stale installed workbench" {
+  # The write guard's counterpart. A write outlives the checkout that made it,
+  # so it is judged by the installed schema too; a read resolves here and now,
+  # and a branch whose own tests could not read its own new key could not test
+  # it at all.
+  _make_repo
+  printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/repo/.workbench.yml"
+  make_stale_checkout "$TMPDIR/installed"
+  install_launcher "$TMPDIR/installed"
+
+  run "$REPO_ROOT/bin/otto-workbench" config get issue_tracker.provider
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"github"* ]]
 }
 
 # ─── The guard ───────────────────────────────────────────────────────────────

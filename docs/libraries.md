@@ -95,28 +95,38 @@ discover_migration_dirs _dirs_arr  # populates array with migration dir paths
 
 ### config.sh
 
-Hand-authored settings, read from YAML — one file per scope, project first.
+Hand-authored settings, read from YAML — one file per scope, this checkout first.
 
 ```bash
 wb_config_get "reuse.level"           # value, or nothing
 wb_config_get "reuse.level" "full"    # value, or the given default
 ```
 
-A malformed file reads as absent — a bash caller wants its default, not a `yq`
-parse error on stdout. Reporting a bad file is the typed loader's job. Both
-filenames, the schema URL and the modeline are declared once in
+The read is not performed here. `wb_config_get` shells out to `otto-workbench
+config get`, which is [`lib/config_cli.py`](../lib/config_cli.py) over
+[`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) — the typed
+owner of these files, and the only thing that knows all three scopes. Bash
+used to carry two partial readers of its own and they disagreed with the
+loader about the same repo in the same session: the machine profile called a
+tracker recorded above a bare repo's worktrees `unset` while the SessionStart
+line named it. A bash caller that needs a config value asks that command; a
+second reader here is the bug, not a shortcut.
+
+A file nothing can parse still reads as the built-in default, which is what
+`load_config_or_default` gives every other reader on the machine — so a
+caller's own fallback still applies and a `yq` parse error never lands on
+stdout. A key the config surface does not define is refused instead, loudly:
+that is a caller asking a question with no answer.
+
+Both filenames, the schema URL and the modeline are declared once in
 [`constants.sh`](#constantssh) — as `WORKBENCH_CONFIG_FILE`,
 `WORKBENCH_PROJECT_CONFIG_NAME`, `WORKBENCH_CONFIG_SCHEMA_URL` and
-`WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only.
-
-[`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed
-owner of the same files: it deep-merges them into a `WorkbenchConfig` and
-rejects an unknown enum value or phase key rather than silently dropping it. It
-spells those same names a second time for Python, and `tests/config.bats` fails
-when a pair drifts. The scope and key tables below are generated from the
-dataclass by `bin/local/generate-config-schema`, alongside
-[`config.schema.json`](../config.schema.json); `tests/test_workbench_config.py`
-fails if the committed schema goes stale.
+`WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only. The typed
+owner spells those same names a second time for Python, and
+`tests/config.bats` fails when a pair drifts. The scope and key tables below
+are generated from the dataclass by `bin/local/generate-config-schema`,
+alongside [`config.schema.json`](../config.schema.json);
+`tests/test_workbench_config.py` fails if the committed schema goes stale.
 
 | Scope | File |
 |-------|------|
@@ -201,8 +211,9 @@ one `wt switch -c` just cut, and is deleted along with the worktree by `wt
 remove`. Ordered by specificity — this checkout, then this repo, then this
 machine. A plain clone has no container and keeps exactly two layers.
 
-`wb_config_get` below reads layers 4 and 6 only; the typed loader reads all
-three. `otto-workbench config status` is where all three are visible.
+`wb_config_get` below reads all three, because it does not read them itself —
+it asks the loader, which is the only thing that knows layer 5 is there.
+`otto-workbench config status` is where all three are visible.
 
 A repo still holding the legacy `.claude/review.yml` is converted to
 `.workbench.yml` the first time a review reads its issue tracker; the old file
@@ -213,8 +224,8 @@ into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 | Function | Purpose |
 |----------|---------|
 | `wb_config_ensure_file [FILE]` | create FILE holding just the modeline, when it does not already exist. |
-| `wb_config_get KEY [DEFAULT]` | a dotted config key, project scope first. KEY must be a literal string. |
-| `wb_config_project_get DIR KEY` | a dotted config key from the project config at DIR, or nothing. DIR is a repo's work-tree root; KEY must be a literal string. |
+| `wb_config_split_record RECORD SCOPE_OUT VALUE_OUT DIR_OUT` | the three fields of one `otto-workbench config get` record, assigned to the named variables. |
+| `wb_config_get KEY [DEFAULT]` | a dotted config key resolved for the repo the caller is standing in, or DEFAULT when no scope sets it. Returns 1, printing why, when KEY is not one the config surface defines. |
 
 Loaded via `ui.sh`.
 

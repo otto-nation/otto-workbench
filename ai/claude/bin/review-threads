@@ -4114,6 +4114,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
     phase = Phase.COMMENTS_FIX
     template = review_common.TEMPLATE_FIX_COMMENTS
     action = "applying review comment suggestions"
+    item_noun = "thread"
 
     def __init__(
         self,

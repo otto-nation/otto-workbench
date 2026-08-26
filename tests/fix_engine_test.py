@@ -39,14 +39,15 @@ class StubAdapter(fix_engine.FixAdapter):
     """A domain that hands over `count` items and records what came back.
 
     `fix-ci.md` is borrowed as the template because it asks for nothing beyond
-    the six substitutions the engine supplies — `template_vars` returning
-    nothing is then a real statement rather than a stub's convenience.
+    the substitutions the engine supplies — `template_vars` returning nothing
+    is then a real statement rather than a stub's convenience.
     """
 
     phase = Phase.COMMENTS_FIX
     template = review_common.TEMPLATE_FIX_CI
     title = "Stub Fix Tracking"
     action = "fixing things"
+    item_noun = "item"
 
     def __init__(self, wt_path, count=1, *, spec=None):
         self.workdir = Path(wt_path)
@@ -434,6 +435,20 @@ def test_the_prompt_carries_the_checklist_and_where_it_lives(tmp_path, landed, h
     assert "## <!-- fix:i0 --> a.py:1 — item 0" in prompt
     assert str(adapter.tracking_path) in prompt
     assert "${" not in prompt
+
+
+def test_the_prompt_asks_for_the_boxes_the_checklist_actually_has(tmp_path, landed, head):
+    """The format is described once, by the module that writes and reads it.
+
+    A template that spells the ask itself drifts from the parse the moment a box
+    is renamed, and the failure is silent: nothing ticks, and every item comes
+    back as work still owed. Only the domain's word for one item is the domain's.
+    """
+    adapter = StubAdapter(tmp_path, count=1)
+    _, inv = _run(adapter)
+
+    prompt = inv.call_args.args[1]
+    assert fix_tracking.instructions(adapter.item_noun) in prompt
 
 
 def test_the_session_log_sits_beside_the_checklist(tmp_path, landed, head):

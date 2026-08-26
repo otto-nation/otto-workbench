@@ -139,6 +139,10 @@ class FixAdapter(ABC):
     rather than by each domain, so an operator finds them in the same place
     whichever pass wrote them.
 
+    `item_noun` is what this domain calls one item, and it is the only part of
+    the answer-format instruction a domain supplies — the boxes themselves are
+    rendered from the format's own definition.
+
     `fix_hint` is what the unproductive-pass guard prepends before a second
     attempt, and `add_dirs` the directories the agent may read; both have an
     answer that suits most domains and neither is worth declaring when it does.
@@ -148,6 +152,7 @@ class FixAdapter(ABC):
     template: str
     title: str
     action: str
+    item_noun: str
     workdir: Path
     artifacts: Path
     # For the prompt and the usage ledger. `pr` is empty off a PR.
@@ -193,7 +198,7 @@ class FixAdapter(ABC):
         """The substitutions this domain's template needs beyond the shared ones.
 
         The engine supplies `branch_name`, `repo`, `tracking_content`,
-        `tracking_file`, `worktree_block` and `max_turns`.
+        `tracking_file`, `answer_format`, `worktree_block` and `max_turns`.
         """
 
     @abstractmethod
@@ -256,6 +261,7 @@ def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
         repo=adapter.repo,
         tracking_content=adapter.tracking_path.read_text(),
         tracking_file=str(adapter.tracking_path),
+        answer_format=fix_tracking.instructions(adapter.item_noun),
         worktree_block=review_common.build_worktree_block(str(adapter.workdir)),
         max_turns=str(turns),
         **adapter.template_vars(),

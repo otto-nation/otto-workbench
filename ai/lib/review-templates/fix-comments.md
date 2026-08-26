@@ -6,24 +6,16 @@ ${tracking_content}
 
 ## Task
 
-Every thread above carries three boxes. Answer each thread by ticking exactly
-one of them with the Edit tool, in the tracking file:
+${answer_format}
 
-1. Read the referenced file at the specified line
-2. Decide which answer the thread has earned:
-   - `- [x] fixed` — you applied the change. Clear code changes are what belongs
-     here: rename, use existing helper, add guard, fix import, add nil check,
-     remove dead code. Apply it with the Edit tool on the source file first
-   - `- [x] declined — <why>` — you read the comment and it should not be acted
-     on: the premise does not hold, the code already does what it asks, or the
-     change would be wrong. Replace `<why>` with the reason, in one sentence
-   - `- [x] needs a person — <why>` — the comment is valid but the call is not
-     yours: a design decision, an architectural change, or something needing
-     input you do not have. Replace `<why>` with what the decision turns on
-3. Leave all three boxes unticked only for a thread you never got to. That reads
-   as work still owed and the thread is handed to another pass, so use it for
-   what you ran out of turns for — never as a way to pass over a thread you
-   read and had an answer for
+## What earns each box
+
+- **fixed** — a clear code change: rename, use an existing helper, add a guard,
+  fix an import, add a nil check, remove dead code
+- **declined** — the premise does not hold, the code already does what it asks,
+  or the change would be wrong
+- **needs a person** — a design decision, an architectural change, or something
+  needing input you do not have
 
 ## Priority order
 

@@ -2726,7 +2726,12 @@ _GENERATED_ACTION_PREFIXES = tuple(
 
 
 def _action_outcome(cell: str) -> FixOutcome | None:
-    """The outcome a published Action cell reports, or None for one we did not write.
+    """The outcome an Action cell reports, or None for one we did not write.
+
+    Read on both sides of the comparison `RoundScope.covers` makes: the cell a
+    published comment carries, and the one this round's render would put in its
+    place. Two cells reporting the same outcome in different words is the case
+    the table exists to answer, so both sides have to come through here.
 
     None is not "some outcome we cannot name" but "no claim to compare
     against": a cell a person wrote, or a wording retired before this table was.

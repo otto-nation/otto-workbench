@@ -69,20 +69,26 @@ line itself: a declined finding is carried forward annotated
 `*(declined — reason)*`, which `match_decline()` parses into `Finding.declined`
 — anchored to the head of the finding body or the end of the line, so a
 finding whose prose quotes the annotation is not silently adjudicated.
-That flag is what keeps the finding out of `run_fix_pass`'s work set, out of
-`_reconcile_checkboxes`, and in `FixPassResult.declined` rather than
-`.skipped`. The templates ask for the same annotation, and treat a `ceiling:`
-or `ceiling-permanent:` marked tradeoff as grounds for declining rather than a
-defect to raise.
+That flag is what keeps the finding out of `run_fix_pass`'s work set: a
+declined finding is never rendered onto the tracking file and never costs the
+turns it would have bought. The fix template treats a `ceiling:` or
+`ceiling-permanent:` marked tradeoff as grounds for the agent's own `declined`
+box rather than a defect to fix.
 
 `*(skipped — reason)*` is the second annotation vocabulary, written by the fix
-pass rather than by a review, and `match_skip()` is its single owner. A skip
-still belongs to the work set — the next `--fix` retries it — but it is barred
-from `_reconcile_checkboxes` for the same reason a decline is: auto-checking
-matches on file path alone, so a fix to one finding would otherwise check off
-every skip sharing its file, and `_diff_findings` reports the difference as
-fixed. Anything that acts on a skip asks `match_skip()`, so the auto-check
-guard and the fix summary cannot disagree about what was skipped.
+pass rather than by a review, and `match_skip()` is its single owner. It is
+what `review_fix._apply_outcomes` writes back for a `needs a person` outcome,
+the way it writes `*(declined — reason)*` for a declined one and ticks the box
+for a fix. A skip still belongs to the work set — the next `--fix` retries it —
+but a line already carrying either annotation is left exactly as it is: that
+verdict was reached before this pass ran, and a second annotation on one line
+leaves the document saying two things about one finding.
+
+The pass itself is `fix_engine`'s: `ReviewFixAdapter` supplies the open
+findings, the path-scoped commit and the re-render, and the batching, the
+agent, the retry and the landing are the engine's. The agent answers on a
+generated tracking file rather than on `review.md`, so what the review document
+says is what the pass decided rather than what an agent happened to edit.
 
 ## Debugging claude-review
 

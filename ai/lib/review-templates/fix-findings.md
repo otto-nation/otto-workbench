@@ -1,34 +1,42 @@
 Fix review findings for branch ${branch_name} in ${repo}.
 
-## Review findings
+## Findings to fix
 
-${review_content}
+${tracking_content}
 
 ## Task
 
-For each unchecked finding (`- [ ]`) in the review above that is NOT annotated
-`*(declined — ...)*`:
+Every finding above carries three boxes. Answer each finding by ticking exactly
+one of them with the Edit tool, in the tracking file:
 
 1. Read the referenced file at the specified line
-2. Determine if the finding is auto-fixable:
-   - **Fixable**: clear, unambiguous change — wrong value, missing guard, off-by-one, missing import, dead code, duplicate logic, incorrect prose, wrong field names in docs, missing comments, wording fixes
-   - **Not fixable**: requires design decision, architectural change, user input, external verification, or changes to files outside this branch
-3. If fixable: apply the fix using the Edit tool, then check the box: `- [x]`
-4. If not fixable: leave unchecked and annotate with skip reason inline:
-   `*(skipped — one-line reason)*`
-   Example: `- [ ] **[S1]** ... *(skipped — requires product team sign-off on SLA figure)* — ...`
+2. Decide which answer the finding has earned:
+   - `- [x] fixed` — you applied the change. A clear, unambiguous change belongs
+     here: a wrong value, a missing guard, an off-by-one, a missing import, dead
+     code, duplicate logic, incorrect prose, wrong field names in docs, a
+     wording fix. Apply it with the Edit tool on the source file first
+   - `- [x] declined — <why>` — you read the finding and it should not be acted
+     on: the premise does not hold, the code already does what it asks, or the
+     change would be wrong. Replace `<why>` with the reason, in one sentence
+   - `- [x] needs a person — <why>` — the finding is real but the call is not
+     yours: a design decision, an architectural change, external verification,
+     or a change to files outside this branch. Replace `<why>` with what the
+     decision turns on
+3. Leave all three boxes unticked only for a finding you never got to. That
+   reads as work still owed and the finding is handed to another pass, so use it
+   for what you ran out of turns for — never as a way to pass over a finding you
+   read and had an answer for
 
 ## Rules
 
-- Fix findings in severity order: Must fix first, then Should fix, then Nit, then Idioms
+- Work in severity order: Must fix first, then Should fix, then Nit, then Idioms
 - For each fix, make the minimal correct change — do not refactor surrounding code
-- If a finding is ambiguous or requires a design choice, skip it with a reason
-- NEVER touch a finding annotated `*(declined — reason)*`. It was raised, considered, and rejected on the merits — leave the line exactly as it is, do not check its box, and do not change the code it points at
-- If the code a finding points at carries a `// ceiling:` or `// ceiling-permanent:` comment naming that exact tradeoff, the tradeoff is a documented decision. Do not "fix" it — decline it instead: leave the box unchecked and annotate `*(declined — documented \`ceiling:\` tradeoff)*`
+- If a finding is ambiguous or requires a design choice, tick `needs a person` and say what the choice is — leaving it unticked reports it as unread
+- If the code a finding points at carries a `// ceiling:` or `// ceiling-permanent:` comment naming that exact tradeoff, the tradeoff is a documented decision. Do not "fix" it — tick `declined` and say so
 - When a generated file needs fixing, fix the source template AND the generated output
 
-## Review file location
-${review_file}
+## Tracking file location
+${tracking_file}
 
 ## Worktree
 ${worktree_block}

@@ -4683,6 +4683,8 @@ class TestCleanupScope:
         Pass *out* to keep the result JSON the run prints; the default throws
         it away, since what most of these tests read is the directory.
         """
+        import fix_engine  # the `ro` fixture has already put `ai/lib` on the path
+
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
@@ -4700,8 +4702,10 @@ class TestCleanupScope:
             (review_dir / "disprove.jsonl").write_text("{}\n")
             (review_dir / "prompt-single.md").write_text("PROMPT")
 
-        def _fix(job, **_kwargs):
-            (Path(job.artifact_dir) / "fix.jsonl").write_text("{}\n")
+        def _fix(job, _trail=None, **_kwargs):
+            artifacts = Path(job.artifact_dir)
+            (artifacts / "fix.jsonl").write_text("{}\n")
+            (artifacts / fix_engine.TRACKING_FILENAME).write_text("## <!-- fix:M1 -->\n")
 
         monkeypatch.setattr(ro.ai_backend, "preflight", lambda *a, **k: True)
         monkeypatch.setattr(ro.pr_state, "load_state", lambda *a, **k: None)
@@ -4718,8 +4722,14 @@ class TestCleanupScope:
             ro._run_orchestrate(MagicMock(), args, "org/repo", str(review_dir / "session.jsonl"))
         return review_dir
 
-    def test_the_fix_pass_log_does_not_outlive_the_run(self, ro, monkeypatch, tmp_path):
-        """The sweep runs after the fix pass, never before it."""
+    def test_the_fix_passes_leavings_do_not_outlive_the_run(
+        self, ro, monkeypatch, tmp_path,
+    ):
+        """The sweep runs after the fix pass, never before it.
+
+        Its log and the checklist its agent answered on are both diagnostic,
+        and the exact listing below is what says neither survived.
+        """
         review_dir = self._run(ro, monkeypatch, tmp_path, fix=True)
 
         assert not (review_dir / "fix.jsonl").exists()

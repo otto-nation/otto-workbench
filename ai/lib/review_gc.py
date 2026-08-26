@@ -34,6 +34,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import fix_engine
 import gh_client
 import log
 import pr_state
@@ -80,13 +81,16 @@ def cleanup_intermediates(review_dir: Path) -> None:
 
     This also sweeps fix.jsonl: a `--fix` pass's log is diagnostic, not a
     finding, so it goes the same way as any other phase log rather than
-    surviving the run that wrote it.
+    surviving the run that wrote it. Its tracking file goes with it, and is
+    named rather than derived because it is the fix engine's file rather than
+    the phase registry's — every domain's pass writes one under that name.
 
     When this runs is not this function's decision — a review run sweeps
     through `cleaned_on_success`, which is what knows the run is over.
     """
     cleanup = phase_artifacts(review_dir)
     cleanup.append(review_dir / FILENAME_PIPELINE_STATE)
+    cleanup.append(review_dir / fix_engine.TRACKING_FILENAME)
     cleanup.extend(
         p for p in review_dir.glob("prompt-*") if p.name != FILENAME_PROMPT_STATS
     )

@@ -33,6 +33,7 @@ import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
 import review_common  # noqa: E402
 import review_findings  # noqa: E402
+import review_fix  # noqa: E402
 import review_prompt  # noqa: E402
 from pr_state import PRIdentity, PRState  # noqa: E402
 from review_preflight import (  # noqa: E402
@@ -364,7 +365,6 @@ def _make_review_job(**overrides) -> ReviewJob:
 # Extra kwargs each handler-backed template needs, keyed by template filename.
 _BUILD_PROMPT_EXTRAS = {
     review_common.TEMPLATE_SINGLE: {},
-    review_common.TEMPLATE_FIX: {},
     review_common.TEMPLATE_SELF_REVIEW: {"branch_name": "user/feat/thing"},
     review_common.TEMPLATE_HOLISTIC: {"holistic_output": "/tmp/reviews/holistic.md"},
     review_common.TEMPLATE_SCOUT: {"scout_output": "/tmp/reviews/scout.md"},
@@ -437,6 +437,28 @@ def _render_fix_comments(rt, wt_path) -> str:
     return _render_adapter(adapter)
 
 
+def _render_fix_findings(wt_path) -> str:
+    job = _make_review_job(
+        wt_path=str(wt_path),
+        review_file=str(wt_path / "reviews" / "review.md"),
+    )
+    finding = review_findings.Finding(
+        id="M1", severity=review_common.SEVERITY_MUST, seq=1,
+        path="a.py", line=3, end_line=None, body="the guard is missing",
+    )
+    return _render_adapter(review_fix.ReviewFixAdapter(job, [finding], set()))
+
+
+# Every fix template, keyed the way the parametrized contracts below name them.
+# One list, so a fourth domain adopting the engine is added to the contracts by
+# adding its renderer here rather than to each test in turn.
+_FIX_RENDERERS = {
+    "ci": lambda cc, rt, wt: _render_fix_ci(cc, wt),
+    "comments": lambda cc, rt, wt: _render_fix_comments(rt, wt),
+    "findings": lambda cc, rt, wt: _render_fix_findings(wt),
+}
+
+
 def _make_common_sections() -> review_prompt.CommonSections:
     return review_prompt.CommonSections(
         **{name: "" for name in review_prompt.COMMON_SECTION_NAMES},
@@ -467,9 +489,14 @@ class TestTemplateRendering:
         left = _unsubstituted(_render_fix_comments(rt, tmp_path))
         assert not left, f"fix-comments.md left: {left}"
 
+    def test_fix_findings_template_fully_substituted(self, tmp_path):
+        left = _unsubstituted(_render_fix_findings(tmp_path))
+        assert not left, f"fix-findings.md left: {left}"
+
     def test_every_template_is_covered(self):
         """A new template must be added to this file's render coverage."""
         covered = set(_BUILD_PROMPT_EXTRAS) | {
+            review_common.TEMPLATE_FIX,
             review_common.TEMPLATE_FIX_CI, review_common.TEMPLATE_FIX_COMMENTS,
         }
         uncovered = sorted(
@@ -497,13 +524,9 @@ class TestOutputBlockContract:
             template_name, _render_via_build_prompt(template_name),
         )
 
-    @pytest.mark.parametrize("render", ["ci", "comments"])
+    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_have_no_write_tool_mandate(self, render, cc, rt, tmp_path):
-        rendered = (
-            _render_fix_ci(cc, tmp_path) if render == "ci"
-            else _render_fix_comments(rt, tmp_path)
-        )
-        self._assert_no_mandate(render, rendered)
+        self._assert_no_mandate(render, _FIX_RENDERERS[render](cc, rt, tmp_path))
 
     def _assert_no_mandate(self, label, rendered):
         match = self._WRITE_MANDATE.search(rendered)
@@ -547,34 +570,23 @@ class TestOutputBlockContract:
         }
         assert expected == checked
 
-    @pytest.mark.parametrize("render", ["ci", "comments"])
+    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_share_the_worktree_block(self, render, cc, rt, tmp_path):
-        rendered = (
-            _render_fix_ci(cc, tmp_path) if render == "ci"
-            else _render_fix_comments(rt, tmp_path)
-        )
+        rendered = _FIX_RENDERERS[render](cc, rt, tmp_path)
         assert review_common.build_worktree_block(str(tmp_path)) in rendered
 
-    def test_fix_findings_shares_the_worktree_block(self):
-        rendered = _render_via_build_prompt(review_common.TEMPLATE_FIX)
-        assert review_common.build_worktree_block("/tmp/wt") in rendered
-
-    @pytest.mark.parametrize("render", ["ci", "comments"])
+    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_explain_every_box_the_checklist_offers(
         self, render, cc, rt, tmp_path,
     ):
         """The boxes are `fix_tracking`'s; the prose explaining them is per-domain.
 
-        Two templates spell out the same three answers in their own words, so a
+        Every template spells out the same three answers in its own words, so a
         box renamed or added in `fix_tracking` leaves prose behind that describes
-        a checklist the agent is not looking at. Neither template has to say it
-        the same way — each only has to still be talking about all of them.
+        a checklist the agent is not looking at. No template has to say it the
+        same way — each only has to still be talking about all of them.
         """
-        rendered = (
-            _render_fix_ci(cc, tmp_path) if render == "ci"
-            else _render_fix_comments(rt, tmp_path)
-        )
-        task = rendered.split("## Task", 1)[1]
+        task = _FIX_RENDERERS[render](cc, rt, tmp_path).split("## Task", 1)[1]
         for label, outcome in fix_tracking._BOXES:
             why = f" — {fix_tracking._WHY}" if outcome in fix_tracking._REASONED else ""
             assert f"`- [x] {label}{why}`" in task, label

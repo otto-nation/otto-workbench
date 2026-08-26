@@ -35,6 +35,7 @@ be a fix pass asserting something outward nobody approved.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -48,11 +49,17 @@ import land
 import log
 import review_common
 from agent_registry import PHASES
-from agent_types import Phase
+from agent_types import Effort, Phase
 from fix_types import FixItem
 from pr_fix import FixOutcome, ItemOutcome
 from review_common import Diagnosis
 from trail import Trail
+from workbench_config import WorkbenchConfig
+
+# The checklist's name inside a pass's artifact directory. Published because a
+# directory that sweeps a pass's leavings has to name the file, and one spelling
+# of it is what keeps the sweep and the write from drifting apart.
+TRACKING_FILENAME = "fix-tracking.md"
 
 # What a retry is told about the file it is handed. The first pass's settled
 # items are not in it, and an agent that assumes otherwise re-reads work that is
@@ -73,11 +80,18 @@ class LandSpec:
     that recovers from one. `recover` asks it to account for a commit the fix
     agent made itself — the engine supplies the HEAD to compare against, which
     is the one thing a domain assembling this cannot know.
+
+    `paths` scopes the commit to exactly those files, for a domain that owns
+    less than the worktree it edits in; None commits the whole tree, and an
+    empty set commits nothing at all. Only the domain can tell the two apart —
+    a pass that could not work out what its agent touched has an empty scope,
+    not a licence to stage everything.
     """
 
     message: str
     regen: str | None = None
     recover: bool = False
+    paths: Iterable[str] | None = None
 
 
 @dataclass
@@ -140,6 +154,14 @@ class FixAdapter(ABC):
     branch: str = ""
     repo: str = ""
     pr: str = ""
+    # The layers above the phase's own resolution. A pass running inside a
+    # review has all three — the worktree's config, the effort preset the review
+    # was launched at, the model its operator typed — and one running on its own
+    # entry point has none of them and takes what the phase resolves to. Effort
+    # is also the dollar cap for a phase that pins no `max_budget` of its own.
+    config: WorkbenchConfig | None = None
+    effort: Effort | None = None
+    model: str = ""
     # Deliberately not `agent_retry.hint_for`, whose hints are written for a
     # phase that produces a document out of nothing: one tells the agent to
     # write its findings file immediately, the other that the file exists and is
@@ -150,7 +172,7 @@ class FixAdapter(ABC):
     @property
     def tracking_path(self) -> Path:
         """The checklist the agent answers on."""
-        return self.artifacts / "fix-tracking.md"
+        return self.artifacts / TRACKING_FILENAME
 
     @property
     def session_log(self) -> Path:
@@ -265,6 +287,9 @@ def _invoke(
         hint_select=lambda _diagnosis: adapter.fix_hint,
         repo=adapter.repo or None,
         pr=adapter.pr or None,
+        config=adapter.config,
+        effort=adapter.effort,
+        model=adapter.model or None,
     )
     log.blank()
     return _Batch(
@@ -281,7 +306,9 @@ def _run_batch(adapter: FixAdapter, items: list[FixItem], label: str) -> _Batch:
     return _invoke(
         adapter, items, label=label,
         turns=agent_phases.phase_turns(adapter.phase, items=len(items)),
-        budget=agent_phases.phase_budget(adapter.phase, items=len(items)),
+        budget=agent_phases.phase_budget(
+            adapter.phase, adapter.effort, items=len(items),
+        ),
     )
 
 
@@ -297,7 +324,9 @@ def _retry(
         adapter, items,
         label=f"{PHASES[adapter.phase].label} retry",
         turns=retry_turns,
-        budget=agent_phases.phase_budget(adapter.phase, items=len(items)),
+        budget=agent_phases.phase_budget(
+            adapter.phase, adapter.effort, items=len(items),
+        ),
         resume=True,
     )
     if trail:
@@ -410,6 +439,7 @@ def run(adapter: FixAdapter, *, trail: Trail | None = None) -> FixRun:
         trail=trail,
         regen=spec.regen,
         recover_from=head_before if spec.recover else None,
+        paths=spec.paths,
     )
     _stamp(settled.outcomes, head_before, landed.sha)
 

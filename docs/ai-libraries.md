@@ -447,9 +447,11 @@ declare it, and the merge-wide pass is the first place that can tell.
 
 Fix pass for claude-review.
 
-Runs after a review is written and `--fix` is set: hands the review document to
-an agent that applies what it can, reconciles the checkboxes against the files
-the agent changed, then commits and pushes the result.
+Runs after a review is written and `--fix` is set. `fix_engine` owns the
+pipeline — the batching, the agent, the retry, the commit — and what stays here
+is the three things only a review can answer: which findings are still open,
+which files the pass is allowed to commit, and how the review document reads
+once the agent has answered.
 
 What the agent changed is a snapshot difference: the worktree's dirty set is
 recorded before the agent runs and again after, and only the paths that appear
@@ -461,6 +463,14 @@ A snapshot git could not take stops the pass rather than reading as an empty
 one. Everything outside the difference goes uncommitted, so an unreadable
 worktree spelled the same way as an unchanged one is how a pass reports success
 having left the agent's fixes behind.
+
+The agent answers on a tracking file, not on the review document. That document
+is the deliverable — a reviewer reads it and a re-review reconciles against it —
+and letting the agent edit it in place made the pass's evidence about itself the
+same text it was editing: a box nobody ticked read as a skip, an annotation
+phrased loosely read as no annotation at all, and the pass had to guess which
+findings its own agent had touched. `record` re-renders the document from the
+outcomes instead, so what it says is what the pass decided.
 
 The commit always happens; the push waits for `--post`. `land` owns both, and
 the split is its: a local commit asserts nothing to anybody, while a push puts

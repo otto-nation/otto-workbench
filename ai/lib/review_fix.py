@@ -1,8 +1,10 @@
 """Fix pass for claude-review.
 
-Runs after a review is written and `--fix` is set: hands the review document to
-an agent that applies what it can, reconciles the checkboxes against the files
-the agent changed, then commits and pushes the result.
+Runs after a review is written and `--fix` is set. `fix_engine` owns the
+pipeline — the batching, the agent, the retry, the commit — and what stays here
+is the three things only a review can answer: which findings are still open,
+which files the pass is allowed to commit, and how the review document reads
+once the agent has answered.
 
 What the agent changed is a snapshot difference: the worktree's dirty set is
 recorded before the agent runs and again after, and only the paths that appear
@@ -14,6 +16,14 @@ A snapshot git could not take stops the pass rather than reading as an empty
 one. Everything outside the difference goes uncommitted, so an unreadable
 worktree spelled the same way as an unchanged one is how a pass reports success
 having left the agent's fixes behind.
+
+The agent answers on a tracking file, not on the review document. That document
+is the deliverable — a reviewer reads it and a re-review reconciles against it —
+and letting the agent edit it in place made the pass's evidence about itself the
+same text it was editing: a box nobody ticked read as a skip, an annotation
+phrased loosely read as no annotation at all, and the pass had to guess which
+findings its own agent had touched. `record` re-renders the document from the
+outcomes instead, so what it says is what the pass decided.
 
 The commit always happens; the push waits for `--post`. `land` owns both, and
 the split is its: a local commit asserts nothing to anybody, while a push puts
@@ -28,50 +38,28 @@ during a review, and a fix pass needs only a finished review file to work from.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
 
-import agent_phases
+import fix_engine
+import fix_types
 import git_client
-import land
 import log
 import proc
-from review_agent import diagnose_missing_output
 from agent_types import Phase
-from review_common import (
-    TEMPLATE_FIX,
-    preserve_log, restore_preserved,
-)
+from pr_fix import FixOutcome, ItemOutcome
+from review_common import TEMPLATE_FIX, phase_log_path, severity_by_key
 from review_findings import (
-    Finding, extract_skip_reasons, match_skip, parse_findings,
+    FINDING_ID_RE, Finding, match_skip, parse_findings,
 )
-from review_phases import PhaseRunner
 from review_preflight import ReviewJob
-from review_prompt import build_prompt
-from review_retry import _FIX_RETRY_HINT, _has_output, _is_retryable
+from review_retry import _has_output
+from trail import Trail
 
-
-def _commit_fixes(
-    job: ReviewJob, paths: set[str], fixed: int, skipped: int, summary: str = "",
-) -> land.LandResult:
-    """Commit the source files the fix-pass agent changed, and push them.
-
-    `paths` is the snapshot difference, so a file the agent created is in it and
-    anything that was already dirty is not. Handing that list to the owner
-    rather than letting it stage the whole tree is what keeps a build artifact
-    or unrelated work in progress out of a commit the pass then pushes.
-
-    The push is gated: a fix pass runs on the operator's behalf and pushing is
-    an outward act, so it waits for `--post` the way a posted comment does. The
-    commit is not — it is local, and it is what makes the work reviewable at all.
-    """
-    msg = "fix: self-review findings"
-    if fixed:
-        msg += f"\n\n{fixed} fixed, {skipped} skipped"
-    if summary:
-        msg += f"\n\n{summary}"
-
-    return land.land(job.wt_path, message=msg, gated=True, paths=paths)
+# The two outcomes that leave a finding open. A deferral is a finding the agent
+# never reached and a `needs a person` is one it read and handed on, and the
+# review document says the same thing about both: still unchecked, still there
+# for the next round.
+_STILL_OPEN = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
 
 
 def _changed_source_files(wt_path: str) -> set[str] | None:
@@ -118,11 +106,11 @@ def _agent_changed(wt_path: str, before: set[str]) -> set[str] | None:
 def _report_unattributable(wt_path: str) -> None:
     """Report a fix pass whose work could not be attributed, and where it is.
 
-    Staging everything is not the fallback: `_commit_fixes` stages by name so
-    that a build artifact or unrelated work in progress never rides along in a
-    commit the pass then pushes, and a snapshot that failed is exactly when
-    that list is unavailable. The edits are still in the worktree, so the
-    honest end of this path is to say so and commit nothing.
+    Staging everything is not the fallback: the pass stages by name so that a
+    build artifact or unrelated work in progress never rides along in a commit
+    it then pushes, and a snapshot that failed is exactly when that list is
+    unavailable. The edits are still in the worktree, so the honest end of this
+    path is to say so and commit nothing.
     """
     log.error(
         f"could not read what the fix pass changed in {wt_path} — nothing was "
@@ -131,213 +119,247 @@ def _report_unattributable(wt_path: str) -> None:
     )
 
 
-@dataclass
-class FixPassResult:
-    fixed: list[Finding]
-    skipped: list[Finding]
-    unchanged: list[Finding]
-    # Kept apart from `skipped`: a skip is work the pass could not do and the
-    # next run should retry, a decline is work nobody is going to do.
-    declined: list[Finding] = field(default_factory=list)
+def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
+    """What the pass did, for the commit message and the operator's terminal.
 
-    @property
-    def fixed_count(self) -> int:
-        return len(self.fixed)
-
-    @property
-    def skipped_count(self) -> int:
-        return len(self.skipped)
-
-
-def _reconcile_checkboxes(review_file: str, changed: set[str]) -> None:
-    """Auto-check findings whose files were modified but checkboxes weren't updated.
-
-    The fix agent sometimes edits source files without updating the review
-    markdown.  This reconciles by matching changed file paths to finding paths.
-
-    `changed` is the agent's own delta, not the worktree's dirty set: a finding
-    on a path that was already dirty when the pass started would otherwise be
-    checked off as fixed by a pass that never touched it.
+    Three blocks, because the three answers are worth telling apart: a fix is
+    work done, a skip is work the next round should pick up, and a decline is
+    work nobody is going to do. `findings` is what the ids were rendered from —
+    the tracking file records no description of its own, so the one line a fix
+    is reported under comes from the finding it answered.
     """
-    if not changed:
-        return
-
-    text = Path(review_file).read_text()
-    findings = parse_findings(text)
-    updated = False
-    for f in findings:
-        # A declined or skipped finding is never checked off: nobody claimed to
-        # fix it, and an incidental edit to the same file is not a fix for it.
-        # Attribution is by path, so one file's other findings would otherwise
-        # check off every skip in it — and `_diff_findings` reads that as fixed,
-        # putting work that never happened in the review file, the counts, and
-        # the commit message, with the skip reason dropped on the way.
-        if f.checked or f.declined or match_skip(f) or not f.path:
-            continue
-        old = f"- [ ] **[{f.id}]**"
-        new = f"- [x] **[{f.id}]**"
-        if f.path in changed and old in text:
-            text = text.replace(old, new, 1)
-            updated = True
-
-    if updated:
-        Path(review_file).write_text(text)
-
-
-def _diff_findings(before: list[Finding], after: list[Finding]) -> FixPassResult:
-    """Diff findings before/after fix pass by ID to classify outcomes."""
-    before_by_id = {f.id: f for f in before}
-    after_by_id = {f.id: f for f in after}
-
-    fixed: list[Finding] = []
-    skipped: list[Finding] = []
-    unchanged: list[Finding] = []
-    declined: list[Finding] = []
-
-    for fid, bf in before_by_id.items():
-        af = after_by_id.get(fid)
-        if af is None:
-            unchanged.append(bf)
-            continue
-        if af.declined:
-            declined.append(af)
-        elif not bf.checked and af.checked:
-            fixed.append(af)
-        elif not bf.checked and not af.checked:
-            skipped.append(af)
-        else:
-            unchanged.append(af)
-
-    return FixPassResult(
-        fixed=fixed, skipped=skipped, unchanged=unchanged, declined=declined,
-    )
-
-
-def _format_fix_summary(result: FixPassResult) -> str:
-    """Format a human-readable fix summary for commit message and stderr."""
     lines: list[str] = []
-    if result.fixed:
-        lines.append("Fixed:")
-        for f in result.fixed:
-            desc = f.body.split('\n', 1)[0][:80] if f.body else f.path
-            lines.append(f"  - [{f.id}] {desc}")
-    if result.skipped:
-        lines.append("Skipped:")
-        for f in result.skipped:
-            reason = f.skip_reason if f.skip_reason else "no auto-fix"
-            lines.append(f"  - [{f.id}] {reason}")
-    if result.declined:
-        lines.append("Declined:")
-        for f in result.declined:
-            reason = f.decline_reason if f.decline_reason else "adjudicated, not a defect"
-            lines.append(f"  - [{f.id}] {reason}")
+    _block(lines, "Fixed:", [
+        (o.id, _describe(findings.get(o.id), o))
+        for o in outcomes if o.outcome is FixOutcome.FIXED
+    ])
+    _block(lines, "Skipped:", [
+        (o.id, o.reason or "no auto-fix")
+        for o in outcomes if o.outcome in _STILL_OPEN
+    ])
+    _block(lines, "Declined:", [
+        (o.id, o.reason or "adjudicated, not a defect")
+        for o in outcomes if o.outcome is FixOutcome.DECLINED
+    ])
     return "\n".join(lines)
 
 
-def _fix_pass_made_progress(result: FixPassResult) -> bool:
-    if result.fixed_count > 0:
-        return True
-    return any(f.skip_reason for f in result.skipped)
+def _block(lines: list[str], heading: str, entries: list[tuple[str, str]]) -> None:
+    """Append one heading and its entries, or nothing when there are none."""
+    if not entries:
+        return
+    lines.append(heading)
+    lines.extend(f"  - [{item_id}] {text}" for item_id, text in entries)
 
 
-def _should_retry(result: FixPassResult, fix_log: str) -> bool:
-    """Whether a pass that changed nothing is worth running a second time.
+def _describe(finding: Finding | None, outcome: ItemOutcome) -> str:
+    """The one line a fixed finding is reported under.
 
-    Diagnosing the session log is what produces the message, so the warning
-    belongs here rather than at the call site: a pass that made no progress
-    says so whether or not the reason is one a retry could clear.
+    Its first body line, truncated, and its path when the body is empty. An id
+    the review no longer holds falls back to whatever the tracking file recorded
+    for it, which is the location it was rendered at.
     """
-    if _fix_pass_made_progress(result) or result.skipped_count == 0:
-        return False
-    diagnosis = diagnose_missing_output(fix_log)
-    log.warn(f"Fix pass made no progress ({diagnosis.message})")
-    return _is_retryable(diagnosis)
+    if finding is None:
+        return outcome.file or outcome.id
+    if finding.body:
+        return finding.body.split("\n", 1)[0][:80]
+    return finding.path
 
 
-def run_fix_pass(job: ReviewJob):
+def _annotation(outcome: ItemOutcome) -> str:
+    """How the review document spells this outcome, or "" when it spells nothing.
+
+    The tracking file's three boxes and the review's two annotations are the
+    same vocabulary written twice. A decline and a `needs a person` both leave
+    the finding unchecked and both say why, in the words the review's own
+    parsers already read back; a fix is a ticked box and carries no annotation,
+    and a deferral is a finding nobody answered, which is the document exactly
+    as it stands.
+    """
+    if outcome.outcome is FixOutcome.DECLINED:
+        word = "declined"
+    elif outcome.outcome is FixOutcome.NEEDS_HUMAN:
+        word = "skipped"
+    else:
+        return ""
+    return f"*({word} — {outcome.reason})*" if outcome.reason else f"*({word})*"
+
+
+def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
+    """The review document with each finding's line rewritten to its outcome.
+
+    A fix ticks the box, a decline or a `needs a person` appends the annotation,
+    and anything else leaves the line alone — which is what hands a finding the
+    pass never answered to the next round unchanged.
+
+    A finding the review had already checked, declined or skipped keeps what it
+    has: those verdicts were reached before the agent ran and outrank it, and
+    appending a second annotation to a line that carries one leaves the document
+    saying two things about one finding.
+    """
+    prior = {f.id: f for f in parse_findings(text)}
+    by_id = {o.id: o for o in outcomes}
+    written: set[str] = set()
+    lines = text.split("\n")
+    for n, line in enumerate(lines):
+        match = FINDING_ID_RE.match(line.strip())
+        if not match:
+            continue
+        finding_id = f"{match.group(2)}{match.group(3)}"
+        finding = prior.get(finding_id)
+        outcome = by_id.get(finding_id)
+        if finding is None or outcome is None or finding_id in written:
+            continue
+        written.add(finding_id)
+        if finding.checked or finding.declined or match_skip(finding):
+            continue
+        if outcome.outcome is FixOutcome.FIXED:
+            lines[n] = line.replace("- [ ]", "- [x]", 1)
+            continue
+        note = _annotation(outcome)
+        if note:
+            lines[n] = f"{line.rstrip()} {note}"
+    return "\n".join(lines)
+
+
+class ReviewFixAdapter(fix_engine.FixAdapter):
+    """The findings pass, in the terms `fix_engine` runs one in.
+
+    The open findings are the work; everything the review already settled — a
+    checked box, a decline it reached itself — never reaches the agent and never
+    reaches the turn budget those items would have bought.
+
+    Two things this adapter carries that the engine does not ask for. `before`
+    is the worktree's dirty set from before the agent ran, taken by the caller
+    because it has to be taken before the pass starts. `changed` is the
+    difference `landing` works out, held so `record` reports on the same set the
+    commit was scoped to rather than reading the worktree a third time.
+    """
+
+    phase = Phase.FIX
+    template = TEMPLATE_FIX
+    title = "Review Fix Tracking"
+    action = "applying review findings"
+
+    def __init__(
+        self, job: ReviewJob, findings: list[Finding], before: set[str],
+    ) -> None:
+        self.job = job
+        self.workdir = Path(job.wt_path)
+        self.artifacts = Path(job.artifact_dir)
+        self.branch = job.pr.head
+        self.repo = job.repo
+        self.pr = job.pr_number
+        self.config = job.config
+        self.effort = job.effort
+        self.model = job.model
+        self.findings = {f.id: f for f in findings}
+        self.before = before
+        self.changed: set[str] | None = None
+        self.summary = ""
+
+    @property
+    def session_log(self) -> Path:
+        """Where the pass streams its session: the review's own fix log.
+
+        Named from the phase registry rather than by the engine's default,
+        because a review directory's sweep finds its leavings by asking the
+        registry what each phase writes. A log under any other name survives the
+        run that wrote it.
+        """
+        return Path(phase_log_path(self.job.review_file, self.phase))
+
+    def add_dirs(self) -> list[Path]:
+        """The worktree, and the review directory the tracking file sits in."""
+        return [self.workdir, self.artifacts]
+
+    def items(self) -> list[fix_types.FixItem]:
+        return [
+            fix_types.FixItem(
+                id=f.id, file=f.path, line=f.line or 0,
+                label=severity_by_key(f.severity).section, body=f.body,
+            )
+            for f in self.findings.values()
+        ]
+
+    def template_vars(self) -> dict[str, str]:
+        """Nothing — `fix-findings.md` asks for no substitution the engine withholds."""
+        return {}
+
+    def landing(self, outcomes: list[ItemOutcome]) -> fix_engine.LandSpec:
+        """Commit the files the agent touched, and only those.
+
+        The second snapshot is taken here because this is the one point between
+        the agent finishing and the commit being made: earlier and it misses the
+        agent's work, later and the commit has already happened. A snapshot that
+        failed lands an empty scope, which commits nothing — `record` is what
+        then says where the work was left.
+        """
+        self.changed = _agent_changed(str(self.workdir), self.before)
+        self.summary = _summary(outcomes, self.findings)
+        fixed = sum(1 for o in outcomes if o.outcome is FixOutcome.FIXED)
+        skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
+        message = "fix: self-review findings"
+        if fixed:
+            message += f"\n\n{fixed} fixed, {skipped} skipped"
+        if self.summary:
+            message += f"\n\n{self.summary}"
+        return fix_engine.LandSpec(
+            message=message, paths=self.changed if self.changed else set(),
+        )
+
+    def record(self, run: fix_engine.FixRun) -> None:
+        """Report the pass, and write its answers into the review document.
+
+        A pass whose work could not be attributed re-renders nothing. The
+        document still describing every finding as open is what sends the next
+        round back over them — which is the right outcome, because the commit
+        that would have made them done never happened.
+        """
+        if self.changed is None:
+            _report_unattributable(str(self.workdir))
+            return
+        if self.summary:
+            log.info("Fix summary:")
+            for line in self.summary.splitlines():
+                print(f"  {line}", file=sys.stderr)
+        review_file = Path(self.job.review_file)
+        review_file.write_text(
+            _apply_outcomes(review_file.read_text(), run.outcomes),
+        )
+
+
+def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
+    """Apply what an agent can of the findings in `job`'s review, and commit it.
+
+    Returns without running an agent when there is no review to work from or
+    nothing in it still open.
+    """
     if not _has_output(job.review_file):
         log.warn("No review file to fix — skipping fix pass")
         return
 
-    before_text = Path(job.review_file).read_text()
-    before_findings = parse_findings(before_text)
     # A declined finding is not work: it was considered and rejected, so it is
     # out of the work set and out of the turn budget it would otherwise buy.
-    before_unchecked = sum(
-        1 for f in before_findings if not f.checked and not f.declined
-    )
-
-    if before_unchecked == 0:
+    findings = [
+        f for f in parse_findings(Path(job.review_file).read_text())
+        if not f.checked and not f.declined
+    ]
+    if not findings:
         log.info("No findings left to fix — skipping fix pass")
         return
 
-    max_turns = agent_phases.phase_turns(Phase.FIX, items=before_unchecked)
-
-    prompt = build_prompt(
-        TEMPLATE_FIX, job, max_turns=max_turns,
-    )
-    runner = PhaseRunner(job, Phase.FIX)
-    fix_log = runner.session_log
-    log.info("Fix pass — applying review findings...")
-    log.blank()
     # ceiling: attribution is by path, so a file already dirty when the pass
     # starts is never credited to the agent — edits it makes to that file are
-    # neither staged nor auto-checked. Upgrade to comparing each path's content
+    # neither staged nor committed. Upgrade to comparing each path's content
     # hash across the snapshot once fix passes routinely run against trees that
     # are dirty in the very files the review has findings on.
-    before_changed = _changed_source_files(job.wt_path)
-    if before_changed is None:
+    before = _changed_source_files(job.wt_path)
+    if before is None:
         # Refused before the agent runs, so nothing is lost by refusing: with no
         # baseline the pass cannot tell its own work from what was already here,
         # and it would either commit the worktree wholesale or commit none of it.
-        log.error(
-            f"could not read the state of {job.wt_path} — skipping fix pass"
-        )
+        log.error(f"could not read the state of {job.wt_path} — skipping fix pass")
         return
-    runner.invoke(prompt, max_turns)
-    log.blank()
 
-    agent_changed = _agent_changed(job.wt_path, before_changed)
-    if agent_changed is None:
-        _report_unattributable(job.wt_path)
-        return
-    _reconcile_checkboxes(job.review_file, agent_changed)
-
-    after_text = Path(job.review_file).read_text()
-    after_findings = parse_findings(after_text)
-    extract_skip_reasons(after_findings)
-
-    result = _diff_findings(before_findings, after_findings)
-
-    if _should_retry(result, fix_log):
-        retry_turns = agent_phases.phase_retry_turns(Phase.FIX, max_turns)
-        retry_prompt = _FIX_RETRY_HINT + build_prompt(
-            TEMPLATE_FIX, job, max_turns=retry_turns,
-        )
-        log.info(f"Retrying fix pass (max_turns={retry_turns})...")
-        prior_log = preserve_log(fix_log)
-        log.blank()
-        runner.invoke(retry_prompt, retry_turns)
-        restore_preserved(fix_log, prior_log)
-        log.blank()
-        # Still measured against the pre-pass snapshot: the retry's work and
-        # the first attempt's are both the agent's, and both must commit.
-        agent_changed = _agent_changed(job.wt_path, before_changed)
-        if agent_changed is None:
-            _report_unattributable(job.wt_path)
-            return
-        _reconcile_checkboxes(job.review_file, agent_changed)
-        after_text = Path(job.review_file).read_text()
-        after_findings = parse_findings(after_text)
-        extract_skip_reasons(after_findings)
-        result = _diff_findings(before_findings, after_findings)
-
-    summary = _format_fix_summary(result)
-    if summary:
-        log.info("Fix summary:")
-        for line in summary.splitlines():
-            print(f"  {line}", file=sys.stderr)
-
-    _commit_fixes(job, agent_changed, fixed=result.fixed_count,
-                  skipped=result.skipped_count, summary=summary)
-
+    fix_engine.run(ReviewFixAdapter(job, findings, before), trail=trail)

@@ -348,15 +348,24 @@ SSH_GITHUB_FAKE_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAFAKEKEY"
 # standing in for ~/.ssh, and a temp global config holding KEY_VALUE, from a
 # directory that is not a git repo.
 #
-# The cd matters: wb_config_get reads project scope first, and inside this
-# repo that is .workbench.yml — a file the test does not control.
+# The config root is exported rather than the file path overridden, because
+# wb_config_get resolves the scopes in a child process now — lib/config_cli.py,
+# which builds the global path from WORKBENCH_CONFIG_DIR the same way
+# constants.sh does. A WORKBENCH_CONFIG_FILE set only in this shell would leave
+# that child reading the real one.
+#
+# The cd matters for the same reason it always did: the project scope resolves
+# from the working directory, and inside this repo that is a .workbench.yml the
+# test does not control.
 _ssh_github_setup() {
   SSH_DIR="$TMPDIR/ssh"
   SSH_CONFIG_FILE="$SSH_DIR/config"
   SSH_KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
   mkdir -p "$SSH_DIR"
 
-  WORKBENCH_CONFIG_FILE="$TMPDIR/config.yml"
+  export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  WORKBENCH_CONFIG_FILE="$WORKBENCH_CONFIG_DIR/$WORKBENCH_CONFIG_NAME"
   if [[ -n "${1:-}" ]]; then
     printf 'github:\n  ssh_over_443: %s\n' "$1" > "$WORKBENCH_CONFIG_FILE"
   fi

@@ -129,6 +129,12 @@ WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHE
 GITHUB_SSH_443_CONFIG_KEY="github.ssh_over_443"
 ISSUE_PROVIDER_CONFIG_KEY="issue_tracker.provider"
 
+# The name `otto-workbench config get` prints for the machine-wide scope. A
+# report over other people's repos distinguishes an answer a repo gave from one
+# it inherited, and this is the string that tells them apart — so it is a wire
+# value between the two languages, cross-validated like the keys above.
+WORKBENCH_GLOBAL_SCOPE="global"
+
 # ─── Review state ─────────────────────────────────────────────────────────────
 # The shell half of two joins the Python side also spells out — this file for
 # bash, ai/lib/workbench_paths.py's reviews_dir() and retro-scan's

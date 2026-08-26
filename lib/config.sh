@@ -1,26 +1,36 @@
 #!/usr/bin/env bash
-# Hand-authored settings, read from YAML — one file per scope, project first.
+# Hand-authored settings, read from YAML — one file per scope, this checkout first.
 #
 # ```bash
 # wb_config_get "reuse.level"           # value, or nothing
 # wb_config_get "reuse.level" "full"    # value, or the given default
 # ```
 #
-# A malformed file reads as absent — a bash caller wants its default, not a `yq`
-# parse error on stdout. Reporting a bad file is the typed loader's job. Both
-# filenames, the schema URL and the modeline are declared once in
+# The read is not performed here. `wb_config_get` shells out to `otto-workbench
+# config get`, which is [`lib/config_cli.py`](../lib/config_cli.py) over
+# [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) — the typed
+# owner of these files, and the only thing that knows all three scopes. Bash
+# used to carry two partial readers of its own and they disagreed with the
+# loader about the same repo in the same session: the machine profile called a
+# tracker recorded above a bare repo's worktrees `unset` while the SessionStart
+# line named it. A bash caller that needs a config value asks that command; a
+# second reader here is the bug, not a shortcut.
+#
+# A file nothing can parse still reads as the built-in default, which is what
+# `load_config_or_default` gives every other reader on the machine — so a
+# caller's own fallback still applies and a `yq` parse error never lands on
+# stdout. A key the config surface does not define is refused instead, loudly:
+# that is a caller asking a question with no answer.
+#
+# Both filenames, the schema URL and the modeline are declared once in
 # [`constants.sh`](#constantssh) — as `WORKBENCH_CONFIG_FILE`,
 # `WORKBENCH_PROJECT_CONFIG_NAME`, `WORKBENCH_CONFIG_SCHEMA_URL` and
-# `WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only.
-#
-# [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) is the typed
-# owner of the same files: it deep-merges them into a `WorkbenchConfig` and
-# rejects an unknown enum value or phase key rather than silently dropping it. It
-# spells those same names a second time for Python, and `tests/config.bats` fails
-# when a pair drifts. The scope and key tables below are generated from the
-# dataclass by `bin/local/generate-config-schema`, alongside
-# [`config.schema.json`](../config.schema.json); `tests/test_workbench_config.py`
-# fails if the committed schema goes stale.
+# `WORKBENCH_CONFIG_HEADER` — and `config.sh` holds functions only. The typed
+# owner spells those same names a second time for Python, and
+# `tests/config.bats` fails when a pair drifts. The scope and key tables below
+# are generated from the dataclass by `bin/local/generate-config-schema`,
+# alongside [`config.schema.json`](../config.schema.json);
+# `tests/test_workbench_config.py` fails if the committed schema goes stale.
 #
 # <!-- include: bin/local/generate-config-schema --emit config-reference -->
 #
@@ -76,8 +86,9 @@
 # remove`. Ordered by specificity — this checkout, then this repo, then this
 # machine. A plain clone has no container and keeps exactly two layers.
 #
-# `wb_config_get` below reads layers 4 and 6 only; the typed loader reads all
-# three. `otto-workbench config status` is where all three are visible.
+# `wb_config_get` below reads all three, because it does not read them itself —
+# it asks the loader, which is the only thing that knows layer 5 is there.
+# `otto-workbench config status` is where all three are visible.
 #
 # A repo still holding the legacy `.claude/review.yml` is converted to
 # `.workbench.yml` the first time a review reads its issue tracker; the old file
@@ -107,98 +118,49 @@ wb_config_ensure_file() {
   printf '%s\n' "$WORKBENCH_CONFIG_HEADER" > "$file"
 }
 
-# _wb_config_project_file — the project config for $PWD, or nothing.
-# Outside a git repo there is no project scope, which is not an error.
-_wb_config_project_file() {
-  local toplevel
-  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  local candidate="$toplevel/$WORKBENCH_PROJECT_CONFIG_NAME"
-  if [[ -f "$candidate" ]]; then printf '%s' "$candidate"; fi
-}
-
-# _wb_config_read FILE KEY — one key from one file, or nothing.
-# A malformed file — and a missing yq — read as absent: a bash caller wants its
-# default, not a yq parse error or a "command not found" on stdout. The typed
-# loader (ai/lib/workbench_config.py) is where a bad file is reported, and every
-# script that sources this already needs yq for lib/state.sh, so a missing
-# binary surfaces there rather than here.
-# A value of the literal string "null" is indistinguishable from an absent key.
-# Nothing this reads is a string that spells null, and treating yq's null output
-# as absent is what makes the fallback work.
-_wb_config_read() {
-  local file="$1" key="$2" value
-  [[ -f "$file" ]] || return 0
-  value="$(yq -r ".$key // \"\"" "$file" 2>/dev/null)" || return 0
-  if [[ -n "$value" && "$value" != "null" ]]; then printf '%s' "$value"; fi
-}
-
-# _wb_config_valid_key CALLER KEY — true when KEY is a literal dotted path,
-# reporting under CALLER's name when it is not.
+# wb_config_split_record RECORD SCOPE_OUT VALUE_OUT DIR_OUT — the three fields
+# of one `otto-workbench config get` record, assigned to the named variables.
 #
-# The key is interpolated into a yq expression, so this rejects anything else
-# rather than letting a built-up key become an expression. Shared by the two
-# readers so a key one accepts is never one the other refuses.
-_wb_config_valid_key() {
-  if [[ "$2" =~ ^[A-Za-z0-9_][A-Za-z0-9_.]*$ ]]; then
-    return 0
-  fi
-  echo "ERROR: $1: invalid config key: $2" >&2
-  return 1
+# Split by parameter expansion rather than by `IFS=$'\t' read`, which cannot do
+# it. A tab is an IFS whitespace character, so bash folds a run of them into one
+# delimiter and the empty field between them disappears — and an empty field is
+# what a key no scope sets looks like, which is the commonest record there is.
+# `read` hands back the directory as the value and leaves the directory empty,
+# with nothing said. Splitting from both ends keeps every field where the
+# resolver put it, and leaves the remainder of the line in DIR_OUT so a path
+# holding a tab can only ever confuse itself.
+wb_config_split_record() {
+  local __record="$1" __rest
+  local -n __scope="$2" __value="$3" __dir="$4"
+  __scope="${__record%%$'\t'*}"
+  __rest="${__record#*$'\t'}"
+  __value="${__rest%%$'\t'*}"
+  __dir="${__rest#*$'\t'}"
 }
 
-# wb_config_get KEY [DEFAULT] — a dotted config key, project scope first. KEY
-# must be a literal string.
+# wb_config_get KEY [DEFAULT] — a dotted config key resolved for the repo the
+# caller is standing in, or DEFAULT when no scope sets it. Returns 1, printing
+# why, when KEY is not one the config surface defines.
 #
-# ceiling: two scopes, not the three the typed loader merges — the container
-# layer is skipped. Deriving the container is a `--git-common-dir` read, a
-# realpath, and a no-working-tree probe, and a bash copy of that is a second
-# definition of the layout in a language that cannot report a file it failed to
-# parse. The one key read from here — github.ssh_over_443 — is machine-wide, so
-# no caller can currently see the gap. Upgrade trigger: when a second key is
-# read through this function, or when a caller in the bare-repo layout needs a
-# per-repo answer, this must resolve the container through the same owner
-# `lib/git_layout.py` gives Python rather than a second implementation.
+# The scopes are resolved by `otto-workbench config get`, whose record format is
+# documented in `lib/config_cli.py`. Only the value is taken here: a caller of
+# this function is asking what the setting is, and the scope that answered is a
+# question for `config status` or for a caller reading the records itself.
+#
+# A refused key is the one failure worth reporting. It cannot be a bad file — an
+# unreadable scope resolves to the built-in default and DEFAULT still applies —
+# so it is the caller naming a key nothing reads, which no fallback should
+# paper over.
 wb_config_get() {
-  local key="$1" fallback="${2:-}" value project
+  local key="$1" fallback="${2:-}" record
+  # shellcheck disable=SC2034  # both are written through namerefs below
+  local scope value dir
 
-  _wb_config_valid_key "wb_config_get" "$key" || return 1
+  record="$(python3 "$WORKBENCH_DIR/lib/config_cli.py" get "$key")" || return 1
 
-  project="$(_wb_config_project_file)"
-  if [[ -n "$project" ]]; then
-    value="$(_wb_config_read "$project" "$key")"
-    if [[ -n "$value" ]]; then echo "$value"; return 0; fi
-  fi
-
-  value="$(_wb_config_read "$WORKBENCH_CONFIG_FILE" "$key")"
+  wb_config_split_record "$record" scope value dir
   if [[ -n "$value" ]]; then echo "$value"; return 0; fi
 
   if [[ -n "$fallback" ]]; then echo "$fallback"; fi
-  return 0
-}
-
-# wb_config_project_get DIR KEY — a dotted config key from the project config at
-# DIR, or nothing. DIR is a repo's work-tree root; KEY must be a literal string.
-#
-# One scope, named by path, for a caller reporting on repos other than the one
-# it is running in — the machine profile's project registry table is the first.
-# `wb_config_get` cannot answer that: it resolves the project scope from `$PWD`
-# and merges the global file underneath, so it would report what the calling
-# repo declared, or what the machine declared on a repo's behalf. Neither is the
-# repo's own answer, and printing one as though it were is the staleness that
-# reading at render time exists to avoid.
-#
-# There is no DEFAULT parameter for the same reason. A caller wanting one has to
-# spell out what an absent key means to it, rather than inheriting a guess.
-#
-# A directory that is gone, holds no config file, or holds an unparseable one
-# all read as nothing — the same "absent" `_wb_config_read` already gives a
-# malformed file. A caller rendering one row per repo therefore degrades to its
-# own marker for that row instead of failing the whole render.
-wb_config_project_get() {
-  local dir="$1" key="$2"
-
-  _wb_config_valid_key "wb_config_project_get" "$key" || return 1
-
-  _wb_config_read "${dir%/}/$WORKBENCH_PROJECT_CONFIG_NAME" "$key"
   return 0
 }

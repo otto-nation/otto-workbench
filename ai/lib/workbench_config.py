@@ -30,6 +30,14 @@ vars:
     CLI flag > WORKBENCH_AI_<PHASE>_* > WORKBENCH_AI_* > project > container > global
 
 so nothing here overrides a value a caller passed or exported.
+
+Bash reads through here too, rather than parsing the same files a second time:
+``lib/config.sh``'s ``wb_config_get`` and the machine profile's registry table
+both go out to ``otto-workbench config get``, which is ``lib/config_cli.py``
+over ``config_status``. A partial reader in another language is what let the
+machine profile call a repo's tracker ``unset`` while the SessionStart line in
+the same session named it — so if a bash caller needs a config value, give it
+that command rather than a third implementation of the scopes.
 """
 
 # doc-group: platform
@@ -77,6 +85,12 @@ PROJECT_CONFIG_NAME = ".workbench.yml"
 GLOBAL_SCOPE = "global"
 CONTAINER_SCOPE = "container"
 PROJECT_SCOPE = "project"
+
+# What a reader calls the answer when no file supplied one. Not a scope — it
+# names no file and ``config_scopes`` never returns it — but every reader that
+# reports where a value came from needs a word for the built-in default, and a
+# caller parsing that report needs the same word the report prints.
+DEFAULT_SCOPE = "default"
 
 # Where the generated schema lives, repo-relative, and the raw URL that serves
 # it. One spelling of the path: bin/local/generate-config-schema writes there,
@@ -863,6 +877,20 @@ def _schema_accepts(schema: dict, key: str) -> bool:
     return cursor is not None
 
 
+def defines_key(key: str) -> bool:
+    """Whether ``key`` names something this checkout's ``WorkbenchConfig`` reads.
+
+    The local half of ``check_key``, on its own for the readers. A write is
+    judged by the installed workbench as well, because the file outlives the
+    checkout that wrote it and is read by whatever is on ``PATH`` afterwards. A
+    read has no such gap: it resolves the key here and now, so a key only this
+    branch defines is one this branch may perfectly well ask for.
+    """
+    import schema_gen
+
+    return _schema_accepts(schema_gen.dataclass_to_schema(WorkbenchConfig), key)
+
+
 def installed_schema_path() -> Path | None:
     """``config.schema.json`` from the workbench installed on this machine.
 
@@ -900,9 +928,7 @@ def check_key(key: str) -> KeyCheck:
     checks a hand-edit, and a key only your branch reads is one only your
     branch has to load.
     """
-    import schema_gen
-
-    if not _schema_accepts(schema_gen.dataclass_to_schema(WorkbenchConfig), key):
+    if not defines_key(key):
         return KeyCheck(KeyVerdict.UNKNOWN_HERE, key)
     path = installed_schema_path()
     if path is None:

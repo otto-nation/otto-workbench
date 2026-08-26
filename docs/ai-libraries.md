@@ -2133,6 +2133,14 @@ vars:
 
 so nothing here overrides a value a caller passed or exported.
 
+Bash reads through here too, rather than parsing the same files a second time:
+``lib/config.sh``'s ``wb_config_get`` and the machine profile's registry table
+both go out to ``otto-workbench config get``, which is ``lib/config_cli.py``
+over ``config_status``. A partial reader in another language is what let the
+machine profile call a repo's tracker ``unset`` while the SessionStart line in
+the same session named it — so if a bash caller needs a config value, give it
+that command rather than a third implementation of the scopes.
+
 ### workbench_paths.py
 
 Where the workbench keeps things.

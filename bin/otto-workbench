@@ -122,6 +122,7 @@ COMMANDS_AI=(
 COMMANDS_CONFIG=(
   "set KEY VALUE [--project|--container]"  "Write KEY — globally, into this checkout, or above its worktrees"
   "status"                                 "Show every scope, every value, and the file it came from"
+  "get KEY [DIR ...]"                      "Resolve KEY for this repo, or for each named one, with the scope that answered"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
@@ -788,6 +789,10 @@ status reports the other side: each scope in precedence order, the value of
 every key with the file that supplied it, and any key a file holds that
 nothing reads.
 
+get resolves one key for a script — one tab-separated record per DIR, holding
+the scope that answered, the value, and the DIR — so bash reads through the
+same owner instead of parsing a subset of the same files.
+
 Commands:
 $(commands_usage COMMANDS_CONFIG)
 EOF
@@ -801,12 +806,17 @@ cmd_config_status() {
   python3 "$WORKBENCH_DIR/lib/config_cli.py" status "$@"
 }
 
+cmd_config_get() {
+  python3 "$WORKBENCH_DIR/lib/config_cli.py" get "$@"
+}
+
 cmd_config() {
   local subcmd="${1:-}"
   shift 2>/dev/null || true
   case "$subcmd" in
     set)       cmd_config_set "$@" ;;
     status)    cmd_config_status "$@" ;;
+    get)       cmd_config_get "$@" ;;
     -h|--help) _config_usage; return 0 ;;
     *)         _config_usage >&2; return 1 ;;
   esac

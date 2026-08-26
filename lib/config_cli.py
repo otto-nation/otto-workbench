@@ -3,6 +3,40 @@
 Usage: python3 lib/config_cli.py set KEY VALUE [--project|--container]
        otto-workbench config set KEY VALUE [--project|--container]
        otto-workbench config status
+       otto-workbench config get KEY [DIR ...]
+
+`get` is the read side for a caller that is not Python.  `ai/lib/
+workbench_config.py` owns which files a key is resolved from; bash has no
+container-aware resolver of its own, and the two partial ones it used to carry
+disagreed with the typed loader about the same repo in the same session — the
+machine profile printed `unset` for a tracker recorded above the worktrees
+while the SessionStart line named it.  So there is one resolver and this is how
+the other language reaches it.
+
+One line per DIR, in the order given, three tab-separated fields:
+
+    SCOPE <TAB> VALUE <TAB> DIR
+
+SCOPE is the name of the file that answered — `project`, `container`, `global`
+— or `default` when no file did.  VALUE is the resolved value, empty when
+nothing is set; it is collapsed onto one line so a caller reading records with
+`read` cannot have a row split under it.  DIR is echoed back last so a batch
+caller matches answers to repos by name rather than by position, and so a value
+holding a tab could still only ever confuse itself.
+
+Every record has both tabs, including the one whose VALUE is empty.  That is
+the shape a caller has to split on rather than tokenise: a tab is an IFS
+whitespace character, so `IFS=$'\t' read -r scope value dir` folds the two
+adjacent tabs of an unset key into one and silently reads the directory as the
+value.  `lib/config.sh`'s `wb_config_split_record` is the bash side done
+correctly, and is what a bash caller should use.
+
+Each DIR is a repo's work-tree root, and each is resolved on its own: a
+directory that is gone, holds no config, or holds one nothing can parse
+resolves to the built-in default rather than failing the batch.  A report over
+other people's repos cannot stop because one of them has a bad file; `config
+status`, run in that repo, is what names it.  With no DIR the caller's own
+work-tree root is used, which is what `wb_config_get` asks for.
 
 `status` answers the two questions the files themselves cannot: what is the
 value right now, and which file supplied it.  The loader deep-merges every
@@ -39,9 +73,17 @@ the caller is standing in.  Run out of a stale checkout instead, it still
 refuses: `workbench_config.check_key` asks the installed schema as well as its
 own.  See `ai/lib/workbench_config.py`.
 
-Exit codes: 0 on a completed write or a report that read every scope, 1 on a
-refused key, a failed write, or a scope that could not be read, 2 on a usage
-error (argparse's own).
+Exit codes: 0 on a completed write, a report that read every scope, or a `get`
+that answered for every DIR; 1 on a refused key, a failed write, or a scope
+`status` could not read; 2 on a usage error (argparse's own).
+
+`get` refuses a key this checkout does not define and answers for every other
+one, including a DIR whose files it could not read — the two halves of the same
+rule.  A key nothing reads is a caller asking a question with no answer, and a
+fallback there hides a typo forever; an unreadable file already resolves to the
+built-in default everywhere else in the workbench, so reporting that is the
+truth rather than a degrade.  Unlike `set`, only this checkout's key surface is
+consulted: see `workbench_config.defines_key`.
 
 A stray key is reported and still exits 0.  It is the finding this command
 exists for, but the command's job is to show the config, and a report that
@@ -104,7 +146,69 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "status", help="show every scope, every value, and the file it came from",
     )
     reporter.set_defaults(run=_status)
+    reader = sub.add_parser(
+        "get", help="resolve one dotted key, for this repo or for each named one",
+    )
+    reader.add_argument("key", help="dotted key, e.g. issue_tracker.provider")
+    reader.add_argument(
+        "dir", nargs="*", metavar="DIR",
+        help="a repo's work-tree root; defaults to the caller's own",
+    )
+    reader.set_defaults(run=_get)
     return parser.parse_args(argv)
+
+
+# ``render_value`` writes "nothing is set" as an em dash, which is a reading for
+# a person looking at a table. A record another program parses says it with an
+# empty value field, so the only marker in the output is the caller's own — the
+# machine profile's "unset", a bash caller's fallback.
+_NO_VALUE = workbench_config.render_value(None)
+
+
+def _one_line(value: str) -> str:
+    """One value as a field of a one-line, tab-separated record.
+
+    Nothing the config surface types can hold a newline or a tab today, so the
+    collapse is what keeps that from being load-bearing: a key that grows into
+    a free-text string later cannot split the row a caller is reading.
+    """
+    return " ".join(value.split())
+
+
+def _resolve(key: str, project_root) -> tuple[str, str]:
+    """The scope that answered for ``key`` at ``project_root``, and its value.
+
+    ``config_status`` already collects a file it could not read rather than
+    raising, and returns no rows at all when the merged config will not type.
+    Both leave the built-in default standing, which is what every other reader
+    on the machine gets from ``load_config_or_default`` — so both report
+    ``DEFAULT_SCOPE`` here rather than an error the batch would have to carry.
+    """
+    try:
+        status = workbench_config.config_status(project_root)
+    except (workbench_config.ConfigError, OSError):
+        return workbench_config.DEFAULT_SCOPE, ""
+    row = next((entry for entry in status.keys if entry.key == key), None)
+    if row is None:
+        return workbench_config.DEFAULT_SCOPE, ""
+    value = _one_line(row.value)
+    if value == _NO_VALUE:
+        value = ""
+    if row.is_default:
+        return workbench_config.DEFAULT_SCOPE, value
+    return row.scope.name, value
+
+
+def _get(args: argparse.Namespace) -> int:
+    """Print one record per DIR: the scope that answered, the value, the DIR."""
+    if not workbench_config.defines_key(args.key):
+        raise workbench_config.ConfigKeyError(
+            f"{args.key} is not a key WorkbenchConfig defines",
+        )
+    for target in args.dir or [_project_root()]:
+        scope, value = _resolve(args.key, target)
+        print(f"{scope}\t{value}\t{target if target is not None else ''}")
+    return 0
 
 
 def _status(_args: argparse.Namespace) -> int:
@@ -132,7 +236,8 @@ def _status(_args: argparse.Namespace) -> int:
         value_width = max(len(row.value) for row in status.keys)
         print(f"\n{BOLD}Values{NC}")
         for row in status.keys:
-            source = "default" if row.is_default else row.scope.name
+            source = (workbench_config.DEFAULT_SCOPE if row.is_default
+                      else row.scope.name)
             tint = DIM if row.is_default else NC
             print(f"  {row.key:<{key_width}}  {row.value:<{value_width}}  "
                   f"{tint}{source}{NC}")

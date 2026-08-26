@@ -53,6 +53,21 @@ def git(repo_root: str, *args: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+# What the shared git dir at each key resolved to, for the life of the process.
+#
+# Every worktree of one bare repo names the same `--git-common-dir`, so a
+# caller walking a whole registry — `otto-workbench config get` over the
+# project list, the permission sweep — asks the same question once per repo
+# instead of once per checkout, and the two `rev-parse` reads behind it are
+# paid once.  The layout a repo is in does not change while a command runs, so
+# there is nothing to invalidate.
+#
+# Keyed on the shared git dir rather than on `repo_root`, because that is what
+# the worktrees have in common.  Populated only once git has named it, so a
+# directory that is not a repo yet is never remembered as one.
+_CONTAINERS: dict[str, str | None] = {}
+
+
 def container_dir(repo_root: str) -> str | None:
     """The directory holding the shared git dir, when it is not the worktree.
 
@@ -72,12 +87,23 @@ def container_dir(repo_root: str) -> str | None:
     the main checkout, and that checkout is a working tree with an owner — its
     `.claude/settings.json` is tracked, its `.workbench.yml` is committed —
     not an unreviewed file sitting outside every checkout.
+
+    Answers for a shared git dir already seen in this process come from
+    `_CONTAINERS` — see the note there for why that is safe and what it buys.
     """
     common = git(repo_root, 'rev-parse', '--git-common-dir')
+    if not common:
+        return None
+    shared = os.path.realpath(os.path.join(repo_root, common))
+    if shared in _CONTAINERS:
+        return _CONTAINERS[shared]
     toplevel = git(repo_root, 'rev-parse', '--show-toplevel')
-    if not common or not toplevel:
+    if not toplevel:
         return None
-    container = os.path.dirname(os.path.realpath(os.path.join(repo_root, common)))
+    container = os.path.dirname(shared)
     if container == os.path.realpath(toplevel):
-        return None
-    return None if git(container, 'rev-parse', '--show-toplevel') else container
+        found = None
+    else:
+        found = None if git(container, 'rev-parse', '--show-toplevel') else container
+    _CONTAINERS[shared] = found
+    return found

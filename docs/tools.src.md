@@ -271,7 +271,7 @@ pr [global flags] <command> [flags]
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
 | `ci [--fix] [--post]` | Fetch and classify CI failures; `--fix` attempts automated repair, `--post` pushes the fix |
 | `review [--self] [--fix] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
-| `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
+| `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post] [--settle <id> --as <outcome>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort] [--onto <ref>]` | Rebase onto the branch's base — `--onto`, else the PR's base branch, else the repo's default branch |
 | `describe [--force] [--dry-run]` | Revise the PR description against the repo's PR template |
@@ -288,8 +288,8 @@ env keys are derived from the phase name, so the list here is the registry's.
 
 **`pr comments` flags fall on two axes — phase and gate:**
 
-The phase flags (`--triage`, `--fix`, `--finish`, `--reply`) choose which work
-the run does. `--post` is the gate: it decides whether that work leaves the
+The phase flags (`--triage`, `--fix`, `--finish`, `--reply`, `--settle`) choose
+which work the run does. `--post` is the gate: it decides whether that work leaves the
 machine. Every phase drafts to stderr and publishes nothing without it, so
 `--post` neither implies a phase nor is implied by one. `--finish --post` is
 therefore not saying the same thing twice — the first names the work, the
@@ -333,6 +333,40 @@ reviewer's finding was triaged and postponed — so the selection is the user's,
 per thread. A `--finish` logs the deferral ids it left unfiled, whether the
 selection was empty or partial. Naming an id that is not a deferred thread is an
 error rather than a silent skip, so a typo cannot pass for agreement.
+
+**`--settle` records a thread you handled yourself:**
+
+`--fix` marks a thread `needs_human` when it is contested, ambiguous, or too
+complex to attempt, and marks it `deferred` when it ran out of budget. Either
+way the ending is usually the same: you write the fix, commit it, and push. None
+of that reaches the snapshot, so `--finish` goes on reporting a settled thread as
+open — no reply, no resolution, an Action cell reading `Needs discussion`, and a
+closeout `pr status` keeps quoting as owed.
+
+`--settle <id>` is how you tell the CLI what you did. It is repeatable, and
+`--as` picks which of the three terminal outcomes to record — `fixed` (the
+default), `dismissed`, or `already_addressed`. From there the thread is
+indistinguishable from one the pass settled: `--finish` replies on it, resolves
+it, and gives it a summary row attributed to the commit that carries the change.
+
+- `--as dismissed` requires `--reason <text>`, which becomes the body of the
+  reply. Telling a reviewer their point does not apply, with nothing for them to
+  argue with, is worse than not replying. The other two outcomes render no
+  reason and refuse the flag rather than swallowing it.
+- `--as fixed` finds the commit itself, from the branch history of the line the
+  thread is anchored to, and cites it only once the remote has it — a link to a
+  commit still sitting on your machine 404s for the reviewer it was written for.
+  Pass `--commit <sha>` when the fix landed somewhere else; a `--commit` the
+  remote does not hold is an error rather than a dropped citation. When neither
+  resolves, the row reads `Addressed outside the fix pass` and the run says so.
+- Naming an id no fix pass recorded is an error listing the threads that are
+  waiting on a person, for the same reason `--track` errors on one. Recording
+  the outcome a thread already carries is a no-op that says so; recording a
+  different terminal outcome replaces it and reports what it replaced.
+
+Recording is its own step, so `--settle` publishes nothing and refuses `--post`
+and every other phase flag alongside it. Run it, read the state back, then run
+`pr comments --finish --post` — the same gate every other write here answers to.
 
 **Replies are one per thread:**
 

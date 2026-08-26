@@ -8,6 +8,7 @@ Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --triage
   review-threads --fix
+  review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish
 """
 
@@ -1023,11 +1024,12 @@ def _attribute_commit(
 def _stamp_pass_commit(fixed: list[CommentItem], sha: str) -> None:
     """Record the pass's commit on the entries it just landed.
 
-    The single writer of thread → commit attribution — no other code sets
-    `entry.commit_sha`. Everything downstream reads it back through
-    `_attribute_commit` instead of re-deriving a SHA from whichever pass
-    happens to be running, which is how a row fixed three rounds ago came to
-    be credited to today's commit.
+    The only place a *pass* attributes a thread to a commit — `_run_settle` is
+    the other writer of `commit_sha`, and it writes the operator's answer rather
+    than the pass's. Everything downstream reads the field back through
+    `_attribute_commit` instead of re-deriving a SHA from whichever pass happens
+    to be running, which is how a row fixed three rounds ago came to be credited
+    to today's commit.
 
     Idempotent by design, not by accident: an entry that already names a
     commit keeps it, so calling this again on the same entries (e.g. once
@@ -1632,12 +1634,42 @@ _HANDLED_REPLY_PREFIXES = (
 # names are not the same mechanism.
 _RECONCILED_REASON = "reconciled: handled outside the fix pass"
 
+# Reason stamped on an outcome the operator settled by hand and told the CLI
+# about with --settle. Read back by _fixed_status_for for the reason
+# _RECONCILED_REASON is: the fix pass did not land this work, so its commit must
+# not be credited for it.
+#
+# The two are kept apart because they are different evidence. Reconciliation is
+# the tool inferring a settlement from what GitHub shows; this is the operator
+# stating one. Only the second can be trusted for a thread nobody has replied to
+# yet, which is exactly the thread --settle exists for.
+_SETTLED_REASON = "settled: recorded by hand"
+
+# Every reason that says a FIXED row landed outside the fix pass. Such a row can
+# still name a commit — both paths resolve one where they can — but when neither
+# could, the cell says the work was handled rather than crediting whatever the
+# running pass happened to commit.
+_HANDLED_OUTSIDE_REASONS = frozenset({_RECONCILED_REASON, _SETTLED_REASON})
+
+# The terminal outcomes --settle can record. Each is one of the three the
+# closeout knows how to reply to, which is the whole point of recording one: the
+# thread rejoins the ordinary path instead of staying open for the life of the
+# PR. DEFERRED is deliberately absent — it is already reachable, through
+# --track, and it says work is still owed rather than settled.
+_SETTLE_OUTCOMES = (
+    FixOutcome.FIXED,
+    FixOutcome.DISMISSED,
+    FixOutcome.ALREADY_ADDRESSED,
+)
+
 # The outcomes a later run re-checks against GitHub before republishing them.
 # Each records work someone still owes, and each has an ending the tool never
 # sees — an operator who fixes the thread by hand, a reviewer who accepts the
 # answer and resolves it. DECLINED sits here for the same reason NEEDS_HUMAN
 # does: the pass handed the thread to a person, so a person settling it is the
-# expected ending rather than the exception.
+# expected ending rather than the exception. This is also the set --settle
+# offers when an id it was given matches nothing: reconciliation infers those
+# endings from GitHub, and --settle is how the operator states one outright.
 _UNSETTLED_OUTCOMES = (
     FixOutcome.DEFERRED,
     FixOutcome.NEEDS_HUMAN,
@@ -2251,11 +2283,11 @@ def _fixed_status_for(
     attribution = _attribute_commit(entry, cp, history, thread)
     if attribution.cited:
         return _fixed_in_cell(attribution.sha, repo)
-    # A row reconciled at drain time was settled by hand or by the reviewer, and
-    # the commit that did it is not recorded anywhere. That is true of the row
-    # whatever the running pass did, so it is answered before the pass-level
-    # text gets a say.
-    if getattr(entry, "reason", "") == _RECONCILED_REASON:
+    # A row settled outside the pass — reconciled at drain time, or recorded by
+    # the operator with --settle — landed in a commit this run could not resolve.
+    # That is true of the row whatever the running pass did, so it is answered
+    # before the pass-level text gets a say.
+    if getattr(entry, "reason", "") in _HANDLED_OUTSIDE_REASONS:
         return _RECONCILED_STATUS_TEXT
     if attribution.claim is CommitClaim.PASS:
         return _fixed_status_text(cp, repo)
@@ -4758,15 +4790,254 @@ def _run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | No
     return 0
 
 
+@dataclass(frozen=True)
+class _SettledCommit:
+    """The commit a hand-settled fix may cite, or why it may cite none.
+
+    Three answers, not two: a commit to name, no commit to name, and an operator
+    to stop. Only the last is an error — a settlement whose commit cannot be
+    resolved is still worth recording, it just renders without a link.
+    """
+
+    sha: str = ""
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+
+def _resolve_settled_commit(
+    wt_path: Path, outcome: ItemOutcome, explicit: str,
+) -> _SettledCommit:
+    """Which commit carries a fix the operator landed by hand.
+
+    Resolved here rather than at render time, and the difference matters: this
+    is the one moment the worktree, the remote and the operator are all
+    available to ask. A SHA inferred while rendering the closeout could name a
+    commit that never left the machine, and the reply citing it would 404 for
+    the reviewer it was written for.
+
+    `explicit` is the operator overriding the inference, for a fix that landed
+    somewhere other than the line the thread is anchored to. It is held to a
+    stricter standard than the inferred answer for the same reason: they named
+    that commit, so silently declining to cite it would leave them reading a row
+    that says less than they asked it to.
+
+    The answer comes back abbreviated, because that is the width every other SHA
+    this command persists carries — see `_pass_commit`. Git is asked in full
+    first: `push.holds` compares ancestry, and an operator may well have typed a
+    tag or a branch name rather than a SHA at all.
+    """
+    if explicit:
+        sha = git_client.out(
+            "rev-parse", "--verify", "--quiet", f"{explicit}^{{commit}}", cwd=wt_path,
+        )
+        if not sha:
+            return _SettledCommit(
+                error=f"--commit names no commit in this worktree: {explicit}"
+            )
+        if not push.holds(wt_path, sha):
+            return _SettledCommit(error=(
+                f"--commit {git_client.abbrev(sha)} is not on the remote — push it "
+                f"first, or the reply citing it sends the reviewer to a 404"
+            ))
+        return _SettledCommit(sha=git_client.abbrev(sha))
+    sha = _find_addressing_commit(wt_path, outcome.file, outcome.line) or ""
+    if sha and push.holds(wt_path, sha):
+        return _SettledCommit(sha=git_client.abbrev(sha))
+    return _SettledCommit()
+
+
+def _settle_targets(record: FixRecord, targets: list[str]) -> list[ItemOutcome] | None:
+    """The recorded outcomes `--settle` named, or None once it has said what is missing.
+
+    Every id is checked before any is written. A run that settled the first two
+    of three and exited on a typo in the fourth would leave the operator to work
+    out which half landed, which is the state surgery this command exists to
+    replace.
+
+    An unknown id is an error rather than a silent skip, for the reason
+    `_validate_track` gives: "settled nothing" and "settled the thread you meant"
+    are indistinguishable from the outside, so a typo would read as agreement.
+    """
+    by_id = {o.id: o for o in record.items if o.id}
+    unknown = sorted({t for t in targets if t not in by_id})
+    if not unknown:
+        return [by_id[t] for t in targets]
+    log.error(f"--settle named threads the fix pass never recorded: {unknown}")
+    settleable = sorted(o.id for o in record.items if o.outcome in _UNSETTLED_OUTCOMES)
+    log.info(
+        f"Threads a person still owes an answer: {', '.join(settleable)}"
+        if settleable else "No thread in the fix snapshot is waiting on a person."
+    )
+    return None
+
+
+def _record_settlement(
+    outcome: ItemOutcome, kind: FixOutcome, reason: str, sha: str,
+) -> bool:
+    """Write one settlement onto its recorded outcome. False when it said this already.
+
+    The whole triple decides: an outcome re-settled the same way but with a
+    commit that has since become resolvable has changed, and reporting it as a
+    no-op would leave a row uncited that could now name its commit.
+
+    A resolved SHA replaces nothing when there is none to replace — an earlier
+    round's attribution outlives a re-settle that could not improve on it.
+    """
+    before = (outcome.outcome, outcome.reason, outcome.commit_sha)
+    outcome.outcome = kind
+    # The operator's words for a dismissal, because that is the one settlement
+    # whose reply is an argument the reviewer may answer. The other two render
+    # from the summary, so their reason carries provenance instead.
+    outcome.reason = reason if kind is FixOutcome.DISMISSED else _SETTLED_REASON
+    outcome.commit_sha = sha or outcome.commit_sha
+    return (outcome.outcome, outcome.reason, outcome.commit_sha) != before
+
+
+def _settled_commits(
+    wt_path: Path, picked: list[ItemOutcome], kind: FixOutcome, commit: str,
+) -> list[str] | None:
+    """One citation per settlement, or None once one of them has failed to resolve.
+
+    Every commit is resolved before any outcome is written, for the reason
+    `_settle_targets` checks every id before any is written: a run that settles
+    two of three and stops on the third leaves the operator to work out which
+    half landed. Nothing here mutates an outcome, so returning None discards the
+    whole run rather than half of it.
+
+    Only a fix cites a commit — the other two settlements render from the
+    summary — so the rest come back uncited without git being asked at all.
+    """
+    if kind is not FixOutcome.FIXED:
+        return ["" for _ in picked]
+    resolved = [_resolve_settled_commit(wt_path, o, commit) for o in picked]
+    failed = next((r for r in resolved if not r.ok), None)
+    if failed:
+        log.error(failed.error)
+        return None
+    return [r.sha for r in resolved]
+
+
+def _report_settlement(
+    outcome: ItemOutcome, kind: FixOutcome, was: FixOutcome, sha: str,
+) -> None:
+    """Say what was recorded, what it replaced, and how the closeout will render it.
+
+    The uncited case earns its own line because the operator's next move depends
+    on it: the row is settled either way, but it names no commit until the fix is
+    pushed or `--commit` points at the one that carries it.
+    """
+    replaced = f" (was {was.value})" if was != kind else ""
+    cited = f", fixed in {sha}" if sha else ""
+    log.info(f"{outcome.id}: recorded as {kind.value}{replaced}{cited}")
+    if kind is FixOutcome.FIXED and not sha:
+        log.info(
+            f"{outcome.id}: no pushed commit found for {outcome.file}:"
+            f"{outcome.line} — the summary row will read "
+            f"\"{_RECONCILED_STATUS_TEXT}\". Push the fix and re-run "
+            f"--settle, or name it with --commit, to cite it"
+        )
+
+
+def _settle_flag_error(kind: FixOutcome, reason: str, commit: str) -> str:
+    """What is wrong with this combination of --as, --reason and --commit, or "".
+
+    A flag that does not apply is refused rather than ignored. An operator who
+    typed a justification and watched the run succeed has every reason to
+    believe the reviewer will read it.
+    """
+    if kind is FixOutcome.DISMISSED and not reason:
+        return (
+            "--as dismissed needs --reason: a dismissal that tells the reviewer "
+            "their point does not apply, and gives them nothing to argue with, "
+            "is worse than no reply at all"
+        )
+    if reason and kind is not FixOutcome.DISMISSED:
+        return f"--reason is only read for --as dismissed; --as {kind.value} renders none"
+    if commit and kind is not FixOutcome.FIXED:
+        return f"--commit is only read for --as fixed; --as {kind.value} cites no commit"
+    return ""
+
+
+def _run_settle(
+    ctx: pr_context.ResolvedContext,
+    targets: list[str],
+    as_name: str,
+    reason: str,
+    commit: str,
+) -> int:
+    """Record that the operator settled these threads by hand.
+
+    The ending the fix pass cannot see. A thread it routed to a person is
+    settled off the tool's surface — the operator writes the fix, commits it,
+    pushes — and nothing in that sequence reaches the snapshot, so the closeout
+    goes on reporting a thread that has been dealt with as awaiting discussion.
+
+    Local state only, and deliberately so: `--post` gates every other write, and
+    a command that recorded *and* published in one step would leave the operator
+    no way to read the closeout back before it left the machine. What this leaves
+    behind is a snapshot `--finish` treats like any other settled thread.
+    """
+    kind = FixOutcome(as_name)
+    flag_error = _settle_flag_error(kind, reason, commit)
+    if flag_error:
+        log.error(flag_error)
+        return 1
+
+    wt_path = ctx.require_worktree()
+    state = pr_state.load_state(ctx.target_dir)
+    if state is None or not state.fix.fix.items:
+        log.error(
+            "No fix snapshot to settle against — run `pr comments --fix` first"
+        )
+        return 1
+
+    picked = _settle_targets(state.fix.fix, targets)
+    if picked is None:
+        return 1
+
+    shas = _settled_commits(wt_path, picked, kind, commit)
+    if shas is None:
+        return 1
+
+    settled = 0
+    for outcome, sha in zip(picked, shas):
+        was = outcome.outcome
+        if not _record_settlement(outcome, kind, reason, sha):
+            log.info(f"{outcome.id}: already recorded as {kind.value} — nothing to do")
+            continue
+        settled += 1
+        _report_settlement(outcome, kind, was, sha)
+
+    if not settled:
+        return 0
+
+    # Both flags are what --finish reads before it does anything: the reply queue
+    # early-returns unless replies are pending, and the summary renderer
+    # early-returns unless one is deferred. Re-arming them is also what puts the
+    # closeout back on `pr status`, which is correct — the PR is owed a reply and
+    # a corrected summary again.
+    state.fix.replies_pending = True
+    state.fix.summary_deferred = True
+    pr_state.save_state(ctx.target_dir, state)
+    log.info(
+        f"Recorded {settled} settled thread(s) — next: "
+        f"{pr_comments_fix.CLOSEOUT_COMMAND}"
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     # Two axes, and the help text has to keep them apart: --triage/--fix/--finish
-    # /--reply choose the work, --post decides whether it leaves the machine.
-    # Read as peers, `--finish --post` looks like it says publish twice, and the
-    # pair gets typed as one unit — which is how a bare --finish stops being the
-    # way to preview a closeout.
+    # /--reply/--settle choose the work, --post decides whether it leaves the
+    # machine. Read as peers, `--finish --post` looks like it says publish twice,
+    # and the pair gets typed as one unit — which is how a bare --finish stops
+    # being the way to preview a closeout.
     parser = argparse.ArgumentParser(
         description="PR review threads. Phase flags (--triage/--fix/--finish/"
-                    "--reply) pick the work; --post publishes it.")
+                    "--reply/--settle) pick the work; --post publishes it.")
     parser.add_argument("--pr", help="PR number")
     parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
     parser.add_argument("--triage", action="store_true",
@@ -4797,6 +5068,21 @@ def _build_parser() -> argparse.ArgumentParser:
                              "other: needs --post to leave the machine")
     parser.add_argument("--body-file", metavar="PATH",
                         help="File holding the --reply body ('-' for stdin)")
+    parser.add_argument("--settle", action="append", default=[], metavar="THREAD_ID",
+                        help="Phase: record that you settled this thread by hand "
+                             "(repeatable). Writes local state and nothing else; "
+                             "--finish then replies, resolves and reports it like "
+                             "any other settled thread")
+    parser.add_argument("--as", dest="settle_as", default=FixOutcome.FIXED.value,
+                        choices=[o.value for o in _SETTLE_OUTCOMES],
+                        help="What --settle records (default: fixed)")
+    parser.add_argument("--reason", metavar="TEXT",
+                        help="Why, for --settle --as dismissed — it becomes the "
+                             "reply the reviewer reads")
+    parser.add_argument("--commit", metavar="SHA",
+                        help="The commit carrying a --settle --as fixed change, "
+                             "for a fix that landed away from the line the thread "
+                             "is anchored to (default: inferred from that line)")
     add_trail_args(parser)
     return parser
 
@@ -4806,11 +5092,29 @@ def main():
     handle_value_flags(parser)
     args = parser.parse_args()
 
+    # Before --fix widens itself into --triage, so the conflict named is the one
+    # that was typed.
+    if args.settle:
+        conflicting = [
+            name for name, on in (
+                ("--triage", args.triage), ("--fix", args.fix),
+                ("--finish", args.finish), ("--reply", bool(args.reply)),
+                ("--post", args.post),
+            ) if on
+        ]
+        if conflicting:
+            log.error(
+                f"--settle records local state and publishes nothing, so it cannot "
+                f"run with {', '.join(conflicting)}. Record the settlement, read "
+                f"it back, then run `{pr_comments_fix.CLOSEOUT_COMMAND}`"
+            )
+            sys.exit(1)
+
     if args.fix:
         args.triage = True
     if args.post:
         publishing.enable()
-    else:
+    elif not args.settle:
         log.info("Draft mode — nothing is posted to GitHub. Re-run with --post to publish.")
 
     ctx = pr_context.resolve(
@@ -4824,6 +5128,10 @@ def main():
 
     if args.reply:
         sys.exit(_run_reply(ctx, args.reply, args.body_file))
+    if args.settle:
+        sys.exit(_run_settle(
+            ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
+        ))
     branch = ctx.branch
     # Called for its raise, not its value: a bare-repo run must fail here,
     # before the lock and the trail.

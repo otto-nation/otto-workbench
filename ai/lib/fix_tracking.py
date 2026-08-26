@@ -32,20 +32,47 @@ what the agent saw.
 from __future__ import annotations
 
 import re
+import textwrap
 from pathlib import Path
+from typing import NamedTuple
 
 from fix_types import FixItem
 from pr_fix import FixOutcome, ItemOutcome
+
+
+class _Box(NamedTuple):
+    """One box, in the label the file writes and the sentence the prompt uses.
+
+    Both halves sit on the same record so a box cannot exist in one and not the
+    other: a label with no contract beside it would render an ask no prompt
+    explains, and a contract with no label would explain a box nothing writes.
+    """
+
+    label: str
+    outcome: FixOutcome
+    contract: str
 
 
 # The boxes offered for each item, in the order they are rendered and the order
 # a contradiction is resolved in. FIXED leads because it is the only one of the
 # three that is a fact about the tree rather than a position about the item: an
 # agent that both applied a fix and argued against the item still applied it.
-_BOXES: tuple[tuple[str, FixOutcome], ...] = (
-    ("fixed", FixOutcome.FIXED),
-    ("declined", FixOutcome.DECLINED),
-    ("needs a person", FixOutcome.NEEDS_HUMAN),
+#
+# The contract sentences are held here, rather than in the templates, because
+# the label each one explains is here: a box renamed and explained in three
+# prompt files is three places to remember, which is the drift the shared render
+# exists to prevent. `{noun}` is what the calling domain calls one item. The
+# examples of what earns each box are the domain's and stay in its own template.
+_BOXES: tuple[_Box, ...] = (
+    _Box("fixed", FixOutcome.FIXED,
+         "you applied the change. Apply it with the Edit tool on the source "
+         "file first"),
+    _Box("declined", FixOutcome.DECLINED,
+         "you read the {noun} and it should not be acted on. Replace `<why>` "
+         "with the reason, in one sentence"),
+    _Box("needs a person", FixOutcome.NEEDS_HUMAN,
+         "the {noun} is real but the call is not yours. Replace `<why>` with "
+         "what the decision turns on"),
 )
 
 # What the render leaves where the agent writes its reason. Parsed back to an
@@ -56,24 +83,6 @@ _WHY = "<why>"
 # FIXED needs no reason — the change speaks for itself — so it is rendered as a
 # bare box and the other two ask for one.
 _REASONED = frozenset({FixOutcome.DECLINED, FixOutcome.NEEDS_HUMAN})
-
-# What each box means, in the sentence `instructions` puts beside its label.
-# Held here rather than in the templates because the label it explains is here:
-# a box renamed in `_BOXES` and explained in three prompt files is three places
-# to remember, which is the drift the shared render exists to prevent. `{noun}`
-# is what the calling domain calls one item. The examples of what belongs in
-# each box are the domain's and stay in the domain's own template.
-_CONTRACT: dict[FixOutcome, str] = {
-    FixOutcome.FIXED:
-        "you applied the change. Apply it with the Edit tool on the source "
-        "file first",
-    FixOutcome.DECLINED:
-        "you read the {noun} and it should not be acted on. Replace `<why>` "
-        "with the reason, in one sentence",
-    FixOutcome.NEEDS_HUMAN:
-        "the {noun} is real but the call is not yours. Replace `<why>` with "
-        "what the decision turns on",
-}
 
 _SECTION_RE = re.compile(
     r"^## <!-- fix:(?P<id>[^\s>]+) -->[ ]*(?P<heading>.*)$", re.MULTILINE,
@@ -86,7 +95,7 @@ _SECTION_RE = re.compile(
 # seen at all.
 _BOX_RE = re.compile(
     r"^- \[(?P<mark>[ xX])\] (?P<label>%s)(?P<rest>[^\w\n].*)?$"
-    % "|".join(re.escape(label) for label, _ in _BOXES),
+    % "|".join(re.escape(box.label) for box in _BOXES),
     re.MULTILINE,
 )
 
@@ -104,6 +113,11 @@ _LOCATION_RE = re.compile(r"^(?P<file>.+):(?P<line>\d+)$")
 _HEADING_SEP = " — "
 
 
+def _suffix(box: _Box) -> str:
+    """What the render leaves after a box's label for the agent to fill in."""
+    return f" — {_WHY}" if box.outcome in _REASONED else ""
+
+
 def render(title: str, items: list[FixItem]) -> str:
     """The tracking file for `items`, under `title`, as markdown.
 
@@ -118,9 +132,8 @@ def render(title: str, items: list[FixItem]) -> str:
             heading += f"{_HEADING_SEP}{item.label}"
         body = item.body.strip()
         section = heading + "\n\n" + (f"{body}\n\n" if body else "")
-        for label, outcome in _BOXES:
-            suffix = f" — {_WHY}" if outcome in _REASONED else ""
-            section += f"- [ ] {label}{suffix}\n"
+        for box in _BOXES:
+            section += f"- [ ] {box.label}{_suffix(box)}\n"
         sections.append(section)
     return "\n".join(sections)
 
@@ -138,29 +151,21 @@ def instructions(noun: str) -> str:
     with their pipelines, and a prompt that asks for a box `parse` no longer
     looks for fails silently — every item comes back reading as work still owed.
     """
-    lines = [
-        f"Every {noun} above carries three boxes. Answer each one by ticking "
-        "exactly one of them",
-        "with the Edit tool, in the tracking file, having read the file it "
-        "points at first:",
-        "",
-    ]
-    for label, outcome in _BOXES:
-        suffix = f" — {_WHY}" if outcome in _REASONED else ""
-        lines.append(
-            f"- `- [x] {label}{suffix}` — {_CONTRACT[outcome].format(noun=noun)}",
-        )
-    lines.extend([
-        "",
-        f"Leave all three boxes unticked only for a {noun} you never got to. "
-        "That reads as",
-        f"work still owed and the {noun} is handed to another pass, so use it "
-        "for what you",
-        f"ran out of turns for — never as a way to pass over a {noun} you read "
-        "and had an",
-        "answer for.",
-    ])
-    return "\n".join(lines)
+    boxes = "\n".join(
+        f"- `- [x] {box.label}{_suffix(box)}` — {box.contract.format(noun=noun)}"
+        for box in _BOXES
+    )
+    return textwrap.dedent("""\
+        Every {noun} above carries three boxes. Answer each one by ticking exactly
+        one of them with the Edit tool, in the tracking file, having read the file
+        it points at first:
+
+        {boxes}
+
+        Leave all three boxes unticked only for a {noun} you never got to. That
+        reads as work still owed and the {noun} is handed to another pass, so use
+        it for what you ran out of turns for — never as a way to pass over a
+        {noun} you read and had an answer for.""").format(noun=noun, boxes=boxes)
 
 
 def write(path: Path, title: str, items: list[FixItem]) -> None:
@@ -249,11 +254,11 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
         for box in _BOX_RE.finditer(body)
         if box.group("mark") in "xX"
     }
-    for label, outcome in _BOXES:
-        if label not in ticked:
+    for box in _BOXES:
+        if box.label not in ticked:
             continue
-        into.outcome = outcome
-        into.reason = ticked[label] if outcome in _REASONED else ""
+        into.outcome = box.outcome
+        into.reason = ticked[box.label] if box.outcome in _REASONED else ""
         return
 
 

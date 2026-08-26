@@ -587,9 +587,13 @@ class TestOutputBlockContract:
         same way — each only has to still be talking about all of them.
         """
         task = _FIX_RENDERERS[render](cc, rt, tmp_path).split("## Task", 1)[1]
-        for label, outcome in fix_tracking._BOXES:
-            why = f" — {fix_tracking._WHY}" if outcome in fix_tracking._REASONED else ""
-            assert f"`- [x] {label}{why}`" in task, label
+        for box in fix_tracking._BOXES:
+            why = (
+                f" — {fix_tracking._WHY}"
+                if box.outcome in fix_tracking._REASONED
+                else ""
+            )
+            assert f"`- [x] {box.label}{why}`" in task, box.label
 
 
 class TestSharedSectionNames:

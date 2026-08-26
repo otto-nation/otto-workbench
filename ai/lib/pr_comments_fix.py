@@ -173,7 +173,7 @@ class FixSummary(Domain):
             return _serde_from_dict(cls, data)
 
         record = dict(data.pop("fix", None) or {})
-        reviewers = dict(data.get("reviewers") or {})
+        reviewers = dict(data.pop("reviewers", None) or {})
         items = []
         for entry in data.pop("threads", None) or []:
             thread = dict(entry or {})

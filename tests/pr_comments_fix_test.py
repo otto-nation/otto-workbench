@@ -28,8 +28,12 @@ def _summary(*outcomes: FixOutcome, **kwargs) -> pr_comments_fix.FixSummary:
     Ids are positional, so a caller that only cares about the verdicts does not
     have to invent them — the counts every renderer here reads come off the
     outcomes, and the ids only have to be distinct enough not to fold together.
+    That is why this takes verdicts where the `_fix` helpers in
+    `pr_state_test` and `test_review_threads` take whole `ItemOutcome`s: those
+    suites are about what the record holds, and this one is about what the
+    domain says over it.
     """
-    record = kwargs.pop("fix", None) or FixRecord()
+    record = kwargs.pop("fix", FixRecord())
     record.items = [
         ItemOutcome(id=f"t{n}", outcome=outcome)
         for n, outcome in enumerate(outcomes, start=1)

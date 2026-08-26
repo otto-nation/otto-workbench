@@ -1114,15 +1114,23 @@ def test_a_verdict_keyed_on_an_empty_sha_matches_nothing():
     assert not SupersessionDomain(head_sha="a" * 40).matches("a" * 40, "")
 
 
-def _fix(*items: ItemOutcome, record=None, **kwargs) -> FixSummary:
+def _fix(
+    *items: ItemOutcome, commit_sha="", commit_status=None, head_sha="", **kwargs,
+) -> FixSummary:
     """A comment fix pass carrying one record, spelled as the domain now holds it.
 
-    `record` supplies the envelope fields — the commit and the head it was taken
-    against — so a caller that only cares about the outcomes names none of them.
+    Same shape as `test_review_threads._fix`: the record's envelope fields stay
+    keywords rather than a nested `FixRecord` literal, so a caller that only
+    cares about the outcomes names none of them and one that names a commit is
+    making a point about the commit, not about which object holds it.
     """
-    record = record or FixRecord()
-    record.items = list(items)
-    return FixSummary(fix=record, **kwargs)
+    return FixSummary(
+        fix=FixRecord(
+            items=list(items), commit_sha=commit_sha,
+            commit_status=commit_status, head_sha=head_sha,
+        ),
+        **kwargs,
+    )
 
 
 def test_legacy_thread_id_key_loads_as_id():
@@ -1150,11 +1158,11 @@ def test_accumulated_outcomes_keep_their_own_shas():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, _fix(
         ItemOutcome(id="t1", commit_sha="1111111", outcome=FixOutcome.FIXED),
-        record=FixRecord(commit_sha="1111111"),
+        commit_sha="1111111",
     ))
     apply(state, _fix(
         ItemOutcome(id="t2", commit_sha="2222222", outcome=FixOutcome.FIXED),
-        record=FixRecord(commit_sha="2222222"),
+        commit_sha="2222222",
     ))
     by_id = {o.id: o.commit_sha for o in state.fix.fix.items}
     assert by_id == {"t1": "1111111", "t2": "2222222"}
@@ -1173,14 +1181,14 @@ def test_apply_fix_replaces_scalar_fields():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, _fix(
         ItemOutcome(id="t1", outcome=FixOutcome.FIXED),
-        record=FixRecord(commit_sha="abc", commit_status=CommitStatus.PUSHED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         updated_at="t1",
     ))
     assert state.fix.fix.commit_sha == "abc"
     assert len(state.fix.fix.items) == 1
     assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
     apply(state, _fix(
-        record=FixRecord(commit_sha="", commit_status=CommitStatus.NO_CHANGES),
+        commit_sha="", commit_status=CommitStatus.NO_CHANGES,
         updated_at="t2",
     ))
     assert state.fix.fix.commit_sha == ""
@@ -1189,25 +1197,25 @@ def test_apply_fix_replaces_scalar_fields():
 
 
 def test_apply_fix_accumulates_outcomes_across_rounds():
-    """A later pass must not drop threads processed in an earlier one."""
+    """A later pass must not drop the items an earlier one recorded."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, _fix(
         ItemOutcome(id="t1", outcome=FixOutcome.FIXED),
         ItemOutcome(id="t2", outcome=FixOutcome.DISMISSED),
-        record=FixRecord(commit_sha="abc", commit_status=CommitStatus.PUSHED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         updated_at="t1",
     ))
     apply(state, _fix(
         ItemOutcome(id="t3", outcome=FixOutcome.ALREADY_ADDRESSED),
-        record=FixRecord(commit_status=CommitStatus.NO_CHANGES),
+        commit_status=CommitStatus.NO_CHANGES,
         updated_at="t2",
     ))
     assert [o.id for o in state.fix.fix.items] == ["t1", "t2", "t3"]
     assert state.fix.fix.items[2].outcome == FixOutcome.ALREADY_ADDRESSED
 
 
-def test_apply_fix_supersedes_same_thread():
-    """Re-processing a thread replaces its earlier outcome rather than duplicating it."""
+def test_apply_fix_supersedes_the_same_item():
+    """Re-processing an item replaces its earlier outcome rather than duplicating it."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, _fix(
         ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED, reason="too complex"),
@@ -1215,7 +1223,7 @@ def test_apply_fix_supersedes_same_thread():
     ))
     apply(state, _fix(
         ItemOutcome(id="t1", outcome=FixOutcome.FIXED),
-        record=FixRecord(commit_sha="abc", commit_status=CommitStatus.PUSHED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         updated_at="t2",
     ))
     assert len(state.fix.fix.items) == 1
@@ -1268,7 +1276,7 @@ def test_state_roundtrip_with_fix_data():
             summary="needs design",
             outcome=FixOutcome.NEEDS_HUMAN, reason="contested",
         ),
-        record=FixRecord(commit_sha="abc1234", commit_status=CommitStatus.PUSHED),
+        commit_sha="abc1234", commit_status=CommitStatus.PUSHED,
         reviewers={"t1": "alice", "t2": "bob", "t3": "charlie"},
         replies_posted=2, summary_url="https://github.com/r/p/issues/1#comment",
         deferred_issue_id="ENG-456",
@@ -1300,7 +1308,7 @@ def test_save_preserves_fix_data(worktree):
     apply(state, _fix(
         ItemOutcome(id="t1", file="a.go", outcome=FixOutcome.FIXED),
         ItemOutcome(id="t2", file="b.go", outcome=FixOutcome.DISMISSED, reason="invalid"),
-        record=FixRecord(commit_sha="def456", commit_status=CommitStatus.PUSHED),
+        commit_sha="def456", commit_status=CommitStatus.PUSHED,
         replies_posted=1,
         updated_at="2026-07-14T00:00:00+00:00",
     ))
@@ -1320,7 +1328,7 @@ def test_already_addressed_outcome_roundtrips(worktree):
             id="t1", file="a.go", outcome=FixOutcome.ALREADY_ADDRESSED,
             reason="the constructor already injects the logger",
         ),
-        record=FixRecord(commit_status=CommitStatus.NO_CHANGES),
+        commit_status=CommitStatus.NO_CHANGES,
         updated_at="2026-07-14T00:00:00+00:00",
     ))
     save_state(worktree, state)
@@ -1372,7 +1380,7 @@ def test_apply_fix_preserves_deferred_issue_across_rounds():
     ))
     apply(state, _fix(
         ItemOutcome(id="t2", outcome=FixOutcome.FIXED),
-        record=FixRecord(commit_sha="abc", commit_status=CommitStatus.PUSHED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         updated_at="t2",
     ))
     assert state.fix.deferred_issue_id == "ENG-456"
@@ -1388,7 +1396,7 @@ def test_apply_fix_preserves_an_unfiled_deferred_issue_across_rounds():
     ))
     apply(state, _fix(
         ItemOutcome(id="t2", outcome=FixOutcome.FIXED),
-        record=FixRecord(commit_sha="abc", commit_status=CommitStatus.PUSHED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         updated_at="t2",
     ))
     assert state.fix.deferred_issue_pending is True
@@ -1407,12 +1415,12 @@ def test_apply_fix_preserves_summary_url_across_quiet_rounds():
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
     apply(state, _fix(
         ItemOutcome(id="t1", outcome=FixOutcome.FIXED),
-        record=FixRecord(commit_sha="abc", commit_status=CommitStatus.PUSHED),
+        commit_sha="abc", commit_status=CommitStatus.PUSHED,
         summary_url="https://github.com/r/p/pull/1#issuecomment-1",
         updated_at="t1",
     ))
     apply(state, _fix(
-        record=FixRecord(commit_status=CommitStatus.NO_CHANGES), updated_at="t2",
+        commit_status=CommitStatus.NO_CHANGES, updated_at="t2",
     ))
     assert state.fix.summary_url == "https://github.com/r/p/pull/1#issuecomment-1"
     assert state.fix.summary_deferred is False

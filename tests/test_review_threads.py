@@ -4830,7 +4830,7 @@ class TestCarriedOverRows:
 class TestPublishedRowsSurviveTheEdit:
     """State is per-worktree; the comment is the record of rounds it never saw."""
 
-    def _fix(self, **overrides):
+    def _state_fix(self, **overrides):
         defaults = dict(
             items=[ItemOutcome(id="t2", summary="round two work", file="new.go",
                                line=1, outcome=FixOutcome.FIXED)],
@@ -4840,7 +4840,7 @@ class TestPublishedRowsSurviveTheEdit:
         return _fix(**defaults)
 
     def _render(self, rt, published):
-        state = _make_state(self._fix())
+        state = _make_state(self._state_fix())
         with _published(published), \
                 patch("pr_comments.post_issue_comment", return_value="https://url") as post:
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
@@ -4869,7 +4869,7 @@ class TestPublishedRowsSurviveTheEdit:
     def test_a_failed_lookup_invents_no_rows(self, rt):
         """An unreadable listing must not be read as an empty published comment."""
         import pr_comments
-        state = _make_state(self._fix())
+        state = _make_state(self._state_fix())
         with patch.object(pr_comments, "find_marker_comments",
                           return_value=pr_comments.MarkerHistory(found=False)), \
                 patch("pr_comments.post_issue_comment", return_value="https://url") as post:
@@ -4891,7 +4891,7 @@ class TestPublishedRowsSurviveTheEdit:
 
     def test_the_lookup_is_not_repeated_for_the_write(self, rt):
         import pr_comments
-        state = _make_state(self._fix())
+        state = _make_state(self._state_fix())
         with _published(_published_summary(rt, ROUND_ONE_ROW)) as find, \
                 patch("pr_comments.post_issue_comment", return_value="https://url") as post:
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
@@ -5012,7 +5012,7 @@ class TestHandEditedCellsSurviveTheRender:
     def _threads(self):
         return {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
 
-    def _fix(self, **overrides):
+    def _state_fix(self, **overrides):
         defaults = dict(
             items=[ItemOutcome(
                 id="t1", summary="drop the guard", file="old.go", line=4,
@@ -5023,7 +5023,7 @@ class TestHandEditedCellsSurviveTheRender:
         return _fix(**defaults)
 
     def _render(self, rt, published):
-        state = _make_state(self._fix())
+        state = _make_state(self._state_fix())
         with _published(published), \
                 patch("pr_comments.post_issue_comment", return_value="https://url") as post:
             rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, self._threads())

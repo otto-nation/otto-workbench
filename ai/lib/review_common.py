@@ -685,7 +685,6 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     ])
 
 
-
 def parse_review_verdict(review_path: Path | None) -> ReviewVerdict | None:
     """The verdict a review's `## Verdict` section states, if it states one."""
     if not review_path or not review_path.is_file():

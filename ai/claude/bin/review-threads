@@ -4884,7 +4884,11 @@ def _record_settlement(
     no-op would leave a row uncited that could now name its commit.
 
     A resolved SHA replaces nothing when there is none to replace — an earlier
-    round's attribution outlives a re-settle that could not improve on it.
+    round's attribution outlives a re-settle that could not improve on it. Only
+    within one ending, though: a row re-settled as dismissed drops the commit it
+    was fixed in, because "dismissed, fixed in abc1234" is not a state the
+    operator can have meant, and a reader of the raw snapshot has no way to tell
+    which half of it is stale.
     """
     before = (outcome.outcome, outcome.reason, outcome.commit_sha)
     outcome.outcome = kind
@@ -4892,7 +4896,7 @@ def _record_settlement(
     # whose reply is an argument the reviewer may answer. The other two render
     # from the summary, so their reason carries provenance instead.
     outcome.reason = reason if kind is FixOutcome.DISMISSED else _SETTLED_REASON
-    outcome.commit_sha = sha or outcome.commit_sha
+    outcome.commit_sha = (sha or outcome.commit_sha) if kind is FixOutcome.FIXED else ""
     return (outcome.outcome, outcome.reason, outcome.commit_sha) != before
 
 
@@ -5082,7 +5086,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--commit", metavar="SHA",
                         help="The commit carrying a --settle --as fixed change, "
                              "for a fix that landed away from the line the thread "
-                             "is anchored to (default: inferred from that line)")
+                             "is anchored to (default: inferred from that line). "
+                             "Applies to every --settle in the run, so a batch "
+                             "where only some threads need it takes two runs")
     add_trail_args(parser)
     return parser
 

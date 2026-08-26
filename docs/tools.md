@@ -387,13 +387,13 @@ env keys are derived from the phase name, so the list here is the registry's.
 **`pr comments` flags fall on two axes — phase and gate:**
 
 The phase flags (`--triage`, `--fix`, `--finish`, `--reply`, `--settle`) choose
-which work the run does. `--post` is the gate: it decides whether that work leaves the
-machine. Every phase drafts to stderr and publishes nothing without it, so
-`--post` neither implies a phase nor is implied by one. `--finish --post` is
-therefore not saying the same thing twice — the first names the work, the
-second opens the gate. The same `--post` gates `pr review` and `--reply`; it is
-one switch for the whole process, not a `comments` flag — see
-`ai/lib/publishing.py`, which owns it.
+which work the run does. `--post` is the gate: it decides whether that work
+leaves the machine. Every phase drafts to stderr and publishes nothing without
+it, so `--post` neither implies a phase nor is implied by one.
+`--finish --post` is therefore not saying the same thing twice — the first
+names the work, the second opens the gate. The same `--post` gates `pr review`
+and `--reply`; it is one switch for the whole process, not a `comments` flag —
+see `ai/lib/publishing.py`, which owns it.
 
 **Every fix pass answers to the same gate.** `pr ci --fix` and `pr review --fix`
 commit what their agent fixed and draft the push without `--post`, exactly as

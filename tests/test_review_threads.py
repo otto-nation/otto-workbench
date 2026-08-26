@@ -3943,6 +3943,19 @@ class TestRecordSettlement:
         rt._record_settlement(outcome, FixOutcome.FIXED, "", "")
         assert outcome.commit_sha == "abc1234"
 
+    @pytest.mark.parametrize("kind,reason", [
+        (FixOutcome.DISMISSED, "not our layer"),
+        (FixOutcome.ALREADY_ADDRESSED, ""),
+    ])
+    def test_an_ending_that_cites_no_commit_drops_the_one_it_replaced(
+        self, rt, kind, reason,
+    ):
+        """"Dismissed, fixed in abc1234" is not a state the operator can have meant."""
+        outcome = self._outcome()
+        rt._record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        assert rt._record_settlement(outcome, kind, reason, "")
+        assert outcome.commit_sha == ""
+
 
 class TestResolveSettledCommit:
     """Which commit a hand-landed fix may cite, asked while the answer exists."""

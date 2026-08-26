@@ -15,15 +15,13 @@ import json
 from pathlib import Path
 
 from review_common import (
-    SEVERITIES,
-    Mode,
-    ReviewMeta,
     aggregate_session_usage,
     count_severities,
     read_review_meta,
     resolve_review_verdict,
 )
 from review_state import build_failure_detail, read_pipeline_status
+from review_types import SEVERITIES, Mode, ReviewMeta
 
 
 def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:

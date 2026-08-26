@@ -9,13 +9,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_preflight import (
-    PRContext, PRMetadata, PreflightData, ReviewJob,
-    MAX_PROMPT_BYTES, MIN_DIFF_BYTES,
+from review_preflight import MAX_PROMPT_BYTES, MIN_DIFF_BYTES
+from review_types import (
+    PRContext, PreflightData, PRMetadata, PriorDisposition, ReviewJob,
 )
 from agent_types import Effort
 from review_common import (
-    PriorDisposition,
     TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SYNTHESIS,
 )
 from review_findings import _parse_ledger_line

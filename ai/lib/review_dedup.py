@@ -16,7 +16,7 @@ import gh_client
 from review_github import PRData, GQL_REVIEWS_LIMIT
 
 from review_format import CLASS_SKIPPED
-from review_findings import Finding
+from review_types import Finding
 
 
 # ── Constants ───────────────────────────────────────────────────────────────

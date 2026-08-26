@@ -30,11 +30,11 @@ import push
 import review_common
 import review_findings
 import review_fix
+import review_types
 from proc import TIMEOUT_RETURNCODE, CmdResult
 from agent_types import Effort, Phase
 from pr_fix import FixOutcome, ItemOutcome
-from review_findings import Finding
-from review_preflight import PRContext, PRMetadata, ReviewJob
+from review_types import Finding, PRContext, PRMetadata, ReviewJob
 
 # What the push owner answers when the fix pass's commit reached the remote.
 # The pass no longer pushes for itself — `land` does — so stubbing the owner is
@@ -202,7 +202,7 @@ class TestTheWorkSet:
         job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `a.py:1` — Style\n")
         adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")], set())
 
-        assert adapter.items()[0].label == review_common.severity_by_key("N").section
+        assert adapter.items()[0].label == review_types.severity_by_key("N").section
 
     def test_a_review_with_nothing_open_never_runs_the_agent(self, git_wt, tmp_path):
         job = _make_job(

@@ -31,8 +31,6 @@ from review_common import (
     META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
-    SEVERITY_MUST, SEVERITY_SHOULD,
-    GroupSkip, Mode, ReviewType,
     PRIOR_DATE_RE,
     TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
@@ -51,12 +49,15 @@ from review_github import PRData, fetch_pr_data
 from review_preflight import (
     DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
     GROUP_TIER3, HOLISTIC_MIN_GROUPS,
-    Group, PRContext, PRMetadata, ReviewJob,
     _merge_smallest_groups,
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
     group_files,
 )
 from review_prior import record_prior_findings
+from review_types import (
+    SEVERITY_MUST, SEVERITY_SHOULD,
+    Group, GroupSkip, Mode, PRContext, PRMetadata, ReviewJob, ReviewType,
+)
 from review_prompt import (
     _is_incremental, _scope_prior_review,
     build_prompt,

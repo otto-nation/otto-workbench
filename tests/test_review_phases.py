@@ -79,7 +79,7 @@ class TestPhaseOutputPath:
 
 
 def _job(tmp_path, effort=Effort.MEDIUM):
-    from review_preflight import PRContext, PRMetadata, ReviewJob
+    from review_types import PRContext, PRMetadata, ReviewJob
 
     return ReviewJob(
         repo="org/repo", pr_number="42",
@@ -92,7 +92,7 @@ def _job(tmp_path, effort=Effort.MEDIUM):
 
 
 def _omitted_job(tmp_path, omitted=(), effort=Effort.MEDIUM):
-    from review_preflight import PreflightData
+    from review_types import PreflightData
 
     job = _job(tmp_path, effort)
     job.preflight = PreflightData(
@@ -486,7 +486,7 @@ class TestGroupTurnBudget:
     """The group budget is resolved when the group runs, not when the module loads."""
 
     def _run(self, job, **kwargs):
-        from review_preflight import Group
+        from review_types import Group
 
         return review_phases._review_group(
             1, Group(name="g1", files=["a.py"], lines=10),
@@ -525,7 +525,7 @@ class TestParallelGroupTurnBudget:
     serial path — it forwards no `max_turns` of its own."""
 
     def test_parallel_groups_get_the_default_budget(self, tmp_path, monkeypatch):
-        from review_preflight import Group
+        from review_types import Group
 
         seen = _capture_invocations(monkeypatch)
         job = _omitted_job(tmp_path, omitted=["big.py"])

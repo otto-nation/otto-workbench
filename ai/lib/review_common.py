@@ -1,7 +1,10 @@
-"""Shared constants, types, and helpers for the claude-review system.
+"""Shared constants and helpers for the claude-review system.
 
 This module is the contract between review-orchestrate and review-post.
-Both scripts import from here instead of defining their own constants.
+Both scripts import from here instead of defining their own constants. The
+vocabulary they name those constants alongside — severities, modes, findings,
+the job a run threads through — is `review_types`', so a consumer that only
+needs a noun does not take the artifact layout with it.
 
 Each review owns a directory under `~/.local/state/workbench/reviews/` —
 `review.md` plus its session logs, group outputs, and pipeline state. The
@@ -49,40 +52,13 @@ from agent_types import Phase
 from ai_usage import SessionUsage, parse_session_log
 from pr_domains import ReviewVerdict
 from pr_state import now_iso
+from review_types import (
+    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, ReviewMeta,
+    review_meta_from_dict,
+)
 
 
-# ── Severity ─────────────────────────────────────────────────────────────────
-
-SEVERITY_MUST = "M"
-SEVERITY_SHOULD = "S"
-SEVERITY_NIT = "N"
-SEVERITY_IDIOMS = "I"
-
-
-@dataclass(frozen=True)
-class SeverityConfig:
-    key: str
-    label: str
-    section: str
-    posting: str
-    body_group: str
-    json_key: str
-    aliases: tuple[str, ...] = ()
-
-
-SEVERITIES = [
-    SeverityConfig(SEVERITY_MUST,    "must-fix",  "Must fix",  posting="inline", body_group="by_severity", json_key="must_fix"),
-    SeverityConfig(SEVERITY_SHOULD,  "should-fix", "Should fix", posting="inline", body_group="by_severity", json_key="should_fix"),
-    SeverityConfig(SEVERITY_NIT,     "nit",       "Nit",        posting="body",   body_group="by_file", json_key="nit", aliases=("Nits",)),
-    SeverityConfig(SEVERITY_IDIOMS,  "idiom",     "Idioms",     posting="body",   body_group="by_file", json_key="idiom"),
-]
-
-_SEVERITY_BY_KEY = {s.key: s for s in SEVERITIES}
-
-
-def severity_by_key(key: str) -> SeverityConfig:
-    return _SEVERITY_BY_KEY[key]
-
+# ── Sections ─────────────────────────────────────────────────────────────────
 
 SECTION_FILE_TRIAGE = "File Triage"
 SECTION_STATIC_ANALYSIS = "Static Analysis"
@@ -94,129 +70,9 @@ SECTION_STATIC_ANALYSIS = "Static Analysis"
 SECTION_PRIOR_FINDINGS = "Prior findings"
 
 
-class PriorDisposition(StrEnum):
-    """What a re-review says became of a prior finding.
-
-    The values are the words the prompt asks for and the words the ledger is
-    parsed for, so the two cannot drift apart. `FIXED` and `STILL_OPEN` keep
-    their original spellings: a review file written before `DECLINED` existed
-    still parses.
-
-    Declaration order is load-bearing: `precedence` reads it, so a member
-    declared later outranks every member above it.
-    """
-
-    FIXED = "Fixed"
-    STILL_OPEN = "Still open"
-    # Raised, considered, and rejected on the merits — a documented tradeoff or
-    # a decision already made. Distinct from STILL_OPEN, which is outstanding
-    # work: carrying an adjudicated finding as open re-presents it every review
-    # and feeds it back into the next fix pass.
-    DECLINED = "Declined"
-
-    @classmethod
-    def parse(cls, text: str) -> "PriorDisposition | None":
-        """The disposition a ledger line states, if it states one plainly.
-
-        The verdict has to stand on its own — the whole text, or ahead of the
-        break that introduces its detail. A qualified one ("Fixed, but only on
-        the happy path") is left unparsed rather than read as its optimistic
-        half.
-        """
-        lowered = text.strip().lower()
-        for member in cls:
-            rest = lowered.removeprefix(member.value.lower())
-            if rest != lowered and _DISPOSITION_TAIL_RE.match(rest):
-                return member
-        return None
-
-    @property
-    def precedence(self) -> int:
-        """Which verdict survives when two groups disposition one finding.
-
-        A group that still sees a finding beats one that says it went, so
-        `STILL_OPEN` outranks `FIXED`. `DECLINED` outranks both: it is a
-        judgement about the finding rather than a report on the code, and no
-        amount of the code still looking that way overturns it.
-        """
-        return _DISPOSITION_PRECEDENCE[self]
-
-
-# Derived from the enum's declaration order rather than restated, so a member
-# added to `PriorDisposition` is ranked by where it is declared instead of
-# raising a `KeyError` from `precedence` the first time two groups disagree.
-_DISPOSITION_PRECEDENCE = {
-    member: rank for rank, member in enumerate(PriorDisposition, 1)
-}
-
-# An entry whose wording the parser could not read a verdict from. It loses to
-# any verdict it can read, and holds its slot against another unreadable one.
-_NO_DISPOSITION_PRECEDENCE = 0
-
-
-def disposition_precedence(disposition: "PriorDisposition | None") -> int:
-    """`precedence`, tolerating the unparsed entry a ledger may also carry."""
-    return _NO_DISPOSITION_PRECEDENCE if disposition is None else disposition.precedence
-
-
-# What may follow a disposition without qualifying it: nothing, or a break that
-# introduces detail rather than a caveat.
-#
-# The full stop is on the list because a review states a verdict in a sentence
-# as readily as in a clause — "Fixed. `check_key` now calls it directly." is the
-# same claim as "Fixed — `check_key` now calls it directly.", and the prompt's
-# example cannot show every punctuation a model will reach for. The comma stays
-# off it: what follows a comma qualifies the verdict rather than explaining it.
-DISPOSITION_TAIL_PUNCTUATION = "—–:(-."
-_DISPOSITION_TAIL_RE = re.compile(rf"^\s*(?:[{re.escape(DISPOSITION_TAIL_PUNCTUATION)}]|$)")
-
-
 def plural(n: int) -> str:
     """Return the plural suffix for a count — `f"{total} finding{plural(total)}"`."""
     return "" if n == 1 else "s"
-
-
-# ── Modes ────────────────────────────────────────────────────────────────────
-
-
-class Mode(StrEnum):
-    """What the review is reviewing: an open PR or the working branch."""
-
-    PR = "pr"
-    SELF = "self"
-
-
-class ReviewType(StrEnum):
-    """How much of the branch the review covers.
-
-    Orthogonal to `Mode` — a self-review can be either. The two travel together
-    in `meta.json` and reading one for the other is the bug fixed alongside this
-    enum, so neither vocabulary borrows the other's members.
-    """
-
-    FULL = "full"
-    INCREMENTAL = "incremental"
-
-    @classmethod
-    def of(cls, incremental: bool) -> "ReviewType":
-        """The type a run of this shape has — the sidecar, the header and the
-        pipeline state all record it, and they must agree."""
-        return cls.INCREMENTAL if incremental else cls.FULL
-
-
-class GroupSkip(StrEnum):
-    """Why the group phase is not running a group.
-
-    The two reasons disagree about what a missing ``group-N.md`` means, so they
-    stay distinct all the way to the executor. A recovery skip reuses a prior
-    attempt's output, which must therefore be on disk — its absence is a real
-    failure. A carried skip never had output: an incremental run takes that
-    group's findings from the prior review's text, and a completed run sweeps
-    its own group files, so the absence is the expected state.
-    """
-
-    RECOVERY = "recovery"
-    CARRIED = "carried"
 
 
 _EnumT = TypeVar("_EnumT", bound=StrEnum)
@@ -320,7 +176,6 @@ SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 # ── Metadata format ──────────────────────────────────────────────────────────
 
-FILE_STAT_FMT = "  - {path} (+{additions} -{deletions})"
 META_DATE = "<!-- date: {today} -->"
 META_HEAD_SHA = "<!-- head_sha: {head_sha} -->"
 META_REVIEW_TYPE = "<!-- review_type: {review_type} -->"
@@ -395,60 +250,6 @@ def phase_output_path(review_file: str, phase: Phase, index: int | None = None) 
     if "{}" in name and index is None:
         raise ValueError(f"{phase} writes one artifact per index — pass an index")
     return _derive_path(review_file, name.format(index))
-
-
-# ── Review metadata ──────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class ReviewMeta:
-    repo: str = ""
-    pr_number: int | None = None
-    head_sha: str = ""
-    head_ref: str = ""
-    base_ref: str = ""
-    # The sidecar carries both, and they answer different questions — how much of
-    # the branch was reviewed, and what was being reviewed. Both are None for a
-    # meta.json written before the field existed, or by a caller that wrote only
-    # the repo; `mode` defaulting to PR would claim a fact the file never stated.
-    review_type: ReviewType | None = None
-    mode: Mode | None = None
-    # Two timestamps because a review run has two moments worth recording and
-    # they are not the same one. `started_at` is taken when the run begins;
-    # `reviewed_at` is stamped only where a run reached its end with a review in
-    # hand. Both are empty for a meta.json written before they existed — see
-    # `ReviewEntry.reviewed_at` for what answers "when" in that case.
-    started_at: str = ""
-    reviewed_at: str = ""
-
-
-def _meta_enum(enum_cls, value):
-    """Read a fixed-vocabulary meta.json field, tolerating a value we don't know.
-
-    meta.json is written by whatever version of the reviewer produced the review
-    and read by whatever version is running now, so an unrecognised member reads
-    as absent rather than taking the whole file down with it.
-    """
-    try:
-        return enum_cls(value) if value else None
-    except ValueError:
-        return None
-
-
-def review_meta_from_dict(d: dict) -> ReviewMeta:
-    pr_number = d.get("pr_number")
-    return ReviewMeta(
-        repo=d.get("repo", ""),
-        # Truthiness check intentionally treats "" and 0 as absent — no valid PR is #0
-        pr_number=int(pr_number) if pr_number else None,
-        head_sha=d.get("head_sha", ""),
-        head_ref=d.get("head_ref", ""),
-        base_ref=d.get("base_ref", ""),
-        review_type=_meta_enum(ReviewType, d.get("review_type")),
-        mode=_meta_enum(Mode, d.get("mode")),
-        started_at=d.get("started_at") or "",
-        reviewed_at=d.get("reviewed_at") or "",
-    )
 
 
 # ── Log preservation for retries ─────────────────────────────────────────────

@@ -33,14 +33,14 @@ import review_sections as _rs  # noqa: E402
 import git_client  # noqa: E402
 import log  # noqa: E402
 import proc  # noqa: E402
-from review_common import SEVERITIES  # noqa: E402
 from review_dedup import dedup_against_posted  # noqa: E402
 from review_findings import (  # noqa: E402
-    Finding, parse_findings,
+    parse_findings,
     _close_previous, _extract_body_text, _extract_path,
     _finalize_finding, _is_section_boundary, _match_severity_header,
     _parse_finding_line, parse_diff_hunks,
 )
+from review_types import Finding, SEVERITIES  # noqa: E402
 from review_format import (  # noqa: E402
     CLASS_FILE_LEVEL, CLASS_INLINE,
     classify_findings, format_body_text, format_inline_comment,

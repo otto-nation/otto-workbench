@@ -22,9 +22,8 @@ import log
 from agent_types import EFFORT_PRESETS, Effort
 from pr_domains import ReviewVerdict
 from review_common import (
-    FILE_STAT_FMT, FILENAME_PROMPT_STATS,
+    FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
-    PriorDisposition,
     TEMPLATE_DISPROVE,
     TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT, TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
@@ -40,10 +39,13 @@ from review_scout import (
 from review_preflight import (
     MAX_PROMPT_BYTES, MAX_REVIEW_BODY_LEN, MIN_DIFF_BYTES,
     NON_PREFLIGHT_OVERHEAD_BYTES,
-    PRContext, PRMetadata, PreflightData, ReviewJob,
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
     _scope_diff, build_project_context, format_preflight_data,
+)
+from review_types import (
+    FILE_STAT_FMT, PRContext, PreflightData, PRMetadata, PriorDisposition,
+    ReviewJob,
 )
 
 # The verdicts the prompt offers, written from the same members the review's

@@ -22,7 +22,7 @@ from eval_scoring_review import (
 )
 from eval_task import RunArtifacts
 from ai_usage import SessionUsage
-from review_findings import Finding
+from review_types import Finding
 
 
 def _finding(

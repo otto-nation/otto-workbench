@@ -28,8 +28,8 @@ import log
 from gh_client import LineResolutionError
 from pr_state import PostedAs, PostEvent, PostTracking
 from review_common import plural
-from review_findings import Finding
 from review_github import PRData
+from review_types import Finding
 from serde import to_dict as serde_to_dict
 
 

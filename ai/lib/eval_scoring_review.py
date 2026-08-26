@@ -30,7 +30,8 @@ from pathlib import Path
 import ai_usage
 from eval_scoring import ScoringResult
 from eval_task import RunArtifacts, RunOptions, create_temp_repo, clean_env
-from review_findings import Finding, parse_findings
+from review_findings import parse_findings
+from review_types import Finding
 
 _REVIEW_ORCHESTRATE = (
     Path(__file__).resolve().parent.parent / "claude" / "bin" / "review-orchestrate"

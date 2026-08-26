@@ -34,8 +34,9 @@ import timeouts
 import workbench_paths
 import workbench_projects
 import run_lock
-from review_common import ReviewType, find_review_file, review_file_path
+from review_common import find_review_file, review_file_path
 from review_summary import build_review_summary, json_summary
+from review_types import ReviewType
 from tool_parser import VALUE_FLAGS_FLAG
 from trail import Trail, add_trail_args
 

@@ -11,9 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import review_gc
 import review_phases
 import review_pipeline
-import review_preflight
 import review_retry
 import review_state
+import review_types
 from agent_diagnosis import Diagnosis, DiagnosisKind
 
 _TURNS = 15
@@ -256,8 +256,8 @@ class TestSingleAgentCleanup:
 
 _PINNED_SHA = "old1234"
 _GROUPS = [
-    review_preflight.Group(name="g1", files=["a.py"], lines=10),
-    review_preflight.Group(name="g2", files=["b.py"], lines=10),
+    review_types.Group(name="g1", files=["a.py"], lines=10),
+    review_types.Group(name="g2", files=["b.py"], lines=10),
 ]
 
 

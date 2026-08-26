@@ -12,8 +12,9 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from review_common import SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS, SEVERITIES
+from review_common import SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS
 from review_findings import _extract_section
+from review_types import SEVERITIES
 
 POSITION_BEFORE = "before_findings"
 POSITION_AFTER = "after_findings"

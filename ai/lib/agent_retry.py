@@ -22,11 +22,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 import log
+from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_types import DEFAULT_RETRY_CEILING
 from review_agent import diagnose_missing_output, try_recover_output
-from review_common import (
-    Diagnosis, DiagnosisKind, preserve_log, restore_preserved,
-)
+from review_common import preserve_log, restore_preserved
 
 # Kinds a second attempt could plausibly clear. Turn exhaustion and a run that
 # never called a write tool are the two the hints address directly; the rest are

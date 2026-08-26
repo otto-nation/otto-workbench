@@ -83,9 +83,9 @@ from dataclasses import dataclass
 import serde
 from review_common import (
     Mode, ReviewEntry, ReviewEntryKind, SEVERITIES, aggregate_session_usage,
-    build_failure_detail, count_severities, iter_review_entries,
-    read_pipeline_status, resolve_review_verdict,
+    count_severities, iter_review_entries, resolve_review_verdict,
 )
+from review_state import build_failure_detail, read_pipeline_status
 
 # Row-schema versions this build serves, oldest first. See "Version policy" in
 # docs/ai-automation.md: a new optional field does not bump it, a removed or

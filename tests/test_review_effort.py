@@ -12,7 +12,8 @@ import review_phases
 import review_pipeline
 from agent_types import AgentKind, Effort, Thinking
 from review_phases import PhaseResult
-from review_preflight import PipelineState, PRContext, PRMetadata, ReviewJob
+from review_preflight import PRContext, PRMetadata, ReviewJob
+from review_state import PipelineState
 
 
 class TestEffortPresets:

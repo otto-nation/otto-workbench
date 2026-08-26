@@ -23,6 +23,7 @@ from pathlib import Path
 
 import git_client
 import log
+from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_types import EFFORT_PRESETS, Effort, Phase
 from review_common import (
     count_severities,
@@ -31,14 +32,13 @@ from review_common import (
     META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
     META_STATUS,
     SEVERITY_MUST, SEVERITY_SHOULD,
-    Diagnosis, DiagnosisKind, GroupSkip, Mode, ReviewType,
+    GroupSkip, Mode, ReviewType,
     PRIOR_DATE_RE,
     TEMPLATE_SELF_REVIEW,
     TEMPLATE_SELF_SYNTHESIS, TEMPLATE_SINGLE, TEMPLATE_SYNTHESIS,
     _derive_path,
     phase_log_path,
     phase_output_path,
-    read_pipeline_status,
 )
 from review_findings import (
     _MECHANICAL_NOTE,
@@ -51,7 +51,7 @@ from review_github import PRData, fetch_pr_data
 from review_preflight import (
     DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
     GROUP_TIER3, HOLISTIC_MIN_GROUPS,
-    Group, PRContext, PRMetadata, PipelineState, ReviewJob,
+    Group, PRContext, PRMetadata, ReviewJob,
     _merge_smallest_groups,
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
     group_files,
@@ -74,10 +74,12 @@ from review_retry import (
     _retry_missing_output,
 )
 from review_state import (
+    PipelineState,
     _inject_failures_and_status,
     _resolve_recovery,
     _write_pipeline_state,
     build_failures_section,
+    read_pipeline_status,
 )
 
 DEFAULT_MAX_COST = 20.0

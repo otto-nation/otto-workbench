@@ -14,7 +14,7 @@ import review_pipeline
 import review_preflight
 import review_retry
 import review_state
-from review_common import Diagnosis, DiagnosisKind
+from agent_diagnosis import Diagnosis, DiagnosisKind
 
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)

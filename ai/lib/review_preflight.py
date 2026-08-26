@@ -22,16 +22,11 @@ from pathlib import Path
 import gh_client
 import git_client
 import log
-import serde
 import workbench_config
 from agent_types import Effort
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
-from pr_domains import ReviewStatus
 from pr_state import now_iso
-from review_common import (
-    FILE_STAT_FMT, FILENAME_PIPELINE_STATE, Diagnosis, DiagnosisKind, Mode,
-    PRIOR_SHA_RE, ReviewType, plural,
-)
+from review_common import FILE_STAT_FMT, Mode, PRIOR_SHA_RE
 from review_dedup import _get_bot_login
 from review_findings import BOLD_FINDING_ID_RE
 from review_github import PRData
@@ -170,85 +165,6 @@ class PreflightData:
     delta_commit_log: str = ""
     delta_files: list[str] = field(default_factory=list)
     prior_head_sha: str = ""
-
-
-@dataclass
-class PipelineState:
-    """The `pipeline.json` sidecar, and the only thing that knows its schema.
-
-    Every reader goes through `load`, so the field names and defaults declared
-    here are the ones on disk. Facts derived from those fields — the status
-    verdict, whether every group failed, what to call a group — are answered by
-    this class rather than recomputed by each caller, which is how the two
-    copies of the all-failed rule came to disagree.
-    """
-
-    # Every field carries a default because a state file on disk may predate the
-    # field. An absent `head_sha` reads as "" and so never matches the run being
-    # resumed, which is the right answer for state written before SHA tracking.
-    head_sha: str = ""
-    group_names: list[str] = field(default_factory=list)
-    holistic_done: bool = False
-    groups_done: list[int] = field(default_factory=list)
-    groups_failed: dict[int, Diagnosis] = field(default_factory=dict)
-    synthesis_done: bool = False
-    # Synthesis's failures are diagnoses like any other, just reached without a
-    # session log — see the pipeline-outcome kinds on `DiagnosisKind`.
-    synthesis_failed: Diagnosis | None = None
-    review_type: ReviewType = ReviewType.FULL
-    prior_sha: str = ""
-    skipped_groups: list[int] = field(default_factory=list)
-
-    @classmethod
-    def load(cls, review_dir: Path | None) -> "PipelineState | None":
-        """Read a review directory's state file, or None if there isn't a usable one.
-
-        A missing file and an unreadable one both come back as None. The one
-        caller that must tell those apart is `--recover`, which stats the file
-        first so it can say "nothing to recover" rather than "state is corrupt".
-        """
-        if not review_dir:
-            return None
-        return serde.load_file(cls, review_dir / FILENAME_PIPELINE_STATE)
-
-    @property
-    def group_count(self):
-        return len(self.group_names)
-
-    def group_label(self, idx: int) -> str:
-        """A group's name by its 1-based index, falling back to its number."""
-        if 1 <= idx <= len(self.group_names):
-            return self.group_names[idx - 1]
-        return f"group-{idx}"
-
-    @property
-    def all_groups_failed(self) -> bool:
-        """Whether the run produced no usable group output at all."""
-        if self.synthesis_failed and self.synthesis_failed.kind is DiagnosisKind.ALL_GROUPS_FAILED:
-            return True
-        return bool(self.groups_failed) and len(self.groups_failed) >= self.group_count > 0
-
-    @property
-    def status(self) -> ReviewStatus:
-        """The verdict this state implies for the review it describes."""
-        if not self.groups_failed and not self.synthesis_failed:
-            return ReviewStatus.COMPLETED
-        if self.all_groups_failed:
-            return ReviewStatus.ERROR
-        return ReviewStatus.PARTIAL
-
-    @property
-    def warnings(self) -> list[str]:
-        """Human-readable notes about phases that did not complete."""
-        notes = []
-        if not self.holistic_done and not self.synthesis_done:
-            notes.append("holistic phase")
-        if self.groups_failed:
-            n = len(self.groups_failed)
-            notes.append(f"{n} group{plural(n)} failed")
-        if self.synthesis_failed:
-            notes.append("synthesis")
-        return notes
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────

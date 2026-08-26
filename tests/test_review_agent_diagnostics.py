@@ -12,7 +12,7 @@ import agent_invoke
 import ai_backend
 import review_agent
 import review_retry
-from review_common import Diagnosis, DiagnosisKind
+from agent_diagnosis import Diagnosis, DiagnosisKind
 
 
 # Arbitrary — the diagnosis echoes whatever num_turns the result record carries,

@@ -14,6 +14,19 @@ Each section below is the module's own docstring, rendered from `ai/lib/` by [`g
 
 The orchestration of a review run: what it checks before spending anything, how the work is split into phases, what each agent is asked, and where the run's artifacts live.
 
+### agent_diagnosis.py
+
+Why an agent run produced no output, classified once and rendered on demand.
+
+Every backend invocation can end without the file it was asked to write, and
+nine callers across the review pipeline, the fix engine and the retry policy
+need to tell those endings apart. `DiagnosisKind` is the vocabulary they switch
+on and `Diagnosis` is what they store, compare and print.
+
+Nothing here is review-specific, which is why it is not in the review layer: a
+diagnosis is a property of the invocation, and the pipeline that happens to be
+running is not part of the reason it failed.
+
 ### agent_invoke.py
 
 The one owner of an agent invocation: resolve the phase, run it, guard it.
@@ -310,11 +323,13 @@ Replaces per-section parameter threading across the posting pipeline.
 
 Pipeline run state for the review pipeline.
 
-The multi-phase pipeline writes a `pipeline-state.json` sidecar as it goes so a
+The multi-phase pipeline writes a `pipeline.json` sidecar as it goes so a
 crashed run can be resumed rather than repeated. Everything that reads, writes,
-validates or renders that state lives here: the persistence itself, the resume
-decision (`_resolve_recovery`), and the Agent Failures table the state feeds
-into the review document.
+validates or renders that state lives here: `PipelineState` itself, the
+persistence around it, the facts other layers ask of it (`read_pipeline_status`,
+`read_pipeline_warnings`, `build_failure_detail`), the resume decision
+(`_resolve_recovery`), and the Agent Failures table the state feeds into the
+review document.
 
 Kept apart from the phases so the state is describable without running one —
 the recovery path, the tests and the phase executors all reach the same
@@ -509,6 +524,16 @@ The record is a sidecar in the review directory rather than a section of the
 review. Reconciliation parses its input for finding-shaped lines, so a
 reconciliation written into the review would come back to the next round
 looking like a fresh set of prior findings.
+
+### review_summary.py
+
+The machine-readable summary of a finished review.
+
+`claude-review` prints a `REVIEW_SUMMARY:{json}` line that `pr` and the review
+listing parse back, so this is the one place the summary's shape is decided.
+It is the only reader that needs both halves of a review at once — the findings
+document (counts, verdict) and the pipeline state (status, failure detail) —
+which is why it sits above both rather than inside either.
 
 ## Publishing
 

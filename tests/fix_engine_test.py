@@ -26,10 +26,10 @@ import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
 import land  # noqa: E402
 import review_common  # noqa: E402
+from agent_diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
 from agent_types import Phase  # noqa: E402
 from fix_types import FixItem  # noqa: E402
 from pr_fix import CommitStatus, FixOutcome  # noqa: E402
-from review_common import Diagnosis, DiagnosisKind  # noqa: E402
 
 
 # ── the stub domain ─────────────────────────────────────────────────────────

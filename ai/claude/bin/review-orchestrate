@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 from trail import Trail, add_trail_args  # noqa: E402
+import agent_diagnosis as _ad  # noqa: E402
 import agent_invoke as _ai  # noqa: E402
 import agent_phases as _aph  # noqa: E402
 import ai_usage as _au  # noqa: E402
@@ -73,7 +74,9 @@ import ai_backend  # noqa: E402
 
 SCRIPT = Path(__file__).name
 
-_SUBMODULES = (_ai, _aph, _au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rgc, _rph, _rrt, _rst)
+_SUBMODULES = (
+    _ad, _ai, _aph, _au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rgc, _rph, _rrt, _rst,
+)
 
 # Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
 # submodule back the way it was. mock.patch deletes rather than restores when the

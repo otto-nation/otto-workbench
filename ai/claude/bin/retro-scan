@@ -749,6 +749,10 @@ def _scan_review_entry(
     rule_match_counts: dict[str, dict],
 ) -> tuple[str, dict, int] | None:
     review_file = entry.review_file
+    # A REVIEW-kind entry had its review file when the walk classified it, so a
+    # read that fails here means the file went away or turned unreadable in
+    # between — a concurrent `pr gc` sweep, most likely. Skip the review rather
+    # than abandoning the scan over one directory.
     try:
         content = review_file.read_text()
     except OSError:

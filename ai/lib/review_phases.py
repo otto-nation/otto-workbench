@@ -26,6 +26,7 @@ from pathlib import Path
 import agent_phases
 import agent_retry
 import log
+from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES
 from agent_types import EFFORT_PRESETS, Phase, PhaseShape
 from agent_invoke import run_agent
@@ -37,14 +38,14 @@ from review_agent import (
 )
 from review_common import (
     FILE_STAT_FMT,
-    Diagnosis, DiagnosisKind, GroupSkip,
+    GroupSkip,
     TEMPLATE_DISPROVE, TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT,
     phase_log_path,
     phase_output_path,
 )
 from review_disprove import apply_disprove_results, parse_disprove_output
 from review_findings import _count_findings, _validate_group_output, merge_reviews
-from review_preflight import Group, PipelineState, ReviewJob
+from review_preflight import Group, ReviewJob
 from review_prompt import build_prompt
 from review_retry import (
     GroupFailure,
@@ -52,7 +53,7 @@ from review_retry import (
     _retry_hint_for, _retry_missing_output, _was_skipped,
 )
 from review_scout import format_leads_block, parse_scout_output
-from review_state import _update_group_done, _update_group_failed
+from review_state import PipelineState, _update_group_done, _update_group_failed
 
 # The group phase's own retry ceiling, off its registry entry. Synthesis borrows
 # it as an upper bound for the same reason it always has: both are review phases

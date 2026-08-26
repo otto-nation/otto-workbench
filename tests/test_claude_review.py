@@ -19,10 +19,11 @@ import workbench_paths
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_common import (
     FILENAME_POST_SESSION, ReviewEntryKind, count_severities, find_review_file,
-    iter_review_entries, json_summary, parse_review_verdict,
-    read_pipeline_status, read_pipeline_warnings, review_file_path,
+    iter_review_entries, parse_review_verdict, review_file_path,
     stamp_reviewed,
 )
+from review_state import read_pipeline_status, read_pipeline_warnings
+from review_summary import json_summary
 import review_gc
 
 from conftest import (
@@ -616,12 +617,12 @@ def test_read_pipeline_status_complete_no_failures(cr, tmp_path):
 
 
 def test_build_failure_detail_no_dir(cr):
-    from review_common import build_failure_detail
+    from review_state import build_failure_detail
     assert build_failure_detail(None) == ""
 
 
 def test_build_failure_detail_no_failures(cr, tmp_path):
-    from review_common import build_failure_detail
+    from review_state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
@@ -632,7 +633,7 @@ def test_build_failure_detail_no_failures(cr, tmp_path):
 
 
 def test_build_failure_detail_groups_failed(cr, tmp_path):
-    from review_common import build_failure_detail
+    from review_state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2", "g3"],
@@ -647,7 +648,7 @@ def test_build_failure_detail_groups_failed(cr, tmp_path):
 
 def test_build_failure_detail_reads_typed_diagnoses(cr, tmp_path):
     """The format `_write_pipeline_state` actually produces."""
-    from review_common import build_failure_detail
+    from review_state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2", "g3"],
@@ -667,7 +668,7 @@ def test_build_failure_detail_reads_typed_diagnoses(cr, tmp_path):
 
 
 def test_build_failure_detail_synthesis_failed(cr, tmp_path):
-    from review_common import build_failure_detail
+    from review_state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
@@ -679,7 +680,7 @@ def test_build_failure_detail_synthesis_failed(cr, tmp_path):
 
 
 def test_build_failure_detail_all_groups_failed(cr, tmp_path):
-    from review_common import build_failure_detail
+    from review_state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
@@ -699,7 +700,7 @@ def test_the_two_readers_agree_on_the_all_failed_sentinel(cr, tmp_path):
     compute the all-failed rule separately, and only the status reader honoured
     the sentinel, so the review said `error` and `1/2 groups failed` at once.
     """
-    from review_common import build_failure_detail
+    from review_state import build_failure_detail
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
@@ -735,7 +736,7 @@ def test_a_self_review_states_no_verdict(cr, tmp_path):
     puts self under `mode`. So the branch never fired and a self-review with a
     must-fix finding claimed `changes_requested` against a PR it has no say in.
     """
-    from review_common import build_review_summary
+    from review_summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
 
     result = build_review_summary("owner/test-repo", "", str(review_dir / "review.md"))
@@ -747,7 +748,7 @@ def test_a_self_review_states_no_verdict(cr, tmp_path):
 
 def test_an_incremental_self_review_states_no_verdict(cr, tmp_path):
     """The two fields are orthogonal — being incremental does not restore a verdict."""
-    from review_common import build_review_summary
+    from review_summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "incremental")
 
     result = build_review_summary("owner/test-repo", "", str(review_dir / "review.md"))
@@ -758,7 +759,7 @@ def test_an_incremental_self_review_states_no_verdict(cr, tmp_path):
 
 def test_a_pr_review_still_requests_changes(cr, tmp_path):
     """The same finding under `mode: pr` keeps the verdict it always had."""
-    from review_common import build_review_summary
+    from review_summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
     (review_dir / "meta.json").write_text(json.dumps({
         "repo": "owner/test-repo", "head_sha": "abc",
@@ -776,7 +777,7 @@ def test_an_unknown_meta_vocabulary_reads_as_absent(cr, tmp_path):
     A member this version does not know reads as unset rather than raising, so
     one unrecognised field does not cost the whole summary.
     """
-    from review_common import build_review_summary
+    from review_summary import build_review_summary
     review_dir = _self_review_dir(tmp_path, "full")
     (review_dir / "meta.json").write_text(json.dumps({
         "repo": "owner/test-repo", "head_sha": "abc",
@@ -800,7 +801,7 @@ def test_json_summary_includes_failure_detail(cr, tmp_path):
         "synthesis_done": True, "synthesis_failed": "",
         "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)"},
     }))
-    from review_common import build_review_summary
+    from review_summary import build_review_summary
     result = build_review_summary("owner/test-repo", "1", str(review_file))
     assert result["status"] == ReviewStatus.PARTIAL.value
     assert "1/2 groups failed" in result["failure_detail"]

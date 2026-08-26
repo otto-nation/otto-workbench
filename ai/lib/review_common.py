@@ -43,12 +43,11 @@ from typing import TypeVar
 
 import ai_usage
 import log
-import serde
 import workbench_paths
 from agent_registry import PHASES, REVIEW_PHASES
 from agent_types import Phase
 from ai_usage import SessionUsage, parse_session_log
-from pr_domains import ReviewStatus, ReviewVerdict
+from pr_domains import ReviewVerdict
 from pr_state import now_iso
 
 
@@ -240,149 +239,6 @@ def enum_arg(enum_cls: type[_EnumT]) -> Callable[[str], _EnumT]:
             ) from None
 
     return parse
-
-
-# ── Failure diagnosis ────────────────────────────────────────────────────────
-
-
-class DiagnosisKind(StrEnum):
-    """Why an agent run left no output.
-
-    Retry policy switches on this, so a member is added when a *decision* needs
-    to tell one outcome from another — not when a message needs new wording.
-    """
-
-    MAX_TURNS = "max_turns"
-    COMPLETED = "completed"
-    AGENT_ERROR = "agent_error"
-    TRANSIENT = "transient"
-    QUOTA_EXHAUSTED = "quota_exhausted"
-    NO_SESSION_LOG = "no_session_log"
-    NO_RESULT_RECORD = "no_result_record"
-    # The three below are the pipeline's own verdicts, reached without ever
-    # reading a session log: a group the pipeline declined to run, one abandoned
-    # when the budget ran out, and one whose output vanished between passes.
-    SKIPPED = "skipped"
-    BUDGET_EXCEEDED = "budget_exceeded"
-    OUTPUT_MISSING = "output_missing"
-    # Synthesis's own outcomes. Recorded against the pipeline rather than an
-    # agent, so neither has a session log behind it: no group produced usable
-    # output, and a synthesis that degraded to the mechanical merge.
-    ALL_GROUPS_FAILED = "all_groups_failed"
-    MECHANICAL_FALLBACK = "mechanical_fallback"
-    # Only reachable by reading a pipeline state file written before failures
-    # were structured. `detail` holds that file's rendered message verbatim.
-    UNKNOWN = "unknown"
-
-
-# Prefixes every backend crash. Load-bearing beyond rendering: the no-write
-# check and the transient-error check both use it to tell a crash apart from a
-# run that ended on its own terms.
-_AGENT_ERROR_PREFIX = "agent error:"
-
-# A backend error whose text matches one of these will fail again the same way,
-# so no amount of retrying or recovery helps. Matched against `Diagnosis.detail`
-# the way `_TRANSIENT_ERROR_MARKERS` is — the error text is free-form, and these
-# are the fragments of it that carry a verdict.
-_NON_RECOVERABLE_ERROR_MARKERS = ("permission denied",)
-
-_DIAGNOSIS_MESSAGES = {
-    DiagnosisKind.QUOTA_EXHAUSTED: "quota exhausted (429)",
-    DiagnosisKind.NO_SESSION_LOG: "no session log found",
-    DiagnosisKind.NO_RESULT_RECORD: "no result record in session log",
-    DiagnosisKind.BUDGET_EXCEEDED: "budget exceeded",
-    DiagnosisKind.OUTPUT_MISSING: "output missing",
-    DiagnosisKind.ALL_GROUPS_FAILED: "all groups failed",
-    DiagnosisKind.MECHANICAL_FALLBACK: "mechanical fallback",
-}
-
-# Every constant message, reversed. A state file written before a message was a
-# kind holds the rendered text; this reads it back as the kind it renders as,
-# rather than burying it in `UNKNOWN`. Derived, so a new message is covered
-# without a second edit. Kinds whose message interpolates `detail` are absent
-# from the forward map and so stay verbatim under `UNKNOWN`, as before.
-_MESSAGE_KINDS = {message: kind for kind, message in _DIAGNOSIS_MESSAGES.items()}
-
-_NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
-
-
-@dataclass(frozen=True)
-class Diagnosis:
-    """A single agent run's failure, classified once and rendered on demand.
-
-    Frozen because two of the pipeline's decisions compare diagnoses for
-    equality — the consecutive-failure abort and the all-groups-failed circuit
-    breaker — and one of them puts them in a set.
-    """
-
-    kind: DiagnosisKind
-    no_write_tool: bool = False
-    detail: str = ""
-    # None when the backend reported no turn count; rendered as "?".
-    num_turns: int | None = None
-
-    @property
-    def message(self) -> str:
-        """The human-readable reason, as it appears in logs and review files."""
-        return self._base_message() + (
-            f" — {_NO_WRITE_TOOL_SUFFIX}" if self.no_write_tool else ""
-        )
-
-    def _base_message(self) -> str:
-        if self.kind is DiagnosisKind.MAX_TURNS:
-            turns = self.num_turns if self.num_turns is not None else "?"
-            return f"agent hit max turns ({turns})"
-        if self.kind is DiagnosisKind.COMPLETED:
-            return f"agent completed (subtype={self.detail}) but did not write output"
-        if self.kind in (DiagnosisKind.AGENT_ERROR, DiagnosisKind.TRANSIENT):
-            return f"{_AGENT_ERROR_PREFIX} {self.detail}"
-        if self.kind is DiagnosisKind.SKIPPED:
-            return f"skipped: {self.detail}"
-        if self.kind is DiagnosisKind.UNKNOWN:
-            # A legacy state file could hold an empty reason; the failures table
-            # gets a word rather than a blank cell.
-            return self.detail or DiagnosisKind.UNKNOWN.value
-        return _DIAGNOSIS_MESSAGES[self.kind]
-
-    @property
-    def recoverable(self) -> bool:
-        """Whether `pr review --recover` could plausibly do better than this run."""
-        lowered = self.detail.lower()
-        return not any(m in lowered for m in _NON_RECOVERABLE_ERROR_MARKERS)
-
-    @classmethod
-    def _from_raw(cls, raw) -> "Diagnosis | None":
-        """Rebuild a diagnosis from any shape a state file can hold.
-
-        `serde` hands the whole field over here rather than assuming a dict,
-        because reviews live in `~/.local/state/workbench/reviews/` and outlive the
-        code that wrote them. A file written before diagnoses were typed holds
-        the rendered reason — recover the kind where the text names one, and
-        keep the rest verbatim under `UNKNOWN`, so a `--recover` run against an
-        in-flight review still renders its failures.
-
-        Returns None for a raw value that records no failure at all: an optional
-        field written before it was optional holds `""`, and reading that as a
-        blank diagnosis would turn a clean run into a failed one.
-        """
-        if not raw:
-            return None
-        if isinstance(raw, cls):
-            return raw
-        if isinstance(raw, dict):
-            return serde.from_dict(cls, raw)
-        text = str(raw)
-        if text in _MESSAGE_KINDS:
-            return cls(_MESSAGE_KINDS[text])
-        return cls(DiagnosisKind.UNKNOWN, detail=text)
-
-    @classmethod
-    def _raw_schema(cls, object_schema: dict) -> dict:
-        """Both shapes `_from_raw` reads, for anything that publishes a schema
-        over a diagnosis. The bare string is the pre-typed form a review file
-        written by an older run still holds, and a schema naming only the
-        object would call that file invalid where the reader accepts it."""
-        return {"oneOf": [object_schema, {"type": "string"}]}
 
 
 # ── Templates ────────────────────────────────────────────────────────────────
@@ -829,58 +685,6 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     ])
 
 
-def _load_pipeline_state(review_dir: Path | None) -> "PipelineState | None":
-    # Local import: review_preflight imports this module, and PipelineState is
-    # the one thing that knows how to read its own file.
-    from review_preflight import PipelineState
-    return PipelineState.load(review_dir)
-
-
-def read_pipeline_status(review_dir: Path | None) -> str:
-    """Derive review status from pipeline state.
-
-    complete — all phases succeeded, no failures
-    partial  — review produced but with failures (groups or synthesis fallback)
-    error    — all groups failed, no usable output
-    """
-    state = _load_pipeline_state(review_dir)
-    if state is None:
-        return ReviewStatus.COMPLETED.value
-    return state.status.value
-
-
-def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
-    """Return human-readable warnings for incomplete pipeline phases."""
-    state = _load_pipeline_state(review_dir)
-    if state is None:
-        return []
-    return state.warnings
-
-
-def build_failure_detail(review_dir: Path | None) -> str:
-    """Build a human-readable failure detail string from pipeline state."""
-    state = _load_pipeline_state(review_dir)
-    if state is None:
-        return ""
-    if not state.groups_failed and not state.synthesis_failed:
-        return ""
-
-    parts = []
-    if state.groups_failed:
-        reasons = ", ".join(sorted({d.message for d in state.groups_failed.values()}))
-        if state.all_groups_failed:
-            parts.append(f"all groups failed: {reasons}")
-        else:
-            n_failed, n_total = len(state.groups_failed), state.group_count
-            parts.append(f"{n_failed}/{n_total} groups failed: {reasons}")
-
-    # ALL_GROUPS_FAILED restates what the groups line already said.
-    if state.synthesis_failed and state.synthesis_failed.kind is not DiagnosisKind.ALL_GROUPS_FAILED:
-        parts.append(f"synthesis: {state.synthesis_failed.message}")
-
-    return "; ".join(parts)
-
-
 def parse_review_verdict(review_path: Path | None) -> ReviewVerdict | None:
     """The verdict a review's `## Verdict` section states, if it states one."""
     if not review_path or not review_path.is_file():
@@ -936,58 +740,3 @@ def resolve_review_verdict(
         counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
     )
     return stated if stated and stated.outranks(derived) else derived
-
-
-def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
-    """Build a review summary dict for a review."""
-    review_path = Path(review_file) if review_file else None
-    by_key = count_severities(review_path)
-    counts = {s.json_key: by_key[s.key] for s in SEVERITIES}
-    total = sum(by_key.values())
-
-    review_dir = Path(review_file).parent if review_file else None
-    meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
-
-    resolved = resolve_review_verdict(
-        review_path, counts=by_key, self_review=meta.mode is Mode.SELF,
-    )
-    verdict = resolved.value if resolved else ""
-
-    usage = aggregate_session_usage(review_dir)
-
-    review_content = None
-    if review_path and review_path.is_file():
-        try:
-            review_content = review_path.read_text()
-        except OSError:
-            pass
-
-    status = read_pipeline_status(review_dir)
-    failure_detail = build_failure_detail(review_dir)
-
-    return {
-        "repo": repo,
-        "pr_number": int(pr_number) if pr_number else None,
-        "head_sha": meta.head_sha or None,
-        "head_ref": meta.head_ref or None,
-        "base_ref": meta.base_ref or None,
-        "review_type": meta.review_type,
-        "review_file": review_file,
-        "review_content": review_content,
-        "findings": {**counts, "total": total},
-        "verdict": verdict,
-        "status": status,
-        "failure_detail": failure_detail,
-        "cost_usd": usage.cost,
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "cache_read_tokens": usage.cache_read_tokens,
-        "cache_write_tokens": usage.cache_write_tokens,
-        "duration_ms": usage.duration_ms,
-    }
-
-
-def json_summary(repo: str, pr_number: str, review_file: str) -> str:
-    """Build a REVIEW_SUMMARY:{json} string for a review."""
-    data = build_review_summary(repo, pr_number, review_file)
-    return f"REVIEW_SUMMARY:{json.dumps(data)}"

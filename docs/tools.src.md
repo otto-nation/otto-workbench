@@ -410,23 +410,33 @@ sent. Use it instead of `gh api .../replies`, which bypasses the dedup entirely.
 A review cycle posts `Review Comments Addressed` comments as it goes. A round
 nobody has spoken over since the last one edits that comment in place; a round a
 reviewer has commented, reviewed, or replied below posts a new one, because an
-edit notifies nobody. Each comment reports all five thread outcomes — fixed,
-already addressed, dismissed, deferred, and the ones still awaiting discussion —
-so a `needs_human` thread appears as open rather than not at all.
+edit notifies nobody. Any of the five thread outcomes can appear — fixed,
+already addressed, dismissed, deferred, and the ones still awaiting discussion.
 
-A new comment covers its own round: threads worked this round, threads a
-reviewer has spoken on since the last summary, and every open question. Threads
-settled in an earlier round and quiet since are left in the comment that
-published them and counted in a note; a footer links every earlier summary, so
-the newest comment is the entry point to the whole record.
+A comment covers its own round rather than the whole PR: a thread it has not
+seen before, one a reviewer has spoken on since the last summary, and one this
+round gave a different outcome than the comment chain already reports. A thread
+quiet since the round that published it is left in that comment and counted in a
+note — one note for the settled ones, a second for the ones still awaiting an
+answer, because "settled" is the wrong word for a question still owed one. A
+footer links every earlier summary, so the newest comment is the entry point to
+the whole record and an open thread is one link away rather than restated for
+the life of the PR.
+
+Re-classification is read as an outcome, not as cell text. One outcome has
+several wordings — a fix reported with a commit and the same fix reported
+without one — so a round that only re-words a cell changes nothing and the row
+stays where it was published. A cell somebody rewrote by hand states no outcome
+at all: it is held as published, never treated as a change, and never restated.
 
 An edit is the case that can destroy a row, since it replaces a body. The
 replacement is built from local state, which is per-target and per-worktree, and
 routinely absent for a round the comment already covers: `pr gc`, a recreated
 worktree, a later round run from another machine. So the comment is read before
 the edit and any row this run cannot account for is carried forward verbatim,
-counted as `N carried over`, and logged. An edit never removes a row the comment
-already had.
+counted as `N carried over`, and logged. An edit never drops a row it is the
+only comment holding; a row an earlier comment also carries is scoped like any
+other, since the chain still holds it.
 
 **`pr describe` is commit-aware:**
 

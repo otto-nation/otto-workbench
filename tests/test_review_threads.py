@@ -5363,6 +5363,61 @@ class TestGeneratedActionCell:
         assert rt._hand_written_rows([published], fresh) == []
         assert rt._carried_over_rows(published, fresh) == [HAND_EDITED_ROW]
 
+
+class TestActionCellOutcome:
+    """Which outcome a published Action cell states, under the wording drift.
+
+    One outcome is written several ways across rounds — a fix reported with a
+    commit one round and without one the next — so the cell's text cannot stand
+    in for the outcome it reports. Only the outcome tells a round that changed a
+    row from one that merely re-rendered it.
+    """
+
+    def test_every_fix_status_reads_as_fixed(self, rt):
+        for status in CommitStatus:
+            cp = rt.CommitPushResult("9f2e1a0", status, "")
+            assert rt._action_outcome(
+                rt._fixed_status_text(cp, "owner/repo")) is FixOutcome.FIXED
+            bare = rt.CommitPushResult(None, status, "")
+            assert rt._action_outcome(
+                rt._fixed_status_text(bare, "owner/repo")) is FixOutcome.FIXED
+
+    def test_a_fix_reported_two_ways_reads_the_same(self, rt):
+        """The false positive a cell comparison produces: same outcome, two
+        wordings, because one round resolved a commit and the next did not."""
+        cited = rt._fixed_in_cell("9f2e1a0", "owner/repo")
+        assert rt._action_outcome(cited) is rt._action_outcome(
+            rt._UNATTRIBUTED_STATUS_TEXT)
+
+    def test_every_human_reason_prose_reads_as_open(self, rt):
+        for reason in rt.HumanReason:
+            assert rt._action_outcome(reason.prose) is FixOutcome.NEEDS_HUMAN
+
+    @pytest.mark.parametrize("cell,outcome", [
+        ("Already addressed", FixOutcome.ALREADY_ADDRESSED),
+        ("Dismissed (invalid)", FixOutcome.DISMISSED),
+        ("Deferred", FixOutcome.DEFERRED),
+        ("Deferred → ENG-1", FixOutcome.DEFERRED),
+        ("Addressed outside the fix pass", FixOutcome.FIXED),
+        ("Added to the PR description (no commit)", FixOutcome.FIXED),
+    ])
+    def test_the_literal_cells_read_as_their_outcome(self, rt, cell, outcome):
+        assert rt._action_outcome(cell) is outcome
+
+    @pytest.mark.parametrize("cell", ["", _HAND_WRITTEN_ACTION_CELL])
+    def test_a_cell_we_did_not_write_states_no_outcome(self, rt, cell):
+        """None is what keeps a hand-written cell from reading as a round's own
+        re-classification — the row is the hand-held path's business, not this."""
+        assert rt._action_outcome(cell) is None
+
+    def test_the_generated_openings_are_the_table_read_flat(self, rt):
+        """One vocabulary, not two: a wording reachable by `_is_generated_action`
+        and not by `_action_outcome` would read as hand-written on one path and
+        as an outcome on the other."""
+        assert set(rt._GENERATED_ACTION_PREFIXES) == {
+            prefix for prefixes in rt._ACTION_BUCKETS.values() for prefix in prefixes
+        }
+
     def test_a_row_with_no_action_cell_is_re_rendered(self, rt):
         """A shape this renderer no longer produces is repaired, not frozen."""
         stub = "| [drop the guard](https://github.com/owner/repo/pull/1#discussion_r111) |"
@@ -5711,6 +5766,21 @@ def _reviewed_thread(created_at, login="kgn", thread_id="t1"):
     )}
 
 
+_OPEN_OUTCOME = dataclasses.replace(
+    _ROUND_ONE_OUTCOME, outcome=FixOutcome.NEEDS_HUMAN, reason="conflicting")
+
+
+def _published_open_row(rt) -> str:
+    """`ROUND_ONE_ROW` as the round that left the thread open published it.
+
+    Built from `HumanReason` rather than transcribed, so the cell this round
+    renders and the one the record holds cannot drift apart — the whole of what
+    tells "still open, and quiet" from "re-classified this round".
+    """
+    return ROUND_ONE_ROW.replace(
+        _GENERATED_ACTION_CELL, rt.HumanReason.prose_for(_OPEN_OUTCOME.reason))
+
+
 class TestASummaryDescribesItsOwnRound:
     """A repost restating every round the PR ever had is complete and unreadable."""
 
@@ -5740,16 +5810,41 @@ class TestASummaryDescribesItsOwnRound:
         )
         assert "drop the guard" not in body
 
-    def test_an_open_question_is_always_in_the_newest_summary(self, rt):
-        """#714 — a reader who has to walk the chain to find it will not find it."""
-        outcome = dataclasses.replace(
-            _ROUND_ONE_OUTCOME, outcome=FixOutcome.NEEDS_HUMAN, reason="conflicting")
+    def test_an_open_thread_quiet_since_is_left_where_it_was_published(self, rt):
+        """#1017 — #714 exempted every open thread from the scoping, which at
+        forty-three of them rebuilds the document the scoping exists to prevent.
+        One row among forty-three is no easier to find than one round back."""
         body = _repost_over(
-            rt, ROUND_ONE_ROW, outcomes=[outcome],
+            rt, _published_open_row(rt), outcomes=[_OPEN_OUTCOME],
             threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "drop the guard" not in body
+        assert "1 thread still open" in body
+        assert "settled in an earlier round" not in body
+
+    def test_an_open_thread_spoken_on_since_comes_back(self, rt):
+        """The rule is the round's own activity — open threads get no exemption
+        from it, and no different treatment under it."""
+        body = _repost_over(
+            rt, _published_open_row(rt), outcomes=[_OPEN_OUTCOME],
+            threads=_reviewed_thread(_AFTER_THE_SUMMARY),
         )
         assert "drop the guard" in body
         assert "1 need discussion" in body
+        assert "still open" not in body
+
+    def test_a_newly_open_thread_is_written_whatever_else_is_dropped(self, rt):
+        """#712 outranks the scoping for a row no comment holds, and an open
+        question reaching a reader for the first time is that row."""
+        fresh = dataclasses.replace(
+            _OPEN_OUTCOME, id="t9", summary="never published")
+        body = _repost_over(
+            rt, _published_open_row(rt), outcomes=[_OPEN_OUTCOME, fresh],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "never published" in body
+        assert "drop the guard" not in body
+        assert "1 thread still open" in body
 
     def test_an_entry_the_run_cannot_date_reads_as_quiet(self, rt):
         """An item keeps its source anchor whether or not the report still
@@ -5803,6 +5898,103 @@ class TestASummaryDescribesItsOwnRound:
                 [], [], cp, "owner/repo", 1, {},
             )
         assert "Earlier rounds" not in post.call_args[0][2]
+
+
+class TestARoundWritesWhatItChanged:
+    """A row this round re-classified is this round's business, however quiet.
+
+    `covers` reads reviewer activity, and a round changing a row's outcome is
+    not that: nobody has to speak for a deferred thread to become a fixed one.
+    Left to the activity test alone, the new outcome reaches no summary at all
+    and the record's newest word on the row is the outcome it has replaced.
+    """
+
+    def test_a_reclassified_row_is_written_though_nobody_spoke(self, rt):
+        body = _repost_over(
+            rt, _published_open_row(rt), outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "drop the guard" in body
+        assert "**2 fixed**" in body
+
+    def test_an_unchanged_row_is_still_left_where_it_was_published(self, rt):
+        """The guard is the outcome, not the round: one wording per outcome is
+        not something the renderer promises, so a re-worded cell is not news."""
+        body = _repost_over(
+            rt, ROUND_ONE_ROW, outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "drop the guard" not in body
+        assert "1 thread settled in an earlier round" in body
+
+    def test_a_hand_written_cell_is_not_a_reclassification(self, rt):
+        """A person's wording states no outcome, so it cannot differ from one.
+        Reading it as a change would restate the row every round — the ratchet
+        this issue removes, rebuilt on the one path a human controls."""
+        body = _repost_over(
+            rt, HAND_EDITED_ROW, outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "drop the guard" not in body
+        assert _HAND_WRITTEN_ACTION_CELL not in body
+
+
+def _edit_over_chain(rt, earlier_rows, target_rows, outcomes=(), threads=None):
+    """Edit the newest of two summary comments, with `earlier_rows` below it.
+
+    The target postdates the first comment and nothing has been said under it,
+    so the round edits in place — the path where dropping a row the target
+    alone holds would delete it from the record rather than defer to a link.
+    """
+    import pr_comments
+    earlier = _round_one_marker(rt, *earlier_rows, newest_other_at=_BEFORE_THE_SUMMARY)
+    target = pr_comments.MarkerComment(
+        True, 12, _published_summary(rt, *target_rows),
+        created_at=_AFTER_THE_SUMMARY, newest_other_at=_BEFORE_THE_SUMMARY,
+        url="https://github.com/owner/repo/pull/1#issuecomment-12",
+    )
+    state = _make_state(_fix(
+        items=[*outcomes], commit_status="no_changes", summary_deferred=True))
+    with _lookup_returns(earlier, target), \
+            patch("pr_comments.post_issue_comment", return_value="https://url") as post:
+        rt._render_deferred_summary(state, PRReport(), "owner/repo", 1, threads or {})
+    assert post.call_args.kwargs["marker"] == rt._SUMMARY_MARKER
+    return post.call_args[0][2]
+
+
+class TestAnEditKeepsOnlyWhatItAloneHolds:
+    """`target_keys` protected every row on the edited comment, which made it a
+    ratchet: once a row reached a summary, every later edit of that comment
+    re-rendered it whatever else carried it. Dropping a row an earlier comment
+    also holds deletes nothing — the reader still finds it one link back."""
+
+    def test_a_row_an_earlier_comment_also_holds_is_dropped(self, rt):
+        body = _edit_over_chain(
+            rt, [ROUND_ONE_ROW], [ROUND_ONE_ROW], outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "drop the guard" not in body
+        assert "1 thread settled in an earlier round" in body
+
+    def test_the_dropped_row_is_not_handed_back_by_the_carry_forward(self, rt):
+        """The two gates ask one question. Scoping a row out of the body while
+        carry-forward reads it as a round local state lost puts it straight
+        back, verbatim, and reports it as carried."""
+        body = _edit_over_chain(
+            rt, [ROUND_ONE_ROW], [ROUND_ONE_ROW], outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "carried over" not in body
+
+    def test_a_row_the_target_alone_holds_is_still_re_rendered(self, rt):
+        """Dropping it here deletes it: an edit rewrites the body wholesale and
+        no earlier comment carries it."""
+        body = _edit_over_chain(
+            rt, [], [ROUND_ONE_ROW], outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_BEFORE_THE_SUMMARY),
+        )
+        assert "drop the guard" in body
+        assert "settled in an earlier round" not in body
 
 
 class TestAnEditKeepsItsTargetWhole:

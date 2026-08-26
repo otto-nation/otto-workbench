@@ -199,6 +199,7 @@
       "Read(//opt/homebrew/**)",
       "Read(//private/tmp/**)",
       "Read(//tmp/**)",
+      "Read(~/Library/Application Support/rtk/tee/**)",
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:gist.github.com)",
       "WebFetch(domain:github.com)",

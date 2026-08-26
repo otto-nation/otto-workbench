@@ -177,6 +177,12 @@ class TestPhaseSpecTemplates:
         with pytest.raises(ValueError, match="no prompt template"):
             spec.template_for()
 
+    def test_a_mapping_missing_a_mode_names_the_phase_that_owes_it_one(self):
+        """A bare KeyError names the mode and leaves the phase to be guessed."""
+        spec = self._review(Phase.SINGLE, {Mode.PR: "single-agent.md"})
+        with pytest.raises(ValueError, match="single.*no prompt template for self"):
+            spec.template_for(Mode.SELF)
+
     def test_a_mode_keyed_template_cannot_be_written_through(self):
         """Every spec is a singleton in PHASES; a write would move every review."""
         spec = self._review(Phase.SINGLE, {Mode.PR: "a.md", Mode.SELF: "b.md"})

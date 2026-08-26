@@ -354,12 +354,16 @@ class PhaseSpec:
         has no notion of. Raises for a phase that declares no template at all,
         the way ``_stem`` does for a domain with no review artifacts: a silent
         empty string reaches ``agent_templates.render`` as a missing file, one
-        layer further from the declaration that is actually wrong.
+        layer further from the declaration that is actually wrong. A mapping
+        missing the mode asked for raises the same way rather than as a bare
+        ``KeyError``, which names the mode but not the phase that owes it one.
         """
         if not self.template:
             raise ValueError(f"{self.phase} declares no prompt template")
         if isinstance(self.template, str):
             return self.template
+        if mode not in self.template:
+            raise ValueError(f"{self.phase} declares no prompt template for {mode}")
         return self.template[mode]
 
     @property

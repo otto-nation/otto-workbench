@@ -1,6 +1,8 @@
 """Finding parsing, renumbering, deduplication, verification, and stable IDs.
 
-Shared between review-orchestrate (merging/verification) and review-post (parsing).
+Shared between review-orchestrate (merging/verification) and review-post
+(parsing). The `Finding` these produce is `review_types`': a consumer that only
+holds findings does not need the parser that read them off a document.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -46,9 +48,11 @@ from pathlib import Path
 import log
 from pr_domains import ReviewVerdict
 from review_common import (
-    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD,
-    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, PriorDisposition,
-    disposition_precedence, plural, severity_by_key,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, plural,
+)
+from review_types import (
+    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, PriorDisposition,
+    disposition_precedence, severity_by_key,
 )
 
 # Severity header name -> key mapping (section + aliases, lowercased)
@@ -65,29 +69,6 @@ def _build_severity_names() -> dict[str, str]:
 
 
 _SEVERITY_NAMES = _build_severity_names()
-
-
-# ── Finding dataclass ────────────────────────────────────────────────────────
-
-@dataclass
-class Finding:
-    id: str
-    severity: str
-    seq: int
-    path: str
-    line: int | None
-    end_line: int | None
-    body: str
-    full_path: str = ""
-    posted_id: str = ""
-    classification: str = ""
-    skip_reason: str = ""
-    checked: bool = False
-    # Adjudicated, not outstanding: the finding was considered and rejected on
-    # the merits. A skip is the fix pass saying "not me"; a decline is the
-    # review saying "not at all", and the fix pass must not revisit it.
-    declined: bool = False
-    decline_reason: str = ""
 
 
 BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")

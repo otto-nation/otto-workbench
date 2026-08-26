@@ -275,6 +275,10 @@ Pre-flight data collection, tier classification, file grouping, and PR fetching.
 Handles everything needed before prompt construction: collecting diffs, commit logs,
 file contents, permissions, and organizing files into review groups.
 
+The records this fills in — `PRMetadata`, `PRContext`, `PreflightData`, `Group`
+and the `ReviewJob` they hang off — are `review_types`', so a consumer that only
+needs to name a job does not import the collection that builds one.
+
 ### review_profiles.py
 
 Review profiles: per-domain review doctrine routed by file paths.
@@ -353,10 +357,13 @@ What a review produces. Parsing an agent's output into findings, giving them sta
 
 ### review_common.py
 
-Shared constants, types, and helpers for the claude-review system.
+Shared constants and helpers for the claude-review system.
 
 This module is the contract between review-orchestrate and review-post.
-Both scripts import from here instead of defining their own constants.
+Both scripts import from here instead of defining their own constants. The
+vocabulary they name those constants alongside — severities, modes, findings,
+the job a run threads through — is `review_types`', so a consumer that only
+needs a noun does not take the artifact layout with it.
 
 Each review owns a directory under `~/.local/state/workbench/reviews/` —
 `review.md` plus its session logs, group outputs, and pipeline state. The
@@ -426,7 +433,9 @@ verdict is decided in the first place belongs to ``ReviewVerdict``.
 
 Finding parsing, renumbering, deduplication, verification, and stable IDs.
 
-Shared between review-orchestrate (merging/verification) and review-post (parsing).
+Shared between review-orchestrate (merging/verification) and review-post
+(parsing). The `Finding` these produce is `review_types`': a consumer that only
+holds findings does not need the parser that read them off a document.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -534,6 +543,27 @@ listing parse back, so this is the one place the summary's shape is decided.
 It is the only reader that needs both halves of a review at once — the findings
 document (counts, verdict) and the pipeline state (status, failure detail) —
 which is why it sits above both rather than inside either.
+
+### review_types.py
+
+The review subsystem's vocabulary: the nouns, with no behaviour around them.
+
+A severity, a mode, a disposition, a finding, a review's attribution, and the
+job a run threads through every phase. Everything here is a type or a constant
+that names one — the modules above hold the code that parses, renders, merges
+and runs.
+
+The split is about fan-in. `Finding` had 14 consumers and lived beside evidence
+verification and document surgery, so wanting the dataclass meant importing all
+of it; `ReviewJob` lived beside git collection and budget fitting, so every
+phase that takes a job took those too. Naming the vocabulary separately is what
+lets a consumer depend on what a review *is* without depending on what the
+review pipeline *does*.
+
+Nothing in the review layer is imported here, and nothing should be: this is the
+layer everything else in it sits on. The three heavier imports — `agent_types`,
+`workbench_config` and `pr_state.now_iso` — are all below the review layer, and
+`ReviewJob` is the only thing that reaches for them.
 
 ## Publishing
 

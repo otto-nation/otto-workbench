@@ -11,7 +11,7 @@ paths:
 # claude-review Development
 
 When adding or modifying a review phase, verify these integration points:
-- `review_common.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
+- `review_types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
 - `review-orchestrate`: iteration over `SEVERITIES`, `renumber_section()`, `merge_reviews()`, `build_prompt()` template rendering
 - `review-post`: `renumber_for_posting()`, `parse_findings()` parser, `classify_findings()` posting routing
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)

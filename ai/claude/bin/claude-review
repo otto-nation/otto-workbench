@@ -40,10 +40,12 @@ from review_common import (
     FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
     FILENAME_PRIOR, FILENAME_SESSION, REVIEW_EXT,
     SEVERITY_COUNT_RE_FMT,
-    SEVERITIES,
-    Mode, ReviewMeta, ReviewType, aggregate_session_usage,
+    aggregate_session_usage,
     count_severities, resolve_review_verdict, read_review_meta,
-    review_file_path, review_meta_from_dict,
+    review_file_path,
+)
+from review_types import (
+    SEVERITIES, Mode, ReviewMeta, ReviewType, review_meta_from_dict,
 )
 from review_state import (
     build_failure_detail, read_pipeline_status, read_pipeline_warnings,

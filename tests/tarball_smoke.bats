@@ -104,6 +104,7 @@ import review_phases
 import review_retry
 import review_state
 import review_fix
+import review_types
 print('ok')
 "
   [ "$status" -eq 0 ]
@@ -122,6 +123,7 @@ import review_dedup
 import review_format
 import review_github
 import review_posting
+import review_types
 print('ok')
 "
   [ "$status" -eq 0 ]

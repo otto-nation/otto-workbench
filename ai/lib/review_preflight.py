@@ -2,170 +2,38 @@
 
 Handles everything needed before prompt construction: collecting diffs, commit logs,
 file contents, permissions, and organizing files into review groups.
+
+The records this fills in — `PRMetadata`, `PRContext`, `PreflightData`, `Group`
+and the `ReviewJob` they hang off — are `review_types`', so a consumer that only
+needs to name a job does not import the collection that builds one.
 """
 
 # doc-group: pipeline
 
 from __future__ import annotations
 
-import functools
 import json
 import os
 import re
 import stat
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 
 import gh_client
 import git_client
 import log
-import workbench_config
-from agent_types import Effort
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
-from pr_state import now_iso
-from review_common import FILE_STAT_FMT, Mode, PRIOR_SHA_RE
+from review_common import PRIOR_SHA_RE
 from review_dedup import _get_bot_login
 from review_findings import BOLD_FINDING_ID_RE
 from review_github import PRData
 from review_profiles import (
     format_profiles_section, load_profiles, match_profiles,
 )
-
-# ── Data types ────────────────────────────────────────────────────────────────
-
-@dataclass
-class PRMetadata:
-    title: str
-    body: str
-    head: str
-    base: str
-    head_sha: str
-    additions: int
-    deletions: int
-    changed_files: int
-    files: list[dict]
-    is_draft: bool = False
-    labels: list[str] = field(default_factory=list)
-    author: str = ""
-
-    @property
-    def total_lines(self):
-        return self.additions + self.deletions
-
-    def file_stats(self, line_threshold: int):
-        """The per-file churn breakdown, or "" for a PR small enough not to need it.
-
-        The threshold is an argument rather than a module constant because
-        ``EFFORT_PRESETS`` varies it by effort; re-deriving it here is what let
-        the two owners disagree.
-        """
-        if self.total_lines <= line_threshold:
-            return ""
-        sorted_files = sorted(
-            self.files, key=lambda f: f["additions"] + f["deletions"], reverse=True
-        )
-        return "\n".join(
-            FILE_STAT_FMT.format(**f) for f in sorted_files
-        )
-
-    @property
-    def all_files_formatted(self):
-        return "\n".join(
-            FILE_STAT_FMT.format(**f) for f in self.files
-        )
-
-
-@dataclass
-class PRContext:
-    commits: str = ""
-    reviews: str = "[]"
-    review_comments: str = "[]"
-    comments: str = "[]"
-
-
-@dataclass
-class Group:
-    name: str
-    files: list[str]
-    lines: int
-
-
-
-class ViewerRole(StrEnum):
-    AUTHOR = "author"
-    REQUESTED = "requested reviewer"
-    REVIEWER = "reviewer"
-
-
-@dataclass
-class ReviewJob:
-    repo: str
-    pr_number: str
-    pr: PRMetadata
-    ctx: PRContext
-    wt_path: str
-    review_file: str
-    session_log: str
-    issue_link: str = ""
-    issue_context: str = ""
-    prior_review: str = ""
-    mode: Mode = Mode.PR
-    generator_version: str = ""
-    preflight: "PreflightData | None" = None
-    model: str = ""
-    effort: Effort = Effort.MEDIUM
-    include_generated: bool = False
-    reply_threads: dict = field(default_factory=dict)
-    verification: dict | None = None
-    pr_state_data: "PRState | None" = None
-    viewer_role: str = ""
-    throttle: "QuotaThrottle | None" = None
-    # Taken when the job is built, not when the sidecar is written: every
-    # branch that reaches a review file writes a sidecar, so a timestamp taken
-    # there dates the deliverable rather than the run that produced it. This is
-    # what `started_at` in meta.json carries.
-    started_at: str = field(default_factory=now_iso)
-
-    @functools.cached_property
-    def config(self) -> workbench_config.WorkbenchConfig:
-        """The merged workbench config for this job's worktree, read once.
-
-        A review builds a ``PhaseRunner`` per phase and, in the group phase, one
-        per group — every one of them resolving model, thinking and provider
-        from the same two files. Cached on the job so the read happens once per
-        review rather than once per runner.
-        """
-        return workbench_config.load_config_or_default(self.wt_path)
-
-    @property
-    def artifact_dir(self) -> str:
-        """This review's own directory — every artifact is a sibling of the review file.
-
-        Agents are granted write access to exactly this, never to the shared reviews
-        root: a root grant is how scratch files ended up beside unrelated reviews.
-        """
-        return str(Path(self.review_file).parent)
-
-
-@dataclass
-class PreflightData:
-    diff: str
-    commit_log: str
-    file_contents: dict[str, str]
-    file_permissions: dict[str, str]
-    claude_md: str
-    architecture_md: str
-    review_checklists: dict[str, str] = field(default_factory=dict)
-    review_profiles: list = field(default_factory=list)
-    omitted_files: list[str] = field(default_factory=list)
-    delta_diff: str = ""
-    delta_commit_log: str = ""
-    delta_files: list[str] = field(default_factory=list)
-    prior_head_sha: str = ""
-
+from review_types import (
+    Group, Mode, PRContext, PreflightData, PRMetadata, ReviewJob,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -323,7 +191,7 @@ def _worktree_diff(wt_path: str, since: str) -> str:
     )
 
 
-def _collect_delta(job: "ReviewJob") -> tuple[str, str, list[str], str]:
+def _collect_delta(job: ReviewJob) -> tuple[str, str, list[str], str]:
     empty = ("", "", [], "")
     if not job.prior_review:
         log.info("No prior review — running full review")
@@ -468,7 +336,7 @@ def _fit_to_budget(
     return included, included_perms, omitted
 
 
-def collect_preflight_data(job: "ReviewJob") -> PreflightData:
+def collect_preflight_data(job: ReviewJob) -> PreflightData:
     wt = Path(job.wt_path)
     base = job.pr.base or DEFAULT_BASE_BRANCH
 

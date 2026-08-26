@@ -37,15 +37,12 @@ from review_agent import (
     diagnose_missing_output, try_recover_output,
 )
 from review_common import (
-    FILE_STAT_FMT,
-    GroupSkip,
     TEMPLATE_DISPROVE, TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT,
     phase_log_path,
     phase_output_path,
 )
 from review_disprove import apply_disprove_results, parse_disprove_output
 from review_findings import _count_findings, _validate_group_output, merge_reviews
-from review_preflight import Group, ReviewJob
 from review_prompt import build_prompt
 from review_retry import (
     GroupFailure,
@@ -54,6 +51,7 @@ from review_retry import (
 )
 from review_scout import format_leads_block, parse_scout_output
 from review_state import PipelineState, _update_group_done, _update_group_failed
+from review_types import FILE_STAT_FMT, Group, GroupSkip, ReviewJob
 
 # The group phase's own retry ceiling, off its registry entry. Synthesis borrows
 # it as an upper bound for the same reason it always has: both are review phases

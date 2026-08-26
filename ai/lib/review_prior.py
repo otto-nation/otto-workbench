@@ -34,11 +34,9 @@ import git_client
 import log
 import serde
 from review_common import (
-    DISPOSITION_TAIL_PUNCTUATION,
     FILENAME_PRIOR_FINDINGS,
     PRIOR_DATE_RE,
     PRIOR_SHA_RE,
-    PriorDisposition,
     _derive_path,
     plural,
 )
@@ -50,6 +48,7 @@ from review_findings import (
     _parse_prior_findings,
     _stable_ids,
 )
+from review_types import DISPOSITION_TAIL_PUNCTUATION, PriorDisposition
 
 # The bucket a finding lands in when nothing settled it. Not a
 # `PriorDisposition` member: those are verdicts a review may state, and "no

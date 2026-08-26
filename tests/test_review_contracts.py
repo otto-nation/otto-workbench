@@ -35,9 +35,11 @@ import review_common  # noqa: E402
 import review_findings  # noqa: E402
 import review_fix  # noqa: E402
 import review_prompt  # noqa: E402
+import review_types  # noqa: E402
 from pr_state import PRIdentity, PRState  # noqa: E402
-from review_preflight import (  # noqa: E402
-    MAX_PROMPT_BYTES, PRContext, PRMetadata, PreflightData, ReviewJob,
+from review_preflight import MAX_PROMPT_BYTES  # noqa: E402
+from review_types import (  # noqa: E402
+    PRContext, PreflightData, PRMetadata, ReviewJob,
 )
 
 
@@ -140,29 +142,29 @@ class TestReviewMeta:
 
     def test_empty_string_pr_number_returns_none(self):
         """Empty-string pr_number from meta.json must not crash with ValueError on int("")."""
-        meta = review_common.review_meta_from_dict({"pr_number": ""})
+        meta = review_types.review_meta_from_dict({"pr_number": ""})
         assert meta.pr_number is None
 
     def test_valid_pr_number_as_string(self):
-        meta = review_common.review_meta_from_dict({"pr_number": "42"})
+        meta = review_types.review_meta_from_dict({"pr_number": "42"})
         assert meta.pr_number == 42
 
     def test_missing_pr_number_returns_none(self):
-        meta = review_common.review_meta_from_dict({})
+        meta = review_types.review_meta_from_dict({})
         assert meta.pr_number is None
 
     def test_none_pr_number_returns_none(self):
-        meta = review_common.review_meta_from_dict({"pr_number": None})
+        meta = review_types.review_meta_from_dict({"pr_number": None})
         assert meta.pr_number is None
 
     def test_timestamps_are_absent_when_the_file_predates_them(self):
         """No backfill: a meta.json without them reports them as absent."""
-        meta = review_common.review_meta_from_dict({})
+        meta = review_types.review_meta_from_dict({})
         assert meta.started_at == ""
         assert meta.reviewed_at == ""
 
     def test_timestamps_are_read_from_the_file(self):
-        meta = review_common.review_meta_from_dict({
+        meta = review_types.review_meta_from_dict({
             "started_at": "2026-08-18T13:47:03+00:00",
             "reviewed_at": "2026-08-18T14:02:11+00:00",
         })
@@ -177,19 +179,19 @@ class TestSeverityConsistency:
     """Severity registry is internally consistent."""
 
     def test_every_severity_key_is_single_char(self):
-        for s in review_common.SEVERITIES:
+        for s in review_types.SEVERITIES:
             assert len(s.key) == 1, f"{s.key} is not a single character"
 
     def test_posting_values_are_valid(self):
-        for s in review_common.SEVERITIES:
+        for s in review_types.SEVERITIES:
             assert s.posting in ("inline", "body"), f"{s.key} has invalid posting: {s.posting}"
 
     def test_body_group_values_are_valid(self):
-        for s in review_common.SEVERITIES:
+        for s in review_types.SEVERITIES:
             assert s.body_group in ("by_severity", "by_file"), f"{s.key} has invalid body_group: {s.body_group}"
 
     def test_finding_id_regex_accepts_all_severity_keys(self):
-        keys = [s.key for s in review_common.SEVERITIES]
+        keys = [s.key for s in review_types.SEVERITIES]
         regex_keys = review_findings.FINDING_ID_RE.pattern
         for key in keys:
             assert key in regex_keys, f"FINDING_ID_RE does not include severity key {key}"
@@ -202,18 +204,18 @@ class TestSeverityRegistry:
     """SeverityConfig registry provides all severity metadata."""
 
     def test_severities_has_four_entries(self):
-        assert len(review_common.SEVERITIES) == 4
+        assert len(review_types.SEVERITIES) == 4
 
     def test_severity_keys_are_unique(self):
-        keys = [s.key for s in review_common.SEVERITIES]
+        keys = [s.key for s in review_types.SEVERITIES]
         assert len(keys) == len(set(keys))
 
     def test_severity_keys_are_msni(self):
-        keys = [s.key for s in review_common.SEVERITIES]
+        keys = [s.key for s in review_types.SEVERITIES]
         assert keys == ["M", "S", "N", "I"]
 
     def test_severity_by_key_returns_correct_config(self):
-        m = review_common.severity_by_key("M")
+        m = review_types.severity_by_key("M")
         assert m.label == "must-fix"
         assert m.section == "Must fix"
         assert m.posting == "inline"
@@ -221,24 +223,24 @@ class TestSeverityRegistry:
 
     def test_severity_by_key_unknown_raises(self):
         with pytest.raises(KeyError):
-            review_common.severity_by_key("X")
+            review_types.severity_by_key("X")
 
     def test_nit_is_body_posting(self):
-        n = review_common.severity_by_key("N")
+        n = review_types.severity_by_key("N")
         assert n.posting == "body"
         assert n.body_group == "by_file"
 
     def test_idiom_is_body_posting(self):
-        i = review_common.severity_by_key("I")
+        i = review_types.severity_by_key("I")
         assert i.posting == "body"
         assert i.body_group == "by_file"
 
     def test_nit_aliases_include_nits(self):
-        n = review_common.severity_by_key("N")
+        n = review_types.severity_by_key("N")
         assert "Nits" in n.aliases
 
     def test_severity_config_is_frozen(self):
-        m = review_common.severity_by_key("M")
+        m = review_types.severity_by_key("M")
         with pytest.raises(AttributeError):
             m.key = "X"
 
@@ -442,8 +444,8 @@ def _render_fix_findings(wt_path) -> str:
         wt_path=str(wt_path),
         review_file=str(wt_path / "reviews" / "review.md"),
     )
-    finding = review_findings.Finding(
-        id="M1", severity=review_common.SEVERITY_MUST, seq=1,
+    finding = review_types.Finding(
+        id="M1", severity=review_types.SEVERITY_MUST, seq=1,
         path="a.py", line=3, end_line=None, body="the guard is missing",
     )
     return _render_adapter(review_fix.ReviewFixAdapter(job, [finding], set()))

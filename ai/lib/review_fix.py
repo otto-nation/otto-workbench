@@ -47,12 +47,10 @@ import log
 import proc
 from agent_types import Phase
 from pr_fix import FixOutcome, ItemOutcome
-from review_common import TEMPLATE_FIX, phase_log_path, severity_by_key
-from review_findings import (
-    FINDING_ID_RE, Finding, match_skip, parse_findings,
-)
-from review_preflight import ReviewJob
+from review_common import TEMPLATE_FIX, phase_log_path
+from review_findings import FINDING_ID_RE, match_skip, parse_findings
 from review_retry import _has_output
+from review_types import Finding, ReviewJob, severity_by_key
 from trail import Trail
 
 # The two outcomes that leave a finding open. A deferral is a finding the agent

@@ -15,6 +15,7 @@ if str(LIB_DIR) not in sys.path:
 
 import review_common  # noqa: E402
 import review_listing  # noqa: E402
+import review_types  # noqa: E402
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
@@ -88,7 +89,7 @@ def test_findings_are_keyed_by_the_codebase_severity_vocabulary(reviews_dir):
 
     row, = review_listing.rows()
 
-    expected = {s.json_key for s in review_common.SEVERITIES} | {"total"}
+    expected = {s.json_key for s in review_types.SEVERITIES} | {"total"}
     assert set(row.findings) == expected
     assert row.findings["must_fix"] == 1
     assert row.findings["should_fix"] == 1

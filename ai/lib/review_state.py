@@ -31,12 +31,11 @@ from review_agent import _parse_session_cost
 from review_common import (
     FILENAME_PIPELINE_STATE,
     META_STATUS,
-    ReviewType,
     _derive_path,
     phase_log_path,
     plural,
 )
-from review_preflight import Group, ReviewJob
+from review_types import Group, ReviewJob, ReviewType
 
 _state_lock = threading.Lock()
 

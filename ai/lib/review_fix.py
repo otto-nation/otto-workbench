@@ -47,7 +47,7 @@ import log
 import proc
 from agent_types import Phase
 from pr_fix import FixOutcome, ItemOutcome
-from review_common import TEMPLATE_FIX, phase_log_path
+from review_common import phase_log_path
 from review_findings import FINDING_ID_RE, match_skip, parse_findings
 from review_retry import _has_output
 from review_types import Finding, ReviewJob, severity_by_key
@@ -236,7 +236,6 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
     """
 
     phase = Phase.FIX
-    template = TEMPLATE_FIX
     title = "Review Fix Tracking"
     action = "applying review findings"
     item_noun = "finding"

@@ -2,9 +2,9 @@
 
 A phase is one agent invocation the workbench knows how to size: what model it
 runs, how hard it thinks, how many turns it gets, which agent definition it
-adopts. This module owns the names for those things — ``Phase``,
-``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort`` — and ``PhaseSpec``,
-the shape a phase's built-in defaults take.
+adopts, which prompt template it renders. This module owns the names for those
+things — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
+``Mode`` — and ``PhaseSpec``, the shape a phase's built-in defaults take.
 
 Which phases exist, and what each one's defaults are, is ``agent_registry``'s
 job. The vocabulary is a closed set of names that grows only when a new kind of
@@ -27,8 +27,10 @@ this one.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 
 # Every per-phase and global override key starts here. `WORKBENCH_AI_` rather
 # than the old `CLAUDE_REVIEW_`: these keys size agent invocations across the
@@ -116,6 +118,18 @@ class Phase(StrEnum):
 # phase whose artifacts carry an index. Both are read by `PhaseSpec` below.
 _WRITES_REVIEW_FILE = frozenset({Phase.SINGLE, Phase.SYNTHESIS, Phase.FIX})
 _INDEXED = frozenset({Phase.GROUP})
+
+
+class Mode(StrEnum):
+    """What the review is reviewing: an open PR or the working branch.
+
+    Vocabulary rather than review state: two phases render a different prompt
+    template per mode, and ``PhaseSpec`` is what says which. Owning it here is
+    what lets the spec answer that without importing the review layer.
+    """
+
+    PR = "pr"
+    SELF = "self"
 
 
 class Effort(StrEnum):
@@ -295,11 +309,18 @@ class PhaseSpec:
     opposite default fails asymmetrically — a phase that silently misses the
     bump is under-budgeted, where one that takes it needlessly finishes early.
     A phase that reasons only over text already in its prompt opts out.
+
+    ``template`` names the prompt file the phase renders, and a mapping names
+    one per ``Mode`` for the two phases that read the working branch and an open
+    PR differently. Read it through ``template_for``, never directly: the
+    mapping is the reason the caller-side ``if mode is SELF`` branches existed,
+    and the point of declaring it here is that they do not have to.
     """
 
     phase: Phase
     domain: PhaseDomain
     label: str
+    template: str | Mapping[Mode, str] = ""
     model: str = "sonnet"
     thinking: Thinking | None = None
     max_turns: int = 15
@@ -309,6 +330,41 @@ class PhaseSpec:
     scales_with_omitted: bool = True
     scaling: ItemScaling = ItemScaling()
     retry: RetryBudget = RetryBudget()
+
+    def __post_init__(self) -> None:
+        """Seal a mode-keyed template against writes through the registry.
+
+        ``frozen=True`` stops an attribute being reassigned, not a mapping under
+        one being written to, and every spec is a process-wide singleton in
+        ``PHASES`` — a caller that mutated one would move every later review's
+        prompt. The rest of the class is deep-immutable already, ``scaling`` and
+        ``retry`` being frozen dataclasses of their own.
+        """
+        if not isinstance(self.template, str):
+            object.__setattr__(
+                self, "template", MappingProxyType(dict(self.template)),
+            )
+
+    def template_for(self, mode: Mode = Mode.PR) -> str:
+        """The prompt template this phase renders in ``mode``.
+
+        Most phases render one template whatever the review is looking at, and
+        those ignore the argument — hence the default, which lets a caller
+        outside a review (a fix pass, a triage) ask without inventing a mode it
+        has no notion of. Raises for a phase that declares no template at all,
+        the way ``_stem`` does for a domain with no review artifacts: a silent
+        empty string reaches ``agent_templates.render`` as a missing file, one
+        layer further from the declaration that is actually wrong. A mapping
+        missing the mode asked for raises the same way rather than as a bare
+        ``KeyError``, which names the mode but not the phase that owes it one.
+        """
+        if not self.template:
+            raise ValueError(f"{self.phase} declares no prompt template")
+        if isinstance(self.template, str):
+            return self.template
+        if mode not in self.template:
+            raise ValueError(f"{self.phase} declares no prompt template for {mode}")
+        return self.template[mode]
 
     @property
     def _stem(self) -> str:

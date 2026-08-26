@@ -131,9 +131,9 @@ The vocabulary every agent invocation is described in.
 
 A phase is one agent invocation the workbench knows how to size: what model it
 runs, how hard it thinks, how many turns it gets, which agent definition it
-adopts. This module owns the names for those things — ``Phase``,
-``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort`` — and ``PhaseSpec``,
-the shape a phase's built-in defaults take.
+adopts, which prompt template it renders. This module owns the names for those
+things — ``Phase``, ``PhaseShape``, ``Thinking``, ``AgentKind``, ``Effort``,
+``Mode`` — and ``PhaseSpec``, the shape a phase's built-in defaults take.
 
 Which phases exist, and what each one's defaults are, is ``agent_registry``'s
 job. The vocabulary is a closed set of names that grows only when a new kind of
@@ -361,9 +361,9 @@ Shared constants and helpers for the claude-review system.
 
 This module is the contract between review-orchestrate and review-post.
 Both scripts import from here instead of defining their own constants. The
-vocabulary they name those constants alongside — severities, modes, findings,
-the job a run threads through — is `review_types`', so a consumer that only
-needs a noun does not take the artifact layout with it.
+vocabulary they name those constants alongside — severities, findings, the job
+a run threads through — is `review_types`', so a consumer that only needs a
+noun does not take the artifact layout with it.
 
 Each review owns a directory under `~/.local/state/workbench/reviews/` —
 `review.md` plus its session logs, group outputs, and pipeline state. The
@@ -548,10 +548,9 @@ which is why it sits above both rather than inside either.
 
 The review subsystem's vocabulary: the nouns, with no behaviour around them.
 
-A severity, a mode, a disposition, a finding, a review's attribution, and the
-job a run threads through every phase. Everything here is a type or a constant
-that names one — the modules above hold the code that parses, renders, merges
-and runs.
+A severity, a disposition, a finding, a review's attribution, and the job a run
+threads through every phase. Everything here is a type or a constant that names
+one — the modules above hold the code that parses, renders, merges and runs.
 
 The split is about fan-in. `Finding` had 14 consumers and lived beside evidence
 verification and document surgery, so wanting the dataclass meant importing all

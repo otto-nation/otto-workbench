@@ -37,7 +37,6 @@ from review_agent import (
     diagnose_missing_output, try_recover_output,
 )
 from review_common import (
-    TEMPLATE_DISPROVE, TEMPLATE_GROUP, TEMPLATE_HOLISTIC, TEMPLATE_SCOUT,
     phase_log_path,
     phase_output_path,
 )
@@ -234,7 +233,7 @@ def _review_group(
     )
 
     group_prompt = build_prompt(
-        TEMPLATE_GROUP, job, max_turns=max_turns,
+        PHASES[Phase.GROUP].template_for(), job, max_turns=max_turns,
         group_idx=i, group_count=group_count, group_name=grp.name,
         group_files_formatted=group_files_formatted,
         group_file_paths=grp.files,
@@ -272,7 +271,8 @@ def _phase_holistic(job: ReviewJob, group_count: int) -> PhaseResult:
     holistic_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
-        TEMPLATE_HOLISTIC, job, max_turns=max_turns, holistic_output=holistic_output,
+        PHASES[Phase.HOLISTIC].template_for(), job,
+        max_turns=max_turns, holistic_output=holistic_output,
     )
 
     log.info(f"Phase 1/{group_count}: Holistic scan...")
@@ -307,7 +307,8 @@ def _phase_scout(job: ReviewJob, group_count: int) -> PhaseResult:
     scout_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
-        TEMPLATE_SCOUT, job, max_turns=max_turns, scout_output=scout_output,
+        PHASES[Phase.SCOUT].template_for(), job,
+        max_turns=max_turns, scout_output=scout_output,
     )
 
     log.info(f"Phase 1/{group_count}: Lead scout scan...")
@@ -349,7 +350,7 @@ def _phase_disprove(job: ReviewJob) -> PhaseResult:
     disprove_log = runner.session_log
     max_turns = runner.max_turns
     prompt = build_prompt(
-        TEMPLATE_DISPROVE, job, max_turns=max_turns,
+        PHASES[Phase.DISPROVE].template_for(), job, max_turns=max_turns,
         disprove_output=disprove_output, review_content=review_content,
     )
 

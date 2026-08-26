@@ -313,11 +313,6 @@ class TestNoDuplicateDefaults:
         # `PhaseSpec.log_filename` and `PhaseSpec.output_filename` are the one
         # owner each. A second module-level string holding the same value — under
         # any name — would be a second owner, and the two would drift.
-        #
-        # TEMPLATE_* is excluded: the prompt templates in
-        # lib/review-templates/ are legitimately named holistic.md, scout.md
-        # and disprove.md. They are a different file in a different
-        # directory that happens to share the phase's name.
         artifact_names = {
             name
             for p in REVIEW_PHASES
@@ -329,9 +324,7 @@ class TestNoDuplicateDefaults:
         }
         duplicates = {
             name for name, value in vars(review_common).items()
-            if isinstance(value, str)
-            and value in artifact_names
-            and not name.startswith("TEMPLATE_")
+            if isinstance(value, str) and value in artifact_names
         }
         assert duplicates == set()
 

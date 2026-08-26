@@ -15,8 +15,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent_types import (
-    AgentKind, Effort, Phase, PhaseDomain, PhaseShape, PhaseSpec, ItemScaling,
-    Thinking,
+    AgentKind, Effort, Mode, Phase, PhaseDomain, PhaseShape, PhaseSpec,
+    ItemScaling, Thinking,
 )
 
 
@@ -147,6 +147,56 @@ class TestPhaseSpecArtifactNames:
             spec.log_filename
 
 
+class TestPhaseSpecTemplates:
+    """A spec answers which prompt file it renders, per mode where that differs."""
+
+    @staticmethod
+    def _review(phase: Phase, template) -> PhaseSpec:
+        return PhaseSpec(phase, PhaseDomain.REVIEW, "label", template=template)
+
+    def test_one_template_answers_every_mode(self):
+        spec = self._review(Phase.HOLISTIC, "holistic.md")
+        assert spec.template_for() == "holistic.md"
+        assert spec.template_for(Mode.SELF) == "holistic.md"
+
+    def test_a_mode_keyed_template_answers_the_mode_asked_for(self):
+        spec = self._review(
+            Phase.SINGLE, {Mode.PR: "single-agent.md", Mode.SELF: "self-review.md"},
+        )
+        assert spec.template_for(Mode.PR) == "single-agent.md"
+        assert spec.template_for(Mode.SELF) == "self-review.md"
+
+    def test_the_default_mode_is_the_pr(self):
+        """A caller outside a review has no mode to name, and must still ask."""
+        spec = self._review(Phase.SINGLE, {Mode.PR: "a.md", Mode.SELF: "b.md"})
+        assert spec.template_for() == "a.md"
+
+    def test_a_phase_declaring_no_template_says_so(self):
+        """An empty string reaches `render` as a missing file one layer later."""
+        spec = PhaseSpec(Phase.REBASE, PhaseDomain.REBASE, "Rebase assist")
+        with pytest.raises(ValueError, match="no prompt template"):
+            spec.template_for()
+
+    def test_a_mapping_missing_a_mode_names_the_phase_that_owes_it_one(self):
+        """A bare KeyError names the mode and leaves the phase to be guessed."""
+        spec = self._review(Phase.SINGLE, {Mode.PR: "single-agent.md"})
+        with pytest.raises(ValueError, match="single.*no prompt template for self"):
+            spec.template_for(Mode.SELF)
+
+    def test_a_mode_keyed_template_cannot_be_written_through(self):
+        """Every spec is a singleton in PHASES; a write would move every review."""
+        spec = self._review(Phase.SINGLE, {Mode.PR: "a.md", Mode.SELF: "b.md"})
+        with pytest.raises(TypeError):
+            spec.template[Mode.PR] = "other.md"
+
+    def test_the_declared_mapping_is_copied_rather_than_adopted(self):
+        """A caller keeping its literal must not keep a handle on the spec."""
+        declared = {Mode.PR: "a.md", Mode.SELF: "b.md"}
+        spec = self._review(Phase.SINGLE, declared)
+        declared[Mode.PR] = "other.md"
+        assert spec.template_for(Mode.PR) == "a.md"
+
+
 class TestVocabularyIsClosed:
     """These enums name choices, so an unrecognised string is not one of them."""
 
@@ -154,6 +204,7 @@ class TestVocabularyIsClosed:
         assert {e.value for e in Effort} == {"low", "medium", "high"}
         assert {t.value for t in Thinking} == {"low", "medium", "high"}
         assert {a.value for a in AgentKind} == {"reviewer", "reviewer-lite"}
+        assert {m.value for m in Mode} == {"pr", "self"}
         assert {d.value for d in PhaseDomain} == {
             "review", "comments", "ci", "rebase", "describe",
         }

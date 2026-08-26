@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from agent_types import Mode
 from review_common import (
     aggregate_session_usage,
     count_severities,
@@ -21,7 +22,7 @@ from review_common import (
     resolve_review_verdict,
 )
 from review_state import build_failure_detail, read_pipeline_status
-from review_types import SEVERITIES, Mode, ReviewMeta
+from review_types import SEVERITIES, ReviewMeta
 
 
 def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:

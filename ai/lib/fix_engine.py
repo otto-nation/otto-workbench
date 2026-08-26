@@ -129,10 +129,10 @@ class FixRun:
 class FixAdapter(ABC):
     """One domain's half of a fix pass.
 
-    Six things, and the engine owns everything else. `phase` sizes the pass —
-    turns, dollars, chunk size and retry ceiling all come from the registry
-    entry it names. `template` is the prompt, `title` the heading the tracking
-    file is written under, and `action` how the pass announces itself.
+    Five things, and the engine owns everything else. `phase` is the pass —
+    turns, dollars, chunk size, retry ceiling and the prompt template all come
+    from the registry entry it names. `title` is the heading the tracking file
+    is written under, and `action` how the pass announces itself.
 
     `workdir` is the worktree the agent edits and `artifacts` the directory the
     pass writes into; the tracking file and the session log are named inside it
@@ -149,7 +149,6 @@ class FixAdapter(ABC):
     """
 
     phase: Phase
-    template: str
     title: str
     action: str
     item_noun: str
@@ -256,7 +255,7 @@ def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
 def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
     """Render this domain's template around the tracking file as it now stands."""
     text = agent_templates.render(
-        adapter.template,
+        PHASES[adapter.phase].template_for(),
         branch_name=adapter.branch,
         repo=adapter.repo,
         tracking_content=adapter.tracking_path.read_text(),

@@ -36,6 +36,7 @@ except ImportError:
     def version_string(name):
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
+from agent_types import Mode
 from review_common import (
     FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
     FILENAME_PRIOR, FILENAME_SESSION, REVIEW_EXT,
@@ -45,7 +46,7 @@ from review_common import (
     review_file_path,
 )
 from review_types import (
-    SEVERITIES, Mode, ReviewMeta, ReviewType, review_meta_from_dict,
+    SEVERITIES, ReviewMeta, ReviewType, review_meta_from_dict,
 )
 from review_state import (
     build_failure_detail, read_pipeline_status, read_pipeline_warnings,

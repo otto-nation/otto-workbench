@@ -111,12 +111,39 @@ commit_deep_script() {
 }
 
 @test "a branch deletion is not measured for nesting" {
+  # A deletion adds no lines, so there is nothing for the gate to charge it
+  # with — including the debt sitting uncommitted-to-the-remote on the branch
+  # that happens to be checked out, which a default-branch base would surface.
   git -C "$TMPDIR/wt" push -q origin main:doomed
+  git -C "$TMPDIR/wt" push -q origin main
   commit_deep_script legacy.sh
-  git -C "$TMPDIR/wt" -c core.hooksPath=/dev/null push -q origin main
 
   run git -C "$TMPDIR/wt" push origin :doomed
   [ "$status" -eq 0 ]
+}
+
+@test "a push of a branch that is not checked out is reported, not measured" {
+  # validate-nesting reads the working tree, so a diff against it would answer
+  # for the wrong branch's lines, and the tree does not hold the pushed ones
+  # either. Neither number is about this push, so the ref is named instead of
+  # being passed off as checked.
+  git -C "$TMPDIR/wt" push -q origin main
+  git -C "$TMPDIR/wt" checkout -q -b other
+  commit_deep_script deep.sh
+  git -C "$TMPDIR/wt" checkout -q main
+
+  run git -C "$TMPDIR/wt" push origin other:other
+  [[ "$output" == *"nesting not checked for other"* ]]
+}
+
+@test "a multi-ref push still measures the checked-out branch" {
+  git -C "$TMPDIR/wt" branch -q side
+  git -C "$TMPDIR/wt" push -q origin main
+  commit_deep_script deep.sh
+
+  run git -C "$TMPDIR/wt" push origin main side
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nesting exceeds"* ]]
 }
 
 # ── Recording ────────────────────────────────────────────────────────────────

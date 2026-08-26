@@ -2407,6 +2407,11 @@ class TestPhaseSynthesis:
 class TestRunSynthesisOrFallback:
     """What the synthesis step records in state, and what it reports spending."""
 
+    # A merge with one finding in it, so the step has something to carry: the
+    # clean-review shortcut returns before synthesis and would answer for every
+    # test below whatever the branch under test does.
+    MERGED = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+
     def _make_state(self, ro):
         return ro.PipelineState(
             head_sha="abc123",
@@ -2446,7 +2451,7 @@ class TestRunSynthesisOrFallback:
         monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        merged = self.MERGED
         ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
@@ -2467,7 +2472,7 @@ class TestRunSynthesisOrFallback:
         monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
@@ -2492,7 +2497,7 @@ class TestRunSynthesisOrFallback:
         state = self._make_state(ro)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 25.0, 20.0,
         )
@@ -2512,7 +2517,7 @@ class TestRunSynthesisOrFallback:
         state = self._make_state(ro)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        merged = self.MERGED
         skipped = ro.Diagnosis(ro.DiagnosisKind.SKIPPED, detail="--no-group")
         ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [ro.GroupFailure("grp-1", skipped)],
@@ -2537,7 +2542,7 @@ class TestRunSynthesisOrFallback:
             review_pipeline, "_phase_synthesis",
             lambda *a, **kw: pytest.fail("synthesis ran despite --no-synthesis"))
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )

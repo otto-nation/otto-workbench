@@ -36,6 +36,7 @@ from review_common import (
     _derive_path,
     phase_log_path,
     phase_output_path,
+    phase_skip_argv,
 )
 from review_findings import (
     _MECHANICAL_NOTE,
@@ -434,7 +435,7 @@ def _holistic_skip_reason(
     if incremental:
         return "incremental review"
     if _SCAN_PHASES <= job.skip_phases:
-        return "--no-scout --no-holistic"
+        return " ".join(phase_skip_argv(_SCAN_PHASES))
     if _SCAN_PHASES <= job.skipped:
         return f"effort={job.effort}"
     if group_count < HOLISTIC_MIN_GROUPS:

@@ -399,13 +399,16 @@ def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> b
     `--no-disprove` is read off `skip_phases` rather than `skipped`, so the two
     flags keep their precedence: `--disprove` buys back the gate a low-effort
     preset dropped, and nothing buys back one the operator switched off.
+
+    `explicit_disprove` is a tri-state a caller supplies, not a flag value: both
+    CLIs pass `None` or `True`, since switching the gate off now travels as
+    `--no-disprove` on `skip_phases`. `False` is for a library caller running the
+    pipeline directly with the gate forced off, and stays reachable for it.
     """
     if Phase.DISPROVE in job.skip_phases:
         return False
-    if explicit_disprove is True:
-        return True
-    if explicit_disprove is False:
-        return False
+    if explicit_disprove is not None:
+        return explicit_disprove
     return Phase.DISPROVE not in job.skipped
 
 

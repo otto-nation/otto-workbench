@@ -178,8 +178,8 @@ class TestPhaseSkipFlags:
 
     def test_a_flag_per_optional_review_phase(self):
         offered = {
-            a.dest for a in _skip_flag_parser()._actions
-            if a.dest.startswith("no_")
+            dest for dest in vars(_skip_flag_parser().parse_args([]))
+            if dest.startswith("no_")
         }
         assert offered == {
             f"no_{p}" for p in REVIEW_PHASES if PHASES[p].optional

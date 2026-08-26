@@ -1592,7 +1592,6 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(rt, "_resolve_default_branch", return_value="main"), \
              patch.object(rt, "_persist_fix_state") as persist, \
-             patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
              patch.object(rt.git_client, "run", side_effect=mock_run), \
              patch("pr_comments.post_thread_reply", return_value=True), \
              patch("pr_comments.post_issue_comment", return_value="u"), \
@@ -4594,7 +4593,6 @@ class TestFixPassHoldsWhenContested:
              patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
              patch.object(rt, "_resolve_default_branch", return_value="main"), \
              patch.object(rt, "_persist_fix_state"), \
-             patch.object(rt.review_common, "has_uncommitted_changes", return_value=True), \
              patch.object(rt.git_client, "run",
                           side_effect=_answering_the_owner(mock_run)), \
              patch("pr_comments.post_thread_reply", return_value=True), \

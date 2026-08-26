@@ -55,7 +55,7 @@ from review_github import (  # noqa: E402
     _check_existing_pending, _count_new_commits,
 )
 from review_dedup import (  # noqa: E402
-    _word_set, _jaccard, _extract_body_findings, _fetch_bot_comments,
+    word_set, jaccard, _extract_body_findings, _fetch_bot_comments,
     _get_bot_login, fetch_bot_reviews,
     check_review_already_posted, REVIEW_BODY_DEDUP_THRESHOLD,
 )

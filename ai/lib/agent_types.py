@@ -345,40 +345,6 @@ class PhaseSpec:
                 self, "template", MappingProxyType(dict(self.template)),
             )
 
-    model: str = "sonnet"
-    thinking: Thinking | None = None
-    max_turns: int = 15
-    max_budget: float | None = None
-    agent: AgentKind | None = None
-    shape: PhaseShape = PhaseShape.AGENT
-    scales_with_omitted: bool = True
-    scaling: ItemScaling = ItemScaling()
-    retry: RetryBudget = RetryBudget()
-
-    template: str | Mapping[Mode, str] = ""
-    model: str = "sonnet"
-    thinking: Thinking | None = None
-    max_turns: int = 15
-    max_budget: float | None = None
-    agent: AgentKind | None = None
-    shape: PhaseShape = PhaseShape.AGENT
-    scales_with_omitted: bool = True
-    scaling: ItemScaling = ItemScaling()
-    retry: RetryBudget = RetryBudget()
-
-    def __post_init__(self) -> None:
-        """Seal a mode-keyed template against writes through the registry.
-
-        ``frozen=True`` stops an attribute being reassigned, not a mapping under
-        one being written to, and every spec is a process-wide singleton in
-        ``PHASES`` — a caller that mutated one would move every later review's
-        prompt. The rest of the class is deep-immutable already, ``scaling`` and
-        ``retry`` being frozen dataclasses of their own.
-        """
-        if not isinstance(self.template, str):
-            object.__setattr__(
-                self, "template", MappingProxyType(dict(self.template)),
-            )
 
     def template_for(self, mode: Mode = Mode.PR) -> str:
         """The prompt template this phase renders in ``mode``.

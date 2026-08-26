@@ -1369,6 +1369,47 @@ def test_apply_state_update_fix(worktree):
     assert loaded.fix.fix.items[0].outcome == FixOutcome.FIXED
 
 
+def test_apply_state_update_migrates_a_pre_fold_payload(worktree):
+    """The dict route reaches `_from_raw` too, or a legacy round applies as empty.
+
+    `serde` honours the hook on nested fields only, so this domain gets it from
+    `apply_state_update` itself. Without that, `threads` is an unrecognised key
+    that `from_dict` drops in silence — the update lands, reports nothing wrong,
+    and carries none of the outcomes it was handed.
+    """
+    apply_state_update(
+        target_dir=worktree, repo="owner/repo", branch="feat",
+        pr_number=1, head_sha="abc", domain="fix",
+        data={
+            "threads": [
+                {"thread_id": "t1", "file": "f.go", "reviewer": "alice",
+                 "action": "fixed"},
+            ],
+            "commit_sha": "xyz", "commit_status": "pushed",
+            "updated_at": "t",
+        },
+    )
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.fix.fix.commit_sha == "xyz"
+    assert loaded.fix.fix.commit_status == CommitStatus.PUSHED
+    assert [o.id for o in loaded.fix.fix.items] == ["t1"]
+    assert loaded.fix.fix.items[0].outcome == FixOutcome.FIXED
+    assert loaded.fix.reviewers == {"t1": "alice"}
+
+
+def test_apply_state_update_leaves_a_hookless_domain_alone(worktree):
+    """Only a domain owning its reconstruction is built through the hook."""
+    apply_state_update(
+        target_dir=worktree, repo="owner/repo", branch="feat",
+        pr_number=1, head_sha="abc", domain="review",
+        data={"verdict": "approve", "updated_at": "t"},
+    )
+    loaded = load_state(worktree)
+    assert loaded is not None
+    assert loaded.review.verdict == "approve"
+
+
 def test_apply_fix_preserves_deferred_issue_across_rounds():
     """A later round must not clear the tracking issue, or it opens a duplicate."""
     state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")

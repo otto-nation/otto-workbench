@@ -104,7 +104,11 @@ _FORCE_PUSH_ARGS = ("--force-with-lease",)
 
 # What `land` commits the pre-push hook's regenerated files under before it
 # pushes again. Naming a message is how a caller asks for that recovery.
-_REGEN_MESSAGE = "chore(docs): regenerate after rebase"
+#
+# Unscoped, because the hook decides what it rewrote and this side cannot see
+# it: a generated doc, a config schema, a public-surface snapshot, a lockfile.
+# `chore(docs)` claimed one of those for all of them.
+_REGEN_MESSAGE = "chore: regenerate after rebase"
 
 _GIT_REBASE_MERGE_DIR = "rebase-merge"
 _GIT_REBASE_APPLY_DIR = "rebase-apply"

@@ -26,6 +26,10 @@ import git_client  # noqa: E402
 import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402
+from review_common import (  # noqa: E402
+    ReviewEntry, ReviewEntryKind, iter_review_entries,
+)
+from review_dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
 from review_github import (  # noqa: E402
     GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT, GQL_ISSUE_COMMENTS_LIMIT,
     fetch_review_threads,
@@ -425,25 +429,10 @@ def find_nearest_rule(comment_body: str, rules: list[dict]) -> dict | None:
 
 # ── Dedup helpers ──────────────────────────────────────────────────────────
 
-DEDUP_THRESHOLD = 0.6
-
-
-def _word_set(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9_]+", text.lower()))
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a and not b:
-        return 1.0
-    union = a | b
-    if not union:
-        return 0.0
-    return len(a & b) / len(union)
-
 
 def _collect_github_entries(github_repos: list[dict]) -> list[tuple[str | None, set[str]]]:
     return [
-        (c.get("path"), _word_set(c["body"]))
+        (c.get("path"), word_set(c["body"]))
         for repo in github_repos
         for pr in repo.get("prs", [])
         for c in pr.get("comments", [])
@@ -451,10 +440,10 @@ def _collect_github_entries(github_repos: list[dict]) -> list[tuple[str | None, 
 
 
 def _is_dup_comment(comment: dict, github_entries: list[tuple[str | None, set[str]]]) -> bool:
-    c_words = _word_set(comment["body"])
+    c_words = word_set(comment["body"])
     return any(
         comment.get("path") == gh_path
-        and _jaccard(c_words, gh_words) >= DEDUP_THRESHOLD
+        and jaccard(c_words, gh_words) >= DEDUP_THRESHOLD
         for gh_path, gh_words in github_entries
     )
 
@@ -755,20 +744,20 @@ def _finding_to_comment(
     return comment, True
 
 
-def _scan_review_dir(
-    review_dir: Path, rules: list[dict],
+def _scan_review_entry(
+    entry: ReviewEntry, rules: list[dict],
     rule_match_counts: dict[str, dict],
 ) -> tuple[str, dict, int] | None:
-    review_file = review_dir / "review.md"
-    if not review_file.exists():
+    review_file = entry.review_file
+    try:
+        content = review_file.read_text()
+    except OSError:
         return None
-
-    content = review_file.read_text()
     findings = _parse_review_findings(content)
     if not findings:
         return None
 
-    dir_name = review_dir.name
+    dir_name = entry.path.name
     repo_key = _extract_repo_from_review(content, dir_name)
     source = "self-review" if "-self-" in dir_name else "claude-review"
 
@@ -796,23 +785,20 @@ def scan_local_reviews(
     reviews_dir: Path, rules: list[dict], rule_match_counts: dict[str, dict],
 ) -> tuple[list[dict], int, list[str]]:
     """Returns (repo_list, unmatched_count, consumed_dir_names)."""
-    if not reviews_dir.exists():
-        return [], 0, []
-
     local_repos: dict[str, list[dict]] = {}
     consumed_dirs: list[str] = []
     unmatched = 0
 
-    for review_dir in sorted(reviews_dir.iterdir()):
-        if not review_dir.is_dir():
+    for entry in iter_review_entries(reviews_dir):
+        if entry.kind is not ReviewEntryKind.REVIEW:
             continue
-        result = _scan_review_dir(review_dir, rules, rule_match_counts)
+        result = _scan_review_entry(entry, rules, rule_match_counts)
         if not result:
             continue
         repo_key, pr_entry, dir_unmatched = result
         unmatched += dir_unmatched
         local_repos.setdefault(repo_key, []).append(pr_entry)
-        consumed_dirs.append(review_dir.name)
+        consumed_dirs.append(entry.path.name)
 
     result_list = [
         {"github": f"local/{repo_key}", "prs": prs}

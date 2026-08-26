@@ -27,11 +27,11 @@ REVIEW_BODY_DEDUP_THRESHOLD = 0.8
 
 # ── Similarity ──────────────────────────────────────────────────────────────
 
-def _word_set(text: str) -> set[str]:
+def word_set(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9_]+", text.lower()))
 
 
-def _jaccard(a: set[str], b: set[str]) -> float:
+def jaccard(a: set[str], b: set[str]) -> float:
     if not a and not b:
         return 1.0
     union = a | b
@@ -118,17 +118,17 @@ def dedup_against_posted(
         return findings, []
 
     posted_entries = [
-        (c["path"], _word_set(c["body"]))
+        (c["path"], word_set(c["body"]))
         for c in existing
     ]
 
     kept, deduped = [], []
     for f in findings:
-        f_words = _word_set(f.body)
+        f_words = word_set(f.body)
         is_dup = any(
             f.path and posted_path and
             f.path == posted_path and
-            _jaccard(f_words, posted_words) >= DEDUP_THRESHOLD
+            jaccard(f_words, posted_words) >= DEDUP_THRESHOLD
             for posted_path, posted_words in posted_entries
         )
         if is_dup:
@@ -215,12 +215,12 @@ def check_review_already_posted(
     Takes a pre-fetched list of bot reviews (from fetch_bot_reviews).
     Returns list of matching review IDs (empty if no match).
     """
-    body_words = _word_set(body_text)
+    body_words = word_set(body_text)
     matching_ids: list[int] = []
 
     for r in bot_reviews:
         review_body = r.get("body", "")
-        if _jaccard(body_words, _word_set(review_body)) >= REVIEW_BODY_DEDUP_THRESHOLD:
+        if jaccard(body_words, word_set(review_body)) >= REVIEW_BODY_DEDUP_THRESHOLD:
             matching_ids.append(r["id"])
 
     return matching_ids

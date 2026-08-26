@@ -34,7 +34,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -43,10 +42,8 @@ from pathlib import Path
 from typing import TypeVar
 
 import ai_usage
-import git_client
 import log
 import serde
-import timeouts
 import workbench_paths
 from agent_registry import PHASES, REVIEW_PHASES
 from agent_types import Phase
@@ -155,12 +152,12 @@ _DISPOSITION_PRECEDENCE = {
 
 # An entry whose wording the parser could not read a verdict from. It loses to
 # any verdict it can read, and holds its slot against another unreadable one.
-NO_DISPOSITION_PRECEDENCE = 0
+_NO_DISPOSITION_PRECEDENCE = 0
 
 
 def disposition_precedence(disposition: "PriorDisposition | None") -> int:
     """`precedence`, tolerating the unparsed entry a ledger may also carry."""
-    return NO_DISPOSITION_PRECEDENCE if disposition is None else disposition.precedence
+    return _NO_DISPOSITION_PRECEDENCE if disposition is None else disposition.precedence
 
 
 # What may follow a disposition without qualifying it: nothing, or a break that
@@ -223,17 +220,17 @@ class GroupSkip(StrEnum):
     CARRIED = "carried"
 
 
-EnumT = TypeVar("EnumT", bound=StrEnum)
+_EnumT = TypeVar("_EnumT", bound=StrEnum)
 
 
-def enum_arg(enum_cls: type[EnumT]) -> Callable[[str], EnumT]:
+def enum_arg(enum_cls: type[_EnumT]) -> Callable[[str], _EnumT]:
     """An argparse ``type`` that converts to ``enum_cls`` by value.
 
     Passing the enum class directly as ``type=`` drops the valid-value list from
     the error message, because a failed conversion never reaches argparse's own
     ``choices`` check — so the message is reproduced here.
     """
-    def parse(value: str) -> EnumT:
+    def parse(value: str) -> _EnumT:
         try:
             return enum_cls(value)
         except ValueError:
@@ -281,13 +278,13 @@ class DiagnosisKind(StrEnum):
 # Prefixes every backend crash. Load-bearing beyond rendering: the no-write
 # check and the transient-error check both use it to tell a crash apart from a
 # run that ended on its own terms.
-AGENT_ERROR_PREFIX = "agent error:"
+_AGENT_ERROR_PREFIX = "agent error:"
 
 # A backend error whose text matches one of these will fail again the same way,
 # so no amount of retrying or recovery helps. Matched against `Diagnosis.detail`
 # the way `_TRANSIENT_ERROR_MARKERS` is — the error text is free-form, and these
 # are the fragments of it that carry a verdict.
-NON_RECOVERABLE_ERROR_MARKERS = ("permission denied",)
+_NON_RECOVERABLE_ERROR_MARKERS = ("permission denied",)
 
 _DIAGNOSIS_MESSAGES = {
     DiagnosisKind.QUOTA_EXHAUSTED: "quota exhausted (429)",
@@ -306,7 +303,7 @@ _DIAGNOSIS_MESSAGES = {
 # from the forward map and so stay verbatim under `UNKNOWN`, as before.
 _MESSAGE_KINDS = {message: kind for kind, message in _DIAGNOSIS_MESSAGES.items()}
 
-NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
+_NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
 
 
 @dataclass(frozen=True)
@@ -328,7 +325,7 @@ class Diagnosis:
     def message(self) -> str:
         """The human-readable reason, as it appears in logs and review files."""
         return self._base_message() + (
-            f" — {NO_WRITE_TOOL_SUFFIX}" if self.no_write_tool else ""
+            f" — {_NO_WRITE_TOOL_SUFFIX}" if self.no_write_tool else ""
         )
 
     def _base_message(self) -> str:
@@ -338,7 +335,7 @@ class Diagnosis:
         if self.kind is DiagnosisKind.COMPLETED:
             return f"agent completed (subtype={self.detail}) but did not write output"
         if self.kind in (DiagnosisKind.AGENT_ERROR, DiagnosisKind.TRANSIENT):
-            return f"{AGENT_ERROR_PREFIX} {self.detail}"
+            return f"{_AGENT_ERROR_PREFIX} {self.detail}"
         if self.kind is DiagnosisKind.SKIPPED:
             return f"skipped: {self.detail}"
         if self.kind is DiagnosisKind.UNKNOWN:
@@ -351,7 +348,7 @@ class Diagnosis:
     def recoverable(self) -> bool:
         """Whether `pr review --recover` could plausibly do better than this run."""
         lowered = self.detail.lower()
-        return not any(m in lowered for m in NON_RECOVERABLE_ERROR_MARKERS)
+        return not any(m in lowered for m in _NON_RECOVERABLE_ERROR_MARKERS)
 
     @classmethod
     def _from_raw(cls, raw) -> "Diagnosis | None":
@@ -618,31 +615,6 @@ def restore_preserved(path: str, prior: str) -> None:
     except OSError:
         current = ""
     Path(path).write_text(prior + current)
-
-
-# ── Subprocess ───────────────────────────────────────────────────────────────
-
-def _run(cmd: list[str], check: bool = True, cwd: str | None = None) -> str:
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL)
-    if check and r.returncode != 0:
-        return ""
-    return r.stdout.strip()
-
-
-def has_uncommitted_changes(wt_path: str | Path) -> bool:
-    """Whether a worktree has unstaged, staged, or untracked changes, or git
-    could not say.
-
-    The name the review commands share for the fix pass's commit gate; the
-    check itself, why it reads porcelain rather than `diff --quiet`, and why an
-    unreadable worktree answers "yes", all live in `git_client.is_dirty`.
-
-    Opening the gate on an unreadable worktree is what `land.committed_nothing`
-    is for: a caller that gets this far and finds git had nothing to commit
-    after all learns it from the commit, which is the read that cannot be wrong
-    about it.
-    """
-    return git_client.is_dirty(wt_path)
 
 
 # ── Review file helpers ─────────────────────────────────────────────────────

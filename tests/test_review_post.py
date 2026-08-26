@@ -1261,30 +1261,30 @@ class TestClassifyFindingsEmptyPath:
 
 class TestWordSet:
     def test_extracts_lowercase_words(self, rp):
-        assert rp._word_set("Hello World_Foo 123") == {"hello", "world_foo", "123"}
+        assert rp.word_set("Hello World_Foo 123") == {"hello", "world_foo", "123"}
 
     def test_empty_string(self, rp):
-        assert rp._word_set("") == set()
+        assert rp.word_set("") == set()
 
     def test_strips_punctuation(self, rp):
-        assert rp._word_set("error — missing `check`") == {"error", "missing", "check"}
+        assert rp.word_set("error — missing `check`") == {"error", "missing", "check"}
 
 
 class TestJaccard:
     def test_identical_sets(self, rp):
-        assert rp._jaccard({"a", "b"}, {"a", "b"}) == 1.0
+        assert rp.jaccard({"a", "b"}, {"a", "b"}) == 1.0
 
     def test_disjoint_sets(self, rp):
-        assert rp._jaccard({"a"}, {"b"}) == 0.0
+        assert rp.jaccard({"a"}, {"b"}) == 0.0
 
     def test_partial_overlap(self, rp):
-        assert rp._jaccard({"a", "b", "c"}, {"b", "c", "d"}) == pytest.approx(0.5)
+        assert rp.jaccard({"a", "b", "c"}, {"b", "c", "d"}) == pytest.approx(0.5)
 
     def test_both_empty(self, rp):
-        assert rp._jaccard(set(), set()) == 1.0
+        assert rp.jaccard(set(), set()) == 1.0
 
     def test_one_empty(self, rp):
-        assert rp._jaccard({"a"}, set()) == 0.0
+        assert rp.jaccard({"a"}, set()) == 0.0
 
 
 class TestDedupAgainstPosted:

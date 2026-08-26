@@ -198,7 +198,6 @@ class PipelineState:
     review_type: ReviewType = ReviewType.FULL
     prior_sha: str = ""
     skipped_groups: list[int] = field(default_factory=list)
-    angles_done: bool = False
 
     @classmethod
     def load(cls, review_dir: Path | None) -> "PipelineState | None":

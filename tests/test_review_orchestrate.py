@@ -4020,8 +4020,8 @@ class TestCollectPreflightData:
             session_log=str(tmp_path / "session.jsonl"),
         )
         # Set budget so diff fits but only ~1000 bytes remain for file contents
-        diff_size = len(ro._run(
-            ["git", "diff", "origin/main...HEAD"], cwd=str(repo),
+        diff_size = len(ro.git_client.out(
+            "diff", "origin/main...HEAD", cwd=str(repo),
         ).encode())
         monkeypatch.setattr(ro, "MAX_PROMPT_BYTES", diff_size + ro.TEMPLATE_OVERHEAD_BYTES + 1000)
         with contextlib.redirect_stdout(io.StringIO()):

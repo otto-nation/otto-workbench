@@ -943,46 +943,6 @@ class TestParseDeclinedFindings:
 # ── the gates every fix pass shares ─────────────────────────────────────────
 
 
-class TestHasUncommittedChanges:
-    """The commit gate for every fix pass — pipeline, ci-check, review-threads.
-
-    Against a real repo: what counts as dirty is git's answer, and a stubbed
-    porcelain line would agree with whatever this test expected.
-    """
-
-    def test_a_clean_worktree_is_not_dirty(self, git_wt):
-        assert review_common.has_uncommitted_changes(git_wt) is False
-
-    def test_unstaged_changes(self, git_wt):
-        (git_wt / "src.py").write_text("edited\n")
-        assert review_common.has_uncommitted_changes(git_wt) is True
-
-    def test_staged_only_changes(self, git_wt):
-        (git_wt / "src.py").write_text("edited\n")
-        git_out(git_wt, "add", "src.py")
-        assert review_common.has_uncommitted_changes(git_wt) is True
-
-    def test_untracked_only_changes(self, git_wt):
-        """A fix that only adds a test file still has to reach the commit."""
-        (git_wt / "run_ai.bats").write_text("@test 'x' { true; }\n")
-        assert review_common.has_uncommitted_changes(git_wt) is True
-
-    def test_accepts_a_path_object(self, git_wt):
-        (git_wt / "src.py").write_text("edited\n")
-        assert review_common.has_uncommitted_changes(Path(git_wt)) is True
-
-    def test_a_worktree_git_cannot_read_is_dirty(self, git_wt):
-        """Regression: the gate may not answer "nothing to commit" on a failed read.
-
-        A `status` that never completed says nothing about the tree. Read as
-        clean, the fix pass returns before staging and reports the agent's
-        edits as applied while they sit uncommitted in the worktree.
-        """
-        (git_wt / "src.py").write_text("edited\n")
-        (git_wt / ".git" / "index").write_bytes(b"not an index")
-        assert review_common.has_uncommitted_changes(git_wt) is True
-
-
 class TestCommittedNothing:
     """The other half of the gate, which opens on a worktree git cannot read.
 

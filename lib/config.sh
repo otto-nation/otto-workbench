@@ -151,6 +151,13 @@ wb_config_split_record() {
 # unreadable scope resolves to the built-in default and DEFAULT still applies —
 # so it is the caller naming a key nothing reads, which no fallback should
 # paper over.
+#
+# One call is one python interpreter, which is the price of reading the same
+# files everything else reads. That is nothing against a `sync` step, and the
+# wrong shape for a loop: `otto-workbench config get KEY DIR ...` resolves a
+# whole list in one process and prints a record per directory, which is what the
+# machine profile's registry table does. Reach for that rather than for this
+# function called once per item.
 wb_config_get() {
   local key="$1" fallback="${2:-}" record
   # shellcheck disable=SC2034  # both are written through namerefs below

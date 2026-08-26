@@ -62,6 +62,12 @@ def git(repo_root: str, *args: str) -> str | None:
 # paid once.  The layout a repo is in does not change while a command runs, so
 # there is nothing to invalidate.
 #
+# A process outliving one command is the case that assumption does not cover,
+# and the only one today is the test suite, where a session builds and tears
+# down repos on purpose: `tests/git_layout_test.py` clears this between tests.
+# Anything longer-lived arriving later — a daemon, a watcher — needs the same,
+# so clear the dict rather than reading around it.
+#
 # Keyed on the shared git dir rather than on `repo_root`, because that is what
 # the worktrees have in common.  Populated only once git has named it, so a
 # directory that is not a repo yet is never remembered as one.

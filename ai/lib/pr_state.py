@@ -478,7 +478,17 @@ def apply_state_update(
     domain: str,
     data: dict,
 ) -> None:
-    """Load-or-init state, apply a domain update from a dict, and save."""
+    """Load-or-init state, apply a domain update from a dict, and save.
+
+    A domain that owns its own reconstruction is built through `_from_raw`
+    here. ``serde`` honours that hook on nested fields only — a top-level
+    ``from_dict`` calling it would recurse, since a hook ends by calling
+    ``from_dict`` on its own class — so a domain read straight off a dict
+    reaches it from this side or not at all. Not at all means the shapes only
+    the hook knows how to read arrive as unrecognised keys, which `from_dict`
+    drops in silence: a legacy payload would apply as an empty update and take
+    the round it carried with it.
+    """
     domain_cls = _domains().get(domain)
     if domain_cls is None:
         raise ValueError(f"Unknown state domain: {domain!r}")
@@ -490,5 +500,6 @@ def apply_state_update(
         head_sha=head_sha,
         worktree_root=worktree_root,
     )
-    apply(state, _serde_from_dict(domain_cls, data))
+    build = getattr(domain_cls, "_from_raw", None)
+    apply(state, build(data) if build else _serde_from_dict(domain_cls, data))
     save_state(target_dir, state)

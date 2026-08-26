@@ -24,7 +24,6 @@ if str(LIB_DIR) not in sys.path:
 from conftest import (
     assert_no_worktree_exit, git_in, git_out, make_ctx, run_checked,
     supersession_context, supersession_evidence, supersession_verdict,
-    write_thrash_log,
 )
 import agent_retry
 import fix_engine
@@ -41,7 +40,7 @@ from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
     TriageStats, triage_result_from_dict,
 )
-from review_common import SECTION_PRIOR_FINDINGS, Diagnosis, DiagnosisKind
+from review_common import SECTION_PRIOR_FINDINGS
 from review_issue import CreatedIssue, IssueDelivery, IssueResult
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,

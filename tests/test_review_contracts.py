@@ -30,6 +30,7 @@ if str(LIB_DIR) not in sys.path:
 from conftest import make_ctx  # noqa: E402
 
 import fix_engine  # noqa: E402
+import fix_tracking  # noqa: E402
 import review_common  # noqa: E402
 import review_findings  # noqa: E402
 import review_prompt  # noqa: E402
@@ -557,6 +558,26 @@ class TestOutputBlockContract:
     def test_fix_findings_shares_the_worktree_block(self):
         rendered = _render_via_build_prompt(review_common.TEMPLATE_FIX)
         assert review_common.build_worktree_block("/tmp/wt") in rendered
+
+    @pytest.mark.parametrize("render", ["ci", "comments"])
+    def test_fix_templates_explain_every_box_the_checklist_offers(
+        self, render, cc, rt, tmp_path,
+    ):
+        """The boxes are `fix_tracking`'s; the prose explaining them is per-domain.
+
+        Two templates spell out the same three answers in their own words, so a
+        box renamed or added in `fix_tracking` leaves prose behind that describes
+        a checklist the agent is not looking at. Neither template has to say it
+        the same way — each only has to still be talking about all of them.
+        """
+        rendered = (
+            _render_fix_ci(cc, tmp_path) if render == "ci"
+            else _render_fix_comments(rt, tmp_path)
+        )
+        task = rendered.split("## Task", 1)[1]
+        for label, outcome in fix_tracking._BOXES:
+            why = f" — {fix_tracking._WHY}" if outcome in fix_tracking._REASONED else ""
+            assert f"`- [x] {label}{why}`" in task, label
 
 
 class TestSharedSectionNames:

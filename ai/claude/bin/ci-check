@@ -623,7 +623,7 @@ class CIFixAdapter(fix_engine.FixAdapter):
         ]
 
     def template_vars(self) -> dict[str, str]:
-        """None: `fix-ci.md` asks for nothing the engine does not already supply."""
+        """Nothing — `fix-ci.md` asks for no substitution the engine withholds."""
         return {}
 
     def landing(self, outcomes: list[ItemOutcome]) -> fix_engine.LandSpec:

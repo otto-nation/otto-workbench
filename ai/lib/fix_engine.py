@@ -25,8 +25,8 @@ question it was asked — and its answers supersede the first pass's rather than
 being reported alongside them.
 
 The gate is not a parameter. Every pass here runs on an operator's behalf, so
-the commit is unconditional and the push waits for ``--post``; `land`'s own
-docstring makes that argument, and a fix pass that wanted the other split would
+the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
+module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
 """
 
@@ -90,7 +90,9 @@ class FixRun:
 
     `max_turns` and `max_budget` are the largest batch's, not the last one's:
     the remainder chunk is usually the smallest and would understate what the
-    pass was given.
+    pass was given. The retry's own raised budget is not folded in — it is a
+    second attempt at one batch rather than a batch of its own, and the retry
+    log line and trail entry are where it is reported.
 
     `exit_code` is non-zero when any batch's backend call was, which is not the
     same question as whether the pass did work: an agent can exit non-zero
@@ -332,11 +334,17 @@ def _settle(
     again = [by_id[o.id] for o in deferred if o.id in by_id]
     if not again:
         return _Settled(stalled + settled + deferred, worst)
+    # An id the pass never handed out cannot be re-asked — there is no item
+    # behind it to render. It is still an answer the file gave, so it is
+    # carried rather than dropped: every entry the pass parsed reaches the
+    # record, and a domain that cannot place one says so itself.
+    unknown = [o for o in deferred if o.id not in by_id]
     # The retry re-decided every item it was handed, so the first pass's
     # deferrals are superseded rather than reported alongside the second's.
     retried = _retry(adapter, again, turns, trail)
     return _Settled(
-        stalled + settled + retried.outcomes, max(worst, retried.exit_code),
+        stalled + settled + unknown + retried.outcomes,
+        max(worst, retried.exit_code),
     )
 
 

@@ -14,10 +14,12 @@ it, and it imports nothing from ``ai/lib`` in return. That is what lets the
 record hang off the base class without the domains and the vocabulary they are
 written in forming a cycle.
 
-The CI pass writes one. It reaches these types through :mod:`fix_engine`, the
-shared pipeline the other two are still being moved onto — so a record is what
-a pass produces once it runs on the engine, and the passes that do not yet keep
-the bespoke shapes they had.
+The CI pass writes one, through :mod:`fix_engine` — the shared pipeline all
+three are converging on, and the thing that produces the
+:class:`ItemOutcome` list a record is assembled from. Running on the engine is
+not the same as recording through these types: the comment pass runs on it and
+still keeps the summary shape it had, and the review-findings pass has yet to
+adopt either.
 """
 
 # doc-group: pr-state

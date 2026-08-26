@@ -256,6 +256,29 @@ def test_a_settled_verdict_is_not_retried(tmp_path, landed, head):
     assert all(o.outcome is FixOutcome.DECLINED for o in run.outcomes)
 
 
+def test_an_entry_no_item_stands_behind_survives_the_retry(tmp_path, landed, head):
+    """A section the pass cannot re-ask is still an answer the file gave.
+
+    The retry replaces the checklist with the items it re-asks, so an entry
+    dropped here is one the record never hears about at all.
+    """
+    adapter = StubAdapter(tmp_path, count=2)
+    first = [True]
+
+    def run_fix(phase, prompt, **kwargs):
+        if first[0]:
+            first[0] = False
+            text = adapter.tracking_path.read_text().replace("fix:i1", "fix:ghost")
+            adapter.tracking_path.write_text(text)
+            return agent_invoke.FixResult(0, None)
+        return _answer(adapter)(phase, prompt, **kwargs)
+
+    run, inv = _run(adapter, run_fix=run_fix)
+
+    assert inv.call_count == 2
+    assert {o.id for o in run.outcomes} == {"i0", "ghost"}
+
+
 def test_a_stalled_batch_has_already_had_its_retry(tmp_path, landed, head):
     """`run_fix` retries an unproductive pass itself — a third run is waste."""
     adapter = StubAdapter(tmp_path, count=2)

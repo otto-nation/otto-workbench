@@ -54,7 +54,7 @@ from pr_context import detect_repo  # noqa: E402
 from agent_types import Effort, Mode  # noqa: E402
 from review_common import (  # noqa: E402
     FILENAME_SESSION, PIPELINE_MULTI, PIPELINE_SINGLE,
-    _derive_path, enum_arg, stamp_reviewed,
+    _derive_path, add_phase_skip_flags, enum_arg, phase_skips, stamp_reviewed,
 )
 from review_preflight import (  # noqa: E402
     DEFAULT_MAX_PARALLEL, collect_preflight_data, fetch_reply_threads,
@@ -192,9 +192,8 @@ def _run_phases(trail, args, job) -> str:
         with trail.span("multi_phase"):
             run_multi_phase(
                 job, max_parallel=args.max_parallel,
-                skip_holistic=args.no_holistic, max_cost=args.max_cost,
-                max_groups=args.max_groups,
-                skip_scout=args.no_scout, disprove=args.disprove,
+                max_cost=args.max_cost, max_groups=args.max_groups,
+                disprove=args.disprove,
             )
     else:
         with trail.span("single_agent"):
@@ -240,6 +239,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
         prior_review=prior_review, mode=args.mode,
         generator_version=args.generator_version,
         model=args.model, effort=resolve_effort(args.effort),
+        skip_phases=phase_skips(args),
         include_generated=args.generated,
     )
 
@@ -303,14 +303,9 @@ def main():
     parser.add_argument("--issue-context", default="", help="Issue context JSON")
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
                         help=f"Max concurrent group reviews (default: {DEFAULT_MAX_PARALLEL})")
-    parser.add_argument("--no-holistic", action="store_true",
-                        help="Skip holistic phase in multi-phase reviews")
-    parser.add_argument("--no-scout", action="store_true",
-                        help="Use classic holistic phase instead of scout")
+    add_phase_skip_flags(parser)
     parser.add_argument("--disprove", action="store_true", default=None,
                         help="Enable disprove-it gate (default: effort-based)")
-    parser.add_argument("--no-disprove", action="store_true",
-                        help="Disable disprove-it gate")
     parser.add_argument("--generator-version", default="",
                         help="Version string to embed in review metadata")
     parser.add_argument("--mode", type=enum_arg(Mode), choices=list(Mode), default=Mode.PR,
@@ -342,11 +337,6 @@ def main():
     # pass lives in this one.
     if args.post:
         publishing.enable()
-
-    if args.no_disprove:
-        args.disprove = False
-    elif args.disprove is None:
-        args.disprove = None
 
     if args.mode == Mode.PR and not args.pr:
         log.error("--pr is required in pr mode")

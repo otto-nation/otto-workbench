@@ -36,13 +36,14 @@ except ImportError:
     def version_string(name):
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
-from agent_types import Mode
+from agent_types import Mode, Phase
 from review_common import (
     FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
     FILENAME_PRIOR, FILENAME_SESSION, REVIEW_EXT,
     SEVERITY_COUNT_RE_FMT,
-    aggregate_session_usage,
-    count_severities, resolve_review_verdict, read_review_meta,
+    add_phase_skip_flags, aggregate_session_usage,
+    count_severities, phase_skip_argv, phase_skips,
+    resolve_review_verdict, read_review_meta,
     review_file_path,
 )
 from review_types import (
@@ -704,11 +705,11 @@ def _build_orchestrate_args(
     *,
     pr_number: str, repo: str, review_file: Path, wt_path: str,
     session_log: str, prior_review_path: str, issue_link: str,
-    issue_context: str, max_parallel: int, no_holistic: bool,
+    issue_context: str, max_parallel: int,
     max_cost: float | None, model: str | None, mode: str = "",
     fix_pass: bool = False, post: bool = False, effort: str | None = None,
     max_groups: int | None = None,
-    no_scout: bool = False, disprove: bool | None = None,
+    skip_phases: frozenset[Phase] = frozenset(), disprove: bool | None = None,
     generated: bool = False, recover_sha: str = "",
     target_dir: Path,
 ) -> list[str]:
@@ -738,8 +739,6 @@ def _build_orchestrate_args(
     # only way it learns this run may publish is to be told on its own argv.
     if post:
         args.append("--post")
-    if no_holistic:
-        args.append("--no-holistic")
     if max_cost:
         args += ["--max-cost", str(max_cost)]
     if model:
@@ -750,12 +749,9 @@ def _build_orchestrate_args(
         args += ["--effort", effort]
     if max_groups is not None:
         args += ["--max-groups", str(max_groups)]
-    if no_scout:
-        args.append("--no-scout")
+    args += phase_skip_argv(skip_phases)
     if disprove is True:
         args.append("--disprove")
-    elif disprove is False:
-        args.append("--no-disprove")
     if generated:
         args.append("--generated")
     if recover_sha:
@@ -766,9 +762,9 @@ def _build_orchestrate_args(
 def _run_review_body(
     pr_number, repo, review_file, review_dir, wt_path,
     session_log, prior_review_path, issue_link, issue_context,
-    max_parallel, no_holistic, max_cost, model, no_post, auto_post,
+    max_parallel, max_cost, model, no_post, auto_post,
     auto_submit, pr_url, effort=None, max_groups=None,
-    no_scout=False, disprove=None, generated=False, recover_sha="",
+    skip_phases=frozenset(), disprove=None, generated=False, recover_sha="",
     *, target_dir,
 ) -> None:
     orchestrate_args = _build_orchestrate_args(
@@ -776,9 +772,9 @@ def _run_review_body(
         wt_path=wt_path, session_log=session_log,
         prior_review_path=prior_review_path, issue_link=issue_link,
         issue_context=issue_context, max_parallel=max_parallel,
-        no_holistic=no_holistic, max_cost=max_cost, model=model,
+        max_cost=max_cost, model=model,
         effort=effort, max_groups=max_groups,
-        no_scout=no_scout, disprove=disprove, generated=generated,
+        skip_phases=skip_phases, disprove=disprove, generated=generated,
         recover_sha=recover_sha, target_dir=target_dir,
     )
     wall_start = time.monotonic()
@@ -828,9 +824,9 @@ def _run_review_body(
 def _run_review_pr(
     trail, ctx, pr_number, repo, review_dir, review_file,
     issue_link, no_post, auto_post, auto_submit,
-    force, repo_dir, max_parallel, no_holistic, max_cost, model,
+    force, repo_dir, max_parallel, max_cost, model,
     effort=None, max_groups=None,
-    no_scout=False, disprove=None, generated=False,
+    skip_phases=frozenset(), disprove=None, generated=False,
     recover=False, supersession_override=False,
 ) -> None:
     trail.info("resolve_context", f"resolved PR #{pr_number} in {repo}",
@@ -921,14 +917,15 @@ def _run_review_pr(
 
         trail.info("delegate_orchestrate", "delegating to review-orchestrate",
                    data={"wt_path": wt_path, "max_parallel": max_parallel,
-                         "no_holistic": no_holistic, "max_cost": max_cost, "model": model})
+                         "skipped": sorted(str(p) for p in skip_phases),
+                         "max_cost": max_cost, "model": model})
 
         _run_review_body(
             pr_number, repo, review_file, review_dir, wt_path,
             session_log, prior_review_path, issue_link, issue_context,
-            max_parallel, no_holistic, max_cost, model, no_post, auto_post,
+            max_parallel, max_cost, model, no_post, auto_post,
             auto_submit, pr_url, effort=effort, max_groups=max_groups,
-            no_scout=no_scout, disprove=disprove, generated=generated,
+            skip_phases=skip_phases, disprove=disprove, generated=generated,
             recover_sha=recover_sha, target_dir=ctx.target_dir,
         )
     finally:
@@ -950,8 +947,7 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
     issue_link = args.issue or ""
     max_parallel = args.max_parallel
     force = args.force
-    no_holistic = args.no_holistic
-    no_scout = args.no_scout
+    skip_phases = phase_skips(args)
     disprove = args.disprove
     max_cost = args.max_cost
     model = args.model
@@ -981,9 +977,9 @@ def _run_review(args, ctx: pr_context.ResolvedContext) -> None:
         _run_review_pr(
             trail, ctx, pr_number, repo, review_dir, review_file,
             issue_link, no_post, auto_post, auto_submit,
-            force, repo_dir, max_parallel, no_holistic, max_cost, model,
+            force, repo_dir, max_parallel, max_cost, model,
             effort=effort, max_groups=max_groups,
-            no_scout=no_scout, disprove=disprove, generated=generated,
+            skip_phases=skip_phases, disprove=disprove, generated=generated,
             recover=recover,
             supersession_override=_supersession_override(args.force, recover),
         )
@@ -1010,9 +1006,9 @@ def _cleanup_self_review_worktree(wt_cleanup, repo_dir: str) -> None:
 
 def _run_self_review_body(
     repo, pr_number, wt_path, issue_link, max_parallel,
-    no_holistic, max_cost, model, fix_pass, args,
+    max_cost, model, fix_pass, args,
     self_review_dir, branch_name, effort=None, max_groups=None,
-    no_scout=False, disprove=None, generated=False,
+    skip_phases=frozenset(), disprove=None, generated=False,
     recover=False, head_sha="", *, ctx: pr_context.ResolvedContext, trail: Trail,
 ) -> None:
     review_file = self_review_dir / f"review{REVIEW_EXT}"
@@ -1061,10 +1057,10 @@ def _run_self_review_body(
         wt_path=review_wt_path, session_log=session_log,
         prior_review_path=prior_review_path, issue_link=issue_link,
         issue_context=issue_context, max_parallel=max_parallel,
-        no_holistic=no_holistic, max_cost=max_cost, model=model,
+        max_cost=max_cost, model=model,
         mode="self", fix_pass=fix_pass, post=args.post,
         effort=effort, max_groups=max_groups,
-        no_scout=no_scout, disprove=disprove, generated=generated,
+        skip_phases=skip_phases, disprove=disprove, generated=generated,
         recover_sha=recover_sha, target_dir=ctx.target_dir,
     )
 
@@ -1129,8 +1125,7 @@ def _run_self_review(args) -> None:
     max_parallel = args.max_parallel
     skip_user_verification = args.skip_user_verification
     force = args.force
-    no_holistic = args.no_holistic
-    no_scout = args.no_scout
+    skip_phases = phase_skips(args)
     disprove = args.disprove
     max_cost = args.max_cost
     model = args.model
@@ -1207,11 +1202,11 @@ def _run_self_review(args) -> None:
                    data={"pr": pr_number, "repo": repo, "branch": ctx.branch, "wt_path": wt_path})
         _run_self_review_body(
             repo, pr_number, wt_path, issue_link, max_parallel,
-            no_holistic, max_cost, model, fix_pass, args,
+            max_cost, model, fix_pass, args,
             self_review_dir=self_review_dir,
             branch_name=ctx.branch or "",
             effort=effort, max_groups=max_groups,
-            no_scout=no_scout, disprove=disprove, generated=generated,
+            skip_phases=skip_phases, disprove=disprove, generated=generated,
             recover=recover, head_sha=recover_head_sha,
             ctx=ctx, trail=trail,
         )
@@ -1245,10 +1240,8 @@ def main() -> None:
     parser.add_argument("--skip-user-verification", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--recover", action="store_true")
-    parser.add_argument("--no-holistic", action="store_true")
-    parser.add_argument("--no-scout", action="store_true")
+    add_phase_skip_flags(parser)
     parser.add_argument("--disprove", action="store_true", default=None)
-    parser.add_argument("--no-disprove", action="store_true")
     parser.add_argument("--json-summary", action="store_true")
     parser.add_argument("--issue")
     parser.add_argument("--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL)
@@ -1267,11 +1260,6 @@ def main() -> None:
     handle_value_flags(parser)
 
     parsed = parser.parse_args()
-
-    if parsed.no_disprove:
-        parsed.disprove = False
-    elif parsed.disprove is None:
-        parsed.disprove = None
 
     if parsed.version:
         print(version_string(SCRIPT))

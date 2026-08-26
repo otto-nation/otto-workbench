@@ -25,7 +25,7 @@ import git_client
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES
-from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
+from agent_types import EFFORT_PRESETS, Mode, Phase
 from review_common import (
     count_severities,
     FILENAME_META,
@@ -36,6 +36,7 @@ from review_common import (
     _derive_path,
     phase_log_path,
     phase_output_path,
+    phase_skip_argv,
 )
 from review_findings import (
     _MECHANICAL_NOTE,
@@ -422,31 +423,33 @@ def _build_group_skips(
     return skips
 
 
+# Phase 1 is one scan chosen from two candidates, so it drops out only when
+# both are off — `--no-scout` alone falls back to the holistic scan, which is
+# what that flag has always meant.
+_SCAN_PHASES = frozenset({Phase.SCOUT, Phase.HOLISTIC})
+
+
 def _holistic_skip_reason(
-    skip_holistic: bool, incremental: bool, group_count: int,
-    effort: Effort = Effort.MEDIUM,
+    job: ReviewJob, incremental: bool, group_count: int,
 ) -> str | None:
     if incremental:
         return "incremental review"
-    if skip_holistic:
-        return "--no-holistic"
-    if EFFORT_PRESETS[effort].skip_holistic:
-        return f"effort={effort}"
+    if _SCAN_PHASES <= job.skip_phases:
+        return " ".join(phase_skip_argv(_SCAN_PHASES))
+    if _SCAN_PHASES <= job.skipped:
+        return f"effort={job.effort}"
     if group_count < HOLISTIC_MIN_GROUPS:
         return f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
     return None
 
 
-def _use_scout(job: ReviewJob, skip_scout: bool) -> bool:
-    if skip_scout:
-        return False
-    return not EFFORT_PRESETS[job.effort].skip_scout
+def _use_scout(job: ReviewJob) -> bool:
+    return Phase.SCOUT not in job.skipped
 
 
 def _run_holistic_phase(
     job: ReviewJob, group_count: int, state: PipelineState,
-    skip_holistic: bool, resume_exists: bool, incremental: bool,
-    skip_scout: bool = False,
+    resume_exists: bool, incremental: bool,
 ) -> PhaseResult:
     """Phase 1's scan, the log it wrote, and what that scan spent.
 
@@ -454,7 +457,7 @@ def _run_holistic_phase(
     `_resolve_recovery` already charged the resumed run for it, so pricing it
     again here would bill that scan twice.
     """
-    reason = _holistic_skip_reason(skip_holistic, incremental, group_count, effort=job.effort)
+    reason = _holistic_skip_reason(job, incremental, group_count)
     if reason:
         log.info(f"Holistic/scout phase skipped ({reason})")
         if not state.holistic_done:
@@ -462,9 +465,7 @@ def _run_holistic_phase(
             _write_pipeline_state(job, state)
         return PhaseResult()
 
-    use_scout = _use_scout(job, skip_scout)
-
-    if use_scout:
+    if _use_scout(job):
         scout_output = phase_output_path(job.review_file, Phase.SCOUT)
         if resume_exists and _has_output(scout_output):
             raw = Path(scout_output).read_text()
@@ -538,20 +539,28 @@ def _run_synthesis_or_fallback(
         return PhaseResult()
 
     if all_groups_failed:
-        log.warn("All group agents failed — skipping synthesis")
+        if Phase.GROUP in job.skipped:
+            log.warn("Group phase skipped — the review reports what it has")
+            why = Diagnosis(DiagnosisKind.SKIPPED, detail="--no-group")
+        else:
+            log.warn("All group agents failed — skipping synthesis")
+            why = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
+        # Recorded before the fallback is built, not after: the meta header the
+        # fallback carries reads the status back off this file, so a verdict
+        # written afterwards leaves the document claiming the run completed.
+        state.synthesis_done = True
+        state.synthesis_failed = why
+        _write_pipeline_state(job, state)
         fallback = _build_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=n_skipped,
             pipeline_state=state,
         )
         Path(job.review_file).write_text(fallback)
         _write_review_sidecar(job)
-        state.synthesis_done = True
-        state.synthesis_failed = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
-        _write_pipeline_state(job, state)
         return PhaseResult()
 
-    if EFFORT_PRESETS[job.effort].skip_synthesis:
-        log.info("Synthesis skipped (effort=low) — using mechanical merge")
+    if Phase.SYNTHESIS in job.skipped:
+        log.info("Synthesis skipped — using mechanical merge")
         Path(job.review_file).write_text(merged_content)
         _post_process_review(job)
         _write_review_sidecar(job)
@@ -585,9 +594,9 @@ def _run_synthesis_or_fallback(
 
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
-    skip_holistic: bool = False, max_cost: float = DEFAULT_MAX_COST,
+    max_cost: float = DEFAULT_MAX_COST,
     max_groups: int | None = None,
-    skip_scout: bool = False, disprove: bool | None = None,
+    disprove: bool | None = None,
 ):
     groups = group_files(job.pr)
     effective_max_groups = max_groups or EFFORT_PRESETS[job.effort].max_groups
@@ -645,17 +654,27 @@ def run_multi_phase(
 
     # ── Phase 1: Scout/Holistic ─────────────────────────────────────────────
     holistic = _run_holistic_phase(
-        job, group_count, state, skip_holistic, skip_holistic_phase, incremental,
-        skip_scout=skip_scout,
+        job, group_count, state, skip_holistic_phase, incremental,
     )
     cost_so_far += holistic.cost
 
     # ── Phase 2: Groups ───────────────────────────────────────────────────────
-    if cost_so_far > max_cost:
+    # Two ways every group ends up unreviewed without a single agent running,
+    # and each group carries the reason rather than an absence: the merge and
+    # the failures table both report what happened, and "no output" from a
+    # deliberate skip reads the same as one from a crash.
+    unrun: Diagnosis | None = None
+    if Phase.GROUP in job.skipped:
+        log.warn("Group phase skipped (--no-group) — the review will be partial")
+        unrun = Diagnosis(DiagnosisKind.SKIPPED, detail="--no-group")
+    elif cost_so_far > max_cost:
         log.warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
+        unrun = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
+
+    if unrun:
         group_outputs: list[str] = []
         failed_groups: list[GroupFailure] = [
-            GroupFailure(g.name, Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)) for g in groups
+            GroupFailure(g.name, unrun) for g in groups
         ]
     else:
         group_outputs, failed_groups, groups_cost = _run_group_phase(

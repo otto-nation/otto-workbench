@@ -9,6 +9,7 @@ All expectations are derived dynamically from source — no hardcoded lists.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import re
 import subprocess
@@ -32,7 +33,7 @@ from conftest import make_ctx  # noqa: E402
 import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
 import review_common  # noqa: E402
-from agent_registry import PHASES  # noqa: E402
+from agent_registry import PHASES, REVIEW_PHASES  # noqa: E402
 from agent_types import Mode, Phase  # noqa: E402
 import review_findings  # noqa: E402
 import review_fix  # noqa: E402
@@ -157,6 +158,68 @@ class TestReviewMeta:
         })
         assert meta.started_at == "2026-08-18T13:47:03+00:00"
         assert meta.reviewed_at == "2026-08-18T14:02:11+00:00"
+
+
+# ── 1c. TestPhaseSkipFlags ───────────────────────────────────────────────────
+
+
+def _skip_flag_parser():
+    parser = argparse.ArgumentParser()
+    review_common.add_phase_skip_flags(parser)
+    return parser
+
+
+class TestPhaseSkipFlags:
+    """`--no-<phase>` is generated, so the two CLIs cannot drift from each other.
+
+    `claude-review` offers the flags, `review-orchestrate` parses them, and the
+    first forwards them to the second on argv. All three read the registry.
+    """
+
+    def test_a_flag_per_optional_review_phase(self):
+        offered = {
+            dest for dest in vars(_skip_flag_parser().parse_args([]))
+            if dest.startswith("no_")
+        }
+        assert offered == {
+            f"no_{p}" for p in REVIEW_PHASES if PHASES[p].optional
+        }
+
+    def test_nothing_skipped_by_default(self):
+        args = _skip_flag_parser().parse_args([])
+        assert review_common.phase_skips(args) == frozenset()
+
+    def test_each_flag_names_its_own_phase(self):
+        for phase in (p for p in REVIEW_PHASES if PHASES[p].optional):
+            args = _skip_flag_parser().parse_args([f"--no-{phase}"])
+            assert review_common.phase_skips(args) == frozenset({phase})
+
+    def test_argv_round_trips_through_the_parser(self):
+        skips = frozenset({Phase.GROUP, Phase.SYNTHESIS, Phase.DISPROVE})
+        argv = review_common.phase_skip_argv(skips)
+        assert review_common.phase_skips(_skip_flag_parser().parse_args(argv)) == skips
+
+    def test_argv_follows_the_registry_order(self):
+        every = frozenset(p for p in REVIEW_PHASES if PHASES[p].optional)
+        assert review_common.phase_skip_argv(every) == [
+            f"--no-{p}" for p in REVIEW_PHASES if PHASES[p].optional
+        ]
+
+    def test_no_flag_for_a_required_phase(self):
+        with pytest.raises(SystemExit):
+            _skip_flag_parser().parse_args([f"--no-{Phase.SINGLE}"])
+
+    def test_both_clis_offer_the_same_flags(self):
+        generated = sorted(
+            f"--no-{p}" for p in REVIEW_PHASES if PHASES[p].optional
+        )
+        for script in ("claude-review", "review-orchestrate"):
+            helped = subprocess.run(
+                [str(REPO_ROOT / "ai" / "claude" / "bin" / script), "--help"],
+                capture_output=True, text=True, timeout=60,
+            ).stdout
+            for flag in generated:
+                assert flag in helped, f"{script} does not offer {flag}"
 
 
 # ── 2. TestSeverityConsistency ───────────────────────────────────────────────

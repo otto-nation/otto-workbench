@@ -2407,6 +2407,11 @@ class TestPhaseSynthesis:
 class TestRunSynthesisOrFallback:
     """What the synthesis step records in state, and what it reports spending."""
 
+    # A merge with one finding in it, so the step has something to carry: the
+    # clean-review shortcut returns before synthesis and would answer for every
+    # test below whatever the branch under test does.
+    MERGED = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+
     def _make_state(self, ro):
         return ro.PipelineState(
             head_sha="abc123",
@@ -2415,7 +2420,7 @@ class TestRunSynthesisOrFallback:
             groups_done=[1],
         )
 
-    def _make_job(self, ro, tmp_path, mode="pr"):
+    def _make_job(self, ro, tmp_path, mode="pr", skip_phases=frozenset()):
         return ro.ReviewJob(
             repo="org/repo", pr_number="42",
             pr=ro.PRMetadata(title="test PR", body="", head="feat", base="main",
@@ -2425,7 +2430,7 @@ class TestRunSynthesisOrFallback:
             wt_path=str(tmp_path / "wt"),
             review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            mode=ro.Mode(mode),
+            mode=ro.Mode(mode), skip_phases=skip_phases,
         )
 
     def test_self_review_fallback_detected(self, ro, tmp_path, monkeypatch):
@@ -2446,7 +2451,7 @@ class TestRunSynthesisOrFallback:
         monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        merged = self.MERGED
         ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
@@ -2467,7 +2472,7 @@ class TestRunSynthesisOrFallback:
         monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
@@ -2492,11 +2497,59 @@ class TestRunSynthesisOrFallback:
         state = self._make_state(ro)
         monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
 
-        merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
+        merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 25.0, 20.0,
         )
         assert result == review_pipeline.PhaseResult()
+
+    def test_no_group_reports_partial_not_a_failed_run(self, ro, tmp_path, monkeypatch):
+        """A group phase the operator switched off is not the pipeline failing.
+
+        Every group is unreviewed either way, so the honest verdict is partial
+        with `skipped` as the reason — `all groups failed` would blame the
+        agents for a review nobody asked to run.
+        """
+        import review_pipeline
+
+        job = self._make_job(
+            ro, tmp_path, skip_phases=frozenset({ro.Phase.GROUP}))
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        merged = self.MERGED
+        skipped = ro.Diagnosis(ro.DiagnosisKind.SKIPPED, detail="--no-group")
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, merged, [ro.GroupFailure("grp-1", skipped)],
+            0, 0.0, 20.0,
+        )
+        assert state.synthesis_failed == skipped
+        assert state.status is ro.ReviewStatus.PARTIAL
+
+    def test_no_synthesis_writes_the_mechanical_merge(self, ro, tmp_path, monkeypatch):
+        """`--no-synthesis` reaches the review file without an agent."""
+        import review_pipeline
+
+        job = self._make_job(
+            ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
+        # The merge is post-processed like any other review, and that drops a
+        # finding whose file it cannot find.
+        (tmp_path / "wt").mkdir()
+        (tmp_path / "wt" / "api.go").write_text("\n" * 20)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(
+            review_pipeline, "_phase_synthesis",
+            lambda *a, **kw: pytest.fail("synthesis ran despite --no-synthesis"))
+
+        merged = self.MERGED
+        result = ro._run_synthesis_or_fallback(
+            job, state, "", 1, merged, [], 0, 0.0, 20.0,
+        )
+        assert result == review_pipeline.PhaseResult()
+        assert state.synthesis_done is True
+        assert state.synthesis_failed is None
+        assert "api.go:10" in Path(job.review_file).read_text()
 
 
 class TestIsRetryable:
@@ -4698,7 +4751,8 @@ class TestCleanupScope:
             "generator_version": "", "model": "", "recover_sha": "",
             "target_dir": str(repo_dir), "max_parallel": 2,
             "max_cost": 20.0, "max_groups": None,
-            "no_holistic": False, "no_scout": False, "disprove": False,
+            "no_holistic": False, "no_scout": False, "no_group": False,
+            "no_synthesis": False, "no_disprove": True, "disprove": None,
             "generated": False, "fix": False,
         }
         defaults.update(overrides)

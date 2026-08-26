@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import agent_phases
 import review_phases
 import review_pipeline
-from agent_types import AgentKind, Effort, Thinking
+from agent_types import AgentKind, Effort, Phase, Thinking
 from review_phases import PhaseResult
 from review_state import PipelineState
 from review_types import PRContext, PRMetadata, ReviewJob
@@ -34,13 +34,15 @@ class TestEffortPresets:
 
     def test_low_skips_phases(self):
         low = review_pipeline.EFFORT_PRESETS[Effort.LOW]
-        assert low.skip_synthesis is True
-        assert low.skip_holistic is True
+        assert low.skips == frozenset({
+            Phase.HOLISTIC, Phase.SCOUT, Phase.SYNTHESIS, Phase.DISPROVE,
+        })
 
     def test_medium_does_not_skip_phases(self):
-        medium = review_pipeline.EFFORT_PRESETS[Effort.MEDIUM]
-        assert medium.skip_synthesis is False
-        assert medium.skip_holistic is False
+        assert review_pipeline.EFFORT_PRESETS[Effort.MEDIUM].skips == frozenset()
+
+    def test_high_does_not_skip_phases(self):
+        assert review_pipeline.EFFORT_PRESETS[Effort.HIGH].skips == frozenset()
 
     def test_agent_budget_scales_with_effort(self):
         assert review_pipeline.EFFORT_PRESETS[Effort.LOW].agent_budget < \
@@ -99,37 +101,7 @@ class TestOmittedTurns:
         assert agent_phases.omitted_turns(Effort.MEDIUM, 0) == 0
 
 
-class TestHolisticSkipReason:
-    def test_incremental_skips(self):
-        reason = review_pipeline._holistic_skip_reason(False, True, 10)
-        assert reason == "incremental review"
-
-    def test_no_holistic_flag_skips(self):
-        reason = review_pipeline._holistic_skip_reason(True, False, 10)
-        assert reason == "--no-holistic"
-
-    def test_low_effort_skips(self):
-        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort=Effort.LOW)
-        assert reason == "effort=low"
-
-    def test_medium_effort_does_not_skip(self):
-        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort=Effort.MEDIUM)
-        assert reason is None
-
-    def test_high_effort_does_not_skip(self):
-        reason = review_pipeline._holistic_skip_reason(False, False, 10, effort=Effort.HIGH)
-        assert reason is None
-
-    def test_few_groups_skips(self):
-        reason = review_pipeline._holistic_skip_reason(False, False, 2)
-        assert "threshold" in reason
-
-    def test_enough_groups_does_not_skip(self):
-        reason = review_pipeline._holistic_skip_reason(False, False, 10)
-        assert reason is None
-
-
-def _make_job(tmp_path, effort=Effort.MEDIUM, mode="pr"):
+def _make_job(tmp_path, effort=Effort.MEDIUM, mode="pr", skip_phases=frozenset()):
     review_file = str(tmp_path / "review.md")
     return ReviewJob(
         repo="org/repo", pr_number="42",
@@ -137,8 +109,58 @@ def _make_job(tmp_path, effort=Effort.MEDIUM, mode="pr"):
         ctx=PRContext(), wt_path=str(tmp_path),
         review_file=review_file,
         session_log=str(tmp_path / "session.jsonl"),
-        effort=effort, mode=mode,
+        effort=effort, mode=mode, skip_phases=skip_phases,
     )
+
+
+class TestHolisticSkipReason:
+    """Phase 1 is two candidate scans, so it drops out only when both are off."""
+
+    def test_incremental_skips(self, tmp_path):
+        reason = review_pipeline._holistic_skip_reason(
+            _make_job(tmp_path), True, 10)
+        assert reason == "incremental review"
+
+    def test_both_scan_flags_skip(self, tmp_path):
+        job = _make_job(
+            tmp_path, skip_phases=frozenset({Phase.HOLISTIC, Phase.SCOUT}))
+        assert review_pipeline._holistic_skip_reason(job, False, 10) == \
+            "--no-holistic --no-scout"
+
+    def test_no_holistic_alone_falls_back_to_scout(self, tmp_path):
+        job = _make_job(tmp_path, skip_phases=frozenset({Phase.HOLISTIC}))
+        assert review_pipeline._holistic_skip_reason(job, False, 10) is None
+        assert review_pipeline._use_scout(job) is True
+
+    def test_no_scout_alone_falls_back_to_holistic(self, tmp_path):
+        job = _make_job(tmp_path, skip_phases=frozenset({Phase.SCOUT}))
+        assert review_pipeline._holistic_skip_reason(job, False, 10) is None
+        assert review_pipeline._use_scout(job) is False
+
+    def test_low_effort_skips(self, tmp_path):
+        reason = review_pipeline._holistic_skip_reason(
+            _make_job(tmp_path, effort=Effort.LOW), False, 10)
+        assert reason == "effort=low"
+
+    def test_medium_effort_does_not_skip(self, tmp_path):
+        reason = review_pipeline._holistic_skip_reason(
+            _make_job(tmp_path, effort=Effort.MEDIUM), False, 10)
+        assert reason is None
+
+    def test_high_effort_does_not_skip(self, tmp_path):
+        reason = review_pipeline._holistic_skip_reason(
+            _make_job(tmp_path, effort=Effort.HIGH), False, 10)
+        assert reason is None
+
+    def test_few_groups_skips(self, tmp_path):
+        reason = review_pipeline._holistic_skip_reason(
+            _make_job(tmp_path), False, 2)
+        assert "threshold" in reason
+
+    def test_enough_groups_does_not_skip(self, tmp_path):
+        reason = review_pipeline._holistic_skip_reason(
+            _make_job(tmp_path), False, 10)
+        assert reason is None
 
 
 class TestHolisticPhaseStateUpdate:
@@ -150,20 +172,21 @@ class TestHolisticPhaseStateUpdate:
 
         result = review_pipeline._run_holistic_phase(
             job, group_count=1, state=state,
-            skip_holistic=False, resume_exists=False, incremental=True,
+            resume_exists=False, incremental=True,
         )
         assert result == PhaseResult()
         assert state.holistic_done is True
         mock_write.assert_called_once_with(job, state)
 
     @patch.object(review_pipeline, "_write_pipeline_state")
-    def test_skip_no_holistic_flag_marks_done(self, mock_write, tmp_path):
-        job = _make_job(tmp_path)
+    def test_skip_both_scan_flags_marks_done(self, mock_write, tmp_path):
+        job = _make_job(
+            tmp_path, skip_phases=frozenset({Phase.HOLISTIC, Phase.SCOUT}))
         state = PipelineState(head_sha="abc", group_names=["g1"])
 
         review_pipeline._run_holistic_phase(
             job, group_count=10, state=state,
-            skip_holistic=True, resume_exists=False, incremental=False,
+            resume_exists=False, incremental=False,
         )
         assert state.holistic_done is True
         mock_write.assert_called_once()
@@ -175,9 +198,36 @@ class TestHolisticPhaseStateUpdate:
 
         review_pipeline._run_holistic_phase(
             job, group_count=1, state=state,
-            skip_holistic=False, resume_exists=False, incremental=True,
+            resume_exists=False, incremental=True,
         )
         assert state.holistic_done is True
         mock_write.assert_not_called()
+
+
+class TestShouldDisprove:
+    """`--disprove` beats the preset; `--no-disprove` beats `--disprove`.
+
+    The two sources of a skip are kept apart on the job for this one gate —
+    everywhere else a skipped phase is a skipped phase.
+    """
+
+    def test_medium_runs_the_gate(self, tmp_path):
+        assert review_phases._should_disprove(_make_job(tmp_path)) is True
+
+    def test_low_effort_drops_the_gate(self, tmp_path):
+        job = _make_job(tmp_path, effort=Effort.LOW)
+        assert review_phases._should_disprove(job) is False
+
+    def test_explicit_disprove_buys_back_a_dropped_gate(self, tmp_path):
+        job = _make_job(tmp_path, effort=Effort.LOW)
+        assert review_phases._should_disprove(job, True) is True
+
+    def test_no_disprove_beats_explicit_disprove(self, tmp_path):
+        job = _make_job(tmp_path, skip_phases=frozenset({Phase.DISPROVE}))
+        assert review_phases._should_disprove(job, True) is False
+
+    def test_no_disprove_drops_the_gate(self, tmp_path):
+        job = _make_job(tmp_path, skip_phases=frozenset({Phase.DISPROVE}))
+        assert review_phases._should_disprove(job) is False
 
 

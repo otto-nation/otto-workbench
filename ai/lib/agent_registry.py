@@ -36,20 +36,24 @@ _SPECS: tuple[PhaseSpec, ...] = (
         template={Mode.PR: "single-agent.md", Mode.SELF: "self-review.md"},
         thinking=Thinking.MEDIUM, max_turns=15,
     ),
+    # The five multi-phase steps below are `optional`: each has a path around it
+    # in the pipeline, so each earns a `--no-<phase>` flag and may appear in an
+    # effort preset's `skips`. `single` does not — a review with no reviewing
+    # phase is not a shallower review, it is no review.
     PhaseSpec(
         Phase.HOLISTIC, PhaseDomain.REVIEW, "Holistic scan",
-        template="holistic.md",
+        template="holistic.md", optional=True,
         thinking=Thinking.MEDIUM, max_turns=15,
     ),
     PhaseSpec(
         Phase.SCOUT, PhaseDomain.REVIEW, "Scout",
-        template="scout.md",
+        template="scout.md", optional=True,
         thinking=Thinking.LOW, max_turns=10,
         agent=AgentKind.REVIEWER_LITE,
     ),
     PhaseSpec(
         Phase.GROUP, PhaseDomain.REVIEW, "Group review",
-        template="group.md",
+        template="group.md", optional=True,
         thinking=Thinking.LOW, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
     ),
@@ -60,12 +64,13 @@ _SPECS: tuple[PhaseSpec, ...] = (
         Phase.SYNTHESIS, PhaseDomain.REVIEW, "Synthesis",
         template={Mode.PR: "synthesis.md",
                   Mode.SELF: "self-review-synthesis.md"},
+        optional=True,
         thinking=Thinking.MEDIUM, max_turns=15,
         scales_with_omitted=False,
     ),
     PhaseSpec(
         Phase.DISPROVE, PhaseDomain.REVIEW, "Disprove",
-        template="disprove.md",
+        template="disprove.md", optional=True,
         thinking=Thinking.MEDIUM, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,
         scales_with_omitted=False,

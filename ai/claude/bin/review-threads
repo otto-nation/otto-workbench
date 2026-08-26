@@ -42,7 +42,7 @@ import run_lock
 import publishing
 import push
 from pr_comments_state import ThreadRecord, ThreadState
-from pr_fix import CommitStatus, FixOutcome, ItemOutcome
+from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome
 import review_common
 import review_issue
 import timeouts
@@ -628,10 +628,7 @@ _UNSTATED_REASON = {
 # agent argued against and one it could not decide both end the same way — an
 # operator has to read it — and the reason is carried per row either way, so the
 # distinction the state file keeps buys the summary nothing.
-_NEEDS_A_PERSON = (
-    pr_comments_fix.ThreadAction.NEEDS_HUMAN,
-    pr_comments_fix.ThreadAction.DECLINED,
-)
+_NEEDS_A_PERSON = (FixOutcome.NEEDS_HUMAN, FixOutcome.DECLINED)
 
 
 def _parse_tracking_results(
@@ -949,7 +946,7 @@ class CommitAttribution:
 
 
 def _attribute_commit(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome,
+    entry: CommentItem,
     cp: CommitPushResult,
     history: "AddressingHistory | None" = None,
     thread: ReportThread | None = None,
@@ -1071,7 +1068,7 @@ def _blob_permalink(repo: str, sha: str, filepath: str, line: int = 0) -> str:
 
 
 def _anchored_line(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome,
+    entry: CommentItem,
     filepath: str, line: int, sha: str, wt_path: Path | None,
 ) -> int:
     """`line` when it still points at the same code in `sha`, else 0.
@@ -1100,7 +1097,7 @@ def _anchored_line(
 
 
 def _anchored_link(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome,
+    entry: CommentItem,
     repo: str, filepath: str, line: int, sha: str, wt_path: Path | None,
 ) -> str:
     """A markdown blob link to `filepath`, anchored only where the line holds."""
@@ -1256,7 +1253,7 @@ class AddressingHistory:
 
     def framing(
         self,
-        entry: CommentItem | pr_comments_fix.ThreadOutcome,
+        entry: CommentItem,
         thread: ReportThread | None,
         acted: bool = False,
     ) -> AddressedFraming:
@@ -1278,7 +1275,7 @@ class AddressingHistory:
         # the one the flat prefix is reserved for.
         return AddressedFraming(landed_after, sha)
 
-    def _commit_for(self, entry: CommentItem | pr_comments_fix.ThreadOutcome) -> str:
+    def _commit_for(self, entry: CommentItem) -> str:
         """The branch commit behind this entry's code, or "" when there is none."""
         if not self._wt_path:
             return ""
@@ -1501,8 +1498,9 @@ def _validate_track(state: pr_state.PRState, track) -> None:
     """
     if track is TRACK_ALL:
         return
-    FA = pr_comments_fix.ThreadAction
-    deferred_ids = {t.id for t in state.fix.threads if t.action == FA.DEFERRED}
+    deferred_ids = {
+        o.id for o in state.fix.fix.items if o.outcome == FixOutcome.DEFERRED
+    }
     unknown = set(track) - deferred_ids
     if unknown:
         log.error(f"--track named threads that are not deferred: {sorted(unknown)}")
@@ -1529,23 +1527,19 @@ def _finalize_deferred(
     per thread, never the fallback disposition for whatever a fix pass failed
     to fix.
     """
-    if not state.fix.threads:
+    if not state.fix.fix.items:
         return _NO_ISSUE
 
     _validate_track(state, track)
 
-    FA = pr_comments_fix.ThreadAction
     # `reason` carries why the thread was held back, and it is the only column
     # in the tracking issue that distinguishes an agent that gave up from a
-    # decision anyone made. Rebuilding the item without it renders every row
-    # blank.
+    # decision anyone made — so the outcome's reason lands there rather than in
+    # the `reasoning` the reply templates read.
     deferred = [
-        CommentItem(
-            id=t.id, file=t.file, line=t.line,
-            reviewer=t.reviewer, summary=t.summary, reason=t.reason,
-        )
-        for t in state.fix.threads
-        if t.action == FA.DEFERRED and t.id in track
+        CommentItem.from_outcome(o, state.fix.reviewers.get(o.id, ""))
+        for o in state.fix.fix.items
+        if o.outcome == FixOutcome.DEFERRED and o.id in track
     ]
     if not deferred:
         return _NO_ISSUE
@@ -1587,16 +1581,15 @@ def _report_unfiled_deferrals(state: pr_state.PRState, track) -> None:
     just as unfiled as no selection does, and they are the easiest ones to lose
     — the run reports success for the few that were named.
     """
-    FA = pr_comments_fix.ThreadAction
     still = [
-        t for t in state.fix.threads
-        if t.action == FA.DEFERRED and t.id not in track
+        o for o in state.fix.fix.items
+        if o.outcome == FixOutcome.DEFERRED and o.id not in track
     ]
     if not still:
         return
     log.info(
         f"{len(still)} deferred thread(s) not filed — pass --track <id> for "
-        f"each one to track, or --track-all: {', '.join(t.id for t in still)}"
+        f"each one to track, or --track-all: {', '.join(o.id for o in still)}"
     )
 
 
@@ -1608,13 +1601,13 @@ def _warn_if_snapshot_stale(state: pr_state.PRState, wt_path: Path) -> None:
     of committing and then closing out. A snapshot with no recorded HEAD
     predates the field and cannot be vouched for either way, so it counts.
     """
-    if not state.fix.threads:
+    if not state.fix.fix.items:
         return
     current = _get_head_sha(wt_path)
-    if state.fix.head_sha and state.fix.head_sha == current:
+    if state.fix.fix.head_sha and state.fix.fix.head_sha == current:
         return
     log.warn(
-        f"Fix snapshot was taken at {state.fix.head_sha or '(unrecorded)'} "
+        f"Fix snapshot was taken at {state.fix.fix.head_sha or '(unrecorded)'} "
         f"but HEAD is {current or '(unknown)'} — reconciling against GitHub"
     )
 
@@ -1645,10 +1638,10 @@ _RECONCILED_REASON = "reconciled: handled outside the fix pass"
 # answer and resolves it. DECLINED sits here for the same reason NEEDS_HUMAN
 # does: the pass handed the thread to a person, so a person settling it is the
 # expected ending rather than the exception.
-_UNSETTLED_ACTIONS = (
-    pr_comments_fix.ThreadAction.DEFERRED,
-    pr_comments_fix.ThreadAction.NEEDS_HUMAN,
-    pr_comments_fix.ThreadAction.DECLINED,
+_UNSETTLED_OUTCOMES = (
+    FixOutcome.DEFERRED,
+    FixOutcome.NEEDS_HUMAN,
+    FixOutcome.DECLINED,
 )
 
 # The two status cells that decline to name a commit. Both exist because the
@@ -1675,9 +1668,7 @@ def _thread_looks_handled(thread: ReportThread | None) -> bool:
     )
 
 
-def _finding_location(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome | ReportThread,
-) -> str:
+def _finding_location(entry: CommentItem | ReportThread) -> str:
     """Reviewer and code location of an entry, or "" when it has neither.
 
     The join key between a review thread and a decomposed comment item that
@@ -1708,7 +1699,7 @@ _SOURCE_ANCHOR_RE = re.compile(r"#(?:issuecomment|pullrequestreview)-(\d+)")
 
 
 def _answered_comment_sources(
-    outcomes: list[pr_comments_fix.ThreadOutcome],
+    outcomes: list[ItemOutcome],
     repo: str, pr_number: int, my_login: str,
 ) -> frozenset[str]:
     """Source comment ids our standing reply on the PR reports as handled.
@@ -1723,7 +1714,7 @@ def _answered_comment_sources(
     such a reply could settle.
     """
     if not any(
-        o.action in _UNSETTLED_ACTIONS and _comment_item_source(o).ok
+        o.outcome in _UNSETTLED_OUTCOMES and _comment_item_source(o).ok
         for o in outcomes
     ):
         return frozenset()
@@ -1752,7 +1743,7 @@ def _answered_comment_sources(
 
 
 def _entry_looks_handled(
-    outcome: pr_comments_fix.ThreadOutcome,
+    entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
     answered_sources: frozenset[str],
     handled_locations: set[str],
@@ -1766,15 +1757,15 @@ def _entry_looks_handled(
     thing about the same line being settled: triage decomposes a top-level
     comment without knowing which of its points an inline thread already covers.
     """
-    thread = threads_by_id.get(outcome.id)
+    thread = threads_by_id.get(entry.id)
     if thread:
         return _thread_looks_handled(thread)
-    source = _comment_item_source(outcome)
+    source = _comment_item_source(entry)
     if not source.ok:
         return False
     if source.id in answered_sources:
         return True
-    return _finding_location(outcome) in handled_locations
+    return _finding_location(entry) in handled_locations
 
 
 def _reconcile_fix_snapshot(
@@ -1783,7 +1774,7 @@ def _reconcile_fix_snapshot(
 ) -> int:
     """Flip snapshot outcomes that GitHub contradicts. Returns the flip count.
 
-    The snapshot records what one fix pass concluded, and `FixSummary.merge_into`
+    The snapshot records what one fix pass concluded, and `FixRecord.merge_into`
     accumulates it across rounds without ever expiring an outcome. Work done by
     hand in between never passes through it, so a thread fixed outside the tool
     stays DEFERRED forever. Publishing that is a false claim about someone's
@@ -1800,20 +1791,22 @@ def _reconcile_fix_snapshot(
     nothing asked, which is the honest reading for a caller that consulted only
     the review threads.
     """
-    FA = pr_comments_fix.ThreadAction
     handled_locations = {
         _finding_location(t) for t in threads_by_id.values()
         if _thread_looks_handled(t)
     } - {""}
     flipped = 0
-    for outcome in state.fix.threads:
-        if outcome.action not in _UNSETTLED_ACTIONS:
+    for outcome in state.fix.fix.items:
+        if outcome.outcome not in _UNSETTLED_OUTCOMES:
             continue
+        entry = CommentItem.from_outcome(
+            outcome, state.fix.reviewers.get(outcome.id, ""),
+        )
         if not _entry_looks_handled(
-            outcome, threads_by_id, answered_sources, handled_locations,
+            entry, threads_by_id, answered_sources, handled_locations,
         ):
             continue
-        outcome.action = FA.FIXED
+        outcome.outcome = FixOutcome.FIXED
         outcome.reason = _RECONCILED_REASON
         flipped += 1
     if flipped:
@@ -1854,7 +1847,7 @@ def _finish_deferred_work(
     _post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id)
     _warn_if_snapshot_stale(state, wt_path)
     _reconcile_fix_snapshot(state, threads_by_id, _answered_comment_sources(
-        state.fix.threads, ctx.repo, ctx.pr_number, report.my_login,
+        state.fix.fix.items, ctx.repo, ctx.pr_number, report.my_login,
     ))
     _finalize_deferred(state, ctx, threads_by_id, trail=trail, track=track)
     _report_unfiled_deferrals(state, track)
@@ -1888,8 +1881,8 @@ def _follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
     this cannot read, and the one thing worse than blocking would be publishing
     on a guess.
     """
-    fix = state.fix
-    recorded = fix.commit_sha
+    record = state.fix.fix
+    recorded = record.commit_sha
     # Keyed by recorded SHA, so a branch whose threads all cite one commit asks
     # git once. "" is a cached answer too: it means orphaned with no replay.
     replays: dict[str, str] = {}
@@ -1903,15 +1896,15 @@ def _follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
             )
         return replays[sha] or sha
 
-    fix.commit_sha = followed(fix.commit_sha)
+    record.commit_sha = followed(record.commit_sha)
     # The snapshot HEAD moves with the rest. It is the base of the "what landed
     # outside the fix pass" range, and a base git cannot resolve makes that
     # range empty — which reads as "nothing landed since", the one answer that
     # is never true after a rebase.
-    fix.head_sha = followed(fix.head_sha)
-    for thread in fix.threads:
-        thread.commit_sha = followed(thread.commit_sha)
-        thread.read_sha = followed(thread.read_sha)
+    record.head_sha = followed(record.head_sha)
+    for outcome in record.items:
+        outcome.commit_sha = followed(outcome.commit_sha)
+        outcome.read_sha = followed(outcome.read_sha)
 
     moved = sum(1 for sha, replay in replays.items() if replay and replay != sha)
     if moved:
@@ -1919,7 +1912,7 @@ def _follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
             f"Followed {moved} rewritten commit(s) — the fix snapshot now cites "
             "the history on the branch"
         )
-    if recorded and replays.get(recorded) == "" and _commit_unpushed(fix.commit_status):
+    if recorded and replays.get(recorded) == "" and _commit_unpushed(record.commit_status):
         log.warn(
             f"Fix commit {recorded} is no longer on this branch and no single "
             "commit on it carries that change — the closeout stays held. This "
@@ -1945,12 +1938,12 @@ def _push_held_commit(
     so this runs first: the replies and the summary are only allowed out once
     the SHA they link to is somewhere the reviewer can follow it.
     """
-    fix = state.fix
-    if not fix.commit_sha or not _commit_unpushed(fix.commit_status):
+    record = state.fix.fix
+    if not record.commit_sha or not _commit_unpushed(record.commit_status):
         return
 
-    if push.holds(wt_path, fix.commit_sha):
-        fix.commit_status = CommitStatus.PUSHED
+    if push.holds(wt_path, record.commit_sha):
+        record.commit_status = CommitStatus.PUSHED
         return
 
     # No SHA is handed down: the owner reads full HEAD for itself, and
@@ -1962,11 +1955,11 @@ def _push_held_commit(
     if result.status is push.PushStatus.HELD:
         return
     if not result.ok:
-        fix.commit_status = land.commit_status(result.status)
+        record.commit_status = land.commit_status(result.status)
         return
 
-    log.info(f"Pushed held fixes ({fix.commit_sha})")
-    fix.commit_status = CommitStatus.PUSHED
+    log.info(f"Pushed held fixes ({record.commit_sha})")
+    record.commit_status = CommitStatus.PUSHED
 
 
 def _deliver_pr_body(wt_path: Path, repo: str, pr_number: int) -> bool:
@@ -2236,7 +2229,7 @@ def _create_or_update_deferred_issue(
 
 
 def _fixed_status_for(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome,
+    entry: CommentItem,
     cp: CommitPushResult,
     repo: str,
     history: "AddressingHistory | None" = None,
@@ -2410,14 +2403,17 @@ class CommentSource:
         return None
 
 
-def _comment_item_source(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome,
-) -> CommentSource:
-    """The comment a decomposed item came from, empty when it is not one."""
+def _comment_item_source(entry: CommentItem | ItemOutcome) -> CommentSource:
+    """The comment a decomposed item came from, empty when it is not one.
+
+    Takes either shape because reconciliation asks it of the record directly,
+    before an outcome has been rebuilt into an entry — an `ItemOutcome` carries
+    no source of its own, so the synthetic id is all there is to read.
+    """
     source_id = getattr(entry, "source_id", "")
     source_type = getattr(entry, "source_type", "")
     if not source_id and not source_type:
-        # ThreadOutcome — parse synthetic id (ic-{source_id}-{index} or rb-{source_id}-{index})
+        # Parse the synthetic id: ic-{source_id}-{index} or rb-{source_id}-{index}
         eid = entry.id
         if eid.startswith("ic-"):
             source_type = "issue_comment"
@@ -2429,7 +2425,7 @@ def _comment_item_source(
 
 
 def _comment_item_permalink(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome,
+    entry: CommentItem,
     repo: str, pr_number: int,
 ) -> str | None:
     """Build a permalink for a decomposed comment item from its source comment."""
@@ -2437,7 +2433,7 @@ def _comment_item_permalink(
 
 
 def _thread_permalink(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome,
+    entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str | None:
@@ -2463,7 +2459,7 @@ def _escape_cell(text: str) -> str:
 
 
 def _summary_cell(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome,
+    entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
     repo: str, pr_number: int,
 ) -> str:
@@ -2476,7 +2472,7 @@ def _summary_cell(
 
 
 def _build_row(
-    entry: CommentItem | pr_comments_fix.ThreadOutcome, status: str,
+    entry: CommentItem, status: str,
     threads_by_id: dict[str, ReportThread], repo: str, pr_number: int,
     head_sha: str = "",
     wt_path: Path | None = None,
@@ -2524,11 +2520,8 @@ def _summarize_comment_body(body: str, max_len: int = 120) -> str:
     return "(empty)"
 
 
-_SummaryEntry = CommentItem | pr_comments_fix.ThreadOutcome
-
-
 def _duplicate_item_ids(
-    entries: list[_SummaryEntry], threads_by_id: dict[str, ReportThread],
+    entries: list[CommentItem], threads_by_id: dict[str, ReportThread],
 ) -> set[str]:
     """Ids of comment items a review thread in the same table already covers.
 
@@ -2556,11 +2549,11 @@ def _duplicate_item_ids(
 
 def _folded_item_ids(
     *,
-    fixed: list[_SummaryEntry],
-    needs_human: list[_SummaryEntry],
-    deferred: list[_SummaryEntry],
-    dismissed: list[_SummaryEntry],
-    already_addressed: list[_SummaryEntry],
+    fixed: list[CommentItem],
+    needs_human: list[CommentItem],
+    deferred: list[CommentItem],
+    dismissed: list[CommentItem],
+    already_addressed: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
 ) -> set[str]:
     """The ids no bucket will render, folded across every bucket at once.
@@ -2598,7 +2591,7 @@ class HumanReason(Enum):
     """Why a thread was routed to a human, in both spellings it is written in.
 
     `value` is the machine-readable token stamped on the entry's `reason`.
-    `to_outcome` persists it as `ThreadOutcome.reason`, and a later `--finish`
+    `to_outcome` persists it as `ItemOutcome.reason`, and a later `--finish`
     reads it back out of the state file to render the Action cell through
     `prose_for` — that round trip is why the values must stay stable. They also
     leave the process verbatim, in the stdout JSON report and the
@@ -2772,7 +2765,7 @@ def _comment_timestamps(
 
 
 def _entry_activity_at(
-    entry: "_SummaryEntry",
+    entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
     sources_at: dict[str, str],
 ) -> str:
@@ -2817,15 +2810,15 @@ class HeldRow:
 
 
 def _build_summary_body(
-    fixed: list[_SummaryEntry],
-    needs_human: list[_SummaryEntry],
-    deferred: list[_SummaryEntry],
+    fixed: list[CommentItem],
+    needs_human: list[CommentItem],
+    deferred: list[CommentItem],
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
-    dismissed: list[_SummaryEntry] | None = None,
-    already_addressed: list[_SummaryEntry] | None = None,
+    dismissed: list[CommentItem] | None = None,
+    already_addressed: list[CommentItem] | None = None,
     issue_comments: list[dict] | None = None,
     review_body_comments: list[dict] | None = None,
     deferred_issue_id: str = "",
@@ -2909,7 +2902,7 @@ def _build_summary_body(
         deferred_status = "Deferred"
 
     def emit(
-        entry: _SummaryEntry, status: str, sha: str, *, unsettled: bool = False,
+        entry: CommentItem, status: str, sha: str, *, unsettled: bool = False,
     ) -> bool:
         """Append this entry's row, or the published one a human rewrote.
 
@@ -3512,7 +3505,8 @@ def _post_pending_fix_replies(
     which was written from a snapshot taken before this phase ran.
     """
     fix = state.fix
-    if not _commit_unpushed(fix.commit_status) and not fix.replies_pending:
+    record = fix.fix
+    if not _commit_unpushed(record.commit_status) and not fix.replies_pending:
         return
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
@@ -3523,31 +3517,29 @@ def _post_pending_fix_replies(
     # committed nothing leaves entries citing the commits that did — already on
     # the remote — and the triage buckets cite HEAD rather than a fix commit,
     # so there is nothing for either to wait on.
-    if fix.commit_sha and not push.holds(wt_path, fix.commit_sha):
+    if record.commit_sha and not push.holds(wt_path, record.commit_sha):
         log.info("Push still pending — skipping deferred replies")
         return
 
     resolved: list[ThreadState] = []
-    FA = pr_comments_fix.ThreadAction
 
-    def bucket(action: str) -> list[CommentItem]:
-        # commit_sha carried, not dropped: this queue spans rounds, and an
-        # entry fixed two commits ago must still cite the commit that fixed it.
-        # `reason` carries the dismissal's justification, which `to_outcome`
-        # folded in from `reasoning` — without it a drained dismissal tells a
-        # reviewer their premise fails and gives them nothing to argue with.
+    def bucket(outcome: FixOutcome) -> list[CommentItem]:
+        # The reason lands in `reasoning`, which is what the reply templates
+        # read: a drained dismissal that dropped it tells a reviewer their
+        # premise fails and gives them nothing to argue with. The commit and
+        # read SHAs travel too — this queue spans rounds, and an entry fixed two
+        # commits ago must still cite the commit that fixed it.
         return [
-            CommentItem(id=t.id, file=t.file, line=t.line,
-                        reviewer=t.reviewer, summary=t.summary,
-                        reasoning=t.reason, commit_sha=t.commit_sha,
-                        read_sha=t.read_sha)
-            for t in fix.threads if t.action == action
+            CommentItem.from_outcome(
+                o, fix.reviewers.get(o.id, ""), reason_field="reasoning",
+            )
+            for o in record.items if o.outcome == outcome
         ]
 
     # Accumulate rather than discard: these are the same round's replies
     # finally going out, and the fix pass already counted any it sent
     # itself. A draft returns 0 here, so a drafted drain adds nothing.
-    fixed = bucket(FA.FIXED)
+    fixed = bucket(FixOutcome.FIXED)
     if fixed:
         # The same reconciliation the summary rows get, read through the same
         # resolver. A pass whose commit a hook rejected records no SHA of its
@@ -3555,11 +3547,11 @@ def _post_pending_fix_replies(
         # otherwise be replied to with "Fixed in ``" over an empty link.
         fix.replies_posted += _reply_to_fixed(
             fixed, threads_by_id, repo, pr_number,
-            _reconciled_commit(fix, fix.commit_status, wt_path), wt_path,
+            _reconciled_commit(record, record.commit_status, wt_path), wt_path,
         )
         resolved += _resolve_fixed_threads(fixed, threads_by_id)
 
-    addressed = bucket(FA.ALREADY_ADDRESSED)
+    addressed = bucket(FixOutcome.ALREADY_ADDRESSED)
     if addressed:
         fix.replies_posted += _post_already_addressed_replies(
             addressed, threads_by_id, repo, pr_number, wt_path,
@@ -3569,7 +3561,7 @@ def _post_pending_fix_replies(
     # Not resolved, unlike the other two: telling a reviewer their premise does
     # not hold is the reply most likely to be argued with, so the thread stays
     # open for them to answer. Mirrors the triage phase.
-    dismissed = bucket(FA.DISMISSED)
+    dismissed = bucket(FixOutcome.DISMISSED)
     if dismissed:
         fix.replies_posted += _post_dismissed_replies(
             dismissed, threads_by_id, repo, pr_number, wt_path,
@@ -3579,13 +3571,13 @@ def _post_pending_fix_replies(
 
     # A draft delivered nothing, so the queue has to survive for the next run.
     if publishing.enabled():
-        if _commit_unpushed(fix.commit_status):
-            fix.commit_status = CommitStatus.PUSHED
+        if _commit_unpushed(record.commit_status):
+            record.commit_status = CommitStatus.PUSHED
         fix.replies_pending = False
 
 
 def _reconciled_commit(
-    fix: pr_comments_fix.FixSummary, status: str, wt_path: Path | None,
+    record: FixRecord, status: str, wt_path: Path | None,
 ) -> CommitPushResult:
     """The pass's commit as the worktree now shows it, not as it was recorded.
 
@@ -3609,14 +3601,14 @@ def _reconciled_commit(
     commit` reads each thread's own line history and cites the commit that
     changed it after the reviewer asked.
     """
-    if fix.commit_sha or not wt_path or not fix.head_sha:
-        return CommitPushResult(fix.commit_sha or None, status, "")
+    if record.commit_sha or not wt_path or not record.head_sha:
+        return CommitPushResult(record.commit_sha or None, status, "")
     current = _get_head_sha(wt_path)
-    if not current or current == fix.head_sha:
+    if not current or current == record.head_sha:
         return CommitPushResult(None, status, "")
     if not push.holds(wt_path, current):
         return CommitPushResult(None, CommitStatus.RECONCILED, "")
-    landed = _commits_since(wt_path, fix.head_sha, current)
+    landed = _commits_since(wt_path, record.head_sha, current)
     if len(landed) > 1:
         log.warn(
             f"{len(landed)} commits landed outside the fix pass — rows it did "
@@ -3652,28 +3644,29 @@ def _render_deferred_summary(
     """Re-render fix summary from state and post it.
 
     Called during --finish after the deferred tracking issue has been created
-    and stored in state.fix.  Rebuilds the summary body from FixSummary's
-    structured data so the issue link renders inline — no string patching.
+    and stored in state.fix.  Rebuilds the summary body from the recorded
+    outcomes so the issue link renders inline — no string patching.
     Updates state.fix.summary_url and summary_deferred on success.
     """
     fix = state.fix
+    record = fix.fix
     if not fix.summary_deferred:
         return
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
 
-    status = fix.commit_status
-    if _commit_unpushed(fix.commit_status) and fix.commit_sha:
-        if not wt_path or not push.holds(wt_path, fix.commit_sha):
+    status = record.commit_status
+    if _commit_unpushed(record.commit_status) and record.commit_sha:
+        if not wt_path or not push.holds(wt_path, record.commit_sha):
             log.info("Push still pending — keeping summary deferred")
             return
         status = CommitStatus.PUSHED
         # Same reason as the deferred-reply queue: only a run that actually
         # publishes may retire an unpushed status, or the queue is lost silently.
         if publishing.enabled():
-            fix.commit_status = status
+            record.commit_status = status
 
-    # A plain partition over every action, with nothing dropped: this renderer
+    # A plain partition over every outcome, with nothing dropped: this renderer
     # is the only one --finish reaches, and the condition that routes here is
     # the presence of needs_human, so omitting that bucket would omit exactly
     # the threads that took the most operator judgment.
@@ -3681,14 +3674,23 @@ def _render_deferred_summary(
     # _finish_deferred_work reconciles the snapshot against GitHub before
     # calling this, so a thread settled outside the fix pass has already been
     # flipped to FIXED and cannot still be sitting in DEFERRED or NEEDS_HUMAN.
-    FA = pr_comments_fix.ThreadAction
-    fixed = [t for t in fix.threads if t.action == FA.FIXED]
-    needs_human = [t for t in fix.threads if t.action in _NEEDS_A_PERSON]
-    deferred = [t for t in fix.threads if t.action == FA.DEFERRED]
-    dismissed = [t for t in fix.threads if t.action == FA.DISMISSED]
-    already_addressed = [t for t in fix.threads if t.action == FA.ALREADY_ADDRESSED]
+    #
+    # The rows are entries again before any of it: the reviewer column, the
+    # permalink and the fold key are all read off an entry, and rebuilding them
+    # here is what leaves every renderer downstream with one type to handle.
+    def bucket(*outcomes: FixOutcome) -> list[CommentItem]:
+        return [
+            CommentItem.from_outcome(o, fix.reviewers.get(o.id, ""))
+            for o in record.items if o.outcome in outcomes
+        ]
 
-    cp = _reconciled_commit(fix, status, wt_path)
+    fixed = bucket(FixOutcome.FIXED)
+    needs_human = bucket(*_NEEDS_A_PERSON)
+    deferred = bucket(FixOutcome.DEFERRED)
+    dismissed = bucket(FixOutcome.DISMISSED)
+    already_addressed = bucket(FixOutcome.ALREADY_ADDRESSED)
+
+    cp = _reconciled_commit(record, status, wt_path)
     # One per render, shared with the table below: the warning asks the same
     # question of the same rows, and `git log -L` is a process per location.
     history = AddressingHistory(wt_path)
@@ -3908,16 +3910,18 @@ def _replayed_commit(wt_path: Path, sha: str) -> str:
     return git_client.out("rev-parse", "--short", replays[0], cwd=wt_path)
 
 
-def _build_thread_outcomes(
-    by_action: dict[pr_comments_fix.ThreadAction, list[CommentItem]],
+def _build_fix_record(
+    by_outcome: dict[FixOutcome, list[CommentItem]],
     commit_sha: str = "",
-) -> list[pr_comments_fix.ThreadOutcome]:
-    """Build the ThreadOutcome list a FixSummary records, one action at a time.
+    commit_status: CommitStatus | None = None,
+    head_sha: str = "",
+) -> FixRecord:
+    """Build the record a fix pass writes, one outcome at a time.
 
-    Taking the buckets as a mapping rather than as a parameter each: the actions
-    are `ThreadAction`'s to name, and a signature that spells them out has to
-    grow a parameter — and every caller a positional argument — each time that
-    vocabulary does.
+    Taking the buckets as a mapping rather than as a parameter each: the
+    outcomes are `FixOutcome`'s to name, and a signature that spells them out
+    has to grow a parameter — and every caller a positional argument — each
+    time that vocabulary does.
 
     `commit_sha` is stamped on the fixed entries only, through `_stamp_pass_commit`
     — the one writer of that field, and safe to call here even when a caller
@@ -3925,12 +3929,35 @@ def _build_thread_outcomes(
     that already names a commit. The others were not landed by this commit, and
     a SHA on them would read as if they had been.
     """
-    _stamp_pass_commit(by_action.get(pr_comments_fix.ThreadAction.FIXED, []), commit_sha)
-    return [
-        entry.to_outcome(action)
-        for action, entries in by_action.items()
+    _stamp_pass_commit(by_outcome.get(FixOutcome.FIXED, []), commit_sha)
+    return FixRecord(
+        items=[
+            entry.to_outcome(outcome)
+            for outcome, entries in by_outcome.items()
+            for entry in entries
+        ],
+        commit_sha=commit_sha,
+        commit_status=commit_status,
+        head_sha=head_sha,
+        updated_at=pr_state.now_iso(),
+    )
+
+
+def _reviewers_for(
+    by_outcome: dict[FixOutcome, list[CommentItem]],
+) -> dict[str, str]:
+    """The login behind each recorded outcome, keyed by the outcome's id.
+
+    Kept beside the record rather than on it — see `FixSummary.reviewers`. An
+    entry GitHub named no reviewer for contributes no key, so a later lookup
+    misses rather than asserting an anonymous one.
+    """
+    return {
+        entry.id: entry.reviewer
+        for entries in by_outcome.values()
         for entry in entries
-    ]
+        if entry.id and entry.reviewer
+    }
 
 
 def _persist_fix_state(
@@ -4209,7 +4236,6 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         each of the outward acts is gated, and the state file has to record which
         of them actually went out.
         """
-        FA = pr_comments_fix.ThreadAction
         cp = _pass_commit(self.workdir, run.landed)
         tracking = _parse_tracking_results(
             run.outcomes, self.fixable, fixable_items=self.fixable_items,
@@ -4263,21 +4289,25 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             wt_path=self.workdir,
         )
 
+        by_outcome = {
+            FixOutcome.FIXED: all_fixed,
+            FixOutcome.DEFERRED: all_deferred,
+            FixOutcome.NEEDS_HUMAN: self.needs_human + agent_needs_human,
+            FixOutcome.DECLINED: declined,
+            FixOutcome.DISMISSED: self.dismissed,
+            FixOutcome.ALREADY_ADDRESSED: self.already_addressed,
+        }
         _persist_fix_state(pr_comments_fix.FixSummary(
-            threads=_build_thread_outcomes({
-                FA.FIXED: all_fixed,
-                FA.DEFERRED: all_deferred,
-                FA.NEEDS_HUMAN: self.needs_human + agent_needs_human,
-                FA.DECLINED: declined,
-                FA.DISMISSED: self.dismissed,
-                FA.ALREADY_ADDRESSED: self.already_addressed,
-            }, commit_sha=cp.sha or ""),
-            commit_sha=cp.sha or "",
-            commit_status=cp.status,
-            # HEAD after the pass, not ctx.head_sha: the fix pass commits, so
-            # the snapshot must name the commit its outcomes were measured
-            # against.
-            head_sha=_get_head_sha(self.workdir),
+            fix=_build_fix_record(
+                by_outcome,
+                commit_sha=cp.sha or "",
+                commit_status=cp.status,
+                # HEAD after the pass, not ctx.head_sha: the fix pass commits,
+                # so the snapshot must name the commit its outcomes were
+                # measured against.
+                head_sha=_get_head_sha(self.workdir),
+            ),
+            reviewers=_reviewers_for(by_outcome),
             replies_posted=replies_posted,
             replies_pending=(
                 bool(fixed_threads) and not publishing.enabled()
@@ -4315,7 +4345,6 @@ def _run_comment_fix(
     trail: Trail | None = None,
 ) -> CommentFixResult:
     """Apply mechanical fixes for valid actionable comment threads and items."""
-    FA = pr_comments_fix.ThreadAction
     threads_by_id = {t.id: t for t in report.threads}
 
     # Classify threads
@@ -4414,14 +4443,18 @@ def _run_comment_fix(
             summary_url = None
         empty_result.summary_url = summary_url
         empty_result.summary_deferred = summary_url is None and early_deferred
+        by_outcome = {
+            FixOutcome.NEEDS_HUMAN: all_needs_human,
+            FixOutcome.DISMISSED: all_dismissed,
+            FixOutcome.ALREADY_ADDRESSED: all_addressed,
+        }
         _persist_fix_state(pr_comments_fix.FixSummary(
-            threads=_build_thread_outcomes({
-                FA.NEEDS_HUMAN: all_needs_human,
-                FA.DISMISSED: all_dismissed,
-                FA.ALREADY_ADDRESSED: all_addressed,
-            }),
-            commit_status=no_commit.status,
-            head_sha=_get_head_sha(wt_path),
+            fix=_build_fix_record(
+                by_outcome,
+                commit_status=no_commit.status,
+                head_sha=_get_head_sha(wt_path),
+            ),
+            reviewers=_reviewers_for(by_outcome),
             replies_posted=triage_replies,
             replies_pending=_triage_replies_drafted(all_addressed, all_dismissed),
             summary_url=summary_url or "",

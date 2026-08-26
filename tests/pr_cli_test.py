@@ -31,6 +31,7 @@ pr_cli = load_script("pr_cli", BIN_DIR / "pr")
 import proc  # noqa: E402
 import pr_comments_fix  # noqa: E402
 import pr_domains  # noqa: E402
+import pr_fix  # noqa: E402
 import pr_state  # noqa: E402
 import run_lock  # noqa: E402
 import timeouts  # noqa: E402
@@ -205,7 +206,9 @@ def test_merge_readiness_ignores_a_drained_closeout():
     import pr_state
     state = _green_state()
     pr_state.apply(state, pr_comments_fix.FixSummary(
-        threads=[pr_comments_fix.ThreadOutcome(id="t1", action=pr_comments_fix.ThreadAction.FIXED)],
+        fix=pr_fix.FixRecord(
+            items=[pr_fix.ItemOutcome(id="t1", outcome=pr_fix.FixOutcome.FIXED)],
+        ),
         summary_url="https://example.test/c/1", replies_posted=1, updated_at="t",
     ))
     result = pr_cli._merge_readiness(state)

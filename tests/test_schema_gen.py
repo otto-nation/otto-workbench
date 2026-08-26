@@ -350,15 +350,26 @@ def test_every_from_raw_type_in_the_tree_publishes_a_raw_schema():
     assert missing == []
 
 
-def test_thread_outcome_schema_accepts_the_legacy_key_serde_accepts():
-    """The live case. `pr --tool-schema` publishes PRState, `FixSummary.threads`
-    holds ThreadOutcome, and its `_from_raw` reads `thread_id` as `id` — the
-    published schema described only the current name."""
+def test_fix_summary_schema_accepts_the_pre_fold_shape_serde_accepts():
+    """The live case. `pr --tool-schema` publishes PRState, and the comment
+    domain's `_from_raw` still reads the shape that predates the fold into
+    `FixRecord` — a top-level `threads` list of thread outcomes beside a
+    top-level `commit_status`. The published schema described only the current
+    names, so it called a state file invalid that `_from_raw` reads without
+    complaint."""
     from pr_state import PRState
 
-    outcome = dataclass_to_schema(PRState)["properties"]["fix"]["properties"]["threads"]["items"]
-    assert outcome["properties"]["thread_id"] == {"type": "string"}
-    assert outcome["properties"]["id"] == {"type": "string"}
+    fix = dataclass_to_schema(PRState)["properties"]["fix"]["properties"]
+    assert fix["commit_sha"] == {"type": "string"}
+    assert fix["head_sha"] == {"type": "string"}
+    # A plain string rather than the record's enum — an unrun pass wrote "".
+    assert fix["commit_status"] == {"type": "string"}
+
+    outcome = fix["threads"]["items"]["properties"]
+    assert outcome["thread_id"] == {"type": "string"}
+    assert outcome["id"] == {"type": "string"}
+    assert outcome["reviewer"] == {"type": "string"}
+    assert outcome["action"] == outcome["outcome"]
 
 
 def test_a_diagnosis_schema_accepts_the_legacy_string_form():

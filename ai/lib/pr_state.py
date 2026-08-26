@@ -8,8 +8,8 @@ State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on t
 run's target — see ``pr_target.target_dir``, which owns that path.
 
 The domains this is an envelope over live in ``pr_domains`` — and one of them,
-the comment pass's fix record, in ``pr_comments_fix``. This module imports both;
-neither imports it.
+the comment pass's, in ``pr_comments_fix``. This module imports both; neither
+imports it.
 """
 
 # doc-group: pr-state

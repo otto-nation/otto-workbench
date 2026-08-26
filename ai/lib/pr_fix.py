@@ -1,11 +1,11 @@
 """What a fix pass did, in terms no one domain owns.
 
 Three fix passes run in this workbench — reviewer comments, CI failures, and
-review findings — and each one records its result differently: one writes typed
-thread outcomes into state, one writes checkbox counts, one rewrites checkboxes
-inside the review markdown. The types here are the shape all three settle on. A
-pass records one :class:`ItemOutcome` per item it was handed and one
-:class:`FixRecord` per run, and every domain carries a record because
+review findings — and each one used to record its result differently: one wrote
+typed thread outcomes into state, one wrote checkbox counts, one rewrote
+checkboxes inside the review markdown. The types here are the shape all three
+settle on. A pass records one :class:`ItemOutcome` per item it was handed and
+one :class:`FixRecord` per run, and every domain carries a record because
 :class:`~pr_domains.Domain` declares the field — so a domain that gains a fix
 pass gains somewhere to record it by declaring nothing.
 
@@ -14,12 +14,12 @@ it, and it imports nothing from ``ai/lib`` in return. That is what lets the
 record hang off the base class without the domains and the vocabulary they are
 written in forming a cycle.
 
-The CI pass writes one, through :mod:`fix_engine` — the shared pipeline all
-three now run on, and the thing that produces the :class:`ItemOutcome` list a
-record is assembled from. Running on the engine is not the same as recording
-through these types: the comment pass keeps the summary shape it had, and the
-review-findings pass re-renders the review document from its outcomes rather
-than writing a record at all.
+The CI and comment passes both write one, through :mod:`fix_engine` — the
+shared pipeline all three now run on, and the thing that produces the
+:class:`ItemOutcome` list a record is assembled from. Running on the engine is
+not the same as recording through these types: the review-findings pass
+re-renders the review document from its outcomes rather than writing a record
+at all.
 """
 
 # doc-group: pr-state
@@ -76,10 +76,9 @@ class FixOutcome(StrEnum):
     attempt at all, and the findings pass lets the agent argue a finding is
     wrong rather than merely hard.
 
-    The five values the comment pass already persists keep their exact strings,
-    so an outcome written as a `ThreadAction` reads back as the member of the
-    same name here and the two vocabularies can be swapped without migrating a
-    state file.
+    The five values the comment pass persisted under its own vocabulary keep
+    their exact strings, so an outcome that pass wrote before the two were
+    folded together reads back as the member of the same name here.
     """
 
     # The pass changed code for this item.
@@ -106,7 +105,10 @@ class ItemOutcome:
 
     Carries only what every pass can answer. A reviewer login, a CI job name, a
     finding's severity belong to the item as the domain fetched it, not to the
-    record of what happened to it, so they stay on the domain's own item type.
+    record of what happened to it, so they stay on the domain — see
+    `FixSummary.reviewers`, which keys the comment pass's logins by outcome id
+    rather than widening this type with a field two of the three passes would
+    leave empty.
 
     The default is DEFERRED rather than FIXED because a record assembled from a
     tracking file the agent left untouched must read as work still owed. An

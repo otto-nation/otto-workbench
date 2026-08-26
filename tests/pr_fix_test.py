@@ -1,8 +1,8 @@
 """Tests for the fix vocabulary every domain shares — outcomes and the record.
 
-Nothing writes a `FixRecord` yet, so what is pinned here is the contract the
-shared fix pipeline will write against: the value strings a state file already
-holds, the default an unset outcome reads as, and how two rounds fold together.
+What is pinned here is the contract every pass writes against: the value strings
+a state file already holds, the default an unset outcome reads as, and how two
+rounds fold together.
 """
 
 import sys
@@ -15,7 +15,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import pr_comments_fix
 import pr_domains
 import pr_fix
 import pr_state
@@ -25,23 +24,32 @@ import serde
 # ── FixOutcome ────────────────────────────────────────────────────────────
 
 
-def test_fix_outcome_keeps_the_strings_thread_action_persists():
-    """Every ThreadAction reads back as the FixOutcome of the same name.
+def test_fix_outcome_keeps_the_strings_the_comment_pass_persisted():
+    """The six verdicts the comment pass wrote before the fold still read back.
 
-    The comment pass has been writing these strings into state files for months.
-    Phase 4 swaps its vocabulary for this one, and that swap is only free while
-    the values match — a rename here is a state migration there.
+    Those strings are in state files on disk, under a key the migration renames
+    but does not translate. A rename of any member here is a silent data loss
+    there — the outcome comes back as something else, or the load raises and
+    `serde.load_file` discards the whole file.
     """
-    for action in pr_comments_fix.ThreadAction:
-        assert pr_fix.FixOutcome(action.value).name == action.name
-
-
-def test_fix_outcome_adds_only_what_no_thread_has():
-    """SKIPPED alone — DECLINED became a thread action when the pass adopted it."""
-    extra = {o.name for o in pr_fix.FixOutcome} - {
-        a.name for a in pr_comments_fix.ThreadAction
+    persisted = {
+        "fixed": "FIXED",
+        "deferred": "DEFERRED",
+        "needs_human": "NEEDS_HUMAN",
+        "dismissed": "DISMISSED",
+        "already_addressed": "ALREADY_ADDRESSED",
+        "declined": "DECLINED",
     }
-    assert extra == {"SKIPPED"}
+    for value, name in persisted.items():
+        assert pr_fix.FixOutcome(value).name == name
+
+
+def test_fix_outcome_adds_only_what_no_comment_thread_had():
+    """SKIPPED alone — the other members are the comment pass's own vocabulary."""
+    persisted = {
+        "FIXED", "DEFERRED", "NEEDS_HUMAN", "DISMISSED", "ALREADY_ADDRESSED", "DECLINED",
+    }
+    assert {o.name for o in pr_fix.FixOutcome} - persisted == {"SKIPPED"}
 
 
 def test_fix_outcome_serializes_as_its_string():

@@ -239,6 +239,21 @@ def test_a_sha_the_remote_may_not_hold_is_never_citable(wt, status):
     assert landed.resume
 
 
+@pytest.mark.parametrize("status", list(CommitStatus))
+def test_a_held_push_is_its_own_answer_rather_than_a_failure(status):
+    """`--no-push` finishing as asked and a push that fell over are not one case.
+
+    Read off `ok` alone the two are indistinguishable, and the caller that most
+    needs them apart is `pr rebase`, whose held landing is the run succeeding.
+    Over the whole enum rather than a sample, so a status that starts answering
+    `held` — or `ok` — cannot arrive unnoticed.
+    """
+    landed = land.LandResult(status)
+    assert landed.held is (status is CommitStatus.PUSH_HELD)
+    assert landed.ok is (status is CommitStatus.PUSHED)
+    assert not (landed.held and landed.ok)
+
+
 def test_a_divergence_carries_the_force_push_the_operator_must_run(wt):
     (wt / "src.py").write_text("edited\n")
     landed, _ = _land(wt, result=push.PushResult(
@@ -427,6 +442,82 @@ def test_a_retry_that_falls_short_too_keeps_the_original(regenerating, tmp_path)
     assert _remote_head(remote) == before
 
 
+_STILL_REFUSING_HOOK = """#!/bin/sh
+if [ -f .git/regenerated ]; then echo '✗ Pytest failed' >&2; exit 1; fi
+: > .git/regenerated
+echo 'regenerated' > gen.txt
+echo 'docs are stale — regenerated them' >&2
+exit 1
+"""
+
+_UNTRACKED_REGEN_HOOK = """#!/bin/sh
+if [ -f .git/regenerated ]; then exit 0; fi
+: > .git/regenerated
+echo 'regenerated' > gen.txt
+echo 'new' > extra.txt
+echo 'docs are stale — regenerated them' >&2
+exit 1
+"""
+
+
+def test_the_retry_is_the_refusal_the_caller_is_handed(regenerating, tmp_path):
+    """What the operator has to repair is what the *second* attempt said.
+
+    The first attempt's complaint went stale the moment the regenerated files
+    were committed; reporting it sends someone to fix a thing already fixed.
+    """
+    wt, _ = regenerating
+    hook = tmp_path / "hooks" / "pre-push"
+    hook.write_text(_STILL_REFUSING_HOOK)
+    (wt / "src.py").write_text("edited\n")
+
+    landed = land.land(
+        wt, message="fix: work", gated=False, regen="chore: regenerate",
+    )
+
+    assert landed.status is CommitStatus.PUSH_FAILED
+    assert "Pytest failed" in landed.error
+    assert "docs are stale" not in landed.error
+
+
+def test_a_retry_that_would_push_an_unvalidated_tree_is_abandoned(
+    regenerating, tmp_path, capsys,
+):
+    """`add -u` reaches tracked files only, and a hook validates the worktree.
+
+    The hook here also writes a file git has never seen, so committing what it
+    regenerated still leaves the tree the second run would validate different
+    from the HEAD that reaches the remote.
+    """
+    wt, remote = regenerating
+    before = _remote_head(remote)
+    hook = tmp_path / "hooks" / "pre-push"
+    hook.write_text(_UNTRACKED_REGEN_HOOK)
+    (wt / "src.py").write_text("edited\n")
+
+    landed = land.land(
+        wt, message="fix: work", gated=False, regen="chore: regenerate",
+    )
+
+    assert landed.status is CommitStatus.PUSH_FAILED
+    assert _remote_head(remote) == before
+    # The regeneration is still committed — abandoning the retry is a decision
+    # about pushing, not a rollback of what the hook wrote.
+    assert git_out(wt, "log", "-1", "--pretty=%s").strip() == "chore: regenerate"
+    assert "Recovery left uncommitted changes" in capsys.readouterr().err
+
+
+def test_a_worktree_that_will_not_answer_is_not_a_validated_one(tmp_path, capsys):
+    """"Don't know" must not be spelled the same way as "clean" over a push."""
+    assert land._validated(tmp_path, None) is False
+    err = capsys.readouterr().err
+    assert "Cannot tell whether the recovery left the worktree dirty" in err
+
+
+def test_a_clean_worktree_is_a_validated_one(wt):
+    assert land._validated(wt, None) is True
+
+
 def test_a_lost_push_is_not_read_as_a_regenerating_hook(wt):
     """Nothing was left behind to commit, and `push` has already retried that one."""
     (wt / "src.py").write_text("edited\n")
@@ -550,3 +641,92 @@ def test_a_caller_that_did_not_ask_recovers_nothing(landable):
     assert landed.status is CommitStatus.NO_CHANGES
     assert landed.sha == ""
     assert _remote_head(remote) == at_remote
+
+
+# ── land_head: the caller whose commits already exist ───────────────────────
+
+
+def _land_head(repo, *, result=_PUSHED, **kwargs):
+    """`land_head` with the push owner stubbed, so nothing reaches a network."""
+    kwargs.setdefault("gated", False)
+    with patch("land.push.push", return_value=result) as mock_push:
+        landed = land.land_head(repo, **kwargs)
+    return landed, mock_push
+
+
+def test_land_head_pushes_the_commit_head_already_points_at(wt):
+    head = git_out(wt, "rev-parse", "HEAD").strip()
+
+    landed, mock_push = _land_head(wt)
+
+    assert landed.status is CommitStatus.PUSHED
+    assert landed.sha == head
+    assert mock_push.call_args.kwargs["sha"] == head
+
+
+def test_land_head_makes_no_commit_of_its_own(landable):
+    """`pr rebase` replays the branch's commits; a commit here would be an empty one.
+
+    The dirty file is the case that would go wrong silently: `land` would sweep
+    it into a commit nobody asked for, and force-push it.
+    """
+    wt, remote = landable
+    before = git_out(wt, "rev-list", "--count", "HEAD").strip()
+    (wt / "scratch.txt").write_text("work in progress\n")
+
+    landed = land.land_head(wt, gated=False)
+
+    assert landed.status is CommitStatus.PUSHED
+    assert git_out(wt, "rev-list", "--count", "HEAD").strip() == before
+    assert _remote_head(remote) == landed.sha
+    assert git_out(wt, "status", "--porcelain").strip() == "?? scratch.txt"
+
+
+def test_land_head_passes_the_push_args_through(wt):
+    """`pr rebase` rewrote the branch, so every push from it is a force-push."""
+    landed, mock_push = _land_head(wt, args=("--force-with-lease",))
+
+    assert mock_push.call_args.kwargs["args"] == ("--force-with-lease",)
+    assert landed.ok is True
+
+
+def test_land_head_holds_behind_a_shut_gate_and_names_the_resume(landable, capsys):
+    """What `pr rebase --no-push` gets: nothing sent, and the command as data."""
+    wt, remote = landable
+    before = _remote_head(remote)
+    _agent_commit(wt)
+
+    landed = land.land_head(wt, gated=True, args=("--force-with-lease",))
+
+    assert landed.held is True
+    assert landed.sha == git_out(wt, "rev-parse", "HEAD").strip()
+    assert "--force-with-lease" in landed.resume
+    assert _remote_head(remote) == before
+    assert "DRAFT (not published)" in capsys.readouterr().err
+
+
+def test_land_head_pushes_once_the_gate_is_open(landable, publishing_on):
+    """The same call under `pr rebase` without `--no-push`."""
+    wt, remote = landable
+    _agent_commit(wt)
+
+    landed = land.land_head(wt, gated=True, args=("--force-with-lease",))
+
+    assert landed.status is CommitStatus.PUSHED
+    assert _remote_head(remote) == landed.sha
+
+
+def test_land_head_recovers_from_a_regenerating_hook_too(regenerating):
+    """The recovery belongs to the push half, so both entry points get it."""
+    wt, remote = regenerating
+    _agent_commit(wt)
+    replayed = git_out(wt, "rev-parse", "HEAD").strip()
+
+    landed = land.land_head(wt, gated=False, regen="chore: regenerate")
+
+    assert landed.status is CommitStatus.PUSHED
+    # The caller's own commit is what the landing reports; the regeneration
+    # rides above it, exactly as it does under `land`.
+    assert landed.sha == replayed
+    assert git_out(wt, "log", "-1", "--pretty=%s").strip() == "chore: regenerate"
+    assert _remote_head(remote) == git_out(wt, "rev-parse", "HEAD").strip()

@@ -22,7 +22,7 @@ actually predicts the right answer is **what bounds the cost**:
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
-| `UNBOUNDED` | `worktree add`, `commit`, `push` | A bound would be wrong, not merely large. |
+| `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add` | A bound would be wrong, not merely large. |
 
 For the first three tiers the cost is the same whatever the repository holds, so
 a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —
@@ -81,11 +81,15 @@ TRANSFER = 600.0
 # No bound, because a bound would be wrong rather than merely large.
 #
 # Two kinds of work land here. Work proportional to the working tree —
-# `git worktree add` materializes every file, so the honest bound is a function
-# of the repo, not a constant. And work that executes someone else's code —
+# `git worktree add` materializes every file, `checkout` and `stash` write or
+# restore as much of it as they touch, and `git add -A` reads and hashes it, so
+# the honest bound is a function of the repo, not a constant. And work that
+# executes someone else's code —
 # `git commit` and `git push` run hooks in whatever repository is being operated
-# on, which can be a linter, a secret scan, or a full test suite. In both cases
-# a timeout cannot distinguish a hang from a large input or a slow hook.
+# on, which can be a linter, a secret scan, or a full test suite. `git rebase`
+# is both at once, replaying commits with their hooks and rewriting the tree
+# between them. In every case a timeout cannot distinguish a hang from a large
+# input or a slow hook.
 #
 # Spelled as a named constant so that running unbounded stays a decision on the
 # record. An omitted `timeout=` is indistinguishable from nobody having thought

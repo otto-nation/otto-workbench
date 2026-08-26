@@ -46,15 +46,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import agent_invoke
 import ai_backend
 import gh_client
+import git_client
+import land
 import log
 import pr_context
 import pr_domains
 import pr_state
 import proc
+import publishing
 import push
 import timeouts
 from agent_types import Phase
 from pr_domains import RebaseStatus, RebaseSummary
+from proc import CmdResult
 from tool_parser import ToolParser
 from trail import EXCERPT_LIMIT, Trail, add_trail_args
 
@@ -92,6 +96,19 @@ def _billed_to() -> dict[str, str | None]:
 # How many unpushed commits a divergence refusal names before it stops. The
 # operator needs enough to recognise the branch, not the whole log.
 _UNPUSHED_SUBJECT_LIMIT = 10
+
+# Every push this script makes overwrites history the remote no longer shares,
+# because the branch's commits have just been replayed. `--force-with-lease`
+# rather than `--force` so a remote somebody else moved still refuses.
+_FORCE_PUSH_ARGS = ("--force-with-lease",)
+
+# What `land` commits the pre-push hook's regenerated files under before it
+# pushes again. Naming a message is how a caller asks for that recovery.
+#
+# Unscoped, because the hook decides what it rewrote and this side cannot see
+# it: a generated doc, a config schema, a public-surface snapshot, a lockfile.
+# `chore(docs)` claimed one of those for all of them.
+_REGEN_MESSAGE = "chore: regenerate after rebase"
 
 _GIT_REBASE_MERGE_DIR = "rebase-merge"
 _GIT_REBASE_APPLY_DIR = "rebase-apply"
@@ -268,10 +285,7 @@ class ResolutionTally:
 
 def _git_dir(cwd: str) -> Path:
     """Return the .git directory path for the repo."""
-    git_dir = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).stdout.strip()
+    git_dir = git_client.out("rev-parse", "--git-dir", cwd=cwd)
     return Path(git_dir) if Path(git_dir).is_absolute() else Path(cwd) / git_dir
 
 
@@ -281,53 +295,32 @@ def _detect_rebase_in_progress(cwd: str) -> bool:
     return (git_path / _GIT_REBASE_MERGE_DIR).is_dir() or (git_path / _GIT_REBASE_APPLY_DIR).is_dir()
 
 
-def _status_lines(cwd: str, untracked: bool = True) -> list[str] | None:
+def _status_lines(cwd: str) -> list[str] | None:
     """Porcelain status lines for the worktree, or None when git could not read
     it. Ignored files are excluded.
 
-    None rather than an empty list, because every caller reads emptiness as a
-    clean tree and two of them gate on that: one stashes before the rebase, the
-    other refuses to force-push a tree a recovery step left dirty. A `status`
-    killed by a timeout or a locked index must not be spelled the same way as a
-    tree with nothing in it — that git would then refuse the rebase itself is a
+    None rather than an empty list, because the caller reads emptiness as a
+    clean tree and gates on it: it stashes before the rebase. A `status` killed
+    by a timeout or a locked index must not be spelled the same way as a tree
+    with nothing in it — that git would then refuse the rebase itself is a
     backstop, not a reason for the read to be wrong.
     """
-    cmd = ["git", "status", "--porcelain"]
-    if not untracked:
-        cmd.append("--untracked-files=no")
-    try:
-        status = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL)
-    except (OSError, subprocess.SubprocessError) as exc:
-        # A timeout raises rather than returning non-zero, and an unreadable
-        # worktree is the answer either way.
-        log.warn(f"git status failed in {cwd}: {type(exc).__name__}: {exc}")
-        return None
-    if status.returncode != 0:
-        log.warn(f"git status failed in {cwd}: {status.stderr.strip()}")
+    status = git_client.run("status", "--porcelain", cwd=cwd)
+    if not status.ok:
+        log.warn(proc.failure_message(f"git status failed in {cwd}", status))
         return None
     return [line for line in status.stdout.splitlines() if line.strip()]
 
 
 def _detect_conflicts(cwd: str) -> list[str]:
     """Return list of conflicted file paths."""
-    r = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=U"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    return [f for f in r.stdout.strip().splitlines() if f]
+    return git_client.lines("diff", "--name-only", "--diff-filter=U", cwd=cwd)
 
 
 def _rebase_head_info(cwd: str) -> tuple[str, str]:
     """Return (short SHA, subject) of the commit being rebased."""
-    sha = subprocess.run(
-        ["git", "rev-parse", "--short", "REBASE_HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).stdout.strip()
-    subject = subprocess.run(
-        ["git", "log", "-1", "--format=%s", "REBASE_HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).stdout.strip()
+    sha = git_client.out("rev-parse", "--short", "REBASE_HEAD", cwd=cwd)
+    subject = git_client.out("log", "-1", "--format=%s", "REBASE_HEAD", cwd=cwd)
     return sha, subject
 
 
@@ -389,24 +382,14 @@ class ConflictReport:
 
 def _commits_ahead(cwd: str, *, target_ref: str) -> int:
     """Count commits ahead of the target ref."""
-    out = subprocess.run(
-        ["git", "rev-list", "--count", f"{target_ref}..HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).stdout.strip()
+    out = git_client.out("rev-list", "--count", f"{target_ref}..HEAD", cwd=cwd)
     return int(out) if out.isdigit() else 0
 
 
 def _is_empty_patch(cwd: str) -> bool:
     """Check if the current rebase step has no changes (patch already applied upstream)."""
-    staged = subprocess.run(
-        ["git", "diff", "--cached", "--quiet"],
-        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    unstaged = subprocess.run(
-        ["git", "diff", "--quiet"],
-        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    return staged.returncode == 0 and unstaged.returncode == 0
+    staged = git_client.ok("diff", "--cached", "--quiet", cwd=cwd)
+    return staged and git_client.ok("diff", "--quiet", cwd=cwd)
 
 
 # ── Lockfile regeneration registry ─────────────────────────────────────────
@@ -493,10 +476,7 @@ def _try_run(
 
 def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
     """Run a regeneration command and stage the result. Returns success."""
-    repo_root = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).stdout.strip() or cwd
+    repo_root = git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
 
     cmd = list(job.cmd)
     use_mise = _detect_mise(job.regen_dir, repo_root)
@@ -531,9 +511,7 @@ def _run_regeneration(job: RegenJob, *, cwd: str) -> bool:
         return False
 
     if job.stage_dir:
-        sr = subprocess.run(["git", "add", "-u", "."], cwd=job.regen_dir,
-                            timeout=timeouts.UNBOUNDED)
-        if sr.returncode != 0:
+        if not git_client.ok("add", "-u", ".", cwd=job.regen_dir):
             _terr("regeneration", f"git add -u failed in {job.regen_dir}")
             log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
             return False
@@ -564,11 +542,8 @@ def _is_generated_file(
 
     Returns the signal that identified the file, or None if not generated.
     """
-    r = subprocess.run(
-        ["git", "check-attr", "linguist-generated", "--", filepath],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    if r.returncode == 0 and ": true" in r.stdout:
+    r = git_client.run("check-attr", "linguist-generated", "--", filepath, cwd=cwd)
+    if r.ok and ": true" in r.stdout:
         return GeneratedSignal.GITATTRIBUTES
 
     try:
@@ -593,11 +568,8 @@ def _detect_delete_conflict(filepath: str, cwd: str) -> DeleteSide | None:
         THEIRS_DELETED if branch commit deletes the file, target has it
         None if both stages present (normal content conflict)
     """
-    r = subprocess.run(
-        ["git", "ls-files", "-u", "--stage", "--", filepath],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    if r.returncode != 0 or not r.stdout.strip():
+    r = git_client.run("ls-files", "-u", "--stage", "--", filepath, cwd=cwd)
+    if not r.ok or not r.stdout.strip():
         return None
 
     stages = set()
@@ -633,8 +605,7 @@ def _resolve_delete_conflict(
             reason=f"{reason} (modify/delete conflict)",
         )
 
-    r = subprocess.run(["git", "rm", "--force", filepath], cwd=cwd, timeout=timeouts.LOCAL)
-    if r.returncode != 0:
+    if not git_client.ok("rm", "--force", filepath, cwd=cwd):
         log.error(f"git rm failed for {filepath}")
         return False
     log.info(f"Accepted deletion: {filepath} ({reason})")
@@ -648,11 +619,8 @@ def _get_ours_content(filepath: str, cwd: str) -> str | None:
     state before the conflicting commit is applied. Returns None if unavailable
     (e.g. file is new on the branch).
     """
-    r = subprocess.run(
-        ["git", "show", f":2:{filepath}"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    return r.stdout if r.returncode == 0 else None
+    r = git_client.run("show", f":2:{filepath}", cwd=cwd)
+    return r.stdout if r.ok else None
 
 
 def _get_commit_diff(filepath: str, cwd: str) -> str | None:
@@ -661,11 +629,7 @@ def _get_commit_diff(filepath: str, cwd: str) -> str | None:
     Shows what the commit being replayed intended to change, helping the AI
     understand the branch's intent separately from the conflict markers.
     """
-    r = subprocess.run(
-        ["git", "diff", "REBASE_HEAD^", "REBASE_HEAD", "--", filepath],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+    return git_client.out("diff", "REBASE_HEAD^", "REBASE_HEAD", "--", filepath, cwd=cwd) or None
 
 
 def _is_binary(path: Path) -> bool:
@@ -933,10 +897,10 @@ def _splice_resolutions(
 
 def _git_add(filepath: str, cwd: str) -> bool:
     """Stage a file and return True on success."""
-    r = subprocess.run(["git", "add", filepath], cwd=cwd, timeout=timeouts.UNBOUNDED)
-    if r.returncode != 0:
-        log.error(f"git add failed for {filepath}")
-    return r.returncode == 0
+    if git_client.ok("add", filepath, cwd=cwd):
+        return True
+    log.error(f"git add failed for {filepath}")
+    return False
 
 
 # One budget for every chunk of context pasted into a fix prompt — check output
@@ -994,10 +958,7 @@ def _fix_commit_message(cwd: str, fixed: list[str]) -> str:
     rules are in the prompt, so a second ask is the cheapest way to get one
     that follows them, and only then does the generic line stand.
     """
-    diff = subprocess.run(
-        ["git", "diff", "--cached"], capture_output=True, text=True, cwd=cwd,
-        timeout=timeouts.LOCAL,
-    ).stdout[:_FIX_ERROR_MAX_CHARS]
+    diff = git_client.run("diff", "--cached", cwd=cwd).stdout[:_FIX_ERROR_MAX_CHARS]
     if not diff.strip():
         return _FALLBACK_FIX_SUBJECT
 
@@ -1100,20 +1061,16 @@ def _stage_worktree(cwd: str) -> list[str]:
     untracked files included, so staging anything narrower commits something
     other than what the hooks passed.
     """
-    if subprocess.run(["git", "add", "-A"], cwd=cwd, timeout=timeouts.UNBOUNDED).returncode != 0:
+    if not git_client.ok("add", "-A", cwd=cwd):
         log.error("Failed to stage fixes.")
         return []
-    r = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    return [line for line in r.stdout.splitlines() if line.strip()]
+    return git_client.lines("diff", "--cached", "--name-only", cwd=cwd)
 
 
 def _fix_push_failures(
     cwd: str, error_output: str, resolved_files: list[str],
-) -> bool:
-    """Attempt to fix pre-push check errors and commit the result.
+) -> land.LandResult | None:
+    """Fix pre-push check errors, then land the repair.
 
     Uses AI to interpret the check output and fix formatting, build, or lint
     issues in the resolved files the output names. Language-agnostic — the
@@ -1125,10 +1082,12 @@ def _fix_push_failures(
     list is what keeps a direct edit from being validated by the retry's hooks
     and then left out of the pushed commit.
 
-    Returns True if fixes were applied and committed.
+    None when no fix was attempted or nothing came of one — there is no backend,
+    or the agent changed nothing worth staging. The caller then reports the push
+    that sent it here, which is still the honest answer about the branch.
     """
     if not ai_backend.is_available():
-        return False
+        return None
 
     truncated = error_output[:_FIX_ERROR_MAX_CHARS]
     # A file that conflicted in several replayed commits is listed once per
@@ -1149,29 +1108,28 @@ def _fix_push_failures(
     for filepath in targets:
         _fix_one_file(filepath, cwd, truncated)
 
+    # Staged here rather than left to `land`, which would stage the same tree a
+    # moment later: the message is generated from the staged diff, so the index
+    # has to hold the fix before there is anything to describe.
     staged = _stage_worktree(cwd)
     if not staged:
-        return False
+        return None
 
-    cr = subprocess.run(
-        ["git", "commit", "-m", _fix_commit_message(cwd, staged)],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
+    landed = land.land(
+        cwd, message=_fix_commit_message(cwd, staged), gated=True,
+        args=_FORCE_PUSH_ARGS, trail=_trail,
     )
-    if cr.returncode != 0:
-        log.error("Failed to commit fixes.")
-        return False
-
-    _tinfo(
-        "fix_push_failures", "committed check-failure fixes",
-        data={"files": staged},
-    )
-    return True
+    if landed.sha:
+        _tinfo(
+            "fix_push_failures", "committed check-failure fixes",
+            data={"files": staged, "sha": landed.sha},
+        )
+    return landed
 
 
 def _accept_theirs_and_stage(filepath: str, parent: Path, cwd: str) -> bool:
     """Accept theirs for a generated file and stage it."""
-    r = subprocess.run(["git", "checkout", "--theirs", filepath], cwd=cwd, timeout=timeouts.LOCAL)
-    if r.returncode != 0:
+    if not git_client.ok("checkout", "--theirs", filepath, cwd=cwd):
         log.error(f"git checkout --theirs failed for {filepath}")
         return False
     if not _git_add(filepath, cwd):
@@ -1462,6 +1420,18 @@ def _resolve_file_conflicts(
 _MAX_REBASE_STEPS = 500
 
 
+def _rebase_continue(cwd: str) -> CmdResult:
+    """Continue the rebase without stopping for a commit message.
+
+    `core.editor=true` is what keeps an unattended run unattended: git opens the
+    editor for a commit whose message it wants confirmed, and `true` exits zero
+    without touching the file, so the message is taken as it stands.
+    """
+    return git_client.run(
+        "rebase", "--continue", cwd=cwd, config={"core.editor": "true"},
+    )
+
+
 def _drive_to_completion(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
@@ -1495,7 +1465,7 @@ def _drive_loop(
 
     _terr("drive_to_completion", f"rebase did not complete after {_MAX_REBASE_STEPS} steps")
     log.error(f"Rebase did not complete after {_MAX_REBASE_STEPS} steps — aborting.")
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
+    git_client.run("rebase", "--abort", cwd=cwd)
     return 1
 
 
@@ -1572,23 +1542,16 @@ def _step_conflicts(
     if resolved is None:
         _terr("resolve_conflicts", "AI resolution failed, aborting rebase")
         log.error("AI conflict resolution failed — aborting rebase.")
-        subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
+        git_client.run("rebase", "--abort", cwd=cwd)
         return 1
     tally.absorb(resolved)
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
-    unstaged = subprocess.run(
-        ["git", "diff", "--name-only"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    if unstaged.stdout.strip():
-        subprocess.run(["git", "add", "-u"], cwd=cwd, timeout=timeouts.UNBOUNDED)
+    if git_client.lines("diff", "--name-only", cwd=cwd):
+        git_client.run("add", "-u", cwd=cwd)
 
-    r = subprocess.run(
-        ["git", "-c", "core.editor=true", "rebase", "--continue"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
-    )
-    if r.returncode == 0:
+    r = _rebase_continue(cwd)
+    if r.ok:
         return None
 
     if r.stderr.strip():
@@ -1601,7 +1564,7 @@ def _step_conflicts(
 
     _terr("step_conflicts", "rebase --continue failed after resolution", data={"stderr": r.stderr.strip()})
     log.error("rebase --continue failed after conflict resolution — aborting.")
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
+    git_client.run("rebase", "--abort", cwd=cwd)
     return 1
 
 
@@ -1616,17 +1579,14 @@ def _step_advance(cwd: str) -> int | None:
                 reason="patch already applied upstream",
                 data={"commit": sha, "subject": subject},
             )
-        r = subprocess.run(["git", "rebase", "--skip"], cwd=cwd, timeout=timeouts.UNBOUNDED)
-        if r.returncode != 0:
+        r = git_client.run("rebase", "--skip", cwd=cwd)
+        if not r.ok:
             log.error(f"git rebase --skip failed (exit {r.returncode})")
             return 1
         return None
 
-    r = subprocess.run(
-        ["git", "-c", "core.editor=true", "rebase", "--continue"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
-    )
-    if r.returncode == 0:
+    r = _rebase_continue(cwd)
+    if r.ok:
         return None
 
     if r.stderr.strip():
@@ -1642,7 +1602,7 @@ def _step_advance(cwd: str) -> int | None:
             "step", "aborting after --continue failure",
             data={"stderr": r.stderr.strip(), "exit_code": r.returncode},
         )
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
+    git_client.run("rebase", "--abort", cwd=cwd)
     return 1
 
 
@@ -1671,11 +1631,8 @@ def _auto_stash(cwd: str) -> bool | None:
         return False
 
     log.info("Stashing uncommitted changes...")
-    r = subprocess.run(
-        ["git", "stash", "push", "-u", "-m", _STASH_MSG],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
-    )
-    if r.returncode != 0:
+    r = git_client.run("stash", "push", "-u", "-m", _STASH_MSG, cwd=cwd)
+    if not r.ok:
         log.error(f"git stash failed: {r.stderr.strip()}")
         return None
     if _trail:
@@ -1691,11 +1648,8 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
     refuses to overwrite. Nothing is lost either way: a failed pop keeps the
     stash entry, so the message names it rather than only echoing git.
     """
-    r = subprocess.run(
-        ["git", "stash", "pop"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
-    )
-    if r.returncode == 0:
+    r = git_client.run("stash", "pop", cwd=cwd)
+    if r.ok:
         log.ok("Restored stashed changes.")
         return
 
@@ -1769,12 +1723,11 @@ def _auto_unstash(cwd: str, mode: RunMode) -> None:
     if remaining:
         log.warn(f"{len(remaining)} stash conflict(s) remain — resolve manually, then `git stash drop`.")
     else:
-        r = subprocess.run(["git", "stash", "drop"], cwd=cwd, capture_output=True, text=True,
-                           timeout=timeouts.LOCAL)
-        if r.returncode != 0:
-            log.warn(f"git stash drop failed: {r.stderr.strip()}")
-        else:
+        r = git_client.run("stash", "drop", cwd=cwd)
+        if r.ok:
             log.ok("Restored stashed changes.")
+        else:
+            log.warn(f"git stash drop failed: {r.stderr.strip()}")
 
 
 # ── State helpers ───────────────────────────────────────────────────────────
@@ -1907,10 +1860,7 @@ def _diff_is_empty(cwd: str, *, target_ref: str) -> bool:
     branch's own commits are unreachable from the squashed commit, so nothing
     that compares commits notices the work landed.
     """
-    return subprocess.run(
-        ["git", "diff", "--quiet", target_ref, "HEAD"],
-        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).returncode == 0
+    return git_client.ok("diff", "--quiet", target_ref, "HEAD", cwd=cwd)
 
 
 def _all_commits_upstream(cwd: str, *, target_ref: str) -> bool:
@@ -1920,13 +1870,7 @@ def _all_commits_upstream(cwd: str, *, target_ref: str) -> bool:
     rebased or amended on its way into the target ref — the case an empty diff
     misses once the target has moved on with unrelated work.
     """
-    r = subprocess.run(
-        ["git", "cherry", target_ref, "HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    )
-    if r.returncode != 0:
-        return False
-    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    lines = git_client.lines("cherry", target_ref, "HEAD", cwd=cwd)
     return bool(lines) and all(ln.startswith("-") for ln in lines)
 
 
@@ -1992,11 +1936,8 @@ def _git_landed_check(
 
 
 def _ref_exists(cwd: str, ref: str) -> bool:
-    """Whether the ref names a commit in this repo."""
-    return subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).returncode == 0
+    """Whether *ref* resolves in the repo at *cwd*."""
+    return git_client.ok("rev-parse", "--verify", "--quiet", ref, cwd=cwd)
 
 
 def _shares_history(cwd: str, *, target_ref: str) -> bool:
@@ -2010,10 +1951,7 @@ def _shares_history(cwd: str, *, target_ref: str) -> bool:
     """
     if not _ref_exists(cwd, target_ref):
         return True
-    return subprocess.run(
-        ["git", "merge-base", target_ref, "HEAD"],
-        capture_output=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).returncode == 0
+    return git_client.ok("merge-base", target_ref, "HEAD", cwd=cwd)
 
 
 def _unrelated_history_check(
@@ -2080,7 +2018,7 @@ def _refuse_over_budget(
     abort restores the branch, so the refusal leaves the worktree where the
     preflight refusals do — untouched, with nothing pushed.
     """
-    subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
+    git_client.run("rebase", "--abort", cwd=cwd)
     return _refuse(ctx, RefusalReport(
         branch=ctx.branch, signal=RefusalSignal.CONFLICTS_OVER_BUDGET.value,
         detail=f"conflicts in {spread} files, over the "
@@ -2139,156 +2077,38 @@ def _resolve_target_ref(
     )
 
 
-# ── Push helper ─────────────────────────────────────────────────────────────
+# ── Landing ─────────────────────────────────────────────────────────────────
 
 
-def _push(cwd: str) -> push.PushResult:
-    """Force-push, confirm the remote moved, and say what happened.
+def _land(cwd: str, resolved_files: list[str] | None = None) -> land.LandResult:
+    """Force-push the replayed branch, auto-recovering from a hook rejection.
 
-    The owner captures output so the hook's check errors can be fed to the AI
-    fix, which means nothing reaches the terminal unless it is reported here.
+    Two recoveries sit under this and only the second is this script's. `land`
+    commits whatever the pre-push hook regenerated and pushes once more; when
+    that second run still reports check failures, `_fix_push_failures` hands
+    them to the AI and lands the repair. A hook can both rewrite a file and fail
+    a check, so the two are a ladder rather than alternatives — collapsing them
+    would make the AI fix unreachable on any repo whose hooks regenerate
+    anything.
 
-    `--force-with-lease` stays on the owner's retry of a lost push: if the
-    remote genuinely moved under us, the lease failing is the right answer.
+    Whether any of it reaches the remote is the publishing gate's answer, not an
+    argument here: `main` opens the gate for the modes that push, so `--no-push`
+    comes back `held`, with the force-push command in `resume`, rather than as a
+    failure or as a hand-written hint.
     """
-    result = push.push(cwd, gated=False, args=("--force-with-lease",), trail=_trail)
-    push.report(result, cwd)
-    return result
-
-
-def _hook_modified(cwd: str) -> list[str] | None:
-    """Tracked files the pre-push hook left modified, or None when git could not say."""
-    lines = _status_lines(cwd, untracked=False)
-    if lines is None:
-        return None
-    return [line[3:] for line in lines if line.startswith(" M ")]
-
-
-def _uncommitted(cwd: str) -> list[str] | None:
-    """Every path the worktree holds outside a commit, or None when git could not say."""
-    lines = _status_lines(cwd)
-    return None if lines is None else [line[3:] for line in lines]
-
-
-def _commit_regenerated(cwd: str) -> bool:
-    """Commit files the pre-push hook regenerated. Returns True if committed."""
-    modified = _hook_modified(cwd)
-    if modified is None:
-        log.error("Cannot tell what the hook regenerated — not committing.")
-        return False
-    if not modified:
-        return False
-
-    if _trail:
-        _trail.info(
-            "force_push", "committing regenerated files before retry",
-            data={"files": modified},
-        )
-    log.info("Committing regenerated files...")
-    if subprocess.run(["git", "add", "-u"], cwd=cwd, timeout=timeouts.UNBOUNDED).returncode != 0:
-        log.error("Failed to stage regenerated files.")
-        return False
-    cr = subprocess.run(
-        ["git", "commit", "-m", "chore(docs): regenerate after rebase"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
+    landed = land.land_head(
+        cwd, gated=True, args=_FORCE_PUSH_ARGS, trail=_trail, regen=_REGEN_MESSAGE,
     )
-    if cr.returncode != 0:
-        log.error("Failed to commit regenerated files.")
-        return False
-    return True
+    # Only a refusal leaves something an agent could repair. A held, lost, or
+    # unverified push says nothing is wrong with the worktree, and handing one to
+    # the fix pass asks an agent to rewrite code that passed every check.
+    refused = landed.push is not None and landed.push.status is push.PushStatus.REFUSED
+    if not refused or not resolved_files or not landed.error:
+        return landed
 
-
-def _retry_push(cwd: str, step: str) -> push.PushResult | None:
-    """Push again after a recovery step, refusing to push an unvalidated tree.
-
-    Pre-push hooks run against the worktree, not against the commits being
-    pushed, so a dirty tree lets them pass on code that is in no commit — a
-    green hook then says nothing about the pushed HEAD. Returns the retry's
-    result, or None when the tree was dirty, or could not be read, and nothing
-    was pushed.
-    """
-    dirty = _uncommitted(cwd)
-    if dirty is None:
-        _terr(step, "worktree state unreadable before retry")
-        log.error("Cannot tell whether recovery left the worktree dirty — not pushing.")
-        return None
-    if dirty:
-        _terr(step, "recovery left the worktree dirty", data={"files": dirty})
-        log.error("Recovery left uncommitted changes — not pushing:")
-        for path in dirty:
-            log.dim(f"  {path}")
-        return None
-
-    log.info("Retrying force-push...")
-    return _push(cwd)
-
-
-def _recover_regenerated(
-    cwd: str, failed: push.PushResult,
-) -> push.PushResult | None:
-    """Commit hook-regenerated files and retry. None once the retry has pushed.
-
-    Hands back the failure the next recovery step has to work from: the retry's
-    own error when it ran, the caller's otherwise.
-    """
-    if not _commit_regenerated(cwd):
-        return failed
-
-    retry = _retry_push(cwd, "force_push")
-    if retry is None:
-        return failed
-    if retry.ok:
-        return None
-    # Re-read the error: the second run's checks are what step 2 must fix.
-    return retry if retry.output.strip() else failed
-
-
-def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
-    """Force-push, auto-recovering from pre-push hook failures.
-
-    Recovery steps on failure:
-    1. Commit files regenerated by the hook (e.g. generate-tool-context) and retry.
-    2. If resolved_files provided, use AI to fix check errors and retry.
-
-    A hook can both regenerate a file and report a check failure, so step 1
-    falls through to step 2 when its retry is still rejected — otherwise the
-    AI fix is unreachable on any repo whose hooks regenerate anything.
-
-    Either retry is abandoned when its recovery step left the worktree dirty:
-    the branch stays unpushed and the original failure is returned, rather than
-    pushing a HEAD the hooks never saw.
-
-    Returns 0 when the remote holds the branch and 1 when it does not. Git's own
-    exit code is not the answer, because a push git reports as successful can
-    still leave the remote where it was.
-    """
-    result = _push(cwd)
-    if result.ok:
-        return 0
-
-    # The ladder below repairs a tree the pre-push hooks rejected. A push the
-    # remote dropped is not that: nothing in the worktree is wrong, the owner
-    # has already retried it once, and handing it to the AI fix would ask an
-    # agent to repair code that passed every check.
-    if result.status is not push.PushStatus.REFUSED:
-        return 1
-
-    # Recovery 1: commit regenerated files (hook modified tracked files)
-    # A dirty tree abandons this retry but not step 2, whose whole-tree stage is
-    # exactly what sweeps up the untracked leftover `git add -u` cannot reach.
-    recovered = _recover_regenerated(cwd, result)
-    if recovered is None:
-        return 0
-
-    # Recovery 2: AI-fix resolved files based on check errors
-    push_output = recovered.output.strip()
-    if resolved_files and push_output:
-        log.info("Attempting to fix pre-push check failures...")
-        if _fix_push_failures(cwd, push_output, resolved_files):
-            retry = _retry_push(cwd, "fix_push_failures")
-            return 0 if retry is not None and retry.ok else 1
-
-    return 1
+    log.info("Attempting to fix pre-push check failures...")
+    repaired = _fix_push_failures(cwd, landed.error, resolved_files)
+    return repaired if repaired is not None else landed
 
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
@@ -2297,8 +2117,8 @@ def _force_push(cwd: str, resolved_files: list[str] | None = None) -> int:
 def cmd_abort(cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str) -> int:
     """Abort an in-progress rebase and reset state."""
     log.info("Aborting rebase...")
-    r = subprocess.run(["git", "rebase", "--abort"], cwd=cwd, timeout=timeouts.UNBOUNDED)
-    if r.returncode == 0:
+    r = git_client.run("rebase", "--abort", cwd=cwd)
+    if r.ok:
         RebaseOutcome(status=RebaseStatus.ABORTED, target_base=target_ref).save(ctx)
         log.ok("Rebase aborted.")
     return r.returncode
@@ -2312,10 +2132,11 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str) -> i
         return 1
 
     log.info("Force-pushing...")
-    push_rc = _force_push(cwd)
-    if push_rc != 0:
-        _terr("push", "force-push failed", data={"exit_code": push_rc})
-        return push_rc
+    landed = _land(cwd)
+    if not landed.ok:
+        _terr("push", "force-push failed",
+              data={"status": str(landed.status), "resume": landed.resume})
+        return 1
 
     state = _load_or_init(ctx)
     RebaseOutcome(
@@ -2419,14 +2240,6 @@ class RefDivergence:
         return self.comparable and self.ahead > 0
 
 
-def _ref_exists(cwd: str, ref: str) -> bool:
-    """Whether *ref* resolves in the repo at *cwd*."""
-    return subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", ref],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
-    ).returncode == 0
-
-
 def _local_vs_remote(cwd: str, branch: str) -> RefDivergence:
     """Compare the local *branch* ref against origin's, without moving HEAD.
 
@@ -2434,12 +2247,11 @@ def _local_vs_remote(cwd: str, branch: str) -> RefDivergence:
     pr_context._unpushed_count asks: this runs while the worktree is still on
     some other branch, so HEAD is not the thing being measured.
     """
-    r = subprocess.run(
-        ["git", "rev-list", "--left-right", "--count",
-         f"origin/{branch}...refs/heads/{branch}"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+    r = git_client.run(
+        "rev-list", "--left-right", "--count",
+        f"origin/{branch}...refs/heads/{branch}", cwd=cwd,
     )
-    if r.returncode != 0:
+    if not r.ok:
         return RefDivergence()
     parts = r.stdout.split()
     if len(parts) != 2 or not all(p.isdigit() for p in parts):
@@ -2450,14 +2262,11 @@ def _local_vs_remote(cwd: str, branch: str) -> RefDivergence:
 
 def _unpushed_subjects(cwd: str, branch: str) -> list[str]:
     """Subjects of commits on local *branch* that origin's copy does not have."""
-    r = subprocess.run(
-        ["git", "log", "--no-decorate", "--oneline",
-         f"-{_UNPUSHED_SUBJECT_LIMIT}", f"origin/{branch}..refs/heads/{branch}"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+    return git_client.lines(
+        "log", "--no-decorate", "--oneline",
+        f"-{_UNPUSHED_SUBJECT_LIMIT}", f"origin/{branch}..refs/heads/{branch}",
+        cwd=cwd,
     )
-    if r.returncode != 0:
-        return []
-    return [line for line in r.stdout.splitlines() if line.strip()]
 
 
 def _refuse_diverged(cwd: str, ctx: pr_context.ResolvedContext, div: RefDivergence) -> int:
@@ -2494,7 +2303,7 @@ def _checkout_target_branch(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     that was force-pushed and then force-pushing the result loses the same work
     in the other direction.
     """
-    from_origin = ["git", "checkout", "-B", ctx.branch, f"origin/{ctx.branch}"]
+    from_origin = ("checkout", "-B", ctx.branch, f"origin/{ctx.branch}")
     if not _ref_exists(cwd, f"refs/heads/{ctx.branch}"):
         return _run_checkout(cwd, ctx, from_origin)
 
@@ -2505,15 +2314,17 @@ def _checkout_target_branch(cwd: str, ctx: pr_context.ResolvedContext) -> int:
     # Not comparable here means the local ref resolved but origin's did not, so
     # every commit on it is unpushed and there is no remote to reset to anyway.
     if div.local_only_work or not div.comparable:
-        return _run_checkout(cwd, ctx, ["git", "checkout", ctx.branch])
+        return _run_checkout(cwd, ctx, ("checkout", ctx.branch))
 
     return _run_checkout(cwd, ctx, from_origin)
 
 
-def _run_checkout(cwd: str, ctx: pr_context.ResolvedContext, cmd: list[str]) -> int:
+def _run_checkout(
+    cwd: str, ctx: pr_context.ResolvedContext, args: tuple[str, ...],
+) -> int:
     """Run one checkout, reporting git's own stderr when it refuses."""
-    co = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED)
-    if co.returncode != 0:
+    co = git_client.run(*args, cwd=cwd)
+    if not co.ok:
         _terr("preflight", f"cannot checkout {ctx.branch}", data={"stderr": co.stderr.strip()})
         log.error(f"Cannot checkout {ctx.branch}: {co.stderr.strip()}")
         return 1
@@ -2536,11 +2347,8 @@ def _fresh(
     # substitute for it: dropping the remote-tracking ref of a branch deleted
     # on merge is what stops --force-with-lease from being satisfied by a stale
     # lease and silently recreating the remote branch.
-    fetch = subprocess.run(
-        ["git", "fetch", "--prune", "origin"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.TRANSFER,
-    )
-    if fetch.returncode != 0:
+    fetch = git_client.run("fetch", "--prune", "origin", cwd=cwd)
+    if not fetch.ok:
         log.warn(f"Fetch failed — rebasing against potentially stale {target_ref}.")
         if fetch.stderr.strip():
             log.dim(fetch.stderr.strip())
@@ -2590,12 +2398,9 @@ def _fresh(
         return _refuse(ctx, landed, target_ref=target_ref)
 
     log.info(f"Rebasing onto {target_ref}...")
-    r = subprocess.run(
-        ["git", "rebase", target_ref],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.UNBOUNDED,
-    )
+    r = git_client.run("rebase", target_ref, cwd=cwd)
 
-    if r.returncode == 0 and not _detect_rebase_in_progress(cwd):
+    if r.ok and not _detect_rebase_in_progress(cwd):
         return _rebase_success(cwd, ctx, mode, target_ref=target_ref)
 
     if not _detect_rebase_in_progress(cwd):
@@ -2619,48 +2424,57 @@ def _rebase_success(
     # check-fix commits, which were never replayed from the old branch.
     replayed = _commits_ahead(cwd, target_ref=target_ref)
 
-    # RunMode.PUSH pushes from main() via cmd_push, so only the fix path pushes
-    # from here. RunMode.FIX_ONLY resolves conflicts and stops short of the remote.
-    pushes_here = mode is RunMode.FIX
+    # RunMode.PUSH lands from main() via cmd_push; every other mode lands here.
+    # A mode that does not reach the remote still lands, because the publishing
+    # gate — shut for those modes — is what stops it, and a held landing is what
+    # carries the force-push command back as data.
+    lands_here = mode is not RunMode.PUSH
 
     label = "Rebase complete" if not tally.commits else (
         f"Rebase complete — resolved {len(tally.files)} file(s) "
         f"across {tally.commits} commit(s)"
     )
 
-    push_rc = 0
-    if pushes_here:
-        log.info(f"{label} — force-pushing...")
-        push_rc = _force_push(cwd, resolved_files=tally.files or None)
-        if push_rc == 0:
-            _trail and _trail.info("force_push", "force-pushed to remote")
-        else:
-            _terr("force_push", "force-push failed", data={"exit_code": push_rc})
+    landed = None
+    if lands_here:
+        # Announced only when the push will actually happen; a held run says the
+        # same thing once at the end, through the label and the resume line.
+        if mode.reaches_remote:
+            log.info(f"{label} — force-pushing...")
+        landed = _land(cwd, resolved_files=tally.files or None)
+        if landed.ok:
+            _tinfo("force_push", "force-pushed to remote", data={"sha": landed.sha})
+        elif not landed.held:
+            _terr("force_push", "force-push failed",
+                  data={"status": str(landed.status), "resume": landed.resume})
 
     outcome = RebaseOutcome(
         commits_replayed=replayed,
         conflicts_resolved=len(tally.files),
         files_resolved=tally.files,
         files_stale=tally.stale,
-        force_pushed=push_rc == 0 if pushes_here else None,
+        # None rather than False for a run that never tried: a held landing did
+        # exactly what --no-push asked for, and recording it as a failed push
+        # would be the summary's own invention.
+        force_pushed=None if landed is None or landed.held else landed.ok,
         target_base=target_ref,
     )
     outcome.save(ctx)
     outcome.emit()
 
-    if pushes_here:
-        if push_rc == 0:
+    if landed is not None and not landed.held:
+        if landed.ok:
             log.ok("Force-pushed.")
-        else:
-            log.error("Force-push failed.")
-        return push_rc
+            return 0
+        log.error("Force-push failed.")
+        return 1
 
     # The label holds in every mode that reaches here — the rebase finished.
     # Under FIX_ONLY the AI's work is the whole point of the run and the user is
     # about to push it by hand, so name it rather than reporting a bare "clean".
     log.ok(label)
-    if not mode.reaches_remote:
-        log.ok("Run `git push --force-with-lease` to push, or re-run without --no-push.")
+    if landed is not None:
+        log.ok(f"Run `{landed.resume}` to push, or re-run without --no-push.")
     return 0
 
 
@@ -2742,6 +2556,12 @@ def main():
 
         mode, reason = _select_mode(args)
         _trail.decision("mode", f"selected {mode}", reason=reason)
+        # The one entry point where force-pushing is the command rather than a
+        # side effect of it, so it is the one that opens the gate. `--no-push`
+        # leaves it shut, and every push below then drafts its command instead
+        # of running it — which is where the resume line comes from.
+        if mode.reaches_remote:
+            publishing.enable()
         if args.force:
             _trail.decision("preflight", "waiving the already-landed check",
                             reason=f"{_REFUSAL_OVERRIDE_FLAG} flag set")

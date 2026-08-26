@@ -28,10 +28,13 @@ anything named for a sha to a literal length is rejected whatever the length,
 since a site free to pick eight is a site free to disagree with the rest.
 
 There is no `timeout` parameter. The bound follows from the subcommand the same
-way `core.quotePath` does — `fetch` takes `TRANSFER`, `worktree`/`commit`/`push`
-run `UNBOUNDED`, and everything else is a flat-cost metadata read at `LOCAL` — so
-the knowledge lives with the client that owns it rather than at every call site,
-one of which used to pass a number of its own.
+way `core.quotePath` does — `fetch` takes `TRANSFER`, the subcommands that write
+the tree or run somebody's hooks run `UNBOUNDED`, and everything else is a
+flat-cost metadata read at `LOCAL` — so the knowledge lives with the client that
+owns it rather than at every call site, one of which used to pass a number of
+its own. Where a single subcommand spans both classes the second argv word
+decides: `checkout --theirs <file>` and `stash drop` are named exceptions to the
+tier their subcommand otherwise takes.
 
 `config={"key": "value"}` becomes `-c key=value` ahead of the subcommand.
 `diff`, `ls-files` and `status` get `core.quotePath=false` by default: git
@@ -99,7 +102,36 @@ _PATH_LISTING = frozenset({"diff", "ls-files", "status"})
 # being operated on, which is routinely a secret scan, a linter, or a full test
 # suite; this repo's own pre-push runs three gates. Killing a push part-way is
 # also the worst available outcome, since it leaves the remote's state in doubt.
-_UNBOUNDED = frozenset({"worktree", "commit", "push"})
+#
+# `rebase` is both at once: it replays commits — each one a `commit`, hooks
+# included — and rewrites the tree between them. `checkout` and `stash` are the
+# `worktree add` case without the clone, writing or restoring as much of the
+# tree as the switch touches. Killing any of the three mid-run is the same bad
+# outcome as a killed push, only locally: a half-replayed rebase, a detached
+# index, or a stash entry holding work the tree no longer has.
+#
+# `add` reads and hashes everything in its scope, and its widest scope is the
+# whole tree — `add -A` after a fix pass, `add -u` after a lockfile
+# regeneration. Nothing about the argv says how much that is, so the bound would
+# be a guess at the repository rather than at the operation.
+_UNBOUNDED = frozenset({
+    "worktree", "commit", "push", "rebase", "checkout", "stash", "add",
+})
+
+# The forms of an `_UNBOUNDED` subcommand whose cost is not the tree's after
+# all, keyed on two words because one is not enough to tell them apart.
+#
+# `checkout --ours|--theirs <paths>` rewrites exactly the paths it is given,
+# which during a conflict resolution is one file. `stash drop` deletes a ref and
+# writes no tree at all. Both were bounded before their call sites moved onto
+# this client, and leaving them unbounded trades a hang that a caller could have
+# reported for one it waits out — the failure the tiers above exist to catch,
+# arriving on the two calls least able to be a large input.
+_LOCAL_FORMS = frozenset({
+    ("checkout", "--ours"),
+    ("checkout", "--theirs"),
+    ("stash", "drop"),
+})
 
 # Data-proportional like the above, but over a socket that can genuinely stall,
 # so a generous bound still catches a failure that waiting will not fix.
@@ -113,12 +145,18 @@ _TRANSFER = frozenset({"fetch", "ls-remote"})
 def _timeout_for(args: tuple[str, ...]) -> float | None:
     """The bound for this subcommand — see `timeouts` for the tiers.
 
-    ceiling: keyed on the subcommand alone, so `remote get-url` (local) and a
-    `remote update` (network) would share a tier. Only `get-url` is called
-    today. Upgrade trigger: when a network-side `remote` or `submodule`
-    subcommand is added, key this on the first two argv words instead.
+    Two words where one subcommand spans both cost classes — `_LOCAL_FORMS` —
+    and the subcommand alone everywhere else.
+
+    ceiling: the two-word read is a fixed exception list rather than a general
+    rule, so `remote get-url` (local) and a `remote update` (network) still
+    share a tier. Only `get-url` is called today. Upgrade trigger: when a
+    network-side `remote` or `submodule` subcommand is added, give those
+    subcommands their own two-word tiers the way `_LOCAL_FORMS` does.
     """
     subcommand = args[0] if args else ""
+    if args[:2] in _LOCAL_FORMS:
+        return timeouts.LOCAL
     if subcommand in _UNBOUNDED:
         return timeouts.UNBOUNDED
     if subcommand in _TRANSFER:

@@ -23,10 +23,66 @@ if str(LIB_DIR) not in sys.path:
 
 pr_rebase_cli = load_script("pr_rebase_cli", BIN_DIR / "pr-rebase")
 
+import land  # noqa: E402
 import pr_context  # noqa: E402
 import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
+import push  # noqa: E402
 import timeouts  # noqa: E402
+from pr_fix import CommitStatus  # noqa: E402
+
+
+def _unconfigured(cmd):
+    """A git argv with `git_client`'s `-c key=value` prefixes stripped.
+
+    The client decides `core.quotePath=false` for every path-listing subcommand
+    and `core.editor=true` for a `rebase --continue`, so the argv git receives
+    no longer starts with the subcommand. A stub keyed on `cmd[:2]` then stops
+    firing and answers from its catch-all instead — which reads as the tested
+    behaviour changing, or as nothing at all.
+    """
+    if not cmd or cmd[0] != "git":
+        return cmd
+    rest = list(cmd[1:])
+    while rest[:1] == ["-c"]:
+        del rest[:2]
+    return ["git", *rest]
+
+
+# The sha the stubbed owner reports for whatever it landed. Any value does; it
+# is here so the tests that read it back are reading one thing.
+_LANDED_SHA = "1a2b3c4"
+
+# What `push.resume_command` renders for this script's force-push, which is the
+# line `--no-push` prints and a refusal offers.
+_RESUME = "git -C '/fake' push --force-with-lease"
+
+
+def _pushed(sha: str = _LANDED_SHA) -> land.LandResult:
+    """The owner's answer when the remote took the force-push."""
+    return land.LandResult(CommitStatus.PUSHED, sha=sha)
+
+
+def _held() -> land.LandResult:
+    """The owner's answer with the publishing gate shut — what `--no-push` gets."""
+    return land.LandResult(CommitStatus.PUSH_HELD, sha=_LANDED_SHA, resume=_RESUME)
+
+
+def _refused(error: str = "✗ gofmt: server.go") -> land.LandResult:
+    """The owner's answer when a pre-push hook rejected the branch."""
+    return land.LandResult(
+        CommitStatus.PUSH_FAILED, sha=_LANDED_SHA, error=error, resume=_RESUME,
+        push=push.PushResult(
+            push.PushStatus.REFUSED, sha=_LANDED_SHA, branch="isaac/feat/x",
+            refusal=push.Refusal.HOOK, output=f"{error}\n",
+        ),
+    )
+
+
+def _lands(result: land.LandResult):
+    """Patch `_land` so the caller under test sees exactly this outcome."""
+    return mock.patch.object(pr_rebase_cli, "_land", return_value=result)
+
 
 # The base a run resolved to, threaded into every helper that derives a signal
 # from it. Named here rather than repeated as a literal so a test that cares
@@ -593,10 +649,8 @@ def test_get_ours_content_returns_stage2():
     with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
         result = pr_rebase_cli._get_ours_content("src/file.py", "/fake")
     assert result == "base version content\n"
-    mock_run.assert_called_once_with(
-        ["git", "show", ":2:src/file.py"],
-        capture_output=True, text=True, cwd="/fake", timeout=timeouts.LOCAL,
-    )
+    assert _unconfigured(mock_run.call_args[0][0]) == ["git", "show", ":2:src/file.py"]
+    assert mock_run.call_args.kwargs["cwd"] == "/fake"
 
 
 def test_get_ours_content_returns_none_on_failure():
@@ -615,10 +669,10 @@ def test_get_commit_diff_returns_diff():
     with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
         result = pr_rebase_cli._get_commit_diff("file.py", "/fake")
     assert result == diff_text.strip()
-    mock_run.assert_called_once_with(
-        ["git", "diff", "REBASE_HEAD^", "REBASE_HEAD", "--", "file.py"],
-        capture_output=True, text=True, cwd="/fake", timeout=timeouts.LOCAL,
-    )
+    assert _unconfigured(mock_run.call_args[0][0]) == [
+        "git", "diff", "REBASE_HEAD^", "REBASE_HEAD", "--", "file.py",
+    ]
+    assert mock_run.call_args.kwargs["cwd"] == "/fake"
 
 
 def test_get_commit_diff_returns_none_on_failure():
@@ -1460,7 +1514,7 @@ def test_resolve_file_conflicts_calls_claude():
                     args=cmd, returncode=0,
                     stdout="base version\n", stderr="",
                 )
-            if cmd[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
+            if _unconfigured(cmd)[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0,
                     stdout="diff output\n", stderr="",
@@ -1491,7 +1545,7 @@ def _fake_run_with_context(extra_handler=None):
     def fake_run(cmd, **kwargs):
         if cmd[:2] == ["git", "show"] and len(cmd) > 2 and ":2:" in cmd[2]:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
-        if cmd[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
+        if _unconfigured(cmd)[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="diff\n", stderr="")
         if extra_handler:
             result = extra_handler(cmd, **kwargs)
@@ -1979,7 +2033,7 @@ def test_rebase_success_emits_stale_files():
 def test_rebase_success_counts_commits_before_push():
     """commits_replayed excludes commits the push recovery creates.
 
-    _force_push can add regeneration and check-fix commits; counting after it
+    The landing can add regeneration and check-fix commits; counting after it
     reported them as replayed from the branch.
     """
     ctx = mock.MagicMock()
@@ -1987,7 +2041,7 @@ def test_rebase_success_counts_commits_before_push():
     ahead = iter([2, 3])
 
     with mock.patch.object(pr_rebase_cli, "_commits_ahead", lambda _, **kw: next(ahead)), \
-         mock.patch.object(pr_rebase_cli, "_force_push", return_value=0), \
+         _lands(_pushed()), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
         pr_rebase_cli._rebase_success(
@@ -2688,7 +2742,7 @@ def test_diff_is_empty_follows_git_diff_quiet(returncode, expected):
     with mock.patch("subprocess.run", return_value=_completed(["git"], returncode)) as mock_run:
         assert pr_rebase_cli._diff_is_empty("/fake", target_ref=_TARGET) is expected
 
-    assert mock_run.call_args[0][0] == ["git", "diff", "--quiet", _TARGET, "HEAD"]
+    assert _unconfigured(mock_run.call_args[0][0]) == ["git", "diff", "--quiet", _TARGET, "HEAD"]
 
 
 def test_diff_is_empty_compares_against_the_resolved_ref():
@@ -2696,7 +2750,7 @@ def test_diff_is_empty_compares_against_the_resolved_ref():
     with mock.patch("subprocess.run", return_value=_completed(["git"], 0)) as mock_run:
         pr_rebase_cli._diff_is_empty("/fake", target_ref=_OTHER_TARGET)
 
-    assert mock_run.call_args[0][0] == [
+    assert _unconfigured(mock_run.call_args[0][0]) == [
         "git", "diff", "--quiet", _OTHER_TARGET, "HEAD",
     ]
 
@@ -3268,300 +3322,109 @@ def test_main_threads_one_ref_into_both_commands():
     assert mock_push.call_args.kwargs["target_ref"] == "origin/master"
 
 
-# ── _force_push ────────────────────────────────────────────────────────────
-
-_HEAD_SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+# ── _land ──────────────────────────────────────────────────────────────────
 
 
-def _answering_the_owner(fake_run):
-    """Wrap a subprocess stub so the push owner's questions get real answers.
+def _owner_reports(result: land.LandResult):
+    """Patch the land owner, whose own behaviour is `tests/land_test.py`'s subject.
 
-    `_push` goes through `push.push`, which reads HEAD and then asks the remote
-    what it holds. A stub's catch-all answers both with the empty string, and
-    an empty remote head compares equal to an empty local sha — so every push
-    would read as landed whatever the test was setting up.
+    What is left here is the composition: which flags this script asks the owner
+    for, and which of the owner's answers is worth handing to the AI fix.
     """
-    def run(cmd, **kwargs):
-        if cmd == ["git", "rev-parse", "HEAD"]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout=f"{_HEAD_SHA}\n", stderr="")
-        if cmd == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="isaac/feat/x\n", stderr="")
-        if cmd[:2] == ["git", "ls-remote"]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
-                stdout=f"{_HEAD_SHA}\trefs/heads/isaac/feat/x\n", stderr="")
-        return fake_run(cmd, **kwargs)
-    return run
+    return mock.patch.object(pr_rebase_cli.land, "land_head", return_value=result)
 
 
-def test_force_push_succeeds_first_try():
-    """Push succeeds on first attempt — returns 0."""
-    def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+def test_land_asks_the_owner_for_a_force_push_with_the_regen_recovery():
+    """The rebase replayed the branch, so every push here rewrites the remote.
 
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
-        assert pr_rebase_cli._force_push("/fake") == 0
-
-
-def test_force_push_that_never_landed_skips_the_recovery_ladder(capsys):
-    """git exits zero and the remote still holds something else.
-
-    The ladder repairs a tree the hooks rejected. Here the hooks passed and the
-    push evaporated, so running the AI fix over it would ask an agent to repair
-    code that has nothing wrong with it.
+    `gated=True` whatever the mode: this is the one entry point where pushing is
+    the command rather than an accident, and `main` opens the publishing gate
+    for the modes that reach the remote. The gate, not this argument, is what
+    `--no-push` shuts.
     """
-    def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+    landed = _pushed()
 
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
-         mock.patch.object(pr_rebase_cli.push, "remote_head", return_value="9f8e7d6c5b"), \
+    with _owner_reports(landed) as owner:
+        assert pr_rebase_cli._land("/fake") is landed
+
+    assert owner.call_args[0][0] == "/fake"
+    kwargs = owner.call_args.kwargs
+    assert kwargs["gated"] is True
+    assert kwargs["args"] == ("--force-with-lease",)
+    assert kwargs["regen"] == pr_rebase_cli._REGEN_MESSAGE
+
+
+def test_a_landed_push_never_reaches_the_ai_fix():
+    with _owner_reports(_pushed()), \
          mock.patch.object(pr_rebase_cli, "_fix_push_failures") as mock_fix:
-        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
+        assert pr_rebase_cli._land("/fake", resolved_files=["server.go"]).ok
 
-    assert rc == 1
     mock_fix.assert_not_called()
-    printed = capsys.readouterr().err
-    assert "the remote did not move" in printed
-    assert "9f8e7d6" in printed
 
 
-def test_force_push_fails_no_modified_files():
-    """Push fails with no modified files — returns failure code without retry."""
-    calls = []
+def test_a_refusal_hands_the_hook_output_to_the_ai_fix():
+    """The second recovery: `land` committed what the hook regenerated and the
+    checks still failed, so the output is a complaint an agent can act on."""
+    repaired = _pushed(sha="9f8e7d6")
 
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="rejected")
-        if "--porcelain" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+    with _owner_reports(_refused("gofmt: server.go")), \
+         mock.patch.object(
+             pr_rebase_cli, "_fix_push_failures", return_value=repaired,
+         ) as mock_fix:
+        assert pr_rebase_cli._land("/fake", resolved_files=["server.go"]) is repaired
 
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
-        rc = pr_rebase_cli._force_push("/fake")
-
-    assert rc == 1
-    push_calls = [c for c in calls if c[:2] == ["git", "push"]]
-    assert len(push_calls) == 1
+    mock_fix.assert_called_once_with("/fake", "gofmt: server.go", ["server.go"])
 
 
-def test_force_push_retries_after_regenerated_files():
-    """Push fails due to regenerated files — commits and retries successfully."""
-    push_count = [0]
-    committed = [False]
-    calls = []
+def test_a_fix_that_produced_nothing_leaves_the_refusal_standing():
+    """No backend, or an agent that changed nothing — the push is still the answer."""
+    refusal = _refused()
 
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[:2] == ["git", "push"]:
-            push_count[0] += 1
-            if push_count[0] == 1:
-                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        if "--porcelain" in cmd:
-            out = "" if committed[0] else " M docs/ai-automation.md\n"
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
-        if cmd[:2] == ["git", "commit"]:
-            committed[0] = True
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
-        rc = pr_rebase_cli._force_push("/fake")
-
-    assert rc == 0
-    push_calls = [c for c in calls if c[:2] == ["git", "push"]]
-    assert len(push_calls) == 2
-    assert ["git", "add", "-u"] in calls
-    commit_calls = [c for c in calls if c[:2] == ["git", "commit"]]
-    assert len(commit_calls) == 1
+    with _owner_reports(refusal), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=None):
+        assert pr_rebase_cli._land("/fake", resolved_files=["server.go"]) is refusal
 
 
-def test_force_push_commit_fails_returns_original_error():
-    """Push fails, commit of regenerated files fails — returns original push error."""
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
-        if "--porcelain" in cmd:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
-                stdout=" M docs/ai-automation.md\n", stderr="",
-            )
-        if cmd[:2] == ["git", "commit"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="commit error")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+@pytest.mark.parametrize("result", [
+    land.LandResult(CommitStatus.PUSH_HELD, sha=_LANDED_SHA, resume=_RESUME,
+                    push=push.PushResult(push.PushStatus.HELD, sha=_LANDED_SHA,
+                                         branch="isaac/feat/x")),
+    land.LandResult(CommitStatus.PUSH_LOST, sha=_LANDED_SHA,
+                    push=push.PushResult(push.PushStatus.LOST, sha=_LANDED_SHA,
+                                         branch="isaac/feat/x")),
+    land.LandResult(CommitStatus.PUSH_UNVERIFIED, sha=_LANDED_SHA,
+                    push=push.PushResult(push.PushStatus.UNVERIFIED, sha=_LANDED_SHA,
+                                         branch="isaac/feat/x")),
+])
+def test_only_a_refusal_reaches_the_ai_fix(result):
+    """A held, lost, or unverified push says nothing is wrong with the worktree.
 
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
-        rc = pr_rebase_cli._force_push("/fake")
-
-    assert rc == 1
-
-
-def test_force_push_retry_also_fails():
-    """Push fails, retry after commit also fails — the branch is unpushed.
-
-    Git's own exit code is not passed through: the owner answers whether the
-    remote holds the branch, and a git exit of 0 is not that answer.
+    Handing one to the fix pass asks an agent to rewrite code that passed every
+    check — and under `--no-push` it would do that on every run.
     """
-    push_count = [0]
-    committed = [False]
+    with _owner_reports(result), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures") as mock_fix:
+        assert pr_rebase_cli._land("/fake", resolved_files=["server.go"]) is result
 
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            push_count[0] += 1
-            if push_count[0] == 1:
-                return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="rejected")
-            return subprocess.CompletedProcess(args=cmd, returncode=128, stdout="", stderr="retry failed")
-        if "--porcelain" in cmd:
-            out = "" if committed[0] else " M docs/ai-automation.md\n"
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
-        if cmd[:2] == ["git", "commit"]:
-            committed[0] = True
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)):
-        rc = pr_rebase_cli._force_push("/fake")
-
-    assert rc == 1
-    assert push_count[0] == 2
+    mock_fix.assert_not_called()
 
 
-def test_force_push_refuses_to_retry_a_dirty_tree_after_the_ai_fix():
-    """A fix that leaves the worktree dirty is not pushed.
+def test_a_refusal_with_no_resolved_files_skips_the_ai_fix():
+    """Nothing the AI resolved means nothing it has standing to repair."""
+    with _owner_reports(_refused()), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures") as mock_fix:
+        assert not pr_rebase_cli._land("/fake").ok
 
-    Pre-push hooks validate the worktree, not the commits being pushed, so
-    retrying past leftover edits greens a HEAD no hook ever saw, and pushes a
-    branch that cannot be imported.
-    """
-    push_count = [0]
-
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            push_count[0] += 1
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=1, stdout="", stderr="test failed",
-            )
-        if "--porcelain" in cmd and "--untracked-files=no" not in cmd:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0,
-                stdout=" M ai/lib/review_phases.py\n", stderr="",
-            )
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
-         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True):
-        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
-
-    assert rc == 1
-    assert push_count[0] == 1
+    mock_fix.assert_not_called()
 
 
-def _regeneration_leaves_untracked(push_count):
-    """subprocess stub: the hook regenerates a file and leaves an untracked one."""
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            push_count[0] += 1
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=1, stdout="", stderr="rejected",
-            )
-        if "--porcelain" in cmd:
-            out = (" M docs/ai-automation.md\n" if "--untracked-files=no" in cmd
-                   else "?? docs/new-page.md\n")
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-    return _answering_the_owner(fake_run)
+def test_a_refusal_that_said_nothing_skips_the_ai_fix():
+    """An empty complaint is not a prompt — the agent would be guessing."""
+    with _owner_reports(_refused(error="")), \
+         mock.patch.object(pr_rebase_cli, "_fix_push_failures") as mock_fix:
+        pr_rebase_cli._land("/fake", resolved_files=["server.go"])
 
-
-def test_force_push_refuses_to_retry_a_dirty_tree_after_regeneration():
-    """Step 1's retry is gated too — `git add -u` cannot sweep an untracked file."""
-    push_count = [0]
-
-    with mock.patch("subprocess.run", side_effect=_regeneration_leaves_untracked(push_count)):
-        rc = pr_rebase_cli._force_push("/fake")
-
-    assert rc == 1
-    assert push_count[0] == 1
-
-
-def test_force_push_dirty_after_regeneration_still_reaches_the_ai_fix():
-    """Gating step 1's retry must not dead-end the run.
-
-    Step 2 stages the whole tree, which is exactly what clears the untracked
-    leftover that blocked step 1 — so dirtiness abandons the retry, not the
-    recovery.
-    """
-    push_count = [0]
-
-    with mock.patch("subprocess.run",
-                    side_effect=_regeneration_leaves_untracked(push_count)), \
-         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
-        pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
-
-    mock_fix.assert_called_once()
-    assert mock_fix.call_args[0][1] == "rejected"
-
-
-def test_force_push_regenerated_files_fall_through_to_ai_fix():
-    """A hook that regenerates AND fails a check must still reach the AI fix.
-
-    Recovery 1 used to return unconditionally, so on any repo whose hooks
-    regenerate a tracked file the AI fix was unreachable.
-    """
-    push_count = [0]
-    committed = [False]
-
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            push_count[0] += 1
-            if push_count[0] < 3:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=1, stdout="", stderr="test failed",
-                )
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        if "--porcelain" in cmd:
-            # Only the first check sees the regenerated file; it gets committed.
-            out = "" if committed[0] else " M docs/ai-automation.md\n"
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
-        if cmd[:2] == ["git", "commit"]:
-            committed[0] = True
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
-         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
-        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
-
-    assert rc == 0
-    assert push_count[0] == 3
-    assert mock_fix.call_args[0][1] == "test failed"
-
-
-def test_force_push_ai_fix_sees_the_retry_error():
-    """Step 2 fixes the error the retry reported, not the stale first one."""
-    push_count = [0]
-    committed = [False]
-
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            push_count[0] += 1
-            errs = {1: "stale first error", 2: "fresh retry error"}
-            if push_count[0] < 3:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=1, stdout="", stderr=errs[push_count[0]],
-                )
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        if "--porcelain" in cmd:
-            out = "" if committed[0] else " M generated.md\n"
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
-        if cmd[:2] == ["git", "commit"]:
-            committed[0] = True
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
-         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
-        pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
-
-    assert mock_fix.call_args[0][1] == "fresh retry error"
+    mock_fix.assert_not_called()
 
 
 # ── _fix_commit_message ───────────────────────────────────────────────────
@@ -3570,7 +3433,7 @@ def test_force_push_ai_fix_sees_the_retry_error():
 def _diff_only(diff: str):
     """subprocess.run stub where `git diff --cached` yields `diff`."""
     def fake_run(cmd, **kwargs):
-        out = diff if cmd[:3] == ["git", "diff", "--cached"] else ""
+        out = diff if _unconfigured(cmd)[:3] == ["git", "diff", "--cached"] else ""
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
     return fake_run
 
@@ -3631,33 +3494,49 @@ def test_fix_commit_message_empty_diff_skips_the_prompt():
 # ── _fix_push_failures ────────────────────────────────────────────────────
 
 
+def _fix_lands(result: land.LandResult | None = None):
+    """Patch the owner the fix pass lands its repair through.
+
+    The pass stages the tree itself — the commit message is generated from the
+    staged diff — and hands the rest to `land`, whose own behaviour belongs to
+    `tests/land_test.py`.
+    """
+    return mock.patch.object(
+        pr_rebase_cli.land, "land",
+        return_value=_pushed() if result is None else result,
+    )
+
+
 def test_fix_push_failures_ai_fixes_file(tmp_path):
-    """AI returns fixed content — stages, commits, returns True."""
+    """AI returns fixed content — stages the tree and lands it."""
     f = tmp_path / "server.go"
     f.write_text("package main\n\nbad format\n")
 
     fixed_output = "<<<RESOLVED>>>\npackage main\n\ngood format\n<<<END_RESOLVED>>>\n"
+    landed = _pushed()
     calls = []
 
     def fake_run(cmd, **kwargs):
-        calls.append(cmd)
+        calls.append(_unconfigured(cmd))
         if cmd[:3] == ["claude", "-p", "--bare"]:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=fixed_output, stderr="")
-        if cmd[:4] == ["git", "diff", "--cached", "--name-only"]:
+        if _unconfigured(cmd)[:4] == ["git", "diff", "--cached", "--name-only"]:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="server.go\n", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
+         _fix_lands(landed) as owner:
         result = pr_rebase_cli._fix_push_failures(
             str(tmp_path), "gofmt: server.go needs formatting", ["server.go"],
         )
 
-    assert result is True
+    assert result is landed
     assert f.read_text() == "package main\n\ngood format\n"
     assert ["git", "add", "-A"] in calls
-    commit_calls = [c for c in calls if c[:2] == ["git", "commit"]]
-    assert len(commit_calls) == 1
+    kwargs = owner.call_args.kwargs
+    assert kwargs["gated"] is True
+    assert kwargs["args"] == ("--force-with-lease",)
 
 
 def test_fix_push_failures_commits_edits_outside_the_marker_protocol(tmp_path):
@@ -3673,57 +3552,62 @@ def test_fix_push_failures_commits_edits_outside_the_marker_protocol(tmp_path):
     calls = []
 
     def fake_run(cmd, **kwargs):
-        calls.append(cmd)
+        calls.append(_unconfigured(cmd))
         if cmd[:3] == ["claude", "-p", "--bare"]:
             return subprocess.CompletedProcess(
                 args=cmd, returncode=0,
                 stdout=f"<<<RESOLVED>>>\n{unchanged}<<<END_RESOLVED>>>\n", stderr="",
             )
-        if cmd[:4] == ["git", "diff", "--cached", "--name-only"]:
+        if _unconfigured(cmd)[:4] == ["git", "diff", "--cached", "--name-only"]:
             # The agent edited server.go directly; nothing round-tripped.
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="server.go\n", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
+         _fix_lands() as owner:
         result = pr_rebase_cli._fix_push_failures(
             str(tmp_path), "NameError: name 'group_log' is not defined", ["server_test.go"],
         )
 
-    assert result is True
+    assert result is not None
     assert ["git", "add", "-A"] in calls
-    assert len([c for c in calls if c[:2] == ["git", "commit"]]) == 1
+    # No `paths`, so the owner commits the whole tree rather than the one file
+    # the marker protocol round-tripped.
+    assert owner.call_args.kwargs.get("paths") is None
 
 
 def test_fix_push_failures_staging_fails(tmp_path):
-    """`git add -A` fails — nothing is committed and the retry is not reached."""
+    """`git add -A` fails — nothing is landed and the retry is not reached."""
     (tmp_path / "server.go").write_text("package main\n")
 
     def fake_run(cmd, **kwargs):
         if cmd[:3] == ["claude", "-p", "--bare"]:
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
-        if cmd[:3] == ["git", "add", "-A"]:
+        if _unconfigured(cmd)[:3] == ["git", "add", "-A"]:
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="add failed")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
+         _fix_lands() as owner:
         result = pr_rebase_cli._fix_push_failures(str(tmp_path), "errors", ["server.go"])
 
-    assert result is False
+    assert result is None
+    owner.assert_not_called()
 
 
 def test_fix_push_failures_ai_unavailable():
-    """AI backend unavailable — returns False without attempting."""
+    """AI backend unavailable — returns None without attempting."""
     with mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
         mock_ai.is_available.return_value = False
         result = pr_rebase_cli._fix_push_failures("/fake", "errors", ["file.go"])
 
-    assert result is False
+    assert result is None
 
 
 def test_fix_push_failures_ai_prompt_fails(tmp_path):
-    """AI prompt fails — returns False."""
+    """AI prompt fails — nothing was staged, so there is nothing to land."""
     f = tmp_path / "server.go"
     f.write_text("package main\n")
 
@@ -3733,16 +3617,18 @@ def test_fix_push_failures_ai_prompt_fails(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
+         _fix_lands() as owner:
         result = pr_rebase_cli._fix_push_failures(
             str(tmp_path), "errors", ["server.go"],
         )
 
-    assert result is False
+    assert result is None
+    owner.assert_not_called()
 
 
 def test_fix_push_failures_no_changes_needed(tmp_path):
-    """AI returns identical content — no commit, returns False."""
+    """AI returns identical content — nothing staged, so nothing is landed."""
     content = "package main\n\nfunc main() {}\n"
     f = tmp_path / "server.go"
     f.write_text(content)
@@ -3755,28 +3641,31 @@ def test_fix_push_failures_no_changes_needed(tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True):
+         mock.patch.object(pr_rebase_cli.ai_backend, "is_available", return_value=True), \
+         _fix_lands() as owner:
         result = pr_rebase_cli._fix_push_failures(
             str(tmp_path), "errors", ["server.go"],
         )
 
-    assert result is False
+    assert result is None
+    owner.assert_not_called()
 
 
 def test_fix_push_failures_missing_file(tmp_path):
-    """File doesn't exist — skips it, and an empty index means no commit."""
+    """File doesn't exist — skips it, and an empty index means nothing to land."""
     def fake_run(cmd, **kwargs):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with mock.patch("subprocess.run", side_effect=fake_run) as mock_run, \
-         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai:
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(pr_rebase_cli, "ai_backend") as mock_ai, \
+         _fix_lands() as owner:
         mock_ai.is_available.return_value = True
         result = pr_rebase_cli._fix_push_failures(
             str(tmp_path), "errors", ["nonexistent.go"],
         )
 
-    assert result is False
-    assert not [c for c in mock_run.call_args_list if c[0][0][:2] == ["git", "commit"]]
+    assert result is None
+    owner.assert_not_called()
 
 
 def test_fix_push_failures_truncates_error_output(tmp_path):
@@ -3915,90 +3804,6 @@ def test_fix_one_file_records_the_backend_exit_code(tmp_path):
     assert data == {"filepath": "server.go", "exit_code": 1}
 
 
-def test_force_push_tries_ai_fix_on_check_failure():
-    """Push fails with no modified files but resolved_files provided — tries AI fix."""
-    push_count = [0]
-
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            push_count[0] += 1
-            if push_count[0] == 1:
-                return subprocess.CompletedProcess(
-                    args=cmd, returncode=1, stdout="", stderr="gofmt: server.go",
-                )
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        if "--porcelain" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
-         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True) as mock_fix:
-        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
-
-    assert rc == 0
-    mock_fix.assert_called_once_with("/fake", "gofmt: server.go", ["server.go"])
-    assert push_count[0] == 2
-
-
-def test_force_push_ai_fix_fails_returns_error():
-    """Push fails, AI fix fails — returns original error code."""
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=1, stdout="", stderr="check errors",
-            )
-        if "--porcelain" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
-         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=False):
-        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
-
-    assert rc == 1
-
-
-def test_force_push_logs_the_final_retry_error():
-    """The post-fix retry captures its output — a failure must still be shown.
-
-    The resume it offers is the rebase's own push: a plain one would be refused
-    again, this time as non-fast-forward.
-    """
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=1, stdout="", stderr="still broken",
-            )
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
-         mock.patch.object(pr_rebase_cli, "_fix_push_failures", return_value=True), \
-         mock.patch.object(pr_rebase_cli.log, "dim") as mock_dim:
-        rc = pr_rebase_cli._force_push("/fake", resolved_files=["server.go"])
-
-    assert rc == 1
-    dimmed = [call[0][0] for call in mock_dim.call_args_list]
-    assert dimmed.count("still broken") == 2
-    assert dimmed[-1] == "Resume: git -C '/fake' push --force-with-lease"
-
-
-def test_force_push_no_resolved_files_skips_ai_fix():
-    """Push fails without resolved_files — doesn't attempt AI fix."""
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error")
-        if "--porcelain" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=_answering_the_owner(fake_run)), \
-         mock.patch.object(pr_rebase_cli, "_fix_push_failures") as mock_fix:
-        rc = pr_rebase_cli._force_push("/fake")
-
-    assert rc == 1
-    mock_fix.assert_not_called()
-
-
 # ── _status_lines ──────────────────────────────────────────────────────────
 
 
@@ -4032,23 +3837,6 @@ def test_status_lines_folds_a_timeout_into_the_same_answer():
         assert pr_rebase_cli._status_lines("/fake") is None
 
 
-def test_retry_push_refuses_when_the_worktree_cannot_be_read(tmp_path):
-    """An unreadable tree is not a validated one.
-
-    Pre-push hooks run against the worktree, so a retry that pushes when the
-    dirty check could not answer pushes a tree nothing validated.
-    """
-    with mock.patch.object(pr_rebase_cli, "_push") as mock_push:
-        assert pr_rebase_cli._retry_push(str(tmp_path), "force_push") is None
-    mock_push.assert_not_called()
-
-
-def test_commit_regenerated_refuses_when_the_worktree_cannot_be_read(tmp_path, capsys):
-    """No file list means no `git add -u` — the recovery step just does not run."""
-    assert pr_rebase_cli._commit_regenerated(str(tmp_path)) is False
-    assert "Cannot tell what the hook regenerated" in capsys.readouterr().err
-
-
 # ── _auto_stash ────────────────────────────────────────────────────────────
 
 
@@ -4067,7 +3855,7 @@ def test_auto_stash_covers_untracked_files(status_out, expected):
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        out = status_out if cmd[:2] == ["git", "status"] else ""
+        out = status_out if _unconfigured(cmd)[:2] == ["git", "status"] else ""
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
@@ -4259,22 +4047,26 @@ def test_fix_with_no_push_does_not_reach_the_remote():
 
 
 def test_rebase_success_in_fix_only_prints_the_push_command(capsys):
-    """The force-push is handed to the user, not issued — repository policy."""
+    """The force-push is handed to the user, not issued — repository policy.
+
+    The landing still happens: `--no-push` shuts the publishing gate rather than
+    skipping the call, so the command the user is handed is the one the owner
+    drafted against the real worktree rather than a string composed here.
+    """
     ctx = mock.MagicMock()
     with mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=2), \
-         mock.patch.object(pr_rebase_cli, "_force_push") as mock_force, \
+         _lands(_held()), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(pr_rebase_cli, "_emit_json") as mock_emit:
         rc = pr_rebase_cli._rebase_success(
             "/fake", ctx, pr_rebase_cli.RunMode.FIX_ONLY, target_ref=_TARGET,
         )
 
-    mock_force.assert_not_called()
     assert rc == 0
     # force_pushed is None, which the emitter drops — "not pushed" rather than
     # "push failed", the same shape --no-push already reports.
     assert "force_pushed" not in mock_emit.call_args[0][0]
-    assert "git push --force-with-lease" in capsys.readouterr().err
+    assert _RESUME in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("mode,hinted", [
@@ -4291,16 +4083,17 @@ def test_manual_push_hint_only_when_the_run_never_pushes(mode, hinted, capsys):
     the remote at all.
     """
     ctx = mock.MagicMock()
+    landed = _held() if hinted else _pushed()
 
     with mock.patch.object(pr_rebase_cli, "_commits_ahead", return_value=2), \
-         mock.patch.object(pr_rebase_cli, "_force_push", return_value=0), \
+         _lands(landed), \
          mock.patch.object(pr_rebase_cli.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(pr_rebase_cli, "_emit_json"):
         rc = pr_rebase_cli._rebase_success("/fake", ctx, mode, target_ref=_TARGET)
 
     assert rc == 0
     err = capsys.readouterr().err
-    assert ("git push --force-with-lease" in err) is hinted
+    assert (_RESUME in err) is hinted
     assert ("--no-push" in err) is hinted
     assert "Rebase complete" in err
 

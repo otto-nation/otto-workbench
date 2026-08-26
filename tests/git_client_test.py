@@ -81,10 +81,35 @@ def test_a_fetch_takes_the_transfer_tier():
     assert git_client._timeout_for(("fetch", "--unshallow")) == timeouts.TRANSFER
 
 
-@pytest.mark.parametrize("subcommand", ["worktree", "commit", "push"])
+@pytest.mark.parametrize("subcommand", [
+    "worktree", "commit", "push", "rebase", "checkout", "stash", "add",
+])
 def test_input_and_hook_bound_subcommands_run_unbounded(subcommand):
     """A fixed bound here reports a large repo, or a slow hook, as a breakage."""
     assert git_client._timeout_for((subcommand, "-m", "x")) is timeouts.UNBOUNDED
+
+
+@pytest.mark.parametrize("args", [
+    ("checkout", "--theirs", "src/main.go"),
+    ("checkout", "--ours", "src/main.go"),
+    ("stash", "drop"),
+])
+def test_a_flat_cost_form_is_bounded_despite_its_subcommand(args):
+    """Rewriting one named file, or deleting a ref, is not the tree's cost.
+
+    Left on their subcommand's tier these two wait out a wedged git forever,
+    which is the failure the bounds exist to catch arriving on the calls least
+    able to be a large input.
+    """
+    assert git_client._timeout_for(args) == timeouts.LOCAL
+
+
+def test_the_wider_form_of_the_same_subcommand_stays_unbounded():
+    """The exception is the two-word form, not the subcommand it belongs to."""
+    assert git_client._timeout_for(
+        ("checkout", "-B", "feat/x", "origin/feat/x"),
+    ) is timeouts.UNBOUNDED
+    assert git_client._timeout_for(("stash", "pop")) is timeouts.UNBOUNDED
 
 
 def test_an_empty_argv_still_resolves_a_tier():

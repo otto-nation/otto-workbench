@@ -20,7 +20,9 @@ Reconciliation runs at the start of the next `pr` command. That is later than
 the shell prompt and much cheaper: no network call sits near the prompt, and
 `pr` is both the workbench's git surface and somewhere that can always print.
 It costs one failed `stat` when nothing is pending — every run but the ones
-that matter — and one `ls-remote` per pending ref when something is.
+that matter — and one `ls-remote` per pending ref when something is. A ref that
+comes back looking lost costs a few local ref reads on top, and at most one `gh`
+call, for the reason `_landed_elsewhere` gives.
 
 The record's whole lifecycle is designed against a permanent false alarm:
 
@@ -30,6 +32,10 @@ The record's whole lifecycle is designed against a permanent false alarm:
   a ref being removed has no commit left to verify.
 * A remote that has moved *past* the recorded commit landed it and was built
   upon; `_built_upon` asks that locally before anything is reported.
+* A commit whose work reached the default branch under another sha landed too,
+  however its own ref ended up. `_landed_elsewhere` is what covers the squash
+  merge that deletes its head branch — the ordinary end of a PR here, and
+  otherwise a guaranteed false alarm for every one of them.
 * A record whose working tree has since been removed drains in silence, which
   is what makes a push between throwaway repositories — a test suite's, say —
   cost nothing to have recorded, without this having to know what a temp root
@@ -66,11 +72,22 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
+import branch_landed
 import git_client
 import log
 import push
 import serde
 import workbench_paths
+
+# `git_remote` is a workbench-wide module rather than an `ai/lib` one, because
+# the pre-push hooks and the surface gate resolve the same default branch. In a
+# checkout that is one directory up; in the otto-ai-tools tarball, which
+# flattens both into one `lib/`, it is already beside this file and the path
+# below does not exist.
+_WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent / "lib"
+if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
+    sys.path.insert(0, str(_WORKBENCH_LIB))
+import git_remote  # noqa: E402
 
 # One file, under the state root, because a record has to outlive the shell the
 # push was typed into — and the shell it is reported in is a different one.
@@ -268,6 +285,8 @@ def _answer(intent: PushIntent) -> Reconciled:
         return Reconciled(intent, Outcome.UNANSWERED)
     if held == intent.sha or _built_upon(intent, held):
         return Reconciled(intent, Outcome.LANDED, remote_sha=held)
+    if _landed_elsewhere(intent):
+        return Reconciled(intent, Outcome.LANDED, remote_sha=held)
     return Reconciled(intent, Outcome.LOST, remote_sha=held)
 
 
@@ -290,6 +309,46 @@ def _built_upon(intent: PushIntent, held: str) -> bool:
     return git_client.ok(
         "merge-base", "--is-ancestor", intent.sha, held, cwd=intent.repo,
     )
+
+
+def _landed_elsewhere(intent: PushIntent) -> bool:
+    """Whether the recorded commit's work is already in the default branch.
+
+    The branch the record names is not the only place its commits can be. A
+    squash merge rewrites them into one commit nothing here can recognise, and
+    the merge then deletes the head ref — so `remote_head` answers "no such ref"
+    for a push that landed perfectly, which is `_built_upon`'s question asked
+    against a ref that no longer exists to answer it. Every branch that merges
+    and is deleted would otherwise be reported as a push that vanished, which is
+    the whole population of merged PRs in a repo configured this way.
+
+    `branch_landed` owns the evidence and `pr rebase` reads the same three
+    signals. The two cheap ones are asked first and answer while the base is
+    still near the merge; the tracker is the only one that survives the base
+    moving on, and is reached only when they do not.
+
+    Three questions are refused rather than guessed at, all of them in the
+    direction that keeps a genuinely lost push reportable:
+
+    * A push to the default branch has no base to be measured against — it *is*
+      the base, so both git signals would call every such push landed.
+    * A base ref this repo has never fetched cannot be compared against, and
+      `default_base_ref` answers None rather than naming a ref that resolves to
+      nothing.
+    * A record for some remote other than `origin` was pushed somewhere the
+      default branch is not the trunk of, and a fork's branch measured against
+      upstream's trunk answers about the wrong repository.
+    """
+    if intent.remote != git_remote.GIT_REMOTE:
+        return False
+    if intent.branch == git_remote.resolve_default_branch(intent.repo):
+        return False
+    base = git_remote.default_base_ref(intent.repo)
+    if base is None:
+        return False
+    return branch_landed.check(
+        intent.repo, target_ref=base, branch=intent.branch, rev=intent.sha,
+    ) is not None
 
 
 def _exhausted(answer: Reconciled) -> bool:

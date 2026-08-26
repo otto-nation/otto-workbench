@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import agent_invoke
 import ai_backend
+import branch_landed
 import gh_client
 import git_client
 import land
@@ -146,10 +147,15 @@ class RefusalSignal(StrEnum):
 
     The first three found the branch's work already present in the target ref;
     the last two found the rebase itself unsafe to run against that ref.
+
+    The landed three take their wire values from `branch_landed`, which owns
+    both the checks and their names — `push_intent` reports on the same three
+    signals, and a rename that reached only one of the two would leave the pair
+    describing the same evidence in different words.
     """
-    PR_MERGED = "pr_merged"
-    EMPTY_DIFF = "empty_diff"
-    COMMITS_UPSTREAM = "commits_upstream"
+    PR_MERGED = branch_landed.LandedSignal.PR_MERGED.value
+    EMPTY_DIFF = branch_landed.LandedSignal.EMPTY_DIFF.value
+    COMMITS_UPSTREAM = branch_landed.LandedSignal.COMMITS_UPSTREAM.value
     NO_MERGE_BASE = "no_merge_base"
     CONFLICTS_OVER_BUDGET = "conflicts_over_budget"
 
@@ -378,12 +384,6 @@ class ConflictReport:
 
     def emit(self) -> None:
         _emit_json(asdict(self))
-
-
-def _commits_ahead(cwd: str, *, target_ref: str) -> int:
-    """Count commits ahead of the target ref."""
-    out = git_client.out("rev-list", "--count", f"{target_ref}..HEAD", cwd=cwd)
-    return int(out) if out.isdigit() else 0
 
 
 def _is_empty_patch(cwd: str) -> bool:
@@ -1824,54 +1824,21 @@ class RefusalReport:
         _emit_json(asdict(self))
 
 
-@dataclass(frozen=True)
-class MergedPR:
-    """The tracker's answer when it reports the branch's PR merged.
+def _as_refusal(
+    landed: branch_landed.Landed | None, branch: str,
+) -> RefusalReport | None:
+    """`branch_landed`'s evidence as this script's refusal payload, or None.
 
-    A named answer rather than a bare pair: the caller reads ``.number`` and
-    ``.url`` instead of relying on the order two same-shaped fields happen to
-    be returned in, and a third field later is an added attribute rather than
-    a changed arity at every call site.
+    The one place the two vocabularies meet. `Landed` carries no branch name —
+    its detail lines describe the comparison rather than who was compared — so
+    naming the branch is what this adds.
     """
-    number: int
-    url: str = ""
-
-
-def _merged_pr(cwd: str, ctx: pr_context.ResolvedContext) -> MergedPR | None:
-    """The branch's merged PR per GitHub, or None.
-
-    Best effort by design: gh may be absent, unauthenticated, rate-limited, or
-    the branch may have no PR at all. Every one of those is "the tracker has
-    nothing to say", not "the branch is unlanded" — the git signals still get
-    their turn. Only a state of MERGED counts, so an open or closed-unmerged PR
-    reads the same as no answer.
-    """
-    target = str(ctx.pr_number) if ctx.pr_number else ctx.branch
-    data = gh_client.pr_view(target, "state", "number", "url", repo=ctx.repo, cwd=cwd)
-    if data.get("state") != "MERGED":
+    if landed is None:
         return None
-    return MergedPR(number=data.get("number") or 0, url=data.get("url") or "")
-
-
-def _diff_is_empty(cwd: str, *, target_ref: str) -> bool:
-    """Whether HEAD's tree is identical to the target ref's.
-
-    Tracker-agnostic, and the one signal that catches a squash merge: the
-    branch's own commits are unreachable from the squashed commit, so nothing
-    that compares commits notices the work landed.
-    """
-    return git_client.ok("diff", "--quiet", target_ref, "HEAD", cwd=cwd)
-
-
-def _all_commits_upstream(cwd: str, *, target_ref: str) -> bool:
-    """Whether every commit the branch adds already has an equivalent upstream.
-
-    ``git cherry`` compares patch ids, so it still recognises a commit that was
-    rebased or amended on its way into the target ref — the case an empty diff
-    misses once the target has moved on with unrelated work.
-    """
-    lines = git_client.lines("cherry", target_ref, "HEAD", cwd=cwd)
-    return bool(lines) and all(ln.startswith("-") for ln in lines)
+    return RefusalReport(
+        branch=branch, signal=landed.signal.value, detail=landed.detail,
+        commits_ahead=landed.commits_ahead, pr_number=landed.pr_number,
+    )
 
 
 def _tracker_landed_check(
@@ -1888,15 +1855,9 @@ def _tracker_landed_check(
     The most authoritative signal, and the only one that survives a squash
     merge once the target ref has moved on with unrelated work.
     """
-    merged = _merged_pr(cwd, ctx)
-    if merged is None:
-        return None
-    where = f" ({merged.url})" if merged.url else ""
-    return RefusalReport(
-        branch=ctx.branch, signal=RefusalSignal.PR_MERGED.value,
-        detail=f"PR #{merged.number} is merged{where}",
-        pr_number=merged.number,
-    )
+    return _as_refusal(branch_landed.by_tracker(
+        cwd, branch=ctx.branch, repo=ctx.repo, pr_number=ctx.pr_number,
+    ), ctx.branch)
 
 
 def _git_landed_check(
@@ -1905,34 +1866,12 @@ def _git_landed_check(
     """Evidence from git that the branch's work is in the target ref, or None.
 
     Every signal here compares HEAD, so this only means anything once the
-    branch is checked out. Tried in order: an empty diff (squash merges), then
-    matching patch ids (rebase and merge-commit landings). Each stands alone —
-    neither survives every merge style — and both are tracker-agnostic, so they
-    are what answers in a repo where gh cannot.
+    branch is checked out — which is why it is a separate call from the tracker
+    check rather than `branch_landed.check`'s single ladder.
     """
-    ahead = _commits_ahead(cwd, target_ref=target_ref)
-
-    # A branch with no commits of its own has nothing that could have landed,
-    # and both git signals below read as "already upstream" for it — vacuously
-    # for the freshly branched worktree that is the common case.
-    if ahead == 0:
-        return None
-
-    if _diff_is_empty(cwd, target_ref=target_ref):
-        return RefusalReport(
-            branch=ctx.branch, signal=RefusalSignal.EMPTY_DIFF.value,
-            detail=f"{ahead} commit(s) ahead of {target_ref} but no diff against it",
-            commits_ahead=ahead,
-        )
-
-    if _all_commits_upstream(cwd, target_ref=target_ref):
-        return RefusalReport(
-            branch=ctx.branch, signal=RefusalSignal.COMMITS_UPSTREAM.value,
-            detail=f"all {ahead} commit(s) already have an equivalent in {target_ref}",
-            commits_ahead=ahead,
-        )
-
-    return None
+    return _as_refusal(
+        branch_landed.by_git(cwd, target_ref=target_ref), ctx.branch,
+    )
 
 
 def _ref_exists(cwd: str, ref: str) -> bool:
@@ -2037,9 +1976,9 @@ def _pr_base_branch(cwd: str, ctx: pr_context.ResolvedContext) -> str | None:
     has no base to report, and probing by branch name would spend a round trip
     on every rebase to learn nothing.
 
-    Best effort like ``_merged_pr`` — gh may be absent, unauthenticated or
-    rate-limited, and the repo's default branch is the right answer for all but
-    stacked and release-branch PRs.
+    Best effort like ``branch_landed.merged_pr`` — gh may be absent,
+    unauthenticated or rate-limited, and the repo's default branch is the right
+    answer for all but stacked and release-branch PRs.
     """
     if not ctx.pr_number:
         return None
@@ -2141,7 +2080,7 @@ def cmd_push(cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str) -> i
     state = _load_or_init(ctx)
     RebaseOutcome(
         commits_replayed=(state.rebase.commits_replayed
-                          or _commits_ahead(cwd, target_ref=target_ref)),
+                          or git_client.commits_ahead(cwd, target_ref=target_ref)),
         conflicts_resolved=state.rebase.conflicts_resolved,
         files_resolved=state.rebase.files_resolved,
         files_stale=state.rebase.files_stale,
@@ -2422,7 +2361,7 @@ def _rebase_success(
 
     # Counted before the push: its recovery paths add regeneration and
     # check-fix commits, which were never replayed from the old branch.
-    replayed = _commits_ahead(cwd, target_ref=target_ref)
+    replayed = git_client.commits_ahead(cwd, target_ref=target_ref)
 
     # RunMode.PUSH lands from main() via cmd_push; every other mode lands here.
     # A mode that does not reach the remote still lands, because the publishing

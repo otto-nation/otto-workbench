@@ -278,7 +278,7 @@ state_data = {
     "group_names": ["tier1-critical"],
     "groups_done": [1],
     "groups_failed": {},
-    "done": ["holistic", "synthesis"],
+    "done": ["holistic", "synthesis", "disprove"],
     "failed": {},
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))

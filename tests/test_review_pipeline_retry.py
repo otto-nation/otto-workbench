@@ -317,7 +317,7 @@ class TestResolveRecoveryPinnedMetadata:
     def test_pinned_metadata_on_a_clean_run_recovers_nothing(self, tmp_path):
         _write_state(
             tmp_path, groups_done=[0, 1], groups_failed={},
-            done=["holistic", "synthesis"],
+            done=["holistic", "synthesis", "disprove"],
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
@@ -328,6 +328,41 @@ class TestResolveRecoveryPinnedMetadata:
         # The caller aborts on this rather than starting over, and told apart
         # from "no state" without re-reading the file.
         assert plan.already_complete is True
+
+    def test_a_state_that_never_reached_the_gate_resumes_at_it(self, tmp_path):
+        """The shape a run killed inside the disprove gate leaves behind.
+
+        Synthesis is the last phase to record itself, so this used to read as a
+        finished review and `--recover` declined it.
+        """
+        _write_state(
+            tmp_path, groups_done=[0, 1], groups_failed={},
+            done=["holistic", "synthesis"],
+        )
+        job = _make_job(tmp_path, head_sha=_PINNED_SHA)
+
+        plan = review_state._resolve_recovery(job, _GROUPS)
+
+        assert plan.already_complete is False
+        assert plan.resume_at_gate is True
+        # Every group succeeded, so the resumed run re-runs none of them and
+        # keeps the synthesis they already paid for.
+        assert plan.skip_groups == {0, 1}
+        assert plan.state is not None
+        assert plan.state.done == {Phase.HOLISTIC, Phase.SYNTHESIS}
+
+    def test_a_failed_group_under_a_missing_gate_still_resynthesises(self, tmp_path):
+        """A group re-running is new output, so the prior synthesis cannot stand."""
+        _write_state(
+            tmp_path, groups_done=[0], groups_failed={"1": "quota"},
+            done=["holistic", "synthesis"],
+        )
+        job = _make_job(tmp_path, head_sha=_PINNED_SHA)
+
+        plan = review_state._resolve_recovery(job, _GROUPS)
+
+        assert plan.resume_at_gate is False
+        assert plan.skip_groups == {0}
 
     def test_unpinned_metadata_discards_the_state(self, tmp_path):
         state_path = _write_state(tmp_path)

@@ -292,6 +292,70 @@ class TestTheRunningTotalChargesEveryPhase:
         assert "disprove" in agent.phases
 
 
+class TestTheDisproveGateRecordsItsOwnOutcome:
+    """The gate runs last, so no later phase can report that it got there.
+
+    `_resolve_recovery` reads a state file with no disprove entry as a run that
+    died inside the gate, and that reading holds only because every path out of
+    the gate records itself — the ones that decline to run it included.
+    """
+
+    @staticmethod
+    def _killed_in_the_gate(job):
+        """The state a process killed inside the gate leaves behind.
+
+        Written by hand because a run that survives the gate sweeps its own
+        state, and the pipeline offers no seam to die halfway through one.
+        """
+        Path(review_state._pipeline_state_path(job)).write_text(json.dumps({
+            "head_sha": "abc123", "group_names": ["a", "b"],
+            "groups_done": [1, 2], "done": ["synthesis"],
+        }))
+
+    def test_a_gate_that_declined_to_run_still_records_itself(self, job, run):
+        run(job, fails={"group-2"})
+
+        state = _state(job)
+        assert "disprove" in state["done"]
+        assert "disprove" not in state["failed"]
+
+    def test_a_run_killed_in_the_gate_resumes_at_the_gate(self, job, run):
+        run(job, review_body=_REVIEW_WITH_FINDING, disprove=True)
+        self._killed_in_the_gate(job)
+
+        second = run(job, review_body=_REVIEW_WITH_FINDING, disprove=True)
+
+        # Everything before the gate succeeded, so the resumed run re-pays for
+        # none of it — least of all synthesis, the most expensive phase here.
+        assert second.phases == ["disprove"]
+
+    def test_a_gate_whose_agent_produced_nothing_reports_it(self, job, run):
+        run(
+            job, fails={"disprove"}, review_body=_REVIEW_WITH_FINDING,
+            disprove=True,
+        )
+
+        review = _review(job)
+        assert "| disprove | agent hit max turns (20) | failed |" in review
+        assert _RECOVER_HINT in review
+        assert "<!-- status: partial -->" in review
+
+    def test_a_gate_failure_reaches_a_table_synthesis_already_wrote(self, job, run):
+        """The gate is always writing into a review synthesis has had its say on.
+
+        A failures section that is only ever inserted, never replaced, drops the
+        one phase that can have nothing else follow it.
+        """
+        run(
+            job, fails={"group-2", "disprove"},
+            review_body=_REVIEW_WITH_FINDING, disprove=True,
+        )
+
+        review = _review(job)
+        assert "| group-2: b | agent hit max turns (20) | failed |" in review
+        assert "| disprove | agent hit max turns (20) | failed |" in review
+
+
 class TestRecoverDeclinesTheWorkItShould:
     def test_a_surviving_complete_state_blocks_a_re_run(self, job, run):
         """The `--force` guard.
@@ -303,7 +367,7 @@ class TestRecoverDeclinesTheWorkItShould:
         run(job)
         Path(review_state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
-            "groups_done": [1, 2], "done": ["synthesis"],
+            "groups_done": [1, 2], "done": ["synthesis", "disprove"],
         }))
 
         assert run(job).phases == []

@@ -51,7 +51,7 @@ from review_findings import _count_findings, _validate_group_output, merge_revie
 from review_prompt import build_prompt
 from review_retry import (
     GroupFailure,
-    _check_serial_abort, _has_output, _is_retryable, _render_reason,
+    _check_serial_abort, _has_output, _is_retryable,
     _retry_hint_for, _retry_missing_output, _was_skipped,
 )
 from review_scout import format_leads_block, parse_scout_output
@@ -164,21 +164,31 @@ class PhaseResult:
     `content` and `output` carry a scan the phases after it read. Phase 1 is
     the only phase that writes for its successors rather than into the review
     file, so it is the only one that fills them.
+
+    `diagnosis` says why `content` is empty, and tells that apart from a phase
+    that declined to run and so has nothing to explain. It travels with the
+    result rather than being re-derived, because the reason is only reachable
+    while the retry driver is still holding the session log — by the time the
+    disprove gate records the outcome, the log belongs to whatever ran next.
     """
 
     log: str = ""
     cost: float = 0.0
     content: str = ""
     output: str = ""
+    diagnosis: Diagnosis | None = None
 
     @classmethod
-    def of(cls, log: str, content: str = "", output: str = "") -> "PhaseResult":
+    def of(
+        cls, log: str, content: str = "", output: str = "",
+        diagnosis: "Diagnosis | None" = None,
+    ) -> "PhaseResult":
         """Priced from the log the phase just wrote.
 
         A phase that wrote no log reads as free: `_parse_session_cost` takes a
         missing file as zero.
         """
-        return cls(log, _parse_session_cost(log), content, output)
+        return cls(log, _parse_session_cost(log), content, output, diagnosis)
 
 
 def _touch(path: str) -> None:
@@ -284,9 +294,9 @@ def run_phase(
     those, because deciding what the document says when an agent falls short is
     that module's job rather than this one's.
 
-    A phase that produced nothing warns why and comes back with empty
-    `content`, rather than raising. Every phase this runs is one the pipeline
-    has a path around, so the run continues without it.
+    A phase that produced nothing warns why and comes back with empty `content`
+    and the `diagnosis` saying why, rather than raising. Every phase this runs
+    is one the pipeline has a path around, so the run continues without it.
     """
     output = phase_output_path(job.review_file, phase)
     scan = _scan(phase)
@@ -308,11 +318,13 @@ def run_phase(
     )
 
     if not _has_output(output):
-        log.warn(
-            f"{label} produced no output ({_render_reason(diagnosis)}) "
-            f"— {scan.without}"
-        )
-        return PhaseResult.of(runner.session_log, output=output)
+        # A `None` here is the artifact vanishing after the retry driver had
+        # already confirmed it. The phase still failed, so it is named as the
+        # missing output it is: a result carrying no diagnosis is how a caller
+        # tells a phase that fell short from one that was never asked to run.
+        diagnosis = diagnosis or Diagnosis(DiagnosisKind.OUTPUT_MISSING)
+        log.warn(f"{label} produced no output ({diagnosis.message}) — {scan.without}")
+        return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
 
     content = scan.read(Path(output).read_text())
     return PhaseResult.of(runner.session_log, content, output)

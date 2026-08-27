@@ -194,6 +194,10 @@ class TestReviewTitle:
         meta = ReviewMeta(repo="acme/widget", pr_number=42)
         assert review_title(meta) == "# Review: acme/widget#42"
 
+    def test_a_sidecar_numbering_no_pr_is_named_by_its_repository(self):
+        """`#None` is a number the review does not have."""
+        assert review_title(ReviewMeta(repo="acme/widget")) == "# Review: acme/widget"
+
     def test_a_self_review_is_named_by_the_branch_it_covers(self):
         meta = ReviewMeta(repo="acme/widget", head_ref="feat/caching", mode=Mode.SELF)
         assert review_title(meta) == "# Self-Review: acme/widget — feat/caching"
@@ -278,6 +282,12 @@ class TestDocumentParse:
         document = ReviewDocument.parse(text)
         assert "sid: a1b2c3" in document.body
         assert document.header == ReviewHeader(head_sha="abc")
+
+    def test_a_titled_document_stating_no_metadata_keeps_its_title(self):
+        document = ReviewDocument.parse("# Review: acme/widget#42\n\n## Summary\n")
+        assert document.title == "# Review: acme/widget#42"
+        assert document.header == ReviewHeader()
+        assert document.body == "## Summary\n"
 
     def test_a_bare_body_parses_to_a_document_with_no_frame(self):
         document = ReviewDocument.parse("## Summary\nnothing here\n")

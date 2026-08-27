@@ -2006,23 +2006,22 @@ class TestDocument:
             **kwargs,
         )
 
-    def test_the_header_states_what_this_run_is(self, ro, tmp_path):
+    def test_a_full_review_is_framed_by_what_the_sidecar_records(self, ro, tmp_path):
         from datetime import date
-        document = ro._document(self._job(ro, tmp_path), "## Summary\n")
-        assert document.header.date == date.today().isoformat()
-        assert document.header.head_sha == "abc123"
-        assert document.header.generator_version == "1.0.0"
-
-    def test_the_title_names_the_pr_the_sidecar_records(self, ro, tmp_path):
-        document = ro._document(self._job(ro, tmp_path), "## Summary\n")
-        assert document.title == "# Review: org/repo#42 — test"
-
-    def test_the_body_is_carried_through_verbatim(self, ro, tmp_path):
-        document = ro._document(self._job(ro, tmp_path), "## Summary\nbody\n")
-        assert document.body == "## Summary\nbody\n"
-        assert document.render().endswith("\n## Summary\nbody\n")
+        rendered = ro._document(self._job(ro, tmp_path), "## Summary\nbody\n").render()
+        assert rendered == (
+            "# Review: org/repo#42 — test\n"
+            f"<!-- date: {date.today().isoformat()} -->\n"
+            "<!-- head_sha: abc123 -->\n"
+            "<!-- review_type: full -->\n"
+            "<!-- generator: 1.0.0 -->\n"
+            "\n"
+            "## Summary\nbody\n"
+        )
 
     def test_a_full_review_reports_no_group_ratio(self, ro, tmp_path):
+        """Skipped groups are a claim about an incremental run: the pipeline
+        passes the count on every path, and a full review states none."""
         document = ro._document(
             self._job(ro, tmp_path), "## Summary\n",
             skipped_groups=1, total_groups=4,

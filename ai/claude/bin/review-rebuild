@@ -105,10 +105,10 @@ def main():
             ),
         )
 
-        document.write(review_file)
+        final = document.render()
+        review_file.write_text(final)
         log.info(f"Rebuilt {review_file}")
 
-        final = document.render()
         finding_lines = [line for line in final.splitlines() if line.startswith("- [")]
         trail.info("post_process", f"processed {len(finding_lines)} findings",
                    data={"finding_count": len(finding_lines), "review_file": str(review_file)})

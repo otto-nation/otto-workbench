@@ -197,10 +197,15 @@ def review_title(meta: ReviewMeta) -> str:
     the pipeline, the mechanical fallback and `review-rebuild` cannot name the
     same review three ways. A self-review has no PR to number and is titled by
     the branch it covers instead.
+
+    A sidecar that numbers no PR is named by its repository alone — `#None` is
+    a number the review does not have, and stating it is worse than saying
+    nothing.
     """
     if meta.mode == Mode.SELF:
         return f"# Self-Review: {meta.repo} — {meta.head_ref or 'unknown'}"
-    title = f"# Review: {meta.repo}#{meta.pr_number}"
+    number = f"#{meta.pr_number}" if meta.pr_number is not None else ""
+    title = f"# Review: {meta.repo}{number}"
     return f"{title} — {meta.title}" if meta.title else title
 
 

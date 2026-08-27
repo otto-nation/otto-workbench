@@ -1794,6 +1794,45 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         assert "no commit to attribute" not in capsys.readouterr().err
 
 
+class TestSummaryHasContent:
+    """The one owner of "does this round have anything for a table to say".
+
+    Tested directly rather than only through its two callers: the whole point
+    of the helper is that both read the same answer, and a contract pinned only
+    through one of them is one the other can still be changed out from under.
+    """
+
+    def _content(self, rt, **kw):
+        args = {
+            "fixed": [], "needs_human": [], "deferred": [], "dismissed": [],
+            "already_addressed": [], "issue_comments": [],
+            "review_body_comments": [],
+        }
+        args.update(kw)
+        return rt._summary_has_content(**args)
+
+    def test_an_empty_round_has_nothing_to_say(self, rt):
+        assert self._content(rt) is False
+
+    @pytest.mark.parametrize(
+        "bucket", ["fixed", "needs_human", "deferred", "dismissed", "already_addressed"],
+    )
+    def test_any_settled_thread_is_a_row(self, rt, bucket):
+        assert self._content(rt, **{bucket: ["t1"]}) is True
+
+    @pytest.mark.parametrize("kind", ["issue_comments", "review_body_comments"])
+    def test_an_unseen_comment_is_a_row_with_no_thread_behind_it(self, rt, kind):
+        assert self._content(rt, **{kind: [{"seen": False}]}) is True
+
+    @pytest.mark.parametrize("kind", ["issue_comments", "review_body_comments"])
+    def test_a_comment_the_round_saw_is_not(self, rt, kind):
+        assert self._content(rt, **{kind: [{"seen": True}]}) is False
+
+    def test_a_comment_with_no_seen_key_reads_as_unseen(self, rt):
+        """External data, so the read is a `.get` and its default is the answer."""
+        assert self._content(rt, issue_comments=[{}]) is True
+
+
 class TestSummaryStillOwed:
     """Whether the round has a fix summary the PR has not been told about."""
 
@@ -5148,6 +5187,46 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
             result = self._run(rt, tmp_path)
         assert result.summary_url == "https://u"
         assert result.summary_deferred is False
+
+
+class TestARoundWhoseOnlyContentIsAnUnreadComment:
+    """No thread settled either way, and still a table to publish.
+
+    An unseen issue or review-body comment is a row the summary renders, so a
+    round that settled no thread at all can still owe one. The gate on whether
+    to attempt the post named the four thread buckets instead of asking
+    `_summary_has_content`, so this round was recorded as owing a summary it
+    never tried to publish — recoverable on the next `--finish`, a cycle late.
+    """
+
+    def _run(self, rt, tmp_path):
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            issue_comments=[{"id": "c1", "author": "kgn", "body": "one thought",
+                             "seen": False}],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt, "_persist_fix_state"), \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))):
+            return rt._run_comment_fix(TriageResult(), report, tmp_path, ctx)
+
+    def test_the_round_publishes_its_table(self, rt, tmp_path, publishing_on):
+        with patch("pr_comments.post_issue_comment", return_value="https://u"):
+            result = self._run(rt, tmp_path)
+        assert result.summary_url == "https://u"
+        assert result.summary_deferred is False
+
+    def test_a_draft_still_owes_it(self, rt, tmp_path):
+        result = self._run(rt, tmp_path)
+        assert result.summary_url is None
+        assert result.summary_deferred is True
 
 
 class TestAlreadyAddressedInSummary:

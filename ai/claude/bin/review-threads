@@ -4612,6 +4612,11 @@ def _run_comment_fix(
         # renders a table for what triage settled, and a rule of its own here
         # is how an `already_addressed`-only round came to print one and record
         # that it owed nothing.
+        #
+        # Whether to try posting reads the same owner below, so the two answers
+        # cannot disagree. Naming the buckets there instead left the round that
+        # has only an unread issue comment owing a summary it never attempted —
+        # recoverable on the next `--finish`, but a cycle late.
         early_deferred = _summary_still_owed(
             [], all_needs_human, [], all_dismissed,
             no_commit.status, has_unaccounted,
@@ -4622,7 +4627,12 @@ def _run_comment_fix(
         if has_unaccounted:
             log.info("Deferred fix summary — unresolved threads not yet addressed")
             summary_url = None
-        elif all_dismissed or all_needs_human or all_addressed:
+        elif _summary_has_content(
+            fixed=[], needs_human=all_needs_human, deferred=[],
+            dismissed=all_dismissed, already_addressed=all_addressed,
+            issue_comments=report.issue_comments,
+            review_body_comments=report.review_body_comments,
+        ):
             summary_url = _post_or_defer_summary(
                 [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
                 threads_by_id, dismissed=all_dismissed,

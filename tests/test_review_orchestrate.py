@@ -4643,7 +4643,9 @@ class TestInjectFailuresAndStatus:
             "group_names": ["ui", "api"],
             "groups_done": [1],
             "groups_failed": groups_failed or {},
-            "done": ["synthesis"],
+            # Through the gate, so status turns on what failed rather than on a
+            # run these tests never meant to leave unfinished.
+            "done": ["synthesis", "disprove"],
             "failed": {"synthesis": failure_reason} if failure_reason else {},
             "review_type": "full",
             "prior_sha": "",
@@ -4699,7 +4701,7 @@ class TestInjectFailuresAndStatus:
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
-            done={Phase.SYNTHESIS},
+            done={Phase.SYNTHESIS, Phase.DISPROVE},
         )
         _inject_failures_and_status(str(review_file), state)
 

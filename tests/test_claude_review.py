@@ -521,9 +521,23 @@ def test_read_pipeline_status_synthesis_ok(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "done": ["synthesis"], "failed": {},
+        "done": ["synthesis", "disprove"], "failed": {},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
+
+
+def test_read_pipeline_status_stops_short_of_the_gate(cr, tmp_path):
+    """A run killed in the disprove gate records no failure, only an absence.
+
+    Reading it as completed is what sent `--recover` away from the one phase
+    the run had left: the gate is the last one, so nothing else reports it.
+    """
+    pipeline = tmp_path / "pipeline.json"
+    pipeline.write_text(json.dumps({
+        "head_sha": "abc", "group_names": ["g1"],
+        "done": ["synthesis"], "failed": {},
+    }))
+    assert read_pipeline_status(tmp_path) == ReviewStatus.PARTIAL.value
 
 
 def test_read_pipeline_status_synthesis_failed(cr, tmp_path):
@@ -607,7 +621,7 @@ def test_read_pipeline_status_complete_no_failures(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "done": ["synthesis"], "failed": {},
+        "done": ["synthesis", "disprove"], "failed": {},
         "groups_done": [1, 2], "groups_failed": {},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
@@ -1853,12 +1867,27 @@ def test_resolve_recover_sha_without_pipeline_state(cr, tmp_path):
 
 def test_resolve_recover_sha_completed_review(cr, tmp_path):
     (tmp_path / "pipeline.json").write_text(json.dumps({
-        "head_sha": "abc1234", "group_names": ["g1"], "done": ["synthesis"],
+        "head_sha": "abc1234", "group_names": ["g1"],
+        "done": ["synthesis", "disprove"],
         "failed": {}, "groups_done": [1], "groups_failed": {},
     }))
     with pytest.raises(SystemExit) as exc:
         cr._resolve_recover_sha(tmp_path, "abc1234")
     assert exc.value.code == 0
+
+
+def test_resolve_recover_sha_recovers_a_run_killed_in_the_gate(cr, tmp_path):
+    """The entry point `--recover` goes through, ahead of the pipeline itself.
+
+    `_resolve_recover_sha` exits before `_resolve_recovery` is ever reached, so
+    the two have to agree on what finished means or the resume is unreachable.
+    """
+    (tmp_path / "pipeline.json").write_text(json.dumps({
+        "head_sha": "abc1234", "group_names": ["g1"], "done": ["synthesis"],
+        "failed": {}, "groups_done": [1], "groups_failed": {},
+    }))
+
+    assert cr._resolve_recover_sha(tmp_path, "abc1234") == "abc1234"
 
 
 # ── _pin_recover_worktree ─────────────────────────────────────────────────────
@@ -2193,7 +2222,7 @@ def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc123", "group_names": ["g1"],
-        "done": ["synthesis"], "failed": {},
+        "done": ["synthesis", "disprove"], "failed": {},
         "groups_done": [1], "groups_failed": {},
     }))
 

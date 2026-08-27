@@ -119,9 +119,21 @@ class PipelineState:
         return bool(self.groups_failed) and len(self.groups_failed) >= self.group_count > 0
 
     @property
+    def finished(self) -> bool:
+        """Whether the run reached the end of the pipeline.
+
+        The disprove gate is the last phase and records itself on every path it
+        can conclude, so an absent entry is a run that stopped before the end.
+        That is the only thing separating a finished review from one whose
+        process was killed inside the gate: the kill records no failure either,
+        and asking synthesis instead answers about the phase before the last.
+        """
+        return Phase.DISPROVE in self.done
+
+    @property
     def status(self) -> ReviewStatus:
         """The verdict this state implies for the review it describes."""
-        if not self.groups_failed and not self.failed:
+        if not self.groups_failed and not self.failed and self.finished:
             return ReviewStatus.COMPLETED
         if self.all_groups_failed:
             return ReviewStatus.ERROR
@@ -314,7 +326,10 @@ def _replace_failures_section(content: str, failures: str) -> str:
             return content
         return content.replace("## Summary", f"{failures}\n## Summary", 1)
     end = content.find("\n## ", start + len(_FAILURES_HEADING))
-    return content[:start] + failures + (content[end + 1:] if end >= 0 else "")
+    tail = content[end + 1:] if end >= 0 else ""
+    # The section ends with a newline of its own and the heading below it wants
+    # a blank line, which is the `\n` the insert branch spells out too.
+    return content[:start] + (f"{failures}\n" if failures else "") + tail
 
 
 def _inject_failures_and_status(review_file: str, state: "PipelineState") -> None:
@@ -382,12 +397,11 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
     is_complete = Phase.SYNTHESIS in state.done
 
     if is_complete and not has_failed_groups and not has_failed_phases:
-        # A run ends at the disprove gate, not at synthesis. The gate records
-        # itself done on every path that reaches a conclusion, so an entry it
-        # never wrote means the process died inside it — which a state file
-        # reporting synthesis finished and nothing failed otherwise hides, and
-        # `--recover` then declines the one phase it had left to run.
-        if Phase.DISPROVE in state.done:
+        # A run ends at the disprove gate, not at synthesis, and `state.finished`
+        # is the one that asks the last phase. A state file reporting synthesis
+        # done with nothing failed otherwise hides a process killed inside the
+        # gate, and `--recover` declines the one phase it had left to run.
+        if state.finished:
             log.info("Prior review completed successfully — nothing to recover")
             return RecoveryPlan(already_complete=True)
         log.info("Prior review stopped in the disprove gate — resuming there")

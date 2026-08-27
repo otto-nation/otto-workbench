@@ -495,6 +495,31 @@ JSON
   grep -q -- "--force-delete" "$WT_REMOVE_LOG"
 }
 
+@test "a dry run records the deletion it would have made" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/would-go","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup --dry-run
+  [ "$status" -eq 0 ]
+  [ ! -f "$WT_REMOVE_LOG" ]
+  local log_file="$TMPDIR/logs/wt-cleanup.log"
+  grep -q "DRY-REMOVE branch=feat/would-go" "$log_file"
+  grep -q "delete_branch=true" "$log_file"
+}
+
+@test "a dry run of an age removal records the branch it would keep" {
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[{"branch":"feat/would-stay","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑3","commit":{"timestamp":$old_timestamp}}]
+JSON
+  _run_cleanup --dry-run --age 30
+  [ "$status" -eq 0 ]
+  local log_file="$TMPDIR/logs/wt-cleanup.log"
+  grep -q "DRY-REMOVE branch=feat/would-stay" "$log_file"
+  grep -q "delete_branch=false" "$log_file"
+}
+
 @test "the worktree force flag is still passed alongside" {
   _write_worktrees <<'JSON'
 [{"branch":"feat/both","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]

@@ -588,6 +588,22 @@ make_bare_worktree_layout() {
   [ "$output" = "$TMPDIR/plain" ]
 }
 
+@test "record_project_repo_ids clears a stale id it cannot re-resolve" {
+  # The id's directory is gone, so it has to be re-resolved — but the path left
+  # behind is one git cannot answer for either (no re-init here, so it is not a
+  # work tree). The stale id must not survive untouched: project_repo_leaders
+  # trusts any non-empty id field with no directory check of its own, so a
+  # leftover id would keep standing in for a repo that no longer resolves to it.
+  mkdir -p "$WORKBENCH_STATE_DIR" "$TMPDIR/plain"
+  printf '%s\t%s\n' "$TMPDIR/plain" "$TMPDIR/vanished/.git" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run record_project_repo_ids
+  [ "$status" -eq 0 ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/plain" ]
+}
+
 @test "project_repo_leaders names one worktree per repo" {
   mkdir -p "$WORKBENCH_STATE_DIR"
   make_bare_worktree_layout "$TMPDIR/container"

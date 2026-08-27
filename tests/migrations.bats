@@ -540,9 +540,10 @@ register_fake_project() {
   printf '%s\n' "$1" >> "$FAKE_STATE/projects.registry"
 }
 
-# Helper: assert the state file holds KEY's entry for a repo. The separator the
-# framework writes lives here rather than in every assertion that reads one back.
-assert_project_entry() {
+# Helper: assert the state file holds KEY's checkout-scoped entry for a work
+# tree. The separator the framework writes lives here rather than in every
+# assertion that reads one back.
+assert_checkout_entry() {
   local key="$1" repo="$2"
   grep -qxF "$key"$'\t'"$repo" "$FAKE_STATE/migrations.applied"
 }
@@ -562,8 +563,8 @@ assert_project_entry() {
 
   # One line per repo, and no bare key: a bare key is the machine claiming to be
   # done, which is the whole thing a checkout-scoped migration cannot say.
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
   run ! grep -qxF "mycomp/20250101-proj.sh" "$FAKE_STATE/migrations.applied"
 }
 
@@ -584,7 +585,7 @@ assert_project_entry() {
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" == *"Migration applied: 20250101-proj.sh (1 project)"* ]]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
 }
 
 @test "a repo that registers after the first sync is visited on the next" {
@@ -620,7 +621,7 @@ assert_project_entry() {
   [[ "$output" != *"Pruned stale migration state"* ]]
 
   [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
 }
 
 @test "entries naming a repo that left the registry are dropped" {
@@ -639,7 +640,7 @@ assert_project_entry() {
   [[ "$output" != *"no longer registered"* ]]
   [[ "$output" != *"Forgot"* ]]
 
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 }
 
@@ -707,7 +708,7 @@ EOF
   [[ "$output" == *"Migration failed: 20250101-proj.sh in $TMPDIR/repo-b"* ]]
   [[ "$output" == *"SYNC CONTINUED"* ]]
 
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 
   rm "$TMPDIR/repo-b/fail"
@@ -844,9 +845,9 @@ EOF
   # All three were visited, and all three are recorded — the two that found
   # nothing to do are as done as the one that did the work.
   [ "$(wc -l < "$TMPDIR/exec.log")" -eq 3 ]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-c"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-c"
 }
 
 @test "a sync whose only new repo has nothing to do says nothing" {
@@ -862,7 +863,7 @@ EOF
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" != *"Migration applied"* ]]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
 }
 
 @test "a repo that fails is still a failure alongside one that no-ops" {
@@ -888,7 +889,7 @@ EOF
   [[ "$output" == *"Migration failed: 20250101-proj.sh in $TMPDIR/repo-b"* ]]
   [[ "$output" != *"Migration applied"* ]]
 
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 }
 
@@ -925,8 +926,8 @@ EOF
 
   # Recorded: the one that worked and the one that had nothing to do. Not the
   # one that failed — that repo alone is retried next sync.
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-work"
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-noop"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-work"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-noop"
   run ! grep -qF "repo-fail" "$FAKE_STATE/migrations.applied"
 }
 
@@ -1039,7 +1040,7 @@ EOF
 
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-ready"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-ready"
   run ! grep -qF "repo-later" "$FAKE_STATE/migrations.applied"
 }
 

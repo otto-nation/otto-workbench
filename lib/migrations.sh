@@ -362,6 +362,8 @@ run_component_migrations() {
   local component_rel="${dir#"$WORKBENCH_DIR/"}"
 
   local migration basename_m base_key fn_name applied=0 skipped=0
+  # shellcheck disable=SC2034  # target_keys is written through the nameref in
+  # _migration_targets and read through the nameref in _run_migration_targets
   local -a target_args=() target_keys=()
   for migration in "$migrations_dir"/*.sh; do
     [[ -f "$migration" ]] || continue
@@ -431,6 +433,7 @@ _migration_carries_marker() {
 # A checkout-scoped migration's state lines extend its key with a separator and a
 # repo path, so every comparison against these keys splits the line first —
 # _split_migration_state_line is what does that.
+# shellcheck disable=SC2178  # __keys is a nameref to an array — shellcheck misreads it
 _discover_migration_keys() {
   local -n __keys="$1"
   local marker_re="${2:-}"
@@ -535,6 +538,9 @@ _prune_stale_migration_state() {
   local state_file="$MIGRATIONS_STATE_FILE"
   [[ -f "$state_file" ]] || return 0
 
+  # shellcheck disable=SC2034  # checkout_keys and repo_keys are written through
+  # the nameref in _discover_migration_keys and read through the nameref in
+  # _migration_entry_unclaimed
   local -a discovered_keys=() checkout_keys=() repo_keys=()
   _discover_migration_keys discovered_keys
   _discover_migration_keys checkout_keys "$_CHECKOUT_SCOPED_MARKER"
@@ -549,10 +555,14 @@ _prune_stale_migration_state() {
   local -A registered=() registered_repos=()
   local repo leader repo_id work_tree
   while IFS= read -r repo; do
+    # shellcheck disable=SC2034  # registered is read through the nameref in
+    # _migration_entry_unclaimed
     registered["$repo"]=1
   done < <(project_registered)
   while IFS= read -r leader; do
     _split_project_line "$leader" repo_id work_tree
+    # shellcheck disable=SC2034  # registered_repos is read through the nameref
+    # in _migration_entry_unclaimed
     registered_repos["$repo_id"]=1
   done < <(project_repo_leaders)
 

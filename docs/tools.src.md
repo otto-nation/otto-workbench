@@ -619,7 +619,7 @@ from wherever it was launched.
 
 ### `serena-mcp`
 
-Scaffolds Serena MCP into a project's `.mcp.json` for scoped code intelligence.
+Scaffolds Serena MCP into a project's `.mcp.json` for project-scoped code intelligence.
 
 ```
 serena-mcp <command>

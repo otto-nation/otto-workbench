@@ -620,7 +620,7 @@ and `tests/projects.bats` cross-validates the halves against one file.
 | `project_forget DIR` | drop DIR's entry. Returns 1 when it had none. |
 | `project_prune` | drop entries whose directory is gone, and repeats. Prints how many went. |
 | `project_repo_id DIR` | the identity DIR's repository keeps across its worktrees. |
-| `project_repo_leaders` | one registered work tree per repo, with its repo id. |
+| `project_repo_leaders` | one registered work tree per repo, with its repo id. Prints `<repo id><TAB><work-tree path>` — the reverse of a registry line, which is `<path><TAB><id>` — in registry order, the first surviving work tree of each repo winning. The path is what a caller working per repo runs against, and the id is what it records the result under. |
 | `record_project_repo_ids` | give every registry line the repo identity it lacks. |
 | `seed_project_registry` | backfill the repos that predate the registry, once. |
 

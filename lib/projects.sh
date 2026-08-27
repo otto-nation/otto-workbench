@@ -405,10 +405,10 @@ project_repo_id() {
 }
 
 # project_repo_leaders — one registered work tree per repo, with its repo id.
-#
-# Prints `<repo id><TAB><work-tree path>`, in registry order, the first
-# surviving work tree of each repo winning. The path is what a caller working
-# per repo runs against, and the id is what it records the result under.
+# Prints `<repo id><TAB><work-tree path>` — the reverse of a registry line,
+# which is `<path><TAB><id>` — in registry order, the first surviving work
+# tree of each repo winning. The path is what a caller working per repo runs
+# against, and the id is what it records the result under.
 #
 # The leader is not stable and does not need to be: a repo-scoped migration's
 # state line names the id, so the leader changing between syncs — because the
@@ -451,7 +451,7 @@ project_repo_leaders() {
 # that do not run commands of their own.
 record_project_repo_ids() {
   [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 0
-  local line path id shared added=0
+  local line path id shared changed=0
   local -a kept=()
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ -z "$line" ]]; then
@@ -463,16 +463,21 @@ record_project_repo_ids() {
     fi
     _split_project_line "$line" path id
     if [[ -n "$id" && ! -d "$id" ]]; then
+      # Clear it from the line too, not just the local: if re-resolution below
+      # fails, the line written back must not still carry the id that just
+      # proved stale.
       id=""
+      line="$path"
+      changed=$(( changed + 1 ))
     fi
     if [[ -z "$id" && -d "$path" ]] && shared="$(git_shared_dir "$path")"; then
       line="$path$_PROJECT_FIELD_SEP$shared"
-      added=$(( added + 1 ))
+      changed=$(( changed + 1 ))
     fi
     kept+=("$line")
   done < "$PROJECTS_REGISTRY_FILE"
 
-  if (( added > 0 )); then
+  if (( changed > 0 )); then
     _project_rewrite "${kept[@]}"
   fi
   return 0

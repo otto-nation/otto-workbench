@@ -5410,13 +5410,18 @@ class TestActionCellOutcome:
         re-classification — the row is the hand-held path's business, not this."""
         assert rt._action_outcome(cell) is None
 
-    def test_the_generated_openings_are_the_table_read_flat(self, rt):
-        """One vocabulary, not two: a wording reachable by `_is_generated_action`
-        and not by `_action_outcome` would read as hand-written on one path and
-        as an outcome on the other."""
-        assert set(rt._GENERATED_ACTION_PREFIXES) == {
-            prefix for prefixes in rt._ACTION_BUCKETS.values() for prefix in prefixes
-        }
+    def test_no_opening_opens_another_under_a_different_outcome(self, rt):
+        """What lets `_action_outcome` scan `_ACTION_OUTCOMES` in any order. Add
+        an opening that another one opens and the cell reports whichever the
+        scan reached first, so the row is restated every round or frozen holding
+        the outcome it left — with no wording anywhere to show which."""
+        overlaps = [
+            f"{opening!r} ({outcome}) opens {longer!r} ({other})"
+            for opening, outcome in rt._ACTION_OUTCOMES.items()
+            for longer, other in rt._ACTION_OUTCOMES.items()
+            if longer != opening and longer.startswith(opening) and other is not outcome
+        ]
+        assert overlaps == []
 
     def test_a_row_with_no_action_cell_is_re_rendered(self, rt):
         """A shape this renderer no longer produces is repaired, not frozen."""

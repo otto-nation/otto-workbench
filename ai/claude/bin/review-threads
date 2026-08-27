@@ -2678,10 +2678,15 @@ class HumanReason(Enum):
 # by hand, and to tell a round that changed a row's outcome from one that only
 # re-worded it.
 #
-# Grouping by outcome is what makes the second reading possible. One outcome is
+# Naming the outcome is what makes the second reading possible. One outcome is
 # written several ways — a fix reported with a commit one round and without one
 # the next, see `_fixed_status_for` — so a cell compared against a cell reports
 # a change that did not happen, and restates the row for the life of the PR.
+#
+# No opening may open another under a different outcome, which is what lets
+# `_action_outcome` scan in any order; the mapping cannot express the rule, so a
+# test asserts it. Its absence would be silent — the row is restated every
+# round, or left behind holding a stale outcome, with no wording to show which.
 #
 # Kept in step with the four places a status cell is built — `_fixed_status_for`
 # and `_fixed_status_text` (every "Fix…" opening), the literal cells in
@@ -2692,37 +2697,21 @@ class HumanReason(Enum):
 # Retired wordings stay in the table. A summary comment outlives the code that
 # wrote it, so an opening no builder produces any more still opens rows on live
 # PRs, and dropping it here freezes every one of them.
-_ACTION_BUCKETS: dict[FixOutcome, tuple[str, ...]] = {
-    FixOutcome.FIXED: (
-        "Fixed in ",
-        "Fix applied",
-        "Fix committed locally",
-        "Fix committed and pushed",
-        "Fix pending",
-        "Added to the PR description (no commit)",
-        _RECONCILED_STATUS_TEXT,
-    ),
-    FixOutcome.DEFERRED: ("Deferred",),
-    FixOutcome.ALREADY_ADDRESSED: ("Already addressed",),
-    FixOutcome.DISMISSED: ("Dismissed (invalid)",),
-    FixOutcome.NEEDS_HUMAN: tuple(reason.prose for reason in HumanReason),
+_ACTION_OUTCOMES: Mapping[str, FixOutcome] = {
+    "Fixed in ": FixOutcome.FIXED,
+    "Fix applied": FixOutcome.FIXED,
+    "Fix committed locally": FixOutcome.FIXED,
+    "Fix committed and pushed": FixOutcome.FIXED,
+    "Fix pending": FixOutcome.FIXED,
+    "Added to the PR description (no commit)": FixOutcome.FIXED,
+    _RECONCILED_STATUS_TEXT: FixOutcome.FIXED,
+    "Deferred": FixOutcome.DEFERRED,
+    "Already addressed": FixOutcome.ALREADY_ADDRESSED,
+    "Dismissed (invalid)": FixOutcome.DISMISSED,
+    **{reason.prose: FixOutcome.NEEDS_HUMAN for reason in HumanReason},
 }
 
-# Longest opening first, so an opening that is a prefix of another cannot claim
-# its cells. Nothing in the table stops one being added, and the wrong bucket is
-# silent: the row is restated every round, or left behind holding a stale
-# outcome, with no wording anywhere to show which.
-_ACTION_OUTCOMES_BY_PREFIX = tuple(sorted(
-    (
-        (prefix, outcome)
-        for outcome, prefixes in _ACTION_BUCKETS.items() for prefix in prefixes
-    ),
-    key=lambda pair: len(pair[0]), reverse=True,
-))
-
-_GENERATED_ACTION_PREFIXES = tuple(
-    prefix for prefix, _ in _ACTION_OUTCOMES_BY_PREFIX
-)
+_GENERATED_ACTION_PREFIXES = tuple(_ACTION_OUTCOMES)
 
 
 def _action_outcome(cell: str) -> FixOutcome | None:
@@ -2738,7 +2727,7 @@ def _action_outcome(cell: str) -> FixOutcome | None:
     Both are rows `_hand_written_rows` owns, and reading either as an outcome
     would let every round's own render differ from it and restate the row.
     """
-    for prefix, outcome in _ACTION_OUTCOMES_BY_PREFIX:
+    for prefix, outcome in _ACTION_OUTCOMES.items():
         if cell.startswith(prefix):
             return outcome
     return None
@@ -3112,37 +3101,19 @@ def _build_summary_body(
         parts.extend(rows)
         parts.append("")
 
-    if held_count:
-        parts.append(
-            f"> {held_count} row{review_common.plural(held_count)} kept as published "
-            "— the Action cell was written by hand, so this round did not re-render it."
-        )
-        parts.append("")
-
-    if carried_count:
-        parts.append(
-            f"> {carried_count} row{review_common.plural(carried_count)} carried over "
-            "from an earlier round that this checkout's state file does not cover."
-        )
-        parts.append("")
-
-    open_count = len(open_elsewhere)
-    if open_count:
-        parts.append(
-            f"> {open_count} thread{review_common.plural(open_count)} still open "
-            "and awaiting an answer — raised in an earlier round and quiet since, "
-            "left as published there rather than restated here."
-        )
-        parts.append("")
-
-    settled_count = len(settled_elsewhere)
-    if settled_count:
-        parts.append(
-            f"> {settled_count} thread{review_common.plural(settled_count)} settled in "
-            "an earlier round and quiet since — left as published there rather than "
-            "restated here."
-        )
-        parts.append("")
+    parts.extend(_table_note(
+        held_count, "row", "kept as published — the Action cell was written by "
+        "hand, so this round did not re-render it."))
+    parts.extend(_table_note(
+        carried_count, "row", "carried over from an earlier round that this "
+        "checkout's state file does not cover."))
+    parts.extend(_table_note(
+        len(open_elsewhere), "thread", "still open and awaiting an answer — raised "
+        "in an earlier round and quiet since, left as published there rather than "
+        "restated here."))
+    parts.extend(_table_note(
+        len(settled_elsewhere), "thread", "settled in an earlier round and quiet "
+        "since — left as published there rather than restated here."))
 
     if not has_comment_items:
         parts.extend(_render_raw_comment_sections(review_body_comments, issue_comments))
@@ -3150,6 +3121,18 @@ def _build_summary_body(
     parts.extend(_render_round_chain(chain))
 
     return "\n".join(parts)
+
+
+def _table_note(count: int, noun: str, rest: str) -> list[str]:
+    """A blockquote under the table for `count` rows, or nothing when it is zero.
+
+    Every note the table carries reports rows the render left out of it, so they
+    are one shape: a count, what was counted, and what became of them. The
+    trailing blank keeps the notes separate paragraphs when several appear.
+    """
+    if not count:
+        return []
+    return [f"> {count} {noun}{review_common.plural(count)} {rest}", ""]
 
 
 def _render_round_chain(chain: list[SummaryRound]) -> list[str]:

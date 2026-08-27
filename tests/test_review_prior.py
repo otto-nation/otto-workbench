@@ -20,7 +20,8 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import review_prior
-from review_common import FILENAME_PRIOR_FINDINGS, SECTION_PRIOR_FINDINGS
+from review_common import SECTION_PRIOR_FINDINGS
+from review_paths import FILENAME_PRIOR_FINDINGS
 from review_findings import compute_stable_id
 from review_prior import DispositionSource, UndecidedReason
 from review_types import PriorDisposition

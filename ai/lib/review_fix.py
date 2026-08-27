@@ -47,7 +47,7 @@ import log
 import proc
 from agent_types import Phase
 from pr_fix import FixOutcome, ItemOutcome
-from review_common import phase_log_path
+from review_paths import phase_log_path
 from review_document import FINDING_ID_RE, ReviewDocument
 from review_findings import match_skip
 from review_retry import _has_output

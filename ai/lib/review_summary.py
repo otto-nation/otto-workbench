@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from agent_types import Mode
-from review_common import (
+from review_paths import (
     aggregate_session_usage,
     read_review_meta,
 )

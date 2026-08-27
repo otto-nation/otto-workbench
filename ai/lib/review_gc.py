@@ -7,7 +7,7 @@ of reviews whose PR has been merged or closed.
 
 They differ only in what makes a file collectable — the run being over, age, or
 the PR being gone — and all of them read what a review directory holds from
-`review_common.phase_artifacts` rather than naming files themselves.
+`review_paths.phase_artifacts` rather than naming files themselves.
 
 `pr gc` collects loose files at the reviews root once they are a week old, prunes
 review directories and run-target directories for merged and closed PRs (skipping
@@ -43,7 +43,7 @@ import run_lock
 import workbench_paths
 from pr_domains import ReviewStatus
 from pr_state import PRClosure, PRCloseState
-from review_common import (
+from review_paths import (
     FILENAME_PIPELINE_STATE,
     FILENAME_PROMPT_STATS,
     REVIEW_EXT,

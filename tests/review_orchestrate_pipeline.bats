@@ -506,25 +506,25 @@ print(result)
   [ "$result" = "pipeline.json" ]
 }
 
-@test "_derive_path: produces folder-relative paths" {
+@test "review_artifact_path: produces folder-relative paths" {
   _py_here <<'PY'
-result = mod._derive_path("/reviews/maximum-1206/review.md", "group-1.md")
+result = mod.review_artifact_path("/reviews/maximum-1206/review.md", "group-1.md")
 assert result == "/reviews/maximum-1206/group-1.md", f"got {result}"
 PY
 }
 
-@test "_derive_path: works for all intermediate types" {
+@test "review_artifact_path: works for all intermediate types" {
   _py_here <<'PY'
 base = "/reviews/maximum-1206/review.md"
-assert mod._derive_path(base, "pipeline.json") == "/reviews/maximum-1206/pipeline.json"
-assert mod._derive_path(base, "holistic.md") == "/reviews/maximum-1206/holistic.md"
-assert mod._derive_path(base, "holistic.jsonl") == "/reviews/maximum-1206/holistic.jsonl"
-assert mod._derive_path(base, "group-3.md") == "/reviews/maximum-1206/group-3.md"
-assert mod._derive_path(base, "group-3.jsonl") == "/reviews/maximum-1206/group-3.jsonl"
-assert mod._derive_path(base, "synthesis.jsonl") == "/reviews/maximum-1206/synthesis.jsonl"
-assert mod._derive_path(base, "session.jsonl") == "/reviews/maximum-1206/session.jsonl"
-assert mod._derive_path(base, "meta.json") == "/reviews/maximum-1206/meta.json"
-assert mod._derive_path(base, "prior.md") == "/reviews/maximum-1206/prior.md"
+assert mod.review_artifact_path(base, "pipeline.json") == "/reviews/maximum-1206/pipeline.json"
+assert mod.review_artifact_path(base, "holistic.md") == "/reviews/maximum-1206/holistic.md"
+assert mod.review_artifact_path(base, "holistic.jsonl") == "/reviews/maximum-1206/holistic.jsonl"
+assert mod.review_artifact_path(base, "group-3.md") == "/reviews/maximum-1206/group-3.md"
+assert mod.review_artifact_path(base, "group-3.jsonl") == "/reviews/maximum-1206/group-3.jsonl"
+assert mod.review_artifact_path(base, "synthesis.jsonl") == "/reviews/maximum-1206/synthesis.jsonl"
+assert mod.review_artifact_path(base, "session.jsonl") == "/reviews/maximum-1206/session.jsonl"
+assert mod.review_artifact_path(base, "meta.json") == "/reviews/maximum-1206/meta.json"
+assert mod.review_artifact_path(base, "prior.md") == "/reviews/maximum-1206/prior.md"
 PY
 }
 

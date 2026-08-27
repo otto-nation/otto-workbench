@@ -28,13 +28,13 @@ from agent_registry import SCAN_PHASES
 from agent_types import Phase
 from pr_domains import ReviewStatus
 from review_agent import _parse_session_cost
-from review_common import (
-    FILENAME_PIPELINE_STATE,
-    _derive_path,
-    phase_log_path,
-    plural,
-)
+from review_common import plural
 from review_document import SECTION_SUMMARY, set_section, set_status
+from review_paths import (
+    FILENAME_PIPELINE_STATE,
+    phase_log_path,
+    review_artifact_path,
+)
 from review_types import Group, ReviewJob, ReviewType
 
 _state_lock = threading.Lock()
@@ -213,7 +213,7 @@ def build_failure_detail(review_dir: Path | None) -> str:
 
 
 def _pipeline_state_path(job: ReviewJob) -> str:
-    return _derive_path(job.review_file, FILENAME_PIPELINE_STATE)
+    return review_artifact_path(job.review_file, FILENAME_PIPELINE_STATE)
 
 
 def _write_pipeline_state(job: ReviewJob, state: PipelineState):

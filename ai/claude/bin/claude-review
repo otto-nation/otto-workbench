@@ -12,7 +12,6 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
@@ -37,14 +36,13 @@ except ImportError:
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
 from agent_types import Mode, Phase
-from review_common import (
-    FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
-    FILENAME_PRIOR, FILENAME_SESSION, REVIEW_EXT,
-    add_phase_skip_flags, aggregate_session_usage,
-    phase_skip_argv, phase_skips, read_review_meta,
-    review_file_path,
-)
+from review_common import add_phase_skip_flags, phase_skip_argv, phase_skips
 from review_document import ReviewDocument, open_counts, resolve_review_verdict
+from review_paths import (
+    FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION, FILENAME_PRIOR,
+    FILENAME_SESSION, REVIEW_EXT, aggregate_session_usage, archive_review,
+    archives_dir, read_review_meta, review_file_path,
+)
 from review_types import (
     SEVERITIES, ReviewMeta, ReviewType, review_meta_from_dict,
 )
@@ -64,12 +62,8 @@ BIN_DIR = Path(__file__).resolve().parent
 SCRIPT = Path(__file__).name
 LEGACY_REVIEWS_DIR = Path(os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude"))) / "reviews"
 
-ARCHIVE_KEEP_COUNT = 3
 DEFAULT_MAX_PARALLEL = 1
 GITHUB_BASE_URL = "https://github.com"
-
-ARCHIVE_TIMESTAMP_FMT = "%Y%m%d-%H%M%S"
-
 
 
 # ── Startup migrations ──────────────────────────────────────────────────────
@@ -116,7 +110,7 @@ def _migrate_one_flat_review(reviews: Path, flat_review: Path, dir_name: str) ->
         fname = intermediate.name.removeprefix(f"{dir_name}.")
         shutil.move(str(intermediate), str(review_dir / fname))
 
-    archive_dir = review_dir / "archives"
+    archive_dir = archives_dir(review_dir)
     archive_patterns = (f"{dir_name}.2*.md", f"{dir_name}.session.2*.jsonl", f"{dir_name}.post.2*.jsonl")
     archives = [f for p in archive_patterns for f in reviews.glob(p)]
     for archive in archives:
@@ -311,41 +305,6 @@ def _update_pr_state(
         log.error(f"claude-review: state update failed: {exc}")
 
 
-def _archive_review(review_file: Path, session_log: str) -> str:
-    review_dir = review_file.parent
-    archive_dir = review_dir / "archives"
-    prior_path = ""
-
-    if review_file.is_file():
-        prior_path = str(review_dir / FILENAME_PRIOR)
-        shutil.copy2(str(review_file), prior_path)
-
-        archive_dir.mkdir(exist_ok=True)
-        ts = datetime.now().strftime(ARCHIVE_TIMESTAMP_FMT)
-        shutil.move(str(review_file), str(archive_dir / f"{ts}{REVIEW_EXT}"))
-        log.info(f"Archived prior review to archives/{ts}{REVIEW_EXT}")
-
-    if os.path.isfile(session_log):
-        archive_dir.mkdir(exist_ok=True)
-        ts = datetime.now().strftime(ARCHIVE_TIMESTAMP_FMT)
-        shutil.move(session_log, str(archive_dir / f"{ts}.session.jsonl"))
-
-    post_log = str(review_dir / FILENAME_POST_SESSION)
-    if os.path.isfile(post_log):
-        archive_dir.mkdir(exist_ok=True)
-        ts = datetime.now().strftime(ARCHIVE_TIMESTAMP_FMT)
-        shutil.move(post_log, str(archive_dir / f"{ts}.post.jsonl"))
-
-    # Prune old archives
-    for suffix in (REVIEW_EXT, ".session.jsonl", ".post.jsonl"):
-        pattern = f"2*{suffix}"
-        archives = sorted(archive_dir.glob(pattern), reverse=True) if archive_dir.is_dir() else []
-        for old in archives[ARCHIVE_KEEP_COUNT:]:
-            old.unlink(missing_ok=True)
-
-    return prior_path
-
-
 def _resolve_prior_review(review_file: Path, session_log: str, resume: bool) -> str:
     review_dir = review_file.parent
     if resume:
@@ -353,7 +312,7 @@ def _resolve_prior_review(review_file: Path, session_log: str, resume: bool) -> 
         if prior.is_file():
             return str(prior)
         return ""
-    return _archive_review(review_file, session_log)
+    return archive_review(review_file, session_log)
 
 
 def _cleanup_prior_review(review_file: Path, prior_path: str) -> None:

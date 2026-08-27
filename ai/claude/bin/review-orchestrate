@@ -40,6 +40,7 @@ import review_agent as _ra  # noqa: E402
 import review_pipeline as _rpl  # noqa: E402
 import review_fix as _rfx  # noqa: E402
 import review_gc as _rgc  # noqa: E402
+import review_paths as _rpath  # noqa: E402
 import review_phases as _rph  # noqa: E402
 import review_retry as _rrt  # noqa: E402
 import review_state as _rst  # noqa: E402
@@ -53,10 +54,13 @@ import publishing  # noqa: E402
 from pr_context import detect_repo  # noqa: E402
 from agent_types import Effort, Mode  # noqa: E402
 from review_common import (  # noqa: E402
-    FILENAME_SESSION, PIPELINE_MULTI, PIPELINE_SINGLE, SECTION_STATIC_ANALYSIS,
-    _derive_path, add_phase_skip_flags, enum_arg, phase_skips, stamp_reviewed,
+    PIPELINE_MULTI, PIPELINE_SINGLE, SECTION_STATIC_ANALYSIS,
+    add_phase_skip_flags, enum_arg, phase_skips,
 )
 from review_document import SECTION_VERDICT, set_section  # noqa: E402
+from review_paths import (  # noqa: E402
+    FILENAME_SESSION, review_artifact_path, stamp_reviewed,
+)
 from review_preflight import (  # noqa: E402
     DEFAULT_MAX_PARALLEL, collect_preflight_data, fetch_reply_threads,
 )
@@ -77,8 +81,8 @@ import ai_backend  # noqa: E402
 SCRIPT = Path(__file__).name
 
 _SUBMODULES = (
-    _ad, _ai, _aph, _au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rgc, _rph, _rrt, _rst,
-    _rt,
+    _ad, _ai, _aph, _au, _rc, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rgc, _rpath, _rph,
+    _rrt, _rst, _rt,
 )
 
 # Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
@@ -345,7 +349,7 @@ def main():
 
     repo = args.repo or detect_repo(cwd=args.repo_dir)
 
-    session_log = args.session_log or _derive_path(args.review_file, FILENAME_SESSION)
+    session_log = args.session_log or review_artifact_path(args.review_file, FILENAME_SESSION)
 
     trail = Trail.start(
         script=SCRIPT,

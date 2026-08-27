@@ -42,7 +42,7 @@ from review_agent import (
     _parse_session_cost, build_add_dirs,
     diagnose_missing_output, try_recover_output,
 )
-from review_common import (
+from review_paths import (
     phase_log_path,
     phase_output_path,
 )

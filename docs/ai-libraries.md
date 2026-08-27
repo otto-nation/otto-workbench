@@ -268,7 +268,7 @@ of reviews whose PR has been merged or closed.
 
 They differ only in what makes a file collectable — the run being over, age, or
 the PR being gone — and all of them read what a review directory holds from
-`review_common.phase_artifacts` rather than naming files themselves.
+`review_paths.phase_artifacts` rather than naming files themselves.
 
 `pr gc` collects loose files at the reviews root once they are a week old, prunes
 review directories and run-target directories for merged and closed PRs (skipping
@@ -283,6 +283,44 @@ each cycle, alongside its sync and stale-worktree cleanup — so this sweep, and
 the terminal `pr_outcome` event it fires, no longer depends on someone typing
 `pr gc` by hand. The step is skipped on an install without the ai component,
 which is what puts `pr` on the path.
+
+### review_paths.py
+
+Where a review lives on disk, and what is allowed to be there.
+
+Each review owns a directory under `~/.local/state/workbench/reviews/` —
+`review.md` plus its session logs, group outputs, and pipeline state. The
+directory is derived from the review file's path, and it is the only place
+outside the worktree that review agents may write to. Granting the shared
+reviews root instead is how agent scratch files ended up sitting beside
+unrelated reviews.
+
+Every artifact in that directory is named here rather than by its writer. A
+phase's log and output are derived from `PhaseSpec`, so a phase added to the
+enum is found by the sweeps for free; everything else is a `FILENAME_*`
+constant, so the reader and the writer of a file cannot disagree about its
+name.
+
+Each directory carries a `meta.json` sidecar, and that is what a review is
+attributed by — the repo, the PR number, the head and base refs. The directory
+name is for a human reading `ls`; nothing decides what a review is *for* by
+parsing it, so a lookup is never answered by a similarly-named directory that
+belongs to another repo. `meta.json` also carries two timestamps, which answer
+different questions: `started_at` is stamped when a run begins, `reviewed_at`
+only when it finishes with a review in hand. Neither is backfilled — a review
+written before they existed dates from its `review.md` mtime and reports no
+start.
+
+Everything that reads the tree — the two `pr gc` sweeps and every review lookup
+— walks it through one shared iterator (`iter_review_entries`), which classifies
+each entry at the root as a review, an orphaned directory, or a stray file. A
+new consumer reads that walk rather than adding a fourth set of rules for what
+counts as a review.
+
+A re-review rotates what it is replacing into an `archives/` subdirectory and
+keeps the last few, so the directory a run finds is the one its predecessor
+left rather than an unbounded pile. That retention is layout too, which is why
+it is decided here and not by the entry point that triggers it.
 
 ### review_phases.py
 
@@ -427,31 +465,9 @@ Shared constants and helpers for the claude-review system.
 This module is the contract between review-orchestrate and review-post.
 Both scripts import from here instead of defining their own constants. The
 vocabulary they name those constants alongside — severities, findings, the job
-a run threads through — is `review_types`', so a consumer that only needs a
-noun does not take the artifact layout with it.
-
-Each review owns a directory under `~/.local/state/workbench/reviews/` —
-`review.md` plus its session logs, group outputs, and pipeline state. The
-directory is derived from the review file's path, and it is the only place
-outside the worktree that review agents may write to. Granting the shared
-reviews root instead is how agent scratch files ended up sitting beside
-unrelated reviews.
-
-Each directory carries a `meta.json` sidecar, and that is what a review is
-attributed by — the repo, the PR number, the head and base refs. The directory
-name is for a human reading `ls`; nothing decides what a review is *for* by
-parsing it, so a lookup is never answered by a similarly-named directory that
-belongs to another repo. `meta.json` also carries two timestamps, which answer
-different questions: `started_at` is stamped when a run begins, `reviewed_at`
-only when it finishes with a review in hand. Neither is backfilled — a review
-written before they existed dates from its `review.md` mtime and reports no
-start.
-
-Everything that reads the tree — the two `pr gc` sweeps and every review lookup
-— walks it through one shared iterator (`iter_review_entries`), which classifies
-each entry at the root as a review, an orphaned directory, or a stray file. A
-new consumer reads that walk rather than adding a fourth set of rules for what
-counts as a review.
+a run threads through — is `review_types`', and where a review's files sit is
+`review_paths`', so a consumer that only needs a noun takes neither the
+artifact layout nor the vocabulary with it.
 
 ### review_dedup.py
 

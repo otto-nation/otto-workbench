@@ -26,11 +26,11 @@ import git_client  # noqa: E402
 import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402
-from review_common import (  # noqa: E402
-    ReviewEntry, ReviewEntryKind, iter_review_entries,
-)
 from review_dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
 from review_document import ReviewDocument  # noqa: E402
+from review_paths import (  # noqa: E402
+    ReviewEntry, ReviewEntryKind, iter_review_entries,
+)
 from review_types import Finding  # noqa: E402
 from review_github import (  # noqa: E402
     GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT, GQL_ISSUE_COMMENTS_LIMIT,

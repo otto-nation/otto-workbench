@@ -314,14 +314,21 @@ class TestDocumentParse:
 class TestSectionSpan:
     def test_the_span_excludes_the_heading_and_stops_at_the_next_one(self):
         text = "## Summary\nfirst\n\n## Verdict\nApprove\n"
-        start, end = section_span(text, "Summary")
-        assert text[start:end] == "\nfirst\n\n"
+        assert section_span(text, "Summary").body_of(text) == "\nfirst\n\n"
 
     def test_the_last_section_runs_to_the_end_of_the_text(self):
         text = "## Summary\nfirst\n\n## Verdict\nApprove\n"
-        start, end = section_span(text, "Verdict")
-        assert text[start:end] == "\nApprove\n"
-        assert end == len(text)
+        span = section_span(text, "Verdict")
+        assert span.body_of(text) == "\nApprove\n"
+        assert span.end == len(text)
+
+    def test_what_falls_outside_the_span_is_what_an_edit_puts_back(self):
+        """The offsets are the contract, not just the slice between them — an
+        in-place edit rewrites the body and leaves both sides untouched."""
+        text = "## Summary\nfirst\n\n## Verdict\nApprove\n"
+        span = section_span(text, "Summary")
+        assert text[:span.start] == "## Summary"
+        assert text[span.end:] == "## Verdict\nApprove\n"
 
     def test_a_section_the_text_does_not_carry_has_no_span(self):
         assert section_span("## Summary\nfirst\n", "Verdict") is None
@@ -330,8 +337,7 @@ class TestSectionSpan:
         """The review agent writes its own headings, so `## Must Fix` and
         `## Must fix` name the same section."""
         text = "## Must Fix\n- **[M1]** a.py:1 — bug\n"
-        start, end = section_span(text, "Must fix")
-        assert text[start:end].strip() == "- **[M1]** a.py:1 — bug"
+        assert section_span(text, "Must fix").body_of(text).strip() == "- **[M1]** a.py:1 — bug"
 
     def test_a_heading_carrying_more_than_the_header_is_a_different_section(self):
         assert section_span("## Verdict and rationale\nApprove\n", "Verdict") is None

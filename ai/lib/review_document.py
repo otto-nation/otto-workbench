@@ -211,7 +211,26 @@ def set_status(content: str, status: ReviewStatus) -> str:
     return content.replace("## ", f"{line}\n\n## ", 1)
 
 
-def section_span(text: str, header: str) -> tuple[int, int] | None:
+@dataclass(frozen=True)
+class SectionSpan:
+    """Where a section's body sits in the text it was found in.
+
+    Offsets into that text, so `text[span.start:span.end]` is the section's
+    contents and `text[:span.start]` and `text[span.end:]` are the bytes an
+    in-place edit must put back unchanged.
+    """
+
+    start: int
+    end: int
+
+    def body_of(self, text: str) -> str:
+        """The section's contents, verbatim — leading and trailing blank lines
+        included, since an edit rewriting the section has to know what it is
+        replacing."""
+        return text[self.start:self.end]
+
+
+def section_span(text: str, header: str) -> SectionSpan | None:
     """Where `text`'s `## <header>` section body sits, or None when it has none.
 
     The span opens at the end of the heading line and closes at the next `## `
@@ -230,7 +249,7 @@ def section_span(text: str, header: str) -> tuple[int, int] | None:
         return None
     start = m.end()
     nxt = re.search(r"^## ", text[start:], re.MULTILINE)
-    return start, start + nxt.start() if nxt else len(text)
+    return SectionSpan(start, start + nxt.start() if nxt else len(text))
 
 
 def review_title(meta: ReviewMeta) -> str:
@@ -329,7 +348,7 @@ class ReviewDocument:
         for the section's contents.
         """
         span = section_span(self.body, header)
-        return self.body[span[0]:span[1]].strip() if span else ""
+        return span.body_of(self.body).strip() if span else ""
 
     @property
     def counts(self) -> dict[str, int]:

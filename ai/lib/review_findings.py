@@ -1227,8 +1227,8 @@ def _drop_note(details: list[dict], dropped: list[str]) -> str:
 
 
 def _insert_drop_note(text: str, note: str) -> str:
-    bounds = section_span(text, SECTION_SUMMARY)
-    if bounds is None:
+    span = section_span(text, SECTION_SUMMARY)
+    if span is None:
         # No Summary to correct — the mechanical paths build theirs from this
         # text afterwards, so the note goes above the findings it explains and
         # ends up directly beneath the summary they generate.
@@ -1237,9 +1237,10 @@ def _insert_drop_note(text: str, note: str) -> str:
             return f"{text.rstrip()}\n\n{note}\n"
         return f"{text[:first.start()]}{note}\n\n{text[first.start():]}"
 
-    start, end = bounds
-    body = text[start:end].rstrip()
-    return f"{text[:start]}{body}\n\n{note}\n\n{text[end:].lstrip(chr(10))}"
+    body = span.body_of(text).rstrip()
+    return (
+        f"{text[:span.start]}{body}\n\n{note}\n\n{text[span.end:].lstrip(chr(10))}"
+    )
 
 
 def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
@@ -1248,13 +1249,11 @@ def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
     Dropping only ever removes findings, so a stale verdict can only overstate
     — the revision lowers, never raises, and leaves an unranked verdict alone.
     """
-    bounds = section_span(text, SECTION_VERDICT)
-    if bounds is None:
+    span = section_span(text, SECTION_VERDICT)
+    if span is None:
         return text
 
-    start, end = bounds
-    body = text[start:end]
-    stated = ReviewVerdict.stated_in(body)
+    stated = ReviewVerdict.stated_in(span.body_of(text))
     supported = _verdict_from_counts(counts)
     if not stated or not stated.outranks(supported):
         return text
@@ -1265,7 +1264,7 @@ def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
         f"{supported.prose} — {remaining} after evidence verification removed "
         f"{n_dropped} finding{plural(n_dropped)}.\n"
     )
-    return f"{text[:start]}\n{revised}\n{text[end:].lstrip(chr(10))}"
+    return f"{text[:span.start]}\n{revised}\n{text[span.end:].lstrip(chr(10))}"
 
 
 def reconcile_dropped_findings(text: str, verification: dict) -> str:

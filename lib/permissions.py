@@ -351,6 +351,44 @@ def prune(filepath: str, grants: list[Grant]) -> None:
     write_json(filepath, settings)
 
 
+def first_misordered(allow: list[str]) -> str | None:
+    """The first `allow` rule written out of the order Claude Code writes them in.
+
+    Returns None when the list is already in that order.  A single rule is
+    returned rather than the whole list so a report can name the line it is on.
+
+    Claude Code rewrites `allow` in codepoint order whenever a session grants a
+    permission, and leaves `deny` and `ask` in the order they were authored —
+    both were observed in one save, so this is the writer's behaviour rather
+    than a guess about it.  A committed file written any other way therefore
+    comes back modified the first time a session touches permissions, with no
+    rule added and none removed, and that diff outlives the branch it appears
+    on: it is reported as uncommitted work in every worktree that has one.
+    """
+    reordered = (rule for rule, ordered in zip(allow, sorted(allow)) if rule != ordered)
+    return next(reordered, None)
+
+
+def sort_allow(filepath: str) -> None:
+    """Rewrite a settings file's `allow` bucket into the order Claude Code writes it.
+
+    A pure reordering: no rule is added or removed, so the file permits exactly
+    the commands it permitted before.  The other buckets are left alone, `deny`
+    because it is grouped by the command it guards rather than sorted, and both
+    because the writer does not reorder them either.
+
+    Only called for a bucket `first_misordered` found something in, so there is
+    a non-empty `allow` here to sort and no key is created by asking for it.
+    """
+    with open(filepath, encoding='utf-8') as f:
+        settings = json.load(f)
+
+    permissions = settings.get('permissions') or {}
+    permissions['allow'] = sorted(permissions.get('allow') or [])
+    settings['permissions'] = permissions
+    write_json(filepath, settings)
+
+
 def write_json(filepath: str, settings: dict) -> None:
     """Write a settings object to a path, replacing any file already there.
 

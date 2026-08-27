@@ -158,6 +158,27 @@ rule can match, so the set of commands the file permits is the same before and
 after. An `ask` override is never pruned: deleting it restores a deliberate gate
 on credential access, which is a person's call, not a script's.
 
+### The order a tracked allow is written in
+
+Claude Code does not append to `allow` — it rewrites the whole bucket in
+codepoint order every time a session grants a permission, and leaves `deny` and
+`ask` in the order they were authored. Both halves were observed in one save,
+so this is what the writer does rather than a guess about it.
+
+A tracked file committed in any other order therefore comes back modified the
+first time a session touches permissions, with no rule added and none removed.
+That diff is worse than it sounds: it does not belong to the branch it appears
+on, so it sits in every worktree at once and `wt-cleanup` reports each of them
+as holding uncommitted work. Seven worktrees were once held open by a single
+entry that had moved one line.
+
+So add a rule in its sorted position rather than at the end, and run
+`bin/local/validate-permissions --fix` if you are not sure where that is — it
+sorts the bucket, which is a pure reorder and grants nothing. The check covers
+tracked files only. A `settings.local.json` is Claude Code's own and dies with
+the checkout, and the container mirror below is generated with the managed
+rules deliberately in front of whatever was already there.
+
 ### Reaching the container
 
 At the container there is nothing to move a grant into: it holds no working

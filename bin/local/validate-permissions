@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate permission rules: every rule can match, and every grant belongs.
+"""Validate permission rules: every rule can match, belongs, and is in order.
 
 Usage: bin/local/validate-permissions [--quiet] [--fix] [file...]
 
@@ -40,6 +40,16 @@ ever renders it.  Failing is what makes the finding visible, and --fix is what
 keeps that defensible — the covered class is pruned by a command, not by hand,
 and the file it prunes regrows.
 
+The third question is what order a committed `allow` bucket is written in, and
+it is asked of tracked files only.  Claude Code rewrites that bucket in
+codepoint order on the next grant, so a file committed any other way comes back
+modified with nothing added and nothing removed — a diff that then sits in
+every worktree holding it, reported as uncommitted work nobody can identify.
+`deny` is exempt: the writer leaves it alone, and it is grouped here by the
+command it guards.  The container mirror is exempt too — it is generated with
+the managed rules deliberately in front of whatever was already there, which
+sorting would undo.
+
 This validator is scoped to this repo on purpose: validate-all runs from
 git/hooks/pre-push-workbench and .github/workflows/ci.yml, and neither is a
 sensible vehicle for failing on drift in somebody else's checkout.  The
@@ -55,8 +65,8 @@ reviewed where the tracked file was and it is checked for dead rules but not
 for drift.  A grant reaching the container despite the mirror is drift, which
 is what the finding at the end of this file says to regenerate.
 
-Exit code: 0 if every rule is live and every grant is in the right file,
-1 otherwise.
+Exit code: 0 if every rule is live, every grant is in the right file, and every
+tracked `allow` is in the writer's order, 1 otherwise.
 """
 
 import argparse
@@ -71,7 +81,8 @@ from ansi import RED, GREEN, DIM, NC  # noqa: E402
 from permissions import (  # noqa: E402
     BASH_RULE, TRACKED_SETTINGS, Drift, Grant,
     at_container, container_dir, discover_container_settings, discover_settings,
-    drift_in, is_local, line_of, prune, rules_in, tracked_rules,
+    drift_in, first_misordered, is_local, line_of, prune, rules_in, sort_allow,
+    tracked_rules,
 )
 
 # Named in the failure message: validate-all does not pass --fix, so the human
@@ -88,6 +99,9 @@ EMPTY_PREFIX = 'nothing precedes :*, so the rule names no command'
 
 NAME_THE_COMMAND = 'a rule that names the command it is for'
 
+MISORDERED = ('Claude Code rewrites allow in codepoint order on the next grant, so this file '
+              'comes back modified with no rule added and none removed')
+
 
 @dataclasses.dataclass(frozen=True)
 class Violation:
@@ -96,6 +110,14 @@ class Violation:
     rule: str
     reason: str
     fix: str
+    line: int = 0
+
+
+@dataclasses.dataclass(frozen=True)
+class Misordered:
+    """The first `allow` rule written where Claude Code would not write it."""
+
+    rule: str
     line: int = 0
 
 
@@ -155,6 +177,16 @@ def check_file(filepath: str) -> list[Violation]:
     return [dataclasses.replace(v, line=line_of(lines, v.rule)) for v in violations]
 
 
+def check_order(filepath: str) -> Misordered | None:
+    """Return the first `allow` rule out of the writer's order, or None."""
+    with open(filepath) as f:
+        text = f.read()
+
+    allow = (json.loads(text).get('permissions') or {}).get('allow') or []
+    rule = first_misordered(allow)
+    return Misordered(rule, line_of(text.splitlines(), rule)) if rule else None
+
+
 # ── Reporting ───────────────────────────────────────────────────────────────
 
 def _report_violations(relpath: str, violations: list[Violation]) -> None:
@@ -196,6 +228,19 @@ def _report_covered(relpath: str, grants: list[Grant], in_container: bool) -> No
               f'{TRACKED_SETTINGS} reaches sessions rooted there{NC}', file=sys.stderr)
 
 
+def _report_misordered(relpath: str, misordered: Misordered) -> None:
+    print(f'{RED}✗{NC} {relpath}: allow is not in the order Claude Code writes it',
+          file=sys.stderr)
+    where = f'line {misordered.line}: ' if misordered.line else ''
+    print(f'      {where}{misordered.rule}', file=sys.stderr)
+    print(f'        {MISORDERED}', file=sys.stderr)
+    print(f'        {DIM}run `{FIX_COMMAND}` to sort it{NC}', file=sys.stderr)
+
+
+def _report_sorted(relpath: str) -> None:
+    print(f'  {GREEN}✓{NC} {relpath}: sorted allow into the order Claude Code writes it')
+
+
 def _report_pruned(relpath: str, grants: list[Grant], quiet: bool) -> None:
     print(f'  {GREEN}✓{NC} {relpath}: pruned {len(grants)} local grant(s) a tracked rule '
           f'already makes')
@@ -206,11 +251,12 @@ def _report_pruned(relpath: str, grants: list[Grant], quiet: bool) -> None:
 def _print_summary(files_checked: int, errors: int) -> None:
     print()
     if errors == 0:
-        print(f'{GREEN}✓{NC} {files_checked} files checked, every permission rule is live '
-              f'and in the right file')
+        print(f'{GREEN}✓{NC} {files_checked} files checked, every permission rule is live, '
+              f'in the right file, and in the order Claude Code writes it')
     else:
         print(f'{RED}✗{NC} {errors} of {files_checked} files declare a rule that can never '
-              f'match, or a grant that belongs somewhere else', file=sys.stderr)
+              f'match, a grant that belongs somewhere else, or an allow bucket the next '
+              f'grant will reorder', file=sys.stderr)
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -221,7 +267,8 @@ def main():
                     'no untracked settings file holds a grant a tracked rule speaks for.')
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
     parser.add_argument('--fix', action='store_true',
-                        help='Delete local grants a tracked rule already makes')
+                        help='Delete local grants a tracked rule already makes, and sort a '
+                             'tracked allow bucket into the order Claude Code writes it')
     parser.add_argument('files', nargs='*', help='Settings files to check (auto-discovers if omitted)')
     args = parser.parse_args()
 
@@ -237,7 +284,12 @@ def main():
         relpath = os.path.relpath(filepath, repo_root)
         violations = check_file(filepath)
         in_container = at_container(filepath, container)
-        drift = drift_in(filepath, tracked) if is_local(filepath, in_container) else Drift()
+        local = is_local(filepath, in_container)
+        drift = drift_in(filepath, tracked) if local else Drift()
+        # Order is a committed file's problem: a local one dies with the
+        # checkout, and the container mirror is generated with the managed
+        # rules in front of what was already there, which sorting would undo.
+        misordered = None if local or in_container else check_order(filepath)
 
         pruned = drift.covered if args.fix else []
         if pruned:
@@ -245,7 +297,13 @@ def main():
             _report_pruned(relpath, pruned, args.quiet)
             drift = Drift(drift.overrides)
 
-        errors += 1 if violations or not drift.empty else 0
+        resorted = bool(misordered) and args.fix
+        if resorted:
+            sort_allow(filepath)
+            _report_sorted(relpath)
+            misordered = None
+
+        errors += 1 if violations or not drift.empty or misordered else 0
 
         if violations:
             _report_violations(relpath, violations)
@@ -253,7 +311,10 @@ def main():
             _report_overrides(relpath, drift.overrides)
         if drift.covered:
             _report_covered(relpath, drift.covered, in_container)
-        if not violations and drift.empty and not pruned and not args.quiet:
+        if misordered:
+            _report_misordered(relpath, misordered)
+        clean = not violations and drift.empty and not misordered
+        if clean and not pruned and not resorted and not args.quiet:
             print(f'  {GREEN}✓{NC} {relpath}')
 
     _print_summary(len(files), errors)

@@ -1200,6 +1200,22 @@ register_fake_repo_worktrees() {
   [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$TMPDIR/plain" ]
 }
 
+@test "this repo's repo-scoped migrations are discovered by their real keys" {
+  # Against the real workbench rather than the fake one: the marker is a
+  # contract with files that ship, and a typo in one is invisible otherwise.
+  run bash -c "
+    WORKBENCH_DIR='$REPO_ROOT'
+    LIB_SRC_DIR='$REPO_ROOT/lib'
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/migrations.sh'
+    keys=()
+    _discover_migration_keys keys \"\$_REPO_SCOPED_MARKER\"
+    printf '%s\n' \"\${keys[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ai/claude/20260824-drop-container-anatomy.sh"* ]]
+}
+
 # ─── Component discovery under set -e ────────────────────────────────────────
 
 @test "discover_migration_dirs returns 0 under set -e with no migrations" {

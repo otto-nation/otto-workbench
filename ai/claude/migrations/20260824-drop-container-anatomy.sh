@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# checkout-scoped: a container is only reachable from a repo inside it, and being
-# done is a fact about that container rather than about the machine.
+# repo-scoped: the anatomy index belongs to the container every worktree of the
+# repo shares, so being done is a fact about that repo rather than about any one
+# checkout of it.
 # Migration: delete the anatomy index a bare-repo container was given while the
 # generator still wrote one there.
 #
@@ -12,10 +13,12 @@
 # The index is all that goes. The container's .claude/ belongs to the permission
 # mirror, which writes a generated settings.json into it on every sync.
 #
-# Project-scoped rather than a single machine-wide sweep so a container the
-# machine learns about later is still visited. Containers are shared, so the
-# first of a container's worktrees to be visited does the deletion and every
-# later one answers MIGRATION_NOOP.
+# Repo-scoped rather than a single machine-wide sweep so a repo the machine
+# learns about later is still visited, and rather than checkout-scoped because
+# every worktree of one container would otherwise be visited for one deletion
+# and hold a state line for it. The framework hands over one of the repo's
+# registered work trees, which is all the function needs — it resolves the
+# container from there.
 
 # _drop_container_anatomy_container DIR — the bare-repo container DIR sits in,
 # or a non-zero status when DIR is not in that layout.

@@ -27,8 +27,8 @@ import pr_context
 from agent_types import Mode
 from agent_types import Mode
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
-from review_common import PRIOR_SHA_RE
 from review_dedup import _get_bot_login
+from review_document import ReviewHeader
 from review_findings import BOLD_FINDING_ID_RE
 from review_github import PRData
 from review_profiles import (
@@ -197,11 +197,10 @@ def _collect_delta(job: ReviewJob) -> tuple[str, str, list[str], str]:
     if not job.prior_review:
         log.info("No prior review — running full review")
         return empty
-    prior_sha_match = PRIOR_SHA_RE.search(job.prior_review)
-    if not prior_sha_match:
+    prior_sha = ReviewHeader.parse(job.prior_review).head_sha
+    if not prior_sha:
         log.info("Prior review has no SHA marker — running full review")
         return empty
-    prior_sha = prior_sha_match.group(1)
     if prior_sha == job.pr.head_sha:
         log.info("Prior review is on current HEAD — running full review")
         return empty

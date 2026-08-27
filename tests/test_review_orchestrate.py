@@ -4607,13 +4607,6 @@ class TestBuildFailuresSection:
         assert "pr review --recover" in build_failures_section(state)
 
 
-def test_meta_status_constant_format():
-    from review_common import META_STATUS
-    assert META_STATUS.format(status="complete") == "<!-- status: complete -->"
-    assert META_STATUS.format(status="partial") == "<!-- status: partial -->"
-    assert META_STATUS.format(status="error") == "<!-- status: error -->"
-
-
 class TestFailuresSectionInReview:
     def test_mechanical_fallback_includes_failures(self, tmp_path):
         """When synthesis falls back, the review includes ## Agent Failures."""

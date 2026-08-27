@@ -17,7 +17,6 @@ functions.
 
 from __future__ import annotations
 
-import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,11 +30,11 @@ from pr_domains import ReviewStatus
 from review_agent import _parse_session_cost
 from review_common import (
     FILENAME_PIPELINE_STATE,
-    META_STATUS,
     _derive_path,
     phase_log_path,
     plural,
 )
+from review_document import set_status
 from review_types import Group, ReviewJob, ReviewType
 
 _state_lock = threading.Lock()
@@ -155,17 +154,24 @@ class PipelineState:
 # ── What a review directory's state says ─────────────────────────────────────
 
 
-def read_pipeline_status(review_dir: Path | None) -> str:
+def pipeline_status(review_dir: Path | None) -> ReviewStatus:
     """Derive review status from pipeline state.
 
-    complete — all phases succeeded, no failures
-    partial  — review produced but with failures (groups or synthesis fallback)
-    error    — all groups failed, no usable output
+    completed — all phases succeeded, no failures
+    partial   — review produced but with failures (groups or synthesis fallback)
+    error     — all groups failed, no usable output
+
+    A directory with no state file reads as completed: the single-agent
+    pipeline writes no state, and a review sitting there with nothing recorded
+    against it is one that finished.
     """
     state = PipelineState.load(review_dir)
-    if state is None:
-        return ReviewStatus.COMPLETED.value
-    return state.status.value
+    return ReviewStatus.COMPLETED if state is None else state.status
+
+
+def read_pipeline_status(review_dir: Path | None) -> str:
+    """`pipeline_status` as the string a review document and a listing record."""
+    return pipeline_status(review_dir).value
 
 
 def read_pipeline_warnings(review_dir: Path | None) -> list[str]:
@@ -337,24 +343,8 @@ def _inject_failures_and_status(review_file: str, state: "PipelineState") -> Non
     path = Path(review_file)
     if not path.exists():
         return
-    content = path.read_text()
-
-    status = read_pipeline_status(path.parent)
-
-    content = _replace_failures_section(content, build_failures_section(state))
-
-    status_line = META_STATUS.format(status=status)
-    if "<!-- status:" in content:
-        # Replace existing status line — may be stale (e.g. completed written before
-        # synthesis was recorded failed, now needs to become partial).
-        content = re.sub(r"<!-- status: [^>]+ -->", status_line, content, count=1)
-    else:
-        content = content.replace("<!-- generator:", f"{status_line}\n<!-- generator:", 1)
-        if status_line not in content:
-            # generator line not found — insert before first ## heading
-            content = content.replace("## ", f"{status_line}\n\n## ", 1)
-
-    path.write_text(content)
+    content = _replace_failures_section(path.read_text(), build_failures_section(state))
+    path.write_text(set_status(content, pipeline_status(path.parent)))
 
 
 @dataclass

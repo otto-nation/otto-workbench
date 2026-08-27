@@ -206,12 +206,13 @@ class ReviewMeta:
     reviewed_at: str = ""
 
 
-def _meta_enum(enum_cls, value):
-    """Read a fixed-vocabulary meta.json field, tolerating a value we don't know.
+def meta_enum(enum_cls, value):
+    """Read a persisted fixed-vocabulary field, tolerating a value we don't know.
 
-    meta.json is written by whatever version of the reviewer produced the review
-    and read by whatever version is running now, so an unrecognised member reads
-    as absent rather than taking the whole file down with it.
+    A review's records — `meta.json` and the document's own metadata header —
+    are written by whatever version of the reviewer produced the review and read
+    by whatever version is running now, so an unrecognised member reads as
+    absent rather than taking the whole record down with it.
     """
     try:
         return enum_cls(value) if value else None
@@ -228,8 +229,8 @@ def review_meta_from_dict(d: dict) -> ReviewMeta:
         head_sha=d.get("head_sha", ""),
         head_ref=d.get("head_ref", ""),
         base_ref=d.get("base_ref", ""),
-        review_type=_meta_enum(ReviewType, d.get("review_type")),
-        mode=_meta_enum(Mode, d.get("mode")),
+        review_type=meta_enum(ReviewType, d.get("review_type")),
+        mode=meta_enum(Mode, d.get("mode")),
         started_at=d.get("started_at") or "",
         reviewed_at=d.get("reviewed_at") or "",
     )

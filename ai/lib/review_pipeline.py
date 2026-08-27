@@ -26,18 +26,16 @@ import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES, SCAN_PHASES
 from agent_types import EFFORT_PRESETS, Mode, Phase
+from pr_domains import ReviewStatus
 from review_common import (
     count_severities,
     FILENAME_META,
-    META_DATE, META_DELTA_FILES, META_GENERATOR, META_HEAD_SHA,
-    META_PRIOR_DATE, META_PRIOR_SHA, META_REVIEW_TYPE, META_SKIPPED_GROUPS,
-    META_STATUS,
-    PRIOR_DATE_RE,
     _derive_path,
     phase_log_path,
     phase_output_path,
     phase_skip_argv,
 )
+from review_document import ReviewHeader
 from review_findings import (
     _MECHANICAL_NOTE,
     _has_findings,
@@ -80,7 +78,7 @@ from review_state import (
     _resolve_recovery,
     _write_pipeline_state,
     build_failures_section,
-    read_pipeline_status,
+    pipeline_status,
 )
 
 DEFAULT_MAX_COST = 20.0
@@ -169,37 +167,31 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 def _build_meta_header(
     job: ReviewJob,
     skipped_groups: int = 0, total_groups: int = 0,
-    status: str = "",
+    status: ReviewStatus | None = None,
 ) -> str:
-    today = date.today().isoformat()
     incremental = _is_incremental(job)
-    review_type = ReviewType.of(incremental)
+    header = ReviewHeader(
+        date=date.today().isoformat(),
+        head_sha=job.pr.head_sha,
+        review_type=ReviewType.of(incremental),
+        status=status,
+        generator_version=job.generator_version,
+    )
+    if not incremental:
+        return header.render()
 
-    lines = [
-        META_DATE.format(today=today),
-        META_HEAD_SHA.format(head_sha=job.pr.head_sha),
-        META_REVIEW_TYPE.format(review_type=review_type),
-    ]
-
-    if incremental:
-        pf = job.preflight
-        prior_date_match = PRIOR_DATE_RE.search(job.prior_review) if job.prior_review else None
-        prior_date = prior_date_match.group(1) if prior_date_match else "unknown"
-        lines.append(META_PRIOR_SHA.format(prior_sha=pf.prior_head_sha))
-        lines.append(META_PRIOR_DATE.format(prior_date=prior_date))
-        lines.append(META_DELTA_FILES.format(delta_file_count=len(pf.delta_files)))
-        if total_groups > 0:
-            lines.append(META_SKIPPED_GROUPS.format(
-                skipped=skipped_groups, total=total_groups,
-            ))
-
-    if status:
-        lines.append(META_STATUS.format(status=status))
-
-    if job.generator_version:
-        lines.append(META_GENERATOR.format(generator_version=job.generator_version))
-
-    return "\n".join(lines) + "\n"
+    pf = job.preflight
+    # The prior review's own header is where its date comes from — a re-review
+    # states what it is a delta against, and only that document knows.
+    prior_date = ReviewHeader.parse(job.prior_review).date if job.prior_review else ""
+    return replace(
+        header,
+        prior_sha=pf.prior_head_sha,
+        prior_date=prior_date or "unknown",
+        delta_files=len(pf.delta_files),
+        skipped_groups=skipped_groups,
+        total_groups=total_groups,
+    ).render()
 
 
 def _is_complete_review(review_file: str) -> bool:
@@ -214,7 +206,8 @@ def _build_mechanical_fallback(
     skipped_groups: int = 0,
     pipeline_state: "PipelineState | None" = None,
 ) -> str:
-    status = read_pipeline_status(Path(job.review_file).parent) if Path(job.review_file).parent.exists() else "error"
+    review_dir = Path(job.review_file).parent
+    status = pipeline_status(review_dir) if review_dir.exists() else ReviewStatus.ERROR
     meta = _build_meta_header(
         job, skipped_groups=skipped_groups, total_groups=group_count,
         status=status,

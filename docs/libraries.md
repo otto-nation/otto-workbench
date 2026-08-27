@@ -292,6 +292,37 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 
 Loaded via `ui.sh`.
 
+### git_layout.sh
+
+The bare-repo worktree layout, as git names it — bash half.
+
+A repository is one thing and its checkouts are several: `wt-init` and
+`worktrunk` produce a container holding a bare `.git` with every worktree as a
+peer, and a worktree comes and goes with `wt switch` and `wt remove` while the
+repository stays. Anything recorded about the repository rather than about one
+branch therefore needs a name the checkouts share, and
+`git rev-parse --git-common-dir` is it: every worktree of one repository
+resolves it to the same directory, and two repositories never share one.
+
+```bash
+. "$LIB_SRC_DIR/git_layout.sh"
+git_shared_dir /path/to/worktree     # → /path/to/container/.git
+```
+
+[`lib/git_layout.py`](#git_layoutpy) is the Python half and answers the
+neighbouring question — the *container*, the shared git dir's parent, and
+deliberately nothing for an ordinary clone whose parent belongs to somebody
+else. This one is total, because the caller here wants an identity rather than
+a directory to write into, and `/repo/.git` is a perfectly good identity.
+`tests/projects.bats` cross-validates the two.
+
+`bin/resolve-worktree` owns the other direction — container → the worktree it
+stands in for.
+
+| Function | Purpose |
+|----------|---------|
+| `git_shared_dir DIR` | the shared git directory DIR's repository uses, resolved to a physical path. Non-zero and silent when git cannot answer for DIR. |
+
 ### git_remote.sh
 
 The remote, its default branch, and whether a branch exists on it.
@@ -412,7 +443,7 @@ run_component_migrations DIR    # run for a single component directory
 |----------|---------|
 | `run_component_migrations DIR` | Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs each function, and records success. Failed migrations are not recorded and retry on the next run. Migrations must be idempotent. |
 | `adopt_legacy_workbench_root` | Move a pre-split ~/.config/workbench to whichever roots now own its contents. No-op once the legacy root is gone, or when a root still resolves to it. |
-| `run_all_migrations` | Adopts the legacy root, backfills the project registry, prunes stale state, then runs every component's migrations. |
+| `run_all_migrations` | Adopts the legacy root, backfills the project registry, records each repo's identity, prunes stale state, then runs every component's migrations. |
 
 ### output.sh
 
@@ -508,7 +539,11 @@ the project-scoped migrations, each carried their own guessed-at list of git
 roots and a depth limit, so a repo cloned anywhere else was invisible and the
 migration recorded itself applied all the same. Registration is an observation,
 so it can only ever be late; `otto-workbench projects add` is what covers a
-repo that joined after something needed to see it. The registrations are:
+repo that joined after something needed to see it.
+`record_project_repo_ids` is the sync-time step that gives each of those lines
+the repo identity behind it, which is how work that belongs to a repo rather
+than to a checkout is done once — see [Execution Flow —
+Migrations](execution-flow.md#migrations). The registrations are:
 
 | Caller | Where the root comes from |
 |--------|---------------------------|
@@ -581,6 +616,9 @@ and `tests/projects.bats` cross-validates the halves against one file.
 | `project_registered` | print every registered repo that still exists, one per line. |
 | `project_forget DIR` | drop DIR's entry. Returns 1 when it had none. |
 | `project_prune` | drop entries whose directory is gone, and repeats. Prints how many went. |
+| `project_repo_id DIR` | the identity DIR's repository keeps across its worktrees. |
+| `project_repo_leaders` | one registered work tree per repo, with its repo id. |
+| `record_project_repo_ids` | give every registry line the repo identity it lacks. |
 | `seed_project_registry` | backfill the repos that predate the registry, once. |
 
 Loaded via `ui.sh`.

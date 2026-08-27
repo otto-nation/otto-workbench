@@ -40,6 +40,7 @@ MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
 PROJECTS_REGISTRY_FILE="$FAKE_STATE/projects.registry"
 # No such file, so the backfill run_all_migrations does has no candidates.
 CLAUDE_CONFIG_FILE="$TMPDIR/absent-claude.json"
+. "$FAKE_ROOT/lib/portable.sh"
 # The real projects.sh, not a stub: run_all_migrations calls into it, and it
 # needs the constants above, so it loads from here rather than from ui.sh.
 . "$FAKE_ROOT/lib/projects.sh"
@@ -49,6 +50,11 @@ CONST
   cp "$REPO_ROOT/lib/components.sh" "$FAKE_ROOT/lib/components.sh"
   cp "$REPO_ROOT/lib/migrations.sh" "$FAKE_ROOT/lib/migrations.sh"
   cp "$REPO_ROOT/lib/projects.sh" "$FAKE_ROOT/lib/projects.sh"
+  cp "$REPO_ROOT/lib/gitenv.sh" "$FAKE_ROOT/lib/gitenv.sh"
+  cp "$REPO_ROOT/lib/git_layout.sh" "$FAKE_ROOT/lib/git_layout.sh"
+  # _project_rewrite reads a file's mode through portable.sh, and
+  # record_project_repo_ids is the first thing on the sync path to call it.
+  cp "$REPO_ROOT/lib/portable.sh" "$FAKE_ROOT/lib/portable.sh"
 }
 
 teardown() {

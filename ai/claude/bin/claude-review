@@ -39,9 +39,9 @@ from agent_types import Mode, Phase
 from review_common import add_phase_skip_flags, phase_skip_argv, phase_skips
 from review_document import ReviewDocument, open_counts, resolve_review_verdict
 from review_paths import (
-    FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
-    FILENAME_PRIOR, FILENAME_SESSION, REVIEW_EXT, aggregate_session_usage,
-    archive_review, archives_dir, read_review_meta, review_file_path,
+    FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION, FILENAME_PRIOR,
+    FILENAME_SESSION, REVIEW_EXT, aggregate_session_usage, archive_review,
+    archives_dir, read_review_meta, review_file_path,
 )
 from review_types import (
     SEVERITIES, ReviewMeta, ReviewType, review_meta_from_dict,

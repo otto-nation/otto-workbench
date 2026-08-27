@@ -120,6 +120,19 @@ make_bare_worktree_layout() {
   [ "$status" -eq 1 ]
 }
 
+@test "a path holding the field separator is refused" {
+  # The tab is what tells the path field from the repo identity, so a path
+  # that carries one is indistinguishable from a line that already has one —
+  # _project_contains would compare against the truncated field 1 forever and
+  # every workbench command run there would append another line.
+  make_repo "$TMPDIR/al"$'\t'"pha"
+  run project_register "$TMPDIR/al"$'\t'"pha"
+  [ "$status" -eq 1 ]
+
+  run project_registered
+  [ -z "$output" ]
+}
+
 @test "temp paths are excluded by default" {
   # The default list, not this suite's override — this is the rule that keeps
   # every other bats suite's throwaway repos out of the real registry.
@@ -278,6 +291,73 @@ make_bare_worktree_layout() {
   run project_prune
   [ "$status" -eq 0 ]
   [ "$output" = "0" ]
+}
+
+# ─── Two-field lines ─────────────────────────────────────────────────────────
+#
+# A registry line is a work-tree path, optionally followed by a tab and the
+# repo identity every worktree of that repo shares. Everything that matches a
+# line compares the path ahead of the tab; the identity is data, not part of
+# the name.
+
+@test "the repo id on a line is not part of the path it names" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" > "$PROJECTS_REGISTRY_FILE"
+
+  run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
+@test "a repo already recorded with a repo id is not registered twice" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" > "$PROJECTS_REGISTRY_FILE"
+
+  run project_register "$TMPDIR/alpha"
+  [ "$status" -eq 3 ]
+  run grep -c . "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "1" ]
+}
+
+@test "project_forget drops a line that carries a repo id" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  make_repo "$TMPDIR/beta"
+  printf '%s\t%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" "$TMPDIR/beta" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run project_forget "$TMPDIR/alpha"
+  [ "$status" -eq 0 ]
+  run project_registered
+  [ "$output" = "$TMPDIR/beta" ]
+}
+
+@test "project_prune keeps the repo id on the lines it keeps" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" "$TMPDIR/gone" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run project_prune
+  [ "$output" = "1" ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/alpha"$'\t'"$TMPDIR/alpha/.git" ]
+}
+
+@test "a repeat of a path already carrying an id is pruned" {
+  # Registration is an append guarded by a membership check, so the same repo
+  # can be appended twice — once before its id was recorded and once after.
+  # Both name one repo, and the line holding the id is the one worth keeping.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" "$TMPDIR/alpha" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run project_prune
+  [ "$output" = "1" ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/alpha"$'\t'"$TMPDIR/alpha/.git" ]
 }
 
 # ─── Backfill ────────────────────────────────────────────────────────────────
@@ -489,6 +569,39 @@ os.environ.pop('TMPDIR', None)
 print(workbench_projects.register('$TMPDIR/container'))
 "
   [ "$output" = "False" ]
+}
+
+@test "Python reads the path from a line bash gave a repo id" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" > "$PROJECTS_REGISTRY_FILE"
+
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import workbench_projects
+print(*workbench_projects.registered())
+"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
+@test "Python does not append a repo bash recorded with a repo id" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" > "$PROJECTS_REGISTRY_FILE"
+
+  run python3 -c "
+import os, sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import workbench_projects
+workbench_projects.TEMP_ROOTS = ()
+os.environ.pop('TMPDIR', None)
+assert workbench_projects.register('$TMPDIR/alpha')
+"
+  [ "$status" -eq 0 ]
+  run grep -c . "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "1" ]
 }
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────

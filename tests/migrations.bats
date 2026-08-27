@@ -633,21 +633,6 @@ assert_project_entry() {
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 }
 
-@test "a repo path holding a tab keeps the key ahead of it intact" {
-  # Every split is on the first separator, so a path carrying one costs the repo
-  # nothing: the key still matches a discovered migration and the entry is not
-  # pruned as unrecognised.
-  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
-  register_fake_project "$TMPDIR/re"$'\t'"po"
-  run_migrations_in_fake
-
-  run run_migrations_in_fake
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"Pruned stale migration state"* ]]
-  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/re"$'\t'"po"
-}
-
 @test "a bare entry for a migration that became project-scoped is dropped" {
   # How a migration converts scope: the machine-wide line the old shape recorded
   # says nothing about any repo, so prune drops it and every registered repo is

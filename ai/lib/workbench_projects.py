@@ -7,10 +7,13 @@ worktree root. ``lib/projects.sh`` is the shell half — it owns the one-time
 backfill, the CLI, and the reads that the machine profile generator and the
 project-scoped migrations make.
 
-Both halves read and write one newline-delimited file of absolute paths, named
-by ``workbench_paths.projects_registry()``. Text rather than YAML because every
-write is an append and every read is a scan. ``tests/projects.bats``
-cross-validates the two halves against the same file.
+Both halves read and write one file named by ``workbench_paths.projects_registry()``:
+one absolute path per line, optionally followed by a tab and the repo identity
+the shell half records from the sync. This side reads the path ahead of that tab
+and writes bare paths, because resolving an identity means forking git on a
+session's startup path. Text rather than YAML because every write is an append
+and every read is a scan. ``tests/projects.bats`` cross-validates the two halves
+against the same file.
 
 Nothing here raises. Registration is a side effect of a command that was run for
 some other reason, and a hook that failed because a state file was unwritable
@@ -29,6 +32,17 @@ import workbench_paths
 # Lines the shell half writes to mark its backfill as done. A reader that took
 # one for a path would hand a caller a directory that does not exist.
 COMMENT_PREFIX = "#"
+
+# What separates a registered work tree from the repo identity behind it. The
+# shell half writes that second field from the sync; nothing here does, because
+# resolving it means forking git on a session's startup path. A reader that took
+# a whole line for a path would hand a caller a directory that does not exist.
+FIELD_SEP = "\t"
+
+
+def _path_of(line: str) -> str:
+    """The work-tree path a registry line names, without the repo identity."""
+    return line.split(FIELD_SEP, 1)[0]
 
 # Where test harnesses build throwaway git repos. `bats` creates one per suite
 # under $TMPDIR and runs validators and pre-commit hooks inside it — workbench
@@ -107,14 +121,21 @@ def register(repo_root: Path | str | None) -> bool:
     repo_root must already be a resolved work-tree root — every caller has one
     in hand, so nothing here shells out to git. Returns True when the path is in
     the registry afterwards.
+
+    A path holding FIELD_SEP is refused alongside the other membership rules: the
+    tab is what tells the path field from the repo identity, so a path that
+    carries one cannot be told apart from a line that already has an identity —
+    the membership check would compare against the truncated path forever, never
+    match the real one, and every workbench command run in that repo would
+    append another line with no error.
     """
     if not repo_root:
         return False
     path = Path(repo_root)
-    if excluded(path) or not _is_worktree(path):
+    if FIELD_SEP in str(path) or excluded(path) or not _is_worktree(path):
         return False
     line = str(path)
-    if line in _read_lines():
+    if any(_path_of(existing) == line for existing in _read_lines()):
         return True
     try:
         registry = registry_path()
@@ -145,6 +166,6 @@ def registered() -> list[Path]:
     by a membership check rather than a lock, so two commands starting in one
     repo at the same moment can each append. Mirrors ``project_registered``.
     """
-    paths = [line for line in _read_lines()
-             if not line.startswith(COMMENT_PREFIX) and Path(line).is_dir()]
-    return [Path(line) for line in dict.fromkeys(paths)]
+    paths = [_path_of(line) for line in _read_lines()
+             if not line.startswith(COMMENT_PREFIX)]
+    return [Path(p) for p in dict.fromkeys(paths) if Path(p).is_dir()]

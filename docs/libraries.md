@@ -496,6 +496,12 @@ every read is a scan, and YAML would pay a `yq` fork on each of them. The
 filename is declared once, in [`constants.sh`](#constantssh), and this file
 holds functions only.
 
+A line is a work-tree path, optionally followed by a tab and the repo identity
+every worktree of that repo shares — the realpath of its `--git-common-dir`.
+Only `record_project_repo_ids` writes that second field, from the sync;
+registration stays fork-free, so a line arrives bare and is resolved later.
+Everything that matches a line compares the path ahead of the tab.
+
 Membership means a workbench command actually ran in a repo. Nothing scans for
 candidates — the two consumers that used to, the machine profile generator and
 the project-scoped migrations, each carried their own guessed-at list of git

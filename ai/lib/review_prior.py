@@ -35,11 +35,10 @@ import log
 import serde
 from review_common import (
     FILENAME_PRIOR_FINDINGS,
-    PRIOR_DATE_RE,
-    PRIOR_SHA_RE,
     _derive_path,
     plural,
 )
+from review_document import ReviewHeader
 from review_findings import (
     FindingRef,
     LedgerEntry,
@@ -363,12 +362,11 @@ def reconcile(
     """
     carried = _stable_ids(review_text)
     ledger = _parse_ledger(review_text)
-    sha = PRIOR_SHA_RE.search(prior_text)
-    date = PRIOR_DATE_RE.search(prior_text)
-    tree = _Tree(wt_path, sha.group(1) if sha else "")
+    prior = ReviewHeader.parse(prior_text)
+    tree = _Tree(wt_path, prior.head_sha)
     return Reconciliation(
         prior_sha=tree.prior_sha,
-        prior_date=date.group(1) if date else "",
+        prior_date=prior.date,
         head_sha=head_sha or (git_client.head_sha(wt_path) if wt_path else ""),
         records=[
             _settle(finding, carried, ledger, tree)

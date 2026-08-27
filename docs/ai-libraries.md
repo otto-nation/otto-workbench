@@ -210,6 +210,24 @@ permission to save can still be recovered.
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
 
+### review_document.py
+
+The metadata header a review document opens with.
+
+`review.md` begins with a block of HTML comments recording what produced it —
+the date, the head SHA, whether the review covers the whole branch or a delta,
+and how the run that wrote it ended. Every one of those keys is spelled here
+once, so the writers agree on the format by construction rather than by two
+lists of format strings staying in step.
+
+Three things write a header and they do not write the same one. The pipeline
+renders the full block; `review-rebuild` renders the subset a `meta.json` can
+attest to; and on the synthesis and single-agent paths the review agent writes
+its own, following prose in its template. `parse` therefore reads keys wherever
+they appear and in whatever order, and `set_status` edits the line it is asked
+about rather than re-rendering the block — a field this module was never told
+about survives an edit instead of being dropped by it.
+
 ### review_gc.py
 
 Removal of review artifacts, at every lifecycle that removes one.

@@ -19,13 +19,11 @@ import log
 from trail import Trail, add_trail_args
 from agent_registry import PHASES
 from agent_types import Mode, Phase
-from review_common import (
-    META_DATE, META_GENERATOR, META_HEAD_SHA, META_REVIEW_TYPE,
-)
+from review_document import ReviewHeader
 from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,
 )
-from review_types import ReviewType
+from review_types import ReviewType, meta_enum
 
 SCRIPT = Path(__file__).name
 REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."
@@ -53,17 +51,19 @@ def _read_meta(review_dir: Path) -> dict:
         return {}
 
 
-def _build_meta_header(meta: dict) -> str:
-    lines = [
-        META_DATE.format(today=date.today().isoformat()),
-    ]
-    if meta.get("head_sha"):
-        lines.append(META_HEAD_SHA.format(head_sha=meta["head_sha"]))
-    review_type = meta.get("review_type") or ReviewType.FULL
-    lines.append(META_REVIEW_TYPE.format(review_type=review_type))
-    if meta.get("generator_version"):
-        lines.append(META_GENERATOR.format(generator_version=meta["generator_version"]))
-    return "\n".join(lines) + "\n"
+def _build_header(meta: dict) -> ReviewHeader:
+    """The header a rebuild can attest to — what meta.json recorded, dated today.
+
+    A rebuild reconstructs the document from the group files, so it makes no
+    claim about the incremental keys or the run's status: those describe a
+    pipeline run, and this is not one.
+    """
+    return ReviewHeader(
+        date=date.today().isoformat(),
+        head_sha=meta.get("head_sha", ""),
+        review_type=meta_enum(ReviewType, meta.get("review_type")) or ReviewType.FULL,
+        generator_version=meta.get("generator_version", ""),
+    )
 
 
 def _build_title(meta: dict, repo: str, pr: str) -> str:
@@ -124,12 +124,11 @@ def main():
         processed = review_file.read_text()
 
         title = _build_title(meta, repo, args.pr)
-        meta_header = _build_meta_header(meta)
 
         final = build_mechanical_review(
             processed,
             title=title,
-            meta_header=meta_header,
+            meta_header=_build_header(meta).render(),
             group_count=len(group_files),
             summary_note=REBUILD_SUMMARY,
             include_verdict=(mode != Mode.SELF),

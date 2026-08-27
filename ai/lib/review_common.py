@@ -189,22 +189,6 @@ PIPELINE_SINGLE = "single"
 SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 
-# ── Metadata format ──────────────────────────────────────────────────────────
-
-META_DATE = "<!-- date: {today} -->"
-META_HEAD_SHA = "<!-- head_sha: {head_sha} -->"
-META_REVIEW_TYPE = "<!-- review_type: {review_type} -->"
-META_PRIOR_SHA = "<!-- prior_sha: {prior_sha} -->"
-META_PRIOR_DATE = "<!-- prior_date: {prior_date} -->"
-META_DELTA_FILES = "<!-- delta_files: {delta_file_count} -->"
-META_SKIPPED_GROUPS = "<!-- skipped_groups: {skipped}/{total} -->"
-META_GENERATOR = "<!-- generator: {generator_version} -->"
-META_STATUS = "<!-- status: {status} -->"
-
-PRIOR_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
-PRIOR_DATE_RE = re.compile(r"<!-- date: (\d{4}-\d{2}-\d{2}) -->")
-
-
 # ── Path helpers ─────────────────────────────────────────────────────────────
 
 def _derive_path(review_file: str, filename: str) -> str:

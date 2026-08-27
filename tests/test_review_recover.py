@@ -303,7 +303,7 @@ class TestRecoverDeclinesTheWorkItShould:
         run(job)
         Path(review_state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
-            "groups_done": [1, 2], "synthesis_done": True,
+            "groups_done": [1, 2], "done": ["synthesis"],
         }))
 
         assert run(job).phases == []

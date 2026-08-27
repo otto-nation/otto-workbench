@@ -145,3 +145,10 @@ PHASES: dict[Phase, PhaseSpec] = {s.phase: s for s in _SPECS}
 REVIEW_PHASES: tuple[Phase, ...] = tuple(
     p for p, s in PHASES.items() if s.domain is PhaseDomain.REVIEW
 )
+
+# A review's phase 1 is one scan chosen from these two, so every question about
+# phase 1 — did it run, was it switched off, is it behind a resumed run — is a
+# question about the pair rather than about either member. Listed rather than
+# derived: nothing on a `PhaseSpec` says "candidate for phase 1", and inventing
+# a field read by one frozenset would be the parallel table this epic removes.
+SCAN_PHASES: frozenset[Phase] = frozenset({Phase.SCOUT, Phase.HOLISTIC})

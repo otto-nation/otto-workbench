@@ -168,14 +168,13 @@ class TestHolisticPhaseStateUpdate:
     def test_skip_incremental_marks_done(self, mock_write, tmp_path):
         job = _make_job(tmp_path)
         state = PipelineState(head_sha="abc", group_names=["g1"])
-        assert state.holistic_done is False
+        assert state.scanned is False
 
         result = review_pipeline._run_holistic_phase(
-            job, group_count=1, state=state,
-            resume_exists=False, incremental=True,
+            job, group_count=1, state=state, incremental=True,
         )
         assert result == PhaseResult()
-        assert state.holistic_done is True
+        assert state.scanned is True
         mock_write.assert_called_once_with(job, state)
 
     @patch.object(review_pipeline, "_write_pipeline_state")
@@ -185,23 +184,37 @@ class TestHolisticPhaseStateUpdate:
         state = PipelineState(head_sha="abc", group_names=["g1"])
 
         review_pipeline._run_holistic_phase(
-            job, group_count=10, state=state,
-            resume_exists=False, incremental=False,
+            job, group_count=10, state=state, incremental=False,
         )
-        assert state.holistic_done is True
+        assert state.scanned is True
         mock_write.assert_called_once()
 
     @patch.object(review_pipeline, "_write_pipeline_state")
     def test_skip_already_done_no_write(self, mock_write, tmp_path):
         job = _make_job(tmp_path)
-        state = PipelineState(head_sha="abc", group_names=["g1"], holistic_done=True)
+        state = PipelineState(
+            head_sha="abc", group_names=["g1"], done={Phase.SCOUT})
 
         review_pipeline._run_holistic_phase(
-            job, group_count=1, state=state,
-            resume_exists=False, incremental=True,
+            job, group_count=1, state=state, incremental=True,
         )
-        assert state.holistic_done is True
+        assert state.scanned is True
         mock_write.assert_not_called()
+
+    @patch.object(review_pipeline, "_write_pipeline_state")
+    def test_a_skipped_scan_records_the_scan_it_would_have_run(
+        self, mock_write, tmp_path,
+    ):
+        """`--no-scout` alone falls back to the holistic scan, so a run that
+        skips phase 1 for some other reason records `holistic` — a single
+        `holistic_done` bool recorded the scout scan under the holistic name."""
+        job = _make_job(tmp_path, skip_phases=frozenset({Phase.SCOUT}))
+        state = PipelineState(head_sha="abc", group_names=["g1"])
+
+        review_pipeline._run_holistic_phase(
+            job, group_count=1, state=state, incremental=True,
+        )
+        assert state.done == {Phase.HOLISTIC}
 
 
 class TestShouldDisprove:

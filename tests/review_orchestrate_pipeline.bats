@@ -170,16 +170,16 @@ job = mod.ReviewJob(
 )
 groups = [mod.Group("g1", ["a.go"], 10)]
 plan = mod._resolve_recovery(job, groups)
-print(plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state)
+print(plan.cost_so_far, plan.skip_groups, plan.state)
 PYEOF
 )
-  [ "$result" = "0.0 None False None" ]
+  [ "$result" = "0.0 None None" ]
 }
 
 @test "_resolve_recovery: auto-resumes when valid incomplete pipeline state exists" {
   mkdir -p "$TMPDIR/test"
   cat > "$TMPDIR/test/pipeline.json" <<'EOF'
-{"head_sha": "abc123", "group_names": ["g1", "g2"], "holistic_done": true, "groups_done": [1]}
+{"head_sha": "abc123", "group_names": ["g1", "g2"], "done": ["holistic"], "groups_done": [1]}
 EOF
   result=$(_py_here <<PYEOF
 job = mod.ReviewJob(
@@ -191,18 +191,18 @@ job = mod.ReviewJob(
 )
 groups = [mod.Group("g1", ["a.go"], 10), mod.Group("g2", ["b.go"], 20)]
 plan = mod._resolve_recovery(job, groups)
-print(plan.skip_groups, plan.skip_holistic, plan.state is not None)
+print(plan.skip_groups, plan.state.scanned)
 PYEOF
 )
   # _info prints a status line to stdout; check last line for the actual result
   last_line=$(echo "$result" | tail -1)
-  [ "$last_line" = "{1} True True" ]
+  [ "$last_line" = "{1} True" ]
 }
 
 @test "_resolve_recovery: starts fresh when SHA differs" {
   mkdir -p "$TMPDIR/stale"
   cat > "$TMPDIR/stale/pipeline.json" <<'EOF'
-{"head_sha": "old_sha", "group_names": ["g1"], "holistic_done": true, "groups_done": [1]}
+{"head_sha": "old_sha", "group_names": ["g1"], "done": ["holistic"], "groups_done": [1]}
 EOF
   result=$(_py_here <<PYEOF
 job = mod.ReviewJob(
@@ -235,11 +235,10 @@ Path(review_file).write_text("## Summary\nMechanical fallback\n## Verdict\nAppro
 state_data = {
     "head_sha": "abc123",
     "group_names": ["tier1-critical", "orc-card", "svc-card"],
-    "holistic_done": True,
     "groups_done": [1, 3],
     "groups_failed": {"2": "agent error: model not available"},
-    "synthesis_done": True,
-    "synthesis_failed": "mechanical fallback (no output)",
+    "done": ["holistic", "synthesis"],
+    "failed": {"synthesis": "mechanical fallback (no output)"},
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
@@ -257,13 +256,11 @@ job = mod.ReviewJob(
 )
 
 plan = mod._resolve_recovery(job, groups)
-cost, skip_groups, skip_holistic, state = (
-    plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state,
-)
+cost, skip_groups, state = plan.cost_so_far, plan.skip_groups, plan.state
 assert skip_groups == {1, 3}, f"expected skip {{1, 3}}, got {skip_groups}"
-assert skip_holistic is True
 assert state is not None
-assert state.synthesis_done is False, "synthesis must be re-run after patching"
+assert state.scanned is True
+assert mod.Phase.SYNTHESIS not in state.done, "synthesis must be re-run after patching"
 PY
 }
 
@@ -279,11 +276,10 @@ Path(review_file).write_text("## Summary\nGood review\n## Verdict\nApprove")
 state_data = {
     "head_sha": "abc123",
     "group_names": ["tier1-critical"],
-    "holistic_done": True,
     "groups_done": [1],
     "groups_failed": {},
-    "synthesis_done": True,
-    "synthesis_failed": "",
+    "done": ["holistic", "synthesis"],
+    "failed": {},
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
@@ -297,10 +293,7 @@ job = mod.ReviewJob(
 )
 
 plan = mod._resolve_recovery(job, groups)
-cost, skip_groups, skip_holistic, state = (
-    plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state,
-)
-assert state is None, "state should be None when review is complete with no failures"
+assert plan.state is None, "state should be None when review is complete with no failures"
 PY
 }
 
@@ -316,11 +309,10 @@ Path(review_file).write_text("## Summary\nmechanically merged\n## Verdict\nAppro
 state_data = {
     "head_sha": "abc123",
     "group_names": ["tier1-critical", "orc-card"],
-    "holistic_done": True,
     "groups_done": [1, 2],
     "groups_failed": {},
-    "synthesis_done": True,
-    "synthesis_failed": "mechanical fallback (no output)",
+    "done": ["holistic", "synthesis"],
+    "failed": {"synthesis": "mechanical fallback (no output)"},
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
@@ -337,13 +329,11 @@ job = mod.ReviewJob(
 )
 
 plan = mod._resolve_recovery(job, groups)
-cost, skip_groups, skip_holistic, state = (
-    plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state,
-)
+cost, skip_groups, state = plan.cost_so_far, plan.skip_groups, plan.state
 assert skip_groups == {1, 2}, f"expected skip {{1, 2}}, got {skip_groups}"
-assert skip_holistic is True
 assert state is not None
-assert state.synthesis_done is False, "synthesis must be re-run"
+assert state.scanned is True
+assert mod.Phase.SYNTHESIS not in state.done, "synthesis must be re-run"
 PY
 }
 
@@ -358,11 +348,10 @@ review_file = f"{d}/review.md"
 state_data = {
     "head_sha": "abc123",
     "group_names": ["tier1-critical", "orc-card", "svc-card"],
-    "holistic_done": True,
     "groups_done": [1],
     "groups_failed": {},
-    "synthesis_done": False,
-    "synthesis_failed": "",
+    "done": ["holistic"],
+    "failed": {},
 }
 Path(f"{d}/pipeline.json").write_text(json.dumps(state_data))
 
@@ -380,12 +369,10 @@ job = mod.ReviewJob(
 )
 
 plan = mod._resolve_recovery(job, groups)
-cost, skip_groups, skip_holistic, state = (
-    plan.cost_so_far, plan.skip_groups, plan.skip_holistic, plan.state,
-)
+cost, skip_groups, state = plan.cost_so_far, plan.skip_groups, plan.state
 assert skip_groups == {1}, f"expected skip {{1}}, got {skip_groups}"
-assert skip_holistic is True
 assert state is not None
+assert state.scanned is True
 PY
 }
 
@@ -399,7 +386,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     state = mod.PipelineState(
         head_sha='abc123',
         group_names=['tier1', 'services', 'tests'],
-        holistic_done=True,
+        done={mod.Phase.HOLISTIC},
         groups_done=[1, 3],
     )
 review_file = '$TMPDIR/review.md'
@@ -415,14 +402,14 @@ loaded = mod._read_pipeline_state(job)
 print(f'sha={loaded.head_sha}')
 print(f'count={loaded.group_count}')
 print(f'names={loaded.group_names}')
-print(f'holistic={loaded.holistic_done}')
+print(f'done={sorted(str(p) for p in loaded.done)}')
 print(f'groups={loaded.groups_done}')
 ")
   echo "$result"
   [[ "$result" == *"sha=abc123"* ]]
   [[ "$result" == *"count=3"* ]]
   [[ "$result" == *"names=['tier1', 'services', 'tests']"* ]]
-  [[ "$result" == *"holistic=True"* ]]
+  [[ "$result" == *"done=['holistic']"* ]]
   [[ "$result" == *"groups=[1, 3]"* ]]
 }
 
@@ -469,21 +456,21 @@ print(result)
   echo '{"type": "result", "total_cost_usd": 0.75}' > "$TMPDIR/group-1.jsonl"
   echo '{"type": "result", "total_cost_usd": 0.50}' > "$TMPDIR/group-2.jsonl"
 
-  result=$(_sum_costs "group_names=['a', 'b', 'c'], holistic_done=True, groups_done=[1, 2]")
+  result=$(_sum_costs "group_names=['a', 'b', 'c'], groups_done=[1, 2]")
   [ "$result" = "2.75" ]
 }
 
 @test "_sum_existing_costs: missing log files return 0" {
-  result=$(_sum_costs "group_names=['a', 'b'], holistic_done=True, groups_done=[1]")
+  result=$(_sum_costs "group_names=['a', 'b'], groups_done=[1]")
   [ "$result" = "0.00" ]
 }
 
 @test "_sum_existing_costs: counts the scout log when phase 1 scouted" {
-  # holistic_done means "phase 1 finished" — the scout branch sets it too, and
-  # writes scout.jsonl rather than holistic.jsonl.
+  # Phase 1 is either scan, and the one that ran is the one that left a log —
+  # which is why the total is read from the logs rather than from `state.done`.
   echo '{"type": "result", "total_cost_usd": 1.25}' > "$TMPDIR/scout.jsonl"
 
-  result=$(_sum_costs "group_names=['a'], holistic_done=True")
+  result=$(_sum_costs "group_names=['a']")
   [ "$result" = "1.25" ]
 }
 
@@ -493,7 +480,7 @@ print(result)
   echo '{"type": "result", "total_cost_usd": 1.50}' > "$TMPDIR/holistic.jsonl"
   echo '{"type": "result", "total_cost_usd": 1.25}' > "$TMPDIR/scout.jsonl"
 
-  result=$(_sum_costs "group_names=['a'], holistic_done=True")
+  result=$(_sum_costs "group_names=['a']")
   [ "$result" = "2.75" ]
 }
 
@@ -772,7 +759,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     state = mod.PipelineState(
         head_sha='abc123',
         group_names=['services', 'tests'],
-        holistic_done=True, groups_done=[1],
+        done={mod.Phase.HOLISTIC}, groups_done=[1],
     )
     groups = [mod.Group('services', ['a.go'], 10), mod.Group('tests', ['b_test.go'], 5)]
     valid = mod._validate_resume_state(state, 'abc123', groups)
@@ -837,7 +824,7 @@ print(f'groups={loaded.groups_done}')
   [ "$result" = "groups=[1, 2, 3]" ]
 }
 
-@test "PipelineState: round-trips groups_failed through JSON" {
+@test "PipelineState: round-trips the failure maps through JSON" {
   _py_here <<'PY'
 import json, tempfile
 from pathlib import Path
@@ -845,15 +832,14 @@ from pathlib import Path
 state = mod.PipelineState(
     head_sha="abc123",
     group_names=["tier1-critical", "orc-card"],
-    holistic_done=True,
+    done={mod.Phase.HOLISTIC},
     groups_done=[1],
     groups_failed={2: mod.Diagnosis(
         mod.DiagnosisKind.AGENT_ERROR, detail="model not available",
     )},
-    synthesis_done=False,
-    synthesis_failed=mod.Diagnosis(
+    failed={mod.Phase.SYNTHESIS: mod.Diagnosis(
         mod.DiagnosisKind.UNKNOWN, detail="agent exited with code 1 (no output)",
-    ),
+    )},
 )
 
 d = tempfile.mkdtemp()
@@ -872,10 +858,10 @@ loaded = mod._read_pipeline_state(job)
 assert loaded.groups_failed == {2: mod.Diagnosis(
     mod.DiagnosisKind.AGENT_ERROR, detail="model not available",
 )}, f"got {loaded.groups_failed}"
-assert loaded.synthesis_done is False
-assert loaded.synthesis_failed == mod.Diagnosis(
+assert loaded.done == {mod.Phase.HOLISTIC}, f"got {loaded.done}"
+assert loaded.failed == {mod.Phase.SYNTHESIS: mod.Diagnosis(
     mod.DiagnosisKind.UNKNOWN, detail="agent exited with code 1 (no output)",
-), f"got {loaded.synthesis_failed}"
+)}, f"got {loaded.failed}"
 PY
 }
 
@@ -888,7 +874,8 @@ d = tempfile.mkdtemp()
 review_file = f"{d}/review.md"
 Path(review_file).write_text("")
 
-# Write a legacy pipeline state without the new fields
+# Write a legacy pipeline state without the new fields. `holistic_done` is one
+# of the per-phase flags `done` replaced — an unknown key now, and ignored.
 state_file = f"{d}/pipeline.json"
 Path(state_file).write_text(json.dumps({
     "head_sha": "abc123",
@@ -906,8 +893,8 @@ job = mod.ReviewJob(
 
 loaded = mod._read_pipeline_state(job)
 assert loaded.groups_failed == {}, f"got {loaded.groups_failed}"
-assert loaded.synthesis_done is False, f"got {loaded.synthesis_done}"
-assert loaded.synthesis_failed is None, f"got {loaded.synthesis_failed}"
+assert loaded.done == set(), f"got {loaded.done}"
+assert loaded.failed == {}, f"got {loaded.failed}"
 PY
 }
 

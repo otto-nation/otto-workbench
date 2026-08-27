@@ -9,6 +9,10 @@ import pytest
 
 from conftest import git_out, synthetic_review
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
+
+from agent_types import Phase
+
 
 class TestExtractEvidence:
     def test_extracts_from_blockquoted_fenced_code(self, ro):
@@ -2416,7 +2420,7 @@ class TestRunSynthesisOrFallback:
         return ro.PipelineState(
             head_sha="abc123",
             group_names=["grp-1"],
-            holistic_done=True,
+            done={Phase.HOLISTIC},
             groups_done=[1],
         )
 
@@ -2455,7 +2459,7 @@ class TestRunSynthesisOrFallback:
         ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
-        assert state.synthesis_failed == ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)
+        assert state.failed == {Phase.SYNTHESIS: ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK)}
 
     def test_synthesis_reports_what_its_log_records(self, ro, tmp_path, monkeypatch):
         import review_pipeline
@@ -2523,7 +2527,7 @@ class TestRunSynthesisOrFallback:
             job, state, "", 1, merged, [ro.GroupFailure("grp-1", skipped)],
             0, 0.0, 20.0,
         )
-        assert state.synthesis_failed == skipped
+        assert state.failed == {Phase.SYNTHESIS: skipped}
         assert state.status is ro.ReviewStatus.PARTIAL
 
     def test_no_synthesis_writes_the_mechanical_merge(self, ro, tmp_path, monkeypatch):
@@ -2547,8 +2551,8 @@ class TestRunSynthesisOrFallback:
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
         assert result == review_pipeline.PhaseResult()
-        assert state.synthesis_done is True
-        assert state.synthesis_failed is None
+        assert Phase.SYNTHESIS in state.done
+        assert state.failed == {}
         assert "api.go:10" in Path(job.review_file).read_text()
 
 
@@ -4433,10 +4437,10 @@ class TestPipelineStateFailureRoundTrip:
             1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="agent hit max turns (12)"),
         }
 
-    def _synthesis_state(self, ro, tmp_path, raw):
+    def _write_state(self, ro, tmp_path, **fields):
         path = ro._pipeline_state_path(self._job(ro, tmp_path))
         Path(path).write_text(json.dumps({
-            "head_sha": "abc", "group_names": ["ui"], "synthesis_failed": raw,
+            "head_sha": "abc", "group_names": ["ui"], **fields,
         }))
         return ro._read_pipeline_state(self._job(ro, tmp_path))
 
@@ -4452,19 +4456,29 @@ class TestPipelineStateFailureRoundTrip:
         `--recover`, so each sentinel has to read back as the kind it names —
         otherwise the recovered run loses the outcome it recorded.
         """
-        state = self._synthesis_state(ro, tmp_path, raw)
-        assert state.synthesis_failed == ro.Diagnosis(getattr(ro.DiagnosisKind, kind))
+        state = self._write_state(ro, tmp_path, failed={"synthesis": raw})
+        assert state.failed == {
+            Phase.SYNTHESIS: ro.Diagnosis(getattr(ro.DiagnosisKind, kind)),
+        }
 
-    def test_a_legacy_empty_synthesis_field_is_no_failure_at_all(self, ro, tmp_path):
-        """`""` was how the old schema spelled "synthesis did not fail".
+    def test_a_state_file_from_before_the_phase_keys_reads_as_nothing_done(
+        self, ro, tmp_path,
+    ):
+        """The per-phase flags are gone, and `serde` ignores what it does not know.
 
-        Read as a blank diagnosis it would be truthy, and every reader tests
-        truthiness — a clean recovered run would report itself partial and
-        grow an Agent Failures section with an empty reason.
+        A review mid-flight across the upgrade therefore reads back with no
+        phase recorded, re-runs its scan once and is correct from there — the
+        whole migration, which is why there is no migration.
         """
-        state = self._synthesis_state(ro, tmp_path, "")
+        state = self._write_state(
+            ro, tmp_path,
+            holistic_done=True, synthesis_done=True,
+            synthesis_failed="mechanical fallback",
+        )
 
-        assert state.synthesis_failed is None
+        assert state.done == set()
+        assert state.failed == {}
+        assert state.scanned is False
         assert ro.build_failures_section(state) == ""
 
     def test_a_legacy_reason_still_renders_verbatim(self, ro, tmp_path):
@@ -4481,7 +4495,7 @@ class TestBuildFailuresSection:
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
-            synthesis_done=True,
+            done={Phase.SYNTHESIS},
         )
         assert build_failures_section(state) == ""
 
@@ -4495,7 +4509,7 @@ class TestBuildFailuresSection:
                 2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED),
                 3: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5),
             },
-            synthesis_done=True,
+            done={Phase.SYNTHESIS},
         )
         result = build_failures_section(state)
         assert "## Agent Failures" in result
@@ -4513,8 +4527,8 @@ class TestBuildFailuresSection:
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
-            synthesis_done=True,
-            synthesis_failed=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
+            done={Phase.SYNTHESIS},
+            failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
         result = build_failures_section(state)
         assert "synthesis" in result
@@ -4535,7 +4549,7 @@ class TestBuildFailuresSection:
             groups_failed={
                 1: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied"),
             },
-            synthesis_done=True,
+            done={Phase.SYNTHESIS},
         )
         result = build_failures_section(state)
         assert "## Agent Failures" in result
@@ -4553,7 +4567,7 @@ class TestBuildFailuresSection:
                 1: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied"),
                 2: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5),
             },
-            synthesis_done=True,
+            done={Phase.SYNTHESIS},
         )
         assert "pr review --recover" in build_failures_section(state)
 
@@ -4565,7 +4579,7 @@ class TestBuildFailuresSection:
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
             groups_done=[], groups_failed={1: denial, 2: denial},
-            synthesis_done=True,
+            done={Phase.SYNTHESIS},
         )
         assert "pr review --recover" not in build_failures_section(state)
 
@@ -4576,7 +4590,7 @@ class TestBuildFailuresSection:
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[], groups_failed={1: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5)},
-            synthesis_done=True,
+            done={Phase.SYNTHESIS},
         )
         assert "pr review --recover" in build_failures_section(state)
 
@@ -4587,8 +4601,8 @@ class TestBuildFailuresSection:
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
-            synthesis_done=True,
-            synthesis_failed=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
+            done={Phase.SYNTHESIS},
+            failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
         assert "pr review --recover" in build_failures_section(state)
 
@@ -4609,8 +4623,8 @@ class TestFailuresSectionInReview:
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1], groups_failed={2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)},
-            synthesis_done=True,
-            synthesis_failed=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
+            done={Phase.SYNTHESIS},
+            failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
         result = build_failures_section(state)
         assert "group-2: api" in result
@@ -4629,9 +4643,8 @@ class TestInjectFailuresAndStatus:
             "group_names": ["ui", "api"],
             "groups_done": [1],
             "groups_failed": groups_failed or {},
-            "holistic_done": False,
-            "synthesis_done": True,
-            "synthesis_failed": synthesis_failed,
+            "done": ["synthesis"],
+            "failed": {"synthesis": synthesis_failed} if synthesis_failed else {},
             "review_type": "full",
             "prior_sha": "",
             "skipped_groups": [],
@@ -4659,8 +4672,8 @@ class TestInjectFailuresAndStatus:
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1], groups_failed={},
-            synthesis_done=True,
-            synthesis_failed=Diagnosis(DiagnosisKind.BUDGET_EXCEEDED),
+            done={Phase.SYNTHESIS},
+            failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)},
         )
         _inject_failures_and_status(str(review_file), state)
 
@@ -4686,7 +4699,7 @@ class TestInjectFailuresAndStatus:
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
-            synthesis_done=True,
+            done={Phase.SYNTHESIS},
         )
         _inject_failures_and_status(str(review_file), state)
 
@@ -4712,8 +4725,8 @@ class TestInjectFailuresAndStatus:
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
             groups_done=[1], groups_failed={},
-            synthesis_done=True,
-            synthesis_failed=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
+            done={Phase.SYNTHESIS},
+            failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
         _inject_failures_and_status(str(review_file), state)
 
@@ -4851,7 +4864,7 @@ class TestCleanupScope:
             state = PipelineState(
                 head_sha="abc123", group_names=["a", "b"], groups_done=[1],
                 groups_failed={2: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=20)},
-                synthesis_done=True,
+                done={Phase.SYNTHESIS},
             )
             (review_dir / FILENAME_PIPELINE_STATE).write_text(
                 json.dumps(serde.to_dict(state)),

@@ -25,6 +25,7 @@ from pathlib import Path
 import log
 import serde
 from agent_diagnosis import Diagnosis, DiagnosisKind
+from agent_registry import SCAN_PHASES
 from agent_types import Phase
 from pr_domains import ReviewStatus
 from review_agent import _parse_session_cost
@@ -59,16 +60,33 @@ class PipelineState:
     # resumed, which is the right answer for state written before SHA tracking.
     head_sha: str = ""
     group_names: list[str] = field(default_factory=list)
-    holistic_done: bool = False
+    # Which phases finished, and why the ones that did not failed — keyed by the
+    # phase rather than spelled as a field apiece. A `holistic_done` bool could
+    # only ever answer for the phase in its name, which is how the scout scan
+    # came to record itself under the holistic flag and the disprove gate to
+    # record itself nowhere.
+    #
+    # The group phase keeps its own pair below: it is the one phase that runs
+    # once per group, so what it has to record is an index, not a membership.
+    done: set[Phase] = field(default_factory=set)
+    # A phase's failures are diagnoses like any other, just reached without a
+    # session log — see the pipeline-outcome kinds on `DiagnosisKind`.
+    failed: dict[Phase, Diagnosis] = field(default_factory=dict)
     groups_done: list[int] = field(default_factory=list)
     groups_failed: dict[int, Diagnosis] = field(default_factory=dict)
-    synthesis_done: bool = False
-    # Synthesis's failures are diagnoses like any other, just reached without a
-    # session log — see the pipeline-outcome kinds on `DiagnosisKind`.
-    synthesis_failed: Diagnosis | None = None
     review_type: ReviewType = ReviewType.FULL
     prior_sha: str = ""
     skipped_groups: list[int] = field(default_factory=list)
+
+    @property
+    def scanned(self) -> bool:
+        """Whether phase 1's scan is behind this run, whichever scan it was.
+
+        Phase 1 is one scan chosen from two candidates, so "did it happen" is a
+        question about the pair rather than about either member — and a run
+        resumed at a different effort can have recorded the other one.
+        """
+        return bool(SCAN_PHASES & self.done)
 
     @classmethod
     def load(cls, review_dir: Path | None) -> "PipelineState | None":
@@ -95,14 +113,15 @@ class PipelineState:
     @property
     def all_groups_failed(self) -> bool:
         """Whether the run produced no usable group output at all."""
-        if self.synthesis_failed and self.synthesis_failed.kind is DiagnosisKind.ALL_GROUPS_FAILED:
+        synthesis = self.failed.get(Phase.SYNTHESIS)
+        if synthesis and synthesis.kind is DiagnosisKind.ALL_GROUPS_FAILED:
             return True
         return bool(self.groups_failed) and len(self.groups_failed) >= self.group_count > 0
 
     @property
     def status(self) -> ReviewStatus:
         """The verdict this state implies for the review it describes."""
-        if not self.groups_failed and not self.synthesis_failed:
+        if not self.groups_failed and not self.failed:
             return ReviewStatus.COMPLETED
         if self.all_groups_failed:
             return ReviewStatus.ERROR
@@ -112,13 +131,12 @@ class PipelineState:
     def warnings(self) -> list[str]:
         """Human-readable notes about phases that did not complete."""
         notes = []
-        if not self.holistic_done and not self.synthesis_done:
+        if not self.scanned and Phase.SYNTHESIS not in self.done:
             notes.append("holistic phase")
         if self.groups_failed:
             n = len(self.groups_failed)
             notes.append(f"{n} group{plural(n)} failed")
-        if self.synthesis_failed:
-            notes.append("synthesis")
+        notes.extend(str(phase) for phase in sorted(self.failed))
         return notes
 
 
@@ -151,7 +169,7 @@ def build_failure_detail(review_dir: Path | None) -> str:
     state = PipelineState.load(review_dir)
     if state is None:
         return ""
-    if not state.groups_failed and not state.synthesis_failed:
+    if not state.groups_failed and not state.failed:
         return ""
 
     parts = []
@@ -164,8 +182,11 @@ def build_failure_detail(review_dir: Path | None) -> str:
             parts.append(f"{n_failed}/{n_total} groups failed: {reasons}")
 
     # ALL_GROUPS_FAILED restates what the groups line already said.
-    if state.synthesis_failed and state.synthesis_failed.kind is not DiagnosisKind.ALL_GROUPS_FAILED:
-        parts.append(f"synthesis: {state.synthesis_failed.message}")
+    parts.extend(
+        f"{phase}: {diagnosis.message}"
+        for phase, diagnosis in sorted(state.failed.items())
+        if diagnosis.kind is not DiagnosisKind.ALL_GROUPS_FAILED
+    )
 
     return "; ".join(parts)
 
@@ -188,13 +209,12 @@ def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
 def _sum_existing_costs(job: ReviewJob, state: PipelineState) -> float:
     """What the prior attempt spent, read from the session logs it left behind.
 
-    Derived from the logs rather than from the state flags, because a flag can
-    disagree with them in both directions. `holistic_done` means "phase 1 is
-    finished" — the scout branch sets it too, and then there is no
-    `holistic.jsonl` to find — while a phase that crashed mid-flight spent what
-    its log records and set no flag at all. A phase that never ran leaves no
-    log, and `_parse_session_cost` reads a missing file as zero, so listing
-    every log a pipeline run can write needs no guard.
+    Derived from the logs rather than from `state.done`, because the two
+    disagree in both directions. A phase 1 that was skipped outright records
+    itself done and leaves no log to find, while a phase that crashed mid-flight
+    spent what its log records and recorded nothing. A phase that never ran
+    leaves no log, and `_parse_session_cost` reads a missing file as zero, so
+    listing every log a pipeline run can write needs no guard.
 
     Every such log is listed. Both phase-1 scans appear because a run resumed at
     a different effort can leave one of each, and a re-run overwrites its own
@@ -247,13 +267,9 @@ def build_failures_section(state: "PipelineState") -> str:
     for idx, diagnosis in sorted(state.groups_failed.items()):
         rows.append((f"group-{idx}: {state.group_label(idx)}", diagnosis.message, "failed"))
 
-    if state.synthesis_failed:
-        fell_back = state.synthesis_failed.kind is DiagnosisKind.MECHANICAL_FALLBACK
-        rows.append((
-            "synthesis",
-            state.synthesis_failed.message,
-            "fallback" if fell_back else "failed",
-        ))
+    for phase, diagnosis in sorted(state.failed.items()):
+        fell_back = diagnosis.kind is DiagnosisKind.MECHANICAL_FALLBACK
+        rows.append((str(phase), diagnosis.message, "fallback" if fell_back else "failed"))
 
     if not rows:
         return ""
@@ -267,9 +283,10 @@ def build_failures_section(state: "PipelineState") -> str:
     for agent, reason, status in rows:
         lines.append(f"| {agent} | {reason} | {status} |")
 
-    recoverable = [d.recoverable for d in state.groups_failed.values()]
-    if state.synthesis_failed:
-        recoverable.append(state.synthesis_failed.recoverable)
+    recoverable = [
+        d.recoverable
+        for d in list(state.groups_failed.values()) + list(state.failed.values())
+    ]
     if any(recoverable):
         lines.append("")
         lines.append("Run `pr review --recover` to retry failed agents.")
@@ -293,7 +310,7 @@ def _inject_failures_and_status(review_file: str, state: "PipelineState") -> Non
     status_line = META_STATUS.format(status=status)
     if "<!-- status:" in content:
         # Replace existing status line — may be stale (e.g. completed written before
-        # synthesis_failed was set, now needs to become partial).
+        # synthesis was recorded failed, now needs to become partial).
         content = re.sub(r"<!-- status: [^>]+ -->", status_line, content, count=1)
     else:
         content = content.replace("<!-- generator:", f"{status_line}\n<!-- generator:", 1)
@@ -321,7 +338,6 @@ class RecoveryPlan:
     # "no resume opinion", which lets the caller substitute its own incremental
     # skips rather than merge with a set that was never a decision.
     skip_groups: "set[int] | None" = None
-    skip_holistic: bool = False
     already_complete: bool = False
 
 
@@ -335,29 +351,32 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
         return RecoveryPlan()
 
     has_failed_groups = bool(state.groups_failed)
-    has_failed_synthesis = bool(state.synthesis_failed)
-    is_complete = state.synthesis_done
+    has_failed_phases = bool(state.failed)
+    is_complete = Phase.SYNTHESIS in state.done
 
-    if is_complete and not has_failed_groups and not has_failed_synthesis:
+    if is_complete and not has_failed_groups and not has_failed_phases:
         log.info("Prior review completed successfully — nothing to recover")
         return RecoveryPlan(already_complete=True)
 
     cost_so_far = _sum_existing_costs(job, state)
 
-    if is_complete and (has_failed_groups or has_failed_synthesis):
+    if is_complete and (has_failed_groups or has_failed_phases):
         log.info("Prior review had failures — recovering")
         skip_groups = set(state.groups_done)
         if has_failed_groups:
             failed_count = len(state.groups_failed)
             state.groups_failed.clear()
             log.info(f"  Re-running {failed_count} failed groups")
-        if has_failed_synthesis:
-            state.synthesis_done = False
-            state.synthesis_failed = None
-            log.info("  Re-running synthesis")
+        if has_failed_phases:
+            # A phase that failed is no longer done — the two record the same
+            # attempt, so clearing one without the other leaves a run that
+            # reports itself finished and never retries what it is retrying.
+            retrying = sorted(str(phase) for phase in state.failed)
+            state.done -= set(state.failed)
+            state.failed.clear()
+            log.info(f"  Re-running {', '.join(retrying)}")
         return RecoveryPlan(
             state=state, cost_so_far=cost_so_far, skip_groups=skip_groups,
-            skip_holistic=state.holistic_done,
         )
 
     # Incomplete pipeline — resume from where it left off
@@ -365,5 +384,4 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
     return RecoveryPlan(
         state=state, cost_so_far=cost_so_far,
         skip_groups=set(state.groups_done) if state.groups_done else None,
-        skip_holistic=state.holistic_done,
     )

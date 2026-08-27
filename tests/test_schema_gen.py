@@ -201,6 +201,20 @@ def test_tuple():
     assert schema["properties"]["items"] == {"type": "array", "items": {"type": "integer"}}
 
 
+def test_set_says_its_elements_are_unique():
+    """`serde` writes a set as an array, so the schema does too — plus the one
+    thing an array does not say, which is the whole reason the field is a set."""
+    @dataclass
+    class WithSet:
+        phases: set[Color] = field(default_factory=set)
+
+    assert dataclass_to_schema(WithSet)["properties"]["phases"] == {
+        "type": "array",
+        "items": {"type": "string", "enum": ["red", "green", "blue"]},
+        "uniqueItems": True,
+    }
+
+
 def test_bare_list():
     """A bare `list` states its shape and nothing about its elements — which is
     also all `serde` checks for one. It used to fall through to an open schema

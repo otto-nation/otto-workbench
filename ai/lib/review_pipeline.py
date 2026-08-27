@@ -41,8 +41,8 @@ from review_findings import (
 )
 from review_github import PRData, fetch_pr_data
 from review_preflight import (
-    DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
-    GROUP_TIER3, HOLISTIC_MIN_GROUPS,
+    BUDGET_SUMMARY, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
+    GROUP_TIER3, HOLISTIC_MIN_GROUPS, SKIPPED_SUMMARY,
     _merge_smallest_groups,
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
     group_files,
@@ -235,6 +235,30 @@ def _build_mechanical_fallback(
     return _document(
         job, body, skipped_groups=skipped_groups, total_groups=group_count,
         status=status,
+    )
+
+
+def _no_synthesis_body(
+    job: ReviewJob, merged_content: str, group_count: int, summary_note: str,
+) -> str:
+    """`merged_content` under a Summary saying synthesis did not run, and why.
+
+    The two paths that reach the review file with the group output and no agent
+    — `--no-synthesis` and the budget cut-off — write through here so that both
+    carry the section every other path writes. Without it `_is_complete_review`
+    reads the document as unfinished and a run resumed at the disprove gate
+    re-enters synthesis to rewrite a review it already has.
+
+    No verdict: neither path reviewed anything the synthesis agent would have
+    weighed, and a mechanical approve/request-changes from a run the operator
+    stopped is a claim nobody made.
+    """
+    return build_mechanical_body(
+        merged_content,
+        group_count=group_count,
+        summary_note=summary_note,
+        include_verdict=False,
+        file_count=job.pr.changed_files,
     )
 
 
@@ -560,7 +584,11 @@ def _run_synthesis_or_fallback(
     if Phase.SYNTHESIS in job.skipped:
         log.info("Synthesis skipped — using mechanical merge")
         _document(
-            job, _post_processed_body(job, merged_content),
+            job,
+            _no_synthesis_body(
+                job, _post_processed_body(job, merged_content),
+                group_count, SKIPPED_SUMMARY,
+            ),
             skipped_groups=n_skipped, total_groups=group_count,
         ).write(job.review_file)
         _write_review_sidecar(job)
@@ -572,7 +600,7 @@ def _run_synthesis_or_fallback(
     if cost_so_far > max_cost:
         log.warn("Using merged group output as final review (synthesis skipped due to budget)")
         _document(
-            job, merged_content,
+            job, _no_synthesis_body(job, merged_content, group_count, BUDGET_SUMMARY),
             skipped_groups=n_skipped, total_groups=group_count,
         ).write(job.review_file)
         _write_review_sidecar(job)

@@ -30,6 +30,8 @@ from review_common import (  # noqa: E402
     ReviewEntry, ReviewEntryKind, iter_review_entries,
 )
 from review_dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
+from review_document import ReviewDocument  # noqa: E402
+from review_types import Finding  # noqa: E402
 from review_github import (  # noqa: E402
     GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT, GQL_ISSUE_COMMENTS_LIMIT,
     fetch_review_threads,
@@ -67,12 +69,9 @@ COMMENT_BODY_MAX = 500
 # tests/workbench_roots.bats holds the two together.
 CONSUMED_REVIEWS_NAME = "retro-consumed-reviews.txt"
 
-FINDING_RE = re.compile(
-    r"^- \[[ x]\] \*\*\[([MSNI])(\d+)\]\*\*\s+"
-    r"(?:\*\*)?`([^`]+)`(?:\*\*)?\s*—\s*(.+)",
-)
-
-REVIEW_HEADER_RE = re.compile(
+# The repository a review written before `meta.json` recorded one is for. The
+# sidecar is the answer everywhere it exists — see `_review_repo`.
+REVIEW_TITLE_RE = re.compile(
     r"^#\s+(?:Self-)?Review:\s+(\S+)\s*(?:—|#)",
 )
 
@@ -679,37 +678,21 @@ def _scan_repo(
 # ── Local review scanning ──────────────────────────────────────────────────
 
 
-def _parse_file_ref(file_ref: str) -> tuple[str, int | None]:
-    if ":" not in file_ref:
-        return file_ref, None
-    parts = file_ref.split(":", 1)
-    try:
-        return parts[0], int(parts[1])
-    except ValueError:
-        return parts[0], None
+def _review_repo(entry: ReviewEntry, doc: ReviewDocument) -> str:
+    """The repository `entry`'s review is for.
 
-
-def _parse_review_findings(content: str) -> list[dict]:
-    findings: list[dict] = []
-    for line in content.splitlines():
-        m = FINDING_RE.match(line.strip())
-        if not m:
-            continue
-        severity, _num, file_ref, description = m.groups()
-        path, line_num = _parse_file_ref(file_ref)
-        findings.append({
-            "severity": severity,
-            "path": path,
-            "line": line_num,
-            "body": description.strip(),
-        })
-    return findings
-
-
-def _extract_repo_from_review(content: str, dir_name: str) -> str:
-    m = REVIEW_HEADER_RE.search(content)
+    `meta.json` is the answer wherever there is one — the walk that classified
+    the entry already read it, and it is what every other reader of the tree
+    goes by. A review written before the sidecar recorded a repo has only its
+    title, and one whose title states none has only its directory name, which
+    is the short repo name with the PR number or the branch appended.
+    """
+    if entry.meta.repo:
+        return entry.meta.repo
+    m = REVIEW_TITLE_RE.search(doc.title)
     if m:
         return m.group(1)
+    dir_name = entry.path.name
     parts = dir_name.split("-self-", 1)
     if len(parts) == 2:
         return parts[0]
@@ -720,14 +703,14 @@ def _extract_repo_from_review(content: str, dir_name: str) -> str:
 
 
 def _finding_to_comment(
-    finding: dict, source: str, review_file: Path,
+    finding: Finding, source: str, review_file: Path,
     rules: list[dict], rule_match_counts: dict[str, dict],
 ) -> tuple[dict, bool]:
     comment = {
         "author": source,
-        "body": f"[{finding['severity']}] {finding['body']}",
-        "path": finding["path"],
-        "line": finding["line"],
+        "body": f"[{finding.severity}] {finding.body}",
+        "path": finding.path or None,
+        "line": finding.line,
         "url": "",
         "direction": "received",
         "source_file": str(review_file),
@@ -750,19 +733,18 @@ def _scan_review_entry(
 ) -> tuple[str, dict, int] | None:
     review_file = entry.review_file
     # A REVIEW-kind entry had its review file when the walk classified it, so a
-    # read that fails here means the file went away or turned unreadable in
-    # between — a concurrent `pr gc` sweep, most likely. Skip the review rather
-    # than abandoning the scan over one directory.
-    try:
-        content = review_file.read_text()
-    except OSError:
+    # document that comes back None means the file went away or turned
+    # unreadable in between — a concurrent `pr gc` sweep, most likely. Skip the
+    # review rather than abandoning the scan over one directory.
+    doc = ReviewDocument.read(review_file)
+    if doc is None:
         return None
-    findings = _parse_review_findings(content)
+    findings = doc.findings
     if not findings:
         return None
 
     dir_name = entry.path.name
-    repo_key = _extract_repo_from_review(content, dir_name)
+    repo_key = _review_repo(entry, doc)
     source = "self-review" if "-self-" in dir_name else "claude-review"
 
     unmatched = 0

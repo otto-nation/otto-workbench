@@ -28,7 +28,7 @@ from review_document import (
     FINDING_ID_RE, ReviewDocument, ReviewHeader, _close_previous, _extract_body_text,
     _finalize_finding, _FIRST_FILE_RE, _match_severity_header, finding_location,
     is_section_boundary, open_counts, parse_finding_line, resolve_review_verdict,
-    review_title, section_span, set_status,
+    review_title, section_span, set_section, set_status,
 )
 from review_types import Finding, ReviewMeta, ReviewType
 
@@ -348,6 +348,47 @@ class TestSectionSpan:
 
     def test_a_heading_carrying_more_than_the_header_is_a_different_section(self):
         assert section_span("## Verdict and rationale\nApprove\n", "Verdict") is None
+
+    def test_the_heading_offset_names_the_whole_section(self):
+        """What an edit that replaces a section has to slice out — the body
+        offsets alone leave the old heading behind."""
+        text = "## Summary\nfirst\n\n## Verdict\nApprove\n"
+        span = section_span(text, "Verdict")
+        assert text[span.heading_start:span.end] == "## Verdict\nApprove\n"
+
+
+class TestSetSection:
+    def test_a_section_already_there_is_replaced_where_it_stands(self):
+        text = "## Summary\n\nold\n\n## Verdict\n\nApprove\n"
+        assert set_section(text, "Summary", "new") == "## Summary\n\nnew\n\n## Verdict\n\nApprove\n"
+
+    def test_a_new_section_goes_above_its_anchor(self):
+        text = "## Summary\n\nthe prose\n\n## Verdict\n\nApprove\n"
+        assert set_section(text, "Static Analysis", "clean", before="Verdict") == (
+            "## Summary\n\nthe prose\n\n## Static Analysis\n\nclean\n\n## Verdict\n\nApprove\n"
+        )
+
+    def test_a_document_missing_the_anchor_still_gets_the_section(self):
+        """A `--no-synthesis` run reaches here with no Summary to sit above, and
+        the section it asked for is the report of why — dropping it is the one
+        outcome the caller cannot mean."""
+        text = "## Must fix\n\n- **[M1]** a.py:1 — bug\n"
+        assert set_section(text, "Agent Failures", "one failed", before="Summary") == (
+            "## Must fix\n\n- **[M1]** a.py:1 — bug\n\n## Agent Failures\n\none failed\n"
+        )
+
+    def test_an_empty_body_removes_the_section(self):
+        text = "## Summary\n\nthe prose\n\n## Agent Failures\n\none failed\n\n## Verdict\n\nApprove\n"
+        assert set_section(text, "Agent Failures", "") == (
+            "## Summary\n\nthe prose\n\n## Verdict\n\nApprove\n"
+        )
+
+    def test_an_empty_body_for_a_section_that_is_not_there_changes_nothing(self):
+        text = "## Summary\n\nthe prose\n"
+        assert set_section(text, "Agent Failures", "", before="Summary") == text
+
+    def test_the_caller_states_the_body_and_this_states_the_heading(self):
+        assert set_section("", "Verdict", "  Approve  ") == "## Verdict\n\nApprove\n"
 
 
 class TestSection:

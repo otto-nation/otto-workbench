@@ -18,9 +18,12 @@ never told about survives an edit instead of being dropped by it.
 this module defines. Editing one that is already on disk is a different job and
 stays a text edit, because a header read back off disk states only what its
 writer chose to state — re-rendering it would add this module's defaults as
-claims the original never made. `section_span` is what an in-place edit asks
-instead: the offsets of the section it is rewriting, leaving every byte outside
-them alone.
+claims the original never made. `set_status` and `set_section` are what such an
+edit asks instead, and `section_span` is what they are built on: the offsets of
+the section being rewritten, leaving every byte outside them alone. A pipeline
+that appends a section after the review is written — the Agent Failures table,
+the static-analysis report — states which section it is and what goes in it,
+and this module decides where that lands.
 
 Reading a document is the same one owner from the other side. What a review
 says — which sections it carries, which findings it declares, how many of each
@@ -221,13 +224,16 @@ def set_status(content: str, status: ReviewStatus) -> str:
 
 @dataclass(frozen=True)
 class SectionSpan:
-    """Where a section's body sits in the text it was found in.
+    """Where a section sits in the text it was found in.
 
-    Offsets into that text, so `text[span.start:span.end]` is the section's
-    contents and `text[:span.start]` and `text[span.end:]` are the bytes an
-    in-place edit must put back unchanged.
+    Offsets into that text, in the order they appear: the heading, the body it
+    introduces, and the byte after the body. `text[span.start:span.end]` is the
+    section's contents and `text[span.heading_start:span.end]` is the whole
+    section, heading included — which is the slice an edit that removes or
+    replaces one has to name.
     """
 
+    heading_start: int
     start: int
     end: int
 
@@ -239,25 +245,53 @@ class SectionSpan:
 
 
 def section_span(text: str, header: str) -> SectionSpan | None:
-    """Where `text`'s `## <header>` section body sits, or None when it has none.
+    """Where `text`'s `## <header>` section sits, or None when it has none.
 
-    The span opens at the end of the heading line and closes at the next `## `
-    or the end of the text, so the slice it names is the section's contents
-    with the heading excluded and the blank lines around it intact.
+    The body opens at the end of the heading line and closes at the next `## `
+    or the end of the text, so the slice `body_of` names is the section's
+    contents with the heading excluded and the blank lines around it intact.
 
     The one owner of where a section begins and ends. A reader after the
     contents asks `ReviewDocument.section`; an edit rewriting one section of a
-    document already on disk asks here, because parsing and re-rendering that
-    document would restate a header its writer never wrote. Headers are matched
-    case-insensitively: the review agent writes its own, and `## Must Fix` names
-    the same section as `## Must fix`.
+    document already on disk asks here or `set_section`, because parsing and
+    re-rendering that document would restate a header its writer never wrote.
+    Headers are matched case-insensitively: the review agent writes its own, and
+    `## Must Fix` names the same section as `## Must fix`.
     """
     m = re.search(rf"^## {re.escape(header)}\s*$", text, re.MULTILINE | re.IGNORECASE)
     if not m:
         return None
     start = m.end()
     nxt = re.search(r"^## ", text[start:], re.MULTILINE)
-    return SectionSpan(start, start + nxt.start() if nxt else len(text))
+    return SectionSpan(m.start(), start, start + nxt.start() if nxt else len(text))
+
+
+def set_section(content: str, header: str, body: str, *, before: str = "") -> str:
+    """`content` with its `## <header>` section stating `body`, added if absent.
+
+    `body` is the section's contents without its heading — this owns the
+    heading, so a caller that renders one is spelling the document's format a
+    second time. An empty `body` removes the section, which is how a rerun that
+    fixed what failed drops the report of it.
+
+    A section already there is replaced where it stands. One that is not goes
+    above the `## <before>` section when the document has one, and at the end
+    when it does not — a document missing the anchor still receives the section
+    rather than silently discarding it, which is what a caller asking for a
+    section to be set means either way.
+    """
+    body = body.strip()
+    section = f"## {header}\n\n{body}\n\n" if body else ""
+    span = section_span(content, header)
+    if span:
+        return content[:span.heading_start] + section + content[span.end:]
+    if not section:
+        return content
+    anchor = section_span(content, before) if before else None
+    if anchor:
+        return content[:anchor.heading_start] + section + content[anchor.heading_start:]
+    preceding = f"{content.rstrip()}\n\n" if content.strip() else ""
+    return f"{preceding}{section.rstrip()}\n"
 
 
 def review_title(meta: ReviewMeta) -> str:

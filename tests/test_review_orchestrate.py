@@ -4556,30 +4556,30 @@ class TestPipelineStateFailureRoundTrip:
         assert state.done == set()
         assert state.failed == {}
         assert state.scanned is False
-        assert ro.build_failures_section(state) == ""
+        assert ro.build_failures_body(state) == ""
 
     def test_a_legacy_reason_still_renders_verbatim(self, ro, tmp_path):
         state = self._state(ro, {
             1: ro.Diagnosis(ro.DiagnosisKind.UNKNOWN, detail="quota exhausted (429)"),
         })
-        assert "quota exhausted (429)" in ro.build_failures_section(state)
+        assert "quota exhausted (429)" in ro.build_failures_body(state)
 
 
-class TestBuildFailuresSection:
+class TestBuildFailuresBody:
     def test_no_failures_returns_empty(self):
         from review_state import PipelineState
-        from review_state import build_failures_section
+        from review_state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1, 2], groups_failed={},
             done={Phase.SYNTHESIS},
         )
-        assert build_failures_section(state) == ""
+        assert build_failures_body(state) == ""
 
     def test_group_failures_produce_table(self):
         from agent_diagnosis import Diagnosis, DiagnosisKind
         from review_state import PipelineState
-        from review_state import build_failures_section
+        from review_state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["ui-components", "api-routes", "tests"],
             groups_done=[1], groups_failed={
@@ -4588,8 +4588,8 @@ class TestBuildFailuresSection:
             },
             done={Phase.SYNTHESIS},
         )
-        result = build_failures_section(state)
-        assert "## Agent Failures" in result
+        result = build_failures_body(state)
+        assert "## Agent Failures" not in result
         assert "group-2: api-routes" in result
         assert "quota exhausted (429)" in result
         assert "group-3: tests" in result
@@ -4600,14 +4600,14 @@ class TestBuildFailuresSection:
     def test_synthesis_fallback_in_table(self):
         from agent_diagnosis import Diagnosis, DiagnosisKind
         from review_state import PipelineState
-        from review_state import build_failures_section
+        from review_state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
             done={Phase.SYNTHESIS},
             failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
-        result = build_failures_section(state)
+        result = build_failures_body(state)
         assert "synthesis" in result
         assert "fallback" in result
 
@@ -4619,7 +4619,7 @@ class TestBuildFailuresSection:
         """
         from agent_diagnosis import Diagnosis, DiagnosisKind
         from review_state import PipelineState
-        from review_state import build_failures_section
+        from review_state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[],
@@ -4628,15 +4628,14 @@ class TestBuildFailuresSection:
             },
             done={Phase.SYNTHESIS},
         )
-        result = build_failures_section(state)
-        assert "## Agent Failures" in result
+        result = build_failures_body(state)
         assert "agent error: permission denied" in result
         assert "pr review --recover" not in result
 
     def test_recover_hint_survives_one_recoverable_failure(self):
         from agent_diagnosis import Diagnosis, DiagnosisKind
         from review_state import PipelineState
-        from review_state import build_failures_section
+        from review_state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
             groups_done=[],
@@ -4646,61 +4645,94 @@ class TestBuildFailuresSection:
             },
             done={Phase.SYNTHESIS},
         )
-        assert "pr review --recover" in build_failures_section(state)
+        assert "pr review --recover" in build_failures_body(state)
 
     def test_no_recover_hint_when_every_group_is_unrecoverable(self):
         from agent_diagnosis import Diagnosis, DiagnosisKind
         from review_state import PipelineState
-        from review_state import build_failures_section
+        from review_state import build_failures_body
         denial = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="permission denied")
         state = PipelineState(
             head_sha="abc", group_names=["g1", "g2"],
             groups_done=[], groups_failed={1: denial, 2: denial},
             done={Phase.SYNTHESIS},
         )
-        assert "pr review --recover" not in build_failures_section(state)
+        assert "pr review --recover" not in build_failures_body(state)
 
     def test_recover_hint_offered_for_max_turns(self):
         from agent_diagnosis import Diagnosis, DiagnosisKind
         from review_state import PipelineState
-        from review_state import build_failures_section
+        from review_state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[], groups_failed={1: Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=5)},
             done={Phase.SYNTHESIS},
         )
-        assert "pr review --recover" in build_failures_section(state)
+        assert "pr review --recover" in build_failures_body(state)
 
     def test_synthesis_failure_alone_stays_recoverable(self):
         from agent_diagnosis import Diagnosis, DiagnosisKind
         from review_state import PipelineState
-        from review_state import build_failures_section
+        from review_state import build_failures_body
         state = PipelineState(
             head_sha="abc", group_names=["g1"],
             groups_done=[1], groups_failed={},
             done={Phase.SYNTHESIS},
             failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
-        assert "pr review --recover" in build_failures_section(state)
+        assert "pr review --recover" in build_failures_body(state)
 
 
 class TestFailuresSectionInReview:
-    def test_mechanical_fallback_includes_failures(self, tmp_path):
-        """When synthesis falls back, the review includes ## Agent Failures."""
+    """`set_failures_section` — what the body says, and where it lands."""
+
+    @staticmethod
+    def _state():
         from agent_diagnosis import Diagnosis, DiagnosisKind
         from review_state import PipelineState
-        from review_state import build_failures_section
-        state = PipelineState(
+        return PipelineState(
             head_sha="abc", group_names=["ui", "api"],
             groups_done=[1], groups_failed={2: Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)},
             done={Phase.SYNTHESIS},
             failed={Phase.SYNTHESIS: Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)},
         )
-        result = build_failures_section(state)
+
+    @staticmethod
+    def _clean_state():
+        from review_state import PipelineState
+        return PipelineState(
+            head_sha="abc", group_names=["ui", "api"],
+            groups_done=[1, 2], groups_failed={},
+            done={Phase.SYNTHESIS},
+        )
+
+    def test_mechanical_fallback_includes_failures(self):
+        """When synthesis falls back, the review includes ## Agent Failures."""
+        from review_state import set_failures_section
+        result = set_failures_section("## Summary\n\nnote\n", self._state())
+        assert "## Agent Failures" in result
         assert "group-2: api" in result
         assert "quota exhausted" in result
         assert "synthesis" in result
         assert "fallback" in result
+
+    def test_the_section_sits_above_the_summary(self):
+        from review_state import set_failures_section
+        result = set_failures_section("## Summary\n\nnote\n\n## Verdict\n\nApprove\n", self._state())
+        assert result.index("## Agent Failures") < result.index("## Summary")
+
+    def test_a_review_with_no_summary_still_gets_the_section(self):
+        """A run that never reached synthesis has no Summary to sit above, and
+        the failures are the only account of why."""
+        from review_state import set_failures_section
+        result = set_failures_section("## Must fix\n\n- **[M1]** a.py:1 — bug\n", self._state())
+        assert "## Agent Failures" in result
+        assert result.index("## Must fix") < result.index("## Agent Failures")
+
+    def test_a_rerun_that_failed_nothing_drops_the_section(self):
+        from review_state import set_failures_section
+        review = "## Agent Failures\n\nold table\n\n## Summary\n\nnote\n"
+        assert set_failures_section(review, self._clean_state()).startswith("## Summary")
 
 
 class TestInjectFailuresAndStatus:

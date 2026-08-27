@@ -232,9 +232,12 @@ never told about survives an edit instead of being dropped by it.
 this module defines. Editing one that is already on disk is a different job and
 stays a text edit, because a header read back off disk states only what its
 writer chose to state — re-rendering it would add this module's defaults as
-claims the original never made. `section_span` is what an in-place edit asks
-instead: the offsets of the section it is rewriting, leaving every byte outside
-them alone.
+claims the original never made. `set_status` and `set_section` are what such an
+edit asks instead, and `section_span` is what they are built on: the offsets of
+the section being rewritten, leaving every byte outside them alone. A pipeline
+that appends a section after the review is written — the Agent Failures table,
+the static-analysis report — states which section it is and what goes in it,
+and this module decides where that lands.
 
 Reading a document is the same one owner from the other side. What a review
 says — which sections it carries, which findings it declares, how many of each

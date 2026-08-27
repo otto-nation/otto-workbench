@@ -64,8 +64,7 @@ def _check_serial_abort(
 ) -> "tuple[str, int, Diagnosis | None]":
     if _is_model_error(log_path):
         return f"Model not available — aborting remaining {group_count - i} groups", 0, None
-    same = last is not None and diagnosis.reason_key == last.reason_key
-    consecutive = consecutive + 1 if same else 1
+    consecutive = consecutive + 1 if diagnosis.same_reason_as(last) else 1
     if consecutive >= CONSECUTIVE_FAIL_THRESHOLD:
         return f"{CONSECUTIVE_FAIL_THRESHOLD} consecutive failures ({diagnosis.message}) — aborting remaining {group_count - i} groups", 0, None
     return "", consecutive, diagnosis

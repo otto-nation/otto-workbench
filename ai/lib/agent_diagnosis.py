@@ -92,9 +92,9 @@ class Diagnosis:
 
     Frozen because two of the pipeline's decisions compare diagnoses — the
     consecutive-failure abort and the all-groups-failed circuit breaker — and
-    one of them puts them in a set. The abort compares `reason_key` rather than
-    the whole record, so a detail that measures the failure instead of naming it
-    does not read as a new reason each time.
+    one of them puts them in a set. The abort asks `same_reason_as` rather than
+    comparing the whole record, so a detail that measures the failure instead of
+    naming it does not read as a new reason each time.
     """
 
     kind: DiagnosisKind
@@ -128,21 +128,25 @@ class Diagnosis:
             return self.detail or DiagnosisKind.UNKNOWN.value
         return _DIAGNOSIS_MESSAGES[self.kind]
 
-    @property
-    def reason_key(self) -> tuple:
-        """What "the same reason" means when failures are counted in a row.
+    def same_reason_as(self, other: "Diagnosis | None") -> bool:
+        """Whether `other` failed for the same reason, for counting a streak.
 
-        The detail is normally the reason — one agent error is a different cause
-        from another — so it is part of the key. A prompt over the budget is the
-        exception: its detail is the measurement, and every group measures a
-        different number of kilobytes. Comparing whole diagnoses there makes a
-        run that is structurally guaranteed to fail on every group look like a
-        run failing for a new reason each time, and the consecutive-failure
-        abort never trips.
+        Two diagnoses that are equal always answer yes, and a `None` — no prior
+        failure — always answers no. The detail is normally part of the reason,
+        one agent error being a different cause from another. A prompt over the
+        budget is the exception: its detail is the measurement, and every group
+        measures a different number of kilobytes. Comparing whole records there
+        makes a run structurally unable to prompt any group look like a run
+        failing for a new reason each time, so the consecutive-failure abort
+        never trips and every remaining group is visited.
         """
+        if other is None:
+            return False
+        if self.kind is not other.kind:
+            return False
         if self.kind is DiagnosisKind.PROMPT_TOO_LARGE:
-            return (self.kind,)
-        return (self.kind, self.detail, self.no_write_tool, self.num_turns)
+            return True
+        return self == other
 
     @property
     def recoverable(self) -> bool:

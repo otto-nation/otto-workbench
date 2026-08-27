@@ -49,18 +49,17 @@ from pathlib import Path
 
 import log
 from pr_domains import ReviewVerdict
-from review_common import (
-    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, plural,
-)
 from review_document import (
-    BOLD_FINDING_ID_RE, FINDING_ID_RE, LINE_SUFFIX, SECTION_SUMMARY, SECTION_VERDICT,
-    SPACED_FILE, ReviewDocument, finding_location, is_section_boundary,
-    parse_finding_line, section_span,
+    BOLD_FINDING_ID_RE, FINDING_ID_RE, LINE_SUFFIX, SECTION_FILE_TRIAGE,
+    SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT, SPACED_FILE,
+    ReviewDocument, finding_location, is_section_boundary, parse_finding_line,
+    section_span,
 )
 from review_types import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, PriorDisposition,
     disposition_precedence, severity_by_key,
 )
+from text import plural
 
 # The fix pass's record of work it did not do. The reason is optional for the
 # same reason it is on the decline annotation `review_document` owns: a skip

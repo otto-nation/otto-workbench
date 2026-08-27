@@ -1,8 +1,8 @@
 """Cross-file contract tests for the claude-review system.
 
 Verifies that constants, templates, regex patterns, and CLI interfaces
-stay consistent across review_common, review_document, review_prompt,
-review-templates/, and agents/reviewer.md.
+stay consistent across agent_registry, agent_templates, review_document,
+review_prompt, review-templates/, and agents/reviewer.md.
 
 All expectations are derived dynamically from source — no hardcoded lists.
 """
@@ -24,15 +24,16 @@ TEMPLATE_DIR = LIB_DIR / "review-templates"
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"
 
-# Insert lib dir so we can import review_common / review_document directly
+# Insert lib dir so we can import the review modules directly
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import make_ctx  # noqa: E402
 
+import agent_registry  # noqa: E402
+import agent_templates  # noqa: E402
 import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
-import review_common  # noqa: E402
 from agent_registry import PHASES, REVIEW_PHASES  # noqa: E402
 from agent_types import Mode, Phase, PhaseShape  # noqa: E402
 import review_document  # noqa: E402
@@ -165,7 +166,7 @@ class TestReviewMeta:
 
 def _skip_flag_parser():
     parser = argparse.ArgumentParser()
-    review_common.add_phase_skip_flags(parser)
+    agent_registry.add_phase_skip_flags(parser)
     return parser
 
 
@@ -187,21 +188,21 @@ class TestPhaseSkipFlags:
 
     def test_nothing_skipped_by_default(self):
         args = _skip_flag_parser().parse_args([])
-        assert review_common.phase_skips(args) == frozenset()
+        assert agent_registry.phase_skips(args) == frozenset()
 
     def test_each_flag_names_its_own_phase(self):
         for phase in (p for p in REVIEW_PHASES if PHASES[p].optional):
             args = _skip_flag_parser().parse_args([f"--no-{phase}"])
-            assert review_common.phase_skips(args) == frozenset({phase})
+            assert agent_registry.phase_skips(args) == frozenset({phase})
 
     def test_argv_round_trips_through_the_parser(self):
         skips = frozenset({Phase.GROUP, Phase.SYNTHESIS, Phase.DISPROVE})
-        argv = review_common.phase_skip_argv(skips)
-        assert review_common.phase_skips(_skip_flag_parser().parse_args(argv)) == skips
+        argv = agent_registry.phase_skip_argv(skips)
+        assert agent_registry.phase_skips(_skip_flag_parser().parse_args(argv)) == skips
 
     def test_argv_follows_the_registry_order(self):
         every = frozenset(p for p in REVIEW_PHASES if PHASES[p].optional)
-        assert review_common.phase_skip_argv(every) == [
+        assert agent_registry.phase_skip_argv(every) == [
             f"--no-{p}" for p in REVIEW_PHASES if PHASES[p].optional
         ]
 
@@ -646,7 +647,7 @@ class TestOutputBlockContract:
     )
     def test_output_block_rendered_verbatim(self, key, output_path, stdout_warning):
         rendered = _render_via_build_prompt(key)
-        expected = review_common.build_output_block(
+        expected = agent_templates.build_output_block(
             output_path, stdout_warning=stdout_warning,
         )
         assert expected in rendered
@@ -664,7 +665,7 @@ class TestOutputBlockContract:
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_share_the_worktree_block(self, render, cc, rt, tmp_path):
         rendered = _FIX_RENDERERS[render](cc, rt, tmp_path)
-        assert review_common.build_worktree_block(str(tmp_path)) in rendered
+        assert agent_templates.build_worktree_block(str(tmp_path)) in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_explain_every_box_the_checklist_offers(

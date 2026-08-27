@@ -1,8 +1,8 @@
 """Shared PR context resolution.
 
 Resolves repo, branch, PR number, worktree root, and HEAD SHA once
-per invocation. Replaces the duplicated discovery logic in ci-check,
-review-threads, and the former review_common.detect_repo().
+per invocation. Replaces the duplicated discovery logic ci-check,
+review-threads, and the review pipeline each carried a copy of.
 
 How much of that a command wants is one of three axes every `pr` subcommand
 declares in its `_COMMANDS` entry in `ai/claude/bin/pr`. They are separate
@@ -669,7 +669,7 @@ def _resolve_bare(
 def detect_repo(cwd: str | None = None) -> str:
     """Detect ``owner/repo`` via ``gh``, or exit 1 quoting why gh could not.
 
-    Single owner for repo detection: review_common and the review scripts call
+    Single owner for repo detection: the review and comments scripts call
     through here rather than running their own ``gh repo view``.
     """
     r = gh_client.run("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=cwd)

@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from review_common import SECTION_STATIC_ANALYSIS, plural
+from review_document import SECTION_STATIC_ANALYSIS
+from text import plural
 
 
 @dataclass

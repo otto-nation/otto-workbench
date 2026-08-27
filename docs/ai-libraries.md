@@ -94,6 +94,11 @@ a benchmark whose numbers stop comparing if a config file can move them — is
 better served by a spec of its own than by an entry here that quietly ignores
 the keys it advertises.
 
+The ``--no-<phase>`` flags at the bottom are the registry read from the command
+line: which phases may be switched off is a property of the specs above, so the
+flags are generated from them rather than listed a second time in each script
+that offers them.
+
 ### agent_retry.py
 
 Shared guard against agents that finish without producing anything.
@@ -111,6 +116,10 @@ Two shapes are supported, matching the two ways the `pr` scripts call an agent:
   retry_blank_response — a stateless prompt whose answer must parse.  There is
                         no session log, so the response itself is the signal.
 
+A second attempt writes over the first one's session log, so `preserve_log` and
+`restore_preserved` live here too: a retry is the only thing that overwrites a
+log, and the pair exists so both attempts' result records survive it.
+
 ### agent_templates.py
 
 Where prompt templates live, and the one way to render one.
@@ -121,6 +130,11 @@ pipeline through ``review_prompt``, the comments fix pass and the CI fix pass
 through a ``TEMPLATE_DIR`` and a ``Template(...).safe_substitute`` of their own.
 Three spellings of one path is three chances for a moved template to break one
 caller and not the others.
+
+The two blocks below are the other half of that: instructions every template
+renders the same way, owned here rather than hand-copied into each one, so an
+agent's write mechanism and its worktree are described identically wherever the
+prompt came from.
 
 Stdlib only, like ``agent_types`` and for the same reason: a prompt is the last
 thing that should need the PR state machine to render.
@@ -142,10 +156,11 @@ Keeping them apart is also what stops the enum reaching back into the registry
 to answer questions about itself — a ``PhaseSpec`` answers those now.
 
 It imports nothing but the standard library, and that is the point. The
-vocabulary used to live in ``review_common``, which reaches the PR state
-machine, the usage ledger and the git client; ``ai_backend`` needed one enum
-from it and took all of that with it, and ``workbench_config`` needed three.
-Anything may depend on the vocabulary, so the vocabulary depends on nothing.
+vocabulary used to sit in the review pipeline's shared-helper module, which
+reached the PR state machine, the usage ledger and the git client; ``ai_backend``
+needed one enum from it and took all of that with it, and ``workbench_config``
+needed three. Anything may depend on the vocabulary, so the vocabulary depends
+on nothing.
 
 Resolving a spec against the config file and the environment is
 ``agent_phases``'s job — that layer needs ``workbench_config``, which needs
@@ -457,17 +472,6 @@ Worktree lifecycle management for claude-review.
 ## Findings
 
 What a review produces. Parsing an agent's output into findings, giving them stable IDs, merging duplicates, disproving the ones that do not hold up, and rendering what survives.
-
-### review_common.py
-
-Shared constants and helpers for the claude-review system.
-
-This module is the contract between review-orchestrate and review-post.
-Both scripts import from here instead of defining their own constants. The
-vocabulary they name those constants alongside — severities, findings, the job
-a run threads through — is `review_types`', and where a review's files sit is
-`review_paths`', so a consumer that only needs a noun takes neither the
-artifact layout nor the vocabulary with it.
 
 ### review_dedup.py
 
@@ -995,8 +999,8 @@ triages it.
 Shared PR context resolution.
 
 Resolves repo, branch, PR number, worktree root, and HEAD SHA once
-per invocation. Replaces the duplicated discovery logic in ci-check,
-review-threads, and the former review_common.detect_repo().
+per invocation. Replaces the duplicated discovery logic ci-check,
+review-threads, and the review pipeline each carried a copy of.
 
 How much of that a command wants is one of three axes every `pr` subcommand
 declares in its `_COMMANDS` entry in `ai/claude/bin/pr`. They are separate
@@ -2121,6 +2125,15 @@ for serialization and type-hint-driven reconstruction for deserialization.
 not the only thing that has to know what an annotation means — `schema_gen`
 describes the same hints to a model and dispatches on the same answer.
 
+### text.py
+
+Text a human reads, formatted the same way wherever it is written.
+
+Stdlib only, and no domain vocabulary: what lives here is the formatting a
+count or a phrase needs before it reaches a log line, a PR comment or a review
+document, so a module that only wants to say "3 findings" does not have to
+import the review layer to say it.
+
 ### timeouts.py
 
 How long a subprocess may run, decided once instead of at every call site.
@@ -2232,6 +2245,10 @@ are unconstrained (``claude-review`` declares ``args`` with ``nargs='*'``).
 
 Argparse introspection that reaches past the public API is collected here —
 ``value_taking_options`` and ``subparsers`` — so a caller never has to.
+
+``enum_arg`` is here for the same reason from the other side: it is the argparse
+``type`` every enum-valued option in the workbench is declared with, so the
+message a bad value gets is written once rather than per parser.
 
 ### tool_registry.py
 

@@ -9,7 +9,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent_phases
-import review_common
 import review_paths
 import review_pipeline
 import review_phases
@@ -325,7 +324,7 @@ class TestNoDuplicateDefaults:
         }
         duplicates = {
             f"{mod.__name__}.{name}"
-            for mod in (review_common, review_paths)
+            for mod in (review_paths,)
             for name, value in vars(mod).items()
             if isinstance(value, str) and value in artifact_names
         }

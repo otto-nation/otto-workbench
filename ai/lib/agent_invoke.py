@@ -36,7 +36,6 @@ from agent_diagnosis import Diagnosis
 from agent_registry import PHASES
 from agent_types import Effort, Phase, PhaseShape
 from ai_backend import AgentInvocation
-from review_common import preserve_log, restore_preserved
 from workbench_config import WorkbenchConfig
 
 
@@ -180,9 +179,9 @@ class QuotaThrottle:
 
 
 def _invoke_once(inv: AgentInvocation) -> int:
-    prior_log = preserve_log(inv.session_log)
+    prior_log = agent_retry.preserve_log(inv.session_log)
     rc = ai_backend.invoke_agent(inv)
-    restore_preserved(inv.session_log, prior_log)
+    agent_retry.restore_preserved(inv.session_log, prior_log)
     return rc
 
 

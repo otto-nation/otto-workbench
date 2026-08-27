@@ -40,7 +40,7 @@ from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
     TriageStats, triage_result_from_dict,
 )
-from review_common import SECTION_PRIOR_FINDINGS
+from review_document import SECTION_PRIOR_FINDINGS
 from review_issue import CreatedIssue, IssueDelivery, IssueResult
 from review_preflight import (
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,

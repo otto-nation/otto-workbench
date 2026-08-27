@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from conftest import write_thrash_log
 import agent_retry
+import ai_usage
 from agent_registry import PHASES
 from agent_types import DEFAULT_RETRY_CEILING, Phase
 import review_phases
@@ -327,3 +328,51 @@ class TestTurnsForCeiling:
 
     def test_non_turn_failures_ignore_the_ceiling(self):
         assert agent_retry.turns_for(_TRANSIENT, 60, ceiling=120) == 60
+
+
+class TestPreserveLog:
+    """A retry overwrites the log, so both attempts' records have to survive it.
+
+    `ai_usage.parse_session_log` sums every result record it finds, so the
+    restored file is what makes a retried phase report both attempts' cost
+    rather than only the second's.
+    """
+
+    def test_preserves_prior_content(self, tmp_path):
+        log = tmp_path / "session.jsonl"
+        first = json.dumps({
+            "type": "result", "total_cost_usd": 1.0,
+            "usage": {"input_tokens": 100, "output_tokens": 200,
+                      "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+            "duration_ms": 30000,
+        }) + "\n"
+        log.write_text(first)
+
+        prior = agent_retry.preserve_log(str(log))
+        assert prior == first
+
+        second = json.dumps({
+            "type": "result", "total_cost_usd": 2.0,
+            "usage": {"input_tokens": 300, "output_tokens": 400,
+                      "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+            "duration_ms": 60000,
+        }) + "\n"
+        log.write_text(second)
+
+        agent_retry.restore_preserved(str(log), prior)
+
+        usage = ai_usage.parse_session_log(str(log))
+        assert usage.cost == pytest.approx(3.0)
+        assert usage.input_tokens == 400
+        assert usage.output_tokens == 600
+        assert usage.duration_ms == 90000
+
+    def test_preserve_nonexistent_file(self, tmp_path):
+        assert agent_retry.preserve_log(str(tmp_path / "missing.jsonl")) == ""
+
+    def test_restore_empty_prior_is_noop(self, tmp_path):
+        log = tmp_path / "session.jsonl"
+        content = '{"type":"result","total_cost_usd":1.0}\n'
+        log.write_text(content)
+        agent_retry.restore_preserved(str(log), "")
+        assert log.read_text() == content

@@ -16,11 +16,18 @@ is an ordinary value, and an invocation that must not be operator-tunable —
 a benchmark whose numbers stop comparing if a config file can move them — is
 better served by a spec of its own than by an entry here that quietly ignores
 the keys it advertises.
+
+The ``--no-<phase>`` flags at the bottom are the registry read from the command
+line: which phases may be switched off is a property of the specs above, so the
+flags are generated from them rather than listed a second time in each script
+that offers them.
 """
 
 # doc-group: pipeline
 
 from __future__ import annotations
+
+import argparse
 
 from agent_types import (
     AgentKind, ItemScaling, Mode, Phase, PhaseDomain, PhaseShape, PhaseSpec,
@@ -152,3 +159,33 @@ REVIEW_PHASES: tuple[Phase, ...] = tuple(
 # derived: nothing on a `PhaseSpec` says "candidate for phase 1", and inventing
 # a field read by one frozenset would be the parallel table this epic removes.
 SCAN_PHASES: frozenset[Phase] = frozenset({Phase.SCOUT, Phase.HOLISTIC})
+
+
+# ── Switching a phase off from the command line ──────────────────────────────
+#
+# `claude-review` and `review-orchestrate` both offer the flags and one forwards
+# them to the other, so all three sides are generated from the same registry
+# read: a phase declared `optional` gets its flag, its parse and its argv entry
+# at once, and nothing can offer a flag the pipeline has no path around.
+
+def _switchable() -> tuple[Phase, ...]:
+    return tuple(p for p in REVIEW_PHASES if PHASES[p].optional)
+
+
+def add_phase_skip_flags(parser: argparse.ArgumentParser) -> None:
+    """Add a ``--no-<phase>`` for every review phase that may be switched off."""
+    for phase in _switchable():
+        parser.add_argument(
+            f"--no-{phase}", action="store_true",
+            help=f"Skip the {PHASES[phase].label.lower()} phase",
+        )
+
+
+def phase_skips(args: argparse.Namespace) -> frozenset[Phase]:
+    """The phases ``--no-<phase>`` switched off on this command line."""
+    return frozenset(p for p in _switchable() if getattr(args, f"no_{p}", False))
+
+
+def phase_skip_argv(skips: frozenset[Phase]) -> list[str]:
+    """``skips`` as the flags that reproduce it on a child process's argv."""
+    return [f"--no-{p}" for p in _switchable() if p in skips]

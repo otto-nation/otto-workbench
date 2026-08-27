@@ -55,8 +55,8 @@ import log
 import publishing
 from pr_comments_state import ThreadRecord, ThreadState
 from proc import CmdResult
-from review_common import plural
 from review_github import PRData, fetch_review_threads
+from text import plural
 
 
 # ── Thread lifecycle states ────────────────────────────────────────────────

@@ -23,10 +23,9 @@ from pathlib import Path
 import git_client
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
-from agent_registry import PHASES, SCAN_PHASES
+from agent_registry import PHASES, SCAN_PHASES, phase_skip_argv
 from agent_types import EFFORT_PRESETS, Mode, Phase
 from pr_domains import ReviewStatus
-from review_common import phase_skip_argv
 from review_paths import (
     phase_log_path,
     phase_output_path,
@@ -121,7 +120,7 @@ def _write_review_sidecar(job: ReviewJob):
     Called from every branch that reaches a review file, so the only timestamp
     it can honestly stamp is the run's own start, which it carries rather than
     takes. That a review came of the run is a separate claim, made once at the
-    end by `review_common.stamp_reviewed` and only when the run got there.
+    end by `review_paths.stamp_reviewed` and only when the run got there.
     """
     write_review_meta(Path(job.artifact_dir), _job_meta(job))
 

@@ -28,7 +28,6 @@ from agent_registry import SCAN_PHASES
 from agent_types import Phase
 from pr_domains import ReviewStatus
 from review_agent import _parse_session_cost
-from review_common import plural
 from review_document import SECTION_SUMMARY, set_section, set_status
 from review_paths import (
     FILENAME_PIPELINE_STATE,
@@ -36,6 +35,7 @@ from review_paths import (
     review_artifact_path,
 )
 from review_types import Group, ReviewJob, ReviewType
+from text import plural
 
 _state_lock = threading.Lock()
 

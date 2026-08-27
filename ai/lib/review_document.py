@@ -61,10 +61,21 @@ from review_types import (
     meta_enum,
 )
 
-# The two sections this module reads by name. Every other header a review
-# carries is the caller's vocabulary, passed to `section` as a string.
+# The headers a review is written with. `Summary` and `Verdict` are the two this
+# module reads by name; the rest are here because they name sections of the same
+# document, and a header spelled in the module that reads it and again in the one
+# that writes it is two owners of one string. Any other header is the caller's
+# own vocabulary, passed to `section` as a string.
 SECTION_SUMMARY = "Summary"
 SECTION_VERDICT = "Verdict"
+SECTION_FILE_TRIAGE = "File Triage"
+SECTION_STATIC_ANALYSIS = "Static Analysis"
+
+# A re-review's ledger: one line per prior finding, saying whether the change
+# resolved it. Reconciliation reads it to tell a finding the re-review dropped
+# on purpose from one it lost track of; it is stripped before the review is
+# posted, since its finding IDs number the prior review, not this one.
+SECTION_PRIOR_FINDINGS = "Prior findings"
 
 
 class MetaKey(StrEnum):

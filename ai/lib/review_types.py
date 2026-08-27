@@ -167,6 +167,19 @@ class ReviewType(StrEnum):
         return cls.INCREMENTAL if incremental else cls.FULL
 
 
+class Pipeline(StrEnum):
+    """Which of the two shapes a run took.
+
+    A branch small enough for one agent to hold takes `SINGLE`; anything above
+    the effort preset's file and line thresholds is split across the phases and
+    takes `MULTI`. The values are what a run reports as its `mode`, so they stay
+    as they are for anything reading a completed run's JSON.
+    """
+
+    MULTI = "multi"
+    SINGLE = "single"
+
+
 class GroupSkip(StrEnum):
     """Why the group phase is not running a group.
 

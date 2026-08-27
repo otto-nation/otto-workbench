@@ -47,7 +47,6 @@ import fix_tracking
 import git_client
 import land
 import log
-import review_common
 from agent_diagnosis import Diagnosis
 from agent_registry import PHASES
 from agent_types import Effort, Phase
@@ -261,7 +260,7 @@ def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
         tracking_content=adapter.tracking_path.read_text(),
         tracking_file=str(adapter.tracking_path),
         answer_format=fix_tracking.instructions(adapter.item_noun),
-        worktree_block=review_common.build_worktree_block(str(adapter.workdir)),
+        worktree_block=agent_templates.build_worktree_block(str(adapter.workdir)),
         max_turns=str(turns),
         **adapter.template_vars(),
     )

@@ -51,6 +51,10 @@ are unconstrained (``claude-review`` declares ``args`` with ``nargs='*'``).
 
 Argparse introspection that reaches past the public API is collected here —
 ``value_taking_options`` and ``subparsers`` — so a caller never has to.
+
+``enum_arg`` is here for the same reason from the other side: it is the argparse
+``type`` every enum-valued option in the workbench is declared with, so the
+message a bad value gets is written once rather than per parser.
 """
 
 # doc-group: platform
@@ -60,7 +64,12 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from argparse import SUPPRESS, ArgumentParser, _SubParsersAction
+from argparse import SUPPRESS, ArgumentParser, ArgumentTypeError, _SubParsersAction
+from collections.abc import Callable
+from enum import StrEnum
+from typing import TypeVar
+
+_EnumT = TypeVar("_EnumT", bound=StrEnum)
 
 
 # Args that are injected by the pr dispatcher / context system, not user-facing.
@@ -165,6 +174,25 @@ class ToolParser(ArgumentParser):
         raise TypeError(
             f"output_schema must be a dict or dataclass, got {type(self._output_schema)}"
         )
+
+
+def enum_arg(enum_cls: type[_EnumT]) -> Callable[[str], _EnumT]:
+    """An argparse ``type`` that converts to ``enum_cls`` by value.
+
+    Passing the enum class directly as ``type=`` drops the valid-value list from
+    the error message, because a failed conversion never reaches argparse's own
+    ``choices`` check — so the message is reproduced here.
+    """
+    def parse(value: str) -> _EnumT:
+        try:
+            return enum_cls(value)
+        except ValueError:
+            choices = ", ".join(repr(str(m)) for m in enum_cls)
+            raise ArgumentTypeError(
+                f"invalid choice: {value!r} (choose from {choices})"
+            ) from None
+
+    return parse
 
 
 def value_taking_options(parser: ArgumentParser) -> list[str]:

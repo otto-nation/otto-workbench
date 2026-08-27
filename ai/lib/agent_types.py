@@ -13,10 +13,11 @@ Keeping them apart is also what stops the enum reaching back into the registry
 to answer questions about itself — a ``PhaseSpec`` answers those now.
 
 It imports nothing but the standard library, and that is the point. The
-vocabulary used to live in ``review_common``, which reaches the PR state
-machine, the usage ledger and the git client; ``ai_backend`` needed one enum
-from it and took all of that with it, and ``workbench_config`` needed three.
-Anything may depend on the vocabulary, so the vocabulary depends on nothing.
+vocabulary used to sit in the review pipeline's shared-helper module, which
+reached the PR state machine, the usage ledger and the git client; ``ai_backend``
+needed one enum from it and took all of that with it, and ``workbench_config``
+needed three. Anything may depend on the vocabulary, so the vocabulary depends
+on nothing.
 
 Resolving a spec against the config file and the environment is
 ``agent_phases``'s job — that layer needs ``workbench_config``, which needs

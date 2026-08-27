@@ -34,13 +34,13 @@ import git_client
 import json
 import log
 from agent_registry import PHASES
+from agent_templates import build_output_block, build_worktree_block
 from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from pr_domains import ReviewVerdict
-from review_common import (
-    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
-    build_output_block, build_worktree_block,
+from review_document import (
+    BOLD_FINDING_ID_RE, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
+    SECTION_STATIC_ANALYSIS,
 )
-from review_document import BOLD_FINDING_ID_RE
 from review_findings import annotate_prior_with_stable_ids, strip_sections
 from review_paths import (
     FILENAME_PROMPT_STATS, phase_output_path, review_artifact_path,

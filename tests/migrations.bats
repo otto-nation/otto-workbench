@@ -299,7 +299,7 @@ adopt_in_fake() {
 
 @test "adoption keeps both review session logs rather than splicing two runs" {
   # session.jsonl is a whole-file write whose convention is prior-content-first
-  # (review_common.restore_preserved) — concatenating would misreport both runs.
+  # (agent_retry.restore_preserved) — concatenating would misreport both runs.
   mkdir -p "$FAKE_LEGACY/reviews/run" "$FAKE_STATE/reviews/run"
   echo "old" > "$FAKE_LEGACY/reviews/run/session.jsonl"
   echo "new" > "$FAKE_STATE/reviews/run/session.jsonl"

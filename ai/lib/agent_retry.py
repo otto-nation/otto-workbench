@@ -12,6 +12,10 @@ Two shapes are supported, matching the two ways the `pr` scripts call an agent:
                         tracking checklist.  Diagnosed from its session log.
   retry_blank_response — a stateless prompt whose answer must parse.  There is
                         no session log, so the response itself is the signal.
+
+A second attempt writes over the first one's session log, so `preserve_log` and
+`restore_preserved` live here too: a retry is the only thing that overwrites a
+log, and the pair exists so both attempts' result records survive it.
 """
 
 # doc-group: pipeline
@@ -25,7 +29,6 @@ import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_types import DEFAULT_RETRY_CEILING
 from review_agent import diagnose_missing_output, try_recover_output
-from review_common import preserve_log, restore_preserved
 
 # Kinds a second attempt could plausibly clear. Turn exhaustion and a run that
 # never called a write tool are the two the hints address directly; the rest are
@@ -75,6 +78,25 @@ def has_output(path: str) -> bool:
     """Check if a file exists and has content (not just pre-created empty)."""
     p = Path(path)
     return p.exists() and p.stat().st_size > 0
+
+
+def preserve_log(path: str) -> str:
+    """Read session log content before a retry that will overwrite it."""
+    try:
+        return Path(path).read_text()
+    except OSError:
+        return ""
+
+
+def restore_preserved(path: str, prior: str) -> None:
+    """Prepend prior log content so both attempts' result records are preserved."""
+    if not prior:
+        return
+    try:
+        current = Path(path).read_text()
+    except OSError:
+        current = ""
+    Path(path).write_text(prior + current)
 
 
 def is_retryable(diagnosis: Diagnosis) -> bool:

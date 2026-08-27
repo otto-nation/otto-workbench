@@ -35,8 +35,8 @@ except ImportError:
     def version_string(name):
         vf = Path(__file__).resolve().parent.parent / "VERSION"
         return f"{name} {vf.read_text().strip()}" if vf.is_file() else f"{name} unknown"
+from agent_registry import add_phase_skip_flags, phase_skip_argv, phase_skips
 from agent_types import Mode, Phase
-from review_common import add_phase_skip_flags, phase_skip_argv, phase_skips
 from review_document import ReviewDocument, open_counts, resolve_review_verdict
 from review_paths import (
     FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION, FILENAME_PRIOR,

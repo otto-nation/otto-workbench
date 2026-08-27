@@ -33,7 +33,6 @@ from pathlib import Path
 import git_client
 import log
 import serde
-from review_common import plural
 from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review_document import ReviewHeader
 from review_findings import (
@@ -45,6 +44,7 @@ from review_findings import (
     _stable_ids,
 )
 from review_types import DISPOSITION_TAIL_PUNCTUATION, PriorDisposition
+from text import plural
 
 # The bucket a finding lands in when nothing settled it. Not a
 # `PriorDisposition` member: those are verdicts a review may state, and "no

@@ -599,8 +599,17 @@ def _run_synthesis_or_fallback(
 
     if cost_so_far > max_cost:
         log.warn("Using merged group output as final review (synthesis skipped due to budget)")
+        # Post-processed like every other path that ships group output: the
+        # budget that ran out buys agent turns, and evidence verification and
+        # prior-finding reconciliation are local reads that cost none of it.
+        # Skipping them here shipped findings nothing had checked against the
+        # tree, on the run least able to afford an unchecked claim.
         _document(
-            job, _no_synthesis_body(job, merged_content, group_count, BUDGET_SUMMARY),
+            job,
+            _no_synthesis_body(
+                job, _post_processed_body(job, merged_content),
+                group_count, BUDGET_SUMMARY,
+            ),
             skipped_groups=n_skipped, total_groups=group_count,
         ).write(job.review_file)
         _write_review_sidecar(job)

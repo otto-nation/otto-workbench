@@ -1795,21 +1795,20 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
 
 
 class TestSummaryStillOwed:
-    """Whether --finish has to re-render the fix summary."""
+    """Whether the round has a fix summary the PR has not been told about."""
 
     def _owed(self, rt, **kw):
         args = {
             "fixed": [], "needs_human": [], "deferred": [], "dismissed": [],
             "commit_status": "pushed", "has_unaccounted": False,
+            "already_addressed": [], "issue_comments": [],
+            "review_body_comments": [],
         }
         args.update(kw)
         return rt._summary_still_owed(**args)
 
     def test_nothing_to_say(self, rt, publishing_on):
         assert self._owed(rt) is False
-
-    def test_posted_summary_is_settled(self, rt, publishing_on):
-        assert self._owed(rt, fixed=["t1"]) is False
 
     def test_open_discussion_defers(self, rt, publishing_on):
         assert self._owed(rt, needs_human=["t1"]) is True
@@ -1821,11 +1820,36 @@ class TestSummaryStillOwed:
         """A held push leaves the same gap as a failed one: no remote commit."""
         assert self._owed(rt, fixed=["t1"], commit_status="push_held") is True
 
+    def test_a_round_with_rows_owes_them(self, rt, publishing_on):
+        """Owed is about the table, not about whether the post went out.
+
+        The caller settles that half with `summary_url is None`, so a post the
+        API refused leaves the summary owed instead of closing the round out.
+        """
+        assert self._owed(rt, fixed=["t1"]) is True
+
     def test_draft_leaves_the_summary_owed(self, rt):
         assert self._owed(rt, fixed=["t1"]) is True
 
     def test_draft_with_nothing_to_say_owes_nothing(self, rt):
         assert self._owed(rt) is False
+
+    def test_an_already_addressed_only_round_owes_its_table(self, rt):
+        """The round the bucket test missed: no fix, no dismissal, a full table.
+
+        Every thread settled before this pass reached it, so the draft renders
+        rows for them and records outcomes for none of the two buckets the old
+        clause named.
+        """
+        assert self._owed(rt, already_addressed=["t1"]) is True
+
+    def test_an_unread_issue_comment_owes_a_table_on_its_own(self, rt):
+        """The summary reports unseen comments, so one is a row to render."""
+        assert self._owed(rt, issue_comments=[{"seen": False}]) is True
+        assert self._owed(rt, review_body_comments=[{"seen": False}]) is True
+
+    def test_comments_the_round_already_saw_owe_nothing(self, rt):
+        assert self._owed(rt, issue_comments=[{"seen": True}]) is False
 
 
 class TestPushHeldCommit:
@@ -5067,6 +5091,65 @@ class TestTriagePromptVerificationValues:
         assert "Commits already made on this branch" not in prompt
 
 
+class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
+    """The reported drop, driven through `_run_comment_fix` itself.
+
+    Every thread settled before the pass reached it, so there is nothing to fix
+    and the round takes the early return, which had a narrower rule for what it
+    owed than the pass that commits. The draft printed a full table and recorded
+    that it owed nothing, so `--finish --post` returned at its
+    `summary_deferred` guard and the published comment kept the previous
+    round's rows. Asserted end to end because that is where it is invisible:
+    the closeout exits 0 and `pr status` reports a clean PR.
+    """
+
+    def _run(self, rt, tmp_path):
+        threads = [CommentItem(
+            id="t1", file="f.go", line=10, reviewer="kgn", summary="t1 summary",
+            classification="actionable_suggestion",
+            verification="already_addressed",
+            complexity="low", state=ThreadState.NEW,
+        )]
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[ReportThread(id="t1", file="f.go", line=10,
+                                  comments=[{"databaseId": 100}])],
+        )
+        ctx = SimpleNamespace(
+            repo="owner/repo", branch="b", pr_number=1, head_sha="aaa1111",
+            target_dir=tmp_path,
+        )
+        with patch.object(rt, "_diff_context_for_file", return_value=""), \
+             patch.object(rt, "_find_and_update_main_worktree", return_value=None), \
+             patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch.object(rt, "_persist_fix_state"), \
+             patch.object(rt.git_client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+             patch("pr_comments.post_thread_reply", return_value=True), \
+             patch("pr_comments.resolve_thread", return_value=True):
+            return rt._run_comment_fix(
+                TriageResult(threads=threads), report, tmp_path, ctx,
+            )
+
+    def test_the_draft_leaves_its_table_owed(self, rt, tmp_path):
+        result = self._run(rt, tmp_path)
+        assert [t.id for t in result.already_addressed] == ["t1"]
+        # Neither of the two buckets the old rule named, so the round it
+        # described looked like a round with nothing to say.
+        assert not result.fixed
+        assert not result.dismissed
+        assert result.summary_url is None
+        assert result.summary_deferred is True
+
+    def test_a_published_round_owes_nothing(self, rt, tmp_path, publishing_on):
+        """The other half: once the table is out, it is not owed again."""
+        with patch("pr_comments.post_issue_comment", return_value="https://u"):
+            result = self._run(rt, tmp_path)
+        assert result.summary_url == "https://u"
+        assert result.summary_deferred is False
+
+
 class TestAlreadyAddressedInSummary:
     def test_rendered_as_addressed_not_dismissed(self, rt):
         cp = rt.CommitPushResult(None, "no_changes", "")
@@ -7142,7 +7225,9 @@ class TestCommentItemsSettleThroughTheirSource:
                        if t.outcome == FixOutcome.NEEDS_HUMAN]
         assert needs_human
         assert rt._summary_still_owed(
-            [], needs_human, [], [], CommitStatus.PUSHED, False) is True
+            [], needs_human, [], [], CommitStatus.PUSHED, False,
+            already_addressed=[], issue_comments=[],
+            review_body_comments=[]) is True
 
     def test_an_item_restating_a_settled_thread_settles_with_it(self, rt):
         """The duplicate is one finding; one of its two copies being closed closes it."""

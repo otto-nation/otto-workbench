@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -19,11 +20,10 @@ from trail import Trail, add_trail_args
 from agent_registry import PHASES
 from agent_types import Mode, Phase
 from review_common import read_review_meta
-from review_document import ReviewHeader
+from review_document import ReviewDocument, ReviewHeader, review_title
 from review_findings import (
-    build_mechanical_review, merge_reviews, post_process_findings,
+    build_mechanical_body, merge_reviews, post_process_findings,
 )
-from review_types import ReviewMeta
 
 SCRIPT = Path(__file__).name
 REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."
@@ -39,14 +39,6 @@ def _discover_group_files(review_dir: Path) -> list[str]:
         groups.append(str(path))
         i += 1
     return groups
-
-
-def _build_title(meta: ReviewMeta, repo: str, pr: str) -> str:
-    if meta.mode == Mode.SELF:
-        return f"# Self-Review: {repo} — {meta.head_ref or 'unknown'}"
-    if meta.title:
-        return f"# Review: {repo}#{pr} — {meta.title}"
-    return f"# Review: {repo}#{pr}"
 
 
 def main():
@@ -71,6 +63,10 @@ def main():
         log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
         sys.exit(1)
     repo = meta.repo
+    # A sidecar written before the field existed numbers no PR, so the operator's
+    # `--pr` stands in — it is the same number, and the title has to state one.
+    if meta.pr_number is None and args.pr.isdigit():
+        meta = replace(meta, pr_number=int(args.pr))
 
     trail = Trail.start(
         script=SCRIPT,
@@ -94,26 +90,25 @@ def main():
             trail.info("evidence_verification", detail, data=v)
         processed = review_file.read_text()
 
-        title = _build_title(meta, repo, args.pr)
-
         # Dated today and carrying no status: a rebuild reconstructs the
         # document from the group files, so the one thing it cannot attest to
         # is how the pipeline run ended — this is not one.
-        header = ReviewHeader.from_meta(meta, date=date.today().isoformat())
-
-        final = build_mechanical_review(
-            processed,
-            title=title,
-            meta_header=header.render(),
-            group_count=len(group_files),
-            summary_note=REBUILD_SUMMARY,
-            include_verdict=(meta.mode != Mode.SELF),
-            file_count=meta.changed_files,
+        document = ReviewDocument(
+            title=review_title(meta),
+            header=ReviewHeader.from_meta(meta, date=date.today().isoformat()),
+            body=build_mechanical_body(
+                processed,
+                group_count=len(group_files),
+                summary_note=REBUILD_SUMMARY,
+                include_verdict=(meta.mode != Mode.SELF),
+                file_count=meta.changed_files,
+            ),
         )
 
-        review_file.write_text(final)
+        document.write(review_file)
         log.info(f"Rebuilt {review_file}")
 
+        final = document.render()
         finding_lines = [line for line in final.splitlines() if line.startswith("- [")]
         trail.info("post_process", f"processed {len(finding_lines)} findings",
                    data={"finding_count": len(finding_lines), "review_file": str(review_file)})

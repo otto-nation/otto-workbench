@@ -1276,6 +1276,83 @@ class TestPhaseSynthesis:
         assert len(calls) == 1
 
 
+class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
+    """A prior finding the groups never mentioned reaches the last agent that can act.
+
+    Before this, reconciliation ran only after synthesis had written the
+    document, so a finding whose subject the tree still held left the run as a
+    warning and left the review saying nothing about it — which the next round
+    reads as the finding no longer existing.
+    """
+
+    BEFORE = "func handle() {\n    rows, _ := db.Query(sql)\n}\n"
+    PRIOR_LINE = (
+        "- **[M1]** **`handler.go:2`** — `rows, _ := db.Query(sql)` drops the error"
+    )
+
+    def _job(self, ro, tmp_path, prior_review):
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        git_out(wt, "init", "-q", "-b", "main")
+        git_out(wt, "config", "user.email", "test@example.com")
+        git_out(wt, "config", "user.name", "Test")
+        git_out(wt, "config", "commit.gpgsign", "false")
+        git_out(wt, "config", "core.hooksPath", str(tmp_path / "hooks"))
+        (wt / "handler.go").write_text(self.BEFORE)
+        git_out(wt, "add", "-A")
+        git_out(wt, "commit", "-qm", "before")
+        prior_sha = git_out(wt, "rev-parse", "HEAD").strip()
+
+        job = TestPhaseSynthesis()._make_job(ro, tmp_path)
+        job.wt_path = str(wt)
+        job.prior_review = (
+            f"# Review: org/repo#42 — t\n<!-- head_sha: {prior_sha} -->\n"
+            f"## Must fix\n{prior_review}\n"
+        )
+        return job
+
+    def _extras(self, ro, tmp_path, monkeypatch, merged, prior_review=PRIOR_LINE):
+        job = self._job(ro, tmp_path, prior_review)
+        seen = {}
+
+        def capture(phase, j, **extra):
+            seen.update(extra)
+            return "mock prompt"
+
+        def mock_invoke(inv, **kwargs):
+            Path(job.review_file).write_text(
+                "# Review\n\n## Summary\nok.\n\n## Verdict\nApprove.\n")
+            Path(inv.session_log).write_text("")
+            return 0
+
+        TestPhaseSynthesis._patch_pipeline(
+            monkeypatch, ro, build_prompt=capture, run_agent=mock_invoke,
+        )
+        ro._phase_synthesis(job, "", 3, merged)
+        return seen
+
+    def test_a_finding_no_group_mentioned_is_handed_to_synthesis(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        extras = self._extras(
+            ro, tmp_path, monkeypatch, "## Must fix\n- **[M9]** **`other.go:1`** — x\n",
+        )
+        assert [f.ref.finding_id for f in extras["unaccounted_prior"]] == ["M1"]
+
+    def test_a_finding_the_groups_settled_is_not_asked_about_again(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        merged = "## Prior findings\n- **[M1]** `handler.go` — Fixed\n"
+        assert self._extras(ro, tmp_path, monkeypatch, merged)["unaccounted_prior"] == []
+
+    def test_a_prior_review_that_reported_nothing_hands_over_nothing(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        assert self._extras(
+            ro, tmp_path, monkeypatch, "## Must fix\n", prior_review="",
+        )["unaccounted_prior"] == []
+
+
 class TestRunSynthesisOrFallback:
     """What the synthesis step records in state, and what it reports spending."""
 

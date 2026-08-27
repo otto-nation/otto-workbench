@@ -26,6 +26,7 @@ from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES, SCAN_PHASES, phase_skip_argv
 from agent_types import EFFORT_PRESETS, Mode, Phase
 from pr_domains import ReviewStatus
+from review_common import plural
 from review_paths import (
     phase_log_path,
     phase_output_path,
@@ -46,6 +47,7 @@ from review_preflight import (
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
     group_files,
 )
+from review_common import plural
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD,
     Group, GroupSkip, PRContext, PRMetadata, ReviewJob, ReviewMeta, ReviewType,
@@ -298,11 +300,20 @@ def _phase_synthesis(
     max_turns = _synthesis_max_turns(merged_content)
     runner = PhaseRunner(job, Phase.SYNTHESIS)
     synthesis_log = runner.session_log
+    # The same reconciliation the run ends with, asked one phase early, while
+    # there is still an agent that can act on the answer. Afterwards the only
+    # thing left to do about a prior finding nobody accounted for is report it.
+    unaccounted = passed_over(job.prior_review, merged_content, job.wt_path)
+    if unaccounted:
+        log.dim(
+            f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "
+            "— synthesis is asked to settle them"
+        )
     try:
         prompt = build_prompt(
             Phase.SYNTHESIS, job, max_turns=max_turns,
             holistic_content=holistic_content, group_count=group_count,
-            merged_content=merged_content,
+            merged_content=merged_content, unaccounted_prior=unaccounted,
         )
     except PromptTooLarge as exc:
         # The group findings are already on disk; the synthesis agent only

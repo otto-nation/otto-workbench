@@ -360,6 +360,85 @@ class TestInferredFromTheTree:
         assert reconciliation.range_label == f"{prior_sha[:7]} → {head_sha[:7]}"
 
 
+# ── What is handed back for an agent to settle ───────────────────────────────
+
+
+class TestPassedOver:
+    """The findings a review left out that something can still be done about.
+
+    `unaccounted` answers a neighbouring question and is not a substitute:
+    it names every undecided finding, three quarters of which are this
+    pipeline's own failures, and it names them rather than reproducing them.
+    """
+
+    def _intact(self, repo):
+        """A tree that still holds what the prior finding quotes."""
+        (repo / "handler.go").write_text(_BEFORE)
+        prior_sha = _commit(repo, "before")
+        (repo / "README.md").write_text("unrelated\n")
+        _commit(repo, "after")
+        return _prior(
+            "- **[M1]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n",
+            sha=prior_sha,
+        )
+
+    def test_a_finding_the_review_never_mentioned_comes_back_with_its_text(self, repo):
+        passed = review_prior.passed_over(self._intact(repo), "## Summary\nnothing.\n", str(repo))
+        assert [f.ref.finding_id for f in passed] == ["M1"]
+        assert "drops the error" in passed[0].text
+
+    def test_a_finding_the_review_carried_forward_is_settled(self, repo):
+        review = (
+            "## Must fix\n"
+            "- **[M4]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n"
+        )
+        assert review_prior.passed_over(self._intact(repo), review, str(repo)) == []
+
+    def test_a_finding_the_ledger_ruled_on_is_settled(self, repo):
+        review = _ledger("- **[M1]** `handler.go` — Declined — documented tradeoff")
+        assert review_prior.passed_over(self._intact(repo), review, str(repo)) == []
+
+    def test_a_finding_the_tree_says_is_gone_is_settled(self, repo):
+        (repo / "handler.go").write_text(_BEFORE)
+        prior_sha = _commit(repo, "before")
+        (repo / "handler.go").write_text(_AFTER)
+        _commit(repo, "after")
+
+        prior = _prior(
+            "- **[M1]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n",
+            sha=prior_sha,
+        )
+        assert review_prior.passed_over(prior, "## Summary\nnothing.\n", str(repo)) == []
+
+    def test_an_unreadable_verdict_is_not_asked_about_again(self, repo):
+        """Undecided, but not the review's omission — re-asking settles nothing."""
+        review = _ledger("- **[M1]** `handler.go` — moved to a follow-up")
+        assert review_prior.passed_over(self._intact(repo), review, str(repo)) == []
+
+    def test_nothing_comes_back_when_there_is_no_tree_to_ask(self):
+        """Without a worktree every finding is `NOT_CHECKABLE`, not passed over."""
+        assert review_prior.passed_over(PRIOR_ONE_FINDING, "## Summary\nnothing.\n") == []
+
+    def test_no_prior_review_asks_the_tree_nothing(self, repo):
+        assert review_prior.passed_over("", "## Summary\nnothing.\n", str(repo)) == []
+
+    def test_two_findings_in_one_file_are_matched_apart(self, repo):
+        """Their labels differ only by ID, and one is accounted for."""
+        (repo / "handler.go").write_text(_BEFORE)
+        prior_sha = _commit(repo, "before")
+        (repo / "README.md").write_text("unrelated\n")
+        _commit(repo, "after")
+
+        prior = _prior(
+            "- **[M1]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n"
+            "- **[M2]** **`handler.go:5`** — `defer rows.Close()` runs on a nil handle\n",
+            sha=prior_sha,
+        )
+        review = _ledger("- **[M1]** `handler.go:4` — Fixed")
+        passed = review_prior.passed_over(prior, review, str(repo))
+        assert [f.ref.finding_id for f in passed] == ["M2"]
+
+
 # ── The observed case, end to end ────────────────────────────────────────────
 
 

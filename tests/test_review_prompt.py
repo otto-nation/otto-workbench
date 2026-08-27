@@ -21,12 +21,13 @@ from review_types import (
 from agent_types import Effort, Mode, Phase
 from dataclasses import asdict
 
-from review_merge import _parse_ledger_line
+from review_merge import FindingRef, PriorFinding, _parse_ledger_line
 from review_prompt import (
     _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, BudgetLever, Cut,
     MAX_DELTA_LIST_ENTRIES,
     _build_ci_failure_items, _build_common_sections, _build_delta_section,
-    _build_env_section, _build_omitted_guidance, _build_pr_header, _fit_budget,
+    _build_env_section, _build_omitted_guidance, _build_pr_header,
+    _build_unaccounted_section, _fit_budget,
 )
 from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr_domains import CIDomain
@@ -480,6 +481,61 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         prompt = build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         assert len(prompt.encode()) <= MAX_PROMPT_BYTES
         assert "Incremental review context" in prompt
+
+
+# ── The prior findings handed to synthesis to settle ────────────────────────
+
+
+def _passed_over(finding_id, path, text):
+    return PriorFinding(FindingRef(finding_id, path), "sid", text)
+
+
+class TestUnaccountedPriorSection:
+    """Synthesis's `prior_section` is the remainder, not the prior review.
+
+    The group agents were each shown their slice of the prior review and their
+    conclusions are already in the merged content. What reaches synthesis is
+    what none of them accounted for — the last point in the run where an agent
+    can still decide it.
+    """
+
+    M1 = _passed_over(
+        "M1", "handler.go",
+        "- **[M1]** **`handler.go:42`** — `rows, _ := db.Query(sql)` drops the error",
+    )
+
+    def test_nothing_passed_over_renders_no_section(self):
+        assert _build_unaccounted_section([]) == ""
+
+    def test_a_finding_arrives_with_the_text_that_reported_it(self):
+        section = _build_unaccounted_section([self.M1])
+        assert "**[M1]**" in section
+        assert "`rows, _ := db.Query(sql)` drops the error" in section
+
+    def test_the_section_asks_for_the_ledger_the_parser_reads(self):
+        """One owner for the ledger's shape — this section states none of its own."""
+        assert _LEDGER_INSTRUCTION in _build_unaccounted_section([self.M1])
+
+    def test_the_findings_come_before_the_instruction_that_says_above(self):
+        section = _build_unaccounted_section([self.M1])
+        assert section.index("</unaccounted_findings>") < section.index(_LEDGER_INSTRUCTION)
+
+    def test_the_synthesis_prompt_carries_them(self):
+        job = _make_job(_make_preflight())
+        common = _build_common_sections(job, max_turns=10)
+        extra = dict(
+            group_count=1, merged_content="m", holistic_content="h",
+            unaccounted_prior=[self.M1],
+        )
+        builder, _ = _PROMPT_BUILDERS[Phase.SYNTHESIS](job, common, extra, "/tmp/r.md")
+        assert "drops the error" in builder.vars["prior_section"]
+
+    def test_a_synthesis_prompt_with_nothing_left_over_says_nothing(self):
+        job = _make_job(_make_preflight())
+        common = _build_common_sections(job, max_turns=10)
+        extra = dict(group_count=1, merged_content="m", holistic_content="h")
+        builder, _ = _PROMPT_BUILDERS[Phase.SYNTHESIS](job, common, extra, "/tmp/r.md")
+        assert builder.vars["prior_section"] == ""
 
 
 # ── The ledger instruction and the ledger parser ────────────────────────────

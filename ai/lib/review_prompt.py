@@ -41,7 +41,7 @@ from review_document import (
     BOLD_FINDING_ID_RE, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS,
 )
-from review_findings import strip_sections
+from review_findings import PriorFinding, strip_sections
 from review_merge import annotate_prior_with_stable_ids
 from review_paths import (
     FILENAME_PROMPT_STATS, phase_output_path, review_artifact_path,
@@ -694,6 +694,40 @@ def _build_prior_section(
 </prior_review>"""
 
 
+# What synthesis is told about the prior findings the group agents passed over.
+# It asks for a decision, not for a restatement: a finding whose subject is
+# still in the tree may well be right to decline, and the outcome this exists to
+# prevent is the third one — the document saying nothing about it at all, which
+# the next round cannot tell apart from the finding never having existed.
+_UNACCOUNTED_CTX = """These prior findings reached no disposition: the group
+agents did not mention them, and the worktree still holds what each one points
+at. Decide each one here, on the text below and the merged findings above.
+Omitting one is not a third option — a prior finding this document does not
+mention is reported as unaccounted for, and comes back unsettled next round."""
+
+
+def _build_unaccounted_section(findings: list[PriorFinding]) -> str:
+    """The prior findings synthesis must dispose of, with the text to judge them on.
+
+    The findings come before `_LEDGER_INSTRUCTION` rather than after it, which
+    is the reverse of `_build_prior_section`: the instruction asks for a line
+    per finding above it, and here the only findings synthesis has been shown
+    are these. Restating the verdict forms in this section's own words would
+    make it the second place the ledger's shape is written down.
+    """
+    if not findings:
+        return ""
+    reported = "\n\n".join(finding.text.strip() for finding in findings)
+    return f"""
+## Prior findings awaiting a disposition
+{_UNACCOUNTED_CTX}
+
+<unaccounted_findings>
+{reported}
+</unaccounted_findings>
+{_LEDGER_INSTRUCTION}"""
+
+
 @dataclass(frozen=True)
 class CommonSections:
     """Sections shared by every template, built once per prompt.
@@ -1140,6 +1174,11 @@ def _prompt_synthesis(job, common, extra, output):
 
     Same split as `_prompt_single`, minus the verdict: synthesis asks for one in
     either mode, each template in its own words.
+
+    The prior section here is not the prior review — the group agents were each
+    shown their slice of it and their conclusions are already in
+    `merged_content`. It is the remainder: the findings none of them accounted
+    for, which only this agent is still in a position to decide.
     """
     b = PromptBuilder(common)
     b.shared(
@@ -1150,7 +1189,7 @@ def _prompt_synthesis(job, common, extra, output):
     b.set("repo", job.repo)
     b.set("pr_head_sha", job.pr.head_sha)
     b.set("wt_path", job.wt_path)
-    b.set("prior_section", "")
+    b.set("prior_section", _build_unaccounted_section(extra.get("unaccounted_prior") or []))
     b.set("group_count", extra["group_count"])
     b.set("verdict_options", VERDICT_OPTIONS)
     b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")

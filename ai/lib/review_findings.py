@@ -1,8 +1,10 @@
-"""Finding parsing, renumbering, deduplication, verification, and stable IDs.
+"""Finding renumbering, deduplication, verification, and stable IDs.
 
-Shared between review-orchestrate (merging/verification) and review-post
-(parsing). The `Finding` these produce is `review_types`': a consumer that only
-holds findings does not need the parser that read them off a document.
+What happens to findings *after* a document has been read: shared between
+review-orchestrate, which merges and verifies them, and review-post, which
+renumbers them for posting. Reading them off a review is `review_document`'s
+job, and the `Finding` both sides hold is `review_types`' — a consumer that
+only holds findings needs neither the parser nor this.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -51,183 +53,27 @@ from review_common import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, plural,
 )
 from review_document import (
-    SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument, section_span,
+    BOLD_FINDING_ID_RE, FINDING_ID_RE, LINE_SUFFIX, SECTION_SUMMARY, SECTION_VERDICT,
+    SPACED_FILE, ReviewDocument, finding_location, is_section_boundary,
+    parse_finding_line, section_span,
 )
 from review_types import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, PriorDisposition,
     disposition_precedence, severity_by_key,
 )
 
-# Severity header name -> key mapping (section + aliases, lowercased)
-def _build_severity_names() -> dict[str, str]:
-    names: dict[str, str] = {}
-    for s in SEVERITIES:
-        names[s.section.lower()] = s.key
-        # replace("-", " ") mirrors _match_severity_header's input normalisation so
-        # future hyphenated section names (e.g. "Should-fix") still resolve correctly.
-        names[s.section.lower().replace("-", " ")] = s.key
-        for alias in s.aliases:
-            names[alias.lower()] = s.key
-    return names
-
-
-_SEVERITY_NAMES = _build_severity_names()
-
-
-BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
-
-# ── Finding parsing ──────────────────────────────────────────────────────────
-
-FINDING_ID_RE = re.compile(
-    r"^- (?:\[([ x])\] )?"
-    r"(?:~~)?"
-    r"\*\*\[([MSNI])(\d+)\](?:\*\*)?"
-    r"\s+"
-    r"(?:<!-- sid:\w+ -->\s+)?"
-)
-
-PATH_SECTION_RE = re.compile(
-    r"\*\*`(.+?)`\*\*"
-    r"|"
-    r"\*\*(.+?)\*\*"
-    r"|"
-    r"`(.+?)`"
-)
-# What a path may hold, now that PATH_SECTION_RE has already delimited the
-# span. The class says what a path is not: whitespace, the `:` that introduces
-# the line suffix, the `*` and backtick that close the span, and the em dash
-# that separates a location from its body. Everything else is an ordinary
-# filename character — non-ASCII included, because `src/café.py` names a file
-# the same way `src/cafe.py` does.
-_PATH_CHAR = r"[^\s:*`—]"
-_SEGMENT_CHAR = r"[^\s/:*`—]"
-
-# The `:12` or `:12-18` a location may carry after its filename.
-_LINE_SUFFIX = r"(?::\d+(?:[-–]\d+)?)?"
-
-# A filename holding spaces. It has no character class to stop it, so every
-# use has to bound it: the extension ends it, and whatever follows has to be
-# the end of the span it was found in.
-_SPACED_FILE = rf"{_PATH_CHAR}+(?: {_PATH_CHAR}+)+\.\w+"
-
-# Three shapes, tried in this order:
-#
-#   1. pkg/handler.go            — an extension ends the filename
-#   2. src/café brûlé.py         — a filename holding spaces
-#   3. ai/claude/bin/ci-check    — an extensionless script, slash required
-#
-# Shapes 1 and 3 keep prose out by starting at the span's first character and
-# stopping at the first space: a sentence only passes if its opening word is
-# already shaped like a file. A slash is what shape 3 has instead of an
-# extension, and prose is full of slashes, so that shape cannot be allowed to
-# reach across a space either.
-#
-# Shape 2 has no such boundary, so it earns the space a different way: it must
-# end in an extension and, per the lookahead, account for the whole span, line
-# suffix included. "the fix lands in v2.0 of the tool" fails that — the words
-# after the dotted token are left over — while "src/café brûlé.py:12-18"
-# satisfies it. The same lookahead is what stops a greedy space run from
-# walking past the real filename, since anything it swallowed would have to be
-# part of the span's final extension.
-#
-# Shape 2 is tried after shape 1 so it only runs where the space-free shapes
-# found nothing: every location a review already parsed still parses the same
-# way, and a span naming one path before some prose still yields that path
-# rather than the whole span.
-FIRST_FILE_RE = re.compile(
-    r"("
-    rf"{_PATH_CHAR}+\.\w+"
-    r"|"
-    rf"{_SPACED_FILE}(?={_LINE_SUFFIX}\s*$)"
-    r"|"
-    rf"{_SEGMENT_CHAR}+(?:/{_SEGMENT_CHAR}+)+"
-    r")"
-    r"(?::(\d+)(?:[-–](\d+))?)?"
-)
-
-STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
-
 # The fix pass's record of work it did not do. The reason is optional for the
-# same reason it is on `_DECLINED`: a skip written without one is still a skip,
-# and reading it as an ordinary open finding is what lets a sibling finding's
-# edit report it as fixed.
+# same reason it is on the decline annotation `review_document` owns: a skip
+# written without one is still a skip, and reading it as an ordinary open
+# finding is what lets a sibling finding's edit report it as fixed.
 _SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
 
-# Matched at the head or tail of the finding body for the same reason
-# `DECLINED_HEAD_RE`/`DECLINED_TAIL_RE` are anchored below: matched anywhere, a
-# finding whose prose quotes the annotation — this file's own docs do,
-# verbatim — would be misread as carrying it, and the fix pass would leave the
-# line untouched forever rather than recording what its agent answered.
+# Matched at the head or tail of the finding body, never in the middle: matched
+# anywhere, a finding whose prose quotes the annotation — this file's own docs
+# do, verbatim — would be misread as carrying it, and the fix pass would leave
+# the line untouched forever rather than recording what its agent answered.
 SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
 SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
-
-# The review file's record of `PriorDisposition.DECLINED`. The ledger is
-# stripped before the file is finished, so the verdict has to survive on the
-# finding line itself or the next `--fix` sees an ordinary open finding. The
-# reason is optional so a decline written without one still registers.
-_DECLINED = r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*"
-
-# An annotation, not prose. Matched anywhere in the line, a finding that merely
-# quotes the annotation — which any review of this parser writes — reads as
-# declined and is silently dropped from the fix pass's work set with no warning
-# anywhere. So the match is anchored to the two places the templates put an
-# annotation: at the head of the finding body, and at the end of the line.
-DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
-DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
-
-
-def match_decline(body: str, line: str) -> re.Match[str] | None:
-    """The decline annotation a finding line carries, if it carries one."""
-    return DECLINED_HEAD_RE.match(body) or DECLINED_TAIL_RE.search(line)
-
-
-def _extract_path(after_id: str) -> tuple[str, int | None, int | None]:
-    section_match = PATH_SECTION_RE.match(after_id)
-    if not section_match:
-        return "", None, None
-    section_text = section_match.group(1) or section_match.group(2) or section_match.group(3) or ""
-    section_text = section_text.replace("\\_", "_")
-    file_match = FIRST_FILE_RE.match(section_text)
-    if not file_match:
-        return "", None, None
-    path = file_match.group(1).strip()
-    line_num = int(file_match.group(2)) if file_match.group(2) else None
-    end_line = int(file_match.group(3)) if file_match.group(3) else None
-    return path, line_num, end_line
-
-
-def _extract_body_text(line: str) -> str:
-    em_dash_pos = line.find("—")
-    if em_dash_pos != -1:
-        return line[em_dash_pos + 1:].strip()
-    for sep in (" -- ", " - "):
-        pos = line.find(sep)
-        if pos != -1:
-            return line[pos + len(sep):].strip()
-    return ""
-
-
-def _parse_finding_line(stripped: str) -> Finding | None:
-    id_match = FINDING_ID_RE.match(stripped)
-    if not id_match:
-        return None
-    checkbox = id_match.group(1)
-    sev = id_match.group(2)
-    seq = int(id_match.group(3))
-    after_id = stripped[id_match.end():]
-    path, line_num, end_line = _extract_path(after_id)
-    if path:
-        body = _extract_body_text(stripped)
-    else:
-        body = after_id.strip()
-    declined = match_decline(body, stripped)
-    return Finding(
-        id=f"{sev}{seq}", severity=sev, seq=seq,
-        path=path, line=line_num, end_line=end_line, body=body,
-        checked=(checkbox is not None and checkbox.lower() == "x"),
-        declined=declined is not None,
-        decline_reason=(declined.group(1) or "").strip() if declined else "",
-    )
 
 
 @dataclass(frozen=True)
@@ -290,7 +136,7 @@ class PriorFinding:
 
 def _parse_ledger_line(raw: str) -> LedgerEntry | None:
     """The entry a ledger line carries, or None when it names no finding."""
-    parsed = _parse_finding_line(raw.strip())
+    parsed = parse_finding_line(raw.strip())
     if not parsed:
         return None
     return LedgerEntry(
@@ -298,70 +144,6 @@ def _parse_ledger_line(raw: str) -> LedgerEntry | None:
         disposition=PriorDisposition.parse(parsed.body),
         text=raw,
     )
-
-
-def _finalize_finding(finding: Finding, body_lines: list[str]):
-    body = "\n".join(body_lines).strip()
-    if not body:
-        return
-    body = re.sub(r"\n+###[^\n]*$", "", body, flags=re.DOTALL).strip()
-    finding.body = body
-
-
-def _close_previous(findings: list[Finding], body_lines: list[str]):
-    if findings:
-        _finalize_finding(findings[-1], body_lines)
-    body_lines.clear()
-
-
-def _is_section_boundary(stripped: str) -> bool:
-    return stripped.startswith("### ") or bool(STRIKETHROUGH_RE.match(stripped))
-
-
-def _match_severity_header(stripped: str) -> str | None:
-    if not stripped.startswith("#"):
-        return None
-    text = stripped.lstrip("#").strip().lower().replace("-", " ")
-    return _SEVERITY_NAMES.get(text)
-
-
-def parse_findings(text: str) -> list[Finding]:
-    findings: list[Finding] = []
-    current_severity: str | None = None
-    body_lines: list[str] = []
-    accumulating = False
-
-    for raw_line in text.split("\n"):
-        stripped = raw_line.strip()
-        severity = _match_severity_header(stripped)
-        if severity is not None:
-            _close_previous(findings, body_lines)
-            current_severity = severity
-            accumulating = False
-            continue
-        if stripped.startswith("## "):
-            _close_previous(findings, body_lines)
-            current_severity = None
-            accumulating = False
-            continue
-        if current_severity is None:
-            continue
-        if _is_section_boundary(stripped):
-            _close_previous(findings, body_lines)
-            accumulating = False
-            continue
-        finding = _parse_finding_line(stripped)
-        if finding:
-            _close_previous(findings, body_lines)
-            body_lines = [finding.body] if finding.body else []
-            findings.append(finding)
-            accumulating = True
-            continue
-        if accumulating and stripped:
-            body_lines.append(raw_line.rstrip())
-
-    _close_previous(findings, body_lines)
-    return findings
 
 
 def match_skip(finding: Finding) -> re.Match[str] | None:
@@ -888,18 +670,18 @@ def _verify_finding(path: str, evidence: str | None, wt_path: str) -> bool:
 # parsed before parses the same way, since a space-free span never reaches
 # the second alternative at all.
 #
-# `_SPACED_FILE` needs the same bound it has in FIRST_FILE_RE, where a
-# lookahead makes the filename account for the whole span. Here the closing
-# delimiter is that bound: the extension and its optional line suffix have to
-# run right up to it, so "the fix lands in v2.0 of the tool" is still no path
-# and a greedy space run cannot walk past the real filename.
+# `SPACED_FILE` needs the same bound it has in `review_document`'s location
+# grammar, where a lookahead makes the filename account for the whole span.
+# Here the closing delimiter is that bound: the extension and its optional line
+# suffix have to run right up to it, so "the fix lands in v2.0 of the tool" is
+# still no path and a greedy space run cannot walk past the real filename.
 _VERIFY_FINDING_RE = re.compile(
     r"^- (?:\[ \] )?"
     r"\*\*\[([MSNI])(\d+)\]\*\*"
     r"\s+(?:<!-- sid:\w+ -->\s+)?"
-    rf"(?:\*\*[`]?([^`*\s]+?|{_SPACED_FILE}{_LINE_SUFFIX})[`]?\*\*"
-    rf"|[`]([^`\s]+?|{_SPACED_FILE}{_LINE_SUFFIX})[`])"
-    rf"{_LINE_SUFFIX}"
+    rf"(?:\*\*[`]?([^`*\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`]?\*\*"
+    rf"|[`]([^`\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`])"
+    rf"{LINE_SUFFIX}"
     r"\s*—\s*(.*)"
 )
 
@@ -1043,22 +825,22 @@ _ANNOTATE_FINDING_RE = re.compile(
 def _extract_finding_path(line: str, after: str) -> str:
     """The file a finding line names, or "" when it names none.
 
-    `_extract_path` answers first because it is the same reading the rest of
+    `finding_location` answers first because it is the same reading the rest of
     the parser gives a location, and it is the only rung that recognises a
     plain-backtick file with no `:<line>` after it — the shape a review writes
     whenever the finding is about a file rather than a line of one. Reading
     that as no path at all left the finding with no stable ID either, so
     neither carry-forward nor the tree could account for it.
 
-    The two rungs below it are what this function used to be, kept because
-    they read locations `_extract_path` declines: a bold span that is a label
+    The two rungs below it are what this function used to be, kept because they
+    read locations `finding_location` declines: a bold span that is a label
     rather than a filename, and a bare `path:12` in no span at all. Identity
     is the point here — a finding whose location is `**Documentation**` still
     has to hash to the same thing across reviews to be carried forward.
     """
-    path, _, _ = _extract_path(after)
-    if path:
-        return path
+    location = finding_location(after)
+    if location.named:
+        return location.path
     path_m = _FINDING_PATH_RE.match(line)
     if path_m:
         path_str = (path_m.group(1) or path_m.group(2) or "").replace("\\_", "_").strip()
@@ -1128,7 +910,7 @@ def _prior_finding(block: list[str]) -> PriorFinding:
     text: list[str] = []
     for raw in block:
         stripped = raw.strip()
-        if text and (_is_next_finding_or_section(stripped) or _is_section_boundary(stripped)):
+        if text and (_is_next_finding_or_section(stripped) or is_section_boundary(stripped)):
             break
         text.append(stripped)
     line = text[0]

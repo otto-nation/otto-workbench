@@ -237,10 +237,16 @@ instead: the offsets of the section it is rewriting, leaving every byte outside
 them alone.
 
 Reading a document is the same one owner from the other side. What a review
-says — which sections it carries, how many findings of each severity it
-declares, and the call it reached — is answered off the parsed document rather
+says — which sections it carries, which findings it declares, how many of each
+severity, and the call it reached — is answered off the parsed document rather
 than by a regex each caller brings, so two readers of one review cannot report
 different things about it.
+
+A finding declaration is part of that format, so the grammar of one lives here
+too: the ID at the head of a list item, the location after it, and the body
+after that. `parse_finding_line` is for a caller holding a single line that is
+not in a findings section — the prior-findings ledger is the one — and every
+other reader asks `ReviewDocument.findings`.
 
 ### review_gc.py
 
@@ -481,11 +487,13 @@ verdict is decided in the first place belongs to ``ReviewVerdict``.
 
 ### review_findings.py
 
-Finding parsing, renumbering, deduplication, verification, and stable IDs.
+Finding renumbering, deduplication, verification, and stable IDs.
 
-Shared between review-orchestrate (merging/verification) and review-post
-(parsing). The `Finding` these produce is `review_types`': a consumer that only
-holds findings does not need the parser that read them off a document.
+What happens to findings *after* a document has been read: shared between
+review-orchestrate, which merges and verifies them, and review-post, which
+renumbers them for posting. Reading them off a review is `review_document`'s
+job, and the `Finding` both sides hold is `review_types`' — a consumer that
+only holds findings needs neither the parser nor this.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs

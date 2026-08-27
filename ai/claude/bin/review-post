@@ -34,12 +34,8 @@ import log  # noqa: E402
 import proc  # noqa: E402
 from review_common import read_review_meta  # noqa: E402
 from review_dedup import dedup_against_posted  # noqa: E402
-from review_findings import (  # noqa: E402
-    parse_findings,
-    _close_previous, _extract_body_text, _extract_path,
-    _finalize_finding, _is_section_boundary, _match_severity_header,
-    _parse_finding_line, parse_diff_hunks,
-)
+from review_document import ReviewDocument  # noqa: E402
+from review_findings import parse_diff_hunks  # noqa: E402
 from review_types import Finding, ReviewMeta, SEVERITIES  # noqa: E402
 from review_format import (  # noqa: E402
     CLASS_FILE_LEVEL, CLASS_INLINE,
@@ -107,7 +103,7 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> None:
 
     sections = ReviewSections.from_text(text)
 
-    all_findings = parse_findings(text)
+    all_findings = ReviewDocument.parse(text).findings
     log.info(f"Parsed {len(all_findings)} findings from review file")
     trail.info("parse_findings", f"parsed {len(all_findings)} findings",
                data={"total": len(all_findings), "review_sha": review_sha})

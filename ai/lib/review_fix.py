@@ -48,7 +48,8 @@ import proc
 from agent_types import Phase
 from pr_fix import FixOutcome, ItemOutcome
 from review_common import phase_log_path
-from review_findings import FINDING_ID_RE, match_skip, parse_findings
+from review_document import FINDING_ID_RE, ReviewDocument
+from review_findings import match_skip
 from review_retry import _has_output
 from review_types import Finding, ReviewJob, severity_by_key
 from trail import Trail
@@ -196,7 +197,7 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     appending a second annotation to a line that carries one leaves the document
     saying two things about one finding.
     """
-    prior = {f.id: f for f in parse_findings(text)}
+    prior = {f.id: f for f in ReviewDocument.parse(text).findings}
     by_id = {o.id: o for o in outcomes}
     written: set[str] = set()
     lines = text.split("\n")
@@ -334,16 +335,14 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     Returns without running an agent when there is no review to work from or
     nothing in it still open.
     """
-    if not _has_output(job.review_file):
+    doc = ReviewDocument.read(job.review_file) if _has_output(job.review_file) else None
+    if doc is None:
         log.warn("No review file to fix — skipping fix pass")
         return
 
     # A declined finding is not work: it was considered and rejected, so it is
     # out of the work set and out of the turn budget it would otherwise buy.
-    findings = [
-        f for f in parse_findings(Path(job.review_file).read_text())
-        if not f.checked and not f.declined
-    ]
+    findings = [f for f in doc.findings if not f.checked and not f.declined]
     if not findings:
         log.info("No findings left to fix — skipping fix pass")
         return

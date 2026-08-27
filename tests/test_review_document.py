@@ -25,16 +25,23 @@ import pytest
 from agent_types import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
-    ReviewDocument, ReviewHeader, resolve_review_verdict, review_counts, review_title,
-    section_span, set_status,
+    FINDING_ID_RE, ReviewDocument, ReviewHeader, _close_previous, _extract_body_text,
+    _finalize_finding, _FIRST_FILE_RE, _match_severity_header, finding_location,
+    is_section_boundary, parse_finding_line, resolve_review_verdict, review_counts,
+    review_title, section_span, set_status,
 )
-from review_types import ReviewMeta, ReviewType
+from review_types import Finding, ReviewMeta, ReviewType
 
 
 def _write(tmp_path, body: str) -> Path:
     review = tmp_path / "review.md"
     review.write_text(body)
     return review
+
+
+def _findings(text: str) -> list[Finding]:
+    """The findings a review's text declares, read the way every reader does."""
+    return ReviewDocument.parse(text).findings
 
 
 class TestRender:
@@ -430,6 +437,597 @@ class TestCounts:
             "- **[M1]** path:1 — bug\n"
             "  - see [M1] above\n"
         )
+        assert document.counts["M"] == 1
+
+
+class TestFindingLocation:
+    def test_bold_backtick_with_line_number(self):
+        loc = finding_location("**`pkg/handler.go:42`**")
+        assert (loc.path, loc.line, loc.end_line) == ("pkg/handler.go", 42, None)
+
+    def test_bold_backtick_with_line_range(self):
+        loc = finding_location("**`pkg/handler.go:10-20`**")
+        assert (loc.path, loc.line, loc.end_line) == ("pkg/handler.go", 10, 20)
+
+    def test_bold_only_format(self):
+        loc = finding_location("**pkg/handler.go:5**")
+        assert (loc.path, loc.line, loc.end_line) == ("pkg/handler.go", 5, None)
+
+    def test_backtick_only_format(self):
+        loc = finding_location("`pkg/handler.go:99`")
+        assert (loc.path, loc.line, loc.end_line) == ("pkg/handler.go", 99, None)
+
+    def test_no_line_number(self):
+        loc = finding_location("**`handler.go`**")
+        assert (loc.path, loc.line, loc.end_line) == ("handler.go", None, None)
+
+    def test_no_path_match_names_nothing(self):
+        loc = finding_location("some random text")
+        assert not loc.named
+        assert (loc.path, loc.line, loc.end_line) == ("", None, None)
+
+    def test_a_named_location_reads_as_named(self):
+        assert finding_location("**`handler.go`**").named
+
+    def test_en_dash_range_separator(self):
+        loc = finding_location("**`file.go:10–15`**")
+        assert (loc.path, loc.line, loc.end_line) == ("file.go", 10, 15)
+
+    def test_parenthesized_route_group(self):
+        loc = finding_location(
+            "**`ui-consumer/src/app/(authenticated)/rewards/page.tsx:186`**"
+        )
+        assert (loc.path, loc.line) == (
+            "ui-consumer/src/app/(authenticated)/rewards/page.tsx", 186,
+        )
+
+    def test_nested_parenthesized_groups(self):
+        loc = finding_location("**`app/(auth)/(dashboard)/page.tsx`**")
+        assert loc.path == "app/(auth)/(dashboard)/page.tsx"
+
+    def test_extensionless_script_path(self):
+        """Bin scripts have no extension; a pathless finding never reconciles."""
+        loc = finding_location("`ai/claude/bin/ci-check:777`")
+        assert (loc.path, loc.line, loc.end_line) == ("ai/claude/bin/ci-check", 777, None)
+
+    def test_extensionless_script_path_with_range(self):
+        loc = finding_location("**`git/hooks/pre-push-workbench:124-131`**")
+        assert (loc.path, loc.line, loc.end_line) == ("git/hooks/pre-push-workbench", 124, 131)
+
+    def test_slashless_code_span_is_not_a_path(self):
+        """A bare identifier in a code span is prose, not an extensionless path."""
+        assert not finding_location("`session_log` defaults to empty").named
+
+    def test_path_with_space(self):
+        loc = finding_location("**`src/my notes.py`**")
+        assert (loc.path, loc.line, loc.end_line) == ("src/my notes.py", None, None)
+
+    def test_path_with_space_and_line_number(self):
+        loc = finding_location("**`src/my notes.py:42`**")
+        assert (loc.path, loc.line, loc.end_line) == ("src/my notes.py", 42, None)
+
+    def test_non_ascii_path(self):
+        loc = finding_location("**`src/café.py:7`**")
+        assert (loc.path, loc.line, loc.end_line) == ("src/café.py", 7, None)
+
+    def test_space_and_non_ascii_path_with_line_range(self):
+        loc = finding_location("**`src/café brûlé.py:12-18`**")
+        assert (loc.path, loc.line, loc.end_line) == ("src/café brûlé.py", 12, 18)
+
+    def test_spaced_prose_span_is_not_a_path(self):
+        """Admitting spaces must not let a sentence read as a filename."""
+        assert not finding_location("**the retry loop never terminates**").named
+
+    def test_spaced_prose_span_with_a_version_number_is_not_a_path(self):
+        """A dotted token mid-sentence is not the extension of a spaced path."""
+        assert not finding_location("**the fix lands in v2.0 of the tool**").named
+
+    def test_escaped_underscores_in_dunder(self):
+        loc = finding_location(r"**`scripts/\_\_main\_\_.py:10`**")
+        assert (loc.path, loc.line) == ("scripts/__main__.py", 10)
+
+    def test_escaped_underscores_in_bold(self):
+        loc = finding_location(r"**scripts/\_\_main\_\_.py:10**")
+        assert (loc.path, loc.line) == ("scripts/__main__.py", 10)
+
+    def test_no_escapes_unchanged(self):
+        loc = finding_location("**`scripts/__main__.py:10`**")
+        assert (loc.path, loc.line) == ("scripts/__main__.py", 10)
+
+
+class TestFindingIdRegex:
+    def test_with_stable_id_comment(self):
+        m = FINDING_ID_RE.match("- **[M1]** <!-- sid:abc12345 --> **`file.go:10`** — body")
+        assert m is not None
+        assert (m.group(2), m.group(3)) == ("M", "1")
+
+    def test_checkbox_and_strikethrough_combined(self):
+        m = FINDING_ID_RE.match("- [ ] ~~**[S1]** **`file.go:5`** — Fix~~")
+        assert m is not None
+        assert (m.group(1), m.group(2), m.group(3)) == (" ", "S", "1")
+
+    def test_double_digit_seq(self):
+        m = FINDING_ID_RE.match("- **[M12]** **`file.go:10`** — body")
+        assert m is not None
+        assert (m.group(2), m.group(3)) == ("M", "12")
+
+    def test_checked_checkbox(self):
+        m = FINDING_ID_RE.match("- [x] **[M1]** **`file.go:10`** — body")
+        assert m is not None
+        assert (m.group(1), m.group(2)) == ("x", "M")
+
+    def test_no_checkbox(self):
+        m = FINDING_ID_RE.match("- **[M1]** **`file.go:10`** — body")
+        assert m is not None
+        assert m.group(1) is None
+        assert m.group(2) == "M"
+
+
+class TestFirstFileRegex:
+    def test_hidden_file_not_matched_at_start(self):
+        # Leading dot is not in the regex character class — hidden files
+        # are only matched when preceded by a directory component
+        assert _FIRST_FILE_RE.match(".gitignore") is None
+
+    def test_hidden_file_in_directory(self):
+        m = _FIRST_FILE_RE.match("config/.gitignore")
+        assert m is not None
+        assert m.group(1) == "config/.gitignore"
+
+    def test_file_with_dots_in_path(self):
+        m = _FIRST_FILE_RE.match("v1.2.3/file.go")
+        assert m is not None
+        assert m.group(1) == "v1.2.3/file.go"
+
+    def test_path_with_parentheses(self):
+        m = _FIRST_FILE_RE.match("(auth)/page.tsx")
+        assert m is not None
+        assert m.group(1) == "(auth)/page.tsx"
+
+
+class TestExtractBodyText:
+    def test_em_dash_separator(self):
+        assert _extract_body_text("prefix — the body text") == "the body text"
+
+    def test_double_dash_fallback(self):
+        assert _extract_body_text("prefix -- the body text") == "the body text"
+
+    def test_hyphen_fallback(self):
+        assert _extract_body_text("prefix - the body text") == "the body text"
+
+    def test_no_separator_returns_empty(self):
+        assert _extract_body_text("no separator here") == ""
+
+    def test_em_dash_takes_precedence(self):
+        assert _extract_body_text("a -- b — c") == "c"
+
+
+class TestParseFindingLine:
+    def test_standard_must_fix(self):
+        f = parse_finding_line("- **[M1]** **`handler.go:42`** — Fix this bug")
+        assert (f.id, f.severity, f.seq, f.path, f.line, f.body) == (
+            "M1", "M", 1, "handler.go", 42, "Fix this bug",
+        )
+
+    def test_should_fix_with_line_range(self):
+        f = parse_finding_line("- **[S3]** **`pkg/auth.go:10-20`** — Refactor")
+        assert (f.id, f.severity, f.seq, f.line, f.end_line) == ("S3", "S", 3, 10, 20)
+
+    def test_nit_finding(self):
+        f = parse_finding_line("- **[N2]** **`file.go:5`** — Nit text")
+        assert (f.severity, f.seq) == ("N", 2)
+
+    def test_idiom_finding(self):
+        f = parse_finding_line("- **[I1]** **`file.go:5`** — Use pattern")
+        assert (f.severity, f.seq) == ("I", 1)
+
+    def test_checkbox_variant(self):
+        f = parse_finding_line("- [ ] **[S1]** **`file.go:5`** — Fix this")
+        assert (f.id, f.body) == ("S1", "Fix this")
+
+    def test_pathless_finding_uses_full_text_as_body(self):
+        f = parse_finding_line(
+            '- **[I1]** The `_comment` field convention is good practice and should be retained.'
+        )
+        assert f.path == ""
+        assert "The `_comment` field convention" in f.body
+        assert "should be retained" in f.body
+
+    def test_pathless_finding_with_em_dash_keeps_full_text(self):
+        f = parse_finding_line(
+            '- **[I1]** Some pattern across files — this is good practice.'
+        )
+        assert f.path == ""
+        assert "Some pattern across files" in f.body
+        assert "good practice" in f.body
+
+    def test_optional_bold_close(self):
+        f = parse_finding_line(
+            '- [ ] **[S1] `has_go` summary line dropped** — The step summary lost the output'
+        )
+        assert f is not None
+        assert (f.severity, f.seq) == ("S", 1)
+
+    def test_non_finding_returns_none(self):
+        assert parse_finding_line("just a regular line") is None
+
+    def test_section_header_returns_none(self):
+        assert parse_finding_line("## Must fix") is None
+
+
+class TestIsSectionBoundary:
+    def test_sub_header_is_boundary(self):
+        assert is_section_boundary("### Group A") is True
+
+    def test_strikethrough_finding_is_boundary(self):
+        assert is_section_boundary("- ~~**[M1]** **`file.go:10`** — Resolved~~") is True
+
+    def test_non_strikethrough_finding_is_not_boundary(self):
+        assert is_section_boundary("- **[M1]** **`file.go:10`** — Open") is False
+
+    def test_regular_text_is_not_boundary(self):
+        assert is_section_boundary("Some regular text here") is False
+
+    def test_h2_header_is_not_boundary(self):
+        assert is_section_boundary("## Must fix") is False
+
+
+class TestMatchSeverityHeader:
+    def test_h2_must_fix(self):
+        assert _match_severity_header("## Must fix") == "M"
+
+    def test_h3_should_fix_hyphenated(self):
+        assert _match_severity_header("### Should-fix") == "S"
+
+    def test_h3_nit(self):
+        assert _match_severity_header("### Nit") == "N"
+
+    def test_h2_nits_plural(self):
+        assert _match_severity_header("## Nits") == "N"
+
+    def test_h4_idioms(self):
+        assert _match_severity_header("#### Idioms") == "I"
+
+    def test_case_insensitive(self):
+        assert _match_severity_header("## SHOULD FIX") == "S"
+
+    def test_non_severity_header_returns_none(self):
+        assert _match_severity_header("## Summary") is None
+
+    def test_non_header_returns_none(self):
+        assert _match_severity_header("Some text") is None
+
+    def test_findings_parent_returns_none(self):
+        assert _match_severity_header("## Findings") is None
+
+
+class TestFinalizeFinding:
+    def test_non_empty_body_lines(self):
+        f = Finding(id="M1", severity="M", seq=1, path="file.go", line=10,
+                    end_line=None, body="original")
+        _finalize_finding(f, ["first line", "second line"])
+        assert "first line" in f.body
+        assert "second line" in f.body
+
+    def test_empty_body_lines_leaves_body_unchanged(self):
+        f = Finding(id="M1", severity="M", seq=1, path="file.go", line=10,
+                    end_line=None, body="original")
+        _finalize_finding(f, [])
+        assert f.body == "original"
+
+    def test_trailing_sub_header_stripped(self):
+        f = Finding(id="M1", severity="M", seq=1, path="file.go", line=10,
+                    end_line=None, body="original")
+        _finalize_finding(f, ["actual content", "### Group B"])
+        assert "### Group B" not in f.body
+        assert "actual content" in f.body
+
+
+class TestClosePrevious:
+    def test_with_findings_and_body_lines(self):
+        f = Finding(id="M1", severity="M", seq=1, path="file.go", line=10,
+                    end_line=None, body="original")
+        body_lines = ["updated body content", "more content"]
+        _close_previous([f], body_lines)
+        assert "updated body content" in f.body
+        assert len(body_lines) == 0
+
+    def test_empty_findings_is_noop(self):
+        body_lines = ["some text"]
+        _close_previous([], body_lines)
+        assert len(body_lines) == 0
+
+    def test_body_lines_cleared_after_call(self):
+        f = Finding(id="M1", severity="M", seq=1, path="file.go", line=10,
+                    end_line=None, body="x")
+        body_lines = ["line1", "line2"]
+        _close_previous([f], body_lines)
+        assert body_lines == []
+
+
+class TestFindings:
+    def test_single_finding_single_section(self):
+        findings = _findings("## Must fix\n\n- **[M1]** **`file.go:10`** — Fix the bug\n")
+        assert len(findings) == 1
+        assert findings[0].body == "Fix the bug"
+
+    def test_multiple_findings_one_section(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** **`a.go:1`** — First finding\n"
+            "- **[M2]** **`b.go:2`** — Second finding\n"
+        )
+        assert [(f.id, f.body) for f in findings] == [
+            ("M1", "First finding"), ("M2", "Second finding"),
+        ]
+
+    def test_findings_across_multiple_sections(self):
+        findings = _findings(
+            "## Must fix\n\n- **[M1]** **`a.go:1`** — Must body\n\n"
+            "## Should fix\n\n- **[S1]** **`b.go:2`** — Should body\n\n"
+            "## Nit\n\n- **[N1]** **`c.go:3`** — Nit body\n"
+        )
+        assert [(f.id, f.body) for f in findings] == [
+            ("M1", "Must body"), ("S1", "Should body"), ("N1", "Nit body"),
+        ]
+
+    def test_last_finding_in_section_preserves_body(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** **`a.go:1`** — First must-fix\n"
+            "- **[M2]** **`b.go:2`** — Last must-fix body\n\n"
+            "## Should fix\n\n"
+            "- **[S1]** **`c.go:3`** — First should-fix\n\n"
+            "## Nit\n\n"
+            "- **[N1]** **`d.go:4`** — The only nit\n\n"
+            "## Verdict\n\nAll done.\n"
+        )
+        by_id = {f.id: f for f in findings}
+        assert by_id["M2"].body == "Last must-fix body"
+        assert by_id["S1"].body == "First should-fix"
+        assert by_id["N1"].body == "The only nit"
+        assert all(f.body for f in findings)
+
+    def test_multi_line_continuation(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** **`file.go:10`** — Main body text\n"
+            "  More details here.\n"
+            "  And another line.\n"
+        )
+        body = findings[0].body
+        assert "Main body text" in body
+        assert "More details here." in body
+        assert "And another line." in body
+
+    def test_multi_line_with_code_block(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** **`workflow.yml:10`** — Add permissions block:\n"
+            "  ```yaml\n"
+            "  permissions:\n"
+            "    contents: read\n"
+            "  ```\n"
+            "  Note about the fix.\n"
+        )
+        body = findings[0].body
+        assert "Add permissions block:" in body
+        assert "permissions:" in body
+        assert "contents: read" in body
+        assert "Note about the fix." in body
+
+    def test_multi_line_last_in_section_regression(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** **`a.go:1`** — Simple finding\n\n"
+            "- **[M2]** **`workflow.yml:50-60`** — Complex finding.\n"
+            "  Code block follows:\n"
+            "  ```yaml\n"
+            "  jobs:\n"
+            "    build:\n"
+            "      runs-on: ubuntu\n"
+            "  ```\n"
+            "  *(Note referencing other comments.)*\n\n"
+            "## Should fix\n\n"
+            "- **[S1]** **`b.go:5`** — Should fix body\n"
+        )
+        m2 = next(f for f in findings if f.id == "M2")
+        assert "Complex finding" in m2.body
+
+    def test_code_block_indentation_preserved(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** **`file.py:10`** — Add this code:\n"
+            "  ```python\n"
+            "  def foo():\n"
+            "      return bar\n"
+            "  ```\n"
+        )
+        body = findings[0].body
+        assert "    return bar" in body or "      return bar" in body
+
+    def test_nested_indentation_preserved(self):
+        findings = _findings(
+            "## Should fix\n\n"
+            "- **[S1]** **`config.yml:5`** — Use this structure:\n"
+            "  ```yaml\n"
+            "  jobs:\n"
+            "    build:\n"
+            "      runs-on: ubuntu\n"
+            "  ```\n"
+        )
+        yaml_lines = [l for l in findings[0].body.split("\n") if "runs-on" in l]
+        assert yaml_lines
+        assert yaml_lines[0] != yaml_lines[0].lstrip()
+
+    def test_strikethrough_skipped(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- ~~**[M1]** **`file.go:10`** — Resolved~~\n"
+            "- **[M2]** **`file.go:20`** — Still open\n"
+        )
+        assert [f.id for f in findings] == ["M2"]
+
+    def test_sub_headers_handled(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "### Group A\n\n"
+            "- **[M1]** **`a.go:1`** — First\n\n"
+            "### Group B\n\n"
+            "- **[M2]** **`b.go:2`** — Second\n"
+        )
+        assert [f.body for f in findings] == ["First", "Second"]
+
+    def test_h3_severity_under_findings_parent(self):
+        findings = _findings(
+            "## Findings\n\n"
+            "### Should-fix\n\n"
+            "- **[S1]** **`file.go:10`** — Issue found\n\n"
+            "### Nit\n\n"
+            "- **[N1]** **`file.go:20`** — Style issue\n"
+        )
+        assert [f.severity for f in findings] == ["S", "N"]
+
+    def test_non_severity_section_stops_parsing(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** **`a.go:1`** — A finding\n\n"
+            "## Verdict\n\n"
+            "This is not a finding: - **[M2]** **`b.go:2`** — Not parsed\n"
+        )
+        assert len(findings) == 1
+
+    def test_empty_input(self):
+        assert _findings("") == []
+
+    def test_a_document_declaring_nothing_declares_nothing(self):
+        assert ReviewDocument().findings == []
+
+    def test_no_severity_sections(self):
+        assert _findings("# Review\n\nSome preamble.\n\n## Summary\n\nNothing here.\n") == []
+
+    def test_the_metadata_header_declares_no_findings(self):
+        """The frame is read off before the body, so a header can never be
+        mistaken for a declaration."""
+        findings = _findings(
+            "# Code Review\n\n"
+            "<!-- head_sha: abc123 -->\n\n"
+            "## Must fix\n\n- **[M1]** **`a.go:1`** — A finding\n"
+        )
+        assert [f.id for f in findings] == ["M1"]
+
+    def test_finding_with_no_body(self):
+        assert _findings("## Nit\n\n- **[N1]** **`file.go:10`**\n")[0].body == ""
+
+    def test_case_insensitive_section_headers(self):
+        findings = _findings(
+            "## Must Fix\n\n"
+            "- **[M1]** **`file.go:10`** — Bug found\n\n"
+            "## SHOULD FIX\n\n"
+            "- **[S1]** **`file.go:20`** — Cleanup needed\n\n"
+            "## nit\n\n"
+            "- **[N1]** **`file.go:30`** — Style issue\n"
+        )
+        assert [(f.severity, f.body) for f in findings] == [
+            ("M", "Bug found"), ("S", "Cleanup needed"), ("N", "Style issue"),
+        ]
+
+    def test_stray_text_between_sections_does_not_corrupt_previous_finding(self):
+        findings = _findings(
+            "## Should fix\n"
+            "- **[S1]** **`a.go:10`** — Real should-fix body\n\n"
+            "## Nit\n"
+            "_None in this file group._\n"
+            "- **[N1]** **`b.go:20`** — Real nit body\n"
+        )
+        by_id = {f.id: f for f in findings}
+        assert len(findings) == 2
+        assert by_id["S1"].body == "Real should-fix body"
+        assert by_id["N1"].body == "Real nit body"
+
+    def test_empty_section_markers_do_not_corrupt_adjacent_findings(self):
+        findings = _findings(
+            "## Must fix\n"
+            "_None in this file group._\n"
+            "## Should fix\n"
+            "- **[S1]** **`a.go:1`** — Should body\n"
+            "- **[S2]** **`b.go:2`** — Last should body\n\n"
+            "## Nit\n"
+            "_None in this file group._\n"
+            "- **[N1]** **`c.go:3`** — First nit\n\n"
+            "## Idioms\n"
+            "_None in this file group._\n"
+            "- **[I1]** **`d.go:4`** — First idiom\n"
+        )
+        by_id = {f.id: f for f in findings}
+        assert len(findings) == 4
+        assert by_id["S1"].body == "Should body"
+        assert by_id["S2"].body == "Last should body"
+        assert by_id["N1"].body == "First nit"
+        assert by_id["I1"].body == "First idiom"
+
+    def test_finding_with_stable_id_comment(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** <!-- sid:abc12345 --> **`file.go:10`** — body text\n"
+        )
+        assert len(findings) == 1
+        assert (findings[0].id, findings[0].path, findings[0].line) == ("M1", "file.go", 10)
+
+    def test_idioms_section(self):
+        findings = _findings("## Idioms\n\n- **[I1]** **`config.go:5`** — Good pattern\n")
+        assert (findings[0].severity, findings[0].body) == ("I", "Good pattern")
+
+    def test_a_whole_review_keeps_every_body(self):
+        findings = _findings(
+            "# Review: org/repo#42\n\n"
+            "## Must fix\n\n"
+            "- **[M1]** **`workflow.yml:10-20`** — Missing permissions block.\n"
+            "  ```yaml\n"
+            "  permissions:\n"
+            "    contents: read\n"
+            "  ```\n\n"
+            "- **[M2]** **`handler.go:50`** — Race condition in handler.\n\n"
+            "## Should fix\n\n"
+            "- **[S1]** **`config.sh:30`** — Hardcoded prefix.\n\n"
+            "## Nit\n\n"
+            "- **[N1]** **`test.sh:5`** — Tests not in CI.\n\n"
+            "## Verdict\n\nRequest changes.\n"
+        )
+        by_id = {f.id: f for f in findings}
+        assert all(f.body for f in findings)
+        assert "Missing permissions block." in by_id["M1"].body
+        assert "Race condition in handler." in by_id["M2"].body
+        assert "Hardcoded prefix." in by_id["S1"].body
+        assert "Tests not in CI." in by_id["N1"].body
+
+    def test_every_last_in_section_retains_body(self):
+        findings = _findings(
+            "## Must fix\n\n"
+            "- **[M1]** **`a.go:1`** — Must-fix alpha\n"
+            "- **[M2]** **`b.go:2`** — Must-fix beta (last in section)\n\n"
+            "## Should fix\n\n"
+            "- **[S1]** **`c.go:3`** — Should-fix only (last in section)\n\n"
+            "## Nit\n\n"
+            "- **[N1]** **`d.go:4`** — Nit alpha\n"
+            "- **[N2]** **`e.go:5`** — Nit beta (last in section)\n\n"
+            "## Verdict\n\nDone.\n"
+        )
+        by_id = {f.id: f for f in findings}
+        assert all(f.body for f in findings)
+        assert by_id["M2"].body == "Must-fix beta (last in section)"
+        assert by_id["S1"].body == "Should-fix only (last in section)"
+        assert by_id["N2"].body == "Nit beta (last in section)"
+
+    def test_a_checked_finding_is_declared_though_counts_omits_it(self):
+        """The two readings differ deliberately: `counts` reports what is still
+        outstanding, `findings` reports every declaration."""
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- [x] **[M1]** **`a.go:1`** — done\n"
+            "- [ ] **[M2]** **`b.go:2`** — open\n"
+        )
+        assert [f.id for f in document.findings] == ["M1", "M2"]
         assert document.counts["M"] == 1
 
 

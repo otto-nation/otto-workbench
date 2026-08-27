@@ -42,9 +42,8 @@ from review_common import (
     _derive_path, build_output_block, build_worktree_block,
     phase_output_path,
 )
-from review_findings import (
-    BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids, strip_sections,
-)
+from review_document import BOLD_FINDING_ID_RE
+from review_findings import annotate_prior_with_stable_ids, strip_sections
 from review_scout import (
     format_leads_block,
     is_scout_output, parse_scout_output,

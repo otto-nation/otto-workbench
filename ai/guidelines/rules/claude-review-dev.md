@@ -14,7 +14,8 @@ When adding or modifying a review phase, verify these integration points:
 - `review_types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
 - `review-orchestrate`: iteration over `SEVERITIES`, `renumber_section()`, `merge_reviews()`
 - `review_prompt.py`: a builder in `_PROMPT_BUILDERS` keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
-- `review-post`: `renumber_for_posting()`, `parse_findings()` parser, `classify_findings()` posting routing
+- `review_document.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`) and `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
+- `review-post`: `renumber_for_posting()`, `classify_findings()` posting routing
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates
 

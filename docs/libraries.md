@@ -428,7 +428,7 @@ on the next sync, the deferral silently.
 
 State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state
 root](#rootssh). One line per applied migration, or one line per repo — the
-key, a tab, and the repo path — for a migration marked `# project-scoped:`,
+key, a tab, and the repo path — for a migration marked `# checkout-scoped:`,
 which the framework runs once per entry in the [project registry](#projectssh).
 Stale entries, pointing at migration files that have since been removed, are
 pruned automatically. See [Execution Flow — Migrations](execution-flow.md#migrations).
@@ -535,7 +535,7 @@ Everything that matches a line compares the path ahead of the tab.
 
 Membership means a workbench command actually ran in a repo. Nothing scans for
 candidates — the two consumers that used to, the machine profile generator and
-the project-scoped migrations, each carried their own guessed-at list of git
+the checkout-scoped migrations, each carried their own guessed-at list of git
 roots and a depth limit, so a repo cloned anywhere else was invisible and the
 migration recorded itself applied all the same. Registration is an observation,
 so it can only ever be late; `otto-workbench projects add` is what covers a

@@ -2297,7 +2297,7 @@ recording for the tools written in Python: Claude's SessionStart hook, which
 already resolves the repo root, and the ``pr`` CLI, which already resolves a
 worktree root. ``lib/projects.sh`` is the shell half — it owns the one-time
 backfill, the CLI, and the reads that the machine profile generator and the
-project-scoped migrations make.
+checkout-scoped migrations make.
 
 Both halves read and write one file named by ``workbench_paths.projects_registry()``:
 one absolute path per line, optionally followed by a tab and the repo identity

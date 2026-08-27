@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-scoped: a container is only reachable from a repo inside it, and being
+# checkout-scoped: a container is only reachable from a repo inside it, and being
 # done is a fact about that container rather than about the machine.
 # Migration: delete the anatomy index a bare-repo container was given while the
 # generator still wrote one there.

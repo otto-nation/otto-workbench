@@ -16,7 +16,7 @@
 #
 # Membership means a workbench command actually ran in a repo. Nothing scans for
 # candidates — the two consumers that used to, the machine profile generator and
-# the project-scoped migrations, each carried their own guessed-at list of git
+# the checkout-scoped migrations, each carried their own guessed-at list of git
 # roots and a depth limit, so a repo cloned anywhere else was invisible and the
 # migration recorded itself applied all the same. Registration is an observation,
 # so it can only ever be late; `otto-workbench projects add` is what covers a
@@ -534,7 +534,7 @@ _project_seed_roots() {
 #
 # Called from run_all_migrations ahead of the framework rather than written as a
 # migration of its own, for the reason adoption is: migrations run in filename
-# order, and a project-scoped migration that sorted ahead of the backfill would
+# order, and a checkout-scoped migration that sorted ahead of the backfill would
 # read an empty registry, find nothing, and record itself as applied — the exact
 # silent no-op the registry exists to end.
 seed_project_registry() {

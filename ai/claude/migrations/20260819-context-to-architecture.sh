@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-# project-scoped: renames a file inside each repo, so being done is a fact about
+# checkout-scoped: renames a file inside each repo, so being done is a fact about
 # a repo and not about the machine.
 # Migration: rename .claude/context.md to .claude/architecture.md in every repo
 # the machine knows about. A repo already renamed, or one that never had the

@@ -11,7 +11,7 @@
 #
 # State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state
 # root](#rootssh). One line per applied migration, or one line per repo — the
-# key, a tab, and the repo path — for a migration marked `# project-scoped:`,
+# key, a tab, and the repo path — for a migration marked `# checkout-scoped:`,
 # which the framework runs once per entry in the [project registry](#projectssh).
 # Stale entries, pointing at migration files that have since been removed, are
 # pruned automatically. See [Execution Flow — Migrations](execution-flow.md#migrations).
@@ -43,16 +43,17 @@ _array_contains() {
   return 1
 }
 
-# The header line a migration writes to say it runs once per repo rather than
-# once per machine.
+# The header line a migration writes to say it runs once per registered work
+# tree rather than once per machine.
 #
-# "Applied" for such a migration is a fact about a repo, not about the machine:
-# it edits files under a repo's own .claude/, and a repo the machine learned
-# about afterwards has not been touched by it. A migration that ran its own loop
-# over the project registry could only ever record the one machine-wide line the
-# framework asked it for, so the next sync skipped it outright and the repo
-# cloned the day after kept the shape the migration exists to replace — no
-# error, no warning, and the state file reporting it long since done.
+# "Applied" for such a migration is a fact about a checkout, not about the
+# machine: it edits files under a repo's own .claude/, and a checkout the
+# machine learned about afterwards has not been touched by it. A migration that
+# ran its own loop over the project registry could only ever record the one
+# machine-wide line the framework asked it for, so the next sync skipped it
+# outright and the repo cloned the day after kept the shape the migration exists
+# to replace — no error, no warning, and the state file reporting it long since
+# done.
 #
 # With this marker the framework owns the loop: it calls the function once per
 # registered repo with that repo's path as the only argument, and records one
@@ -63,12 +64,12 @@ _array_contains() {
 # _ADOPTION_SENSITIVE_MARKER is: the marker travels with the file, so nothing
 # goes stale when one is renamed. bin/local/validate-migrations checks that a
 # file carrying it reads the argument, and that one without it does not.
-readonly _PROJECT_SCOPED_MARKER='^# project-scoped:'
+readonly _CHECKOUT_SCOPED_MARKER='^# checkout-scoped:'
 
 # The status a migration returns to say it found nothing to do.
 #
 # A migration has to be idempotent, so "already in the target shape" is its
-# commonest outcome — and for a project-scoped one it is very nearly the only
+# commonest outcome — and for a checkout-scoped one it is very nearly the only
 # outcome, since the framework visits every repo the machine has registered
 # since the last sync and almost none of them are in the shape the migration
 # exists to replace. Returning 0 there is indistinguishable from having done
@@ -116,7 +117,7 @@ readonly MIGRATION_NOOP=3
 # bin/local/validate-migrations only lets it be returned from a guard testing
 # whether a path exists, so a migration cannot defer for a reason that never
 # resolves into one of the other three answers. It is the machine-scoped twin of
-# what _migration_targets already does for a project-scoped migration on a
+# what _migration_targets already does for a checkout-scoped migration on a
 # machine with no repos: nothing recorded, nothing said, and the next sync looks
 # again.
 #
@@ -204,7 +205,7 @@ _source_migration() {
 # _migration_targets OUT_ARRAY FILE BASE_KEY STATE_FILE
 # What FILE still has to be run against: nothing when it is already recorded,
 # one empty string for a machine-scoped migration that has not run, and one repo
-# path for every registered repo a project-scoped migration has not visited.
+# path for every registered repo a checkout-scoped migration has not visited.
 #
 # The machine-scoped case is an empty target rather than a flag of its own so
 # the caller keeps a single loop — "applied" there is a fact about the machine,
@@ -214,7 +215,7 @@ _migration_targets() {
   local migration="$2" base_key="$3" state_file="$4"
   __targets=()
 
-  if ! _migration_carries_marker "$migration" "$_PROJECT_SCOPED_MARKER"; then
+  if ! _migration_carries_marker "$migration" "$_CHECKOUT_SCOPED_MARKER"; then
     grep -qxF "$base_key" "$state_file" || __targets+=("")
     return 0
   fi
@@ -285,7 +286,7 @@ _run_migration_targets() {
 # each function, and records success. Failed migrations are not recorded and retry
 # on the next run. Migrations must be idempotent.
 #
-# A migration carrying _PROJECT_SCOPED_MARKER runs once per registered repo, with
+# A migration carrying _CHECKOUT_SCOPED_MARKER runs once per registered repo, with
 # that repo's path as its only argument, and is recorded once per repo. A repo
 # that fails is the only one not recorded, so the next sync retries that repo
 # alone rather than the whole machine.
@@ -293,7 +294,7 @@ _run_migration_targets() {
 # A migration that returns MIGRATION_NOOP found the target already in the shape
 # it exists to produce. That is recorded like any other success — the answer
 # will not change on a later sync — but it is not announced, and the count in
-# the line printed for a project-scoped migration is repos changed rather than
+# the line printed for a checkout-scoped migration is repos changed rather than
 # repos visited.
 #
 # A migration that returns MIGRATION_DEFERRED found no target at all. That is
@@ -318,7 +319,7 @@ run_component_migrations() {
     basename_m="$(basename "$migration")"
     base_key="$component_rel/$basename_m"
 
-    # Already applied — skip. For a project-scoped migration that means every
+    # Already applied — skip. For a checkout-scoped migration that means every
     # registered repo has its own entry, not that the machine has one.
     _migration_targets targets "$migration" "$base_key" "$state_file"
     if (( ${#targets[@]} == 0 )); then
@@ -377,7 +378,7 @@ _migration_carries_marker() {
 # "<component>/<basename>.sh" form run_component_migrations records. With
 # MARKER_RE given, only the migrations whose file matches it are collected.
 #
-# A project-scoped migration's state lines extend its key with a separator and a
+# A checkout-scoped migration's state lines extend its key with a separator and a
 # repo path, so every comparison against these keys splits the line first —
 # _split_migration_state_line is what does that.
 _discover_migration_keys() {
@@ -425,7 +426,7 @@ _forget_adoption_sensitive_migrations() {
   # not have to.
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
-    # On the key rather than the whole line: a project-scoped migration's
+    # On the key rather than the whole line: a checkout-scoped migration's
     # entries carry a repo path that matches no discovered key, and comparing
     # whole lines would quietly stop forgetting a marked migration for exactly
     # the repos it was applied to.
@@ -450,7 +451,7 @@ _forget_adoption_sensitive_migrations() {
 # Removes entries from the state file that no longer match any discovered migration file.
 # This handles direction changes within a PR or cleaned-up old migrations.
 #
-# It is also where a project-scoped migration's per-repo entries are reconciled
+# It is also where a checkout-scoped migration's per-repo entries are reconciled
 # with the registry, in both directions: a repo that left takes its entries with
 # it, and a migration that changed scope loses the entries written in the shape
 # the other scope records.
@@ -458,9 +459,9 @@ _prune_stale_migration_state() {
   local state_file="$MIGRATIONS_STATE_FILE"
   [[ -f "$state_file" ]] || return 0
 
-  local -a discovered_keys=() project_keys=()
+  local -a discovered_keys=() checkout_keys=()
   _discover_migration_keys discovered_keys
-  _discover_migration_keys project_keys "$_PROJECT_SCOPED_MARKER"
+  _discover_migration_keys checkout_keys "$_CHECKOUT_SCOPED_MARKER"
 
   # The repos a per-repo entry may still name. project_registered also skips a
   # registered path that has gone from disk, so an entry for one of those is
@@ -473,15 +474,15 @@ _prune_stale_migration_state() {
   done < <(project_registered)
 
   # Check each state entry against discovered keys
-  local rewrite=false line base project project_scoped departed=0
+  local rewrite=false line base project checkout_scoped departed=0
   local -a clean_lines=()
   # Same unterminated-last-line guard as _forget_adoption_sensitive_migrations.
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
     _split_migration_state_line "$line" base project
-    project_scoped=false
-    if _array_contains "$base" "${project_keys[@]}"; then
-      project_scoped=true
+    checkout_scoped=false
+    if _array_contains "$base" "${checkout_keys[@]}"; then
+      checkout_scoped=true
     fi
 
     if ! _array_contains "$base" "${discovered_keys[@]}"; then
@@ -491,15 +492,15 @@ _prune_stale_migration_state() {
     fi
     # A migration that changed scope leaves entries in the shape the other
     # scope writes. A bare key claims the whole machine is done, which a
-    # project-scoped migration is in no position to say; a per-repo key means
+    # checkout-scoped migration is in no position to say; a per-repo key means
     # nothing to one that runs once, and no line the framework writes for it
     # would ever match. Either is dropped without a warning — the migration is
     # not stale, it is about to run in the shape it now asks for.
-    if [[ "$project_scoped" == true && -z "$project" ]]; then
+    if [[ "$checkout_scoped" == true && -z "$project" ]]; then
       rewrite=true
       continue
     fi
-    if [[ "$project_scoped" == false && -n "$project" ]]; then
+    if [[ "$checkout_scoped" == false && -n "$project" ]]; then
       rewrite=true
       continue
     fi
@@ -797,7 +798,7 @@ run_all_migrations() {
   # into the roots that own it now, migrations.applied included.
   adopt_legacy_workbench_root
 
-  # Before any project-scoped migration reads it: backfill the registry of repos
+  # Before any checkout-scoped migration reads it: backfill the registry of repos
   # that use the workbench. Here rather than as a migration of its own because
   # migrations run in filename order — one that sorted ahead of the backfill
   # would read an empty registry, find nothing, and record itself as applied.

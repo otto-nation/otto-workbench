@@ -245,18 +245,18 @@ EOF
 
 # ── Scope marker ────────────────────────────────────────────────────────────
 #
-# The framework calls a project-scoped migration once per registered repo with
+# The framework calls a checkout-scoped migration once per registered repo with
 # that repo's path, and every other migration with no arguments at all. The two
 # ways the header and the signature can disagree are both silent at runtime:
 # a marked function that ignores the path does the same global thing once per
 # repo, and an unmarked one that reads $1 works on an empty string.
 
-@test "a project-scoped migration that reads the repo path passes" {
+@test "a checkout-scoped migration that reads the repo path passes" {
   local dir="$FAKE_WORKBENCH/comp/migrations"
   mkdir -p "$dir"
   cat > "$dir/20260417-test.sh" <<'EOF'
 #!/usr/bin/env bash
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 migration_20260417_test() {
   local project_dir="$1"
   rm -f "$project_dir/.claude/stale"
@@ -271,7 +271,7 @@ EOF
   mkdir -p "$dir"
   cat > "$dir/20260417-test.sh" <<'EOF'
 #!/usr/bin/env bash
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 migration_20260417_test() {
   echo "hi"
 }
@@ -292,7 +292,7 @@ migration_20260417_test() {
 EOF
   _run_validate
   [ "$status" -eq 1 ]
-  [[ "$output" == *"no '# project-scoped:' header"* ]]
+  [[ "$output" == *"no '# checkout-scoped:' header"* ]]
 }
 
 @test "a positional read inside a nested helper is not the migration's own" {
@@ -339,7 +339,7 @@ EOF
   mkdir -p "$dir"
   cat > "$dir/20260417-test.sh" <<'EOF'
 #!/usr/bin/env bash
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 migration_20260417_test() {
   _per_root() {
     local root="$1"
@@ -376,7 +376,7 @@ EOF
   mkdir -p "$dir"
   cat > "$dir/20260417-test.sh" <<'EOF'
 #!/usr/bin/env bash
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 migration_20260417_test() {
   cat <<MSG
 Migrating $1

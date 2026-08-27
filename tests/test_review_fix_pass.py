@@ -28,6 +28,7 @@ import fix_engine
 import land
 import push
 import review_common
+import review_document
 import review_findings
 import review_fix
 import review_types
@@ -393,19 +394,19 @@ class TestApplyOutcomes:
             self.OPEN, [_outcome("M2", FixOutcome.NEEDS_HUMAN, "needs design")],
         )
         assert out.splitlines()[2].endswith("*(skipped — needs design)*")
-        assert review_findings.parse_findings(out)[1].checked is False
+        assert review_document.ReviewDocument.parse(out).findings[1].checked is False
 
     def test_an_agent_s_decline_is_annotated_as_one(self):
         out = review_fix._apply_outcomes(
             self.OPEN, [_outcome("M1", FixOutcome.DECLINED, "documented tradeoff")],
         )
-        finding = review_findings.parse_findings(out)[0]
+        finding = review_document.ReviewDocument.parse(out).findings[0]
         assert finding.declined is True
         assert finding.decline_reason == "documented tradeoff"
 
     def test_an_annotation_with_no_reason_still_registers(self):
         out = review_fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.DECLINED)])
-        assert review_findings.parse_findings(out)[0].declined is True
+        assert review_document.ReviewDocument.parse(out).findings[0].declined is True
 
     def test_a_finding_the_agent_never_reached_is_left_for_the_next_round(self):
         out = review_fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.DEFERRED)])
@@ -779,19 +780,19 @@ class TestChangedSourceFiles:
 class TestParseCheckboxState:
     def test_unchecked_finding(self):
         text = "## Must fix\n- [ ] **[M1]** **`file.go:10`** — Bug found\n"
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert len(findings) == 1
         assert findings[0].checked is False
 
     def test_checked_finding(self):
         text = "## Must fix\n- [x] **[M1]** **`file.go:10`** — Bug fixed\n"
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert len(findings) == 1
         assert findings[0].checked is True
 
     def test_no_checkbox_finding(self):
         text = "## Must fix\n- **[M1]** **`file.go:10`** — Bug found\n"
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert len(findings) == 1
         assert findings[0].checked is False
 
@@ -803,7 +804,7 @@ class TestParseCheckboxState:
             "## Nit\n"
             "- [x] **[N1]** **`c.go:3`** — Also fixed\n"
         )
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert len(findings) == 3
         by_id = {f.id: f for f in findings}
         assert by_id["M1"].checked is True
@@ -887,13 +888,13 @@ class TestParseDeclinedFindings:
             "- [ ] **[M1]** `a.go:1` — *(declined — documented `ceiling:` tradeoff)* "
             "— Global lock serialises writes\n"
         )
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert findings[0].declined is True
         assert findings[0].decline_reason == "documented `ceiling:` tradeoff"
 
     def test_a_decline_without_a_reason_still_registers(self):
         text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(declined)* — Body\n"
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert findings[0].declined is True
         assert findings[0].decline_reason == ""
 
@@ -903,7 +904,7 @@ class TestParseDeclinedFindings:
             "## Must fix\n"
             "- [ ] **[M1]** `a.go:1` — Global lock *(declined — by design)*\n"
         )
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert findings[0].declined is True
         assert findings[0].decline_reason == "by design"
 
@@ -918,14 +919,14 @@ class TestParseDeclinedFindings:
             "- [ ] **[M1]** `review_findings.py:99` — The `*(declined — reason)*` "
             "annotation is matched anywhere in the line, so prose trips it\n"
         )
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert findings[0].declined is False
         assert findings[0].decline_reason == ""
 
     def test_a_skip_is_not_a_decline(self):
         """A skip is work deferred; a decline is work rejected."""
         text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(skipped — needs design)* — Body\n"
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert findings[0].declined is False
 
     def test_a_file_without_declines_parses_unchanged(self):
@@ -935,7 +936,7 @@ class TestParseDeclinedFindings:
             "- [x] **[M1]** `a.go:1` — Fixed\n"
             "- [ ] **[M2]** `b.go:2` — Still open\n"
         )
-        findings = review_findings.parse_findings(text)
+        findings = review_document.ReviewDocument.parse(text).findings
         assert [f.declined for f in findings] == [False, False]
         assert [f.decline_reason for f in findings] == ["", ""]
 

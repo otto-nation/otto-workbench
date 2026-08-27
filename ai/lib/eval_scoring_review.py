@@ -30,7 +30,7 @@ from pathlib import Path
 import ai_usage
 from eval_scoring import ScoringResult
 from eval_task import RunArtifacts, RunOptions, create_temp_repo, clean_env
-from review_findings import parse_findings
+from review_document import ReviewDocument
 from review_types import Finding
 
 _REVIEW_ORCHESTRATE = (
@@ -202,11 +202,10 @@ def _run_orchestrate(repo_dir: str, review_file: str, opts: RunOptions) -> int:
 def parse_review_output(
     review_file: str, session_log: str,
 ) -> tuple[list[Finding], ai_usage.SessionUsage]:
-    review_path = Path(review_file)
-    if not review_path.exists():
+    doc = ReviewDocument.read(review_file)
+    if doc is None:
         return [], ai_usage.SessionUsage()
-    findings = parse_findings(review_path.read_text())
-    return findings, ai_usage.parse_session_log(session_log)
+    return doc.findings, ai_usage.parse_session_log(session_log)
 
 
 class ReviewTask:

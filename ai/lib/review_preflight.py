@@ -28,8 +28,7 @@ from agent_types import Mode
 from agent_types import Mode
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_dedup import _get_bot_login
-from review_document import ReviewHeader
-from review_findings import BOLD_FINDING_ID_RE
+from review_document import BOLD_FINDING_ID_RE, ReviewHeader
 from review_github import PRData
 from review_profiles import (
     format_profiles_section, load_profiles, match_profiles,

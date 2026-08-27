@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from review_common import SECTION_FILE_TRIAGE, SECTION_STATIC_ANALYSIS
-from review_findings import _extract_section
+from review_document import SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument
 from review_types import SEVERITIES
 
 POSITION_BEFORE = "before_findings"
@@ -42,10 +42,10 @@ class SectionConfig:
 
 
 KNOWN_SECTIONS: list[SectionConfig] = [
-    SectionConfig("summary", "Summary", POSITION_BEFORE,
-                  heading="## Summary", trailing_separator=True),
-    SectionConfig("verdict", "Verdict", POSITION_BEFORE,
-                  heading="### Verdict", strip_action=True, subsection_of="summary"),
+    SectionConfig("summary", SECTION_SUMMARY, POSITION_BEFORE,
+                  heading=f"## {SECTION_SUMMARY}", trailing_separator=True),
+    SectionConfig("verdict", SECTION_VERDICT, POSITION_BEFORE,
+                  heading=f"### {SECTION_VERDICT}", strip_action=True, subsection_of="summary"),
     SectionConfig("static_analysis", SECTION_STATIC_ANALYSIS, POSITION_AFTER),
 ]
 
@@ -77,8 +77,9 @@ class ReviewSections:
         configs: dict[str, SectionConfig] = {}
         order: list[str] = []
 
+        doc = ReviewDocument.parse(text)
         seen: dict[str, str] = {}
-        for m in _SECTION_HEADER_RE.finditer(text):
+        for m in _SECTION_HEADER_RE.finditer(doc.body):
             raw = m.group(1).strip()
             seen.setdefault(raw.lower(), raw)
 
@@ -95,7 +96,7 @@ class ReviewSections:
                     heading=f"## {original}",
                 )
 
-            content = _extract_section(text, cfg.header)
+            content = doc.section(cfg.header)
             if not content:
                 continue
             entries[cfg.key] = content

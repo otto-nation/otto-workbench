@@ -842,30 +842,6 @@ class TestRenumberFindings:
         assert ro.renumber_findings(content) == content
 
 
-# ── 6. _extract_section ─────────────────────────────────────────────────────
-
-
-class TestExtractSection:
-    def test_middle_section(self, ro):
-        content = "## First\nfirst content\n## Second\nsecond content\n## Third\nthird content\n"
-        result = ro._extract_section(content, "Second")
-        assert result == "second content"
-
-    def test_last_section(self, ro):
-        content = "## First\nfirst\n## Last\nlast content\n"
-        result = ro._extract_section(content, "Last")
-        assert result == "last content"
-
-    def test_missing_section(self, ro):
-        content = "## First\nfirst content\n"
-        assert ro._extract_section(content, "Missing") == ""
-
-    def test_case_insensitive(self, ro):
-        content = "## must fix\nfinding here\n## Other\nother\n"
-        result = ro._extract_section(content, "Must fix")
-        assert result == "finding here"
-
-
 # ── 7. merge_reviews ────────────────────────────────────────────────────────
 
 

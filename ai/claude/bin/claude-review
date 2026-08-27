@@ -40,12 +40,11 @@ from agent_types import Mode, Phase
 from review_common import (
     FILENAME_META, FILENAME_PIPELINE_STATE, FILENAME_POST_SESSION,
     FILENAME_PRIOR, FILENAME_SESSION, REVIEW_EXT,
-    SEVERITY_COUNT_RE_FMT,
     add_phase_skip_flags, aggregate_session_usage,
-    count_severities, phase_skip_argv, phase_skips,
-    resolve_review_verdict, read_review_meta,
+    phase_skip_argv, phase_skips, read_review_meta,
     review_file_path,
 )
+from review_document import ReviewDocument, resolve_review_verdict, review_counts
 from review_types import (
     SEVERITIES, ReviewMeta, ReviewType, review_meta_from_dict,
 )
@@ -196,10 +195,10 @@ def _format_usage(*log_paths: str, wall_clock_ms: int | None = None) -> str:
 
 
 def _format_findings_line(review_file: str) -> str:
-    review_path = Path(review_file) if review_file else None
-    if not review_path or not review_path.is_file():
+    doc = ReviewDocument.read(review_file)
+    if doc is None:
         return ""
-    counts = count_severities(review_path)
+    counts = doc.counts
     parts = [
         f"{counts[sev.key]} {sev.section.lower()}"
         for sev in SEVERITIES if counts[sev.key] > 0
@@ -208,7 +207,7 @@ def _format_findings_line(review_file: str) -> str:
 
 
 def _format_verdict(review_file: str) -> str:
-    verdict = resolve_review_verdict(Path(review_file) if review_file else None)
+    verdict = resolve_review_verdict(ReviewDocument.read(review_file))
     return verdict.prose if verdict else ""
 
 
@@ -267,15 +266,14 @@ def _update_pr_state(
     review_path = Path(review_file)
     review_dir = review_path.parent
 
-    by_key = count_severities(review_path)
+    doc = ReviewDocument.read(review_path)
+    by_key = review_counts(doc)
     finding_counts = {s.json_key: by_key[s.key] for s in SEVERITIES if by_key[s.key]}
 
     meta = read_review_meta(review_dir)
     # Mode, not review type. A self-review has no PR to approve or block; how
     # much of the branch it covered is a separate question, and both are recorded.
-    resolved = resolve_review_verdict(
-        review_path, counts=by_key, self_review=mode is Mode.SELF,
-    )
+    resolved = resolve_review_verdict(doc, self_review=mode is Mode.SELF)
     verdict = resolved.value if resolved else ""
     usage = aggregate_session_usage(review_dir)
 

@@ -18,9 +18,8 @@ if LIB_DIR not in sys.path:
 import workbench_paths
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_common import (
-    FILENAME_POST_SESSION, ReviewEntryKind, count_severities, find_review_file,
-    iter_review_entries, parse_review_verdict, read_review_meta,
-    review_file_path, stamp_reviewed,
+    FILENAME_POST_SESSION, ReviewEntryKind, find_review_file,
+    iter_review_entries, read_review_meta, review_file_path, stamp_reviewed,
 )
 from review_state import read_pipeline_status, read_pipeline_warnings
 from review_summary import json_summary
@@ -267,53 +266,6 @@ def test_format_usage_model_usage_tokens(cr, tmp_path):
     assert "(1.0k cached)" in result
 
 
-# ── count_severities ──────────────────────────────────────────────────────────
-
-
-def test_count_severities_counts_every_severity(cr, tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text(
-        "## Must fix\n"
-        "- **[M1]** path:1 — description\n"
-        "- **[M2]** path:2 — description\n"
-        "## Should fix\n"
-        "- **[S1]** path:3 — description\n"
-    )
-    assert count_severities(review) == {"M": 2, "S": 1, "N": 0, "I": 0}
-
-
-def test_count_severities_excludes_strikethrough(cr, tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text(
-        "## Must fix\n"
-        "- **[M1]** path:1 — active\n"
-        "- ~~**[M2]** path:2 — resolved~~\n"
-    )
-    assert count_severities(review)["M"] == 1
-
-
-def test_count_severities_checkbox_findings(cr, tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text(
-        "## Must fix\n"
-        "- [ ] **[M1]** path:1 — with checkbox\n"
-        "- **[M2]** path:2 — without checkbox\n"
-    )
-    assert count_severities(review)["M"] == 2
-
-
-def test_count_severities_missing_file_is_zeroed_not_empty(cr, tmp_path):
-    """Callers index the result directly, so every key must be present."""
-    assert count_severities(tmp_path / "nonexistent.md") == {"M": 0, "S": 0, "N": 0, "I": 0}
-    assert count_severities(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
-
-
-def test_count_severities_empty_file(cr, tmp_path):
-    review = tmp_path / "empty.md"
-    review.write_text("")
-    assert count_severities(review) == {"M": 0, "S": 0, "N": 0, "I": 0}
-
-
 # ── json_summary ──────────────────────────────────────────────────────────────
 
 
@@ -421,52 +373,6 @@ def test_json_summary_includes_session_costs(cr, tmp_path):
     assert data["input_tokens"] == 1000
     assert data["output_tokens"] == 2000
     assert data["duration_ms"] == 90000
-
-
-# ── parse_review_verdict ──────────────────────────────────────────────────────
-
-
-def test_parse_review_verdict_disapprove(cr, tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text("## Summary\nSome text\n\n## Verdict\nDisapprove — wrong approach entirely.\n")
-    assert parse_review_verdict(review) is ReviewVerdict.DISAPPROVE
-
-
-def test_parse_review_verdict_disapprove_lowercase(cr, tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text("## Verdict\ndisapprove — this should be a config change.\n")
-    assert parse_review_verdict(review) is ReviewVerdict.DISAPPROVE
-
-
-def test_parse_review_verdict_reads_every_verdict(cr, tmp_path):
-    review = tmp_path / "review.md"
-    for prose, expected in [
-        ("Approve", ReviewVerdict.APPROVE),
-        ("**Needs discussion**", ReviewVerdict.NEEDS_DISCUSSION),
-        ("Request changes", ReviewVerdict.CHANGES_REQUESTED),
-    ]:
-        review.write_text(f"## Verdict\n{prose} — rationale.\n")
-        assert parse_review_verdict(review) is expected
-
-
-def test_parse_review_verdict_unrecognised_wording(cr, tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text("## Verdict\nLooks fine to me.\n")
-    assert parse_review_verdict(review) is None
-
-
-def test_parse_review_verdict_no_verdict_section(cr, tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text("## Summary\nSome findings.\n## Must fix\n- **[M1]** a:1 — bug\n")
-    assert parse_review_verdict(review) is None
-
-
-def test_parse_review_verdict_no_file(cr, tmp_path):
-    assert parse_review_verdict(tmp_path / "nonexistent.md") is None
-
-
-def test_parse_review_verdict_none_path(cr):
-    assert parse_review_verdict(None) is None
 
 
 def test_json_summary_verdict_disapprove_from_review(cr, tmp_path):

@@ -83,9 +83,9 @@ from dataclasses import dataclass
 import serde
 from agent_types import Mode
 from review_common import (
-    ReviewEntry, ReviewEntryKind, aggregate_session_usage,
-    count_severities, iter_review_entries, resolve_review_verdict,
+    ReviewEntry, ReviewEntryKind, aggregate_session_usage, iter_review_entries,
 )
+from review_document import ReviewDocument, resolve_review_verdict, review_counts
 from review_state import build_failure_detail, read_pipeline_status
 from review_types import SEVERITIES
 
@@ -103,7 +103,7 @@ class ReviewRow:
     """One review, as the listing reports it.
 
     Deliberately not `build_review_summary`'s return value. The two share every
-    underlying reader — `count_severities`, `resolve_review_verdict`,
+    underlying reader — `ReviewDocument`, `resolve_review_verdict`,
     `read_pipeline_status`, `build_failure_detail`, `aggregate_session_usage` —
     so they cannot disagree about what they describe, but the summary carries
     `review_content` and no timestamps, and this carries the timestamps and no
@@ -149,10 +149,9 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
     review_file = entry.review_file
     meta = entry.meta
 
-    by_key = count_severities(review_file)
-    verdict = resolve_review_verdict(
-        review_file, counts=by_key, self_review=meta.mode is Mode.SELF,
-    )
+    doc = ReviewDocument.read(review_file)
+    by_key = review_counts(doc)
+    verdict = resolve_review_verdict(doc, self_review=meta.mode is Mode.SELF)
     usage = aggregate_session_usage(entry.path)
 
     return ReviewRow(

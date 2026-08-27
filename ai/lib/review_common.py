@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -51,12 +50,8 @@ import workbench_paths
 from agent_registry import PHASES, REVIEW_PHASES
 from agent_types import Phase
 from ai_usage import SessionUsage, parse_session_log
-from pr_domains import ReviewVerdict
 from pr_state import now_iso
-from review_types import (
-    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, ReviewMeta,
-    review_meta_from_dict,
-)
+from review_types import ReviewMeta, review_meta_from_dict
 
 
 # ── Sections ─────────────────────────────────────────────────────────────────
@@ -185,9 +180,6 @@ REVIEW_EXT = ".md"
 
 PIPELINE_MULTI = "multi"
 PIPELINE_SINGLE = "single"
-
-
-SEVERITY_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 
 # ── Path helpers ─────────────────────────────────────────────────────────────
@@ -477,28 +469,6 @@ def find_review_file(repo: str, pr_number: str) -> Path | None:
     return None
 
 
-def count_severities(file: Path | None) -> dict[str, int]:
-    """Count findings of every severity, keyed by severity key.
-
-    Counts all four in one read: every caller wants more than one of them, and
-    a per-severity helper re-read the file once per count. Always returns a
-    complete dict, zeroed when the file is missing or unreadable.
-    """
-    zeroed = {s.key: 0 for s in SEVERITIES}
-    if not file or not file.is_file():
-        return zeroed
-    try:
-        text = file.read_text()
-    except OSError:
-        return zeroed
-    return {
-        s.key: len(re.findall(
-            SEVERITY_COUNT_RE_FMT.format(re.escape(s.key)), text, re.MULTILINE,
-        ))
-        for s in SEVERITIES
-    }
-
-
 def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     """Aggregate usage from session and post-session logs."""
     if not review_dir:
@@ -508,60 +478,3 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
         for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
         if (review_dir / n).is_file()
     ])
-
-
-def parse_review_verdict(review_path: Path | None) -> ReviewVerdict | None:
-    """The verdict a review's `## Verdict` section states, if it states one."""
-    if not review_path or not review_path.is_file():
-        return None
-    try:
-        text = review_path.read_text()
-    except OSError:
-        return None
-    in_verdict = False
-    for line in text.splitlines():
-        if line.strip().lower().startswith("## verdict"):
-            in_verdict = True
-            continue
-        if not in_verdict:
-            continue
-        stripped = line.strip()
-        if not stripped:
-            continue
-        return ReviewVerdict.stated_in(stripped)
-    return None
-
-
-def resolve_review_verdict(
-    review_path: Path | None,
-    *,
-    counts: dict[str, int] | None = None,
-    self_review: bool = False,
-) -> ReviewVerdict | None:
-    """The verdict to record and report for a finished review.
-
-    The prose the synthesis agent wrote and the findings that survived
-    verification are two readings of the same review, and this is the only
-    place they are reconciled: the stronger call wins, so the prose can never
-    under-report findings that block, and the counts can never quietly discard
-    a stronger call the agent made. Disapprove is unranked and always stands —
-    no count implies it and none refutes it.
-
-    Pass `counts` from `count_severities` when the caller already has them, to
-    save re-reading the review file.
-    """
-    if not review_path or not review_path.is_file():
-        return None
-    stated = parse_review_verdict(review_path)
-    if stated is ReviewVerdict.DISAPPROVE:
-        return stated
-    # A self-review is advisory — it has no PR to approve or block. Disapprove
-    # is the exception above: it judges the approach, which holds without a PR.
-    if self_review:
-        return None
-    if counts is None:
-        counts = count_severities(review_path)
-    derived = ReviewVerdict.from_counts(
-        counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
-    )
-    return stated if stated and stated.outranks(derived) else derived

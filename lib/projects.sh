@@ -43,9 +43,23 @@
 # well, holding worktrees rather than being one. `PROJECTS_EXCLUDED_PREFIXES` is
 # assignable so a test can register the repos it builds, which are all temporary.
 #
-# Reads drop entries whose directory is gone, which is what saves the registry
-# from needing a pruning job; `otto-workbench projects prune` makes the drop
-# permanent. Repeats are dropped on read for a related reason: registration is an
+# Reads drop entries whose directory is gone, so a work tree removed between
+# syncs is invisible to every consumer the moment it goes. The sync makes that
+# drop permanent — `run_all_migrations` calls `project_prune` before it walks the
+# file — so the registry tracks the repos the machine has rather than every one
+# it has ever had. Read-time filtering alone keeps a dead line from being seen,
+# not from being stored: on a machine that cuts and removes worktrees as a matter
+# of routine the file grows without bound, and every read pays a stat per dead
+# line forever. `otto-workbench projects prune` is the same drop on demand.
+#
+# Nothing is held back for a work tree that is merely unreachable — one on an
+# unmounted volume — because no reader distinguishes the two either: such a path
+# is already absent from `otto-workbench projects list`, from the machine
+# profile, and from every migration sweep, so keeping its line buys nothing it
+# does not already have. Losing it costs the append that the next workbench
+# command run in that repo makes anyway.
+#
+# Repeats are dropped on read for a related reason: registration is an
 # append guarded by a membership check rather than a lock, so two workbench
 # commands starting in one repo at the same moment can each read "absent" and
 # each append. Absorbing that where it is read costs nothing; a lock would tax
@@ -299,10 +313,10 @@ _project_registered_lines() {
 
 # project_registered — print every registered repo that still exists, one per line.
 #
-# A directory that is gone is skipped rather than rewritten away: dropping stale
-# entries at read time is what saves the registry from needing a pruning job,
-# and a read is the wrong place to take a write lock. `otto-workbench projects
-# prune` is what makes the drop permanent.
+# A directory that is gone is skipped rather than rewritten away: a read is the
+# wrong place to take a write lock, so correctness never waits on the file being
+# tidy. `project_prune` is what makes the drop permanent, from the sync and from
+# `otto-workbench projects prune`.
 #
 # Repeats are dropped here too. Registration is an append guarded by a
 # membership check rather than a lock, so two workbench commands starting in the
@@ -351,6 +365,11 @@ project_forget() {
 }
 
 # project_prune — drop entries whose directory is gone, and repeats. Prints how many went.
+#
+# The sync calls this as well as `otto-workbench projects prune`, so the drop
+# every read already makes is not left waiting on someone to ask for it by hand.
+# Rewrites only when something went, so a settled machine pays a scan and no
+# write.
 project_prune() {
   if [[ ! -f "$PROJECTS_REGISTRY_FILE" ]]; then
     echo 0
@@ -434,7 +453,9 @@ project_repo_leaders() {
 
 # record_project_repo_ids — give every registry line the repo identity it lacks.
 #
-# Called from run_all_migrations, ahead of the pruning that reads the ids back.
+# Called from run_all_migrations, after the registry prune and ahead of the
+# migration-state pruning that reads the ids back — so the lines it resolves are
+# the ones the machine still has.
 # Here rather than at registration because both halves of the registry are
 # fork-free by design — every caller has a resolved work-tree root in hand, and
 # the Python half runs on a session's startup path — so a line arrives bare and

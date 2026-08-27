@@ -446,7 +446,7 @@ run_component_migrations DIR    # run for a single component directory
 |----------|---------|
 | `run_component_migrations DIR` | Discovers DIR/migrations/*.sh, skips already-applied migrations, sources and runs each function, and records success. Failed migrations are not recorded and retry on the next run. Migrations must be idempotent. |
 | `adopt_legacy_workbench_root` | Move a pre-split ~/.config/workbench to whichever roots now own its contents. No-op once the legacy root is gone, or when a root still resolves to it. |
-| `run_all_migrations` | Adopts the legacy root, backfills the project registry, records each repo's identity, prunes stale state, then runs every component's migrations. |
+| `run_all_migrations` | Adopts the legacy root, backfills and prunes the project registry, records each repo's identity, prunes stale state, then runs every component's migrations. |
 
 ### output.sh
 
@@ -565,9 +565,23 @@ are symlinks into `/private` on macOS. A bare repo's container is refused as
 well, holding worktrees rather than being one. `PROJECTS_EXCLUDED_PREFIXES` is
 assignable so a test can register the repos it builds, which are all temporary.
 
-Reads drop entries whose directory is gone, which is what saves the registry
-from needing a pruning job; `otto-workbench projects prune` makes the drop
-permanent. Repeats are dropped on read for a related reason: registration is an
+Reads drop entries whose directory is gone, so a work tree removed between
+syncs is invisible to every consumer the moment it goes. The sync makes that
+drop permanent — `run_all_migrations` calls `project_prune` before it walks the
+file — so the registry tracks the repos the machine has rather than every one
+it has ever had. Read-time filtering alone keeps a dead line from being seen,
+not from being stored: on a machine that cuts and removes worktrees as a matter
+of routine the file grows without bound, and every read pays a stat per dead
+line forever. `otto-workbench projects prune` is the same drop on demand.
+
+Nothing is held back for a work tree that is merely unreachable — one on an
+unmounted volume — because no reader distinguishes the two either: such a path
+is already absent from `otto-workbench projects list`, from the machine
+profile, and from every migration sweep, so keeping its line buys nothing it
+does not already have. Losing it costs the append that the next workbench
+command run in that repo makes anyway.
+
+Repeats are dropped on read for a related reason: registration is an
 append guarded by a membership check rather than a lock, so two workbench
 commands starting in one repo at the same moment can each read "absent" and
 each append. Absorbing that where it is read costs nothing; a lock would tax

@@ -1217,6 +1217,78 @@ register_fake_repo_worktrees() {
   [[ "$output" == *"ai/claude/20260824-drop-container-anatomy.sh"* ]]
 }
 
+# ─── The sync's registry prune ───────────────────────────────────────────────
+#
+# Every read already skips a registered path that has gone, so nothing here is
+# about what the sweeps above can see. It is about what the file keeps: a
+# machine that cuts and removes worktrees routinely accumulates dead lines
+# faster than anything adds a repo, and each one is stat-ed again on every sync
+# for as long as it is stored.
+
+@test "the sync drops a registry entry whose work tree has gone" {
+  register_fake_project "$TMPDIR/repo-a"
+  register_fake_project "$TMPDIR/repo-b"
+  rm -rf "$TMPDIR/repo-a"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+
+  run grep -v '^#' "$FAKE_STATE/projects.registry"
+  [ "$output" = "$TMPDIR/repo-b" ]
+}
+
+@test "the sync says what it pruned, and only when it pruned something" {
+  # A settled machine drops nothing on every sync thereafter, and a line saying
+  # so each time is noise the operator cannot act on.
+  register_fake_project "$TMPDIR/repo-a"
+  register_fake_project "$TMPDIR/repo-b"
+  rm -rf "$TMPDIR/repo-a"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Project registry pruned — 1 entry(s) whose work tree is gone"* ]]
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Project registry pruned"* ]]
+}
+
+@test "the sync's prune keeps the comment that retires the backfill" {
+  # The marker seed_project_registry leaves behind is a comment line, and the
+  # prune runs straight after it. Dropping the comment would put the machine
+  # back to backfilling on every sync.
+  printf '# backfilled from %s\n' "$TMPDIR/absent-claude.json" \
+    > "$FAKE_STATE/projects.registry"
+  register_fake_project "$TMPDIR/repo-a"
+  rm -rf "$TMPDIR/repo-a"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+
+  run cat "$FAKE_STATE/projects.registry"
+  [ "$output" = "# backfilled from $TMPDIR/absent-claude.json" ]
+}
+
+@test "a removed worktree leaves the registry and its repo's entry stays" {
+  # The routine case `wt remove` produces: one checkout of a repo that has
+  # others. The line goes, and the repo-scoped state entry does not — it is
+  # keyed on the shared git dir, which a surviving sibling still leads.
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+  run_migrations_in_fake
+
+  rm -rf "$FAKE_CONTAINER/main"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+
+  run grep -v '^#' "$FAKE_STATE/projects.registry"
+  [ "$output" = "$FAKE_CONTAINER/feature"$'\t'"$FAKE_CONTAINER/.git" ]
+
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$FAKE_CONTAINER/.git" ]
+}
+
 # ─── Component discovery under set -e ────────────────────────────────────────
 
 @test "discover_migration_dirs returns 0 under set -e with no migrations" {

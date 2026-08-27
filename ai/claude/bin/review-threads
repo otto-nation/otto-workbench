@@ -18,7 +18,7 @@ import functools
 import json
 import re
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
@@ -2672,9 +2672,21 @@ class HumanReason(Enum):
             return cls.NEEDS_DISCUSSION.prose
 
 
-# Every opening an Action cell this renderer wrote can have. The reply-side
-# counterpart of `_GENERATED_REPLY_PREFIXES`, and used the same way: to tell a
-# cell we produced apart from one somebody rewrote by hand.
+# Every opening an Action cell this renderer wrote can have, under the outcome
+# that cell reports. The reply-side counterpart of `_GENERATED_REPLY_PREFIXES`,
+# and read two ways: to tell a cell we produced apart from one somebody rewrote
+# by hand, and to tell a round that changed a row's outcome from one that only
+# re-worded it.
+#
+# Naming the outcome is what makes the second reading possible. One outcome is
+# written several ways — a fix reported with a commit one round and without one
+# the next, see `_fixed_status_for` — so a cell compared against a cell reports
+# a change that did not happen, and restates the row for the life of the PR.
+#
+# No opening may open another under a different outcome, which is what lets
+# `_action_outcome` scan in any order; the mapping cannot express the rule, so a
+# test asserts it. Its absence would be silent — the row is restated every
+# round, or left behind holding a stale outcome, with no wording to show which.
 #
 # Kept in step with the four places a status cell is built — `_fixed_status_for`
 # and `_fixed_status_text` (every "Fix…" opening), the literal cells in
@@ -2682,22 +2694,43 @@ class HumanReason(Enum):
 # covered here reads as hand-written, and its row is then frozen at whatever the
 # published comment already said.
 #
-# Retired wordings stay in the list. A summary comment outlives the code that
+# Retired wordings stay in the table. A summary comment outlives the code that
 # wrote it, so an opening no builder produces any more still opens rows on live
 # PRs, and dropping it here freezes every one of them.
-_GENERATED_ACTION_PREFIXES = (
-    "Fixed in ",
-    "Fix applied",
-    "Fix committed locally",
-    "Fix committed and pushed",
-    "Fix pending",
-    "Deferred",
-    "Already addressed",
-    "Dismissed (invalid)",
-    "Added to the PR description (no commit)",
-    _RECONCILED_STATUS_TEXT,
-    *(reason.prose for reason in HumanReason),
-)
+_ACTION_OUTCOMES: Mapping[str, FixOutcome] = {
+    "Fixed in ": FixOutcome.FIXED,
+    "Fix applied": FixOutcome.FIXED,
+    "Fix committed locally": FixOutcome.FIXED,
+    "Fix committed and pushed": FixOutcome.FIXED,
+    "Fix pending": FixOutcome.FIXED,
+    "Added to the PR description (no commit)": FixOutcome.FIXED,
+    _RECONCILED_STATUS_TEXT: FixOutcome.FIXED,
+    "Deferred": FixOutcome.DEFERRED,
+    "Already addressed": FixOutcome.ALREADY_ADDRESSED,
+    "Dismissed (invalid)": FixOutcome.DISMISSED,
+    **{reason.prose: FixOutcome.NEEDS_HUMAN for reason in HumanReason},
+}
+
+_GENERATED_ACTION_PREFIXES = tuple(_ACTION_OUTCOMES)
+
+
+def _action_outcome(cell: str) -> FixOutcome | None:
+    """The outcome an Action cell reports, or None for one we did not write.
+
+    Read on both sides of the comparison `RoundScope.covers` makes: the cell a
+    published comment carries, and the one this round's render would put in its
+    place. Two cells reporting the same outcome in different words is the case
+    the table exists to answer, so both sides have to come through here.
+
+    None is not "some outcome we cannot name" but "no claim to compare
+    against": a cell a person wrote, or a wording retired before this table was.
+    Both are rows `_hand_written_rows` owns, and reading either as an outcome
+    would let every round's own render differ from it and restate the row.
+    """
+    for prefix, outcome in _ACTION_OUTCOMES.items():
+        if cell.startswith(prefix):
+            return outcome
+    return None
 
 
 def _is_generated_action(cell: str) -> bool:
@@ -2746,10 +2779,24 @@ class RoundScope:
     so it is always written. This is what keeps a row from being lost to a
     checkout whose state file cannot date it.
 
-    ``target_keys`` is the row keys of the comment this round is editing rather
-    than replacing. An in-place edit rewrites that body wholesale, so every row
-    it holds is re-rendered or carried forward — dropping one there would delete
-    it from the record rather than defer to an earlier comment.
+    ``target_keys`` is the rows only the comment this round is editing holds. An
+    in-place edit rewrites that body wholesale, so dropping such a row deletes
+    it from the record rather than deferring it to an earlier comment. A row an
+    earlier summary also carries is not in that position and is not protected:
+    dropping it loses nothing, because the reader finds it one link back.
+
+    ``elsewhere_keys`` is the rows some comment other than the target holds,
+    which is the same question read from the other side. `_carried_over_rows`
+    needs it: scoping a row out of the body while the carry-forward step reads
+    it as a round local state lost would put it straight back, verbatim.
+
+    ``published_outcomes`` is the outcome each published row last reported, per
+    `_action_outcome`. A round that changed a row's outcome writes it whoever
+    else holds it — nobody has to speak for a deferred thread to become a fixed
+    one, so the activity test alone would leave the new outcome on no summary at
+    all and the record's newest word on the row the outcome it has replaced. A
+    key with no entry is a row a person rewrote, and states nothing to differ
+    from.
 
     ``since`` is when the newest summary was posted. A thread a reviewer has
     spoken on after that is this round's business again, however settled it
@@ -2763,9 +2810,19 @@ class RoundScope:
     since: str = ""
     published_keys: frozenset[str] = frozenset()
     target_keys: frozenset[str] = frozenset()
+    elsewhere_keys: frozenset[str] = frozenset()
+    published_outcomes: Mapping[str, FixOutcome] = dataclasses.field(
+        default_factory=dict)
 
-    def covers(self, key: str, activity_at: str) -> bool:
+    def covers(
+        self, key: str, activity_at: str, outcome: FixOutcome | None = None,
+    ) -> bool:
         """Whether this round's summary writes the row keyed `key`.
+
+        `outcome` is what this round's render reports for the row. It is
+        compared against the record's newest word rather than against the
+        rendered cell, because one outcome has several wordings and a cell
+        comparison would call every one of them a change.
 
         An entry the run cannot date — `activity_at` empty — reads as quiet
         rather than as new. A thread an earlier round settled stops being
@@ -2780,6 +2837,9 @@ class RoundScope:
         cannot date the comment it is continuing writes every row it can date.
         """
         if key not in self.published_keys or key in self.target_keys:
+            return True
+        published = self.published_outcomes.get(key)
+        if outcome is not None and published is not None and outcome != published:
             return True
         return activity_at > self.since
 
@@ -2931,6 +2991,7 @@ def _build_summary_body(
     rows: list[str] = []
     held: list[str] = []
     settled_elsewhere: list[str] = []
+    open_elsewhere: list[str] = []
     # The fix commit is the tree the table describes; fall back to the reviewed
     # head when nothing was committed.
     link_sha = cp.sha or head_sha
@@ -2942,7 +3003,7 @@ def _build_summary_body(
         deferred_status = "Deferred"
 
     def emit(
-        entry: CommentItem, status: str, sha: str, *, unsettled: bool = False,
+        entry: CommentItem, status: str, sha: str, *, open_thread: bool = False,
     ) -> bool:
         """Append this entry's row, or the published one a human rewrote.
 
@@ -2950,19 +3011,21 @@ def _build_summary_body(
         is what the header counts count — the counts are derived from the rows
         rather than from the buckets so the two cannot disagree.
 
-        A row an earlier summary comment already settled is left to that comment
-        rather than restated — see `RoundScope`. ``unsettled`` is how a bucket
-        opts out of that: a thread still awaiting an answer belongs in the
-        newest summary whether or not anyone has spoken on it since, because a
-        reader who has to walk the chain to find the open question is a reader
-        who will not find it.
+        A row an earlier summary comment already carries is left to that comment
+        rather than restated — see `RoundScope`. ``open_thread`` does not exempt
+        a row from that test: an open question is as hard to find as one row
+        among forty-three as it is one round back, and exempting the bucket is
+        what turned the newest summary into the whole history again. It says
+        which count reports the row when it is left out, because "settled" is
+        the wrong word for a question still owed an answer.
         """
         row = _build_row(entry, status, threads_by_id, repo, pr_number, sha, wt_path)
         key = _summary_row_key(row)
-        if not unsettled and not scope.covers(
+        if not scope.covers(
             key, _entry_activity_at(entry, threads_by_id, sources_at),
+            _action_outcome(status),
         ):
-            settled_elsewhere.append(key)
+            (open_elsewhere if open_thread else settled_elsewhere).append(key)
             return False
         published = held_by_key.get(key)
         if published is None:
@@ -3005,7 +3068,7 @@ def _build_summary_body(
     )
     dismissed_count = sum([emit(e, "Dismissed (invalid)", link_sha) for e in dismissed])
     human_count = sum([
-        emit(e, HumanReason.prose_for(e.reason), link_sha, unsettled=True)
+        emit(e, HumanReason.prose_for(e.reason), link_sha, open_thread=True)
         for e in needs_human
     ])
     deferred_count = sum([emit(e, deferred_status, link_sha) for e in deferred])
@@ -3038,28 +3101,19 @@ def _build_summary_body(
         parts.extend(rows)
         parts.append("")
 
-    if held_count:
-        parts.append(
-            f"> {held_count} row{review_common.plural(held_count)} kept as published "
-            "— the Action cell was written by hand, so this round did not re-render it."
-        )
-        parts.append("")
-
-    if carried_count:
-        parts.append(
-            f"> {carried_count} row{review_common.plural(carried_count)} carried over "
-            "from an earlier round that this checkout's state file does not cover."
-        )
-        parts.append("")
-
-    settled_count = len(settled_elsewhere)
-    if settled_count:
-        parts.append(
-            f"> {settled_count} thread{review_common.plural(settled_count)} settled in "
-            "an earlier round and quiet since — left as published there rather than "
-            "restated here."
-        )
-        parts.append("")
+    parts.extend(_table_note(
+        held_count, "row", "kept as published — the Action cell was written by "
+        "hand, so this round did not re-render it."))
+    parts.extend(_table_note(
+        carried_count, "row", "carried over from an earlier round that this "
+        "checkout's state file does not cover."))
+    parts.extend(_table_note(
+        len(open_elsewhere), "thread", "still open and awaiting an answer — raised "
+        "in an earlier round and quiet since, left as published there rather than "
+        "restated here."))
+    parts.extend(_table_note(
+        len(settled_elsewhere), "thread", "settled in an earlier round and quiet "
+        "since — left as published there rather than restated here."))
 
     if not has_comment_items:
         parts.extend(_render_raw_comment_sections(review_body_comments, issue_comments))
@@ -3067,6 +3121,18 @@ def _build_summary_body(
     parts.extend(_render_round_chain(chain))
 
     return "\n".join(parts)
+
+
+def _table_note(count: int, noun: str, rest: str) -> list[str]:
+    """A blockquote under the table for `count` rows, or nothing when it is zero.
+
+    Every note the table carries reports rows the render left out of it, so they
+    are one shape: a count, what was counted, and what became of them. The
+    trailing blank keeps the notes separate paragraphs when several appear.
+    """
+    if not count:
+        return []
+    return [f"> {count} {noun}{review_common.plural(count)} {rest}", ""]
 
 
 def _render_round_chain(chain: list[SummaryRound]) -> list[str]:
@@ -3221,8 +3287,17 @@ def _summary_table_rows(body: str) -> list[str]:
     return rows
 
 
-def _carried_over_rows(published: str, fresh: str) -> list[str]:
+def _carried_over_rows(
+    published: str, fresh: str, held_elsewhere: frozenset[str] = frozenset(),
+) -> list[str]:
     """Rows the published summary holds that a fresh render does not.
+
+    ``held_elsewhere`` is the rows another summary comment also carries — see
+    `RoundScope.elsewhere_keys`. Those are the one case that is not a lost
+    round: the render left them to the comment that published them, and the
+    reader reaches them through the footer chain. Carrying them anyway would
+    undo the scoping row for row, since every row it drops is by construction
+    a row this render does not reproduce.
 
     The summary is one comment edited in place across a review cycle, but the
     replacement body is built entirely from local state — which is per-target
@@ -3257,6 +3332,7 @@ def _carried_over_rows(published: str, fresh: str) -> list[str]:
     return [
         row for row in _summary_table_rows(published)
         if _summary_row_key(row) not in fresh_keys
+        and _summary_row_key(row) not in held_elsewhere
         and not (_ITEM_ANCHOR_RE.search(row) and _row_location_key(row) in folded)
     ]
 
@@ -3369,20 +3445,36 @@ def _round_scope(marked: pc.MarkerHistory, answered: bool) -> RoundScope:
     """What this round's summary may leave to the comments already on the PR.
 
     ``answered`` is the publish decision, taken before the render because it
-    changes what the render is allowed to omit: an edit rewrites its target
-    wholesale, so that comment's own rows are in scope whatever they say, while
-    a fresh comment leaves them where they are.
+    changes what the render is allowed to omit: an edit rewrites its target, so
+    the rows that target alone holds are in scope whatever they say, while a
+    fresh comment replaces nothing and leaves every one of them where it is.
+
+    Outcomes are read oldest comment first so the newest wins, the same order
+    and for the same reason as `_hand_written_rows`: that is the one a reader
+    arriving at the chain sees. A row whose newest cell is a person's states no
+    outcome and gets no entry, rather than falling back to the generated cell
+    an earlier round wrote under it.
     """
     target = marked.newest
+    elsewhere = frozenset(
+        _summary_row_key(row)
+        for comment in marked.comments[:-1]
+        for row in _summary_table_rows(comment.body)
+    )
+    target_own = frozenset(
+        _summary_row_key(row) for row in _summary_table_rows(target.body))
+    outcomes: dict[str, FixOutcome | None] = {}
+    for body in marked.bodies:
+        for row in _summary_table_rows(body):
+            outcomes[_summary_row_key(row)] = _action_outcome(_row_action_cell(row))
     return RoundScope(
         since=target.created_at,
-        published_keys=frozenset(
-            _summary_row_key(row)
-            for body in marked.bodies for row in _summary_table_rows(body)
-        ),
-        target_keys=frozenset() if answered else frozenset(
-            _summary_row_key(row) for row in _summary_table_rows(target.body)
-        ),
+        published_keys=target_own | elsewhere,
+        target_keys=frozenset() if answered else target_own - elsewhere,
+        elsewhere_keys=elsewhere,
+        published_outcomes={
+            key: outcome for key, outcome in outcomes.items() if outcome is not None
+        },
     )
 
 
@@ -3436,9 +3528,10 @@ def _publish_summary(
     marked = pc.find_marker_comments(repo, pr_number, _SUMMARY_MARKER)
     existing = marked.newest
     answered = _summary_answered_since(existing, activity_at)
+    scope = _round_scope(marked, answered)
     render = functools.partial(
         build_body,
-        scope=_round_scope(marked, answered),
+        scope=scope,
         chain=_earlier_rounds(marked, None if answered else existing.comment_id),
     )
     body = render(carried_over=[])
@@ -3454,7 +3547,8 @@ def _publish_summary(
     # Only against the comment being replaced. A row on any other summary
     # comment is still published there, and lifting it into this one would
     # restate the round the chain already carries.
-    carried = _carried_over_rows("" if answered else existing.body, body)
+    carried = _carried_over_rows(
+        "" if answered else existing.body, body, scope.elsewhere_keys)
     if carried:
         log.warn(
             f"Published summary has {len(carried)} row(s) this run cannot account "

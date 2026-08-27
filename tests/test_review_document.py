@@ -3,8 +3,8 @@
 The header has three writers and only one of them is this module: the pipeline
 and `review-rebuild` render it, and on the synthesis and single-agent paths the
 review agent writes its own from prose in a template. So the tests come in two
-halves — what `render` puts on disk, and what `parse` and `set_status` make of a
-header they did not write.
+halves — what `render` and `from_meta` put on disk, and what `parse` and
+`set_status` make of a header they did not write.
 """
 
 import sys
@@ -15,7 +15,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from pr_domains import ReviewStatus
 from review_document import ReviewHeader, set_status
-from review_types import ReviewType
+from review_types import ReviewMeta, ReviewType
 
 
 class TestRender:
@@ -57,6 +57,36 @@ class TestRender:
 
     def test_a_run_still_in_flight_states_no_status(self):
         assert "status" not in ReviewHeader(head_sha="abc").render()
+
+
+class TestFromMeta:
+    def test_the_header_repeats_what_the_sidecar_attributes(self):
+        meta = ReviewMeta(head_sha="abc123", generator_version="2.0.0")
+        header = ReviewHeader.from_meta(meta)
+        assert (header.head_sha, header.generator_version) == ("abc123", "2.0.0")
+
+    def test_an_incremental_sidecar_carries_the_delta_over(self):
+        meta = ReviewMeta(
+            head_sha="abc123", review_type=ReviewType.INCREMENTAL,
+            prior_sha="def456", delta_files=("a.py", "b.py"),
+        )
+        header = ReviewHeader.from_meta(meta)
+        assert header.review_type == ReviewType.INCREMENTAL
+        assert (header.prior_sha, header.delta_files) == ("def456", 2)
+
+    def test_a_full_review_states_no_delta_count(self):
+        """`0` would read as a delta that moved nothing, which is a different
+        claim from a review that is a delta against nothing."""
+        assert ReviewHeader.from_meta(ReviewMeta()).delta_files is None
+
+    def test_a_sidecar_stating_no_review_type_reads_as_full(self):
+        assert ReviewHeader.from_meta(ReviewMeta()).review_type == ReviewType.FULL
+
+    def test_overrides_win_over_the_sidecar(self):
+        header = ReviewHeader.from_meta(
+            ReviewMeta(head_sha="abc123"), date="2026-08-27", head_sha="override",
+        )
+        assert (header.date, header.head_sha) == ("2026-08-27", "override")
 
 
 class TestParse:

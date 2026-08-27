@@ -14,7 +14,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -33,6 +32,7 @@ import review_sections as _rs  # noqa: E402
 import git_client  # noqa: E402
 import log  # noqa: E402
 import proc  # noqa: E402
+from review_common import read_review_meta  # noqa: E402
 from review_dedup import dedup_against_posted  # noqa: E402
 from review_findings import (  # noqa: E402
     parse_findings,
@@ -40,7 +40,7 @@ from review_findings import (  # noqa: E402
     _finalize_finding, _is_section_boundary, _match_severity_header,
     _parse_finding_line, parse_diff_hunks,
 )
-from review_types import Finding, SEVERITIES  # noqa: E402
+from review_types import Finding, ReviewMeta, SEVERITIES  # noqa: E402
 from review_format import (  # noqa: E402
     CLASS_FILE_LEVEL, CLASS_INLINE,
     classify_findings, format_body_text, format_inline_comment,
@@ -98,7 +98,7 @@ sys.modules[__name__].__class__ = _ProxyModule
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-def _run_post(trail, args, repo, sidecar, review_path) -> None:
+def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> None:
     severity_filter = set(args.severity.upper().split(","))
     text = review_path.read_text()
 
@@ -127,9 +127,9 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
         log.warn("No findings to post")
         sys.exit(0)
 
-    head_sha = sidecar.get("head_sha", "")
-    head_ref = sidecar.get("head_ref", "")
-    base_ref = sidecar.get("base_ref", "")
+    head_sha = sidecar.head_sha
+    head_ref = sidecar.head_ref
+    base_ref = sidecar.base_ref
     pr_data = None
     if not args.dry_run:
         pr_data = fetch_pr_data(repo, args.pr)
@@ -154,10 +154,7 @@ def _run_post(trail, args, repo, sidecar, review_path) -> None:
 
     if args.dry_run:
         log.info("Fetching diff for classification...")
-    if sha_drifted:
-        diff_text = _get_diff(repo, args.pr)
-    else:
-        diff_text = sidecar.get("diff") or _get_diff(repo, args.pr)
+    diff_text = _get_diff(repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
     log.info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
     trail.info("classify_findings",
@@ -235,18 +232,11 @@ def main():
         log.error(f"Review file not found: {review_path}")
         sys.exit(1)
 
-    sidecar: dict = {}
-    sidecar_path = review_path.parent / "meta.json"
-    if sidecar_path.exists():
-        try:
-            sidecar = json.loads(sidecar_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    repo = sidecar.get("repo", "")
-    if not repo:
+    sidecar = read_review_meta(review_path.parent)
+    if not sidecar.repo:
         log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
         sys.exit(1)
+    repo = sidecar.repo
     args.repo = repo
 
     trail = Trail.start(

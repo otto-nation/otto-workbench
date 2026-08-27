@@ -20,11 +20,11 @@ about survives an edit instead of being dropped by it.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from pr_domains import ReviewStatus
-from review_types import ReviewType, meta_enum
+from review_types import ReviewMeta, ReviewType, meta_enum
 
 
 class MetaKey(StrEnum):
@@ -103,6 +103,32 @@ class ReviewHeader:
             (MetaKey.GENERATOR, self.generator_version or None),
         ]
         return "".join(f"{_line(k, v)}\n" for k, v in lines if v is not None)
+
+    @classmethod
+    def from_meta(cls, meta: ReviewMeta, **overrides) -> ReviewHeader:
+        """The header `meta` attests to, with `overrides` written over the top.
+
+        The sidecar and the document header record the same review, so what the
+        two share is read from the sidecar rather than assembled a second time
+        from whatever the caller happens to be holding. A writer that reaches
+        past this is stating the review's attribution twice, and the second
+        statement is the one that drifts.
+
+        Left to the caller is everything `meta.json` does not know: the date the
+        document is being written, the prior review's own date — which only that
+        document records — the group ratio, and how the run ended.
+        """
+        incremental = meta.review_type == ReviewType.INCREMENTAL
+        return replace(cls(
+            head_sha=meta.head_sha,
+            review_type=meta.review_type or ReviewType.FULL,
+            prior_sha=meta.prior_sha,
+            # A count only an incremental review has: on a full one the sidecar
+            # records no delta, and a `0` here would read as a delta of nothing
+            # rather than as the absence of one.
+            delta_files=len(meta.delta_files) if incremental else None,
+            generator_version=meta.generator_version,
+        ), **overrides)
 
     @classmethod
     def parse(cls, text: str) -> ReviewHeader:

@@ -14,7 +14,6 @@ to review_gc, which the orchestrator runs once every phase is done.
 
 from __future__ import annotations
 
-import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -29,11 +28,10 @@ from agent_types import EFFORT_PRESETS, Mode, Phase
 from pr_domains import ReviewStatus
 from review_common import (
     count_severities,
-    FILENAME_META,
-    _derive_path,
     phase_log_path,
     phase_output_path,
     phase_skip_argv,
+    write_review_meta,
 )
 from review_document import ReviewHeader
 from review_findings import (
@@ -54,7 +52,7 @@ from review_preflight import (
 from review_prior import record_prior_findings
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD,
-    Group, GroupSkip, PRContext, PRMetadata, ReviewJob, ReviewType,
+    Group, GroupSkip, PRContext, PRMetadata, ReviewJob, ReviewMeta, ReviewType,
 )
 from review_prompt import (
     _is_incremental, _scope_prior_review,
@@ -88,6 +86,37 @@ DISPROVE_MIN_FINDINGS = 3
 
 # ── Review pipelines ──────────────────────────────────────────────────────────
 
+def _job_meta(job: ReviewJob) -> ReviewMeta:
+    """This run reduced to the record of what it is reviewing.
+
+    The single place a live `ReviewJob` becomes the review's attribution. Both
+    things that state it — the `meta.json` sidecar and the document's metadata
+    header — are derived from here rather than from the job, so the header
+    cannot claim one head SHA while the sidecar beside it claims another.
+
+    `pr_number` is a string on the job because that is what an argument parser
+    hands over, and an int here because that is what it means; a self-review,
+    which has no PR, records none.
+    """
+    incremental = _is_incremental(job)
+    pf = job.preflight
+    return ReviewMeta(
+        repo=job.repo,
+        pr_number=int(job.pr_number) if str(job.pr_number).isdigit() else None,
+        head_sha=job.pr.head_sha,
+        head_ref=job.pr.head,
+        base_ref=job.pr.base,
+        title=job.pr.title,
+        changed_files=job.pr.changed_files,
+        generator_version=job.generator_version,
+        review_type=ReviewType.of(incremental),
+        mode=job.mode,
+        prior_sha=pf.prior_head_sha if incremental else "",
+        delta_files=tuple(pf.delta_files) if incremental else (),
+        started_at=job.started_at,
+    )
+
+
 def _write_review_sidecar(job: ReviewJob):
     """Write the sidecar recording what this run is reviewing.
 
@@ -96,30 +125,7 @@ def _write_review_sidecar(job: ReviewJob):
     takes. That a review came of the run is a separate claim, made once at the
     end by `review_common.stamp_reviewed` and only when the run got there.
     """
-    sidecar_path = _derive_path(job.review_file, FILENAME_META)
-    meta: dict = {
-        "repo": job.repo,
-        "pr_number": job.pr_number,
-        "head_sha": job.pr.head_sha,
-        "head_ref": job.pr.head,
-        "base_ref": job.pr.base,
-        "title": job.pr.title,
-        "changed_files": job.pr.changed_files,
-        "mode": job.mode,
-        "started_at": job.started_at,
-    }
-    if job.generator_version:
-        meta["generator_version"] = job.generator_version
-
-    incremental = _is_incremental(job)
-    meta["review_type"] = ReviewType.of(incremental)
-    if incremental:
-        pf = job.preflight
-        meta["prior_sha"] = pf.prior_head_sha
-        meta["delta_files"] = pf.delta_files
-        meta["delta_file_count"] = len(pf.delta_files)
-
-    Path(sidecar_path).write_text(json.dumps(meta))
+    write_review_meta(Path(job.artifact_dir), _job_meta(job))
 
 
 def run_single_agent(job: ReviewJob, disprove: bool | None = None):
@@ -169,26 +175,21 @@ def _build_meta_header(
     skipped_groups: int = 0, total_groups: int = 0,
     status: ReviewStatus | None = None,
 ) -> str:
-    incremental = _is_incremental(job)
-    header = ReviewHeader(
+    meta = _job_meta(job)
+    header = ReviewHeader.from_meta(
+        meta,
         date=date.today().isoformat(),
-        head_sha=job.pr.head_sha,
-        review_type=ReviewType.of(incremental),
         status=status,
-        generator_version=job.generator_version,
     )
-    if not incremental:
+    if meta.review_type != ReviewType.INCREMENTAL:
         return header.render()
 
-    pf = job.preflight
     # The prior review's own header is where its date comes from — a re-review
     # states what it is a delta against, and only that document knows.
     prior_date = ReviewHeader.parse(job.prior_review).date if job.prior_review else ""
     return replace(
         header,
-        prior_sha=pf.prior_head_sha,
         prior_date=prior_date or "unknown",
-        delta_files=len(pf.delta_files),
         skipped_groups=skipped_groups,
         total_groups=total_groups,
     ).render()

@@ -38,7 +38,7 @@ import argparse
 import json
 import re
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -46,6 +46,7 @@ from typing import TypeVar
 
 import ai_usage
 import log
+import serde
 import workbench_paths
 from agent_registry import PHASES, REVIEW_PHASES
 from agent_types import Phase
@@ -282,15 +283,43 @@ def review_file_path(repo: str, pr_number: str) -> Path:
     return workbench_paths.reviews_dir() / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
 
 
-def read_review_meta(review_dir: Path) -> ReviewMeta:
-    """Read meta.json from a review directory."""
+def _load_review_meta(review_dir: Path) -> ReviewMeta | None:
+    """The sidecar a review directory holds, or None if it holds no usable one.
+
+    The distinction `read_review_meta` throws away: a reader wanting attribution
+    is served as well by an empty `ReviewMeta` as by a missing file, but a
+    writer must not mistake one for the other and overwrite what it could not
+    read.
+
+    A payload that is not an object is unusable in the same way an unparseable
+    one is, and is reported the same way. `review_meta_from_dict` reads it as an
+    empty record — the right answer for a reader, and the wrong one here, since
+    it would licence writing a fresh sidecar over the file.
+    """
     meta_file = review_dir / FILENAME_META
     if not meta_file.is_file():
-        return ReviewMeta()
+        return None
     try:
-        return review_meta_from_dict(json.loads(meta_file.read_text()))
+        payload = json.loads(meta_file.read_text())
     except (json.JSONDecodeError, OSError):
-        return ReviewMeta()
+        return None
+    return review_meta_from_dict(payload) if isinstance(payload, dict) else None
+
+
+def read_review_meta(review_dir: Path) -> ReviewMeta:
+    """What meta.json attributes this review to, empty where it says nothing."""
+    return _load_review_meta(review_dir) or ReviewMeta()
+
+
+def write_review_meta(review_dir: Path, meta: ReviewMeta) -> None:
+    """Record `meta` as the review directory's sidecar, replacing what was there.
+
+    The whole file, every time: `ReviewMeta` is the schema, so re-rendering it
+    cannot drop a key that anything reads. Written atomically, because every
+    review lookup on the machine walks these files and a half-written one reads
+    as a review attributed to nothing.
+    """
+    serde.write_json(review_dir / FILENAME_META, serde.to_dict(meta))
 
 
 def stamp_reviewed(review_dir: Path) -> None:
@@ -306,20 +335,16 @@ def stamp_reviewed(review_dir: Path) -> None:
     review to date, and a meta.json we cannot read is not one to overwrite —
     the fields already in it are worth more than this timestamp.
     """
-    meta_file = review_dir / FILENAME_META
-    try:
-        meta = json.loads(meta_file.read_text())
-    except (json.JSONDecodeError, OSError):
+    meta = _load_review_meta(review_dir)
+    if meta is None:
         return
-    if not isinstance(meta, dict):
-        return
-    meta["reviewed_at"] = now_iso()
     try:
-        meta_file.write_text(json.dumps(meta))
+        write_review_meta(review_dir, replace(meta, reviewed_at=now_iso()))
     except OSError as exc:
         # Warned rather than raised: the review is already written and this
         # runs at the very end of a run that worked. Losing the stamp costs a
         # reader the mtime fallback; failing here would cost the whole review.
+        meta_file = review_dir / FILENAME_META
         log.warn(f"could not stamp {meta_file} ({exc}) — its age will read from the file's mtime")
 
 

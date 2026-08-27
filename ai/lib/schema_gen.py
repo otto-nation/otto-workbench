@@ -128,6 +128,12 @@ def _array_schema(hint, args) -> dict:
     return {"type": "array", "items": _hint_to_schema(args[0])}
 
 
+def _set_schema(hint, args) -> dict:
+    """A set is written as an array, and says the one thing an array does not:
+    that no element repeats."""
+    return {**_array_schema(hint, args), "uniqueItems": True}
+
+
 def _dict_schema(hint, args) -> dict:
     if not args:
         return {"type": "object"}
@@ -154,6 +160,7 @@ _EMITTERS = {
     HintKind.SCALAR: lambda hint, args: dict(_SCALAR_SCHEMAS[hint]),
     HintKind.LIST: _array_schema,
     HintKind.TUPLE: _array_schema,
+    HintKind.SET: _set_schema,
     HintKind.DICT: _dict_schema,
     HintKind.OPAQUE: _opaque_schema,
 }

@@ -15,6 +15,7 @@ import review_retry
 import review_state
 import review_types
 from agent_diagnosis import Diagnosis, DiagnosisKind
+from agent_types import Phase
 
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
@@ -266,15 +267,15 @@ def _write_state(tmp_path: Path, **overrides) -> Path:
 
     Defaults represent an incomplete run: holistic done, no groups done,
     group "0" failed with "quota", synthesis not yet attempted. Pass
-    overrides to model other recovery shapes (e.g. synthesis_done=True
-    with a different groups_failed to model synthesis crashing after
-    groups completed).
+    overrides to model other recovery shapes — a `done` set that names
+    synthesis, alongside a different `groups_failed`, models synthesis
+    crashing after the groups completed.
     """
     path = tmp_path / "pipeline.json"
     state = {
-        "head_sha": _PINNED_SHA, "group_names": ["g1", "g2"], "holistic_done": True,
+        "head_sha": _PINNED_SHA, "group_names": ["g1", "g2"],
+        "done": ["holistic"], "failed": {},
         "groups_done": [], "groups_failed": {"0": "quota"},
-        "synthesis_done": False, "synthesis_failed": "",
     }
     path.write_text(json.dumps({**state, **overrides}))
     return path
@@ -290,7 +291,7 @@ class TestResolveRecoveryPinnedMetadata:
         plan = review_state._resolve_recovery(job, _GROUPS)
 
         assert plan.state is not None
-        assert plan.skip_holistic is True
+        assert plan.state.scanned is True
         assert plan.skip_groups is None
         assert plan.already_complete is False
         assert state_path.exists()
@@ -299,7 +300,7 @@ class TestResolveRecoveryPinnedMetadata:
         """The common failure shape: synthesis ran, one group errored out."""
         _write_state(
             tmp_path, groups_done=[0], groups_failed={"1": "quota"},
-            synthesis_done=True, synthesis_failed="crashed",
+            done=["holistic", "synthesis"], failed={"synthesis": "crashed"},
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
@@ -308,12 +309,15 @@ class TestResolveRecoveryPinnedMetadata:
         assert plan.skip_groups == {0}
         assert plan.state is not None
         assert plan.state.groups_failed == {}
-        assert plan.state.synthesis_done is False
-        assert plan.state.synthesis_failed is None
+        # A phase being retried is neither done nor failed any more, so the
+        # scan it does not retry is all that is left behind.
+        assert plan.state.done == {Phase.HOLISTIC}
+        assert plan.state.failed == {}
 
     def test_pinned_metadata_on_a_clean_run_recovers_nothing(self, tmp_path):
         _write_state(
-            tmp_path, groups_done=[0, 1], groups_failed={}, synthesis_done=True,
+            tmp_path, groups_done=[0, 1], groups_failed={},
+            done=["holistic", "synthesis"],
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 

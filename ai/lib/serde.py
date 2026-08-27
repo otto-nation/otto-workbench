@@ -33,10 +33,39 @@ class _Omitted(Exception):
     """
 
 
+def _writable(value):
+    """A field's value as something JSON can hold: enums as their value, sets
+    as the sorted list of those.
+
+    Sorted because a set's iteration order is not stable across runs, and a
+    state file that reorders itself on every write is a diff nobody can read.
+    """
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, (set, frozenset)):
+        return sorted(_writable(v) for v in value)
+    return value
+
+
 def to_dict(obj) -> dict:
-    """Serialize a dataclass to a dict, converting enums to their values."""
+    """Serialize a dataclass to a dict, converting enums to their values.
+
+    A `set` or `frozenset` field is written as a sorted list, which
+    `_coerce_set` reads back — JSON has no set of its own.
+
+    Only a field's own value is converted. `dataclasses.asdict` descends into
+    lists and dicts before this sees them, so a set nested inside one reaches
+    `json.dump` as a set and is rejected there. That is the loud failure, and
+    the alternative — a second recursive walk beside asdict's — is a shape no
+    persisted dataclass here has ever needed.
+
+    A `dict` field's keys arrive the same way, unconverted, so an enum key is
+    still an enum when `json.dump` sees it. The enums used as keys here are
+    `StrEnum`s, which json writes as their value and `from_dict`'s key coercer
+    reads back; a plain `Enum` key raises there rather than writing a name.
+    """
     def factory(pairs):
-        return {k: v.value if isinstance(v, Enum) else v for k, v in pairs}
+        return {k: _writable(v) for k, v in pairs}
     return dataclasses.asdict(obj, dict_factory=factory)
 
 
@@ -49,6 +78,8 @@ def from_dict(cls, data: dict):
     - Nested dataclass fields are recursively reconstructed
     - `dict[int, V]` and `dict[SomeEnum, V]` keys are restored from the strings
       JSON makes of them; an unknown enum key raises rather than lingering
+    - `set[X]` and `frozenset[X]` are restored from the list `to_dict` wrote,
+      as whichever of the two the hint names
     - A nested dataclass defining `_from_raw` reconstructs itself through it,
       which is how a type stored in more than one shape stays readable. The
       hook is handed the raw value whatever it is, `null` included — a type
@@ -174,12 +205,13 @@ class HintKind(StrEnum):
     SCALAR = "scalar"
     LIST = "list"
     TUPLE = "tuple"
+    SET = "set"
     DICT = "dict"
     OPAQUE = "opaque"
 
 
 # The kinds that read a `None` as something other than "field omitted". Every
-# other kind — enum, scalar, list, tuple, dict — takes the shared rule in
+# other kind — enum, scalar, list, tuple, set, dict — takes the shared rule in
 # `_coerce`.
 #
 # FROM_RAW is here because the hook's contract is that the type reads every raw
@@ -196,7 +228,8 @@ def classify(hint) -> tuple[HintKind, tuple]:
     The returned args are what the kind's handler needs, not `get_args` verbatim:
     OPTIONAL yields the non-None members, containers yield their element types,
     and a kind that needs nothing from the annotation yields `()`. A bare
-    `list`/`tuple`/`dict` is its own kind with no args — shape is all it states.
+    `list`/`tuple`/`set`/`dict` is its own kind with no args — shape is all it
+    states.
     """
     args = get_args(hint)
     origin = get_origin(hint)
@@ -224,6 +257,8 @@ def classify(hint) -> tuple[HintKind, tuple]:
         return HintKind.LIST, args
     if origin is tuple or hint is tuple:
         return HintKind.TUPLE, args
+    if origin in (set, frozenset) or hint in (set, frozenset):
+        return HintKind.SET, args
     if origin is dict or hint is dict:
         # A dict hint carries a key type as well, and only a full pair is usable.
         return HintKind.DICT, args if len(args) >= 2 else ()
@@ -295,8 +330,9 @@ def _coerce_enum(hint, args, value):
 
 # A value that cannot be the container its hint names is an omitted field, not
 # a value to pass through. Returning it verbatim would plant a str behind a
-# `list[X]` hint for the first loop over it to trip on. A bare `list`/`tuple`/
-# `dict` hint carries no element type, so shape is all there is to check.
+# `list[X]` hint for the first loop over it to trip on. A bare
+# `list`/`tuple`/`set`/`dict` hint carries no element type, so shape is all
+# there is to check.
 def _coerce_list(hint, args, value):
     if not isinstance(value, list):
         raise _Omitted
@@ -307,6 +343,20 @@ def _coerce_tuple(hint, args, value):
     if not isinstance(value, (list, tuple)):
         raise _Omitted
     return tuple(_coerce(args[0], v) for v in value) if args else tuple(value)
+
+
+def _coerce_set(hint, args, value):
+    """`set[X]` / `frozenset[X]` — read back from the list `to_dict` wrote.
+
+    Rebuilt as whichever of the two the hint names, so a frozen field comes
+    back hashable rather than quietly mutable. A set written by hand into the
+    file is accepted too, since a caller may reconstruct from a dict it built
+    rather than from JSON.
+    """
+    if not isinstance(value, (list, set, frozenset)):
+        raise _Omitted
+    ctor = get_origin(hint) or hint
+    return ctor(_coerce(args[0], v) for v in value) if args else ctor(value)
 
 
 def _coerce_dict(hint, args, value):
@@ -334,6 +384,7 @@ _COERCERS = {
     HintKind.SCALAR: lambda hint, args, value: _coerce_scalar(hint, value),
     HintKind.LIST: _coerce_list,
     HintKind.TUPLE: _coerce_tuple,
+    HintKind.SET: _coerce_set,
     HintKind.DICT: _coerce_dict,
     HintKind.OPAQUE: _coerce_opaque,
 }

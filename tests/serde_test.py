@@ -110,10 +110,18 @@ class Scalars:
 
 
 @dataclass
+class Marked:
+    """The two set hints, which JSON has no type of its own for."""
+    colors: set[Color] = field(default_factory=set)
+    labels: frozenset[str] = field(default_factory=frozenset)
+
+
+@dataclass
 class Bare:
     """Container hints with no element type — shape is all there is to check."""
     mapping: dict = field(default_factory=dict)
     sequence: list = field(default_factory=list)
+    unique: set = field(default_factory=set)
 
 
 class TestToDict:
@@ -221,6 +229,40 @@ class TestEnumDictKeys:
         assert restored == original
 
 
+class TestSetFields:
+    """A set is written as a list and read back as a set.
+
+    JSON has no set, so a field that is one has to survive the trip through a
+    list without becoming one — a membership test against a list still answers,
+    which is how such a field can look correct while silently accepting
+    duplicates and losing its `&` and `-` operators.
+    """
+
+    def test_a_set_is_written_as_a_sorted_list(self):
+        """Sorted because a set's iteration order is not stable across runs,
+        and a state file that reorders itself on every write is a diff nobody
+        can read."""
+        assert to_dict(Marked(colors={Color.RED, Color.BLUE}))["colors"] == ["blue", "red"]
+
+    def test_a_set_survives_a_json_hop(self):
+        original = Marked(colors={Color.BLUE}, labels=frozenset({"a", "b"}))
+        restored = from_dict(Marked, json.loads(json.dumps(to_dict(original))))
+        assert restored == original
+
+    def test_a_frozenset_hint_comes_back_frozen(self):
+        """A frozen field restored as a plain set is quietly mutable, and the
+        first caller to hash it fails somewhere else entirely."""
+        restored = from_dict(Marked, {"labels": ["a"]})
+        assert isinstance(restored.labels, frozenset)
+
+    def test_a_set_written_by_hand_is_accepted(self):
+        """A caller may reconstruct from a dict it built rather than from JSON."""
+        assert from_dict(Marked, {"colors": {Color.BLUE}}).colors == {Color.BLUE}
+
+    def test_a_duplicated_element_collapses(self):
+        assert from_dict(Marked, {"labels": ["a", "a"]}) == Marked(labels=frozenset({"a"}))
+
+
 class TestFromRawHook:
     """A dataclass defining `_from_raw` reconstructs itself."""
 
@@ -299,6 +341,10 @@ class TestNullOnAField:
         obj = from_dict(Container, {"entries": None})
         assert obj.entries == {}
 
+    def test_null_on_a_set_field_yields_the_default(self):
+        obj = from_dict(Marked, {"colors": None})
+        assert obj.colors == set()
+
     def test_null_as_a_list_element_drops_the_whole_field_to_its_default(self):
         """A `null` inside a collection propagates: the field has no way to
         hold "some real values, one hole" against its type hint, so it falls
@@ -368,7 +414,8 @@ class TestWrongTypedValue:
     @pytest.mark.parametrize(("fname", "raw"), [
         ("mapping", "x"),
         ("sequence", "abc"),
-    ], ids=["dict-hint", "list-hint"])
+        ("unique", "abc"),
+    ], ids=["dict-hint", "list-hint", "set-hint"])
     def test_a_bare_container_hint_rejects_a_wrong_shape(self, fname, raw):
         """A str is iterable, so passing one through a bare `list` hint yields
         a field that loops over characters instead of failing."""
@@ -411,6 +458,8 @@ def _sample(hint):
         return [_sample(args[0])] if args else ["x"]
     if origin is tuple:
         return (_sample(args[0]),) if args else ("x",)
+    if origin in (set, frozenset):
+        return origin({_sample(args[0])} if args else {"x"})
     if origin is dict:
         return {_sample(args[0]): _sample(args[1])} if args else {"k": "v"}
     if isinstance(hint, type) and issubclass(hint, Enum):

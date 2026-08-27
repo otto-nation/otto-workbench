@@ -24,7 +24,7 @@ from pathlib import Path
 import git_client
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
-from agent_registry import PHASES
+from agent_registry import PHASES, SCAN_PHASES
 from agent_types import EFFORT_PRESETS, Mode, Phase
 from review_common import (
     count_severities,
@@ -419,20 +419,17 @@ def _build_group_skips(
     return skips
 
 
-# Phase 1 is one scan chosen from two candidates, so it drops out only when
-# both are off — `--no-scout` alone falls back to the holistic scan, which is
-# what that flag has always meant.
-_SCAN_PHASES = frozenset({Phase.SCOUT, Phase.HOLISTIC})
-
-
 def _holistic_skip_reason(
     job: ReviewJob, incremental: bool, group_count: int,
 ) -> str | None:
+    # Phase 1 is one scan chosen from two candidates, so it drops out only when
+    # both are off — `--no-scout` alone falls back to the holistic scan, which
+    # is what that flag has always meant.
     if incremental:
         return "incremental review"
-    if _SCAN_PHASES <= job.skip_phases:
-        return " ".join(phase_skip_argv(_SCAN_PHASES))
-    if _SCAN_PHASES <= job.skipped:
+    if SCAN_PHASES <= job.skip_phases:
+        return " ".join(phase_skip_argv(SCAN_PHASES))
+    if SCAN_PHASES <= job.skipped:
         return f"effort={job.effort}"
     if group_count < HOLISTIC_MIN_GROUPS:
         return f"{group_count} groups < {HOLISTIC_MIN_GROUPS} threshold"
@@ -445,27 +442,32 @@ def _scan_phase(job: ReviewJob) -> Phase:
 
 
 def _run_holistic_phase(
-    job: ReviewJob, group_count: int, state: PipelineState,
-    resume_exists: bool, incremental: bool,
+    job: ReviewJob, group_count: int, state: PipelineState, incremental: bool,
 ) -> PhaseResult:
     """Phase 1's scan, the log it wrote, and what that scan spent.
 
     A branch that reuses a prior attempt's scan reports the log at no cost:
     `_resolve_recovery` already charged the resumed run for it, so pricing it
-    again here would bill that scan twice.
+    again here would bill that scan twice. Whether there is a prior attempt to
+    reuse is `state.scanned` — the state is already here, so nothing needs to
+    carry the answer in from the recovery plan.
+
+    The chosen scan is resolved before the skip check because the skip branch
+    records it too: a run that scouts and then skips phase 1 has to say scout,
+    which a state field named for the holistic scan could never say.
     """
+    phase = _scan_phase(job)
     reason = _holistic_skip_reason(job, incremental, group_count)
     if reason:
         log.info(f"Holistic/scout phase skipped ({reason})")
-        if not state.holistic_done:
-            state.holistic_done = True
+        if not state.scanned:
+            state.done.add(phase)
             _write_pipeline_state(job, state)
         return PhaseResult()
 
-    phase = _scan_phase(job)
     label = PHASES[phase].label
     output = phase_output_path(job.review_file, phase)
-    if resume_exists and _has_output(output):
+    if state.scanned and _has_output(output):
         log.info(f"Phase 1: {label} skipped (exists)")
         return PhaseResult(
             log=phase_log_path(job.review_file, phase),
@@ -474,7 +476,7 @@ def _run_holistic_phase(
         )
 
     result = run_phase(job, phase, f"Phase 1/{group_count}: {label}...")
-    state.holistic_done = True
+    state.done.add(phase)
     _write_pipeline_state(job, state)
     return result
 
@@ -518,7 +520,7 @@ def _run_synthesis_or_fallback(
     if not _has_findings(merged_content) and not failed_groups:
         log.info("No findings from any group — writing clean review")
         _write_clean_review(job, group_count, skipped_groups=n_skipped)
-        state.synthesis_done = True
+        state.done.add(Phase.SYNTHESIS)
         _write_pipeline_state(job, state)
         return PhaseResult()
 
@@ -532,8 +534,8 @@ def _run_synthesis_or_fallback(
         # Recorded before the fallback is built, not after: the meta header the
         # fallback carries reads the status back off this file, so a verdict
         # written afterwards leaves the document claiming the run completed.
-        state.synthesis_done = True
-        state.synthesis_failed = why
+        state.done.add(Phase.SYNTHESIS)
+        state.failed[Phase.SYNTHESIS] = why
         _write_pipeline_state(job, state)
         fallback = _build_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=n_skipped,
@@ -548,7 +550,7 @@ def _run_synthesis_or_fallback(
         Path(job.review_file).write_text(merged_content)
         _post_process_review(job)
         _write_review_sidecar(job)
-        state.synthesis_done = True
+        state.done.add(Phase.SYNTHESIS)
         _write_pipeline_state(job, state)
         _inject_failures_and_status(job.review_file, state)
         return PhaseResult()
@@ -557,8 +559,8 @@ def _run_synthesis_or_fallback(
         log.warn("Using merged group output as final review (synthesis skipped due to budget)")
         Path(job.review_file).write_text(merged_content)
         _write_review_sidecar(job)
-        state.synthesis_done = True
-        state.synthesis_failed = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
+        state.done.add(Phase.SYNTHESIS)
+        state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
         _write_pipeline_state(job, state)
         _inject_failures_and_status(job.review_file, state)
         return PhaseResult()
@@ -567,10 +569,10 @@ def _run_synthesis_or_fallback(
         job, holistic_content, group_count, merged_content,
         skipped_groups=n_skipped,
     )
-    state.synthesis_done = True
+    state.done.add(Phase.SYNTHESIS)
     review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
     if _MECHANICAL_NOTE in review_content or FALLBACK_SUMMARY in review_content:
-        state.synthesis_failed = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
+        state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
     _write_pipeline_state(job, state)
     _inject_failures_and_status(job.review_file, state)
     return result
@@ -621,7 +623,6 @@ def run_multi_phase(
 
     cost_so_far = recovery.cost_so_far
     skip_groups = recovery.skip_groups
-    skip_holistic_phase = recovery.skip_holistic
     state = recovery.state
 
     if state is None:
@@ -637,9 +638,7 @@ def run_multi_phase(
     group_skips = _build_group_skips(incremental_skips, skip_groups)
 
     # ── Phase 1: Scout/Holistic ─────────────────────────────────────────────
-    holistic = _run_holistic_phase(
-        job, group_count, state, skip_holistic_phase, incremental,
-    )
+    holistic = _run_holistic_phase(job, group_count, state, incremental)
     cost_so_far += holistic.cost
 
     # ── Phase 2: Groups ───────────────────────────────────────────────────────

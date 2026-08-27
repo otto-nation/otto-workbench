@@ -521,7 +521,7 @@ def test_read_pipeline_status_synthesis_ok(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
 
@@ -530,7 +530,7 @@ def test_read_pipeline_status_synthesis_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "synthesis_done": True, "synthesis_failed": "all groups failed",
+        "done": ["synthesis"], "failed": {"synthesis": "all groups failed"},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
 
@@ -539,7 +539,7 @@ def test_read_pipeline_status_mechanical_fallback(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "synthesis_done": True, "synthesis_failed": "mechanical fallback",
+        "done": ["synthesis"], "failed": {"synthesis": "mechanical fallback"},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.PARTIAL.value
 
@@ -548,7 +548,7 @@ def test_read_pipeline_status_budget_exceeded(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "synthesis_done": True, "synthesis_failed": "budget exceeded",
+        "done": ["synthesis"], "failed": {"synthesis": "budget exceeded"},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.PARTIAL.value
 
@@ -557,7 +557,7 @@ def test_read_pipeline_status_groups_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_failed": {"1": "no result record in session log"},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.PARTIAL.value
@@ -574,7 +574,7 @@ def test_read_pipeline_status_partial_groups_failed_synthesis_ok(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2", "g3"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_done": [1, 3], "groups_failed": {"2": "quota exhausted (429)"},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.PARTIAL.value
@@ -585,7 +585,7 @@ def test_read_pipeline_status_partial_mechanical_fallback(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "synthesis_done": True, "synthesis_failed": "mechanical fallback",
+        "done": ["synthesis"], "failed": {"synthesis": "mechanical fallback"},
         "groups_done": [1], "groups_failed": {},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.PARTIAL.value
@@ -596,7 +596,7 @@ def test_read_pipeline_status_error_all_groups_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "synthesis_done": True, "synthesis_failed": "all groups failed",
+        "done": ["synthesis"], "failed": {"synthesis": "all groups failed"},
         "groups_done": [], "groups_failed": {"1": "quota exhausted (429)", "2": "quota exhausted (429)"},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.ERROR.value
@@ -607,7 +607,7 @@ def test_read_pipeline_status_complete_no_failures(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_done": [1, 2], "groups_failed": {},
     }))
     assert read_pipeline_status(tmp_path) == ReviewStatus.COMPLETED.value
@@ -626,7 +626,7 @@ def test_build_failure_detail_no_failures(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_done": [1, 2], "groups_failed": {},
     }))
     assert build_failure_detail(tmp_path) == ""
@@ -637,7 +637,7 @@ def test_build_failure_detail_groups_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2", "g3"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)", "3": "agent hit max turns (5)"},
     }))
     result = build_failure_detail(tmp_path)
@@ -652,7 +652,7 @@ def test_build_failure_detail_reads_typed_diagnoses(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2", "g3"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_done": [1],
         "groups_failed": {
             "2": {"kind": "quota_exhausted", "no_write_tool": False,
@@ -672,7 +672,7 @@ def test_build_failure_detail_synthesis_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "synthesis_done": True, "synthesis_failed": "mechanical fallback",
+        "done": ["synthesis"], "failed": {"synthesis": "mechanical fallback"},
         "groups_done": [1], "groups_failed": {},
     }))
     result = build_failure_detail(tmp_path)
@@ -684,7 +684,7 @@ def test_build_failure_detail_all_groups_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "synthesis_done": True, "synthesis_failed": "all groups failed",
+        "done": ["synthesis"], "failed": {"synthesis": "all groups failed"},
         "groups_done": [], "groups_failed": {"1": "quota exhausted (429)", "2": "quota exhausted (429)"},
     }))
     result = build_failure_detail(tmp_path)
@@ -704,7 +704,7 @@ def test_the_two_readers_agree_on_the_all_failed_sentinel(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "synthesis_done": True, "synthesis_failed": "all groups failed",
+        "done": ["synthesis"], "failed": {"synthesis": "all groups failed"},
         "groups_done": [], "groups_failed": {"1": "quota exhausted (429)"},
     }))
 
@@ -798,7 +798,7 @@ def test_json_summary_includes_failure_detail(cr, tmp_path):
     pipeline = review_dir / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)"},
     }))
     from review_summary import build_review_summary
@@ -822,8 +822,8 @@ def test_read_pipeline_warnings_all_complete(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": True, "groups_done": [1],
-        "groups_failed": {},        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["holistic", "synthesis"], "failed": {},
+        "groups_done": [1], "groups_failed": {},
     }))
     assert read_pipeline_warnings(tmp_path) == []
 
@@ -832,7 +832,7 @@ def test_read_pipeline_warnings_holistic_incomplete(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False,    }))
+    }))
     assert read_pipeline_warnings(tmp_path) == ["holistic phase"]
 
 
@@ -840,7 +840,7 @@ def test_read_pipeline_warnings_groups_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1", "g2"],
-        "holistic_done": True,        "groups_failed": {"1": "max turns", "2": "model error"},
+        "done": ["holistic"], "groups_failed": {"1": "max turns", "2": "model error"},
     }))
     assert read_pipeline_warnings(tmp_path) == ["2 groups failed"]
 
@@ -849,7 +849,7 @@ def test_read_pipeline_warnings_single_group_failed(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": True,        "groups_failed": {"1": "max turns"},
+        "done": ["holistic"], "groups_failed": {"1": "max turns"},
     }))
     assert read_pipeline_warnings(tmp_path) == ["1 group failed"]
 
@@ -858,8 +858,7 @@ def test_read_pipeline_warnings_multiple(cr, tmp_path):
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False,
-        "synthesis_failed": "all groups failed",
+        "failed": {"synthesis": "all groups failed"},
     }))
     warnings = read_pipeline_warnings(tmp_path)
     assert "holistic phase" in warnings
@@ -870,7 +869,7 @@ def test_read_pipeline_warnings_skipped_phases_no_warning_when_synthesis_done(cr
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "holistic_done": False,        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
     }))
     assert read_pipeline_warnings(tmp_path) == []
 
@@ -960,7 +959,7 @@ def test_json_summary_status_error_synthesis_failed(cr, tmp_path):
     pipeline = review_dir / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc", "group_names": ["g1"],
-        "synthesis_done": True, "synthesis_failed": "all groups failed",
+        "done": ["synthesis"], "failed": {"synthesis": "all groups failed"},
     }))
     result = json_summary("org/repo", "42", str(review))
     data = json.loads(result.removeprefix("REVIEW_SUMMARY:"))
@@ -1367,7 +1366,7 @@ def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
         "repo": "org/my-repo", "pr_number": "51", "head_sha": "abc",
     }))
     (d / "pipeline.json").write_text(json.dumps({
-        "synthesis_failed": "all groups failed",
+        "failed": {"synthesis": "all groups failed"},
     }))
 
     old_time = time.time() - 15 * 86400
@@ -1392,7 +1391,7 @@ def test_prune_removes_old_failed_review(mock_run, cr, reviews_dir):
         "repo": "org/my-repo", "pr_number": "52", "head_sha": "abc",
     }))
     (d / "pipeline.json").write_text(json.dumps({
-        "synthesis_failed": "all groups failed",
+        "failed": {"synthesis": "all groups failed"},
     }))
 
     old_time = time.time() - 35 * 86400
@@ -1757,8 +1756,8 @@ def test_cleaned_on_success_keeps_a_partial_run_for_recover(cr, tmp_path):
     d = _finished_review(tmp_path)
     (d / "pipeline.json").write_text(json.dumps({
         "head_sha": "abc123", "group_names": ["a", "b"],
+        "done": ["synthesis"],
         "groups_done": [1], "groups_failed": {"2": "agent hit max turns (20)"},
-        "synthesis_done": True,
     }))
 
     with review_gc.cleaned_on_success(d):
@@ -1815,7 +1814,7 @@ def test_constants_match_expected(cr):
 def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None:
     (review_dir / "pipeline.json").write_text(json.dumps({
         "head_sha": head_sha, "group_names": ["g1", "g2"],
-        "synthesis_done": False, "synthesis_failed": "crashed",
+        "failed": {"synthesis": "crashed"},
         "groups_done": [1], "groups_failed": {},
     }))
 
@@ -1840,8 +1839,8 @@ def test_resolve_recover_sha_without_head(cr, tmp_path):
 def test_resolve_recover_sha_untracked_state(cr, tmp_path):
     """State written before SHA tracking has nothing to pin to."""
     (tmp_path / "pipeline.json").write_text(json.dumps({
-        "group_names": ["g1"], "synthesis_done": False,
-        "synthesis_failed": "crashed", "groups_done": [],
+        "group_names": ["g1"], "failed": {"synthesis": "crashed"},
+        "groups_done": [],
     }))
     assert cr._resolve_recover_sha(tmp_path, "abc1234") == ""
 
@@ -1854,8 +1853,8 @@ def test_resolve_recover_sha_without_pipeline_state(cr, tmp_path):
 
 def test_resolve_recover_sha_completed_review(cr, tmp_path):
     (tmp_path / "pipeline.json").write_text(json.dumps({
-        "head_sha": "abc1234", "group_names": ["g1"], "synthesis_done": True,
-        "synthesis_failed": "", "groups_done": [1], "groups_failed": {},
+        "head_sha": "abc1234", "group_names": ["g1"], "done": ["synthesis"],
+        "failed": {}, "groups_done": [1], "groups_failed": {},
     }))
     with pytest.raises(SystemExit) as exc:
         cr._resolve_recover_sha(tmp_path, "abc1234")
@@ -2175,7 +2174,7 @@ def test_check_stale_review_auto_recovers_on_failures(cr, tmp_path, monkeypatch)
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc123", "group_names": ["g1", "g2"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)"},
     }))
 
@@ -2194,7 +2193,7 @@ def test_check_stale_review_prompts_on_clean_same_head(cr, tmp_path, monkeypatch
     pipeline = tmp_path / "pipeline.json"
     pipeline.write_text(json.dumps({
         "head_sha": "abc123", "group_names": ["g1"],
-        "synthesis_done": True, "synthesis_failed": "",
+        "done": ["synthesis"], "failed": {},
         "groups_done": [1], "groups_failed": {},
     }))
 

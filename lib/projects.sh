@@ -337,6 +337,19 @@ project_registered() {
 # never leaves the registry truncated — `project_forget` and `project_prune`
 # are explicit, user-invoked commands, and losing entries to a partial write
 # there is a lot more surprising than during passive registration.
+#
+# The swap itself is atomic; the read that produced these lines was not part of
+# it. Every caller scans the file, decides what to keep, and calls this — so a
+# registration appended in between is overwritten. Stated here rather than at
+# each of the three call sites because the window belongs to the shape they
+# share, and the sync now opens it twice a run rather than only when an operator
+# types `otto-workbench projects prune`.
+#
+# ceiling: no lock, so that appended registration is lost and the repo
+# re-registers the next time a workbench command runs in it — a scan of one file
+# against a lock every hook would have to take. Upgrade to a lock if anything
+# starts registering repos that do not run commands of their own, since nothing
+# would then bring the lost line back.
 _project_rewrite() {
   local tmp mode
   tmp="$(mktemp "${PROJECTS_REGISTRY_FILE}.XXXXXX")" || return 1
@@ -466,10 +479,8 @@ project_repo_leaders() {
 # moves or removes the shared git dir, and a stat catches that for a fraction of
 # what re-resolving every line on every sync would cost.
 #
-# ceiling: the rewrite is not locked, so a registration appended between the
-# read and the swap is lost — the repo re-registers the next time a workbench
-# command runs in it. Upgrade to a lock if anything starts registering repos
-# that do not run commands of their own.
+# Like every caller of `_project_rewrite`, this reads the file and swaps a new
+# one in unlocked; the marker for what that loses is on the helper.
 record_project_repo_ids() {
   [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 0
   local line path id shared changed=0

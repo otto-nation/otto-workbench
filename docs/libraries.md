@@ -309,7 +309,7 @@ resolves it to the same directory, and two repositories never share one.
 git_shared_dir /path/to/worktree     # → /path/to/container/.git
 ```
 
-[`lib/git_layout.py`](#git_layoutpy) is the Python half and answers the
+`lib/git_layout.py` is the Python half and answers the
 neighbouring question — the *container*, the shared git dir's parent, and
 deliberately nothing for an ordinary clone whose parent belongs to somebody
 else. This one is total, because the caller here wants an identity rather than

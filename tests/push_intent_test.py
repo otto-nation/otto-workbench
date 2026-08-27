@@ -16,6 +16,7 @@ import io
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -24,6 +25,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import branch_landed  # noqa: E402
 import git_client  # noqa: E402
 import push  # noqa: E402
 import push_intent  # noqa: E402
@@ -32,6 +34,10 @@ import serde  # noqa: E402
 from conftest import GIT_TIMEOUT, git_in, git_out, seed_repo  # noqa: E402
 
 _ZERO = "0" * 40
+
+# A branch that is not the default one, which the landed-elsewhere check
+# deliberately declines to measure against itself.
+_FEATURE = "isaac/feat/x"
 
 
 def _ref(local_ref="refs/heads/main", local_sha="a" * 40,
@@ -50,6 +56,17 @@ def _commit(wt: Path, message: str) -> str:
     git_in(wt, "-c", "user.name=t", "-c", "user.email=t@t",
            "commit", "-q", "--allow-empty", "--no-verify", "-m", message)
     return git_client.head_sha(cwd=wt)
+
+
+def _commit_file(wt: Path, name: str, content: str = "work") -> str:
+    """A commit in *wt* that changes a file, returning its SHA.
+
+    A squash merge of an empty commit has nothing to commit, so the branch that
+    stands in for a merged PR has to carry a tree of its own.
+    """
+    (wt / name).write_text(content)
+    git_in(wt, "add", "--", name)
+    return _commit(wt, f"add {name}")
 
 
 @pytest.fixture
@@ -241,6 +258,171 @@ def test_a_remote_holding_a_different_commit_is_reported(pushable, capsys):
     err = capsys.readouterr().err
     assert second[:7] in err
     assert first[:7] in err
+
+
+# ── a push whose work landed under another sha ──────────────────────────────
+
+
+@pytest.fixture
+def merged_and_pruned(pushable) -> tuple[Path, str]:
+    """A feature branch squash-merged into `main`, with its head ref deleted.
+
+    The ordinary end of a PR in a repo configured this way, and the exact shape
+    that made every one of them a false alarm: the recorded commit is nowhere in
+    the squashed commit's history, and the ref it was pushed to no longer exists
+    for `_built_upon` to compare against.
+    """
+    wt, remote = pushable
+    git_in(wt, "checkout", "-q", "-b", _FEATURE)
+    sha = _commit_file(wt, "f.txt")
+    git_in(wt, "push", "-q", "origin", _FEATURE)
+
+    git_in(wt, "checkout", "-q", "main")
+    git_in(wt, "merge", "--squash", _FEATURE)
+    _commit(wt, "feat: the squashed commit")
+    git_in(wt, "push", "-q", "origin", "main")
+
+    git_in(remote, "update-ref", "-d", f"refs/heads/{_FEATURE}")
+    git_in(wt, "fetch", "-q", "--prune", "origin")
+    return wt, sha
+
+
+def _record_feature(wt: Path, sha: str) -> None:
+    """The record the pre-push hook left for the feature branch's push."""
+    push_intent.record(
+        [_ref(local_ref=f"refs/heads/{_FEATURE}", local_sha=sha,
+              remote_ref=f"refs/heads/{_FEATURE}")],
+        repo=str(wt), remote="origin",
+    )
+
+
+def test_a_squash_merged_branch_the_merge_deleted_is_not_reported(
+        merged_and_pruned, capsys):
+    """Regression: every merged PR here was reported as a push that vanished.
+
+    The tracker is never asked — the squashed commit's tree still matches, so
+    the free signal answers and the round trip is not spent.
+    """
+    wt, sha = merged_and_pruned
+    _record_feature(wt, sha)
+
+    with mock.patch.object(branch_landed, "merged_pr") as gh:
+        push_intent.reconcile()
+
+    gh.assert_not_called()
+    assert capsys.readouterr().err == ""
+    assert not push_intent.intents_path().exists()
+
+
+def test_the_tracker_settles_a_squash_the_base_has_moved_past(
+        merged_and_pruned, capsys):
+    """Once `main` moves on, no local signal can see the work arrive.
+
+    The trees no longer match and a squash left no per-commit patch id, so the
+    one round trip the ladder allows is what keeps the record quiet.
+    """
+    wt, sha = merged_and_pruned
+    _commit_file(wt, "later.txt", "somebody else")
+    git_in(wt, "push", "-q", "origin", "main")
+    git_in(wt, "fetch", "-q", "origin")
+    _record_feature(wt, sha)
+
+    with mock.patch.object(branch_landed, "merged_pr",
+                           return_value=branch_landed.MergedPR(number=1016)):
+        push_intent.reconcile()
+
+    assert capsys.readouterr().err == ""
+    assert not push_intent.intents_path().exists()
+
+
+def test_a_merge_commit_leaves_the_recorded_commit_upstream(pushable, capsys):
+    """The other merge style: the commit itself is in the base, whole.
+
+    No tree comparison and no patch id can see it — a rev with nothing of its
+    own over the base reads to `branch_landed` as a worktree that has not
+    committed yet. Ancestry is the evidence, and the tracker is never asked.
+    """
+    wt, remote = pushable
+    git_in(wt, "checkout", "-q", "-b", _FEATURE)
+    sha = _commit_file(wt, "f.txt")
+    git_in(wt, "push", "-q", "origin", _FEATURE)
+
+    git_in(wt, "checkout", "-q", "main")
+    git_in(wt, "-c", "user.name=t", "-c", "user.email=t@t",
+           "merge", "-q", "--no-ff", "--no-verify", "-m", "merge", _FEATURE)
+    git_in(wt, "push", "-q", "origin", "main")
+    git_in(remote, "update-ref", "-d", f"refs/heads/{_FEATURE}")
+    git_in(wt, "fetch", "-q", "--prune", "origin")
+    _record_feature(wt, sha)
+
+    with mock.patch.object(branch_landed, "merged_pr") as gh:
+        push_intent.reconcile()
+
+    gh.assert_not_called()
+    assert capsys.readouterr().err == ""
+    assert not push_intent.intents_path().exists()
+
+
+def test_a_branch_whose_work_reached_nothing_is_still_reported(pushable, capsys):
+    """The report the check must not swallow: pushed, then gone, and unlanded."""
+    wt, remote = pushable
+    git_in(wt, "checkout", "-q", "-b", _FEATURE)
+    sha = _commit_file(wt, "f.txt")
+    git_in(wt, "push", "-q", "origin", _FEATURE)
+    git_in(remote, "update-ref", "-d", f"refs/heads/{_FEATURE}")
+    _record_feature(wt, sha)
+
+    with mock.patch.object(branch_landed, "merged_pr", return_value=None):
+        push_intent.reconcile()
+
+    err = capsys.readouterr().err
+    assert "nothing has confirmed" in err
+    assert sha[:7] in err
+
+
+def test_a_push_to_the_default_branch_is_never_excused(pushable, capsys):
+    """`main` *is* the base, so both git signals would call every push landed."""
+    wt, remote = pushable
+    sha = git_client.head_sha(cwd=wt)
+    push_intent.record([_ref(local_sha=sha)], repo=str(wt), remote="origin")
+    git_in(remote, "update-ref", "-d", "refs/heads/main")
+
+    with mock.patch.object(branch_landed, "check") as landed:
+        push_intent.reconcile()
+
+    landed.assert_not_called()
+    assert "nothing has confirmed" in capsys.readouterr().err
+
+
+def test_a_push_to_another_remote_is_not_measured_against_this_trunk(
+        merged_and_pruned, capsys):
+    """A fork's branch compared to upstream's trunk answers about the wrong repo."""
+    wt, sha = merged_and_pruned
+    git_in(wt, "remote", "add", "upstream", str(wt / "nope.git"))
+    push_intent.record(
+        [_ref(local_ref=f"refs/heads/{_FEATURE}", local_sha=sha,
+              remote_ref=f"refs/heads/{_FEATURE}")],
+        repo=str(wt), remote="upstream",
+    )
+
+    with mock.patch.object(branch_landed, "check") as landed:
+        for _ in range(push_intent._MAX_ATTEMPTS):
+            push_intent.reconcile()
+
+    landed.assert_not_called()
+    assert "could not reach the remote" in capsys.readouterr().err
+
+
+def test_a_base_ref_this_repo_never_fetched_is_not_compared_against(
+        merged_and_pruned, capsys):
+    """No trunk to measure against is a refusal, not a landed branch."""
+    wt, sha = merged_and_pruned
+    git_in(wt, "update-ref", "-d", "refs/remotes/origin/main")
+    _record_feature(wt, sha)
+
+    push_intent.reconcile()
+
+    assert "nothing has confirmed" in capsys.readouterr().err
 
 
 def test_an_unreachable_remote_is_asked_again_before_it_is_reported(pushable, capsys):

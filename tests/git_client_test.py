@@ -292,3 +292,31 @@ def test_commit_exists_rejects_a_non_commit_object(repo):
     blob = git_client.out("rev-parse", "HEAD:f.txt", cwd=repo)
     assert blob
     assert not git_client.commit_exists(blob, cwd=repo)
+
+
+def test_commits_ahead_counts_only_what_the_rev_adds(repo):
+    base = _commit(repo)
+    _commit(repo, "g.txt")
+    _commit(repo, "h.txt")
+    assert git_client.commits_ahead(repo, target_ref=base) == 2
+
+
+def test_commits_ahead_is_zero_for_a_rev_with_nothing_of_its_own(repo):
+    base = _commit(repo)
+    assert git_client.commits_ahead(repo, target_ref=base) == 0
+
+
+def test_commits_ahead_measures_the_rev_it_is_given(repo):
+    """The recorded-commit caller passes one; a count off HEAD would describe
+    whatever the worktree moved on to.
+    """
+    base = _commit(repo)
+    mid = _commit(repo, "g.txt")
+    _commit(repo, "h.txt")
+    assert git_client.commits_ahead(repo, target_ref=base, rev=mid) == 1
+
+
+def test_commits_ahead_is_zero_for_a_ref_git_cannot_resolve(repo):
+    """"Nothing to answer for", not an error — both callers read it that way."""
+    _commit(repo)
+    assert git_client.commits_ahead(repo, target_ref="origin/never-fetched") == 0

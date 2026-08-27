@@ -280,3 +280,22 @@ def is_dirty(cwd: str | Path | None = None) -> bool:
 def commit_exists(sha: str, cwd: str | Path | None = None) -> bool:
     """Whether *sha* resolves to a commit object in this repo."""
     return ok("cat-file", "-e", f"{sha}^{{commit}}", cwd=cwd)
+
+
+def commits_ahead(
+    cwd: str | Path | None = None, *, target_ref: str, rev: str = "HEAD",
+) -> int:
+    """How many commits *rev* has that *target_ref* does not, and 0 when git
+    cannot say.
+
+    *rev* defaults to HEAD for the callers measuring the checked-out branch, and
+    is spelled out by the one measuring a commit recorded earlier — a count read
+    off HEAD there would describe whatever the worktree moved on to.
+
+    A ref git cannot resolve is 0 rather than an error, which reads as "nothing
+    to answer for" at both call sites: `pr rebase` skips the landed signals that
+    only mean something for a branch with commits of its own, and the summary
+    reports no commits replayed.
+    """
+    out_ = out("rev-list", "--count", f"{target_ref}..{rev}", cwd=cwd)
+    return int(out_) if out_.isdigit() else 0

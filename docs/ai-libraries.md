@@ -1542,6 +1542,46 @@ that adding a task does not make every other task's dependencies load.
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
 
+### branch_landed.py
+
+Whether a branch's work is already in the ref it would be measured against.
+
+Two callers ask this, for opposite reasons, and neither can answer it alone.
+`pr rebase` asks so it can refuse: replaying a branch whose work already landed
+force-pushes back a remote branch the merge deleted. `push_intent` asks so it
+can stay quiet: a recorded push the remote no longer has a ref for looks exactly
+like a push that vanished, and every squash-merged branch in a repo that deletes
+its head refs would otherwise be reported as one.
+
+Three signals, in the order `check` tries them, none of them sufficient alone:
+
+* `diff_is_empty` — the trees match. Catches a squash merge, whose commits are
+  unreachable from the squashed commit, so nothing comparing commits notices the
+  work arrive. Stops answering once the target ref moves on with unrelated work.
+* `all_commits_upstream` — every commit has an equivalent patch id upstream.
+  Catches a rebase or a merge-commit landing, and survives the target moving on.
+  Misses a squash, which leaves no per-commit equivalent to match.
+* `merged_pr` — GitHub says the PR merged. The only signal that survives a
+  squash merge once the target ref has moved on, and the only one that costs a
+  round trip, which is why the ladder reaches it last.
+
+Every one of them answers "no" rather than raising when it cannot ask: a ref
+that does not resolve, a base that was never fetched, a `gh` that is absent,
+unauthenticated or rate-limited. "Landed" is the answer that suppresses
+something — a refusal for one caller, a warning for the other — so a question
+nobody could answer must never be able to produce it.
+
+`check` is that ladder for a caller that wants one answer and would rather not
+spend the round trip. The signals are exported one at a time as well, because
+the ordering belongs to the caller: `pr rebase` asks the tracker *first*, and
+before the checkout, because `fetch --prune` has just dropped the
+`origin/<branch>` that checkout would start from — its refusal has to come
+before the checkout or it never comes at all.
+
+`Landed` carries no branch name. Each detail line describes the comparison
+rather than who was compared, so a caller pairs it with whatever it calls the
+branch and renders the two together.
+
 ### gh_client.py
 
 One way to run gh, and the reads every caller was hand-rolling.
@@ -1900,7 +1940,9 @@ Reconciliation runs at the start of the next `pr` command. That is later than
 the shell prompt and much cheaper: no network call sits near the prompt, and
 `pr` is both the workbench's git surface and somewhere that can always print.
 It costs one failed `stat` when nothing is pending — every run but the ones
-that matter — and one `ls-remote` per pending ref when something is.
+that matter — and one `ls-remote` per pending ref when something is. A ref that
+comes back looking lost costs a few local ref reads on top, and at most one `gh`
+call, for the reason `_landed_elsewhere` gives.
 
 The record's whole lifecycle is designed against a permanent false alarm:
 
@@ -1910,6 +1952,10 @@ The record's whole lifecycle is designed against a permanent false alarm:
   a ref being removed has no commit left to verify.
 * A remote that has moved *past* the recorded commit landed it and was built
   upon; `_built_upon` asks that locally before anything is reported.
+* A commit whose work reached the default branch under another sha landed too,
+  however its own ref ended up. `_landed_elsewhere` is what covers the squash
+  merge that deletes its head branch — the ordinary end of a PR here, and
+  otherwise a guaranteed false alarm for every one of them.
 * A record whose working tree has since been removed drains in silence, which
   is what makes a push between throwaway repositories — a test suite's, say —
   cost nothing to have recorded, without this having to know what a temp root

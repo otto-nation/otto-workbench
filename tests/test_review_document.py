@@ -8,6 +8,11 @@ in two halves — what `render` and `from_meta` put on disk, and what `parse` an
 `set_status` make of a header they did not write. `ReviewDocument` is tested
 against the same split: what it renders for a document being built, and what it
 makes of one it is handed.
+
+The readers are the second half of that: what a document handed back says about
+its sections, its findings and the call it reached. Absent and empty are the
+distinction they turn on — a review nobody wrote reaches no verdict, while one
+written with nothing in it approves.
 """
 
 import sys
@@ -16,10 +21,20 @@ from pathlib import Path
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
+import pytest
 from agent_types import Mode
-from pr_domains import ReviewStatus
-from review_document import ReviewDocument, ReviewHeader, review_title, set_status
+from pr_domains import ReviewStatus, ReviewVerdict
+from review_document import (
+    ReviewDocument, ReviewHeader, resolve_review_verdict, review_title, section_span,
+    set_status,
+)
 from review_types import ReviewMeta, ReviewType
+
+
+def _write(tmp_path, body: str) -> Path:
+    review = tmp_path / "review.md"
+    review.write_text(body)
+    return review
 
 
 class TestRender:
@@ -294,3 +309,185 @@ class TestDocumentParse:
         assert document.title == ""
         assert document.header == ReviewHeader()
         assert document.body == "## Summary\nnothing here\n"
+
+
+class TestSectionSpan:
+    def test_the_span_excludes_the_heading_and_stops_at_the_next_one(self):
+        text = "## Summary\nfirst\n\n## Verdict\nApprove\n"
+        start, end = section_span(text, "Summary")
+        assert text[start:end] == "\nfirst\n\n"
+
+    def test_the_last_section_runs_to_the_end_of_the_text(self):
+        text = "## Summary\nfirst\n\n## Verdict\nApprove\n"
+        start, end = section_span(text, "Verdict")
+        assert text[start:end] == "\nApprove\n"
+        assert end == len(text)
+
+    def test_a_section_the_text_does_not_carry_has_no_span(self):
+        assert section_span("## Summary\nfirst\n", "Verdict") is None
+
+    def test_headers_match_however_the_writer_capitalised_them(self):
+        """The review agent writes its own headings, so `## Must Fix` and
+        `## Must fix` name the same section."""
+        text = "## Must Fix\n- **[M1]** a.py:1 — bug\n"
+        start, end = section_span(text, "Must fix")
+        assert text[start:end].strip() == "- **[M1]** a.py:1 — bug"
+
+    def test_a_heading_carrying_more_than_the_header_is_a_different_section(self):
+        assert section_span("## Verdict and rationale\nApprove\n", "Verdict") is None
+
+
+class TestSection:
+    def test_a_section_reads_back_stripped(self):
+        document = ReviewDocument.parse("## Summary\n\nthe prose\n\n## Verdict\nApprove\n")
+        assert document.section("Summary") == "the prose"
+
+    def test_a_section_the_document_does_not_carry_is_empty(self):
+        assert ReviewDocument.parse("## Summary\nprose\n").section("Verdict") == ""
+
+    def test_the_metadata_header_is_not_part_of_any_section(self):
+        """Read off the body, so the frame above it cannot be mistaken for the
+        first section's contents."""
+        text = (
+            "# Review: acme/widget#42\n"
+            "<!-- head_sha: abc -->\n"
+            "\n"
+            "## Summary\nthe prose\n"
+        )
+        assert ReviewDocument.parse(text).section("Summary") == "the prose"
+
+
+class TestRead:
+    def test_a_document_on_disk_reads_back_parsed(self, tmp_path):
+        review = _write(tmp_path, "# Review: acme/widget#42\n<!-- head_sha: abc -->\n\n## Summary\nx\n")
+        document = ReviewDocument.read(review)
+        assert document is not None
+        assert document.header.head_sha == "abc"
+        assert document.section("Summary") == "x"
+
+    def test_a_review_nobody_wrote_is_not_an_empty_one(self, tmp_path):
+        """The distinction every caller of `read` turns on: absent is None, and
+        an empty file is a document that declares nothing."""
+        assert ReviewDocument.read(tmp_path / "nonexistent.md") is None
+        assert ReviewDocument.read(None) is None
+        assert ReviewDocument.read(_write(tmp_path, "")) == ReviewDocument()
+
+    def test_a_path_that_is_not_a_file_has_no_document(self, tmp_path):
+        assert ReviewDocument.read(tmp_path) is None
+
+    def test_a_path_given_as_a_string_reads_the_same(self, tmp_path):
+        review = _write(tmp_path, "## Summary\nx\n")
+        assert ReviewDocument.read(str(review)) == ReviewDocument.read(review)
+
+
+class TestCounts:
+    def test_every_severity_is_counted(self):
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- **[M1]** path:1 — description\n"
+            "- **[M2]** path:2 — description\n"
+            "## Should fix\n"
+            "- **[S1]** path:3 — description\n"
+        )
+        assert document.counts == {"M": 2, "S": 1, "N": 0, "I": 0}
+
+    def test_a_resolved_finding_is_no_longer_counted(self):
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- **[M1]** path:1 — active\n"
+            "- ~~**[M2]** path:2 — resolved~~\n"
+        )
+        assert document.counts["M"] == 1
+
+    def test_the_fix_passs_checkbox_does_not_hide_a_finding(self):
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- [ ] **[M1]** path:1 — with checkbox\n"
+            "- **[M2]** path:2 — without checkbox\n"
+        )
+        assert document.counts["M"] == 2
+
+    def test_a_document_declaring_nothing_is_zeroed_not_empty(self):
+        """Callers index the result directly, so every key must be present."""
+        assert ReviewDocument().counts == {"M": 0, "S": 0, "N": 0, "I": 0}
+
+    def test_a_reference_to_a_finding_is_not_a_second_finding(self):
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- **[M1]** path:1 — bug\n"
+            "  - see [M1] above\n"
+        )
+        assert document.counts["M"] == 1
+
+
+class TestVerdict:
+    @pytest.mark.parametrize("prose,expected", [
+        ("Approve", ReviewVerdict.APPROVE),
+        ("**Needs discussion**", ReviewVerdict.NEEDS_DISCUSSION),
+        ("Request changes", ReviewVerdict.CHANGES_REQUESTED),
+        ("Disapprove", ReviewVerdict.DISAPPROVE),
+        ("disapprove", ReviewVerdict.DISAPPROVE),
+    ])
+    def test_the_verdict_section_is_read_however_it_is_worded(self, prose, expected):
+        document = ReviewDocument.parse(f"## Verdict\n{prose} — rationale.\n")
+        assert document.verdict is expected
+
+    def test_wording_that_states_no_verdict_states_none(self):
+        assert ReviewDocument.parse("## Verdict\nLooks fine to me.\n").verdict is None
+
+    def test_a_document_with_no_verdict_section_states_none(self):
+        text = "## Summary\nSome findings.\n## Must fix\n- **[M1]** a:1 — bug\n"
+        assert ReviewDocument.parse(text).verdict is None
+
+    def test_a_verdict_word_outside_the_section_is_not_the_verdict(self):
+        """Prose elsewhere describes the review; only the Verdict section
+        declares one."""
+        text = "## Summary\nI would approve this once the tests land.\n"
+        assert ReviewDocument.parse(text).verdict is None
+
+
+class TestResolveVerdict:
+    def test_the_counts_speak_when_the_prose_does_not(self):
+        document = ReviewDocument.parse("## Should fix\n- **[S1]** a.py:1 — improvement\n")
+        assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION
+
+    def test_prose_cannot_under_report_blocking_findings(self):
+        document = ReviewDocument.parse(
+            "## Must fix\n- **[M1]** a.py:1 — bug\n\n## Verdict\nApprove — looks fine.\n",
+        )
+        assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
+
+    def test_counts_cannot_discard_a_stronger_call(self):
+        document = ReviewDocument.parse(
+            "## Nit\n- **[N1]** a.py:1 — style\n\n## Verdict\nRequest changes — rework it.\n",
+        )
+        assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
+
+    def test_disapprove_survives_any_counts(self):
+        document = ReviewDocument.parse("## Verdict\nDisapprove — wrong approach.\n")
+        assert resolve_review_verdict(document) is ReviewVerdict.DISAPPROVE
+
+    def test_a_self_review_is_advisory(self):
+        document = ReviewDocument.parse("## Must fix\n- **[M1]** a.py:1 — bug\n")
+        assert resolve_review_verdict(document, self_review=True) is None
+
+    def test_a_self_review_still_reports_disapprove(self):
+        """Disapprove judges the approach, which holds with or without a PR."""
+        document = ReviewDocument.parse("## Verdict\nDisapprove — wrong approach.\n")
+        assert resolve_review_verdict(document, self_review=True) is ReviewVerdict.DISAPPROVE
+
+    def test_a_review_that_was_never_written_reaches_no_verdict(self):
+        assert resolve_review_verdict(None) is None
+
+    def test_a_review_that_found_nothing_approves(self):
+        """The other half of the distinction above: an empty document is a
+        review that ran and had nothing to say."""
+        assert resolve_review_verdict(ReviewDocument()) is ReviewVerdict.APPROVE
+
+    def test_the_counts_come_from_the_document_it_was_handed(self, tmp_path):
+        """One document, read once — the verdict cannot be resolved against
+        counts from a file the caller re-read in between."""
+        document = ReviewDocument.read(
+            _write(tmp_path, "## Should fix\n- **[S1]** a.py:1 — improvement\n\n## Verdict\nApprove — fine.\n"),
+        )
+        assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION

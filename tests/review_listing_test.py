@@ -13,7 +13,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import review_common  # noqa: E402
+import pr_domains  # noqa: E402
 import review_listing  # noqa: E402
 import review_types  # noqa: E402
 
@@ -125,7 +125,7 @@ def test_a_pr_review_of_the_same_findings_does_report_one(reviews_dir):
 
     row, = review_listing.rows()
 
-    assert row.verdict == review_common.ReviewVerdict.CHANGES_REQUESTED.value
+    assert row.verdict == pr_domains.ReviewVerdict.CHANGES_REQUESTED.value
 
 
 def test_an_orphaned_directory_is_not_a_review(reviews_dir):

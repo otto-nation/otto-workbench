@@ -50,6 +50,9 @@ from pr_domains import ReviewVerdict
 from review_common import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, plural,
 )
+from review_document import (
+    SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument, section_span,
+)
 from review_types import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, PriorDisposition,
     disposition_precedence, severity_by_key,
@@ -410,17 +413,6 @@ def parse_diff_hunks(diff_text: str) -> dict[str, list[tuple[int, int]]]:
 
 # ── Section extraction ───────────────────────────────────────────────────────
 
-def _extract_section(content: str, header: str) -> str:
-    pattern = rf"^## {re.escape(header)}\s*\n"
-    m = re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
-    if not m:
-        return ""
-    start = m.end()
-    next_header = re.search(r"^## ", content[start:], re.MULTILINE)
-    end = start + next_header.start() if next_header else len(content)
-    return content[start:end].strip()
-
-
 _EMPTY_SECTION_LINE_RE = re.compile(
     r"^(?:_none\._|_\(none\)_|_none in this file group\._|---)\s*$",
     re.IGNORECASE,
@@ -636,7 +628,8 @@ def _merge_one_review(
     content: str, merged_triage: str,
     merged: dict[str, str], offsets: dict[str, int],
 ) -> str:
-    triage = _extract_section(content, SECTION_FILE_TRIAGE)
+    doc = ReviewDocument.parse(content)
+    triage = doc.section(SECTION_FILE_TRIAGE)
     if triage:
         cleaned = _clean_triage(triage)
         if cleaned:
@@ -644,12 +637,12 @@ def _merge_one_review(
     # Kept out of the renumbering below: these IDs belong to the prior review,
     # and each group only dispositions the prior findings for its own files, so
     # the merged ledger is the union of what every group accounted for.
-    ledger = _clean_section_text(_extract_section(content, SECTION_PRIOR_FINDINGS))
+    ledger = _clean_section_text(doc.section(SECTION_PRIOR_FINDINGS))
     if ledger:
         merged[SECTION_PRIOR_FINDINGS] += ledger + "\n"
     for severity in SEVERITIES:
         section = severity.section
-        raw = _clean_section_text(_extract_section(content, section))
+        raw = _clean_section_text(doc.section(section))
         text, highest = renumber_section(severity.key, raw, offsets[section])
         if text:
             merged[section] += text + "\n"
@@ -1125,7 +1118,7 @@ def _stable_ids(text: str) -> set[str]:
 
 def _parse_ledger(review_text: str) -> list[LedgerEntry]:
     """The entries of the review's prior-findings ledger, in order."""
-    section = _extract_section(review_text, SECTION_PRIOR_FINDINGS)
+    section = ReviewDocument.parse(review_text).section(SECTION_PRIOR_FINDINGS)
     entries = (_parse_ledger_line(raw) for raw in section.split("\n"))
     return [entry for entry in entries if entry]
 
@@ -1215,16 +1208,6 @@ def mechanical_verdict(counts: dict[str, int]) -> str:
 _DROP_NOTE_MARKER = "<!-- verification-drops -->"
 
 
-def _section_bounds(text: str, header: str) -> tuple[int, int] | None:
-    """Character span of a `## <header>` section's body, heading excluded."""
-    m = re.search(rf"^## {re.escape(header)}\s*$", text, re.MULTILINE | re.IGNORECASE)
-    if not m:
-        return None
-    start = m.end()
-    nxt = re.search(r"^## ", text[start:], re.MULTILINE)
-    return start, start + nxt.start() if nxt else len(text)
-
-
 def _drop_note(details: list[dict], dropped: list[str]) -> str:
     """A blockquote naming every dropped finding and why it went.
 
@@ -1244,7 +1227,7 @@ def _drop_note(details: list[dict], dropped: list[str]) -> str:
 
 
 def _insert_drop_note(text: str, note: str) -> str:
-    bounds = _section_bounds(text, "Summary")
+    bounds = section_span(text, SECTION_SUMMARY)
     if bounds is None:
         # No Summary to correct — the mechanical paths build theirs from this
         # text afterwards, so the note goes above the findings it explains and
@@ -1265,7 +1248,7 @@ def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
     Dropping only ever removes findings, so a stale verdict can only overstate
     — the revision lowers, never raises, and leaves an unranked verdict alone.
     """
-    bounds = _section_bounds(text, "Verdict")
+    bounds = section_span(text, SECTION_VERDICT)
     if bounds is None:
         return text
 

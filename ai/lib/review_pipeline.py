@@ -27,7 +27,6 @@ from agent_registry import PHASES, SCAN_PHASES
 from agent_types import EFFORT_PRESETS, Mode, Phase
 from pr_domains import ReviewStatus
 from review_common import (
-    count_severities,
     phase_log_path,
     phase_output_path,
     phase_skip_argv,
@@ -603,7 +602,8 @@ def _run_disprove_gate(
         )
         failure = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
     else:
-        counts = count_severities(Path(job.review_file))
+        doc = ReviewDocument.read(job.review_file) or ReviewDocument()
+        counts = doc.counts
         ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
         if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
             result = _phase_disprove(job)

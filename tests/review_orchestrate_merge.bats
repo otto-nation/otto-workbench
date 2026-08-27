@@ -231,23 +231,6 @@ PYEOF
   [[ "$result" == *"- svc-card: agent hit max turns (10)"* ]]
 }
 
-# ── _extract_section ─────────────────────────────────────────────────────────
-
-@test "_extract_section: case-insensitive header matching" {
-  result=$(_py "
-content = '''## Must Fix
-- [M1] bug in auth
-
-## Should fix
-- [S1] cleanup
-'''
-result = mod._extract_section(content, 'Must fix')
-print(result)
-")
-  [[ "$result" == *"[M1]"* ]]
-  [[ "$result" == *"bug in auth"* ]]
-}
-
 @test "_validate_group_output: valid output with sections returns True" {
   cat > "$TMPDIR/valid.md" <<'EOF'
 ## Must fix

@@ -17,37 +17,43 @@ from pathlib import Path
 from agent_types import Mode
 from review_common import (
     aggregate_session_usage,
-    count_severities,
     read_review_meta,
-    resolve_review_verdict,
 )
+from review_document import ReviewDocument, resolve_review_verdict
 from review_state import build_failure_detail, read_pipeline_status
 from review_types import SEVERITIES, ReviewMeta
+
+
+def _read_review(path: Path | None) -> str | None:
+    """The review's text, or None when there is no readable file at `path`."""
+    if not path or not path.is_file():
+        return None
+    try:
+        return path.read_text()
+    except OSError:
+        return None
 
 
 def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
     """Build a review summary dict for a review."""
     review_path = Path(review_file) if review_file else None
-    by_key = count_severities(review_path)
+    # The document the summary reports on and the text it carries verbatim are
+    # one file, read once: `review_content` is what was on disk, not what
+    # re-rendering the parse would produce.
+    review_content = _read_review(review_path)
+    doc = ReviewDocument.parse(review_content) if review_content is not None else None
+
+    by_key = (doc or ReviewDocument()).counts
     counts = {s.json_key: by_key[s.key] for s in SEVERITIES}
     total = sum(by_key.values())
 
     review_dir = Path(review_file).parent if review_file else None
     meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
 
-    resolved = resolve_review_verdict(
-        review_path, counts=by_key, self_review=meta.mode is Mode.SELF,
-    )
+    resolved = resolve_review_verdict(doc, self_review=meta.mode is Mode.SELF)
     verdict = resolved.value if resolved else ""
 
     usage = aggregate_session_usage(review_dir)
-
-    review_content = None
-    if review_path and review_path.is_file():
-        try:
-            review_content = review_path.read_text()
-        except OSError:
-            pass
 
     status = read_pipeline_status(review_dir)
     failure_detail = build_failure_detail(review_dir)

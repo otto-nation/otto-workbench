@@ -18,7 +18,15 @@ never told about survives an edit instead of being dropped by it.
 this module defines. Editing one that is already on disk is a different job and
 stays a text edit, because a header read back off disk states only what its
 writer chose to state — re-rendering it would add this module's defaults as
-claims the original never made.
+claims the original never made. `section_span` is what an in-place edit asks
+instead: the offsets of the section it is rewriting, leaving every byte outside
+them alone.
+
+Reading a document is the same one owner from the other side. What a review
+says — which sections it carries, how many findings of each severity it
+declares, and the call it reached — is answered off the parsed document rather
+than by a regex each caller brings, so two readers of one review cannot report
+different things about it.
 """
 
 # doc-group: pipeline
@@ -31,8 +39,15 @@ from enum import StrEnum
 from pathlib import Path
 
 from agent_types import Mode
-from pr_domains import ReviewStatus
-from review_types import ReviewMeta, ReviewType, meta_enum
+from pr_domains import ReviewStatus, ReviewVerdict
+from review_types import (
+    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, ReviewMeta, ReviewType, meta_enum,
+)
+
+# The two sections this module reads by name. Every other header a review
+# carries is the caller's vocabulary, passed to `section` as a string.
+SECTION_SUMMARY = "Summary"
+SECTION_VERDICT = "Verdict"
 
 
 class MetaKey(StrEnum):
@@ -56,6 +71,12 @@ class MetaKey(StrEnum):
 
 _LINE_RE = re.compile(r"<!--\s*([a-z_]+):\s*(.*?)\s*-->")
 _STATUS_RE = re.compile(rf"<!--\s*{MetaKey.STATUS}:[^>]*-->")
+
+# A finding declaration, as `counts` tallies them: a list item whose first
+# content is the bold ID, with the fix pass's checkbox optionally in front. The
+# `- ~~**[M2]**` a resolved finding is struck through with does not match, which
+# is what keeps a review's counts to the findings still open.
+_FINDING_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 
 def _line(key: MetaKey, value: object) -> str:
@@ -190,6 +211,28 @@ def set_status(content: str, status: ReviewStatus) -> str:
     return content.replace("## ", f"{line}\n\n## ", 1)
 
 
+def section_span(text: str, header: str) -> tuple[int, int] | None:
+    """Where `text`'s `## <header>` section body sits, or None when it has none.
+
+    The span opens at the end of the heading line and closes at the next `## `
+    or the end of the text, so the slice it names is the section's contents
+    with the heading excluded and the blank lines around it intact.
+
+    The one owner of where a section begins and ends. A reader after the
+    contents asks `ReviewDocument.section`; an edit rewriting one section of a
+    document already on disk asks here, because parsing and re-rendering that
+    document would restate a header its writer never wrote. Headers are matched
+    case-insensitively: the review agent writes its own, and `## Must Fix` names
+    the same section as `## Must fix`.
+    """
+    m = re.search(rf"^## {re.escape(header)}\s*$", text, re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return None
+    start = m.end()
+    nxt = re.search(r"^## ", text[start:], re.MULTILINE)
+    return start, start + nxt.start() if nxt else len(text)
+
+
 def review_title(meta: ReviewMeta) -> str:
     """The `# ...` line a review opens with, as the attribution in `meta` reads.
 
@@ -259,6 +302,86 @@ class ReviewDocument:
             title=title,
             body="\n".join(lines[end:]),
         )
+
+    @classmethod
+    def read(cls, path: str | Path | None) -> ReviewDocument | None:
+        """The document at `path`, or None when there is no readable one there.
+
+        An absent review is not an empty one. A caller handed a document either
+        way would report a review with no findings and nothing to say where in
+        fact no review was ever written, so the two answers stay distinct and
+        the caller decides what an absent one means.
+        """
+        if not path:
+            return None
+        file = Path(path)
+        if not file.is_file():
+            return None
+        try:
+            return cls.parse(file.read_text())
+        except OSError:
+            return None
+
+    def section(self, header: str) -> str:
+        """The body of the `## <header>` section, stripped, or "" when absent.
+
+        Read off the body, so a metadata comment above it can never be mistaken
+        for the section's contents.
+        """
+        span = section_span(self.body, header)
+        return self.body[span[0]:span[1]].strip() if span else ""
+
+    @property
+    def counts(self) -> dict[str, int]:
+        """How many findings of each severity the document declares.
+
+        Keyed by severity key and always complete, so a caller can index the
+        result rather than guarding every key. A struck-through finding is one
+        the review resolved and is not counted.
+        """
+        return {
+            s.key: len(re.findall(
+                _FINDING_COUNT_RE_FMT.format(re.escape(s.key)), self.body, re.MULTILINE,
+            ))
+            for s in SEVERITIES
+        }
+
+    @property
+    def verdict(self) -> ReviewVerdict | None:
+        """The verdict the `## Verdict` section states, if it states one."""
+        return ReviewVerdict.stated_in(self.section(SECTION_VERDICT))
+
+
+def resolve_review_verdict(
+    doc: ReviewDocument | None, *, self_review: bool = False,
+) -> ReviewVerdict | None:
+    """The verdict to record and report for a finished review.
+
+    The prose the synthesis agent wrote and the findings that survived
+    verification are two readings of the same document, and this is the only
+    place they are reconciled: the stronger call wins, so the prose can never
+    under-report findings that block, and the counts can never quietly discard
+    a stronger call the agent made. Disapprove is unranked and always stands —
+    no count implies it and none refutes it.
+
+    A review that was never written reaches no verdict at all, which is why
+    this takes the document rather than a path: absent and empty are different
+    answers and only the caller that went looking can tell them apart.
+    """
+    if doc is None:
+        return None
+    stated = doc.verdict
+    if stated is ReviewVerdict.DISAPPROVE:
+        return stated
+    # A self-review is advisory — it has no PR to approve or block. Disapprove
+    # is the exception above: it judges the approach, which holds without a PR.
+    if self_review:
+        return None
+    counts = doc.counts
+    derived = ReviewVerdict.from_counts(
+        counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
+    )
+    return stated if stated and stated.outranks(derived) else derived
 
 
 def _is_header_line(line: str) -> bool:

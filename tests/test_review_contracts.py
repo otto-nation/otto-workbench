@@ -1,7 +1,7 @@
 """Cross-file contract tests for the claude-review system.
 
 Verifies that constants, templates, regex patterns, and CLI interfaces
-stay consistent across review_common, review_findings, review_prompt,
+stay consistent across review_common, review_document, review_prompt,
 review-templates/, and agents/reviewer.md.
 
 All expectations are derived dynamically from source — no hardcoded lists.
@@ -24,7 +24,7 @@ TEMPLATE_DIR = LIB_DIR / "review-templates"
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
 AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"
 
-# Insert lib dir so we can import review_common / review_findings directly
+# Insert lib dir so we can import review_common / review_document directly
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
@@ -36,7 +36,6 @@ import review_common  # noqa: E402
 from agent_registry import PHASES, REVIEW_PHASES  # noqa: E402
 from agent_types import Mode, Phase, PhaseShape  # noqa: E402
 import review_document  # noqa: E402
-import review_findings  # noqa: E402
 import review_fix  # noqa: E402
 import review_prompt  # noqa: E402
 import review_types  # noqa: E402

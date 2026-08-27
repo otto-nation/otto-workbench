@@ -343,8 +343,8 @@ _run_migration_targets() {
 # A migration that returns MIGRATION_NOOP found the target already in the shape
 # it exists to produce. That is recorded like any other success — the answer
 # will not change on a later sync — but it is not announced, and the count in
-# the line printed for a checkout-scoped migration is repos changed rather than
-# repos visited.
+# the line printed for a checkout-scoped or repo-scoped migration is targets
+# changed rather than targets visited.
 #
 # A migration that returns MIGRATION_DEFERRED found no target at all. That is
 # not recorded and not announced, so the next sync runs it again against a file
@@ -369,7 +369,8 @@ run_component_migrations() {
     base_key="$component_rel/$basename_m"
 
     # Already applied — skip. For a checkout-scoped migration that means every
-    # registered repo has its own entry, not that the machine has one.
+    # registered work tree has its own entry, and for a repo-scoped one every
+    # distinct repo has one — not that the machine has one.
     _migration_targets target_args target_keys "$migration" "$base_key" "$state_file"
     if (( ${#target_args[@]} == 0 )); then
       skipped=$(( skipped + 1 ))
@@ -496,7 +497,7 @@ _forget_adoption_sensitive_migrations() {
   info "$forgotten adoption-sensitive migration(s) will run again — adoption moved data back into what they drain"
 }
 
-# _migration_target_departed BASE PROJECT CHECKOUT_KEYS_REF REPO_KEYS_REF
+# _migration_entry_unclaimed BASE PROJECT CHECKOUT_KEYS_REF REPO_KEYS_REF
 #   REGISTERED_REF REGISTERED_REPOS_REF
 # True when PROJECT no longer belongs to the set BASE's scope has to be checked
 # against — a work tree for a checkout-scoped key, a repo id for a repo-scoped
@@ -505,7 +506,7 @@ _forget_adoption_sensitive_migrations() {
 # A free function rather than nested `if`s inline in the caller's loop, which
 # is what validate-nesting's depth limit rules out for a three-way branch that
 # each also has its own emptiness check.
-_migration_target_departed() {
+_migration_entry_unclaimed() {
   local base="$1" project="$2"
   local -n __checkout_keys="$3" __repo_keys="$4" __registered="$5" __registered_repos="$6"
   if _array_contains "$base" "${__repo_keys[@]}"; then
@@ -579,7 +580,7 @@ _prune_stale_migration_state() {
     # A target that has left the registry is dropped here too, and silently. A
     # checkout is removed by `wt remove` as a matter of routine, and its
     # bookkeeping following it out is not something an operator can act on.
-    if _migration_target_departed "$base" "$project" checkout_keys repo_keys registered registered_repos; then
+    if _migration_entry_unclaimed "$base" "$project" checkout_keys repo_keys registered registered_repos; then
       rewrite=true
       continue
     fi

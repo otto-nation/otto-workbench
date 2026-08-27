@@ -245,8 +245,13 @@ A review is a sequence of agent phases. What a phase *is* — its built-in spec,
 and how that spec resolves against the config file and the environment — is
 `agent_registry` and `agent_phases`, which the whole workbench shares. This module
 is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
-one review's worktree, session log and throttle, and the executors that run
-each phase.
+one review's worktree, session log and throttle, and `run_phase`, which drives
+one of them end to end.
+
+Running an agent phase is the same nine steps whichever phase it is, so there is
+one function rather than one per phase. What differs is what its artifact means
+afterwards, and that is `_SCANS` — one entry per phase, read through `read_scan`
+so the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they

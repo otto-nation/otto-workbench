@@ -69,7 +69,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
         scales_with_omitted=False,
     ),
     PhaseSpec(
-        Phase.DISPROVE, PhaseDomain.REVIEW, "Disprove",
+        Phase.DISPROVE, PhaseDomain.REVIEW, "Disprove gate",
         template="disprove.md", optional=True,
         thinking=Thinking.MEDIUM, max_turns=15,
         agent=AgentKind.REVIEWER_LITE,

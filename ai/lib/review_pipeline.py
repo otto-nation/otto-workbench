@@ -24,6 +24,7 @@ from pathlib import Path
 import git_client
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
+from agent_registry import PHASES
 from agent_types import EFFORT_PRESETS, Mode, Phase
 from review_common import (
     count_severities,
@@ -61,12 +62,12 @@ from review_prompt import (
     _is_incremental, _scope_prior_review,
     build_prompt,
 )
-from review_scout import format_leads_block, parse_scout_output
 from review_agent import _parse_session_cost
 from review_phases import (
     PhaseResult, PhaseRunner,
-    _phase_disprove, _phase_group_reviews, _phase_holistic,
-    _phase_merge, _phase_scout, _should_disprove, _synthesis_max_turns, _touch,
+    _phase_disprove, _phase_group_reviews,
+    _phase_merge, _should_disprove, _synthesis_max_turns, _touch,
+    read_scan, run_phase,
 )
 from review_retry import (
     GroupFailure,
@@ -438,8 +439,9 @@ def _holistic_skip_reason(
     return None
 
 
-def _use_scout(job: ReviewJob) -> bool:
-    return Phase.SCOUT not in job.skipped
+def _scan_phase(job: ReviewJob) -> Phase:
+    """Which of phase 1's two candidates this job runs."""
+    return Phase.HOLISTIC if Phase.SCOUT in job.skipped else Phase.SCOUT
 
 
 def _run_holistic_phase(
@@ -460,31 +462,18 @@ def _run_holistic_phase(
             _write_pipeline_state(job, state)
         return PhaseResult()
 
-    if _use_scout(job):
-        scout_output = phase_output_path(job.review_file, Phase.SCOUT)
-        if resume_exists and _has_output(scout_output):
-            raw = Path(scout_output).read_text()
-            leads, no_scrutiny = parse_scout_output(raw)
-            log.info("Phase 1: Scout scan skipped (exists)")
-            return PhaseResult(
-                log=phase_log_path(job.review_file, Phase.SCOUT),
-                content=format_leads_block(leads, no_scrutiny), output=scout_output,
-            )
-
-        result = _phase_scout(job, group_count)
-        state.holistic_done = True
-        _write_pipeline_state(job, state)
-        return result
-
-    holistic_output = phase_output_path(job.review_file, Phase.HOLISTIC)
-    if resume_exists and _has_output(holistic_output):
-        log.info("Phase 1: Holistic scan skipped (exists)")
+    phase = _scan_phase(job)
+    label = PHASES[phase].label
+    output = phase_output_path(job.review_file, phase)
+    if resume_exists and _has_output(output):
+        log.info(f"Phase 1: {label} skipped (exists)")
         return PhaseResult(
-            log=phase_log_path(job.review_file, Phase.HOLISTIC),
-            content=Path(holistic_output).read_text(), output=holistic_output,
+            log=phase_log_path(job.review_file, phase),
+            content=read_scan(phase, Path(output).read_text()),
+            output=output,
         )
 
-    result = _phase_holistic(job, group_count)
+    result = run_phase(job, phase, f"Phase 1/{group_count}: {label}...")
     state.holistic_done = True
     _write_pipeline_state(job, state)
     return result

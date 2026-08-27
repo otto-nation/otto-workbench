@@ -90,9 +90,11 @@ _NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
 class Diagnosis:
     """A single agent run's failure, classified once and rendered on demand.
 
-    Frozen because two of the pipeline's decisions compare diagnoses for
-    equality — the consecutive-failure abort and the all-groups-failed circuit
-    breaker — and one of them puts them in a set.
+    Frozen because two of the pipeline's decisions compare diagnoses — the
+    consecutive-failure abort and the all-groups-failed circuit breaker — and
+    one of them puts them in a set. The abort compares `reason_key` rather than
+    the whole record, so a detail that measures the failure instead of naming it
+    does not read as a new reason each time.
     """
 
     kind: DiagnosisKind
@@ -125,6 +127,22 @@ class Diagnosis:
             # gets a word rather than a blank cell.
             return self.detail or DiagnosisKind.UNKNOWN.value
         return _DIAGNOSIS_MESSAGES[self.kind]
+
+    @property
+    def reason_key(self) -> tuple:
+        """What "the same reason" means when failures are counted in a row.
+
+        The detail is normally the reason — one agent error is a different cause
+        from another — so it is part of the key. A prompt over the budget is the
+        exception: its detail is the measurement, and every group measures a
+        different number of kilobytes. Comparing whole diagnoses there makes a
+        run that is structurally guaranteed to fail on every group look like a
+        run failing for a new reason each time, and the consecutive-failure
+        abort never trips.
+        """
+        if self.kind is DiagnosisKind.PROMPT_TOO_LARGE:
+            return (self.kind,)
+        return (self.kind, self.detail, self.no_write_tool, self.num_turns)
 
     @property
     def recoverable(self) -> bool:

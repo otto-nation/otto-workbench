@@ -1436,6 +1436,23 @@ class TestCheckSerialAbort:
         assert msg == ""
         assert consec == 1
 
+    def test_oversized_prompts_count_together_despite_differing_sizes(self, ro, tmp_path):
+        """The detail measures the failure here rather than naming it.
+
+        Every group renders a different number of kilobytes, so comparing whole
+        diagnoses read as a new reason each time and the streak never built —
+        leaving a run that cannot prompt any group grinding through all of them.
+        """
+        log = tmp_path / "session.jsonl"
+        log.write_text(json.dumps({"type": "result", "subtype": "max_turns"}) + "\n")
+        msg, consec, last = ro._check_serial_abort(
+            3, 10,
+            ro.Diagnosis(ro.DiagnosisKind.PROMPT_TOO_LARGE, detail="group prompt is 512KB"),
+            str(log), ro.CONSECUTIVE_FAIL_THRESHOLD - 1,
+            ro.Diagnosis(ro.DiagnosisKind.PROMPT_TOO_LARGE, detail="group prompt is 604KB"),
+        )
+        assert "consecutive failures" in msg
+
     def test_different_reason_resets(self, ro, tmp_path):
         log = tmp_path / "session.jsonl"
         log.write_text(json.dumps({"type": "result", "subtype": "max_turns"}) + "\n")

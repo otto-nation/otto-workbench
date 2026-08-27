@@ -23,6 +23,17 @@ def _git(repo: Path, *args: str) -> str:
     return git_out(repo, *args).strip()
 
 
+def _init_repo(tmp_path: Path) -> Path:
+    """An empty repo with an identity and no signing, ready to commit into."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main", "-q")
+    _git(repo, "config", "user.email", "test@test.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "commit.gpgsign", "false")
+    return repo
+
+
 def _make_job(head_sha: str, prior_review: str = "") -> rp.ReviewJob:
     pr = rp.PRMetadata(
         title="test",
@@ -73,12 +84,7 @@ class TestCollectDeltaMode:
 
     @staticmethod
     def _repo_with_prior_commit(tmp_path: Path) -> tuple[Path, str]:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        _git(repo, "init", "-b", "main", "-q")
-        _git(repo, "config", "user.email", "test@test.com")
-        _git(repo, "config", "user.name", "Test")
-        _git(repo, "config", "commit.gpgsign", "false")
+        repo = _init_repo(tmp_path)
         (repo / "reviewed.go").write_text("package main\n")
         _git(repo, "add", ".")
         _git(repo, "commit", "-q", "--no-verify", "-m", "reviewed")
@@ -127,12 +133,7 @@ class TestCollectDeltaSurface:
 
     @staticmethod
     def _repo(tmp_path: Path) -> tuple[Path, str]:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        _git(repo, "init", "-b", "main", "-q")
-        _git(repo, "config", "user.email", "test@test.com")
-        _git(repo, "config", "user.name", "Test")
-        _git(repo, "config", "commit.gpgsign", "false")
+        repo = _init_repo(tmp_path)
         (repo / "mine.go").write_text("package main\n")
         _git(repo, "add", ".")
         _git(repo, "commit", "-q", "--no-verify", "-m", "reviewed")

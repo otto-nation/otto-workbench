@@ -305,8 +305,10 @@ def _build_omitted_guidance(
     ``skip_file_contents`` fills the "Files not pre-collected" list with every
     changed file rather than only the oversized ones, so the batch read is owed
     even when ``omitted_files`` is empty. ``skip_omitted`` is the opposite case
-    and wins over both: at an effort level that does not review the large files,
-    naming them only invites work the run has already declined.
+    and suppresses the read, but only while the contents are still in the
+    prompt: at an effort level that does not review the large files, naming
+    them invites work the run has declined — whereas a file the *budget* took
+    out is one the phase does review and now has nowhere else to get.
     """
     if not preflight or not (preflight.omitted_files or skip_file_contents):
         return ""
@@ -913,7 +915,17 @@ def _fit_budget(
 
     diff_bytes = MAX_PROMPT_BYTES - fixed - contents - len(delta.encode())
     if diff_bytes < min_diff:
-        cuts.append(f"the full diff, floored at {min_diff // 1024}KB")
+        # The shortfall is what the last lever could not absorb, so it is also
+        # what the rendered prompt will be over by — say it here rather than let
+        # the floor read as a cut that solved something. A phase passing
+        # `min_diff=0` has no floor at all, and "floored at 0KB" would describe
+        # holding the diff at a size it was never going to be given.
+        short = (min_diff - diff_bytes) // 1024
+        cuts.append(
+            f"the full diff, floored at {min_diff // 1024}KB and {short}KB still over"
+            if min_diff
+            else f"the full diff entirely, {short}KB still over"
+        )
         diff_bytes = min_diff
 
     return BudgetPlan(

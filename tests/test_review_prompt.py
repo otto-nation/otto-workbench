@@ -410,6 +410,10 @@ class TestSharedPromptBodies:
 
 
 class TestBuildPromptRefusesAnOversizedPrompt:
+    # CLAUDE.md is fixed overhead — no lever reaches it — so one over the whole
+    # budget puts the prompt past it whatever the ladder cuts.
+    UNBUDGETABLE = "x" * (MAX_PROMPT_BYTES + 1000)
+
     def _job(self, tmp_path, **preflight):
         job = _make_job(_make_preflight(**preflight))
         job.review_file = str(tmp_path / "review.md")
@@ -418,7 +422,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
     def test_a_prompt_over_the_budget_raises(self, tmp_path):
         from review_prompt import PromptTooLarge, build_prompt
 
-        job = self._job(tmp_path, claude_md="x" * (MAX_PROMPT_BYTES + 1000))
+        job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge) as exc:
             build_prompt(Phase.SCOUT, job, max_turns=10)
         assert exc.value.prompt_bytes > MAX_PROMPT_BYTES
@@ -427,7 +431,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         """The stats are written before the raise, so the run is diagnosable."""
         from review_prompt import PromptTooLarge, build_prompt
 
-        job = self._job(tmp_path, claude_md="x" * (MAX_PROMPT_BYTES + 1000))
+        job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge):
             build_prompt(Phase.SCOUT, job, max_turns=10)
         stats = json.loads((tmp_path / "prompt-stats.json").read_text())

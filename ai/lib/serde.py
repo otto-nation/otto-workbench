@@ -58,6 +58,11 @@ def to_dict(obj) -> dict:
     `json.dump` as a set and is rejected there. That is the loud failure, and
     the alternative — a second recursive walk beside asdict's — is a shape no
     persisted dataclass here has ever needed.
+
+    A `dict` field's keys arrive the same way, unconverted, so an enum key is
+    still an enum when `json.dump` sees it. The enums used as keys here are
+    `StrEnum`s, which json writes as their value and `from_dict`'s key coercer
+    reads back; a plain `Enum` key raises there rather than writing a name.
     """
     def factory(pairs):
         return {k: _writable(v) for k, v in pairs}

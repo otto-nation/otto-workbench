@@ -451,6 +451,10 @@ def _run_holistic_phase(
     again here would bill that scan twice. Whether there is a prior attempt to
     reuse is `state.scanned` — the state is already here, so nothing needs to
     carry the answer in from the recovery plan.
+
+    The chosen scan is resolved before the skip check because the skip branch
+    records it too: a run that scouts and then skips phase 1 has to say scout,
+    which a state field named for the holistic scan could never say.
     """
     phase = _scan_phase(job)
     reason = _holistic_skip_reason(job, incremental, group_count)

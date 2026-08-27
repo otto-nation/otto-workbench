@@ -267,9 +267,9 @@ def _write_state(tmp_path: Path, **overrides) -> Path:
 
     Defaults represent an incomplete run: holistic done, no groups done,
     group "0" failed with "quota", synthesis not yet attempted. Pass
-    overrides to model other recovery shapes (e.g. a `done` naming synthesis
-    with a different groups_failed to model synthesis crashing after groups
-    completed).
+    overrides to model other recovery shapes — a `done` set that names
+    synthesis, alongside a different `groups_failed`, models synthesis
+    crashing after the groups completed.
     """
     path = tmp_path / "pipeline.json"
     state = {

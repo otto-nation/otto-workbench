@@ -4636,7 +4636,7 @@ class TestFailuresSectionInReview:
 class TestInjectFailuresAndStatus:
     """Tests for _inject_failures_and_status — specifically the always-update status fix."""
 
-    def _make_pipeline_json(self, tmp_path, synthesis_failed="", groups_failed=None):
+    def _make_pipeline_json(self, tmp_path, failure_reason="", groups_failed=None):
         import json
         data = {
             "head_sha": "abc123",
@@ -4644,7 +4644,7 @@ class TestInjectFailuresAndStatus:
             "groups_done": [1],
             "groups_failed": groups_failed or {},
             "done": ["synthesis"],
-            "failed": {"synthesis": synthesis_failed} if synthesis_failed else {},
+            "failed": {"synthesis": failure_reason} if failure_reason else {},
             "review_type": "full",
             "prior_sha": "",
             "skipped_groups": [],
@@ -4667,7 +4667,7 @@ class TestInjectFailuresAndStatus:
         )
 
         # Pipeline state says synthesis failed — status should be 'partial'
-        self._make_pipeline_json(tmp_path, synthesis_failed="budget exceeded")
+        self._make_pipeline_json(tmp_path, failure_reason="budget exceeded")
 
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
@@ -4694,7 +4694,7 @@ class TestInjectFailuresAndStatus:
             "## Summary\n\nAll good.\n"
         )
 
-        self._make_pipeline_json(tmp_path, synthesis_failed="")
+        self._make_pipeline_json(tmp_path, failure_reason="")
 
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],
@@ -4720,7 +4720,7 @@ class TestInjectFailuresAndStatus:
             "## Summary\n\nAll good.\n"
         )
 
-        self._make_pipeline_json(tmp_path, synthesis_failed="mechanical fallback")
+        self._make_pipeline_json(tmp_path, failure_reason="mechanical fallback")
 
         state = PipelineState(
             head_sha="abc123", group_names=["ui", "api"],

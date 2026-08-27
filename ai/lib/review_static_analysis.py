@@ -10,7 +10,6 @@ signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
 from __future__ import annotations
 
 import os
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,8 +116,6 @@ _CHECKERS: list[Callable[[list[str], str], CheckerResult | None]] = [
     check_nesting_depth,
 ]
 
-_VERDICT_RE = re.compile(r"^## Verdict\b", re.MULTILINE)
-
 
 def run_static_analysis(changed_files: list[str], wt_path: str) -> list[CheckerResult]:
     results = []
@@ -148,12 +145,18 @@ def _format_checker_violations(r: CheckerResult) -> list[str]:
 
 
 def format_static_analysis(results: list[CheckerResult]) -> str:
+    """What the Static Analysis section says about `results`, heading excluded.
+
+    Empty when no checker ran at all — there is nothing to report, rather than
+    nothing to report *yet*. The heading and where the section sits belong to
+    `review_document.set_section`.
+    """
     if not results:
         return ""
 
     violating = [r for r in results if r.violations]
     if not violating:
-        return f"## {SECTION_STATIC_ANALYSIS}\n\nAll checks passed."
+        return "All checks passed."
 
     total = sum(len(r.violations) for r in violating)
     # Collapsed by default: the violation list runs to hundreds of lines on
@@ -161,8 +164,6 @@ def format_static_analysis(results: list[CheckerResult]) -> str:
     # repeats the section name because the posted comment renders no heading
     # for this section — the summary line is the only label a reader sees.
     parts = [
-        f"## {SECTION_STATIC_ANALYSIS}",
-        "",
         "<details>",
         f"<summary>{SECTION_STATIC_ANALYSIS} ({total} violation{plural(total)})</summary>",
     ]
@@ -170,12 +171,3 @@ def format_static_analysis(results: list[CheckerResult]) -> str:
         parts.extend(_format_checker_violations(r))
     parts.extend(["", "</details>"])
     return "\n".join(parts)
-
-
-def inject_static_analysis(review_text: str, section_text: str) -> str:
-    if not section_text:
-        return review_text
-    m = _VERDICT_RE.search(review_text)
-    if m:
-        return review_text[:m.start()] + section_text + "\n\n" + review_text[m.start():]
-    return review_text.rstrip() + "\n\n" + section_text

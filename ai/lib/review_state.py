@@ -34,7 +34,7 @@ from review_common import (
     phase_log_path,
     plural,
 )
-from review_document import set_status
+from review_document import SECTION_SUMMARY, set_section, set_status
 from review_types import Group, ReviewJob, ReviewType
 
 _state_lock = threading.Lock()
@@ -278,11 +278,16 @@ def _update_group_failed(
         _write_pipeline_state(job, state)
 
 
-_FAILURES_HEADING = "## Agent Failures"
+SECTION_FAILURES = "Agent Failures"
 
 
-def build_failures_section(state: "PipelineState") -> str:
-    """Build a markdown Agent Failures section from pipeline state."""
+def build_failures_body(state: "PipelineState") -> str:
+    """What the Agent Failures section says about `state`, heading excluded.
+
+    Empty when nothing failed, which is what removes the section from a review
+    whose rerun fixed it. The heading and where the section sits belong to
+    `review_document.set_section` — see `set_failures_section`.
+    """
     rows: list[tuple[str, str, str]] = []
 
     for idx, diagnosis in sorted(state.groups_failed.items()):
@@ -296,8 +301,6 @@ def build_failures_section(state: "PipelineState") -> str:
         return ""
 
     lines = [
-        _FAILURES_HEADING,
-        "",
         "| Agent | Reason | Status |",
         "|-------|--------|--------|",
     ]
@@ -312,30 +315,20 @@ def build_failures_section(state: "PipelineState") -> str:
         lines.append("")
         lines.append("Run `pr review --recover` to retry failed agents.")
 
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines)
 
 
-def _replace_failures_section(content: str, failures: str) -> str:
-    """`content` with its Agent Failures section replaced by `failures`.
+def set_failures_section(content: str, state: "PipelineState") -> str:
+    """`content` with its Agent Failures section reporting `state`.
 
-    An empty `failures` removes the section; a review with no section yet gains
-    one above `## Summary`. The section runs from its heading to the next `##`.
-
-    Replacing rather than leaving the first version in place is what lets a
-    phase that failed *after* the section was written appear in it at all. The
-    disprove gate runs last, so it is always writing into a review synthesis has
-    already had its say about.
+    The one place a review learns what failed, whether the review is being
+    assembled — the mechanical fallback builds its body and asks here — or
+    already on disk. Replacing rather than leaving the first version in place is
+    what lets a phase that failed *after* the section was written appear in it
+    at all: the disprove gate runs last, so it is always writing into a review
+    synthesis has already had its say about.
     """
-    start = content.find(_FAILURES_HEADING)
-    if start < 0:
-        if not failures:
-            return content
-        return content.replace("## Summary", f"{failures}\n## Summary", 1)
-    end = content.find("\n## ", start + len(_FAILURES_HEADING))
-    tail = content[end + 1:] if end >= 0 else ""
-    # The section ends with a newline of its own and the heading below it wants
-    # a blank line, which is the `\n` the insert branch spells out too.
-    return content[:start] + (f"{failures}\n" if failures else "") + tail
+    return set_section(content, SECTION_FAILURES, build_failures_body(state), before=SECTION_SUMMARY)
 
 
 def _inject_failures_and_status(review_file: str, state: "PipelineState") -> None:
@@ -343,7 +336,7 @@ def _inject_failures_and_status(review_file: str, state: "PipelineState") -> Non
     path = Path(review_file)
     if not path.exists():
         return
-    content = _replace_failures_section(path.read_text(), build_failures_section(state))
+    content = set_failures_section(path.read_text(), state)
     path.write_text(set_status(content, pipeline_status(path.parent)))
 
 

@@ -53,9 +53,10 @@ import publishing  # noqa: E402
 from pr_context import detect_repo  # noqa: E402
 from agent_types import Effort, Mode  # noqa: E402
 from review_common import (  # noqa: E402
-    FILENAME_SESSION, PIPELINE_MULTI, PIPELINE_SINGLE,
+    FILENAME_SESSION, PIPELINE_MULTI, PIPELINE_SINGLE, SECTION_STATIC_ANALYSIS,
     _derive_path, add_phase_skip_flags, enum_arg, phase_skips, stamp_reviewed,
 )
+from review_document import SECTION_VERDICT, set_section  # noqa: E402
 from review_preflight import (  # noqa: E402
     DEFAULT_MAX_PARALLEL, collect_preflight_data, fetch_reply_threads,
 )
@@ -69,7 +70,7 @@ from review_pipeline import (  # noqa: E402
     run_multi_phase, run_single_agent,
 )
 from review_static_analysis import (  # noqa: E402
-    format_static_analysis, inject_static_analysis, run_static_analysis,
+    format_static_analysis, run_static_analysis,
 )
 import ai_backend  # noqa: E402
 
@@ -153,9 +154,9 @@ def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_p
     section = format_static_analysis(results)
     if not section:
         return None
-    text = review_path.read_text()
-    updated = inject_static_analysis(text, section)
-    review_path.write_text(updated)
+    review_path.write_text(set_section(
+        review_path.read_text(), SECTION_STATIC_ANALYSIS, section, before=SECTION_VERDICT,
+    ))
     return {
         "checkers_run": len(results),
         "files_checked": sum(r.files_checked for r in results),

@@ -638,7 +638,7 @@ PY
   cat > "$reviews_dir/myrepo-self-1/review.md" <<'EOF'
 # Self-Review: myrepo — branch
 
-## Findings
+## Must fix
 
 - [ ] **[M1]** `src/main.go` — Missing error handling for secret token write
 EOF

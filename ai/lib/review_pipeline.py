@@ -73,8 +73,8 @@ from review_state import (
     _inject_failures_and_status,
     _resolve_recovery,
     _write_pipeline_state,
-    build_failures_section,
     pipeline_status,
+    set_failures_section,
 )
 
 DEFAULT_MAX_COST = 20.0
@@ -222,7 +222,6 @@ def _build_mechanical_fallback(
 ) -> ReviewDocument:
     review_dir = Path(job.review_file).parent
     status = pipeline_status(review_dir) if review_dir.exists() else ReviewStatus.ERROR
-    failures_section = build_failures_section(pipeline_state) if pipeline_state else ""
 
     body = build_mechanical_body(
         merged_content,
@@ -230,8 +229,9 @@ def _build_mechanical_fallback(
         summary_note=FALLBACK_SUMMARY,
         include_verdict=(job.mode != Mode.SELF),
         file_count=job.pr.changed_files,
-        failures_section=failures_section,
     )
+    if pipeline_state:
+        body = set_failures_section(body, pipeline_state)
     return _document(
         job, body, skipped_groups=skipped_groups, total_groups=group_count,
         status=status,

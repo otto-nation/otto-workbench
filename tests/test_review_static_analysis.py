@@ -15,7 +15,6 @@ from review_static_analysis import (
     StaticViolation,
     check_nesting_depth,
     format_static_analysis,
-    inject_static_analysis,
 )
 
 
@@ -25,9 +24,15 @@ class TestFormatStaticAnalysis:
 
     def test_all_checkers_pass(self):
         results = [CheckerResult(name="Nesting depth", violations=[], files_checked=3)]
-        output = format_static_analysis(results)
-        assert "## Static Analysis" in output
-        assert "All checks passed" in output
+        assert format_static_analysis(results) == "All checks passed."
+
+    def test_body_carries_no_heading(self):
+        results = [CheckerResult(
+            name="Nesting depth",
+            violations=[StaticViolation(file="a.sh", line=1, message="too deep")],
+            files_checked=1,
+        )]
+        assert "## Static Analysis" not in format_static_analysis(results)
 
     def test_violations_present(self):
         violations = [
@@ -36,7 +41,6 @@ class TestFormatStaticAnalysis:
         ]
         results = [CheckerResult(name="Nesting depth", violations=violations, files_checked=5)]
         output = format_static_analysis(results)
-        assert "## Static Analysis" in output
         assert "### Nesting depth" in output
         assert "2 violations in 2 of 5 files checked" in output
         assert "**`bin/my-script:42`**" in output
@@ -109,26 +113,6 @@ class TestFormatStaticAnalysis:
         results = [CheckerResult(name="Test", violations=violations, files_checked=1)]
         output = format_static_analysis(results)
         assert "2 violations in 1 of 1 files checked" in output
-
-
-class TestInjectStaticAnalysis:
-    def test_injects_before_verdict(self):
-        review = "## Summary\nLooks good.\n\n## Must fix\n- [M1] bug\n\n## Verdict\nApprove"
-        section = "## Static Analysis\n\nAll checks passed."
-        result = inject_static_analysis(review, section)
-        assert result.index("## Static Analysis") < result.index("## Verdict")
-        assert "## Must fix" in result
-
-    def test_appends_when_no_verdict(self):
-        review = "## Summary\nLooks good.\n\n## Must fix\n- [M1] bug"
-        section = "## Static Analysis\n\nAll checks passed."
-        result = inject_static_analysis(review, section)
-        assert result.endswith(section)
-
-    def test_empty_section_returns_unchanged(self):
-        review = "## Summary\nLooks good."
-        result = inject_static_analysis(review, "")
-        assert result == review
 
 
 class TestCheckNestingDepth:

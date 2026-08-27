@@ -1078,12 +1078,14 @@ def build_mechanical_body(
     summary_note: str,
     include_verdict: bool = True,
     file_count: int = 0,
-    failures_section: str = "",
 ) -> str:
     """A review body summarising `merged_content`, with no agent involved.
 
     The body only — the title and the metadata header above it belong to
     `review_document.ReviewDocument`, which is what every caller wraps this in.
+    A caller with failures to report adds the Agent Failures section afterwards
+    through `review_state.set_failures_section`, which is the same call the
+    already-written review takes.
     """
     counts = ReviewDocument(body=merged_content).open_counts
     total = sum(counts.values())
@@ -1094,10 +1096,7 @@ def build_mechanical_body(
     else:
         scope = f"across {group_count} groups"
 
-    failures_block = f"{failures_section}\n" if failures_section else ""
-
     body = (
-        f"{failures_block}"
         f"## Summary\n"
         f"{count_summary} {scope}. "
         f"{summary_note}\n\n"

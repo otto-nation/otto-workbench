@@ -981,7 +981,8 @@ def _attribute_commit(
     - RESOLVED — the work landed across several commits and `history` found
       the one that changed this row's own line after the reviewer asked. That
       is per-row evidence, which is the thing reconciliation lacked.
-    - UNDETERMINED — the same, with nothing at the row's line to go on.
+    - UNDETERMINED — the same, with nothing at the row's line to go on, or a
+      row `_handled_outside` recognises, which `history` declines to cite for.
 
     "Several commits landed" is a fact about the branch; "which commit carries
     this row" is a fact about the row. Reconciliation only ever knew the first,
@@ -1215,6 +1216,56 @@ def _thread_opened_at(thread: ReportThread | None) -> float:
         return 0.0
 
 
+# Reason stamped on an outcome the fix pass never landed. Read back by
+# _handled_outside, which is what keeps the pass's commit — and the row's own
+# line history — from being credited for it.
+#
+# Distinct from CommitClaim.RECONCILED, the commit-attribution resolver's
+# claim for "the pass recorded nothing and exactly one published commit
+# landed outside it" — this constant marks snapshot reconciliation against
+# GitHub instead (see _reconcile_fix_snapshot). _fixed_status_for checks this
+# reason before falling through to the claim-based one; the two "reconciled"
+# names are not the same mechanism.
+_RECONCILED_REASON = "reconciled: handled outside the fix pass"
+
+# Reason stamped on an outcome the operator settled by hand and told the CLI
+# about with --settle. Read back for the reason _RECONCILED_REASON is: the fix
+# pass did not land this work, so its commit must not be credited for it.
+#
+# The two are kept apart because they are different evidence. Reconciliation is
+# the tool inferring a settlement from what GitHub shows; this is the operator
+# stating one. Only the second can be trusted for a thread nobody has replied to
+# yet, which is exactly the thread --settle exists for.
+_SETTLED_REASON = "settled: recorded by hand"
+
+# Every reason that says a FIXED row landed outside the fix pass. Such a row can
+# still name a commit that was *recorded* for it — the SHA --settle resolved, or
+# the single commit that landed outside the pass — but never one inferred from
+# its line history, and when nothing names one the cell says the work was
+# handled rather than crediting whatever the running pass happened to commit.
+_HANDLED_OUTSIDE_REASONS = frozenset({_RECONCILED_REASON, _SETTLED_REASON})
+
+
+def _handled_outside(entry: CommentItem) -> bool:
+    """Whether this entry records work the fix pass did not land.
+
+    The one question `AddressingHistory.framing` and `_fixed_status_for` both
+    ask before naming a commit for a row, so the summary cell, the thread reply
+    and the permalink under it cannot answer it differently.
+
+    Both reason fields are read because `CommentItem.from_outcome` puts a
+    recorded reason in whichever one the surface about to render it looks at —
+    `reason` for the summary table and the tracking issue, `reasoning` for the
+    reply templates. Asking only the first would decline a citation in the table
+    and let the reply beside it make one.
+    """
+    return bool(
+        _HANDLED_OUTSIDE_REASONS.intersection({
+            getattr(entry, "reason", ""), getattr(entry, "reasoning", ""),
+        })
+    )
+
+
 @dataclass(frozen=True)
 class AddressedFraming:
     """Whether a satisfied thread was satisfied in response to the reviewer.
@@ -1275,11 +1326,22 @@ class AddressingHistory:
         supply a citation: a commit predating the comment is not the one that
         carried a fix made after it, so the entry keeps the in-response reading
         and names nothing.
+
+        An entry `_handled_outside` recognises names nothing either, for a
+        different reason. `git log -L` answers what last changed the line, which
+        is evidence about a row the pass itself fixed and about nothing else:
+        the reason on such a row says the pass did not, and reconciliation
+        stamps it from a thread merely looking settled on GitHub — resolution
+        also covers answered, deferred and declined. Crediting the newest commit
+        to touch a busy file to one of those contradicts the reply standing on
+        the thread. How the row reads is untouched; only the commit link goes.
         """
         sha = self._commit_for(entry)
         landed_after = bool(sha) and self._postdates(sha, thread)
         if acted and not landed_after:
             return AddressedFraming(True)
+        if _handled_outside(entry):
+            return AddressedFraming(landed_after)
         # A line no branch commit touched is code that predates the branch, and
         # so predates the review: that is the genuine already-addressed case and
         # the one the flat prefix is reserved for.
@@ -1630,34 +1692,6 @@ _HANDLED_REPLY_PREFIXES = (
     _ADDRESSED_REPLY_PREFIX,
     _DISMISSED_REPLY_PREFIX,
 )
-
-# Reason stamped on an outcome the fix pass never landed. Read back by
-# _fixed_status_for, which must not credit the pass's commit for it.
-#
-# Distinct from CommitClaim.RECONCILED, the commit-attribution resolver's
-# claim for "the pass recorded nothing and exactly one published commit
-# landed outside it" — this constant marks snapshot reconciliation against
-# GitHub instead (see _reconcile_fix_snapshot). _fixed_status_for checks this
-# reason before falling through to the claim-based one; the two "reconciled"
-# names are not the same mechanism.
-_RECONCILED_REASON = "reconciled: handled outside the fix pass"
-
-# Reason stamped on an outcome the operator settled by hand and told the CLI
-# about with --settle. Read back by _fixed_status_for for the reason
-# _RECONCILED_REASON is: the fix pass did not land this work, so its commit must
-# not be credited for it.
-#
-# The two are kept apart because they are different evidence. Reconciliation is
-# the tool inferring a settlement from what GitHub shows; this is the operator
-# stating one. Only the second can be trusted for a thread nobody has replied to
-# yet, which is exactly the thread --settle exists for.
-_SETTLED_REASON = "settled: recorded by hand"
-
-# Every reason that says a FIXED row landed outside the fix pass. Such a row can
-# still name a commit — both paths resolve one where they can — but when neither
-# could, the cell says the work was handled rather than crediting whatever the
-# running pass happened to commit.
-_HANDLED_OUTSIDE_REASONS = frozenset({_RECONCILED_REASON, _SETTLED_REASON})
 
 # The terminal outcomes --settle can record. Each is one of the three the
 # closeout knows how to reply to, which is the whole point of recording one: the
@@ -2295,7 +2329,7 @@ def _fixed_status_for(
     # the operator with --settle — landed in a commit this run could not resolve.
     # That is true of the row whatever the running pass did, so it is answered
     # before the pass-level text gets a say.
-    if getattr(entry, "reason", "") in _HANDLED_OUTSIDE_REASONS:
+    if _handled_outside(entry):
         return _RECONCILED_STATUS_TEXT
     if attribution.claim is CommitClaim.PASS:
         return _fixed_status_text(cp, repo)

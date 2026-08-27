@@ -469,6 +469,10 @@ it, and gives it a summary row attributed to the commit that carries the change.
   Pass `--commit <sha>` when the fix landed somewhere else; a `--commit` the
   remote does not hold is an error rather than a dropped citation. When neither
   resolves, the row reads `Addressed outside the fix pass` and the run says so.
+  `--finish` renders that same cell for a thread it reconciled against GitHub.
+  Neither is credited afterwards to whatever commit last touched the line the
+  thread is anchored to: that history is evidence about a fix the pass landed,
+  and both of these say it did not.
 - Naming an id no fix pass recorded is an error listing the threads that are
   waiting on a person, for the same reason `--track` errors on one. Recording
   the outcome a thread already carries is a no-op that says so; recording a

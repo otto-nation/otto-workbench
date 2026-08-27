@@ -95,12 +95,10 @@ def _build_pr_header(
     if scoped_files is not None:
         sorted_files = sorted(scoped_files, key=lambda f: f["additions"] + f["deletions"], reverse=True)
         file_stats = "\n".join(FILE_STAT_FMT.format(**f) for f in sorted_files)
-        if file_stats:
-            lines += ["", "### File breakdown (sorted by churn)", file_stats]
     else:
         file_stats = pr.file_stats(EFFORT_PRESETS[effort].multi_phase_line_threshold)
-        if file_stats:
-            lines += ["", "### File breakdown (sorted by churn)", file_stats]
+    if file_stats:
+        lines += ["", "### File breakdown (sorted by churn)", file_stats]
 
     return "\n".join(lines)
 
@@ -863,6 +861,24 @@ _REREVIEW_CTX: dict[Mode, str] = {
 }
 
 
+def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
+    """Register what names the review — the only thing the two modes split on.
+
+    A self-review has no PR to point at, so it is identified by its branch and
+    has no reviews on it to read. `pr_only` carries whatever else belongs to the
+    PR side of one template: the verdict wording for the single-agent prompt,
+    the title for synthesis. A caller states that difference rather than
+    restating the split it hangs off.
+    """
+    if job.mode is Mode.SELF:
+        b.set("branch_name", job.pr.head)
+        return
+    b.shared("reviews_section")
+    b.set("pr_number", job.pr_number)
+    for key, value in pr_only.items():
+        b.set(key, value)
+
+
 def _prompt_single(job, common, extra, output):
     """The one-agent review, of an open PR or of the working branch.
 
@@ -881,12 +897,7 @@ def _prompt_single(job, common, extra, output):
         "reply_threads", "env_section", "issue_section", "generator_version",
         "omitted_guidance", "max_turns",
     )
-    if job.mode is Mode.SELF:
-        b.set("branch_name", job.pr.head)
-    else:
-        b.shared("reviews_section")
-        b.set("pr_number", job.pr_number)
-        b.set("verdict_options", VERDICT_OPTIONS)
+    _identify_review(b, job, verdict_options=VERDICT_OPTIONS)
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
     b.output(output, stdout_warning=True)
@@ -905,12 +916,7 @@ def _prompt_synthesis(job, common, extra, output):
         "pr_header", "state_context", "delta_section", "reply_threads",
         "today", "generator_version", "max_turns",
     )
-    if job.mode is Mode.SELF:
-        b.set("branch_name", job.pr.head)
-    else:
-        b.shared("reviews_section")
-        b.set("pr_number", job.pr_number)
-        b.set("pr_title", job.pr.title)
+    _identify_review(b, job, pr_title=job.pr.title)
     b.set("repo", job.repo)
     b.set("pr_head_sha", job.pr.head_sha)
     b.set("wt_path", job.wt_path)

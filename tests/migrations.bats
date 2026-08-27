@@ -633,7 +633,11 @@ assert_project_entry() {
 
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
-  [[ "$output" == *"no longer registered"* ]]
+  # Silently. A checkout is removed by `wt remove` as a matter of routine, and
+  # the bookkeeping following it out is not news — the operator reading a sync
+  # log got a count of forgotten entries every time and could do nothing with it.
+  [[ "$output" != *"no longer registered"* ]]
+  [[ "$output" != *"Forgot"* ]]
 
   assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
@@ -1037,6 +1041,163 @@ EOF
   [ "$status" -eq 0 ]
   assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-ready"
   run ! grep -qF "repo-later" "$FAKE_STATE/migrations.applied"
+}
+
+# ─── Repo-scoped migrations ──────────────────────────────────────────────────
+#
+# Work that belongs to a repository rather than to one of its checkouts is done
+# once and recorded once. Every worktree of one bare-repo container shares a git
+# dir, and that is the name the state line carries — so removing the worktree
+# the migration happened to run in leaves the entry standing.
+
+# Helper: create a migration that declares itself repo-scoped and appends the
+# path it was handed to $TMPDIR/exec.log.
+create_repo_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+# repo-scoped: edits files the whole repo shares.
+${fn_name}() {
+  echo "\$1" >> "$TMPDIR/exec.log"
+}
+EOF
+}
+
+# Helper: a bare-repo container with two worktrees, both registered, and
+# FAKE_CONTAINER set to its resolved path.
+#
+# Composed from the shared fixtures in test_helper.bash — make_container_seed
+# for the seed repo (branches main and feat), make_worktree_container for the
+# bare clone with `main` checked out — plus one more `git worktree add` for a
+# second checkout on the branch the seed already created.
+#
+# Resolved with `pwd -P` because git reports the /private twin of a macOS
+# /var/folders temp path, and the registry entries have to be the paths git
+# will answer with.
+register_fake_repo_worktrees() {
+  local name="$1" seed
+  FAKE_CONTAINER="$(cd "$TMPDIR" && pwd -P)/$name"
+  seed="$FAKE_CONTAINER.seed"
+  mkdir -p "$seed"
+  printf 'x\n' > "$seed/a.txt"
+  make_container_seed "$seed"
+  make_worktree_container "$FAKE_CONTAINER" "$seed"
+  git -C "$FAKE_CONTAINER" worktree add -q "$FAKE_CONTAINER/feature" feat
+  rm -rf "$seed"
+  printf '%s\n%s\n' "$FAKE_CONTAINER/main" "$FAKE_CONTAINER/feature" \
+    >> "$FAKE_STATE/projects.registry"
+}
+
+@test "a repo-scoped migration runs once for a repo with several worktrees" {
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-repo.sh (1 project)"* ]]
+
+  [ "$(cat "$TMPDIR/exec.log")" = "$FAKE_CONTAINER/main" ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$FAKE_CONTAINER/.git" ]
+}
+
+@test "a repo-scoped entry survives the worktree it ran in being removed" {
+  # The whole point: `wt remove` used to orphan an entry per worktree per
+  # migration, and the next sync forgot them by the dozen.
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+  run_migrations_in_fake
+
+  rm -rf "$FAKE_CONTAINER/main"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Migration applied"* ]]
+  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$FAKE_CONTAINER/.git" ]
+}
+
+@test "a repo-scoped migration visits a repo registered later" {
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees alpha
+  local alpha="$FAKE_CONTAINER"
+  run_migrations_in_fake
+
+  register_fake_repo_worktrees beta
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-repo.sh (1 project)"* ]]
+
+  run cat "$TMPDIR/exec.log"
+  [ "${#lines[@]}" -eq 2 ]
+  [ "${lines[0]}" = "$alpha/main" ]
+  [ "${lines[1]}" = "$FAKE_CONTAINER/main" ]
+}
+
+@test "a repo-scoped entry is dropped when the last checkout of its repo goes" {
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+  run_migrations_in_fake
+
+  rm -rf "$FAKE_CONTAINER"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [ ! -s "$FAKE_STATE/migrations.applied" ]
+}
+
+@test "per-checkout entries are dropped when a migration becomes repo-scoped" {
+  # How a migration converts scope, in the direction this change makes: the
+  # per-checkout lines name no repo the new shape would ever write, so prune
+  # drops them and the repo is visited once. No re-dating the file.
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+  printf 'mycomp/20250101-repo.sh\t%s\nmycomp/20250101-repo.sh\t%s\n' \
+    "$FAKE_CONTAINER/main" "$FAKE_CONTAINER/feature" \
+    > "$FAKE_STATE/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  # Not stale — the file is still there, it just records itself differently now.
+  [[ "$output" != *"Pruned stale migration state"* ]]
+
+  [ "$(cat "$TMPDIR/exec.log")" = "$FAKE_CONTAINER/main" ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$FAKE_CONTAINER/.git" ]
+}
+
+@test "a repo-scoped entry is dropped when the migration becomes checkout-scoped" {
+  # The other direction: a line naming a shared git dir means nothing to a
+  # migration recorded per checkout, and no line the framework writes for it
+  # would ever match.
+  create_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_repo_worktrees container
+  printf 'mycomp/20250101-proj.sh\t%s\n' "$FAKE_CONTAINER/.git" \
+    > "$FAKE_STATE/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "${lines[0]}" = "mycomp/20250101-proj.sh"$'\t'"$FAKE_CONTAINER/main" ]
+  [ "${lines[1]}" = "mycomp/20250101-proj.sh"$'\t'"$FAKE_CONTAINER/feature" ]
+  [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "a repo git cannot answer for is visited once and recorded by its path" {
+  # A registered directory that is no longer a repository still gets visited
+  # exactly once, which is what per-checkout would have done for it anyway.
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_project "$TMPDIR/plain"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMPDIR/exec.log")" = "$TMPDIR/plain" ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$TMPDIR/plain" ]
 }
 
 # ─── Component discovery under set -e ────────────────────────────────────────

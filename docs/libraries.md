@@ -427,11 +427,14 @@ a no-op are recorded and never revisited; a deferral and a failure are retried
 on the next sync, the deferral silently.
 
 State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state
-root](#rootssh). One line per applied migration, or one line per repo — the
-key, a tab, and the repo path — for a migration marked `# checkout-scoped:`,
-which the framework runs once per entry in the [project registry](#projectssh).
-Stale entries, pointing at migration files that have since been removed, are
-pruned automatically. See [Execution Flow — Migrations](execution-flow.md#migrations).
+root](#rootssh). One line per applied migration; for a migration marked
+`# checkout-scoped:` or `# repo-scoped:`, one line per target instead — the
+key, a tab, and the target. A checkout-scoped migration's target is a work
+tree from the [project registry](#projectssh) and a repo-scoped one's is the
+shared git dir every work tree of a repo has in common, so removing a worktree
+costs the first an entry and the second nothing. Stale entries, pointing at
+migration files that have since been removed, are pruned automatically. See
+[Execution Flow — Migrations](execution-flow.md#migrations).
 
 ```bash
 . "$WORKBENCH_DIR/lib/migrations.sh"

@@ -10,11 +10,14 @@
 # on the next sync, the deferral silently.
 #
 # State file: `$MIGRATIONS_STATE_FILE` — `migrations.applied` under the [state
-# root](#rootssh). One line per applied migration, or one line per repo — the
-# key, a tab, and the repo path — for a migration marked `# checkout-scoped:`,
-# which the framework runs once per entry in the [project registry](#projectssh).
-# Stale entries, pointing at migration files that have since been removed, are
-# pruned automatically. See [Execution Flow — Migrations](execution-flow.md#migrations).
+# root](#rootssh). One line per applied migration; for a migration marked
+# `# checkout-scoped:` or `# repo-scoped:`, one line per target instead — the
+# key, a tab, and the target. A checkout-scoped migration's target is a work
+# tree from the [project registry](#projectssh) and a repo-scoped one's is the
+# shared git dir every work tree of a repo has in common, so removing a worktree
+# costs the first an entry and the second nothing. Stale entries, pointing at
+# migration files that have since been removed, are pruned automatically. See
+# [Execution Flow — Migrations](execution-flow.md#migrations).
 #
 # ```bash
 # . "$WORKBENCH_DIR/lib/migrations.sh"
@@ -56,15 +59,38 @@ _array_contains() {
 # done.
 #
 # With this marker the framework owns the loop: it calls the function once per
-# registered repo with that repo's path as the only argument, and records one
-# state line per repo. A repo that registers late is simply a key the state file
-# does not hold yet, so the next sync visits it.
+# registered work tree with that work tree's path as the only argument, and
+# records one state line per work tree. A work tree that registers late is
+# simply a key the state file does not hold yet, so the next sync visits it.
 #
 # Declared by the migration rather than listed here for the reason
 # _ADOPTION_SENSITIVE_MARKER is: the marker travels with the file, so nothing
 # goes stale when one is renamed. bin/local/validate-migrations checks that a
 # file carrying it reads the argument, and that one without it does not.
 readonly _CHECKOUT_SCOPED_MARKER='^# checkout-scoped:'
+
+# The header line a migration writes to say it runs once per repo rather than
+# once per checkout of one.
+#
+# A bare-repo container holds a bare `.git` and every worktree beside it, and a
+# machine that cuts a worktree per branch registers a dozen checkouts of one
+# repository. Work that edits what those checkouts share — a file at the
+# container, an object in the shared git dir — is done the first time and found
+# already done every time after, so the per-checkout shape paid for a visit and
+# a state line per worktree to record one repo's worth of work. When `wt remove`
+# then deleted a worktree, each of those lines was orphaned and the next sync
+# forgot them by the dozen.
+#
+# The framework calls the function once per distinct repo, with one of that
+# repo's registered work trees as the argument — it still needs a checkout to
+# run git in — and records the state line against the repo's shared git dir.
+# Which work tree is handed over is not stable and does not need to be: the key
+# names the repo, so a leader replaced by the next sync re-runs nothing.
+#
+# Mutually exclusive with _CHECKOUT_SCOPED_MARKER: a migration is recorded under
+# one scope or the other, and bin/local/validate-migrations rejects a file
+# carrying both.
+readonly _REPO_SCOPED_MARKER='^# repo-scoped:'
 
 # The status a migration returns to say it found nothing to do.
 #
@@ -202,38 +228,58 @@ _source_migration() {
   return "$status"
 }
 
-# _migration_targets OUT_ARRAY FILE BASE_KEY STATE_FILE
-# What FILE still has to be run against: nothing when it is already recorded,
-# one empty string for a machine-scoped migration that has not run, and one repo
-# path for every registered repo a checkout-scoped migration has not visited.
+# _migration_targets OUT_ARGS OUT_KEYS FILE BASE_KEY STATE_FILE
+# What FILE still has to be run against, as two parallel arrays: the argument to
+# call its function with, and the state key to record the result under. Empty
+# when FILE is already recorded everywhere it applies.
 #
-# The machine-scoped case is an empty target rather than a flag of its own so
+# The two differ only for a repo-scoped migration, which is called with a work
+# tree — it needs a checkout to run git in — and recorded against the repo that
+# work tree belongs to. For the other two scopes the key is the base key with
+# the argument appended, or the base key alone.
+#
+# The machine-scoped case is an empty argument rather than a flag of its own so
 # the caller keeps a single loop — "applied" there is a fact about the machine,
-# and the state line it records names no repo.
+# and the state line it records names nothing.
 _migration_targets() {
-  local -n __targets="$1"
-  local migration="$2" base_key="$3" state_file="$4"
-  __targets=()
+  local -n __args="$1" __keys="$2"
+  local migration="$3" base_key="$4" state_file="$5"
+  __args=()
+  __keys=()
 
-  if ! _migration_carries_marker "$migration" "$_CHECKOUT_SCOPED_MARKER"; then
-    grep -qxF "$base_key" "$state_file" || __targets+=("")
+  local key leader repo_id work_tree project_dir
+
+  if _migration_carries_marker "$migration" "$_REPO_SCOPED_MARKER"; then
+    while IFS= read -r leader; do
+      _split_project_line "$leader" repo_id work_tree
+      key="$base_key$_MIGRATION_KEY_SEP$repo_id"
+      grep -qxF "$key" "$state_file" || { __args+=("$work_tree"); __keys+=("$key"); }
+    done < <(project_repo_leaders)
     return 0
   fi
 
-  local project_dir
-  while IFS= read -r project_dir; do
-    grep -qxF "$base_key$_MIGRATION_KEY_SEP$project_dir" "$state_file" \
-      || __targets+=("$project_dir")
-  done < <(project_registered)
+  if _migration_carries_marker "$migration" "$_CHECKOUT_SCOPED_MARKER"; then
+    while IFS= read -r project_dir; do
+      key="$base_key$_MIGRATION_KEY_SEP$project_dir"
+      grep -qxF "$key" "$state_file" || { __args+=("$project_dir"); __keys+=("$key"); }
+    done < <(project_registered)
+    return 0
+  fi
+
+  grep -qxF "$base_key" "$state_file" || { __args+=(""); __keys+=("$base_key"); }
   return 0
 }
 
-# _run_migration_targets FN BASENAME BASE_KEY STATE_FILE TARGETS...
-# Run FN once per target, recording each one it did not fail on, and leave the
-# number of targets it changed in _MIGRATION_CHANGED.
+# _run_migration_targets FN BASENAME STATE_FILE ARGS_REF KEYS_REF
+# Run FN once per target in ARGS_REF, recording it under the matching key in
+# KEYS_REF, and leave the number of targets it changed in _MIGRATION_CHANGED.
 #
-# A target is a repo path, or the empty string for a machine-scoped migration —
-# which is handed no argument at all and recorded under a key naming no repo.
+# A target is a path the function is called with — a work tree, or the empty
+# string for a machine-scoped migration, which is handed no argument at all. The
+# key it is recorded under is the caller's, in the parallel array: for a
+# repo-scoped migration that key names the repo rather than the work tree the
+# call was made in.
+#
 # A target that fails is simply not recorded, so the next sync retries that one
 # rather than the whole migration.
 #
@@ -247,12 +293,13 @@ _migration_targets() {
 # warned about: what it converts does not exist yet, so there is no answer to
 # keep, and the next sync asks again.
 _run_migration_targets() {
-  local fn_name="$1" basename_m="$2" base_key="$3" state_file="$4"
-  shift 4
+  local fn_name="$1" basename_m="$2" state_file="$3"
+  local -n __run_args="$4" __run_keys="$5"
 
-  local target status
+  local i target status
   _MIGRATION_CHANGED=0
-  for target in "$@"; do
+  for i in "${!__run_args[@]}"; do
+    target="${__run_args[$i]}"
     status=0
     # `|| status=$?` rather than `if ! ...`: MIGRATION_NOOP is a non-zero
     # status that must not read as failure, and a bare call would take the
@@ -260,7 +307,7 @@ _run_migration_targets() {
     #
     # `${target:+...}` drops the argument entirely for a machine-scoped
     # migration rather than handing its function an empty string it never
-    # asked for, and keeps the repo out of the state key it records.
+    # asked for.
     "$fn_name" ${target:+"$target"} || status=$?
     # Deferred: there is nothing to convert yet, so nothing is recorded and the
     # next sync asks again. Ahead of the failure check because this is a
@@ -274,7 +321,7 @@ _run_migration_targets() {
       warn "Migration failed: $basename_m${target:+ in $target} — will retry on next run"
       continue
     fi
-    printf '%s\n' "$base_key${target:+$_MIGRATION_KEY_SEP$target}" >> "$state_file"
+    printf '%s\n' "${__run_keys[$i]}" >> "$state_file"
     if (( status != MIGRATION_NOOP )); then
       _MIGRATION_CHANGED=$(( _MIGRATION_CHANGED + 1 ))
     fi
@@ -286,10 +333,12 @@ _run_migration_targets() {
 # each function, and records success. Failed migrations are not recorded and retry
 # on the next run. Migrations must be idempotent.
 #
-# A migration carrying _CHECKOUT_SCOPED_MARKER runs once per registered repo, with
-# that repo's path as its only argument, and is recorded once per repo. A repo
-# that fails is the only one not recorded, so the next sync retries that repo
-# alone rather than the whole machine.
+# A migration carrying _CHECKOUT_SCOPED_MARKER runs once per registered work
+# tree, with that work tree's path as its only argument, and is recorded once
+# per work tree. One carrying _REPO_SCOPED_MARKER runs once per repo, with one
+# of that repo's registered work trees as the argument, and is recorded against
+# the repo. Either way a target that fails is the only one not recorded, so the
+# next sync retries that one rather than the whole machine.
 #
 # A migration that returns MIGRATION_NOOP found the target already in the shape
 # it exists to produce. That is recorded like any other success — the answer
@@ -313,7 +362,7 @@ run_component_migrations() {
   local component_rel="${dir#"$WORKBENCH_DIR/"}"
 
   local migration basename_m base_key fn_name applied=0 skipped=0
-  local -a targets=()
+  local -a target_args=() target_keys=()
   for migration in "$migrations_dir"/*.sh; do
     [[ -f "$migration" ]] || continue
     basename_m="$(basename "$migration")"
@@ -321,8 +370,8 @@ run_component_migrations() {
 
     # Already applied — skip. For a checkout-scoped migration that means every
     # registered repo has its own entry, not that the machine has one.
-    _migration_targets targets "$migration" "$base_key" "$state_file"
-    if (( ${#targets[@]} == 0 )); then
+    _migration_targets target_args target_keys "$migration" "$base_key" "$state_file"
+    if (( ${#target_args[@]} == 0 )); then
       skipped=$(( skipped + 1 ))
       continue
     fi
@@ -341,7 +390,7 @@ run_component_migrations() {
       continue
     fi
 
-    _run_migration_targets "$fn_name" "$basename_m" "$base_key" "$state_file" "${targets[@]}"
+    _run_migration_targets "$fn_name" "$basename_m" "$state_file" target_args target_keys
 
     # Nothing changed: every target found its work already done, found nothing
     # to do it to yet, or failed and has warned for itself. None of the three is
@@ -352,7 +401,7 @@ run_component_migrations() {
     fi
 
     applied=$(( applied + 1 ))
-    if [[ -z "${targets[0]}" ]]; then
+    if [[ -z "${target_args[0]}" ]]; then
       success "Migration applied: $basename_m"
     elif (( _MIGRATION_CHANGED == 1 )); then
       success "Migration applied: $basename_m (1 project)"
@@ -447,76 +496,95 @@ _forget_adoption_sensitive_migrations() {
   info "$forgotten adoption-sensitive migration(s) will run again — adoption moved data back into what they drain"
 }
 
+# _migration_target_departed BASE PROJECT CHECKOUT_KEYS_REF REPO_KEYS_REF
+#   REGISTERED_REF REGISTERED_REPOS_REF
+# True when PROJECT no longer belongs to the set BASE's scope has to be checked
+# against — a work tree for a checkout-scoped key, a repo id for a repo-scoped
+# one, and anything at all for a machine-scoped one, which is owed no target.
+#
+# A free function rather than nested `if`s inline in the caller's loop, which
+# is what validate-nesting's depth limit rules out for a three-way branch that
+# each also has its own emptiness check.
+_migration_target_departed() {
+  local base="$1" project="$2"
+  local -n __checkout_keys="$3" __repo_keys="$4" __registered="$5" __registered_repos="$6"
+  if _array_contains "$base" "${__repo_keys[@]}"; then
+    [[ -z "$project" || -z "${__registered_repos[$project]:-}" ]]
+    return $?
+  fi
+  if _array_contains "$base" "${__checkout_keys[@]}"; then
+    [[ -z "$project" || -z "${__registered[$project]:-}" ]]
+    return $?
+  fi
+  [[ -n "$project" ]]
+}
+
 # _prune_stale_migration_state
 # Removes entries from the state file that no longer match any discovered migration file.
 # This handles direction changes within a PR or cleaned-up old migrations.
 #
-# It is also where a checkout-scoped migration's per-repo entries are reconciled
-# with the registry, in both directions: a repo that left takes its entries with
-# it, and a migration that changed scope loses the entries written in the shape
-# the other scope records.
+# It is also where a per-target entry is reconciled with the registry, in both
+# directions: a target that left takes its entries with it, and a migration that
+# changed scope loses the entries written in the shape another scope records.
+# The three scopes draw their targets from three different sets, and an entry
+# belongs to the set its key's marker names — a work-tree path for a
+# checkout-scoped migration, a repo's shared git dir for a repo-scoped one, and
+# nothing at all for a machine-scoped one.
 _prune_stale_migration_state() {
   local state_file="$MIGRATIONS_STATE_FILE"
   [[ -f "$state_file" ]] || return 0
 
-  local -a discovered_keys=() checkout_keys=()
+  local -a discovered_keys=() checkout_keys=() repo_keys=()
   _discover_migration_keys discovered_keys
   _discover_migration_keys checkout_keys "$_CHECKOUT_SCOPED_MARKER"
+  _discover_migration_keys repo_keys "$_REPO_SCOPED_MARKER"
 
-  # The repos a per-repo entry may still name. project_registered also skips a
-  # registered path that has gone from disk, so an entry for one of those is
-  # dropped too — if the directory comes back it registers again and the
-  # migration, which has to be idempotent anyway, simply runs there again.
-  local -A registered=()
-  local repo
+  # The work trees and the repos a per-target entry may still name.
+  # project_registered also skips a registered path that has gone from disk, so
+  # an entry for one of those is dropped too — if the directory comes back it
+  # registers again and the migration, which has to be idempotent anyway, simply
+  # runs there again. A repo whose last checkout has gone is a repo no leader
+  # names, and its entry goes the same way.
+  local -A registered=() registered_repos=()
+  local repo leader repo_id work_tree
   while IFS= read -r repo; do
     registered["$repo"]=1
   done < <(project_registered)
+  while IFS= read -r leader; do
+    _split_project_line "$leader" repo_id work_tree
+    registered_repos["$repo_id"]=1
+  done < <(project_repo_leaders)
 
   # Check each state entry against discovered keys
-  local rewrite=false line base project checkout_scoped departed=0
+  local rewrite=false line base project
   local -a clean_lines=()
   # Same unterminated-last-line guard as _forget_adoption_sensitive_migrations.
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
     _split_migration_state_line "$line" base project
-    checkout_scoped=false
-    if _array_contains "$base" "${checkout_keys[@]}"; then
-      checkout_scoped=true
-    fi
 
     if ! _array_contains "$base" "${discovered_keys[@]}"; then
       warn "Pruned stale migration state: $line"
       rewrite=true
       continue
     fi
-    # A migration that changed scope leaves entries in the shape the other
-    # scope writes. A bare key claims the whole machine is done, which a
-    # checkout-scoped migration is in no position to say; a per-repo key means
-    # nothing to one that runs once, and no line the framework writes for it
-    # would ever match. Either is dropped without a warning — the migration is
-    # not stale, it is about to run in the shape it now asks for.
-    if [[ "$checkout_scoped" == true && -z "$project" ]]; then
-      rewrite=true
-      continue
-    fi
-    if [[ "$checkout_scoped" == false && -n "$project" ]]; then
-      rewrite=true
-      continue
-    fi
-    if [[ -n "$project" && -z "${registered["$project"]:-}" ]]; then
-      departed=$(( departed + 1 ))
+
+    # A migration that changed scope leaves entries in the shape another scope
+    # writes, and every one of them is dropped without a warning — the migration
+    # is not stale, it is about to run in the shape it now asks for. A bare key
+    # claims the whole machine is done, which neither per-target scope is in a
+    # position to say; a work-tree path means nothing to a migration recorded
+    # per repo, and no line the framework writes for it would ever match.
+    #
+    # A target that has left the registry is dropped here too, and silently. A
+    # checkout is removed by `wt remove` as a matter of routine, and its
+    # bookkeeping following it out is not something an operator can act on.
+    if _migration_target_departed "$base" "$project" checkout_keys repo_keys registered registered_repos; then
       rewrite=true
       continue
     fi
     clean_lines+=("$line")
   done < "$state_file"
-
-  if (( departed == 1 )); then
-    info "Forgot 1 migration state entry — the repo it names is no longer registered"
-  elif (( departed > 1 )); then
-    info "Forgot $departed migration state entries — the repos they name are no longer registered"
-  fi
 
   if [[ "$rewrite" == true ]]; then
     # printf over an empty array writes a blank line, which the next run would

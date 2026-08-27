@@ -56,7 +56,7 @@ from review_types import (
 )
 from review_prompt import (
     _is_incremental, _scope_prior_review,
-    build_prompt,
+    PromptTooLarge, build_prompt,
 )
 from review_agent import _parse_session_cost
 from review_phases import (
@@ -131,7 +131,16 @@ def _write_review_sidecar(job: ReviewJob):
 def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     runner = PhaseRunner(job, Phase.SINGLE)
     max_turns = runner.max_turns
-    prompt = build_prompt(Phase.SINGLE, job, max_turns=max_turns)
+    try:
+        prompt = build_prompt(Phase.SINGLE, job, max_turns=max_turns)
+    except PromptTooLarge as exc:
+        # The single-agent run is the whole review — there is no second phase to
+        # fall back on and nothing written yet to salvage, so this exits rather
+        # than degrading. A PR this size wants the multi-phase path, which splits
+        # it into groups small enough to prompt.
+        log.error(f"Review cannot be prompted: {exc}")
+        log.dim("Re-run at an effort level that reviews this PR in groups.")
+        sys.exit(1)
     label = f"branch {job.pr.head}" if job.mode == Mode.SELF else f"PR #{job.pr_number} ({job.pr.title})"
     log.info(f"Running review agent on {label}...")
     log.blank()
@@ -267,13 +276,26 @@ def _phase_synthesis(
     Path(job.review_file).write_text("")
 
     max_turns = _synthesis_max_turns(merged_content)
-    prompt = build_prompt(
-        Phase.SYNTHESIS, job, max_turns=max_turns,
-        holistic_content=holistic_content, group_count=group_count,
-        merged_content=merged_content,
-    )
     runner = PhaseRunner(job, Phase.SYNTHESIS)
     synthesis_log = runner.session_log
+    try:
+        prompt = build_prompt(
+            Phase.SYNTHESIS, job, max_turns=max_turns,
+            holistic_content=holistic_content, group_count=group_count,
+            merged_content=merged_content,
+        )
+    except PromptTooLarge as exc:
+        # The group findings are already on disk; the synthesis agent only
+        # writes them up. Merging them mechanically loses the prose and keeps
+        # every finding, which is the same trade the fallback below makes for
+        # an agent that failed — and it is strictly better than discarding a
+        # phase's worth of work because its cover letter would not fit.
+        log.warn(f"Synthesis cannot be prompted ({exc}) — falling back to mechanical merge")
+        _write_mechanical_fallback(
+            job, group_count, merged_content, skipped_groups=skipped_groups,
+        )
+        _write_review_sidecar(job)
+        return PhaseResult.of(synthesis_log)
     log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
     log.blank()
 

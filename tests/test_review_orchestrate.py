@@ -2331,6 +2331,38 @@ class TestPhaseSynthesis:
         assert ro.FALLBACK_SUMMARY in Path(job.review_file).read_text()
         assert result.cost == 2.5
 
+    def test_an_unpromptable_synthesis_falls_back_to_the_merge(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """The findings are already on disk; only the write-up would not fit.
+
+        Merging them mechanically keeps every finding and loses the prose,
+        which is the same trade a synthesis agent that failed already makes —
+        and strictly better than discarding a phase's worth of group reviews
+        because their cover letter is over the budget.
+        """
+        from review_prompt import PromptTooLarge
+
+        job = self._make_job(ro, tmp_path)
+        invoked = []
+
+        def boom(*_a, **_kw):
+            raise PromptTooLarge("synthesis.md", 600_000)
+
+        self._patch_pipeline(
+            monkeypatch, ro,
+            build_prompt=boom,
+            run_agent=lambda inv, **kw: invoked.append(inv),
+        )
+
+        merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
+        ro._phase_synthesis(job, "", 3, merged)
+
+        assert invoked == []
+        written = Path(job.review_file).read_text()
+        assert ro.FALLBACK_SUMMARY in written
+        assert "file.go:1" in written
+
     def test_agent_fails_no_output(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
 
@@ -3548,7 +3580,14 @@ class TestFormatPreflightData:
         result = ro.format_preflight_data(data)
         assert "Files not pre-collected" not in result
 
-    def test_skip_file_contents_omits_file_contents_and_omitted_list(self, ro):
+    def test_skip_file_contents_names_what_it_did_not_inline(self, ro):
+        """Dropping the contents cannot also drop the list of them.
+
+        The list is the only place the prompt says which files exist, and the
+        environment section sends the agent to read exactly it. Omitting both
+        left the agent told its files were pre-collected and shown neither
+        them nor their names.
+        """
         data = ro.PreflightData(
             diff="--- a/foo.go\n+++ b/foo.go",
             commit_log="abc123 fix bug",
@@ -3564,7 +3603,9 @@ class TestFormatPreflightData:
         assert "# Project" in result
         assert "package main" not in result
         assert "Changed file contents" not in result
-        assert "Files not pre-collected" not in result
+        assert "### Files not pre-collected (read directly)" in result
+        assert "- foo.go" in result
+        assert "- bar.go" in result
 
 
 # ── _file_permissions ──────────────────────────────────────────────────

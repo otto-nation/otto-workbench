@@ -1,23 +1,29 @@
 """Tests for review_prompt: scoped prompt section builders."""
 
+import json
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_preflight import MAX_PROMPT_BYTES, MIN_DIFF_BYTES
+from review_preflight import (
+    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, format_preflight_data,
+)
 from review_types import (
     PRContext, PreflightData, PRMetadata, PriorDisposition, ReviewJob,
 )
 from agent_types import Effort, Mode, Phase
 from review_findings import _parse_ledger_line
 from review_prompt import (
-    _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, _build_ci_failure_items,
-    _build_common_sections, _build_delta_section, _build_pr_header, _compute_diff_budget,
+    _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, MAX_DELTA_LIST_ENTRIES,
+    _build_ci_failure_items, _build_common_sections, _build_delta_section,
+    _build_env_section, _build_omitted_guidance, _build_pr_header, _fit_budget,
 )
 from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr_domains import CIDomain
@@ -83,6 +89,41 @@ class TestBuildDeltaSectionScoped:
     def test_no_prior_sha_returns_empty(self):
         pf = _make_preflight(prior_head_sha="")
         assert _build_delta_section(pf, file_filter=["a.py"]) == ""
+
+
+class TestBuildDeltaSectionBounded:
+    """The section cannot spend the prompt on lists or on the delta diff."""
+
+    def test_file_lists_are_capped_and_say_so(self):
+        """A rebase-inflated delta is a summary, not 5,000 lines of paths.
+
+        The one that prompted this budgeted 4,974 delta files against a
+        107-file PR: 260KB of `- \\`path\\`` lines, which pushed synthesis 75%
+        past its budget on their own.
+        """
+        many = [f"pkg/f{i:05d}.go" for i in range(4_974)]
+        pf = _make_preflight(delta_files=many, delta_diff="", file_contents={})
+        section = _build_delta_section(pf)
+        assert section.count("\n- `") == MAX_DELTA_LIST_ENTRIES
+        assert f"+{4_974 - MAX_DELTA_LIST_ENTRIES} more not listed" in section
+        assert len(section.encode()) < 20_000
+
+    def test_max_bytes_shrinks_the_delta_diff(self):
+        big = "".join(
+            f"diff --git a/f{i}.py b/f{i}.py\n@@ -1 +1 @@\n-old\n+{'x' * 500}\n"
+            for i in range(200)
+        )
+        pf = _make_preflight(delta_diff=big, delta_files=[f"f{i}.py" for i in range(200)])
+        unbounded = _build_delta_section(pf)
+        bounded = _build_delta_section(pf, max_bytes=40_000)
+        assert len(bounded.encode()) < len(unbounded.encode())
+        assert len(bounded.encode()) <= 40_000
+
+    def test_no_room_drops_the_diff_rather_than_a_fragment(self):
+        pf = _make_preflight()
+        section = _build_delta_section(pf, max_bytes=100)
+        assert "### Delta diff" not in section
+        assert "Incremental review context" in section
 
 
 # ── _build_pr_header with file_filter ──────────────────────────────────────
@@ -184,7 +225,7 @@ class TestBuildCiFailureItems:
         assert any("SC2086" in item for item in items)
 
 
-# ── _compute_diff_budget ────────────────────────────────────────────────────
+# ── _fit_budget ─────────────────────────────────────────────────────────────
 
 
 def _make_job(preflight=None, mode=Mode.PR):
@@ -202,38 +243,120 @@ def _make_job(preflight=None, mode=Mode.PR):
     )
 
 
-class TestComputeDiffBudget:
+class TestFitBudget:
     def test_returns_remaining_when_within_budget(self):
         job = _make_job(_make_preflight(claude_md="", architecture_md=""))
-        sections = {"header": "small"}
-        result = _compute_diff_budget(job, sections)
-        assert result > MIN_DIFF_BYTES
+        plan = _fit_budget(job, {"header": "small"})
+        assert plan.diff_bytes > MIN_DIFF_BYTES
+        assert plan.cuts == ()
+        assert not plan.skip_file_contents
 
     def test_clamps_to_min_diff_by_default(self):
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
         job = _make_job(_make_preflight(claude_md=huge))
-        sections = {"header": "small"}
-        result = _compute_diff_budget(job, sections)
-        assert result == MIN_DIFF_BYTES
+        plan = _fit_budget(job, {"header": "small"})
+        assert plan.diff_bytes == MIN_DIFF_BYTES
+        assert any("floored" in cut for cut in plan.cuts)
 
     def test_min_diff_zero_allows_zero_budget(self):
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
         job = _make_job(_make_preflight(claude_md=huge))
-        sections = {"header": "small"}
-        result = _compute_diff_budget(job, sections, min_diff=0)
-        assert result == 0
+        plan = _fit_budget(job, {"header": "small"}, min_diff=0)
+        assert plan.diff_bytes == 0
 
     def test_skip_file_contents_frees_budget(self):
-        big_content = "y" * 200_000
-        pf = _make_preflight(file_contents={"gen.pb.go": big_content})
+        pf = _make_preflight(file_contents={"gen.pb.go": "y" * 200_000})
         job = _make_job(pf)
-        sections = {"header": "small"}
-        with_fc = _compute_diff_budget(job, sections, file_filter=["gen.pb.go"])
-        without_fc = _compute_diff_budget(
-            job, sections, file_filter=["gen.pb.go"], skip_file_contents=True,
+        with_fc = _fit_budget(job, {"header": "small"}, file_filter=["gen.pb.go"])
+        without_fc = _fit_budget(
+            job, {"header": "small"}, file_filter=["gen.pb.go"], skip_file_contents=True,
         )
-        assert without_fc > with_fc
-        assert without_fc - with_fc >= 200_000
+        assert without_fc.diff_bytes - with_fc.diff_bytes >= 200_000
+
+    def test_file_contents_are_the_first_lever_and_are_named(self):
+        """The lever the log used to report was the one already at zero.
+
+        The group phase hand-rolled this drop and every other phase went
+        without it, so a scout prompt with 452KB of pre-collected contents had
+        no lever left and logged "diff capped to 20KB" — naming a section that
+        was not the problem.
+        """
+        pf = _make_preflight(file_contents={"gen.pb.go": "y" * 400_000})
+        job = _make_job(pf)
+        plan = _fit_budget(job, {"header": "small"}, file_filter=["gen.pb.go"])
+        assert plan.skip_file_contents
+        assert plan.cuts[0] == "390KB of pre-collected file contents"
+
+    def test_the_delta_is_cut_before_the_diff_is_floored(self):
+        pf = _make_preflight(
+            file_contents={},
+            delta_files=[f"pkg/f{i:05d}.go" for i in range(4_974)],
+            delta_diff="".join(
+                f"diff --git a/f{i}.py b/f{i}.py\n@@ -1 +1 @@\n+{'x' * 900}\n"
+                for i in range(400)
+            ),
+        )
+        job = _make_job(pf)
+        plan = _fit_budget(job, {"header": "small"})
+        assert any("incremental delta" in cut for cut in plan.cuts)
+        assert plan.diff_bytes >= MIN_DIFF_BYTES
+        # Everything the plan admits still fits, which is what the ladder is for.
+        assert (
+            len(plan.delta_section.encode()) + plan.diff_bytes
+            <= MAX_PROMPT_BYTES
+        )
+
+
+# ── Dropped file contents are declared ──────────────────────────────────────
+
+
+class TestDroppedContentsAreDeclared:
+    """What the budget drops, the prompt has to admit to dropping.
+
+    Dropping the contents used to drop the list of them along with it, while
+    the environment section went on saying "File contents and diffs are in the
+    Pre-collected data section" — so the agent was told its files were in the
+    prompt and shown neither them nor their names.
+    """
+
+    def test_skipping_contents_still_names_the_files(self):
+        pf = _make_preflight(file_contents={"a.py": "x", "b.py": "y"})
+        text = format_preflight_data(pf, skip_file_contents=True)
+        assert "### Changed file contents" not in text
+        assert "### Files not pre-collected (read directly)" in text
+        assert "- a.py" in text
+        assert "- b.py" in text
+
+    def test_skipping_contents_does_not_double_list_omitted_files(self):
+        pf = _make_preflight(file_contents={"a.py": "x"}, omitted_files=["big.go"])
+        text = format_preflight_data(pf, skip_file_contents=True)
+        assert text.count("- big.go") == 1
+        assert "- a.py" in text
+
+    def test_env_section_sends_the_agent_to_the_worktree(self):
+        pf = _make_preflight()
+        kept = _build_env_section("/tmp/w", preflight=pf)
+        dropped = _build_env_section("/tmp/w", preflight=pf, skip_file_contents=True)
+        assert "File contents and diffs are in the Pre-collected data section" in kept
+        assert "file contents are not" in dropped
+        assert "Files not pre-collected" in dropped
+
+    def test_omitted_guidance_asks_for_the_batch_read(self):
+        pf = _make_preflight(omitted_files=[])
+        assert _build_omitted_guidance(pf) == ""
+        assert "Files not pre-collected" in _build_omitted_guidance(
+            pf, skip_file_contents=True,
+        )
+
+    def test_skip_omitted_does_not_silence_dropped_contents(self):
+        """The effort preset declines the large files, not every file."""
+        pf = _make_preflight(omitted_files=["big.go"])
+        assert "not reviewed at this effort level" in _build_omitted_guidance(
+            pf, skip_omitted=True,
+        )
+        assert "Files not pre-collected" in _build_omitted_guidance(
+            pf, skip_omitted=True, skip_file_contents=True,
+        )
 
 
 # ── Shared prompt bodies ────────────────────────────────────────────────────
@@ -281,6 +404,42 @@ class TestSharedPromptBodies:
         assert set(self_) - set(pr) == {"branch_name"}
         common_keys = set(pr) & set(self_)
         assert all(pr[k] == self_[k] for k in common_keys)
+
+
+# ── An over-budget prompt is refused, not logged past ───────────────────────
+
+
+class TestBuildPromptRefusesAnOversizedPrompt:
+    def _job(self, tmp_path, **preflight):
+        job = _make_job(_make_preflight(**preflight))
+        job.review_file = str(tmp_path / "review.md")
+        return job
+
+    def test_a_prompt_over_the_budget_raises(self, tmp_path):
+        from review_prompt import PromptTooLarge, build_prompt
+
+        job = self._job(tmp_path, claude_md="x" * (MAX_PROMPT_BYTES + 1000))
+        with pytest.raises(PromptTooLarge) as exc:
+            build_prompt(Phase.SCOUT, job, max_turns=10)
+        assert exc.value.prompt_bytes > MAX_PROMPT_BYTES
+
+    def test_the_oversized_prompt_is_on_disk_to_look_at(self, tmp_path):
+        """The stats are written before the raise, so the run is diagnosable."""
+        from review_prompt import PromptTooLarge, build_prompt
+
+        job = self._job(tmp_path, claude_md="x" * (MAX_PROMPT_BYTES + 1000))
+        with pytest.raises(PromptTooLarge):
+            build_prompt(Phase.SCOUT, job, max_turns=10)
+        stats = json.loads((tmp_path / "prompt-stats.json").read_text())
+        assert stats[-1]["prompt_bytes"] > MAX_PROMPT_BYTES
+        assert (tmp_path / "prompt-scout.md").exists()
+
+    def test_an_ordinary_prompt_still_renders(self, tmp_path):
+        from review_prompt import build_prompt
+
+        prompt = build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        assert len(prompt.encode()) <= MAX_PROMPT_BYTES
+        assert "Incremental review context" in prompt
 
 
 # ── The ledger instruction and the ledger parser ────────────────────────────

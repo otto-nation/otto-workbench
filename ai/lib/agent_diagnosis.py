@@ -40,6 +40,11 @@ class DiagnosisKind(StrEnum):
     SKIPPED = "skipped"
     BUDGET_EXCEEDED = "budget_exceeded"
     OUTPUT_MISSING = "output_missing"
+    # Reached before any agent starts: the phase's prompt is over the token
+    # budget with every lever in `review_prompt` already pulled. Its own kind
+    # because nothing an agent does changes it — the retry paths would re-render
+    # the same bytes, so the phase is failed rather than attempted.
+    PROMPT_TOO_LARGE = "prompt_too_large"
     # Synthesis's own outcomes. Recorded against the pipeline rather than an
     # agent, so neither has a session log behind it: no group produced usable
     # output, and a synthesis that degraded to the mechanical merge.
@@ -113,6 +118,8 @@ class Diagnosis:
             return f"{_AGENT_ERROR_PREFIX} {self.detail}"
         if self.kind is DiagnosisKind.SKIPPED:
             return f"skipped: {self.detail}"
+        if self.kind is DiagnosisKind.PROMPT_TOO_LARGE:
+            return f"prompt too large: {self.detail}"
         if self.kind is DiagnosisKind.UNKNOWN:
             # A legacy state file could hold an empty reason; the failures table
             # gets a word rather than a blank cell.
@@ -121,7 +128,14 @@ class Diagnosis:
 
     @property
     def recoverable(self) -> bool:
-        """Whether `pr review --recover` could plausibly do better than this run."""
+        """Whether `pr review --recover` could plausibly do better than this run.
+
+        A prompt over the budget is not: recovery re-renders the same phase from
+        the same commit, so it produces the same oversized prompt. What changes
+        the answer is a smaller review, not a second attempt at this one.
+        """
+        if self.kind is DiagnosisKind.PROMPT_TOO_LARGE:
+            return False
         lowered = self.detail.lower()
         return not any(m in lowered for m in _NON_RECOVERABLE_ERROR_MARKERS)
 

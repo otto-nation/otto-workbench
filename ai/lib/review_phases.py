@@ -48,7 +48,7 @@ from review_common import (
 )
 from review_disprove import apply_disprove_results, parse_disprove_output
 from review_findings import _count_findings, _validate_group_output, merge_reviews
-from review_prompt import build_prompt
+from review_prompt import PromptTooLarge, build_prompt
 from review_retry import (
     GroupFailure,
     _check_serial_abort, _has_output, _is_retryable,
@@ -296,7 +296,9 @@ def run_phase(
 
     A phase that produced nothing warns why and comes back with empty `content`
     and the `diagnosis` saying why, rather than raising. Every phase this runs
-    is one the pipeline has a path around, so the run continues without it.
+    is one the pipeline has a path around, so the run continues without it. A
+    prompt that will not fit the budget is one of those outcomes and not an
+    error: it is reported before any agent starts, so the phase costs nothing.
     """
     output = phase_output_path(job.review_file, phase)
     scan = _scan(phase)
@@ -304,7 +306,12 @@ def run_phase(
 
     runner = PhaseRunner(job, phase)
     max_turns = runner.max_turns
-    prompt = build_prompt(phase, job, max_turns=max_turns, **prompt_args)
+    try:
+        prompt = build_prompt(phase, job, max_turns=max_turns, **prompt_args)
+    except PromptTooLarge as exc:
+        diagnosis = Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail=str(exc))
+        log.warn(f"{PHASES[phase].label} not run ({diagnosis.message}) — {scan.without}")
+        return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
 
     log.info(announce)
     log.blank()
@@ -375,13 +382,20 @@ def _review_group(
         for f in job.pr.files if f["path"] in grp.files
     )
 
-    group_prompt = build_prompt(
-        Phase.GROUP, job, max_turns=max_turns,
-        group_idx=i, group_count=group_count, group_name=grp.name,
-        group_files_formatted=group_files_formatted,
-        group_file_paths=grp.files,
-        holistic_content=holistic_content,
-    )
+    try:
+        group_prompt = build_prompt(
+            Phase.GROUP, job, max_turns=max_turns,
+            group_idx=i, group_count=group_count, group_name=grp.name,
+            group_files_formatted=group_files_formatted,
+            group_file_paths=grp.files,
+            holistic_content=holistic_content,
+        )
+    except PromptTooLarge as exc:
+        diagnosis = Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail=str(exc))
+        log.warn(f"Group {i} ({grp.name}) not run ({diagnosis.message})")
+        if pipeline_state is not None:
+            _update_group_failed(job, i, diagnosis, pipeline_state)
+        return (i, group_output, GroupFailure(grp.name, diagnosis))
     group_prompt = retry_hint + group_prompt
 
     log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")

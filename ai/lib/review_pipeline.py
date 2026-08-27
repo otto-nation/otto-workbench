@@ -32,7 +32,7 @@ from review_common import (
     phase_skip_argv,
     write_review_meta,
 )
-from review_document import ReviewDocument, ReviewHeader, review_title
+from review_document import ReviewDocument, ReviewHeader, review_counts, review_title
 from review_findings import (
     _MECHANICAL_NOTE,
     _has_findings,
@@ -602,8 +602,7 @@ def _run_disprove_gate(
         )
         failure = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
     else:
-        doc = ReviewDocument.read(job.review_file) or ReviewDocument()
-        counts = doc.counts
+        counts = review_counts(ReviewDocument.read(job.review_file))
         ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
         if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
             result = _phase_disprove(job)

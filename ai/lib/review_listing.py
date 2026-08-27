@@ -85,7 +85,7 @@ from agent_types import Mode
 from review_common import (
     ReviewEntry, ReviewEntryKind, aggregate_session_usage, iter_review_entries,
 )
-from review_document import ReviewDocument, resolve_review_verdict
+from review_document import ReviewDocument, resolve_review_verdict, review_counts
 from review_state import build_failure_detail, read_pipeline_status
 from review_types import SEVERITIES
 
@@ -150,7 +150,7 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
     meta = entry.meta
 
     doc = ReviewDocument.read(review_file)
-    by_key = (doc or ReviewDocument()).counts
+    by_key = review_counts(doc)
     verdict = resolve_review_verdict(doc, self_review=meta.mode is Mode.SELF)
     usage = aggregate_session_usage(entry.path)
 

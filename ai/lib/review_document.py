@@ -352,6 +352,19 @@ class ReviewDocument:
         return ReviewVerdict.stated_in(self.section(SECTION_VERDICT))
 
 
+def review_counts(doc: ReviewDocument | None) -> dict[str, int]:
+    """How many findings of each severity `doc` declares, zeroed when absent.
+
+    The one place a review that was never written is read as one that found
+    nothing. A caller reporting counts has no separate answer for absent — a
+    listing prints zeroes either way — so the substitution is made once here
+    rather than restated at every reader. `resolve_review_verdict` is the
+    reader that does have a separate answer, and takes the same nullable
+    document to give it.
+    """
+    return doc.counts if doc else ReviewDocument().counts
+
+
 def resolve_review_verdict(
     doc: ReviewDocument | None, *, self_review: bool = False,
 ) -> ReviewVerdict | None:

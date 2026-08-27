@@ -25,8 +25,8 @@ import pytest
 from agent_types import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
-    ReviewDocument, ReviewHeader, resolve_review_verdict, review_title, section_span,
-    set_status,
+    ReviewDocument, ReviewHeader, resolve_review_verdict, review_counts, review_title,
+    section_span, set_status,
 )
 from review_types import ReviewMeta, ReviewType
 
@@ -399,7 +399,7 @@ class TestCounts:
         )
         assert document.counts["M"] == 1
 
-    def test_the_fix_passs_checkbox_does_not_hide_a_finding(self):
+    def test_the_fix_passes_checkbox_does_not_hide_a_finding(self):
         document = ReviewDocument.parse(
             "## Must fix\n"
             "- [ ] **[M1]** path:1 — with checkbox\n"
@@ -410,6 +410,13 @@ class TestCounts:
     def test_a_document_declaring_nothing_is_zeroed_not_empty(self):
         """Callers index the result directly, so every key must be present."""
         assert ReviewDocument().counts == {"M": 0, "S": 0, "N": 0, "I": 0}
+
+    def test_a_review_that_was_never_written_counts_as_one_that_found_nothing(self):
+        """The reader that has no separate answer for absent, unlike the
+        verdict below."""
+        assert review_counts(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
+        document = ReviewDocument.parse("## Must fix\n- **[M1]** a.py:1 — bug\n")
+        assert review_counts(document) == document.counts
 
     def test_a_reference_to_a_finding_is_not_a_second_finding(self):
         document = ReviewDocument.parse(

@@ -19,7 +19,7 @@ from review_common import (
     aggregate_session_usage,
     read_review_meta,
 )
-from review_document import ReviewDocument, resolve_review_verdict
+from review_document import ReviewDocument, resolve_review_verdict, review_counts
 from review_state import build_failure_detail, read_pipeline_status
 from review_types import SEVERITIES, ReviewMeta
 
@@ -43,7 +43,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
     review_content = _read_review(review_path)
     doc = ReviewDocument.parse(review_content) if review_content is not None else None
 
-    by_key = (doc or ReviewDocument()).counts
+    by_key = review_counts(doc)
     counts = {s.json_key: by_key[s.key] for s in SEVERITIES}
     total = sum(by_key.values())
 

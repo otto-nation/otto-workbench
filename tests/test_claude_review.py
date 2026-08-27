@@ -19,8 +19,8 @@ import workbench_paths
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_common import (
     FILENAME_POST_SESSION, ReviewEntryKind, count_severities, find_review_file,
-    iter_review_entries, parse_review_verdict, review_file_path,
-    stamp_reviewed,
+    iter_review_entries, parse_review_verdict, read_review_meta,
+    review_file_path, stamp_reviewed,
 )
 from review_state import read_pipeline_status, read_pipeline_warnings
 from review_summary import json_summary
@@ -1616,6 +1616,36 @@ def test_stamp_reviewed_leaves_an_unreadable_sidecar_as_it_found_it(cr, reviews_
     stamp_reviewed(d)
 
     assert (d / "meta.json").read_text() == "{ truncated"
+
+
+def test_stamp_reviewed_leaves_a_sidecar_that_is_not_an_object_alone(cr, reviews_dir):
+    """A payload that parses but holds no record attributes nothing; writing a
+    fresh sidecar over it would invent attribution the file never had."""
+    d = reviews_dir / "widget-42"
+    d.mkdir()
+    (d / "meta.json").write_text("[]")
+
+    stamp_reviewed(d)
+
+    assert (d / "meta.json").read_text() == "[]"
+
+
+def test_stamp_reviewed_keeps_the_delta_a_re_review_recorded(cr, reviews_dir):
+    """The stamp is a read-modify-write of the whole record, so every field
+    beside `reviewed_at` has to survive it — not only the ones a reader of the
+    entry list happens to look at."""
+    d = _seed_review(reviews_dir, "widget-42", repo="acme/widget", pr_number="42")
+    (d / "meta.json").write_text(json.dumps({
+        "repo": "acme/widget", "pr_number": 42, "review_type": "incremental",
+        "prior_sha": "dead00", "delta_files": ["a.py", "b.py"],
+    }))
+
+    stamp_reviewed(d)
+
+    meta = read_review_meta(d)
+    assert meta.reviewed_at
+    assert meta.prior_sha == "dead00"
+    assert meta.delta_files == ("a.py", "b.py")
 
 
 # ── CLI argument parsing ──────────────────────────────────────────────────────

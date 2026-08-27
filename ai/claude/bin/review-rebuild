@@ -8,7 +8,6 @@ synthesis agent formatting drift or corrupted review files.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -19,11 +18,12 @@ import log
 from trail import Trail, add_trail_args
 from agent_registry import PHASES
 from agent_types import Mode, Phase
+from review_common import read_review_meta
 from review_document import ReviewHeader
 from review_findings import (
     build_mechanical_review, merge_reviews, post_process_findings,
 )
-from review_types import ReviewType, meta_enum
+from review_types import ReviewMeta
 
 SCRIPT = Path(__file__).name
 REBUILD_SUMMARY = "Rebuilt mechanically from group finding files."
@@ -41,39 +41,11 @@ def _discover_group_files(review_dir: Path) -> list[str]:
     return groups
 
 
-def _read_meta(review_dir: Path) -> dict:
-    meta_path = review_dir / "meta.json"
-    if not meta_path.exists():
-        return {}
-    try:
-        return json.loads(meta_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _build_header(meta: dict) -> ReviewHeader:
-    """The header a rebuild can attest to — what meta.json recorded, dated today.
-
-    A rebuild reconstructs the document from the group files, so it makes no
-    claim about the incremental keys or the run's status: those describe a
-    pipeline run, and this is not one.
-    """
-    return ReviewHeader(
-        date=date.today().isoformat(),
-        head_sha=meta.get("head_sha", ""),
-        review_type=meta_enum(ReviewType, meta.get("review_type")) or ReviewType.FULL,
-        generator_version=meta.get("generator_version", ""),
-    )
-
-
-def _build_title(meta: dict, repo: str, pr: str) -> str:
-    mode = meta.get("mode", "")
-    if mode == Mode.SELF:
-        head_ref = meta.get("head_ref", "unknown")
-        return f"# Self-Review: {repo} — {head_ref}"
-    title = meta.get("title", "")
-    if title:
-        return f"# Review: {repo}#{pr} — {title}"
+def _build_title(meta: ReviewMeta, repo: str, pr: str) -> str:
+    if meta.mode == Mode.SELF:
+        return f"# Self-Review: {repo} — {meta.head_ref or 'unknown'}"
+    if meta.title:
+        return f"# Review: {repo}#{pr} — {meta.title}"
     return f"# Review: {repo}#{pr}"
 
 
@@ -94,12 +66,11 @@ def main():
 
     log.info(f"Found {len(group_files)} group files")
 
-    meta = _read_meta(review_dir)
-    repo = meta.get("repo", "")
-    if not repo:
+    meta = read_review_meta(review_dir)
+    if not meta.repo:
         log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
         sys.exit(1)
-    mode = meta.get("mode", "")
+    repo = meta.repo
 
     trail = Trail.start(
         script=SCRIPT,
@@ -125,14 +96,19 @@ def main():
 
         title = _build_title(meta, repo, args.pr)
 
+        # Dated today and carrying no status: a rebuild reconstructs the
+        # document from the group files, so the one thing it cannot attest to
+        # is how the pipeline run ended — this is not one.
+        header = ReviewHeader.from_meta(meta, date=date.today().isoformat())
+
         final = build_mechanical_review(
             processed,
             title=title,
-            meta_header=_build_header(meta).render(),
+            meta_header=header.render(),
             group_count=len(group_files),
             summary_note=REBUILD_SUMMARY,
-            include_verdict=(mode != Mode.SELF),
-            file_count=meta.get("changed_files", 0),
+            include_verdict=(meta.mode != Mode.SELF),
+            file_count=meta.changed_files,
         )
 
         review_file.write_text(final)

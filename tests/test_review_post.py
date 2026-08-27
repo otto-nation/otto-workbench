@@ -1947,7 +1947,7 @@ class TestShaDriftReverify:
 
     def test_drift_posts_inline_not_comment(self, rp, tmp_path):
         args, review_file = self._make_args(tmp_path)
-        sidecar = {"repo": "org/repo"}
+        sidecar = rp.ReviewMeta(repo="org/repo")
         trail = MagicMock()
 
         new_head = "ccc3333ddd4444"
@@ -1985,10 +1985,12 @@ class TestShaDriftReverify:
         assert not any("issues" in c for c in post_calls), \
             "Should not fall back to issue comment API"
 
-    def test_drift_skips_sidecar_diff(self, rp, tmp_path):
+    def test_the_classification_diff_is_always_fetched(self, rp, tmp_path):
+        """Nothing writes a diff into the sidecar, so nothing reads one back
+        out: a cached diff only a test ever populates is a branch the pipeline
+        never takes, and findings would be placed against it."""
         args, review_file = self._make_args(tmp_path)
-        stale_diff = "stale"
-        sidecar = {"repo": "org/repo", "diff": stale_diff}
+        sidecar = rp.ReviewMeta(repo="org/repo")
         trail = MagicMock()
 
         new_head = "ccc3333ddd4444"
@@ -2019,7 +2021,7 @@ class TestShaDriftReverify:
 
     def test_drift_records_sha_in_tracking(self, rp, tmp_path):
         args, review_file = self._make_args(tmp_path)
-        sidecar = {"repo": "org/repo"}
+        sidecar = rp.ReviewMeta(repo="org/repo")
         trail = MagicMock()
 
         new_head = "ccc3333ddd4444"
@@ -2207,11 +2209,28 @@ class TestDryRunIntegration:
         review_dir.mkdir()
         review_file = review_dir / "review.md"
         review_file.write_text(self.REVIEW_MD)
-        meta = {"repo": "test/repo", "head_sha": "abc123def456", "diff": self.DIFF_TEXT}
+        meta = {"repo": "test/repo", "head_sha": "abc123def456"}
         (review_dir / "meta.json").write_text(json.dumps(meta))
         return review_file
 
-    def _run_dry_run(self, review_file, extra_args=None):
+    @classmethod
+    def _gh_stub(cls, tmp_path):
+        """A `gh` on PATH answering the one API call a dry run makes.
+
+        The run fetches the PR diff to place findings on lines. Without a stub
+        the subprocess asks the real API about a repo that does not exist, so
+        what these tests assert would depend on the network answering.
+        """
+        bin_dir = tmp_path / "stub-bin"
+        bin_dir.mkdir(exist_ok=True)
+        diff_file = bin_dir / "pr.diff"
+        diff_file.write_text(cls.DIFF_TEXT)
+        stub = bin_dir / "gh"
+        stub.write_text(f"#!/bin/bash\ncat {diff_file}\n")
+        stub.chmod(0o755)
+        return bin_dir
+
+    def _run_dry_run(self, review_file, tmp_path, extra_args=None):
         """Run review-post --dry-run and return the CompletedProcess."""
         cmd = [
             sys.executable, str(self._REVIEW_POST),
@@ -2222,7 +2241,10 @@ class TestDryRunIntegration:
         if extra_args:
             cmd.extend(extra_args)
         import os
-        env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+        env = {
+            **os.environ, "NO_COLOR": "1", "TERM": "dumb",
+            "PATH": f"{self._gh_stub(tmp_path)}{os.pathsep}{os.environ['PATH']}",
+        }
         return subprocess.run(
             cmd, capture_output=True, text=True, timeout=30, env=env,
         )
@@ -2240,19 +2262,19 @@ class TestDryRunIntegration:
 
     def test_dry_run_exits_0(self, tmp_path):
         review_file = self._setup_review(tmp_path)
-        result = self._run_dry_run(review_file)
+        result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
     def test_dry_run_outputs_json_payload(self, tmp_path):
         review_file = self._setup_review(tmp_path)
-        result = self._run_dry_run(review_file)
+        result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
         assert "body" in payload or "comments" in payload
 
     def test_dry_run_omits_file_triage_from_body(self, tmp_path):
         review_file = self._setup_review(tmp_path)
-        result = self._run_dry_run(review_file)
+        result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
         assert "File Triage" not in payload["body"]
@@ -2260,7 +2282,7 @@ class TestDryRunIntegration:
 
     def test_dry_run_with_severity_filter(self, tmp_path):
         review_file = self._setup_review(tmp_path)
-        result = self._run_dry_run(review_file, extra_args=["--severity", "M"])
+        result = self._run_dry_run(review_file, tmp_path, extra_args=["--severity", "M"])
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
         # With only M severity, the body/comments should reference M1 but not S1 or N1
@@ -2271,7 +2293,7 @@ class TestDryRunIntegration:
 
     def test_dry_run_with_missing_review_file_exits_nonzero(self, tmp_path):
         nonexistent = tmp_path / "does-not-exist.md"
-        result = self._run_dry_run(nonexistent)
+        result = self._run_dry_run(nonexistent, tmp_path)
         assert result.returncode != 0
 
     def test_dry_run_without_repo_in_meta_exits_nonzero(self, tmp_path):
@@ -2281,7 +2303,7 @@ class TestDryRunIntegration:
         review_file.write_text(self.REVIEW_MD)
         # meta.json present but missing the 'repo' field
         (review_dir / "meta.json").write_text(json.dumps({"head_sha": "abc123"}))
-        result = self._run_dry_run(review_file)
+        result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode != 0
         assert "repo" in result.stderr.lower() or "meta" in result.stderr.lower()
 
@@ -2312,9 +2334,9 @@ class TestDryRunIntegration:
         review_dir.mkdir()
         review_file = review_dir / "review.md"
         review_file.write_text(review_with_sa)
-        meta = {"repo": "test/repo", "head_sha": "abc123def456", "diff": self.DIFF_TEXT}
+        meta = {"repo": "test/repo", "head_sha": "abc123def456"}
         (review_dir / "meta.json").write_text(json.dumps(meta))
-        result = self._run_dry_run(review_file)
+        result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
         assert "Nesting depth" in payload["body"]
@@ -2344,9 +2366,9 @@ class TestDryRunIntegration:
         review_dir.mkdir()
         review_file = review_dir / "review.md"
         review_file.write_text(review_with_custom)
-        meta = {"repo": "test/repo", "head_sha": "abc123def456", "diff": self.DIFF_TEXT}
+        meta = {"repo": "test/repo", "head_sha": "abc123def456"}
         (review_dir / "meta.json").write_text(json.dumps(meta))
-        result = self._run_dry_run(review_file)
+        result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
         assert "Performance Notes" in payload["body"]

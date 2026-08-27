@@ -12,9 +12,9 @@ lets a consumer depend on what a review *is* without depending on what the
 review pipeline *does*.
 
 Nothing in the review layer is imported here, and nothing should be: this is the
-layer everything else in it sits on. The three heavier imports — `agent_types`,
-`workbench_config` and `pr_state.now_iso` — are all below the review layer, and
-`ReviewJob` is the only thing that reaches for them.
+layer everything else in it sits on. The heavier imports — `agent_types`,
+`serde`, `workbench_config` and `pr_state.now_iso` — are all below the review
+layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
 """
 
 # doc-group: findings
@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import serde
 import workbench_config
 from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from pr_state import now_iso
@@ -186,17 +187,34 @@ class GroupSkip(StrEnum):
 
 @dataclass(frozen=True)
 class ReviewMeta:
+    """Everything `meta.json` records about a review — the whole file, typed.
+
+    One field per key on disk and no key without a field: the sidecar is written
+    by rendering this and read by reconstructing it, so a writer cannot record
+    something no reader can name. Every field has a default, because a sidecar
+    outlives the version that wrote it and one written before a field existed
+    still reconstructs.
+    """
+
     repo: str = ""
     pr_number: int | None = None
     head_sha: str = ""
     head_ref: str = ""
     base_ref: str = ""
+    title: str = ""
+    changed_files: int = 0
+    generator_version: str = ""
     # The sidecar carries both, and they answer different questions — how much of
     # the branch was reviewed, and what was being reviewed. Both are None for a
     # meta.json written before the field existed, or by a caller that wrote only
     # the repo; `mode` defaulting to PR would claim a fact the file never stated.
     review_type: ReviewType | None = None
     mode: Mode | None = None
+    # What an incremental review is a delta against, and which files moved. Both
+    # are empty on a full review, which is a delta against nothing. A tuple
+    # rather than a list so the frozen dataclass is frozen all the way down.
+    prior_sha: str = ""
+    delta_files: tuple[str, ...] = ()
     # Two timestamps because a review run has two moments worth recording and
     # they are not the same one. `started_at` is taken when the run begins;
     # `reviewed_at` is stamped only where a run reached its end with a review in
@@ -220,20 +238,31 @@ def meta_enum(enum_cls, value):
         return None
 
 
-def review_meta_from_dict(d: dict) -> ReviewMeta:
-    pr_number = d.get("pr_number")
-    return ReviewMeta(
-        repo=d.get("repo", ""),
-        # Truthiness check intentionally treats "" and 0 as absent — no valid PR is #0
-        pr_number=int(pr_number) if pr_number else None,
-        head_sha=d.get("head_sha", ""),
-        head_ref=d.get("head_ref", ""),
-        base_ref=d.get("base_ref", ""),
-        review_type=meta_enum(ReviewType, d.get("review_type")),
-        mode=meta_enum(Mode, d.get("mode")),
-        started_at=d.get("started_at") or "",
-        reviewed_at=d.get("reviewed_at") or "",
-    )
+# The sidecar's fixed-vocabulary keys, by the enum each is read into.
+_META_VOCABULARIES = {"review_type": ReviewType, "mode": Mode}
+
+
+def review_meta_from_dict(d) -> ReviewMeta:
+    """The attribution a `meta.json` payload states, keeping what it garbles out.
+
+    `serde` does the reconstruction, so the fields on `ReviewMeta` are the whole
+    schema and a key added there is read without a line here. What it will not
+    do on its own is survive a vocabulary it does not know: an unrecognised
+    `review_type` or `mode` raises out of `serde.from_dict` and would cost the
+    whole record. Both are dropped to absent first, which is what `meta_enum`
+    decides, so one unreadable field costs one field.
+
+    A payload that is not an object at all — a hand-edit that left a list, a
+    truncated write that json still parsed — reconstructs as if the file were
+    absent. There is nothing in it to attribute a review by.
+    """
+    if not isinstance(d, dict):
+        return ReviewMeta()
+    normalised = {
+        k: v for k, v in d.items()
+        if k not in _META_VOCABULARIES or meta_enum(_META_VOCABULARIES[k], v)
+    }
+    return serde.from_dict(ReviewMeta, normalised)
 
 
 # ── Findings ─────────────────────────────────────────────────────────────────

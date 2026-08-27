@@ -587,9 +587,9 @@ lets a consumer depend on what a review *is* without depending on what the
 review pipeline *does*.
 
 Nothing in the review layer is imported here, and nothing should be: this is the
-layer everything else in it sits on. The three heavier imports — `agent_types`,
-`workbench_config` and `pr_state.now_iso` — are all below the review layer, and
-`ReviewJob` is the only thing that reaches for them.
+layer everything else in it sits on. The heavier imports — `agent_types`,
+`serde`, `workbench_config` and `pr_state.now_iso` — are all below the review
+layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
 
 ## Publishing
 

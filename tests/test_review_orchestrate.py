@@ -1,4 +1,5 @@
 import contextlib
+import dataclasses
 import io
 import json
 import sys
@@ -3304,12 +3305,12 @@ class TestWriteReviewSidecar:
         meta = json.loads((tmp_path / "meta.json").read_text())
         assert meta["generator_version"] == "test-v1"
 
-    def test_meta_omits_generator_when_empty(self, ro, tmp_path):
+    def test_meta_states_no_generator_when_the_run_had_none(self, ro, tmp_path):
         job = self._make_job(ro, tmp_path)
         job.generator_version = ""
         ro._write_review_sidecar(job)
         meta = json.loads((tmp_path / "meta.json").read_text())
-        assert "generator_version" not in meta
+        assert not meta["generator_version"]
 
     def test_meta_records_the_runs_start(self, ro, tmp_path):
         job = self._make_job(ro, tmp_path)
@@ -3324,7 +3325,7 @@ class TestWriteReviewSidecar:
         job = self._make_job(ro, tmp_path)
         ro._write_review_sidecar(job)
         meta = json.loads((tmp_path / "meta.json").read_text())
-        assert "reviewed_at" not in meta
+        assert not meta["reviewed_at"]
 
     def test_a_second_write_keeps_the_same_start(self, ro, tmp_path):
         """One run, one start — the sidecar carries the job's stamp, not the
@@ -3334,6 +3335,41 @@ class TestWriteReviewSidecar:
         first = json.loads((tmp_path / "meta.json").read_text())["started_at"]
         ro._write_review_sidecar(job)
         assert json.loads((tmp_path / "meta.json").read_text())["started_at"] == first
+
+    def test_every_key_on_disk_is_a_field_of_the_type(self, ro, tmp_path):
+        """What the sidecar having an owner buys: a writer cannot record a key
+        no reader can name, and cannot drop one a reader looks for."""
+        job = self._make_job(ro, tmp_path)
+        ro._write_review_sidecar(job)
+        meta = json.loads((tmp_path / "meta.json").read_text())
+        assert set(meta) == {f.name for f in dataclasses.fields(ro.ReviewMeta)}
+
+    def test_the_sidecar_reads_back_as_what_was_written(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        ro._write_review_sidecar(job)
+        assert ro.read_review_meta(tmp_path) == ro._job_meta(job)
+
+    def test_an_incremental_run_records_what_it_is_a_delta_against(self, ro, tmp_path):
+        job = self._make_job(ro, tmp_path)
+        job.preflight = ro.PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            claude_md="", architecture_md="",
+            delta_files=["a.py", "b.py"], prior_head_sha="dead00",
+        )
+        ro._write_review_sidecar(job)
+        meta = ro.read_review_meta(tmp_path)
+        assert meta.review_type == ro.ReviewType.INCREMENTAL
+        assert meta.prior_sha == "dead00"
+        assert meta.delta_files == ("a.py", "b.py")
+
+    def test_a_full_run_records_no_delta(self, ro, tmp_path):
+        """A full review is a delta against nothing, which is not the same
+        claim as a delta against a prior review that moved no files."""
+        job = self._make_job(ro, tmp_path)
+        ro._write_review_sidecar(job)
+        meta = ro.read_review_meta(tmp_path)
+        assert meta.review_type == ro.ReviewType.FULL
+        assert (meta.prior_sha, meta.delta_files) == ("", ())
 
 
 # ── is_quota_error ───────────────────────────────────────────────────

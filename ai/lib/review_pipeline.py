@@ -605,7 +605,7 @@ def _run_synthesis_or_fallback(
         _document(
             job,
             _no_synthesis_body(
-                job, merged_content,
+                job, _post_processed_body(job, merged_content),
                 group_count, BUDGET_SUMMARY,
             ),
             skipped_groups=n_skipped, total_groups=group_count,

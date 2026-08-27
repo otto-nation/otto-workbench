@@ -7,6 +7,15 @@ phase's registry entry. Six phases sit in front of eight templates, because two
 of them read an open PR and the working branch differently — which template a
 mode picks is the spec's answer, not the caller's. Includes section builders,
 budget computation, and prompt size logging.
+
+Every phase fits its prompt to the token budget through `PromptBuilder.fit`,
+which registers the sections that can shrink — the pre-collected file contents,
+the incremental delta, and the full diff — after everything fixed is already
+accounted for. It pulls three levers in that order and only as far as the
+shortfall requires, rewrites the environment section to send the agent after
+whatever it dropped, and reports the cuts in the prompt's size log. A prompt
+still over budget once every lever is pulled raises `PromptTooLarge` rather than
+being sent: the phase reports it before an agent starts, so it costs nothing.
 """
 
 # doc-group: pipeline
@@ -15,7 +24,8 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
+from enum import StrEnum
 from datetime import date
 from pathlib import Path
 
@@ -44,7 +54,7 @@ from review_preflight import (
     NON_PREFLIGHT_OVERHEAD_BYTES,
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
-    _scope_diff, build_project_context, format_preflight_data,
+    _scope_diff, _truncate_diff, build_project_context, format_preflight_data,
 )
 from review_types import (
     FILE_STAT_FMT, PRContext, PreflightData, PRMetadata, PriorDisposition,
@@ -254,7 +264,23 @@ def _build_reply_threads_section(
     return "\n".join(parts)
 
 
-def _build_env_section(wt_path: str, preflight: PreflightData | None = None) -> str:
+def _build_env_section(
+    wt_path: str, preflight: PreflightData | None = None,
+    skip_file_contents: bool = False,
+) -> str:
+    """Where the branch is checked out, and how much of it the prompt carries.
+
+    ``skip_file_contents`` is the budget's first lever having fired: the diffs
+    are still inlined but no file contents are, so every changed file is one
+    the agent has to open. Telling it otherwise is worse than telling it
+    nothing — an agent that reads "file contents are in the Pre-collected data
+    section" does not go looking for the ones that are not.
+    """
+    if preflight and skip_file_contents:
+        return f"""
+## Environment
+PR branch checked out at: {wt_path}
+Diffs are pre-collected; file contents are not. Read every file listed under "Files not pre-collected" directly from this path."""
     if preflight and not preflight.omitted_files:
         return f"""
 ## Environment
@@ -271,10 +297,23 @@ PR branch checked out at: {wt_path}
 Read source files directly from this path. Do NOT fetch files via the GitHub API."""
 
 
-def _build_omitted_guidance(preflight: "PreflightData | None", skip_omitted: bool = False) -> str:
-    if not preflight or not preflight.omitted_files:
+def _build_omitted_guidance(
+    preflight: "PreflightData | None", skip_omitted: bool = False,
+    skip_file_contents: bool = False,
+) -> str:
+    """The sentence that sends the agent to read what the prompt left out.
+
+    ``skip_file_contents`` fills the "Files not pre-collected" list with every
+    changed file rather than only the oversized ones, so the batch read is owed
+    even when ``omitted_files`` is empty. ``skip_omitted`` is the opposite case
+    and suppresses the read, but only while the contents are still in the
+    prompt: at an effort level that does not review the large files, naming
+    them invites work the run has declined — whereas a file the *budget* took
+    out is one the phase does review and now has nowhere else to get.
+    """
+    if not preflight or not (preflight.omitted_files or skip_file_contents):
         return ""
-    if skip_omitted:
+    if skip_omitted and not skip_file_contents:
         return " Some large files were excluded — they are not reviewed at this effort level."
     return (
         ' First, read all files listed under "Files not pre-collected"'
@@ -395,10 +434,44 @@ def _build_holistic_block(
     )
 
 
+# How many paths either file list in the delta section spells out before it
+# summarises the rest. A list is orientation, not content — the diff above it is
+# what the agent reviews — so the tail costs bytes no reader spends. Both lists
+# were uncapped until a rebased branch produced 4,974 delta files for a 107-file
+# PR and 260KB of `- \`path\`` lines pushed the synthesis prompt 75% past its
+# budget. `_scope_to_surface` bounds the count itself now; this bounds the
+# rendering, so no future way of over-counting can spend the whole budget on it.
+MAX_DELTA_LIST_ENTRIES = 200
+
+# Below this the diff fence holds a fragment of one hunk, which reads as
+# corruption rather than as context. The delta section drops its diff entirely
+# at that point and the full diff — which covers the same files from the base —
+# is what the agent reviews from.
+MIN_DELTA_DIFF_BYTES = 2_048
+
+
+def _delta_file_list(heading: str, paths: list[str]) -> list[str]:
+    shown = sorted(paths)[:MAX_DELTA_LIST_ENTRIES]
+    lines = ["", heading] + [f"- `{p}`" for p in shown]
+    if len(paths) > len(shown):
+        lines.append(f"- _+{len(paths) - len(shown)} more not listed_")
+    return lines
+
+
 def _build_delta_section(
     preflight: PreflightData | None,
     file_filter: list[str] | None = None,
+    max_bytes: int | None = None,
 ) -> str:
+    """What changed since the prior review, for an incremental re-review.
+
+    ``file_filter`` narrows it to one group's files. ``max_bytes`` is the
+    section's share of the prompt budget: the delta diff shrinks to fit inside
+    it and is dropped when what is left will not hold a readable hunk. The
+    prose and the two file lists are not budgeted — capped at
+    ``MAX_DELTA_LIST_ENTRIES`` they cannot exceed ~20KB, and a section that
+    cannot say which commit it is comparing against is worth no bytes at all.
+    """
     if not preflight or not preflight.prior_head_sha:
         return ""
     prior = git_client.abbrev(preflight.prior_head_sha)
@@ -411,7 +484,7 @@ def _build_delta_section(
         all_pr_files = set(preflight.file_contents.keys()) | set(preflight.omitted_files)
         unchanged = sorted(all_pr_files - set(delta_files))
 
-    parts = [
+    head = [
         "## Incremental review context",
         "",
         f"This is an **incremental review**. A prior review exists at commit `{prior}`.",
@@ -422,7 +495,7 @@ def _build_delta_section(
     ]
 
     if preflight.delta_commit_log and not file_filter:
-        parts += [
+        head += [
             "",
             "### New commits since prior review",
             "",
@@ -431,29 +504,27 @@ def _build_delta_section(
             "```",
         ]
 
-    if preflight.delta_diff:
-        diff_text = _scope_diff(preflight.delta_diff, file_filter) if file_filter else preflight.delta_diff
-        if diff_text:
-            parts += [
-                "",
-                "### Delta diff",
-                "",
-                "```diff",
-                diff_text,
-                "```",
-            ]
-
+    tail: list[str] = []
     if delta_files:
-        parts += ["", "### Files modified since prior review"]
-        for f in sorted(delta_files):
-            parts.append(f"- `{f}`")
-
+        tail += _delta_file_list("### Files modified since prior review", delta_files)
     if unchanged:
-        parts += ["", "### Files unchanged since prior review (prior findings still apply)"]
-        for f in unchanged:
-            parts.append(f"- `{f}`")
+        tail += _delta_file_list(
+            "### Files unchanged since prior review (prior findings still apply)", unchanged,
+        )
 
-    return "\n".join(parts)
+    diff_text = ""
+    if preflight.delta_diff:
+        diff_text = (
+            _scope_diff(preflight.delta_diff, file_filter) if file_filter
+            else preflight.delta_diff
+        )
+    if diff_text and max_bytes is not None:
+        fence = ["", "### Delta diff", "", "```diff", "", "```"]
+        room = max_bytes - len("\n".join(head + fence + tail).encode())
+        diff_text = _truncate_diff(diff_text, room)[0] if room >= MIN_DELTA_DIFF_BYTES else ""
+
+    diff_block = ["", "### Delta diff", "", "```diff", diff_text, "```"] if diff_text else []
+    return "\n".join(head + diff_block + tail)
 
 
 def _is_incremental(job: ReviewJob) -> bool:
@@ -624,7 +695,12 @@ def _build_prior_section(
 
 @dataclass(frozen=True)
 class CommonSections:
-    """Sections shared by every template, built once per prompt."""
+    """Sections shared by every template, built once per prompt.
+
+    The incremental delta is not among them: it is budgeted, and a phase that
+    scopes itself to one group budgets a different section from a phase that
+    reads the whole PR. `PromptBuilder.fit` builds and registers it instead.
+    """
 
     today: str
     generator_version: str
@@ -634,7 +710,6 @@ class CommonSections:
     reply_threads: str
     env_section: str
     issue_section: str
-    delta_section: str
     omitted_guidance: str
     max_turns: int
 
@@ -653,6 +728,7 @@ class PromptBuilder:
     def __init__(self, common: CommonSections):
         self._common = common
         self._vars: dict[str, object] = {}
+        self._plan: BudgetPlan | None = None
 
     def set(self, key: str, value) -> "PromptBuilder":
         self._vars[key] = value
@@ -678,21 +754,58 @@ class PromptBuilder:
     def worktree(self, wt_path: str) -> "PromptBuilder":
         return self.set("worktree_block", build_worktree_block(wt_path))
 
-    def diff_budget(
+    def fit(
         self, job: ReviewJob, *,
         file_filter: list[str] | None = None,
         skip_file_contents: bool = False,
+        skip_project_context: bool = False,
         min_diff: int = MIN_DIFF_BYTES,
-    ) -> int:
-        """Bytes left for the diff, given everything registered so far.
+    ) -> "PromptBuilder":
+        """Register the budgeted sections, shrunk to whatever room is left.
 
-        Call this only after every non-preflight variable is registered —
-        anything set afterwards is not counted against the budget.
+        Everything registered before this call is fixed overhead; call it once,
+        last, after every other variable. `file_filter` scopes the prompt to one
+        group's files, `skip_file_contents` drops the pre-collected contents
+        outright rather than waiting for the ladder to reach them, and
+        `min_diff` is the floor the full diff will not shrink below — synthesis
+        passes 0, having the findings already.
+
+        Four sections are registered here and nowhere else, because this is the
+        only place that knows what the budget cut: `preflight_data` and
+        `delta_section`, which are what shrink, and `env_section` and
+        `omitted_guidance`, which describe them and would otherwise promise the
+        agent data the prompt no longer carries. The latter two are rewritten
+        only if the caller registered them.
         """
-        return _compute_diff_budget(
+        plan = _fit_budget(
             job, self._vars, file_filter=file_filter,
             skip_file_contents=skip_file_contents, min_diff=min_diff,
         )
+        self._plan = plan
+        self.set("delta_section", plan.delta_section)
+        self.set("preflight_data", _build_preflight_section(
+            job, file_filter=file_filter,
+            skip_file_contents=plan.skip_file_contents,
+            skip_project_context=skip_project_context,
+            max_diff_bytes=plan.diff_bytes,
+        ))
+        if "env_section" in self._vars:
+            self.set("env_section", _build_env_section(
+                job.wt_path, preflight=job.preflight,
+                skip_file_contents=plan.skip_file_contents,
+            ))
+        if "omitted_guidance" in self._vars:
+            self.set("omitted_guidance", _build_omitted_guidance(
+                job.preflight,
+                skip_omitted=EFFORT_PRESETS[job.effort].skip_omitted_files,
+                skip_file_contents=plan.skip_file_contents,
+            ))
+        return self
+
+    @property
+    def cuts(self) -> tuple[Cut, ...]:
+        """What `fit` dropped to make the prompt fit, in the order it went."""
+        return self._plan.cuts if self._plan else ()
 
     @property
     def vars(self) -> dict[str, object]:
@@ -715,46 +828,159 @@ def _build_preflight_section(
     )
 
 
-def _compute_diff_budget(
+class BudgetLever(StrEnum):
+    """Which section the budget ladder cut, named in the order it pulls them."""
+
+    FILE_CONTENTS = "file_contents"
+    DELTA = "delta"
+    DIFF_FLOOR = "diff_floor"
+
+
+@dataclass(frozen=True)
+class Cut:
+    """One lever the ladder pulled, and what it bought.
+
+    `freed_bytes` is what the section gave back. `DIFF_FLOOR` gives nothing
+    back — it is the ladder refusing to shrink the diff any further — so it
+    carries `shortfall_bytes`, what the prompt is still over by, and
+    `floor_bytes`, the size the diff was held at. A phase reviewing from
+    findings it already has passes no floor, and then there is no diff left at
+    all rather than a floor to report.
+
+    Structured rather than pre-rendered because `prompt-stats.json` is the
+    artifact an over-budget run is diagnosed from, and asking it which lever
+    fired on which phase should not mean parsing the sentence written for the
+    log. `describe` is that sentence, and the only place it is spelled out.
+    """
+
+    lever: BudgetLever
+    freed_bytes: int = 0
+    shortfall_bytes: int = 0
+    floor_bytes: int = 0
+
+    def describe(self) -> str:
+        """How the cut reads in the prompt's size log."""
+        if self.lever is BudgetLever.FILE_CONTENTS:
+            return f"{self.freed_bytes // 1024}KB of pre-collected file contents"
+        if self.lever is BudgetLever.DELTA:
+            return f"{self.freed_bytes // 1024}KB of incremental delta"
+        still_over = f"{self.shortfall_bytes // 1024}KB still over"
+        if self.floor_bytes:
+            return f"the full diff, floored at {self.floor_bytes // 1024}KB and {still_over}"
+        return f"the full diff entirely, {still_over}"
+
+
+@dataclass(frozen=True)
+class BudgetPlan:
+    """How much of the prompt each variable-size section gets, and what was cut.
+
+    `delta_section` is the rendered incremental context, already shrunk;
+    `diff_bytes` is the cap the full diff is truncated to; `skip_file_contents`
+    says whether the pre-collected contents survived. `cuts` holds one `Cut` per
+    lever the ladder had to pull, in the order it pulled them, and is empty on
+    the ordinary path where everything fit.
+    """
+
+    delta_section: str
+    diff_bytes: int
+    skip_file_contents: bool
+    cuts: tuple[Cut, ...]
+
+
+def _fixed_preflight_bytes(pf: PreflightData | None) -> int:
+    if not pf:
+        return 0
+    return (
+        len(pf.commit_log.encode())
+        + len(pf.claude_md.encode())
+        + len(pf.architecture_md.encode())
+        + sum(len(v.encode()) for v in pf.review_checklists.values())
+    )
+
+
+def _file_contents_bytes(
+    pf: PreflightData | None, file_filter: list[str] | None,
+) -> int:
+    if not pf:
+        return 0
+    filter_set = set(file_filter) if file_filter else None
+    return sum(
+        len(v.encode()) for k, v in pf.file_contents.items()
+        if filter_set is None or k in filter_set
+    )
+
+
+def _fit_budget(
     job: ReviewJob,
     known_sections: dict[str, object],
+    *,
     skip_file_contents: bool = False,
     file_filter: list[str] | None = None,
     min_diff: int = MIN_DIFF_BYTES,
-) -> int:
+) -> BudgetPlan:
+    """Fit the variable sections into what `known_sections` leaves of the budget.
+
+    Three levers, pulled in this order and only as far as the shortfall
+    requires: drop the pre-collected file contents, shrink the incremental
+    delta, then floor the full diff at `min_diff`. Contents go first because
+    they are the only section the agent can recover on its own — the worktree
+    is checked out and `fit` rewrites the environment section to send it there
+    — while a diff it is not shown is a change it does not know happened.
+
+    Pulling every lever is not a guarantee of fitting: the fixed overhead alone
+    can exceed the budget. The plan then reports the cuts it made and
+    `build_prompt` raises `PromptTooLarge` on the rendered result, rather than
+    logging past a prompt the model will reject.
+    """
     # `is not None`, not truthiness — a falsy value (0, False) still renders
     # into the prompt and must count against the budget.
     known_bytes = sum(
         len(str(v).encode()) for v in known_sections.values() if v is not None
     )
+    fixed = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + _fixed_preflight_bytes(job.preflight)
+    contents = 0 if skip_file_contents else _file_contents_bytes(job.preflight, file_filter)
+    delta = _build_delta_section(job.preflight, file_filter=file_filter)
+    cuts: list[Cut] = []
 
-    pf = job.preflight
-    non_diff_preflight = 0
-    if pf:
-        non_diff_preflight = (
-            len(pf.commit_log.encode())
-            + len(pf.claude_md.encode())
-            + len(pf.architecture_md.encode())
-            + sum(len(v.encode()) for v in pf.review_checklists.values())
+    if contents and fixed + contents + len(delta.encode()) + min_diff > MAX_PROMPT_BYTES:
+        cuts.append(Cut(BudgetLever.FILE_CONTENTS, freed_bytes=contents))
+        skip_file_contents, contents = True, 0
+
+    delta_room = max(0, MAX_PROMPT_BYTES - fixed - contents - min_diff)
+    if len(delta.encode()) > delta_room:
+        shrunk = _build_delta_section(
+            job.preflight, file_filter=file_filter, max_bytes=delta_room,
         )
-        if not skip_file_contents:
-            filter_set = set(file_filter) if file_filter else None
-            non_diff_preflight += sum(
-                len(v.encode()) for k, v in pf.file_contents.items()
-                if filter_set is None or k in filter_set
-            )
+        cuts.append(Cut(
+            BudgetLever.DELTA,
+            freed_bytes=len(delta.encode()) - len(shrunk.encode()),
+        ))
+        delta = shrunk
 
-    non_diff_total = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + non_diff_preflight
-    remaining = MAX_PROMPT_BYTES - non_diff_total
-    if remaining < min_diff:
-        log.warn(
-            f"Prompt budget tight: {non_diff_total // 1024}KB non-diff vs "
-            f"{MAX_PROMPT_BYTES // 1024}KB limit — diff capped to {min_diff // 1024}KB"
-        )
-    return max(min_diff, remaining)
+    diff_bytes = MAX_PROMPT_BYTES - fixed - contents - len(delta.encode())
+    if diff_bytes < min_diff:
+        # Recorded as a shortfall rather than as bytes freed, because the floor
+        # frees nothing: it is what the ladder could not absorb, and so is also
+        # what the rendered prompt will be over by.
+        cuts.append(Cut(
+            BudgetLever.DIFF_FLOOR,
+            shortfall_bytes=min_diff - diff_bytes,
+            floor_bytes=min_diff,
+        ))
+        diff_bytes = min_diff
+
+    return BudgetPlan(
+        delta_section=delta,
+        diff_bytes=diff_bytes,
+        skip_file_contents=skip_file_contents,
+        cuts=tuple(cuts),
+    )
 
 
-def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob, label: str = "") -> str:
+def _log_prompt_size(
+    template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
+    label: str = "", cuts: tuple[Cut, ...] = (),
+) -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
     budget_kb = MAX_PROMPT_BYTES // 1024
@@ -769,6 +995,8 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, object
     section_summary = ", ".join(parts) if parts else "all <1KB"
 
     msg = f"Prompt [{template_name}]: {prompt_kb}KB / {budget_kb}KB ({section_summary})"
+    if cuts:
+        msg += " — dropped " + ", ".join(c.describe() for c in cuts)
     if prompt_bytes > MAX_PROMPT_BYTES:
         msg += f" — EXCEEDS budget by {(prompt_bytes - MAX_PROMPT_BYTES) // 1024}KB"
     log.info(msg)
@@ -786,6 +1014,7 @@ def _log_prompt_size(template_name: str, prompt: str, sections: dict[str, object
         "budget_bytes": MAX_PROMPT_BYTES,
         "utilization_pct": round(prompt_bytes / MAX_PROMPT_BYTES * 100, 1),
         "sections": section_sizes,
+        "cuts": [asdict(c) for c in cuts],
     }
     if job.preflight:
         pf = job.preflight
@@ -893,7 +1122,7 @@ def _prompt_single(job, common, extra, output):
     )
     b = PromptBuilder(common)
     b.shared(
-        "pr_header", "state_context", "delta_section",
+        "pr_header", "state_context",
         "reply_threads", "env_section", "issue_section", "generator_version",
         "omitted_guidance", "max_turns",
     )
@@ -901,7 +1130,7 @@ def _prompt_single(job, common, extra, output):
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
     b.output(output, stdout_warning=True)
-    b.set("preflight_data", _build_preflight_section(job))
+    b.fit(job)
     return b, ""
 
 
@@ -913,7 +1142,7 @@ def _prompt_synthesis(job, common, extra, output):
     """
     b = PromptBuilder(common)
     b.shared(
-        "pr_header", "state_context", "delta_section", "reply_threads",
+        "pr_header", "state_context", "reply_threads",
         "today", "generator_version", "max_turns",
     )
     _identify_review(b, job, pr_title=job.pr.title)
@@ -928,10 +1157,7 @@ def _prompt_synthesis(job, common, extra, output):
     b.output(output)
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
-    diff_budget = b.diff_budget(job, skip_file_contents=True, min_diff=0)
-    b.set("preflight_data", _build_preflight_section(
-        job, skip_file_contents=True, max_diff_bytes=diff_budget,
-    ))
+    b.fit(job, skip_file_contents=True, min_diff=0)
     return b, ""
 
 
@@ -944,16 +1170,14 @@ def _survey_prompt(job, common, extra, output):
     """
     b = PromptBuilder(common)
     b.shared(
-        "pr_header", "state_context", "delta_section", "reviews_section",
+        "pr_header", "state_context", "reviews_section",
         "issue_section", "env_section", "omitted_guidance", "max_turns",
     )
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
     b.set("all_files_formatted", job.pr.all_files_formatted)
     b.output(output)
-    b.set("preflight_data", _build_preflight_section(
-        job, max_diff_bytes=b.diff_budget(job),
-    ))
+    b.fit(job)
     return b, ""
 
 
@@ -980,7 +1204,6 @@ def _prompt_group(job, common, extra, output):
     b.set("pr_header", _build_pr_header(
         job.pr, job.ctx, job.effort, file_filter=file_filter,
     ))
-    b.set("delta_section", _build_delta_section(job.preflight, file_filter=file_filter))
     b.set("reply_threads", _build_reply_threads_section(job.reply_threads, file_filter=file_filter))
     b.set("project_context", build_project_context(job.preflight, file_filter=file_filter) if job.preflight else "")
     b.set("holistic_block", holistic_block)
@@ -990,27 +1213,7 @@ def _prompt_group(job, common, extra, output):
     b.set("group_name", extra["group_name"])
     b.set("group_files_formatted", extra["group_files_formatted"])
     b.output(output)
-    diff_budget = b.diff_budget(job, file_filter=file_filter)
-
-    # When file contents blow the budget (common for generated-code groups),
-    # drop them so the diff gets adequate space.
-    skip_file_contents = False
-    if diff_budget <= MIN_DIFF_BYTES and job.preflight:
-        filter_set = set(file_filter) if file_filter else None
-        fc_bytes = sum(
-            len(v.encode()) for k, v in job.preflight.file_contents.items()
-            if filter_set is None or k in filter_set
-        )
-        if fc_bytes > 0:
-            log.info(f"Dropping {fc_bytes // 1024}KB file contents for group to fit diff budget")
-            skip_file_contents = True
-            diff_budget = b.diff_budget(job, file_filter=file_filter, skip_file_contents=True)
-
-    b.set("preflight_data", _build_preflight_section(
-        job, file_filter=file_filter, skip_project_context=True,
-        skip_file_contents=skip_file_contents,
-        max_diff_bytes=diff_budget,
-    ))
+    b.fit(job, file_filter=file_filter, skip_project_context=True)
     return b, str(extra["group_idx"])
 
 
@@ -1050,13 +1253,30 @@ def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
         reply_threads=_build_reply_threads_section(job.reply_threads),
         env_section=_build_env_section(job.wt_path, preflight=job.preflight),
         issue_section=_build_issue_section(job.issue_link, job.issue_context),
-        delta_section=_build_delta_section(job.preflight),
         omitted_guidance=_build_omitted_guidance(
             job.preflight,
             skip_omitted=EFFORT_PRESETS[job.effort].skip_omitted_files,
         ),
         max_turns=max_turns,
     )
+
+
+class PromptTooLarge(RuntimeError):
+    """A rendered prompt that exceeds the budget with every lever already pulled.
+
+    Raised by `build_prompt` after the prompt and its stats are written, so the
+    oversized prompt is on disk to look at. The alternative — logging "EXCEEDS
+    budget" and sending it anyway — spends a phase's cost on a request the model
+    truncates or rejects, and reports whatever comes back as the phase's finding.
+    """
+
+    def __init__(self, template: str, prompt_bytes: int):
+        self.template = template
+        self.prompt_bytes = prompt_bytes
+        super().__init__(
+            f"{template} prompt is {prompt_bytes // 1024}KB against a "
+            f"{MAX_PROMPT_BYTES // 1024}KB budget, with every lever already pulled"
+        )
 
 
 def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> str:
@@ -1066,6 +1286,9 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
     phase's registry entry, so a caller names the phase and nothing else about
     it. ``extra`` carries only what the phase cannot derive — the group's
     identity and the content a later phase reasons over.
+
+    Raises `PromptTooLarge` when the result exceeds `MAX_PROMPT_BYTES` even
+    after the budget ladder has cut everything it can.
     """
     builder = _PROMPT_BUILDERS.get(phase)
     if builder is None:
@@ -1085,6 +1308,12 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
     prompt_builder, label = builder(job, common, extra, output)
     template_vars = prompt_builder.vars
     rendered = agent_templates.render(template_name, **template_vars)
-    return _log_prompt_size(template_name, rendered, template_vars, job, label=label)
+    prompt = _log_prompt_size(
+        template_name, rendered, template_vars, job,
+        label=label, cuts=prompt_builder.cuts,
+    )
+    if len(prompt.encode()) > MAX_PROMPT_BYTES:
+        raise PromptTooLarge(template_name, len(prompt.encode()))
+    return prompt
 
 

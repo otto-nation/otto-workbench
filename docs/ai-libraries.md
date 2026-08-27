@@ -328,6 +328,15 @@ of them read an open PR and the working branch differently — which template a
 mode picks is the spec's answer, not the caller's. Includes section builders,
 budget computation, and prompt size logging.
 
+Every phase fits its prompt to the token budget through `PromptBuilder.fit`,
+which registers the sections that can shrink — the pre-collected file contents,
+the incremental delta, and the full diff — after everything fixed is already
+accounted for. It pulls three levers in that order and only as far as the
+shortfall requires, rewrites the environment section to send the agent after
+whatever it dropped, and reports the cuts in the prompt's size log. A prompt
+still over budget once every lever is pulled raises `PromptTooLarge` rather than
+being sent: the phase reports it before an agent starts, so it costs nothing.
+
 ### review_retry.py
 
 Retry and diagnosis routing for the review pipeline.

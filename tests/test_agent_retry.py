@@ -229,6 +229,8 @@ _RETRY_POLICY = {
     DiagnosisKind.SKIPPED: (False, "", _TURNS),
     DiagnosisKind.BUDGET_EXCEEDED: (False, "", _TURNS),
     DiagnosisKind.OUTPUT_MISSING: (False, "", _TURNS),
+    # Reached before any agent started, and a retry would render the same bytes.
+    DiagnosisKind.PROMPT_TOO_LARGE: (False, "", _TURNS),
     # Synthesis outcomes. No agent call produced them, so nothing here re-invokes
     # one — `pr review --recover` re-runs the phase, which is a different lever.
     DiagnosisKind.ALL_GROUPS_FAILED: (False, "", _TURNS),

@@ -75,6 +75,15 @@ MAX_COMMIT_LOG_BYTES = 50_000
 MAX_DELTA_DIFF_BYTES = 80_000
 MAX_DELTA_LOG_BYTES = 20_000
 
+# ceiling: a flat reserve for everything in a prompt that is not preflight data —
+# the template, the PR header, prior reviews, reply threads. `review_prompt` now
+# measures those sections exactly before it budgets, so this double-counts them:
+# on a typical prompt it holds back ~116KB nothing spends, and the review is
+# smaller than it had room to be. Shrinking it is not free — every byte returned
+# is a byte of diff sent to the model, so it raises per-review cost, which is why
+# it is left as-is while review cost is what is being worked on. Upgrade when a
+# phase reports a cut in its prompt stats that this reserve alone would have
+# covered, or once per-review cost has a budget of its own to spend it against.
 NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
 MIN_DIFF_BYTES = 20_000
 
@@ -192,6 +201,26 @@ def _worktree_diff(wt_path: str, since: str) -> str:
     )
 
 
+def _scope_to_surface(raw_diff: str, pr_files: list[dict]) -> str:
+    """``raw_diff`` narrowed to the files the review is actually reviewing.
+
+    ``pr_files`` is the review's surface — `PRMetadata.files`. A diff with no
+    file headers, or a job with no surface to narrow to, comes back untouched.
+
+    The delta range is `prior_sha..HEAD`, which spans the base branch as well
+    as the branch: rebase onto a moved base and every commit the base gained
+    lands in it. That is how a 107-file review came to report 4,974 changed
+    files — the list alone was 260KB, and it pushed the synthesis prompt past
+    its budget. Nothing outside the surface is reviewable in the first place,
+    so narrowing here bounds the delta by the PR rather than by the base's
+    churn, and `delta_files` — which decides whether a group's files changed
+    enough to re-review — stops naming files no group holds.
+    """
+    if not pr_files:
+        return raw_diff
+    return _scope_diff(raw_diff, [f["path"] for f in pr_files])
+
+
 def _collect_delta(job: ReviewJob) -> tuple[str, str, list[str], str]:
     empty = ("", "", [], "")
     if not job.prior_review:
@@ -217,9 +246,14 @@ def _collect_delta(job: ReviewJob) -> tuple[str, str, list[str], str]:
         raw_diff = _worktree_diff(job.wt_path, prior_sha)
     else:
         raw_diff = git_client.out("diff", f"{prior_sha}..HEAD", cwd=job.wt_path)
+    raw_diff = _scope_to_surface(raw_diff, job.pr.files)
     delta_diff, _ = _truncate_diff(raw_diff, MAX_DELTA_DIFF_BYTES)
+    # Same pathspec as the diff, for the same reason: a rebase puts every
+    # commit the base gained in this range, and a log of them describes work
+    # the review is not looking at.
+    surface = ["--", *(f["path"] for f in job.pr.files)] if job.pr.files else []
     raw_log = git_client.out(
-        "log", "--stat", "--reverse", f"{prior_sha}..HEAD", cwd=job.wt_path,
+        "log", "--stat", "--reverse", f"{prior_sha}..HEAD", *surface, cwd=job.wt_path,
     )
     delta_log = _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log")
     delta_files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(raw_diff)]
@@ -449,13 +483,24 @@ def _truncate_diff(full_diff: str, max_bytes: int) -> tuple[str, list[str]]:
 
 def _format_file_contents(
     data: PreflightData, file_filter: list[str] | None,
+    skip_contents: bool = False,
 ) -> list[str]:
+    """The changed files, inlined or named, scoped to ``file_filter``.
+
+    ``skip_contents`` inlines nothing and names every in-scope file under
+    "Files not pre-collected" instead — the budget's first lever drops the
+    contents, and a file whose contents were dropped is in exactly the position
+    of one that was never collected. Saying so is what lets the agent read it:
+    the section is the only list the prompt gives it to read from, and dropping
+    the contents silently used to drop the list along with them, leaving the
+    agent told its files were pre-collected and shown none of them.
+    """
     parts: list[str] = []
     files_to_include = [
         p for p in (file_filter or data.file_contents.keys())
         if p in data.file_contents
     ]
-    if files_to_include:
+    if files_to_include and not skip_contents:
         parts += ["", "### Changed file contents"]
         for path in files_to_include:
             perms = data.file_permissions.get(path, "?")
@@ -466,6 +511,8 @@ def _format_file_contents(
     omitted = data.omitted_files
     if file_filter:
         omitted = [p for p in omitted if p in set(file_filter)]
+    if skip_contents:
+        omitted = files_to_include + [p for p in omitted if p not in data.file_contents]
     if omitted:
         parts += ["", "### Files not pre-collected (read directly)"]
         for path in omitted:
@@ -523,8 +570,9 @@ def format_preflight_data(
     if data.commit_log:
         parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
 
-    if not skip_file_contents:
-        parts += _format_file_contents(data, file_filter)
+    parts += _format_file_contents(
+        data, file_filter, skip_contents=skip_file_contents,
+    )
 
     if diff_omitted:
         parts += ["", "### Diffs not pre-collected (use `git diff -- <path>` or Read tool)"]

@@ -40,6 +40,11 @@ class DiagnosisKind(StrEnum):
     SKIPPED = "skipped"
     BUDGET_EXCEEDED = "budget_exceeded"
     OUTPUT_MISSING = "output_missing"
+    # Reached before any agent starts: the phase's prompt is over the token
+    # budget with every lever in `review_prompt` already pulled. Its own kind
+    # because nothing an agent does changes it — the retry paths would re-render
+    # the same bytes, so the phase is failed rather than attempted.
+    PROMPT_TOO_LARGE = "prompt_too_large"
     # Synthesis's own outcomes. Recorded against the pipeline rather than an
     # agent, so neither has a session log behind it: no group produced usable
     # output, and a synthesis that degraded to the mechanical merge.
@@ -85,9 +90,11 @@ _NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
 class Diagnosis:
     """A single agent run's failure, classified once and rendered on demand.
 
-    Frozen because two of the pipeline's decisions compare diagnoses for
-    equality — the consecutive-failure abort and the all-groups-failed circuit
-    breaker — and one of them puts them in a set.
+    Frozen because two of the pipeline's decisions compare diagnoses — the
+    consecutive-failure abort and the all-groups-failed circuit breaker — and
+    one of them puts them in a set. The abort asks `same_reason_as` rather than
+    comparing the whole record, so a detail that measures the failure instead of
+    naming it does not read as a new reason each time.
     """
 
     kind: DiagnosisKind
@@ -113,15 +120,44 @@ class Diagnosis:
             return f"{_AGENT_ERROR_PREFIX} {self.detail}"
         if self.kind is DiagnosisKind.SKIPPED:
             return f"skipped: {self.detail}"
+        if self.kind is DiagnosisKind.PROMPT_TOO_LARGE:
+            return f"prompt too large: {self.detail}"
         if self.kind is DiagnosisKind.UNKNOWN:
             # A legacy state file could hold an empty reason; the failures table
             # gets a word rather than a blank cell.
             return self.detail or DiagnosisKind.UNKNOWN.value
         return _DIAGNOSIS_MESSAGES[self.kind]
 
+    def same_reason_as(self, other: "Diagnosis | None") -> bool:
+        """Whether `other` failed for the same reason, for counting a streak.
+
+        Two diagnoses that are equal always answer yes, and a `None` — no prior
+        failure — always answers no. The detail is normally part of the reason,
+        one agent error being a different cause from another. A prompt over the
+        budget is the exception: its detail is the measurement, and every group
+        measures a different number of kilobytes. Comparing whole records there
+        makes a run structurally unable to prompt any group look like a run
+        failing for a new reason each time, so the consecutive-failure abort
+        never trips and every remaining group is visited.
+        """
+        if other is None:
+            return False
+        if self.kind is not other.kind:
+            return False
+        if self.kind is DiagnosisKind.PROMPT_TOO_LARGE:
+            return True
+        return self == other
+
     @property
     def recoverable(self) -> bool:
-        """Whether `pr review --recover` could plausibly do better than this run."""
+        """Whether `pr review --recover` could plausibly do better than this run.
+
+        A prompt over the budget is not: recovery re-renders the same phase from
+        the same commit, so it produces the same oversized prompt. What changes
+        the answer is a smaller review, not a second attempt at this one.
+        """
+        if self.kind is DiagnosisKind.PROMPT_TOO_LARGE:
+            return False
         lowered = self.detail.lower()
         return not any(m in lowered for m in _NON_RECOVERABLE_ERROR_MARKERS)
 

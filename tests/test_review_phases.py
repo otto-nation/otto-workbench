@@ -530,3 +530,54 @@ class TestParallelGroupTurnBudget:
         expected = review_phases.PHASES[Phase.GROUP].max_turns + agent_phases.OMITTED_FILE_TURNS
         assert len(seen) == 2
         assert all(inv.max_turns == expected for inv in seen)
+
+
+class TestPromptTooLargeFailsThePhase:
+    """A prompt over the budget fails its phase instead of being sent anyway.
+
+    Logging "EXCEEDS budget" and invoking the agent regardless spends the
+    phase's whole cost on a request the model truncates or rejects, and then
+    reports whatever comes back as the phase's finding. Nothing an agent does
+    changes the byte count, so the phase is failed before it starts and costs
+    nothing.
+    """
+
+    @staticmethod
+    def _raising(monkeypatch):
+        from review_prompt import PromptTooLarge
+
+        def boom(*_args, **_kwargs):
+            raise PromptTooLarge("scout.md", 600_000)
+
+        monkeypatch.setattr(review_phases, "build_prompt", boom)
+
+    def test_a_scan_reports_it_and_never_reaches_the_agent(self, tmp_path, monkeypatch):
+        from agent_diagnosis import DiagnosisKind
+
+        seen = _capture_invocations(monkeypatch)
+        self._raising(monkeypatch)
+        result = review_phases.run_phase(_job(tmp_path), Phase.SCOUT, "scanning...")
+        assert seen == []
+        assert result.content == ""
+        assert result.diagnosis.kind is DiagnosisKind.PROMPT_TOO_LARGE
+        assert "585KB" in result.diagnosis.message
+
+    def test_a_group_reports_it_as_a_group_failure(self, tmp_path, monkeypatch):
+        from agent_diagnosis import DiagnosisKind
+        from review_types import Group
+
+        seen = _capture_invocations(monkeypatch)
+        self._raising(monkeypatch)
+        _, _, failure = review_phases._review_group(
+            1, Group(name="g1", files=["a.py"], lines=10),
+            _job(tmp_path), 1, "holistic",
+        )
+        assert seen == []
+        assert failure is not None
+        assert failure.diagnosis.kind is DiagnosisKind.PROMPT_TOO_LARGE
+
+    def test_recovery_cannot_fix_it(self):
+        """`--recover` re-renders the same phase at the same commit."""
+        from agent_diagnosis import Diagnosis, DiagnosisKind
+
+        assert not Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail="x").recoverable

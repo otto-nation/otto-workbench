@@ -23,6 +23,17 @@ def _git(repo: Path, *args: str) -> str:
     return git_out(repo, *args).strip()
 
 
+def _init_repo(tmp_path: Path) -> Path:
+    """An empty repo with an identity and no signing, ready to commit into."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main", "-q")
+    _git(repo, "config", "user.email", "test@test.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "commit.gpgsign", "false")
+    return repo
+
+
 def _make_job(head_sha: str, prior_review: str = "") -> rp.ReviewJob:
     pr = rp.PRMetadata(
         title="test",
@@ -73,12 +84,7 @@ class TestCollectDeltaMode:
 
     @staticmethod
     def _repo_with_prior_commit(tmp_path: Path) -> tuple[Path, str]:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        _git(repo, "init", "-b", "main", "-q")
-        _git(repo, "config", "user.email", "test@test.com")
-        _git(repo, "config", "user.name", "Test")
-        _git(repo, "config", "commit.gpgsign", "false")
+        repo = _init_repo(tmp_path)
         (repo / "reviewed.go").write_text("package main\n")
         _git(repo, "add", ".")
         _git(repo, "commit", "-q", "--no-verify", "-m", "reviewed")
@@ -112,6 +118,56 @@ class TestCollectDeltaMode:
         assert "func committed" in delta_diff
         assert "func uncommitted" not in delta_diff
         assert delta_files == ["committed.go"]
+
+
+class TestCollectDeltaSurface:
+    """The delta is bounded by the PR, not by what the base branch did.
+
+    `prior_sha..HEAD` spans the base as well as the branch, so a rebase onto a
+    moved base puts every commit the base gained into the delta. One 107-file
+    review reported 4,974 changed files that way, and the file list alone —
+    260KB — pushed the synthesis prompt 75% past its budget. It also defeated
+    incremental group skipping: with every group's files in the delta set,
+    nothing was skipped and the re-review cost a full one.
+    """
+
+    @staticmethod
+    def _repo(tmp_path: Path) -> tuple[Path, str]:
+        repo = _init_repo(tmp_path)
+        (repo / "mine.go").write_text("package main\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-q", "--no-verify", "-m", "reviewed")
+        prior_sha = _git(repo, "rev-parse", "HEAD")
+        (repo / "mine.go").write_text("package main\nfunc mine() {}\n")
+        (repo / "theirs.go").write_text("package main\nfunc theirs() {}\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-q", "--no-verify", "-m", "mine plus a rebased base commit")
+        return repo, prior_sha
+
+    def _job(self, tmp_path: Path, files: list[dict]) -> rp.ReviewJob:
+        repo, prior_sha = self._repo(tmp_path)
+        job = _make_job(
+            head_sha=_git(repo, "rev-parse", "HEAD"),
+            prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
+        )
+        return replace(
+            job, wt_path=str(repo), pr=replace(job.pr, files=files),
+        )
+
+    def test_files_outside_the_pr_are_not_in_the_delta(self, tmp_path, capsys):
+        job = self._job(tmp_path, [{"path": "mine.go", "additions": 1, "deletions": 0}])
+        delta_diff, delta_log, delta_files, _ = rp._collect_delta(job)
+        capsys.readouterr()
+        assert delta_files == ["mine.go"]
+        assert "func mine" in delta_diff
+        assert "theirs.go" not in delta_diff
+        assert "theirs.go" not in delta_log
+
+    def test_a_job_with_no_surface_keeps_the_whole_range(self, tmp_path, capsys):
+        """Branch reviews reach `_collect_delta` before the file list exists."""
+        _, _, delta_files, _ = rp._collect_delta(self._job(tmp_path, []))
+        capsys.readouterr()
+        assert sorted(delta_files) == ["mine.go", "theirs.go"]
 
 
 class TestArtifactDir:

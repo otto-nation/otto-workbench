@@ -13,8 +13,11 @@ usage() {
   cat <<EOF
 Remove stale git worktrees managed by Worktrunk.
 
-By default, removes worktrees whose branches are fully merged (safe to delete).
-With --age <days>, also removes worktrees with no commits newer than <days> days.
+By default, removes worktrees whose branches are fully merged (safe to delete),
+and deletes the branch with the worktree — including a squash merge, which git's
+own ancestry check cannot see. With --age <days>, also removes worktrees with no
+commits newer than <days> days; those branches are kept, since inactivity says
+nothing about whether the work landed.
 
 Worktrees created less than ${GRACE_PERIOD_SECS}s ago are always skipped to avoid
 removing worktrees that another session is actively using.
@@ -181,14 +184,25 @@ main() {
     reason=$(_detect_reason "$main_state" "$symbols" "$pr_state" "$timestamp")
     [[ -z "$reason" ]] && continue
 
+    # The two force flags cover different things: `--force` lets the worktree go
+    # despite uncommitted files, `--force-delete` lets the branch go despite
+    # commits `wt` reads as unmerged. Only a merge this script proved earns the
+    # second — an `--age` removal keeps `wt`'s judgement and its branch.
+    remove_flags=(--force -y --no-hooks)
+    delete_branch=false
+    if _is_merged "$main_state" "$symbols" "$pr_state"; then
+      delete_branch=true
+      remove_flags+=(--force-delete)
+    fi
+
     removed=$((removed + 1))
     if [[ "$dry_run" == "true" ]]; then
-      _log "DRY-REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
+      _log "DRY-REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state delete_branch=$delete_branch"
       [[ "$quiet" != "true" ]] && echo "would remove: $branch ($reason)"
     else
-      _log "REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
+      _log "REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state delete_branch=$delete_branch"
       [[ "$quiet" != "true" ]] && echo "removing: $branch ($reason)"
-      wt remove "$branch" --force -y --no-hooks 2>/dev/null || true
+      wt remove "$branch" "${remove_flags[@]}" 2>/dev/null || true
     fi
   done
 

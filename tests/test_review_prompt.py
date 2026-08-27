@@ -19,9 +19,12 @@ from review_types import (
     PRContext, PreflightData, PRMetadata, PriorDisposition, ReviewJob,
 )
 from agent_types import Effort, Mode, Phase
+from dataclasses import asdict
+
 from review_findings import _parse_ledger_line
 from review_prompt import (
-    _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, MAX_DELTA_LIST_ENTRIES,
+    _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, BudgetLever, Cut,
+    MAX_DELTA_LIST_ENTRIES,
     _build_ci_failure_items, _build_common_sections, _build_delta_section,
     _build_env_section, _build_omitted_guidance, _build_pr_header, _fit_budget,
 )
@@ -256,13 +259,18 @@ class TestFitBudget:
         job = _make_job(_make_preflight(claude_md=huge))
         plan = _fit_budget(job, {"header": "small"})
         assert plan.diff_bytes == MIN_DIFF_BYTES
-        assert any("floored" in cut for cut in plan.cuts)
+        floored = [c for c in plan.cuts if c.lever is BudgetLever.DIFF_FLOOR]
+        assert [c.floor_bytes for c in floored] == [MIN_DIFF_BYTES]
+        assert floored[0].shortfall_bytes > 0
 
     def test_min_diff_zero_allows_zero_budget(self):
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
         job = _make_job(_make_preflight(claude_md=huge))
         plan = _fit_budget(job, {"header": "small"}, min_diff=0)
         assert plan.diff_bytes == 0
+        # No floor to hold the diff at, so the cut is the whole of it.
+        assert plan.cuts[-1].floor_bytes == 0
+        assert "the full diff entirely" in plan.cuts[-1].describe()
 
     def test_skip_file_contents_frees_budget(self):
         pf = _make_preflight(file_contents={"gen.pb.go": "y" * 200_000})
@@ -285,7 +293,9 @@ class TestFitBudget:
         job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"}, file_filter=["gen.pb.go"])
         assert plan.skip_file_contents
-        assert plan.cuts[0] == "390KB of pre-collected file contents"
+        assert plan.cuts[0].lever is BudgetLever.FILE_CONTENTS
+        assert plan.cuts[0].freed_bytes == 400_000
+        assert plan.cuts[0].describe() == "390KB of pre-collected file contents"
 
     def test_the_delta_is_cut_before_the_diff_is_floored(self):
         pf = _make_preflight(
@@ -298,13 +308,39 @@ class TestFitBudget:
         )
         job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"})
-        assert any("incremental delta" in cut for cut in plan.cuts)
+        assert [c.lever for c in plan.cuts] == [BudgetLever.DELTA]
         assert plan.diff_bytes >= MIN_DIFF_BYTES
         # Everything the plan admits still fits, which is what the ladder is for.
         assert (
             len(plan.delta_section.encode()) + plan.diff_bytes
             <= MAX_PROMPT_BYTES
         )
+
+
+class TestCutSurvivesTheJournal:
+    """A cut is data first and a sentence second.
+
+    `prompt-stats.json` is the artifact an over-budget run is diagnosed from, so
+    a reader asking which lever fired on which phase reads a field rather than
+    parsing the log line.
+    """
+
+    def test_every_lever_describes_itself(self):
+        described = {
+            lever: Cut(lever, freed_bytes=4096, shortfall_bytes=2048, floor_bytes=1024).describe()
+            for lever in BudgetLever
+        }
+        assert len(set(described.values())) == len(BudgetLever)
+        assert all(d for d in described.values())
+
+    def test_the_journalled_form_is_addressable_by_field(self):
+        cut = Cut(BudgetLever.FILE_CONTENTS, freed_bytes=400_000)
+        assert json.loads(json.dumps(asdict(cut))) == {
+            "lever": "file_contents",
+            "freed_bytes": 400_000,
+            "shortfall_bytes": 0,
+            "floor_bytes": 0,
+        }
 
 
 # ── Dropped file contents are declared ──────────────────────────────────────

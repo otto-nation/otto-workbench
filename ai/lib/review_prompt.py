@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
+from enum import StrEnum
 from datetime import date
 from pathlib import Path
 
@@ -802,7 +803,7 @@ class PromptBuilder:
         return self
 
     @property
-    def cuts(self) -> tuple[str, ...]:
+    def cuts(self) -> tuple[Cut, ...]:
         """What `fit` dropped to make the prompt fit, in the order it went."""
         return self._plan.cuts if self._plan else ()
 
@@ -827,21 +828,63 @@ def _build_preflight_section(
     )
 
 
+class BudgetLever(StrEnum):
+    """Which section the budget ladder cut, named in the order it pulls them."""
+
+    FILE_CONTENTS = "file_contents"
+    DELTA = "delta"
+    DIFF_FLOOR = "diff_floor"
+
+
+@dataclass(frozen=True)
+class Cut:
+    """One lever the ladder pulled, and what it bought.
+
+    `freed_bytes` is what the section gave back. `DIFF_FLOOR` gives nothing
+    back — it is the ladder refusing to shrink the diff any further — so it
+    carries `shortfall_bytes`, what the prompt is still over by, and
+    `floor_bytes`, the size the diff was held at. A phase reviewing from
+    findings it already has passes no floor, and then there is no diff left at
+    all rather than a floor to report.
+
+    Structured rather than pre-rendered because `prompt-stats.json` is the
+    artifact an over-budget run is diagnosed from, and asking it which lever
+    fired on which phase should not mean parsing the sentence written for the
+    log. `describe` is that sentence, and the only place it is spelled out.
+    """
+
+    lever: BudgetLever
+    freed_bytes: int = 0
+    shortfall_bytes: int = 0
+    floor_bytes: int = 0
+
+    def describe(self) -> str:
+        """How the cut reads in the prompt's size log."""
+        if self.lever is BudgetLever.FILE_CONTENTS:
+            return f"{self.freed_bytes // 1024}KB of pre-collected file contents"
+        if self.lever is BudgetLever.DELTA:
+            return f"{self.freed_bytes // 1024}KB of incremental delta"
+        still_over = f"{self.shortfall_bytes // 1024}KB still over"
+        if self.floor_bytes:
+            return f"the full diff, floored at {self.floor_bytes // 1024}KB and {still_over}"
+        return f"the full diff entirely, {still_over}"
+
+
 @dataclass(frozen=True)
 class BudgetPlan:
     """How much of the prompt each variable-size section gets, and what was cut.
 
     `delta_section` is the rendered incremental context, already shrunk;
     `diff_bytes` is the cap the full diff is truncated to; `skip_file_contents`
-    says whether the pre-collected contents survived. `cuts` names each lever
-    the ladder had to pull, in the order it pulled them, and is empty on the
-    ordinary path where everything fit.
+    says whether the pre-collected contents survived. `cuts` holds one `Cut` per
+    lever the ladder had to pull, in the order it pulled them, and is empty on
+    the ordinary path where everything fit.
     """
 
     delta_section: str
     diff_bytes: int
     skip_file_contents: bool
-    cuts: tuple[str, ...]
+    cuts: tuple[Cut, ...]
 
 
 def _fixed_preflight_bytes(pf: PreflightData | None) -> int:
@@ -897,10 +940,10 @@ def _fit_budget(
     fixed = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + _fixed_preflight_bytes(job.preflight)
     contents = 0 if skip_file_contents else _file_contents_bytes(job.preflight, file_filter)
     delta = _build_delta_section(job.preflight, file_filter=file_filter)
-    cuts: list[str] = []
+    cuts: list[Cut] = []
 
     if contents and fixed + contents + len(delta.encode()) + min_diff > MAX_PROMPT_BYTES:
-        cuts.append(f"{contents // 1024}KB of pre-collected file contents")
+        cuts.append(Cut(BudgetLever.FILE_CONTENTS, freed_bytes=contents))
         skip_file_contents, contents = True, 0
 
     delta_room = max(0, MAX_PROMPT_BYTES - fixed - contents - min_diff)
@@ -908,24 +951,22 @@ def _fit_budget(
         shrunk = _build_delta_section(
             job.preflight, file_filter=file_filter, max_bytes=delta_room,
         )
-        cuts.append(
-            f"{(len(delta.encode()) - len(shrunk.encode())) // 1024}KB of incremental delta"
-        )
+        cuts.append(Cut(
+            BudgetLever.DELTA,
+            freed_bytes=len(delta.encode()) - len(shrunk.encode()),
+        ))
         delta = shrunk
 
     diff_bytes = MAX_PROMPT_BYTES - fixed - contents - len(delta.encode())
     if diff_bytes < min_diff:
-        # The shortfall is what the last lever could not absorb, so it is also
-        # what the rendered prompt will be over by — say it here rather than let
-        # the floor read as a cut that solved something. A phase passing
-        # `min_diff=0` has no floor at all, and "floored at 0KB" would describe
-        # holding the diff at a size it was never going to be given.
-        short = (min_diff - diff_bytes) // 1024
-        cuts.append(
-            f"the full diff, floored at {min_diff // 1024}KB and {short}KB still over"
-            if min_diff
-            else f"the full diff entirely, {short}KB still over"
-        )
+        # Recorded as a shortfall rather than as bytes freed, because the floor
+        # frees nothing: it is what the ladder could not absorb, and so is also
+        # what the rendered prompt will be over by.
+        cuts.append(Cut(
+            BudgetLever.DIFF_FLOOR,
+            shortfall_bytes=min_diff - diff_bytes,
+            floor_bytes=min_diff,
+        ))
         diff_bytes = min_diff
 
     return BudgetPlan(
@@ -938,7 +979,7 @@ def _fit_budget(
 
 def _log_prompt_size(
     template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
-    label: str = "", cuts: tuple[str, ...] = (),
+    label: str = "", cuts: tuple[Cut, ...] = (),
 ) -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
@@ -955,7 +996,7 @@ def _log_prompt_size(
 
     msg = f"Prompt [{template_name}]: {prompt_kb}KB / {budget_kb}KB ({section_summary})"
     if cuts:
-        msg += " — dropped " + ", ".join(cuts)
+        msg += " — dropped " + ", ".join(c.describe() for c in cuts)
     if prompt_bytes > MAX_PROMPT_BYTES:
         msg += f" — EXCEEDS budget by {(prompt_bytes - MAX_PROMPT_BYTES) // 1024}KB"
     log.info(msg)
@@ -973,7 +1014,7 @@ def _log_prompt_size(
         "budget_bytes": MAX_PROMPT_BYTES,
         "utilization_pct": round(prompt_bytes / MAX_PROMPT_BYTES * 100, 1),
         "sections": section_sizes,
-        "cuts": list(cuts),
+        "cuts": [asdict(c) for c in cuts],
     }
     if job.preflight:
         pf = job.preflight

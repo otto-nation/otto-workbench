@@ -13,8 +13,11 @@ usage() {
   cat <<EOF
 Remove stale git worktrees managed by Worktrunk.
 
-By default, removes worktrees whose branches are fully merged (safe to delete).
-With --age <days>, also removes worktrees with no commits newer than <days> days.
+By default, removes worktrees whose branches are fully merged (safe to delete),
+and deletes the branch with the worktree — including a squash merge, which git's
+own ancestry check cannot see. With --age <days>, also removes worktrees with no
+commits newer than <days> days; those branches are kept, since inactivity says
+nothing about whether the work landed.
 
 Worktrees created less than ${GRACE_PERIOD_SECS}s ago are always skipped to avoid
 removing worktrees that another session is actively using.
@@ -181,14 +184,31 @@ main() {
     reason=$(_detect_reason "$main_state" "$symbols" "$pr_state" "$timestamp")
     [[ -z "$reason" ]] && continue
 
+    # `--force` and `--force-delete` cover different things: the first lets the
+    # worktree go despite uncommitted files, the second lets the branch go
+    # despite commits `wt` reads as unmerged. `wt` decides the branch on its own
+    # ancestry check, which a squash merge defeats — the commit carrying the work
+    # is not an ancestor of the branch tip — so it declines the delete and leaves
+    # a branch behind for work that already shipped. This script has a stronger
+    # answer by then (`⊂`, an integrated main_state, or a MERGED pull request),
+    # and passes `--force-delete` on the strength of it. An `--age` removal
+    # proves nothing about where the commits went, so it keeps `wt`'s judgement
+    # and the branch survives its worktree.
+    remove_flags=(--force -y --no-hooks)
+    delete_branch=false
+    if _is_merged "$main_state" "$symbols" "$pr_state"; then
+      delete_branch=true
+      remove_flags+=(--force-delete)
+    fi
+
     removed=$((removed + 1))
     if [[ "$dry_run" == "true" ]]; then
-      _log "DRY-REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
+      _log "DRY-REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state delete_branch=$delete_branch"
       [[ "$quiet" != "true" ]] && echo "would remove: $branch ($reason)"
     else
-      _log "REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state"
+      _log "REMOVE branch=$branch reason=$reason main_state=$main_state symbols=$symbols pr_state=$pr_state delete_branch=$delete_branch"
       [[ "$quiet" != "true" ]] && echo "removing: $branch ($reason)"
-      wt remove "$branch" --force -y --no-hooks 2>/dev/null || true
+      wt remove "$branch" "${remove_flags[@]}" 2>/dev/null || true
     fi
   done
 

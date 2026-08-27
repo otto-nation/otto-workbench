@@ -12,7 +12,7 @@ setup_file() {
 if [[ "$1" == "list" ]]; then
   cat "$WT_JSON_FILE"
 elif [[ "$1" == "remove" ]]; then
-  echo "$2" >> "$WT_REMOVE_LOG_FILE"
+  echo "$*" >> "$WT_REMOVE_LOG_FILE"
 fi
 FAKEWT
   chmod +x "$MOCK_BIN/wt"
@@ -446,6 +446,65 @@ JSON
   [[ "$output" != *"feat/dirty-open"* ]]
 }
 
+# ── Branch deletion ────────────────────────────────────────────────────────
+#
+# `wt` decides on its own whether the branch goes with the worktree, and asks an
+# ancestry check a squash merge defeats. Where this script has already proved
+# the branch merged it says so with --force-delete; where it has only proved the
+# worktree idle it says nothing and the branch survives.
+
+@test "a merged removal deletes the branch with the worktree" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/gone","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  grep -q -- "--force-delete" "$WT_REMOVE_LOG"
+}
+
+@test "a squash-merged removal deletes the branch too" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/squash-gone","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":0}}]
+JSON
+  echo "feat/squash-gone" > "$GH_PR_MERGED"
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  grep -q -- "--force-delete" "$WT_REMOVE_LOG"
+}
+
+@test "an age removal keeps the branch" {
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[{"branch":"feat/idle","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑3","commit":{"timestamp":$old_timestamp}}]
+JSON
+  _run_cleanup --age 30
+  [ "$status" -eq 0 ]
+  grep -q "feat/idle" "$WT_REMOVE_LOG"
+  ! grep -q -- "--force-delete" "$WT_REMOVE_LOG"
+}
+
+@test "a branch merged and idle at once is still deleted" {
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[{"branch":"feat/old-and-merged","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":$old_timestamp}}]
+JSON
+  _run_cleanup --age 30
+  [ "$status" -eq 0 ]
+  grep -q -- "--force-delete" "$WT_REMOVE_LOG"
+}
+
+@test "the worktree force flag is still passed alongside" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/both","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  grep -q -- "--force " "$WT_REMOVE_LOG"
+  grep -q -- "--force-delete" "$WT_REMOVE_LOG"
+}
+
 # ── Forensic logging ──────────────────────────────────────────────────────
 
 @test "removal is logged even in quiet mode" {
@@ -459,6 +518,20 @@ JSON
   [ -f "$log_file" ]
   grep -q "REMOVE branch=feat/logged" "$log_file"
   grep -q "reason=merged" "$log_file"
+  grep -q "delete_branch=true" "$log_file"
+}
+
+@test "an age removal logs that the branch was kept" {
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[{"branch":"feat/logged-idle","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑3","commit":{"timestamp":$old_timestamp}}]
+JSON
+  _run_cleanup --quiet --age 30
+  [ "$status" -eq 0 ]
+  local log_file="$TMPDIR/logs/wt-cleanup.log"
+  grep -q "REMOVE branch=feat/logged-idle" "$log_file"
+  grep -q "delete_branch=false" "$log_file"
 }
 
 @test "open-PR skip is logged" {

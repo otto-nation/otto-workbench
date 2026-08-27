@@ -578,6 +578,56 @@ def _run_synthesis_or_fallback(
     return result
 
 
+def _run_disprove_gate(
+    job: ReviewJob, state: PipelineState,
+    disprove: bool | None, cost_so_far: float, max_cost: float,
+) -> PhaseResult:
+    """The disprove gate's session log and what the gate spent.
+
+    Every path out of here records the gate done, the ones that decline to run
+    it included. `_resolve_recovery` reads a state file with no disprove entry
+    as a run that died inside the gate, and that reading only holds if a gate
+    which reached a conclusion always says so.
+
+    Only the two paths that wanted the gate and did not get it record a
+    failure, so only those two reach the Agent Failures table and the recover
+    hint: declining for a stated reason is a decision, and offering to retry a
+    decision would send `--recover` after work nothing went wrong with.
+    """
+    result = PhaseResult()
+    failure: Diagnosis | None = None
+
+    if not _should_disprove(job, disprove):
+        log.info("Disprove gate off — keeping all findings")
+    elif cost_so_far > max_cost:
+        log.warn(
+            f"Budget exceeded before the disprove gate "
+            f"(${cost_so_far:.2f}/${max_cost:.2f}) — findings go unchallenged"
+        )
+        failure = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
+    else:
+        counts = count_severities(Path(job.review_file))
+        ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
+        if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
+            result = _phase_disprove(job)
+            # None when the gate declined inside `_phase_disprove` for want of
+            # findings to challenge; a diagnosis only when its agent ran and
+            # came back with nothing.
+            failure = result.diagnosis
+        else:
+            log.info(
+                f"Skipping disprove — only {ms_count} M/S findings "
+                f"(threshold: {DISPROVE_MIN_FINDINGS})"
+            )
+
+    state.done.add(Phase.DISPROVE)
+    if failure:
+        state.failed[Phase.DISPROVE] = failure
+    _write_pipeline_state(job, state)
+    _inject_failures_and_status(job.review_file, state)
+    return result
+
+
 def run_multi_phase(
     job: ReviewJob, max_parallel: int = DEFAULT_MAX_PARALLEL,
     max_cost: float = DEFAULT_MAX_COST,
@@ -674,23 +724,21 @@ def run_multi_phase(
 
     # ── Phase 4: Synthesis ───────────────────────────────────────────────────
     n_skipped = len(incremental_skips)
-    synthesis = _run_synthesis_or_fallback(
-        job, state, holistic.content, group_count,
-        merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
-    )
+    if recovery.resume_at_gate and _is_complete_review(job.review_file):
+        # The prior run synthesised cleanly and only the gate is outstanding, so
+        # the review on disk is the one this run would write again. Re-checking
+        # the file keeps the plan honest about a review deleted between runs.
+        log.info("Phase 4: Synthesis — the prior run's review stands, resuming at the gate")
+        synthesis = PhaseResult()
+    else:
+        synthesis = _run_synthesis_or_fallback(
+            job, state, holistic.content, group_count,
+            merged_content, failed_groups, n_skipped, cost_so_far, max_cost,
+        )
     cost_so_far += synthesis.cost
 
     # ── Phase 4.5: Disprove-it gate ─────────────────────────────────────────
-    disprove_result = PhaseResult()
-    if _should_disprove(job, disprove) and cost_so_far <= max_cost:
-        review_path = Path(job.review_file)
-        counts = count_severities(review_path)
-        ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
-        if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
-            disprove_result = _phase_disprove(job)
-            cost_so_far += disprove_result.cost
-        else:
-            log.info(f"Skipping disprove — only {ms_count} M/S findings (threshold: {DISPROVE_MIN_FINDINGS})")
+    disprove_result = _run_disprove_gate(job, state, disprove, cost_so_far, max_cost)
 
     # ── Consolidate logs ─────────────────────────────────────────────────────
     # Removing what this run leaves behind is the orchestrator's, not the

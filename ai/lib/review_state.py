@@ -260,6 +260,9 @@ def _update_group_failed(
         _write_pipeline_state(job, state)
 
 
+_FAILURES_HEADING = "## Agent Failures"
+
+
 def build_failures_section(state: "PipelineState") -> str:
     """Build a markdown Agent Failures section from pipeline state."""
     rows: list[tuple[str, str, str]] = []
@@ -275,7 +278,7 @@ def build_failures_section(state: "PipelineState") -> str:
         return ""
 
     lines = [
-        "## Agent Failures",
+        _FAILURES_HEADING,
         "",
         "| Agent | Reason | Status |",
         "|-------|--------|--------|",
@@ -294,6 +297,26 @@ def build_failures_section(state: "PipelineState") -> str:
     return "\n".join(lines) + "\n"
 
 
+def _replace_failures_section(content: str, failures: str) -> str:
+    """`content` with its Agent Failures section replaced by `failures`.
+
+    An empty `failures` removes the section; a review with no section yet gains
+    one above `## Summary`. The section runs from its heading to the next `##`.
+
+    Replacing rather than leaving the first version in place is what lets a
+    phase that failed *after* the section was written appear in it at all. The
+    disprove gate runs last, so it is always writing into a review synthesis has
+    already had its say about.
+    """
+    start = content.find(_FAILURES_HEADING)
+    if start < 0:
+        if not failures:
+            return content
+        return content.replace("## Summary", f"{failures}\n## Summary", 1)
+    end = content.find("\n## ", start + len(_FAILURES_HEADING))
+    return content[:start] + failures + (content[end + 1:] if end >= 0 else "")
+
+
 def _inject_failures_and_status(review_file: str, state: "PipelineState") -> None:
     """Insert Agent Failures section and status metadata into an existing review."""
     path = Path(review_file)
@@ -303,9 +326,7 @@ def _inject_failures_and_status(review_file: str, state: "PipelineState") -> Non
 
     status = read_pipeline_status(path.parent)
 
-    failures = build_failures_section(state)
-    if failures and "## Agent Failures" not in content:
-        content = content.replace("## Summary", f"{failures}\n## Summary", 1)
+    content = _replace_failures_section(content, build_failures_section(state))
 
     status_line = META_STATUS.format(status=status)
     if "<!-- status:" in content:
@@ -339,6 +360,12 @@ class RecoveryPlan:
     # skips rather than merge with a set that was never a decision.
     skip_groups: "set[int] | None" = None
     already_complete: bool = False
+    # The one resume where synthesis is worth skipping: everything before the
+    # disprove gate succeeded, so no group re-runs and there is no new output to
+    # synthesise. The caller cannot work this out from the state alone — a state
+    # file that records synthesis done also records it done when a failed group
+    # is about to re-run underneath it, and that one does need synthesising again.
+    resume_at_gate: bool = False
 
 
 def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
@@ -355,12 +382,23 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
     is_complete = Phase.SYNTHESIS in state.done
 
     if is_complete and not has_failed_groups and not has_failed_phases:
-        log.info("Prior review completed successfully — nothing to recover")
-        return RecoveryPlan(already_complete=True)
+        # A run ends at the disprove gate, not at synthesis. The gate records
+        # itself done on every path that reaches a conclusion, so an entry it
+        # never wrote means the process died inside it — which a state file
+        # reporting synthesis finished and nothing failed otherwise hides, and
+        # `--recover` then declines the one phase it had left to run.
+        if Phase.DISPROVE in state.done:
+            log.info("Prior review completed successfully — nothing to recover")
+            return RecoveryPlan(already_complete=True)
+        log.info("Prior review stopped in the disprove gate — resuming there")
+        return RecoveryPlan(
+            state=state, cost_so_far=_sum_existing_costs(job, state),
+            skip_groups=set(state.groups_done), resume_at_gate=True,
+        )
 
     cost_so_far = _sum_existing_costs(job, state)
 
-    if is_complete and (has_failed_groups or has_failed_phases):
+    if is_complete:
         log.info("Prior review had failures — recovering")
         skip_groups = set(state.groups_done)
         if has_failed_groups:

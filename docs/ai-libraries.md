@@ -248,6 +248,12 @@ after that. `parse_finding_line` is for a caller holding a single line that is
 not in a findings section — the prior-findings ledger is the one — and every
 other reader asks `ReviewDocument.findings`.
 
+Counting them is that same parse, not a second grammar over the same text:
+`open_counts` tallies `open_findings`, so which findings a review is reported
+to have and how many it is reported to have are one answer. A tally written as
+its own regex is how a review came to report four findings it had none of —
+the ledger's lines look like declarations from anywhere but inside the parse.
+
 ### review_gc.py
 
 Removal of review artifacts, at every lifecycle that removes one.

@@ -342,7 +342,7 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
 
     # A declined finding is not work: it was considered and rejected, so it is
     # out of the work set and out of the turn budget it would otherwise buy.
-    findings = [f for f in doc.findings if not f.checked and not f.declined]
+    findings = [f for f in doc.open_findings if not f.declined]
     if not findings:
         log.info("No findings left to fix — skipping fix pass")
         return

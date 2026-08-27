@@ -434,18 +434,22 @@ print(f'count={count},total={total}')
   [ "$result" = "count=1,total=3" ]
 }
 
-# ── _count_findings / _mechanical_verdict ────────────────────────────────────
+# ── open_counts / _mechanical_verdict ────────────────────────────────────────
 
-@test "_count_findings: counts by prefix" {
+@test "open_counts: counts by prefix" {
   result=$(_py "
-text = '''- **[M1]** finding a
+text = '''## Must fix
+- **[M1]** finding a
 - **[M2]** finding b
+## Should fix
 - **[S1]** finding c
+## Nit
 - **[N1]** finding d
 - **[N2]** finding e
 - **[N3]** finding f
+## Idioms
 - **[I1]** finding g'''
-counts = mod._count_findings(text)
+counts = mod.ReviewDocument(body=text).open_counts
 print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
 ")
   [ "$result" = "M=2,S=1,N=3,I=1" ]

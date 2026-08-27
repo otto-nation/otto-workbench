@@ -516,26 +516,6 @@ def merge_reviews(group_files: list[str]) -> str:
     return "\n".join(parts)
 
 
-# ── Counting ─────────────────────────────────────────────────────────────────
-
-def _count_findings(text: str) -> dict[str, int]:
-    return {
-        severity.key: len(set(re.findall(
-            rf"^- (?:\[ \] )?\*\*\[{severity.key}(\d+)\]\*\*",
-            text,
-            re.MULTILINE,
-        )))
-        for severity in SEVERITIES
-    }
-
-
-def _has_findings(merged_content: str) -> bool:
-    for severity in SEVERITIES:
-        if re.search(rf"\[{severity.key}\d+\]", merged_content):
-            return True
-    return False
-
-
 # ── Evidence verification ────────────────────────────────────────────────────
 
 _EVIDENCE_RE = re.compile(
@@ -1059,7 +1039,7 @@ def reconcile_dropped_findings(text: str, verification: dict) -> str:
     if not dropped or _DROP_NOTE_MARKER in text:
         return text
 
-    text = _revise_verdict(text, _count_findings(text), len(dropped))
+    text = _revise_verdict(text, ReviewDocument(body=text).open_counts, len(dropped))
     return _insert_drop_note(text, _drop_note(verification.get("details") or [], dropped))
 
 
@@ -1105,7 +1085,7 @@ def build_mechanical_body(
     The body only — the title and the metadata header above it belong to
     `review_document.ReviewDocument`, which is what every caller wraps this in.
     """
-    counts = _count_findings(merged_content)
+    counts = ReviewDocument(body=merged_content).open_counts
     total = sum(counts.values())
     count_summary = f"{total} finding{plural(total)}" if total else "No findings"
 

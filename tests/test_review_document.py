@@ -27,7 +27,7 @@ from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
     FINDING_ID_RE, ReviewDocument, ReviewHeader, _close_previous, _extract_body_text,
     _finalize_finding, _FIRST_FILE_RE, _match_severity_header, finding_location,
-    is_section_boundary, parse_finding_line, resolve_review_verdict, review_counts,
+    is_section_boundary, open_counts, parse_finding_line, resolve_review_verdict,
     review_title, section_span, set_status,
 )
 from review_types import Finding, ReviewMeta, ReviewType
@@ -393,7 +393,7 @@ class TestRead:
         assert ReviewDocument.read(str(review)) == ReviewDocument.read(review)
 
 
-class TestCounts:
+class TestOpenCounts:
     def test_every_severity_is_counted(self):
         document = ReviewDocument.parse(
             "## Must fix\n"
@@ -402,7 +402,7 @@ class TestCounts:
             "## Should fix\n"
             "- **[S1]** path:3 — description\n"
         )
-        assert document.counts == {"M": 2, "S": 1, "N": 0, "I": 0}
+        assert document.open_counts == {"M": 2, "S": 1, "N": 0, "I": 0}
 
     def test_a_resolved_finding_is_no_longer_counted(self):
         document = ReviewDocument.parse(
@@ -410,7 +410,7 @@ class TestCounts:
             "- **[M1]** path:1 — active\n"
             "- ~~**[M2]** path:2 — resolved~~\n"
         )
-        assert document.counts["M"] == 1
+        assert document.open_counts["M"] == 1
 
     def test_the_fix_passes_checkbox_does_not_hide_a_finding(self):
         document = ReviewDocument.parse(
@@ -418,18 +418,66 @@ class TestCounts:
             "- [ ] **[M1]** path:1 — with checkbox\n"
             "- **[M2]** path:2 — without checkbox\n"
         )
-        assert document.counts["M"] == 2
+        assert document.open_counts["M"] == 2
+
+    def test_a_finding_the_fix_pass_ticked_off_is_not_open(self):
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- [x] **[M1]** path:1 — fixed\n"
+            "- [ ] **[M2]** path:2 — still open\n"
+        )
+        assert [f.id for f in document.open_findings] == ["M2"]
+        assert document.open_counts["M"] == 1
+
+    def test_a_declined_finding_is_still_open(self):
+        """Wider than the fix pass's predicate: the review judged this one, so
+        it is not work, but nothing fixed it either."""
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- **[M1]** path:1 — *(declined — by design)*\n"
+        )
+        assert [f.id for f in document.open_findings] == ["M1"]
+        assert document.open_counts["M"] == 1
+
+    def test_an_indented_finding_is_counted(self):
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "  - **[M1]** path:1 — indented under something\n"
+        )
+        assert document.open_counts["M"] == 1
+
+    def test_a_finding_line_outside_a_severity_section_is_not_counted(self):
+        """The prior-findings ledger declares nothing — it reports on the last
+        review, and counting it inflated every tally taken over the whole body."""
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- **[M1]** path:1 — bug\n"
+            "## Prior findings\n"
+            "- **[M1]** `old.go` — Fixed\n"
+            "- **[S1]** `old.go` — Fixed\n"
+        )
+        assert document.open_counts == {"M": 1, "S": 0, "N": 0, "I": 0}
+
+    def test_two_findings_sharing_an_id_are_two_findings(self):
+        """A tally over the parse counts declarations, not distinct IDs: a
+        duplicate is a merge bug to see, not one to hide."""
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- **[M1]** a.py:1 — one\n"
+            "- **[M1]** b.py:2 — two\n"
+        )
+        assert document.open_counts["M"] == 2
 
     def test_a_document_declaring_nothing_is_zeroed_not_empty(self):
         """Callers index the result directly, so every key must be present."""
-        assert ReviewDocument().counts == {"M": 0, "S": 0, "N": 0, "I": 0}
+        assert ReviewDocument().open_counts == {"M": 0, "S": 0, "N": 0, "I": 0}
 
     def test_a_review_that_was_never_written_counts_as_one_that_found_nothing(self):
         """The reader that has no separate answer for absent, unlike the
         verdict below."""
-        assert review_counts(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
+        assert open_counts(None) == {"M": 0, "S": 0, "N": 0, "I": 0}
         document = ReviewDocument.parse("## Must fix\n- **[M1]** a.py:1 — bug\n")
-        assert review_counts(document) == document.counts
+        assert open_counts(document) == document.open_counts
 
     def test_a_reference_to_a_finding_is_not_a_second_finding(self):
         document = ReviewDocument.parse(
@@ -437,7 +485,7 @@ class TestCounts:
             "- **[M1]** path:1 — bug\n"
             "  - see [M1] above\n"
         )
-        assert document.counts["M"] == 1
+        assert document.open_counts["M"] == 1
 
 
 class TestFindingLocation:
@@ -1019,16 +1067,16 @@ class TestFindings:
         assert by_id["S1"].body == "Should-fix only (last in section)"
         assert by_id["N2"].body == "Nit beta (last in section)"
 
-    def test_a_checked_finding_is_declared_though_counts_omits_it(self):
-        """The two readings differ deliberately: `counts` reports what is still
-        outstanding, `findings` reports every declaration."""
+    def test_a_checked_finding_is_declared_though_open_counts_omits_it(self):
+        """The two readings differ deliberately: `open_counts` reports what is
+        still outstanding, `findings` reports every declaration."""
         document = ReviewDocument.parse(
             "## Must fix\n"
             "- [x] **[M1]** **`a.go:1`** — done\n"
             "- [ ] **[M2]** **`b.go:2`** — open\n"
         )
         assert [f.id for f in document.findings] == ["M1", "M2"]
-        assert document.counts["M"] == 1
+        assert document.open_counts["M"] == 1
 
 
 class TestVerdict:

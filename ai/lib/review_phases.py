@@ -47,7 +47,8 @@ from review_common import (
     phase_output_path,
 )
 from review_disprove import apply_disprove_results, parse_disprove_output
-from review_findings import _count_findings, _validate_group_output, merge_reviews
+from review_document import ReviewDocument
+from review_findings import _validate_group_output, merge_reviews
 from review_prompt import PromptTooLarge, build_prompt
 from review_retry import (
     GroupFailure,
@@ -56,7 +57,9 @@ from review_retry import (
 )
 from review_scout import format_leads_block, parse_scout_output
 from review_state import PipelineState, _update_group_done, _update_group_failed
-from review_types import FILE_STAT_FMT, Group, GroupSkip, ReviewJob
+from review_types import (
+    FILE_STAT_FMT, SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
+)
 
 # The group phase's own retry ceiling, off its registry entry. Synthesis borrows
 # it as an upper bound for the same reason it always has: both are review phases
@@ -197,7 +200,7 @@ def _touch(path: str) -> None:
 
 
 def _synthesis_max_turns(merged_content: str) -> int:
-    counts = _count_findings(merged_content)
+    counts = ReviewDocument(body=merged_content).open_counts
     total = sum(counts.values())
     scaled = PHASES[Phase.SYNTHESIS].max_turns + max(0, total - 20) // 10
     return min(scaled, RETRY_MAX_TURNS_GROUP)
@@ -421,8 +424,8 @@ def _review_group(
 
 def _phase_disprove(job: ReviewJob) -> PhaseResult:
     review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
-    counts = _count_findings(review_content)
-    ms_count = counts.get("M", 0) + counts.get("S", 0)
+    counts = ReviewDocument(body=review_content).open_counts
+    ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
     label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
         log.info(f"{label} skipped — no must-fix or should-fix findings")

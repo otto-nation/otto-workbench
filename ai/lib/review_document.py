@@ -33,6 +33,12 @@ too: the ID at the head of a list item, the location after it, and the body
 after that. `parse_finding_line` is for a caller holding a single line that is
 not in a findings section — the prior-findings ledger is the one — and every
 other reader asks `ReviewDocument.findings`.
+
+Counting them is that same parse, not a second grammar over the same text:
+`open_counts` tallies `open_findings`, so which findings a review is reported
+to have and how many it is reported to have are one answer. A tally written as
+its own regex is how a review came to report four findings it had none of —
+the ledger's lines look like declarations from anywhere but inside the parse.
 """
 
 # doc-group: pipeline
@@ -40,6 +46,7 @@ other reader asks `ReviewDocument.findings`.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -78,12 +85,6 @@ class MetaKey(StrEnum):
 
 _LINE_RE = re.compile(r"<!--\s*([a-z_]+):\s*(.*?)\s*-->")
 _STATUS_RE = re.compile(rf"<!--\s*{MetaKey.STATUS}:[^>]*-->")
-
-# A finding declaration, as `counts` tallies them: a list item whose first
-# content is the bold ID, with the fix pass's checkbox optionally in front. The
-# `- ~~**[M2]**` a resolved finding is struck through with does not match, which
-# is what keeps a review's counts to the findings still open.
-_FINDING_COUNT_RE_FMT = r"^\s*- (\[ \] )?\*\*\[{}[0-9]+\]\*\*"
 
 
 def _line(key: MetaKey, value: object) -> str:
@@ -636,26 +637,39 @@ class ReviewDocument:
         than a declaration of one, and the prior-findings ledger is exactly
         that. A caller holding such a line asks `parse_finding_line`.
 
-        `counts` answers a narrower question over the same declarations: it
-        counts the ones still outstanding, so a finding the fix pass checked
-        off is one of these and not one of those.
+        `open_findings` answers a narrower question over the same
+        declarations: the ones still outstanding, so a finding the fix pass
+        checked off is one of these and not one of those.
         """
         return _parse_findings(self.body)
 
     @property
-    def counts(self) -> dict[str, int]:
-        """How many findings of each severity the document declares.
+    def open_findings(self) -> list[Finding]:
+        """The findings the document declares that are still outstanding.
+
+        A finding is open until the fix pass ticks its box. That is wider than
+        the work a fix pass has left: a declined finding is open — the review
+        recorded a judgement about it rather than a fix — and `run_fix_pass`
+        states that narrower predicate where it drives the pass, so neither
+        reading has to answer for the other.
+        """
+        return [f for f in self.findings if not f.checked]
+
+    @property
+    def open_counts(self) -> dict[str, int]:
+        """How many outstanding findings of each severity the document declares.
 
         Keyed by severity key and always complete, so a caller can index the
-        result rather than guarding every key. A struck-through finding is one
-        the review resolved and is not counted.
+        result rather than guarding every key.
+
+        Tallied over `open_findings`, so the parse decides what one is and no
+        second grammar can disagree with it: a struck-through finding is one
+        the review resolved, a checked one is a finding the fix pass fixed, and
+        a finding line under any other heading — the prior-findings ledger is
+        one — is prose about a finding rather than a declaration of one.
         """
-        return {
-            s.key: len(re.findall(
-                _FINDING_COUNT_RE_FMT.format(re.escape(s.key)), self.body, re.MULTILINE,
-            ))
-            for s in SEVERITIES
-        }
+        tally = Counter(f.severity for f in self.open_findings)
+        return {s.key: tally[s.key] for s in SEVERITIES}
 
     @property
     def verdict(self) -> ReviewVerdict | None:
@@ -663,8 +677,8 @@ class ReviewDocument:
         return ReviewVerdict.stated_in(self.section(SECTION_VERDICT))
 
 
-def review_counts(doc: ReviewDocument | None) -> dict[str, int]:
-    """How many findings of each severity `doc` declares, zeroed when absent.
+def open_counts(doc: ReviewDocument | None) -> dict[str, int]:
+    """How many outstanding findings of each severity `doc` declares, zeroed when absent.
 
     The one place a review that was never written is read as one that found
     nothing. A caller reporting counts has no separate answer for absent — a
@@ -673,7 +687,7 @@ def review_counts(doc: ReviewDocument | None) -> dict[str, int]:
     reader that does have a separate answer, and takes the same nullable
     document to give it.
     """
-    return doc.counts if doc else ReviewDocument().counts
+    return doc.open_counts if doc else ReviewDocument().open_counts
 
 
 def resolve_review_verdict(
@@ -701,9 +715,9 @@ def resolve_review_verdict(
     # is the exception above: it judges the approach, which holds without a PR.
     if self_review:
         return None
-    counts = doc.counts
+    counts = doc.open_counts
     derived = ReviewVerdict.from_counts(
-        counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
+        counts[SEVERITY_MUST], counts[SEVERITY_SHOULD],
     )
     return stated if stated and stated.outranks(derived) else derived
 

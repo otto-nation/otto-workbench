@@ -467,40 +467,6 @@ class TestCleanSectionText:
         assert result == "- **[M1]** **`file.go:42`** — finding"
 
 
-class TestCountFindings:
-    def test_counts_unique_ids(self, ro):
-        text = "- **[M1]** finding\n- **[M2]** another"
-        counts = ro._count_findings(text)
-        assert counts["M"] == 2
-
-    def test_no_findings(self, ro):
-        counts = ro._count_findings("no findings here")
-        assert all(v == 0 for v in counts.values())
-
-    def test_mixed_severities(self, ro):
-        text = "- **[M1]** must\n- **[S1]** should\n- **[N1]** nit\n- **[I1]** idiom"
-        counts = ro._count_findings(text)
-        assert counts["M"] == 1
-        assert counts["S"] == 1
-        assert counts["N"] == 1
-        assert counts["I"] == 1
-
-    def test_cross_references_not_counted(self, ro):
-        text = (
-            "## Nit\n"
-            "- **[N1]** **`file.go:10`** — resolving [M1], see also S2\n"
-            "- **[N2]** **`file.go:20`** — once [M1] is resolved, update this\n"
-        )
-        counts = ro._count_findings(text)
-        assert counts["M"] == 0
-        assert counts["N"] == 2
-
-    def test_checkbox_findings_counted(self, ro):
-        text = "- [ ] **[S1]** **`file.go:10`** — open finding"
-        counts = ro._count_findings(text)
-        assert counts["S"] == 1
-
-
 class TestMergeReviewsCleanup:
     def test_empty_markers_excluded_from_merge(self, ro, tmp_path):
         g1 = tmp_path / "group-1.md"
@@ -646,30 +612,6 @@ class TestMechanicalVerdict:
         assert "Request changes" in result
         assert "1 must-fix" in result
         assert "should-fix" not in result
-
-
-# ── 2. _has_findings ────────────────────────────────────────────────────────
-
-
-class TestHasFindings:
-    def test_with_must_fix(self, ro):
-        assert ro._has_findings("found [M1] issue") is True
-
-    def test_with_should_fix(self, ro):
-        assert ro._has_findings("found [S3] issue") is True
-
-    def test_with_nit(self, ro):
-        assert ro._has_findings("found [N2] issue") is True
-
-    def test_with_idiom(self, ro):
-        assert ro._has_findings("found [I1] issue") is True
-
-    def test_no_findings(self, ro):
-        assert ro._has_findings("no issues here at all") is False
-
-    def test_cross_references_still_match(self, ro):
-        # Simple regex matches any [M\d+] including cross-references
-        assert ro._has_findings("see [M1] for context") is True
 
 
 # ── 3. renumber_section ─────────────────────────────────────────────────────
@@ -2563,6 +2505,25 @@ class TestRunSynthesisOrFallback:
         )
         assert result == review_pipeline.PhaseResult()
 
+    def test_a_mention_of_a_finding_id_is_not_a_finding(self, ro, tmp_path, monkeypatch):
+        """The merge declares nothing, so the review is clean — a triage note
+        naming a prior ID used to send the run to synthesis with no findings."""
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(
+            review_pipeline, "_phase_synthesis",
+            lambda *a, **kw: pytest.fail("synthesis ran for a review with no findings"))
+
+        result = ro._run_synthesis_or_fallback(
+            job, state, "", 1,
+            "## File Triage\n- `api.go` — reviewed, [M1] was fixed here\n", [],
+            0, 0.0, 20.0,
+        )
+        assert result == review_pipeline.PhaseResult()
+
     def test_a_synthesis_skipped_on_budget_spends_nothing(self, ro, tmp_path, monkeypatch):
         import review_pipeline
 
@@ -3324,6 +3285,17 @@ class TestBuildMechanicalBody:
             file_count=3,
         )
         assert "across 3 files in 2 groups" in result
+
+    def test_the_prior_findings_ledger_does_not_inflate_the_count(self, ro):
+        """The ledger reports the last review, so its lines are not findings
+        this one declares — counting them said `2 findings` where there is one."""
+        result = ro.build_mechanical_body(
+            self._must_fix_content(ro)
+            + "## Prior findings\n- **[M1]** `old.go` — Fixed\n",
+            group_count=1,
+            summary_note="note",
+        )
+        assert "1 finding across" in result
 
 
 # ── _write_review_sidecar enriched meta.json ────────────────────────────────

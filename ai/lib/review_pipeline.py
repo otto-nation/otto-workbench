@@ -32,10 +32,9 @@ from review_common import (
     phase_skip_argv,
     write_review_meta,
 )
-from review_document import ReviewDocument, ReviewHeader, review_counts, review_title
+from review_document import ReviewDocument, ReviewHeader, open_counts, review_title
 from review_findings import (
     _MECHANICAL_NOTE,
-    _has_findings,
     annotate_prior_with_stable_ids,
     build_mechanical_body,
     post_process_findings,
@@ -531,7 +530,7 @@ def _run_synthesis_or_fallback(
     """
     all_groups_failed = len(failed_groups) == group_count
 
-    if not _has_findings(merged_content) and not failed_groups:
+    if not ReviewDocument(body=merged_content).findings and not failed_groups:
         log.info("No findings from any group — writing clean review")
         _write_clean_review(job, group_count, skipped_groups=n_skipped)
         state.done.add(Phase.SYNTHESIS)
@@ -624,7 +623,7 @@ def _run_disprove_gate(
         )
         failure = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
     else:
-        counts = review_counts(ReviewDocument.read(job.review_file))
+        counts = open_counts(ReviewDocument.read(job.review_file))
         ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
         if disprove is True or ms_count >= DISPROVE_MIN_FINDINGS:
             result = _phase_disprove(job)

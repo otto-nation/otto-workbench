@@ -278,7 +278,7 @@ migration_20260417_test() {
 EOF
   _run_validate
   [ "$status" -eq 1 ]
-  [[ "$output" == *"never reads the repo path"* ]]
+  [[ "$output" == *"never reads the path"* ]]
 }
 
 @test "an unmarked migration that reads an argument fails" {
@@ -292,7 +292,7 @@ migration_20260417_test() {
 EOF
   _run_validate
   [ "$status" -eq 1 ]
-  [[ "$output" == *"no '# checkout-scoped:' header"* ]]
+  [[ "$output" == *"no '# checkout-scoped:' or '# repo-scoped:' header"* ]]
 }
 
 @test "a positional read inside a nested helper is not the migration's own" {
@@ -413,6 +413,68 @@ migration_20260417_test() {
 EOF
   _run_validate
   [ "$status" -eq 0 ]
+}
+
+@test "a repo-scoped migration reading its argument passes" {
+  local dir="$FAKE_WORKBENCH/mycomp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20250101-repo.sh" <<'EOF'
+#!/usr/bin/env bash
+# repo-scoped: edits what the repo's checkouts share.
+migration_20250101_repo() {
+  echo "$1" > /dev/null
+}
+EOF
+  _run_validate
+  [ "$status" -eq 0 ]
+}
+
+@test "a repo-scoped migration ignoring its argument fails" {
+  local dir="$FAKE_WORKBENCH/mycomp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20250101-repo.sh" <<'EOF'
+#!/usr/bin/env bash
+# repo-scoped: edits what the repo's checkouts share.
+migration_20250101_repo() {
+  :
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"marked repo-scoped but"* ]]
+}
+
+@test "a migration carrying both scope markers fails" {
+  # One scope per migration: the two record their state lines in different
+  # shapes, and the framework would answer with whichever it tested first.
+  local dir="$FAKE_WORKBENCH/mycomp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20250101-both.sh" <<'EOF'
+#!/usr/bin/env bash
+# checkout-scoped: edits files inside each checkout.
+# repo-scoped: edits what the repo's checkouts share.
+migration_20250101_both() {
+  echo "$1" > /dev/null
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"carries both"* ]]
+}
+
+@test "an unmarked migration reading an argument names both markers" {
+  local dir="$FAKE_WORKBENCH/mycomp/migrations"
+  mkdir -p "$dir"
+  cat > "$dir/20250101-plain.sh" <<'EOF'
+#!/usr/bin/env bash
+migration_20250101_plain() {
+  echo "$1" > /dev/null
+}
+EOF
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"checkout-scoped"* ]]
+  [[ "$output" == *"repo-scoped"* ]]
 }
 
 # ── Absent-target guards ────────────────────────────────────────────────────

@@ -134,6 +134,160 @@ def test_a_settings_file_with_no_permissions_block_is_clean(tmp_path):
     assert vp.check_file(str(path)) == []
 
 
+# ── allow ordering ───────────────────────────────────────────────────────
+# Claude Code rewrites `allow` in codepoint order whenever a session grants a
+# permission. A committed file written any other way comes back modified with
+# nothing added and nothing removed, and that diff then reads as uncommitted
+# work in every worktree holding it.
+
+
+def _misordered(*allow):
+    return perms.first_misordered(list(allow))
+
+
+def test_an_allow_in_the_writers_order_is_clean():
+    assert _misordered("Bash(awk:*)", "Bash(git:*)", "Bash(xargs:*)") is None
+
+
+def test_an_empty_allow_is_clean():
+    assert _misordered() is None
+
+
+def test_the_first_rule_out_of_order_is_named():
+    assert _misordered("Bash(git:*)", "Bash(awk:*)") == "Bash(git:*)"
+
+
+def test_the_writers_order_is_codepoint_not_alphabetical():
+    """`~` sorts after every letter, which is where the writer puts it — and
+    where the entry that churned seven worktrees was not."""
+    assert _misordered("Bash(xargs:*)", "Bash(~/bin/x)", "Edit") is None
+    assert _misordered("Bash(~/bin/x)", "Bash(xargs:*)") == "Bash(~/bin/x)"
+
+
+def test_only_the_allow_bucket_is_ordered(tmp_path):
+    """The writer leaves `deny` alone — both were seen in one save — and it is
+    grouped here by the command it guards."""
+    path = _settings(tmp_path, {"permissions": {
+        "allow": ["Bash(awk:*)"],
+        "deny": ["Bash(git reset:*)", "Bash(git push --force:*)", "Bash(git push -f:*)"],
+    }})
+    assert vp.check_order(str(path)) is None
+
+
+def test_a_settings_file_with_no_permissions_block_is_in_order(tmp_path):
+    assert vp.check_order(str(_settings(tmp_path, {"statusLine": {"command": "x"}}))) is None
+
+
+def test_a_misordered_rule_carries_the_line_it_is_written_on(tmp_path):
+    path = _settings(tmp_path, {"permissions": {"allow": ["Bash(git:*)", "Bash(awk:*)"]}})
+    assert vp.check_order(str(path)) == vp.Misordered("Bash(git:*)", 4)
+
+
+def test_the_repo_commits_no_misordered_allow():
+    """The rule this validator enforces holds across every tracked settings file.
+
+    Both of them are symlinked or synced into place for Claude Code to write
+    back to, so either one drifting reproduces the churn.
+    """
+    tracked = [p for p in vp.discover_settings(str(REPO_ROOT)) if not perms.is_local(p, False)]
+    assert tracked, "expected at least the machine-wide and project settings files"
+    found = {path: vp.check_order(path) for path in tracked}
+    assert {p: m for p, m in found.items() if m} == {}
+
+
+def test_main_exits_1_on_a_misordered_allow(tmp_path, monkeypatch, capsys):
+    path = _settings(tmp_path, {"permissions": {"allow": ["Bash(git:*)", "Bash(awk:*)"]}})
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--quiet", str(path)])
+    with pytest.raises(SystemExit) as exc:
+        vp.main()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Bash(git:*)" in err
+    assert vp.FIX_COMMAND in err
+
+
+def test_a_local_file_is_not_judged_on_order(tmp_path, monkeypatch, capsys):
+    """It is Claude Code's own file and dies with the checkout, so its order
+    churns no diff."""
+    path = _local(tmp_path, "Bash(git:*)", "Bash(awk:*)")
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", path])
+    vp.main()
+    assert "not in the order" not in capsys.readouterr().err
+
+
+def test_the_container_mirror_is_not_judged_on_order(container, monkeypatch, capsys):
+    """`permissions mirror` puts the managed rules in front of the ones already
+    there on purpose; sorting would undo the contract that generates it."""
+    worktree = container / "main"
+    (worktree / ".claude").mkdir(parents=True)
+    (worktree / vp.TRACKED_SETTINGS).write_text(json.dumps({"permissions": {"allow": []}}))
+    _container_settings(container, "settings.json", {
+        "permissions": {"allow": ["Bash(git:*)", "Bash(awk:*)"]},
+        perms.MANIFEST_KEY: {"permissions": {"allow": ["Bash(git:*)"]}},
+    })
+
+    monkeypatch.setattr(vp, "_WORKBENCH_DIR", str(worktree))
+    monkeypatch.setattr(sys, "argv", ["validate-permissions"])
+    vp.main()
+
+    assert "not in the order" not in capsys.readouterr().err
+
+
+def test_fix_sorts_a_misordered_allow(tmp_path, monkeypatch, capsys):
+    path = _settings(tmp_path, {"permissions": {"allow": ["Bash(git:*)", "Bash(awk:*)"]}})
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", str(path)])
+    vp.main()
+    assert json.loads(path.read_text())["permissions"]["allow"] == [
+        "Bash(awk:*)", "Bash(git:*)"
+    ]
+
+
+def test_sorting_grants_and_revokes_nothing(tmp_path, monkeypatch, capsys):
+    """The no-op proof: a reorder is the same multiset of rules."""
+    allow = ["Bash(git:*)", "Bash(awk:*)", "Read(~/Library/x/**)", "Bash(xargs:*)"]
+    path = _settings(tmp_path, {"permissions": {"allow": allow}})
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", "--quiet", str(path)])
+    vp.main()
+    assert sorted(json.loads(path.read_text())["permissions"]["allow"]) == sorted(allow)
+
+
+def test_fix_leaves_the_other_buckets_and_keys_alone(tmp_path, monkeypatch, capsys):
+    path = _settings(tmp_path, {
+        "statusLine": {"command": "x"},
+        "permissions": {
+            "allow": ["Bash(git:*)", "Bash(awk:*)"],
+            "deny": ["Bash(git reset:*)", "Bash(git push --force:*)"],
+            "ask": ["Bash(bin/get-secret:*)"],
+        },
+    })
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", "--quiet", str(path)])
+    vp.main()
+
+    fixed = json.loads(path.read_text())
+    assert fixed["statusLine"] == {"command": "x"}
+    assert fixed["permissions"]["deny"] == ["Bash(git reset:*)", "Bash(git push --force:*)"]
+    assert fixed["permissions"]["ask"] == ["Bash(bin/get-secret:*)"]
+
+
+def test_a_sorted_file_passes_on_the_next_run(tmp_path, monkeypatch, capsys):
+    path = _settings(tmp_path, {"permissions": {"allow": ["Bash(git:*)", "Bash(awk:*)"]}})
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", str(path)])
+    vp.main()
+
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", str(path)])
+    vp.main()
+    assert "every permission rule is live" in capsys.readouterr().out
+
+
+def test_fix_is_idempotent_on_order(tmp_path, monkeypatch, capsys):
+    path = _settings(tmp_path, {"permissions": {"allow": ["Bash(git:*)", "Bash(awk:*)"]}})
+    monkeypatch.setattr(sys, "argv", ["validate-permissions", "--fix", "--quiet", str(path)])
+    vp.main()
+    once = path.read_text()
+    vp.main()
+    assert path.read_text() == once
+
+
 # ── local grant drift ────────────────────────────────────────────────────
 # The tracked project file grants three bin directories and gates two scripts
 # that reach credentials; these stand in for it so the tests do not move when

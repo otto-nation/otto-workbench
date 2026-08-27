@@ -352,30 +352,35 @@ def prune(filepath: str, grants: list[Grant]) -> None:
 
 
 def first_misordered(allow: list[str]) -> str | None:
-    """The first `allow` rule written out of the order Claude Code writes them in.
+    """The first `allow` rule written out of the codepoint order the bucket lands in.
 
     Returns None when the list is already in that order.  A single rule is
     returned rather than the whole list so a report can name the line it is on.
 
-    Claude Code rewrites `allow` in codepoint order whenever a session grants a
-    permission, and leaves `deny` and `ask` in the order they were authored —
-    both were observed in one save, so this is the writer's behaviour rather
-    than a guess about it.  A committed file written any other way therefore
-    comes back modified the first time a session touches permissions, with no
-    rule added and none removed, and that diff outlives the branch it appears
-    on: it is reported as uncommitted work in every worktree that has one.
+    Two independent paths put the bucket in that order and neither touches
+    `deny` or `ask`.  `ai/claude/steps.sh` merges the registry-derived grants
+    with `jq`'s `unique`, which sorts, so ~/.claude/settings.json carries a
+    sorted `allow` whatever order the template committed one in.  Claude Code
+    writes the same order back when a session grants a permission — that much
+    was observed in a save that reordered `allow` and left an unsorted `deny`
+    exactly as it was.
+
+    A committed bucket in any other order is therefore a diff waiting to
+    happen, with no rule added and none removed.  It does not belong to the
+    branch it appears on, so it surfaces in every worktree at once and reads as
+    uncommitted work in each of them.
     """
     reordered = (rule for rule, ordered in zip(allow, sorted(allow)) if rule != ordered)
     return next(reordered, None)
 
 
 def sort_allow(filepath: str) -> None:
-    """Rewrite a settings file's `allow` bucket into the order Claude Code writes it.
+    """Rewrite a settings file's `allow` bucket into codepoint order.
 
     A pure reordering: no rule is added or removed, so the file permits exactly
     the commands it permitted before.  The other buckets are left alone, `deny`
     because it is grouped by the command it guards rather than sorted, and both
-    because the writer does not reorder them either.
+    because neither path in `first_misordered` reorders them either.
 
     Only called for a bucket `first_misordered` found something in, so there is
     a non-empty `allow` here to sort and no key is created by asking for it.

@@ -160,13 +160,19 @@ on credential access, which is a person's call, not a script's.
 
 ### The order a tracked allow is written in
 
-Claude Code does not append to `allow` — it rewrites the whole bucket in
-codepoint order every time a session grants a permission, and leaves `deny` and
-`ask` in the order they were authored. Both halves were observed in one save,
-so this is what the writer does rather than a guess about it.
+Two independent paths put `allow` in codepoint order, and neither touches
+`deny` or `ask`.
 
-A tracked file committed in any other order therefore comes back modified the
-first time a session touches permissions, with no rule added and none removed.
+`step_claude_settings` in `ai/claude/steps.sh` merges the registry-derived
+grants into the template with `.permissions.allow + $rp | unique`, and `jq`'s
+`unique` sorts — so `~/.claude/settings.json` carries a sorted bucket whatever
+order the template committed one in. Separately, Claude Code does not append to
+`allow`: it rewrites the whole bucket sorted when a session grants a
+permission, which was observed in a save that reordered `allow` and left an
+unsorted `deny` exactly as it was.
+
+A tracked file committed in any other order therefore comes back modified,
+with no rule added and none removed.
 That diff is worse than it sounds: it does not belong to the branch it appears
 on, so it sits in every worktree at once and `wt-cleanup` reports each of them
 as holding uncommitted work. Seven worktrees were once held open by a single

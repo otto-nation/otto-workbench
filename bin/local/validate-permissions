@@ -41,11 +41,14 @@ keeps that defensible — the covered class is pruned by a command, not by hand,
 and the file it prunes regrows.
 
 The third question is what order a committed `allow` bucket is written in, and
-it is asked of tracked files only.  Claude Code rewrites that bucket in
-codepoint order on the next grant, so a file committed any other way comes back
-modified with nothing added and nothing removed — a diff that then sits in
-every worktree holding it, reported as uncommitted work nobody can identify.
-`deny` is exempt: the writer leaves it alone, and it is grouped here by the
+it is asked of tracked files only.  Two paths put that bucket in codepoint
+order: `ai/claude/steps.sh` merges the registry grants into it with `jq`'s
+`unique`, and Claude Code writes it back that way when a session grants a
+permission.  A file committed any other way therefore comes back modified with
+nothing added and nothing removed — a diff belonging to no branch, which sits
+in every worktree at once and reads as uncommitted work in each.
+
+`deny` is exempt: neither path reorders it, and it is grouped here by the
 command it guards.  The container mirror is exempt too — it is generated with
 the managed rules deliberately in front of whatever was already there, which
 sorting would undo.
@@ -66,7 +69,7 @@ for drift.  A grant reaching the container despite the mirror is drift, which
 is what the finding at the end of this file says to regenerate.
 
 Exit code: 0 if every rule is live, every grant is in the right file, and every
-tracked `allow` is in the writer's order, 1 otherwise.
+tracked `allow` is in codepoint order, 1 otherwise.
 """
 
 import argparse
@@ -99,8 +102,8 @@ EMPTY_PREFIX = 'nothing precedes :*, so the rule names no command'
 
 NAME_THE_COMMAND = 'a rule that names the command it is for'
 
-MISORDERED = ('Claude Code rewrites allow in codepoint order on the next grant, so this file '
-              'comes back modified with no rule added and none removed')
+MISORDERED = ('both ai sync and the next grant write allow back in codepoint order, so this '
+              'file comes back modified with no rule added and none removed')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -115,7 +118,7 @@ class Violation:
 
 @dataclasses.dataclass(frozen=True)
 class Misordered:
-    """The first `allow` rule written where Claude Code would not write it."""
+    """The first `allow` rule a codepoint sort would move."""
 
     rule: str
     line: int = 0
@@ -167,24 +170,33 @@ def check_rules(rules: list[str]) -> list[Violation]:
     return [v for v in (_diagnose(rule) for rule in rules) if v is not None]
 
 
-def check_file(filepath: str) -> list[Violation]:
-    """Return every dead permission rule in a settings JSON file."""
-    with open(filepath) as f:
-        text = f.read()
-
+def check_text(text: str) -> list[Violation]:
+    """Return every dead permission rule in the text of a settings JSON file."""
     lines = text.splitlines()
     violations = check_rules(rules_in(json.loads(text)))
     return [dataclasses.replace(v, line=line_of(lines, v.rule)) for v in violations]
 
 
-def check_order(filepath: str) -> Misordered | None:
-    """Return the first `allow` rule out of the writer's order, or None."""
-    with open(filepath) as f:
-        text = f.read()
-
+def order_of(text: str) -> Misordered | None:
+    """Return the first `allow` rule a codepoint sort would move, or None."""
     allow = (json.loads(text).get('permissions') or {}).get('allow') or []
     rule = first_misordered(allow)
     return Misordered(rule, line_of(text.splitlines(), rule)) if rule else None
+
+
+# Both questions are asked of the same text, read once: `main` checks every
+# file it discovers, and a settings file is small enough that parsing it twice
+# was never the cost — reading it twice is what could answer them differently.
+def check_file(filepath: str) -> list[Violation]:
+    """Return every dead permission rule in a settings JSON file."""
+    with open(filepath) as f:
+        return check_text(f.read())
+
+
+def check_order(filepath: str) -> Misordered | None:
+    """Return the first `allow` rule a codepoint sort would move, or None."""
+    with open(filepath) as f:
+        return order_of(f.read())
 
 
 # ── Reporting ───────────────────────────────────────────────────────────────
@@ -229,7 +241,7 @@ def _report_covered(relpath: str, grants: list[Grant], in_container: bool) -> No
 
 
 def _report_misordered(relpath: str, misordered: Misordered) -> None:
-    print(f'{RED}✗{NC} {relpath}: allow is not in the order Claude Code writes it',
+    print(f'{RED}✗{NC} {relpath}: allow is not in codepoint order',
           file=sys.stderr)
     where = f'line {misordered.line}: ' if misordered.line else ''
     print(f'      {where}{misordered.rule}', file=sys.stderr)
@@ -238,7 +250,7 @@ def _report_misordered(relpath: str, misordered: Misordered) -> None:
 
 
 def _report_sorted(relpath: str) -> None:
-    print(f'  {GREEN}✓{NC} {relpath}: sorted allow into the order Claude Code writes it')
+    print(f'  {GREEN}✓{NC} {relpath}: sorted allow into codepoint order')
 
 
 def _report_pruned(relpath: str, grants: list[Grant], quiet: bool) -> None:
@@ -252,7 +264,7 @@ def _print_summary(files_checked: int, errors: int) -> None:
     print()
     if errors == 0:
         print(f'{GREEN}✓{NC} {files_checked} files checked, every permission rule is live, '
-              f'in the right file, and in the order Claude Code writes it')
+              f'in the right file, and in codepoint order')
     else:
         print(f'{RED}✗{NC} {errors} of {files_checked} files declare a rule that can never '
               f'match, a grant that belongs somewhere else, or an allow bucket the next '
@@ -268,7 +280,7 @@ def main():
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
     parser.add_argument('--fix', action='store_true',
                         help='Delete local grants a tracked rule already makes, and sort a '
-                             'tracked allow bucket into the order Claude Code writes it')
+                             'tracked allow bucket into codepoint order')
     parser.add_argument('files', nargs='*', help='Settings files to check (auto-discovers if omitted)')
     args = parser.parse_args()
 
@@ -282,14 +294,16 @@ def main():
 
     for filepath in files:
         relpath = os.path.relpath(filepath, repo_root)
-        violations = check_file(filepath)
+        with open(filepath) as f:
+            text = f.read()
+        violations = check_text(text)
         in_container = at_container(filepath, container)
         local = is_local(filepath, in_container)
         drift = drift_in(filepath, tracked) if local else Drift()
         # Order is a committed file's problem: a local one dies with the
         # checkout, and the container mirror is generated with the managed
         # rules in front of what was already there, which sorting would undo.
-        misordered = None if local or in_container else check_order(filepath)
+        misordered = None if local or in_container else order_of(text)
 
         pruned = drift.covered if args.fix else []
         if pruned:

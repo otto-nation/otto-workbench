@@ -670,7 +670,7 @@ cmd_projects_add() {
     err "Could not write ${PROJECTS_REGISTRY_FILE/#$HOME/~} — $root qualifies but the registry is unwritable"
     return 1
   fi
-  err "Refused $root — a temporary path or a bare repo's container, not a project"
+  err "Refused $root — a temporary path, a bare repo's container, or a path holding a tab, not a project"
   return 1
 }
 

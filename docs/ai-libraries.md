@@ -2337,12 +2337,15 @@ recording for the tools written in Python: Claude's SessionStart hook, which
 already resolves the repo root, and the ``pr`` CLI, which already resolves a
 worktree root. ``lib/projects.sh`` is the shell half — it owns the one-time
 backfill, the CLI, and the reads that the machine profile generator and the
-project-scoped migrations make.
+checkout-scoped migrations make.
 
-Both halves read and write one newline-delimited file of absolute paths, named
-by ``workbench_paths.projects_registry()``. Text rather than YAML because every
-write is an append and every read is a scan. ``tests/projects.bats``
-cross-validates the two halves against the same file.
+Both halves read and write one file named by ``workbench_paths.projects_registry()``:
+one absolute path per line, optionally followed by a tab and the repo identity
+the shell half records from the sync. This side reads the path ahead of that tab
+and writes bare paths, because resolving an identity means forking git on a
+session's startup path. Text rather than YAML because every write is an append
+and every read is a scan. ``tests/projects.bats`` cross-validates the two halves
+against the same file.
 
 Nothing here raises. Registration is a side effect of a command that was run for
 some other reason, and a hook that failed because a state file was unwritable

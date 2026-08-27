@@ -40,6 +40,7 @@ MIGRATIONS_STATE_FILE="$FAKE_STATE/migrations.applied"
 PROJECTS_REGISTRY_FILE="$FAKE_STATE/projects.registry"
 # No such file, so the backfill run_all_migrations does has no candidates.
 CLAUDE_CONFIG_FILE="$TMPDIR/absent-claude.json"
+. "$FAKE_ROOT/lib/portable.sh"
 # The real projects.sh, not a stub: run_all_migrations calls into it, and it
 # needs the constants above, so it loads from here rather than from ui.sh.
 . "$FAKE_ROOT/lib/projects.sh"
@@ -49,6 +50,11 @@ CONST
   cp "$REPO_ROOT/lib/components.sh" "$FAKE_ROOT/lib/components.sh"
   cp "$REPO_ROOT/lib/migrations.sh" "$FAKE_ROOT/lib/migrations.sh"
   cp "$REPO_ROOT/lib/projects.sh" "$FAKE_ROOT/lib/projects.sh"
+  cp "$REPO_ROOT/lib/gitenv.sh" "$FAKE_ROOT/lib/gitenv.sh"
+  cp "$REPO_ROOT/lib/git_layout.sh" "$FAKE_ROOT/lib/git_layout.sh"
+  # _project_rewrite reads a file's mode through portable.sh, and
+  # record_project_repo_ids is the first thing on the sync path to call it.
+  cp "$REPO_ROOT/lib/portable.sh" "$FAKE_ROOT/lib/portable.sh"
 }
 
 teardown() {
@@ -502,21 +508,21 @@ EOF
   [[ "$output" == *"bin/20260824-lift-issue-tracker-key.sh"* ]]
 }
 
-# ─── Project-scoped migrations ───────────────────────────────────────────────
+# ─── Checkout-scoped migrations ──────────────────────────────────────────────
 #
 # A migration that edits files inside a repo is done per repo, not per machine.
 # The marker in its header hands the loop over the registry to the framework,
 # which records one state line per repo it visited — so a repo the machine
 # learns about later is a key the state file simply does not hold yet.
 
-# Helper: create a migration that declares itself project-scoped and appends the
+# Helper: create a migration that declares itself checkout-scoped and appends the
 # repo path it was handed to $TMPDIR/exec.log.
-create_project_migration() {
+create_checkout_migration() {
   local component="$1" filename="$2" fn_name="$3"
   mkdir -p "$FAKE_ROOT/$component/migrations"
   cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
 #!/usr/bin/env bash
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 ${fn_name}() {
   echo "\$1" >> "$TMPDIR/exec.log"
 }
@@ -534,15 +540,16 @@ register_fake_project() {
   printf '%s\n' "$1" >> "$FAKE_STATE/projects.registry"
 }
 
-# Helper: assert the state file holds KEY's entry for a repo. The separator the
-# framework writes lives here rather than in every assertion that reads one back.
-assert_project_entry() {
+# Helper: assert the state file holds KEY's checkout-scoped entry for a work
+# tree. The separator the framework writes lives here rather than in every
+# assertion that reads one back.
+assert_checkout_entry() {
   local key="$1" repo="$2"
   grep -qxF "$key"$'\t'"$repo" "$FAKE_STATE/migrations.applied"
 }
 
-@test "a project-scoped migration runs once per registered repo" {
-  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+@test "a checkout-scoped migration runs once per registered repo" {
+  create_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
   register_fake_project "$TMPDIR/repo-b"
 
@@ -555,18 +562,18 @@ assert_project_entry() {
   [ "${lines[1]}" = "$TMPDIR/repo-b" ]
 
   # One line per repo, and no bare key: a bare key is the machine claiming to be
-  # done, which is the whole thing a project-scoped migration cannot say.
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
+  # done, which is the whole thing a checkout-scoped migration cannot say.
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
   run ! grep -qxF "mycomp/20250101-proj.sh" "$FAKE_STATE/migrations.applied"
 }
 
-@test "a project-scoped migration on a machine with no repos records nothing" {
+@test "a checkout-scoped migration on a machine with no repos records nothing" {
   # No repo to visit is not the migration being done — it is a machine that has
   # nothing to apply it to yet. Recording anything here is what would leave the
   # first repo registered afterwards unvisited, so the run is silent and the
   # state file stays empty until there is a repo to name.
-  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  create_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
 
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
@@ -578,13 +585,13 @@ assert_project_entry() {
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" == *"Migration applied: 20250101-proj.sh (1 project)"* ]]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
 }
 
 @test "a repo that registers after the first sync is visited on the next" {
   # The bug this whole shape exists for: under a single machine-wide key the
   # first sync recorded the migration as done and repo-b never received it.
-  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  create_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
   run_migrations_in_fake
 
@@ -605,7 +612,7 @@ assert_project_entry() {
   # Prune reads the same lines back on the next sync. An entry it did not
   # recognise would be dropped with a warning, and the migration would run
   # everywhere again — silently, since it has to be idempotent anyway.
-  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  create_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
   run_migrations_in_fake
 
@@ -614,11 +621,11 @@ assert_project_entry() {
   [[ "$output" != *"Pruned stale migration state"* ]]
 
   [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
 }
 
 @test "entries naming a repo that left the registry are dropped" {
-  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  create_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
   register_fake_project "$TMPDIR/repo-b"
   run_migrations_in_fake
@@ -627,32 +634,21 @@ assert_project_entry() {
 
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
-  [[ "$output" == *"no longer registered"* ]]
+  # Silently. A checkout is removed by `wt remove` as a matter of routine, and
+  # the bookkeeping following it out is not news — the operator reading a sync
+  # log got a count of forgotten entries every time and could do nothing with it.
+  [[ "$output" != *"no longer registered"* ]]
+  [[ "$output" != *"Forgot"* ]]
 
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 }
 
-@test "a repo path holding a tab keeps the key ahead of it intact" {
-  # Every split is on the first separator, so a path carrying one costs the repo
-  # nothing: the key still matches a discovered migration and the entry is not
-  # pruned as unrecognised.
-  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
-  register_fake_project "$TMPDIR/re"$'\t'"po"
-  run_migrations_in_fake
-
-  run run_migrations_in_fake
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"Pruned stale migration state"* ]]
-  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/re"$'\t'"po"
-}
-
-@test "a bare entry for a migration that became project-scoped is dropped" {
+@test "a bare entry for a migration that became checkout-scoped is dropped" {
   # How a migration converts scope: the machine-wide line the old shape recorded
   # says nothing about any repo, so prune drops it and every registered repo is
   # visited. Re-dating the file to force that is not needed.
-  create_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  create_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
   echo "mycomp/20250101-proj.sh" > "$FAKE_STATE/migrations.applied"
 
@@ -681,15 +677,15 @@ assert_project_entry() {
   [ "$output" = "mycomp/20250101-plain.sh" ]
 }
 
-# Helper: a project-scoped migration that fails for any repo holding a `fail`
+# Helper: a checkout-scoped migration that fails for any repo holding a `fail`
 # file, and records the rest.
-create_failing_project_migration() {
+create_failing_checkout_migration() {
   local component="$1" filename="$2" fn_name="$3"
   mkdir -p "$FAKE_ROOT/$component/migrations"
   cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
 #!/usr/bin/env bash
 set -e
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 ${fn_name}() {
   if [[ -e "\$1/fail" ]]; then
     return 1
@@ -702,7 +698,7 @@ EOF
 @test "a repo whose run fails is the only one retried" {
   # Per-repo state is per-repo retry too: the repos that succeeded are recorded
   # and the next sync leaves them alone.
-  create_failing_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  create_failing_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
   register_fake_project "$TMPDIR/repo-b"
   touch "$TMPDIR/repo-b/fail"
@@ -712,7 +708,7 @@ EOF
   [[ "$output" == *"Migration failed: 20250101-proj.sh in $TMPDIR/repo-b"* ]]
   [[ "$output" == *"SYNC CONTINUED"* ]]
 
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 
   rm "$TMPDIR/repo-b/fail"
@@ -733,7 +729,7 @@ EOF
   cat > "$FAKE_ROOT/mycomp/migrations/20250101-both.sh" <<EOF
 #!/usr/bin/env bash
 # adoption-sensitive: drains a path adoption writes into.
-# project-scoped: drains it inside each repo.
+# checkout-scoped: drains it inside each repo.
 migration_20250101_both() {
   echo "\$1" >> "$TMPDIR/exec.log"
 }
@@ -747,7 +743,7 @@ EOF
   [ ! -s "$FAKE_STATE/migrations.applied" ]
 }
 
-@test "this repo's project-scoped migrations are discovered by their real keys" {
+@test "this repo's checkout-scoped migrations are discovered by their real keys" {
   # Against the real tree, for the reason the adoption-sensitive twin above is:
   # a typo in the marker line is invisible everywhere else, and the migration
   # would quietly go back to claiming the whole machine after one run.
@@ -755,7 +751,7 @@ EOF
     . '$REPO_ROOT/lib/ui.sh'
     . '$REPO_ROOT/lib/migrations.sh'
     keys=()
-    _discover_migration_keys keys \"\$_PROJECT_SCOPED_MARKER\"
+    _discover_migration_keys keys \"\$_CHECKOUT_SCOPED_MARKER\"
     printf '%s\n' \"\${keys[@]}\"
   "
   [ "$status" -eq 0 ]
@@ -765,20 +761,20 @@ EOF
 # ─── Migrations that find nothing to do ──────────────────────────────────────
 #
 # A migration has to be idempotent, so "already in the target shape" is its
-# commonest outcome and, for a project-scoped one on a machine that registers a
+# commonest outcome and, for a checkout-scoped one on a machine that registers a
 # worktree whenever one is opened, very nearly its only outcome. Returning 0
 # there reported a rename that could never happen as work applied, once per
 # sync, forever. MIGRATION_NOOP is how a migration says which of the two it did.
 
-# Helper: a project-scoped migration that answers MIGRATION_NOOP for any repo
+# Helper: a checkout-scoped migration that answers MIGRATION_NOOP for any repo
 # not holding a `work` file, and logs every repo it is handed either way.
-create_noop_project_migration() {
+create_noop_checkout_migration() {
   local component="$1" filename="$2" fn_name="$3"
   mkdir -p "$FAKE_ROOT/$component/migrations"
   cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
 #!/usr/bin/env bash
 set -e
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 ${fn_name}() {
   echo "\$1" >> "$TMPDIR/exec.log"
   if [[ ! -e "\$1/work" ]]; then
@@ -836,7 +832,7 @@ EOF
 }
 
 @test "the project count names the repos changed, not the repos visited" {
-  create_noop_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  create_noop_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
   register_fake_project "$TMPDIR/repo-b"
   register_fake_project "$TMPDIR/repo-c"
@@ -849,16 +845,16 @@ EOF
   # All three were visited, and all three are recorded — the two that found
   # nothing to do are as done as the one that did the work.
   [ "$(wc -l < "$TMPDIR/exec.log")" -eq 3 ]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-c"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-c"
 }
 
 @test "a sync whose only new repo has nothing to do says nothing" {
   # The shape that put a line in every sync: a worktree registers itself the
   # first time anything runs in it, the framework visits it because the state
   # file does not name it yet, and the visit finds the work already done.
-  create_noop_project_migration mycomp 20250101-proj.sh migration_20250101_proj
+  create_noop_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
   register_fake_project "$TMPDIR/repo-a"
   touch "$TMPDIR/repo-a/work"
   run_migrations_in_fake
@@ -867,7 +863,7 @@ EOF
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
   [[ "$output" != *"Migration applied"* ]]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-b"
 }
 
 @test "a repo that fails is still a failure alongside one that no-ops" {
@@ -876,7 +872,7 @@ EOF
   cat > "$FAKE_ROOT/mycomp/migrations/20250101-proj.sh" <<EOF
 #!/usr/bin/env bash
 set -e
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 migration_20250101_proj() {
   if [[ -e "\$1/fail" ]]; then
     return 1
@@ -893,7 +889,7 @@ EOF
   [[ "$output" == *"Migration failed: 20250101-proj.sh in $TMPDIR/repo-b"* ]]
   [[ "$output" != *"Migration applied"* ]]
 
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-a"
   run ! grep -qF "repo-b" "$FAKE_STATE/migrations.applied"
 }
 
@@ -904,7 +900,7 @@ EOF
   cat > "$FAKE_ROOT/mycomp/migrations/20250101-proj.sh" <<EOF
 #!/usr/bin/env bash
 set -e
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 migration_20250101_proj() {
   if [[ -e "\$1/fail" ]]; then
     return 1
@@ -930,8 +926,8 @@ EOF
 
   # Recorded: the one that worked and the one that had nothing to do. Not the
   # one that failed — that repo alone is retried next sync.
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-work"
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-noop"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-work"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-noop"
   run ! grep -qF "repo-fail" "$FAKE_STATE/migrations.applied"
 }
 
@@ -1026,14 +1022,14 @@ EOF
   grep -qxF "mycomp/20250101-defer.sh" "$FAKE_STATE/migrations.applied"
 }
 
-@test "a project-scoped migration defers per repo, not for the machine" {
+@test "a checkout-scoped migration defers per repo, not for the machine" {
   # One repo has the target and one does not, so the run has to record the first
   # and leave the second to be asked again.
   mkdir -p "$FAKE_ROOT/mycomp/migrations"
   cat > "$FAKE_ROOT/mycomp/migrations/20250101-proj.sh" <<EOF
 #!/usr/bin/env bash
 set -e
-# project-scoped: edits files inside each repo.
+# checkout-scoped: edits files inside each repo.
 migration_20250101_proj() {
   [[ -f "\$1/target" ]] || return "\$MIGRATION_DEFERRED"
 }
@@ -1044,8 +1040,181 @@ EOF
 
   run run_migrations_in_fake
   [ "$status" -eq 0 ]
-  assert_project_entry mycomp/20250101-proj.sh "$TMPDIR/repo-ready"
+  assert_checkout_entry mycomp/20250101-proj.sh "$TMPDIR/repo-ready"
   run ! grep -qF "repo-later" "$FAKE_STATE/migrations.applied"
+}
+
+# ─── Repo-scoped migrations ──────────────────────────────────────────────────
+#
+# Work that belongs to a repository rather than to one of its checkouts is done
+# once and recorded once. Every worktree of one bare-repo container shares a git
+# dir, and that is the name the state line carries — so removing the worktree
+# the migration happened to run in leaves the entry standing.
+
+# Helper: create a migration that declares itself repo-scoped and appends the
+# path it was handed to $TMPDIR/exec.log.
+create_repo_migration() {
+  local component="$1" filename="$2" fn_name="$3"
+  mkdir -p "$FAKE_ROOT/$component/migrations"
+  cat > "$FAKE_ROOT/$component/migrations/$filename" <<EOF
+#!/usr/bin/env bash
+# repo-scoped: edits files the whole repo shares.
+${fn_name}() {
+  echo "\$1" >> "$TMPDIR/exec.log"
+}
+EOF
+}
+
+# Helper: a bare-repo container with two worktrees, both registered, and
+# FAKE_CONTAINER set to its resolved path.
+#
+# Composed from the shared fixtures in test_helper.bash — make_container_seed
+# for the seed repo (branches main and feat), make_worktree_container for the
+# bare clone with `main` checked out — plus one more `git worktree add` for a
+# second checkout on the branch the seed already created.
+#
+# Resolved with `pwd -P` because git reports the /private twin of a macOS
+# /var/folders temp path, and the registry entries have to be the paths git
+# will answer with.
+register_fake_repo_worktrees() {
+  local name="$1" seed
+  FAKE_CONTAINER="$(cd "$TMPDIR" && pwd -P)/$name"
+  seed="$FAKE_CONTAINER.seed"
+  mkdir -p "$seed"
+  printf 'x\n' > "$seed/a.txt"
+  make_container_seed "$seed"
+  make_worktree_container "$FAKE_CONTAINER" "$seed"
+  git -C "$FAKE_CONTAINER" worktree add -q "$FAKE_CONTAINER/feature" feat
+  rm -rf "$seed"
+  printf '%s\n%s\n' "$FAKE_CONTAINER/main" "$FAKE_CONTAINER/feature" \
+    >> "$FAKE_STATE/projects.registry"
+}
+
+@test "a repo-scoped migration runs once for a repo with several worktrees" {
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-repo.sh (1 project)"* ]]
+
+  [ "$(cat "$TMPDIR/exec.log")" = "$FAKE_CONTAINER/main" ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$FAKE_CONTAINER/.git" ]
+}
+
+@test "a repo-scoped entry survives the worktree it ran in being removed" {
+  # The whole point: `wt remove` used to orphan an entry per worktree per
+  # migration, and the next sync forgot them by the dozen.
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+  run_migrations_in_fake
+
+  rm -rf "$FAKE_CONTAINER/main"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Migration applied"* ]]
+  [ "$(wc -l < "$TMPDIR/exec.log")" -eq 1 ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$FAKE_CONTAINER/.git" ]
+}
+
+@test "a repo-scoped migration visits a repo registered later" {
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees alpha
+  local alpha="$FAKE_CONTAINER"
+  run_migrations_in_fake
+
+  register_fake_repo_worktrees beta
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Migration applied: 20250101-repo.sh (1 project)"* ]]
+
+  run cat "$TMPDIR/exec.log"
+  [ "${#lines[@]}" -eq 2 ]
+  [ "${lines[0]}" = "$alpha/main" ]
+  [ "${lines[1]}" = "$FAKE_CONTAINER/main" ]
+}
+
+@test "a repo-scoped entry is dropped when the last checkout of its repo goes" {
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+  run_migrations_in_fake
+
+  rm -rf "$FAKE_CONTAINER"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [ ! -s "$FAKE_STATE/migrations.applied" ]
+}
+
+@test "per-checkout entries are dropped when a migration becomes repo-scoped" {
+  # How a migration converts scope, in the direction this change makes: the
+  # per-checkout lines name no repo the new shape would ever write, so prune
+  # drops them and the repo is visited once. No re-dating the file.
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_repo_worktrees container
+  printf 'mycomp/20250101-repo.sh\t%s\nmycomp/20250101-repo.sh\t%s\n' \
+    "$FAKE_CONTAINER/main" "$FAKE_CONTAINER/feature" \
+    > "$FAKE_STATE/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  # Not stale — the file is still there, it just records itself differently now.
+  [[ "$output" != *"Pruned stale migration state"* ]]
+
+  [ "$(cat "$TMPDIR/exec.log")" = "$FAKE_CONTAINER/main" ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$FAKE_CONTAINER/.git" ]
+}
+
+@test "a repo-scoped entry is dropped when the migration becomes checkout-scoped" {
+  # The other direction: a line naming a shared git dir means nothing to a
+  # migration recorded per checkout, and no line the framework writes for it
+  # would ever match.
+  create_checkout_migration mycomp 20250101-proj.sh migration_20250101_proj
+  register_fake_repo_worktrees container
+  printf 'mycomp/20250101-proj.sh\t%s\n' "$FAKE_CONTAINER/.git" \
+    > "$FAKE_STATE/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "${lines[0]}" = "mycomp/20250101-proj.sh"$'\t'"$FAKE_CONTAINER/main" ]
+  [ "${lines[1]}" = "mycomp/20250101-proj.sh"$'\t'"$FAKE_CONTAINER/feature" ]
+  [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "a repo git cannot answer for is visited once and recorded by its path" {
+  # A registered directory that is no longer a repository still gets visited
+  # exactly once, which is what per-checkout would have done for it anyway.
+  create_repo_migration mycomp 20250101-repo.sh migration_20250101_repo
+  register_fake_project "$TMPDIR/plain"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMPDIR/exec.log")" = "$TMPDIR/plain" ]
+  run cat "$FAKE_STATE/migrations.applied"
+  [ "$output" = "mycomp/20250101-repo.sh"$'\t'"$TMPDIR/plain" ]
+}
+
+@test "this repo's repo-scoped migrations are discovered by their real keys" {
+  # Against the real workbench rather than the fake one: the marker is a
+  # contract with files that ship, and a typo in one is invisible otherwise.
+  run bash -c "
+    WORKBENCH_DIR='$REPO_ROOT'
+    LIB_SRC_DIR='$REPO_ROOT/lib'
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/migrations.sh'
+    keys=()
+    _discover_migration_keys keys \"\$_REPO_SCOPED_MARKER\"
+    printf '%s\n' \"\${keys[@]}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ai/claude/20260824-drop-container-anatomy.sh"* ]]
 }
 
 # ─── Component discovery under set -e ────────────────────────────────────────

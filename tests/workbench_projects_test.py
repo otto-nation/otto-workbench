@@ -73,6 +73,15 @@ class TestRegistration:
     def test_a_relative_path_is_refused(self):
         assert not workbench_projects.register("relative/path")
 
+    def test_a_path_holding_the_field_separator_is_refused(self, tmp_path):
+        # The tab is what tells the path field from the repo identity, so a
+        # path that carries one is indistinguishable from a line that already
+        # has one — the membership check would compare against the truncated
+        # path forever and every command run there would append another line.
+        repo = make_repo(tmp_path / "al\tpha")
+        assert not workbench_projects.register(repo)
+        assert workbench_projects.registered() == []
+
     def test_nothing_to_register_is_not_an_error(self):
         assert not workbench_projects.register(None)
 
@@ -147,6 +156,21 @@ class TestReads:
         with open(workbench_projects.registry_path(), "a") as handle:
             handle.write("# backfilled from somewhere\n")
         assert workbench_projects.registered() == [repo]
+
+    def test_a_line_carrying_a_repo_id_reads_as_its_path(self, tmp_path):
+        repo = make_repo(tmp_path / "alpha")
+        registry = workbench_projects.registry_path()
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(f"{repo}\t{repo}/.git\n")
+        assert workbench_projects.registered() == [repo]
+
+    def test_register_is_a_no_op_for_a_path_that_carries_a_repo_id(self, tmp_path):
+        repo = make_repo(tmp_path / "alpha")
+        registry = workbench_projects.registry_path()
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(f"{repo}\t{repo}/.git\n")
+        assert workbench_projects.register(repo)
+        assert registry.read_text() == f"{repo}\t{repo}/.git\n"
 
 
 class TestPathOwnership:

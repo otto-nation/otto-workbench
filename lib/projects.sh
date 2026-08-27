@@ -8,13 +8,23 @@
 # filename is declared once, in [`constants.sh`](#constantssh), and this file
 # holds functions only.
 #
+# A line is a work-tree path, optionally followed by a tab and the repo identity
+# every worktree of that repo shares — the realpath of its `--git-common-dir`.
+# Only `record_project_repo_ids` writes that second field, from the sync;
+# registration stays fork-free, so a line arrives bare and is resolved later.
+# Everything that matches a line compares the path ahead of the tab.
+#
 # Membership means a workbench command actually ran in a repo. Nothing scans for
 # candidates — the two consumers that used to, the machine profile generator and
-# the project-scoped migrations, each carried their own guessed-at list of git
+# the checkout-scoped migrations, each carried their own guessed-at list of git
 # roots and a depth limit, so a repo cloned anywhere else was invisible and the
 # migration recorded itself applied all the same. Registration is an observation,
 # so it can only ever be late; `otto-workbench projects add` is what covers a
-# repo that joined after something needed to see it. The registrations are:
+# repo that joined after something needed to see it.
+# `record_project_repo_ids` is the sync-time step that gives each of those lines
+# the repo identity behind it, which is how work that belongs to a repo rather
+# than to a checkout is done once — see [Execution Flow —
+# Migrations](execution-flow.md#migrations). The registrations are:
 #
 # | Caller | Where the root comes from |
 # |--------|---------------------------|
@@ -88,6 +98,17 @@ if [[ -z "${PROJECTS_REGISTRY_FILE:-}" ]]; then
   return 1 2>/dev/null || exit 1
 fi
 
+# Resolved from this file's own location rather than $LIB_SRC_DIR: projects.sh
+# is always loaded by the ui.sh facade, and a caller that overrides
+# WORKBENCH_DIR to sandbox where components live — bin/local/validate-components
+# and bin/local/validate-migrations both do — would otherwise point $LIB_SRC_DIR
+# at a directory that never held git_layout.sh in the first place. lib/setup.sh
+# uses the same fix for the same reason.
+_projects_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=git_layout.sh
+. "$_projects_lib_dir/git_layout.sh"
+unset _projects_lib_dir
+
 # The line the backfill leaves behind so it runs exactly once per machine.
 #
 # A marker inside the file rather than the file's own existence: the Python half
@@ -95,6 +116,25 @@ fi
 # backfill keyed on existence would then be skipped forever on a machine that
 # used a tool before it next synced.
 _PROJECTS_SEED_MARKER="# backfilled from"
+
+# What separates a registered work tree from the repo identity behind it.
+#
+# A tab, and the same reason `migrations.applied` uses one: a path may hold
+# anything but NUL and newline, `#` and spaces included. Every split is on the
+# *first* tab, so a path that somehow carries one still leaves the field ahead
+# of it intact.
+_PROJECT_FIELD_SEP=$'\t'
+
+# _split_project_line LINE PATH_VAR ID_VAR
+# Split a registry line into the work-tree path every entry starts with and the
+# repo identity behind it, which is empty for a line written before the identity
+# was recorded.
+_split_project_line() {
+  local -n __path="$2" __id="$3"
+  __path="${1%%"$_PROJECT_FIELD_SEP"*}"
+  __id=""
+  [[ "$1" == "$__path" ]] || __id="${1#*"$_PROJECT_FIELD_SEP"}"
+}
 
 # ─── Membership rules ────────────────────────────────────────────────────────
 
@@ -178,9 +218,21 @@ _project_ensure_file() {
 }
 
 # _project_contains DIR — true when DIR already has a line in the registry.
+#
+# On the path field rather than the whole line: a line that has been given a
+# repo identity carries a second field, and a whole-line comparison would read
+# it as a different repo — registering the same work tree a second time on
+# every sync that resolved one.
 _project_contains() {
   [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 1
-  grep -qxF "${1%/}" "$PROJECTS_REGISTRY_FILE"
+  local want="${1%/}" line path id
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    _split_project_line "$line" path id
+    if [[ "$path" == "$want" ]]; then
+      return 0
+    fi
+  done < "$PROJECTS_REGISTRY_FILE"
+  return 1
 }
 
 # project_register DIR — record DIR as a repo that uses the workbench.
@@ -198,9 +250,16 @@ _project_contains() {
 # to tell someone whose state root is read-only. Reporting the already-
 # registered case as its own code lets that caller ask this function once
 # instead of scanning the registry itself first to find out.
+#
+# A path holding `_PROJECT_FIELD_SEP` is refused alongside the other
+# membership rules: the tab is what tells the path field from the repo
+# identity, so a path that carries one is indistinguishable from a line that
+# already has an identity — `_project_contains` would compare against the
+# truncated field 1 forever, never match the real path, and every workbench
+# command run in that repo would append another line with no error.
 project_register() {
   local dir="${1%/}"
-  if _project_excluded "$dir" || ! _project_is_worktree "$dir"; then
+  if [[ "$dir" == *"$_PROJECT_FIELD_SEP"* ]] || _project_excluded "$dir" || ! _project_is_worktree "$dir"; then
     return 1
   fi
   if _project_contains "$dir"; then
@@ -208,6 +267,34 @@ project_register() {
   fi
   _project_ensure_file || return 2
   printf '%s\n' "$dir" >> "$PROJECTS_REGISTRY_FILE" || return 2
+}
+
+# _project_registered_lines — every surviving registry line, whole, one per line.
+#
+# The filtering both public reads want: comment lines and blanks dropped, a
+# repeat of a path dropped, a path whose directory is gone skipped. Callers that
+# need the repo identity read the line; project_registered prints the path out
+# of it.
+_project_registered_lines() {
+  [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 0
+  local line path id
+  local -A seen=()
+  # `|| [[ -n "$line" ]]`: read reports EOF for a final line with no newline
+  # after it, and the loop body would never see it.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -z "$line" || "$line" == \#* ]]; then
+      continue
+    fi
+    _split_project_line "$line" path id
+    if [[ -n "${seen[$path]:-}" ]]; then
+      continue
+    fi
+    seen[$path]=1
+    if [[ -d "$path" ]]; then
+      printf '%s\n' "$line"
+    fi
+  done < "$PROJECTS_REGISTRY_FILE"
+  return 0
 }
 
 # project_registered — print every registered repo that still exists, one per line.
@@ -222,20 +309,12 @@ project_register() {
 # same repo at the same moment can each read "absent" and each append. Absorbing
 # that on read is what a lock would buy, without making every hook pay for one.
 project_registered() {
-  [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 0
-  local line
-  local -A seen=()
-  # `|| [[ -n "$line" ]]`: read reports EOF for a final line with no newline
-  # after it, and the loop body would never see it.
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ -z "$line" || "$line" == \#* || -n "${seen[$line]:-}" ]]; then
-      continue
-    fi
-    seen[$line]=1
-    if [[ -d "$line" ]]; then
-      printf '%s\n' "$line"
-    fi
-  done < "$PROJECTS_REGISTRY_FILE"
+  local line path id
+  while IFS= read -r line; do
+    _split_project_line "$line" path id
+    printf '%s\n' "$path"
+  done < <(_project_registered_lines)
+  return 0
 }
 
 # _project_rewrite LINES... — replace the registry with exactly these lines.
@@ -261,9 +340,10 @@ project_forget() {
     return 1
   fi
   local -a kept=()
-  local line
+  local line path id
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ -n "$line" && "$line" != "$dir" ]]; then
+    _split_project_line "$line" path id
+    if [[ -n "$line" && "$path" != "$dir" ]]; then
       kept+=("$line")
     fi
   done < "$PROJECTS_REGISTRY_FILE"
@@ -276,7 +356,7 @@ project_prune() {
     echo 0
     return 0
   fi
-  local line dropped=0
+  local line path id dropped=0
   local -a kept=()
   local -A seen=()
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -287,10 +367,13 @@ project_prune() {
       kept+=("$line")
       continue
     fi
+    _split_project_line "$line" path id
     # A repeat is what project_registered was already absorbing on read; this is
-    # where the absorbing stops being needed.
-    if [[ -d "$line" && -z "${seen[$line]:-}" ]]; then
-      seen[$line]=1
+    # where the absorbing stops being needed. The first line wins, which is the
+    # one holding a repo identity when only one of them does — record_project_
+    # repo_ids resolves in file order, so an id is never behind a bare repeat.
+    if [[ -d "$path" && -z "${seen[$path]:-}" ]]; then
+      seen[$path]=1
       kept+=("$line")
       continue
     fi
@@ -301,6 +384,103 @@ project_prune() {
     _project_rewrite "${kept[@]}"
   fi
   echo "$dropped"
+}
+
+# ─── Repo identity ───────────────────────────────────────────────────────────
+
+# project_repo_id DIR — the identity DIR's repository keeps across its worktrees.
+#
+# The shared git dir when git can name one, and DIR itself when it cannot. A
+# registered directory that is no longer a repository still has to be visited
+# exactly once by anything working per repo, and standing for itself is what
+# gets it that — the same treatment per-checkout work would have given it.
+#
+# The fallback is deliberately not recorded: record_project_repo_ids asks git
+# directly, so an answer git could not give this sync is asked for again on the
+# next one rather than frozen into the registry.
+project_repo_id() {
+  local dir="$1" shared
+  shared="$(git_shared_dir "$dir")" || shared=""
+  printf '%s\n' "${shared:-$dir}"
+}
+
+# project_repo_leaders — one registered work tree per repo, with its repo id.
+# Prints `<repo id><TAB><work-tree path>` — the reverse of a registry line,
+# which is `<path><TAB><id>` — in registry order, the first surviving work
+# tree of each repo winning. The path is what a caller working per repo runs
+# against, and the id is what it records the result under.
+#
+# The leader is not stable and does not need to be: a repo-scoped migration's
+# state line names the id, so the leader changing between syncs — because the
+# previous one was removed — re-runs nothing. The id comes from the line when
+# the registry holds one, so a whole sweep costs no forks on a machine the sync
+# has already resolved.
+project_repo_leaders() {
+  local line path id
+  local -A seen=()
+  while IFS= read -r line; do
+    _split_project_line "$line" path id
+    if [[ -z "$id" ]]; then
+      id="$(project_repo_id "$path")"
+    fi
+    if [[ -n "${seen[$id]:-}" ]]; then
+      continue
+    fi
+    seen[$id]=1
+    printf '%s%s%s\n' "$id" "$_PROJECT_FIELD_SEP" "$path"
+  done < <(_project_registered_lines)
+  return 0
+}
+
+# record_project_repo_ids — give every registry line the repo identity it lacks.
+#
+# Called from run_all_migrations, ahead of the pruning that reads the ids back.
+# Here rather than at registration because both halves of the registry are
+# fork-free by design — every caller has a resolved work-tree root in hand, and
+# the Python half runs on a session's startup path — so a line arrives bare and
+# the sync is what resolves it.
+#
+# A stored id is trusted while the directory it names is still there. A
+# relayout (`git worktree move`, a container renamed, a clone converted to bare)
+# moves or removes the shared git dir, and a stat catches that for a fraction of
+# what re-resolving every line on every sync would cost.
+#
+# ceiling: the rewrite is not locked, so a registration appended between the
+# read and the swap is lost — the repo re-registers the next time a workbench
+# command runs in it. Upgrade to a lock if anything starts registering repos
+# that do not run commands of their own.
+record_project_repo_ids() {
+  [[ -f "$PROJECTS_REGISTRY_FILE" ]] || return 0
+  local line path id shared changed=0
+  local -a kept=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -z "$line" ]]; then
+      continue
+    fi
+    if [[ "$line" == \#* ]]; then
+      kept+=("$line")
+      continue
+    fi
+    _split_project_line "$line" path id
+    if [[ -n "$id" && ! -d "$id" ]]; then
+      # Clear it from the line too, not just the local: if re-resolution below
+      # fails, the line written back must not still carry the id that just
+      # proved stale.
+      id=""
+      line="$path"
+      changed=$(( changed + 1 ))
+    fi
+    if [[ -z "$id" && -d "$path" ]] && shared="$(git_shared_dir "$path")"; then
+      line="$path$_PROJECT_FIELD_SEP$shared"
+      changed=$(( changed + 1 ))
+    fi
+    kept+=("$line")
+  done < "$PROJECTS_REGISTRY_FILE"
+
+  if (( changed > 0 )); then
+    _project_rewrite "${kept[@]}"
+  fi
+  return 0
 }
 
 # ─── One-time backfill ───────────────────────────────────────────────────────
@@ -359,7 +539,7 @@ _project_seed_roots() {
 #
 # Called from run_all_migrations ahead of the framework rather than written as a
 # migration of its own, for the reason adoption is: migrations run in filename
-# order, and a project-scoped migration that sorted ahead of the backfill would
+# order, and a checkout-scoped migration that sorted ahead of the backfill would
 # read an empty registry, find nothing, and record itself as applied — the exact
 # silent no-op the registry exists to end.
 seed_project_registry() {

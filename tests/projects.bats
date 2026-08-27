@@ -120,6 +120,19 @@ make_bare_worktree_layout() {
   [ "$status" -eq 1 ]
 }
 
+@test "a path holding the field separator is refused" {
+  # The tab is what tells the path field from the repo identity, so a path
+  # that carries one is indistinguishable from a line that already has one —
+  # _project_contains would compare against the truncated field 1 forever and
+  # every workbench command run there would append another line.
+  make_repo "$TMPDIR/al"$'\t'"pha"
+  run project_register "$TMPDIR/al"$'\t'"pha"
+  [ "$status" -eq 1 ]
+
+  run project_registered
+  [ -z "$output" ]
+}
+
 @test "temp paths are excluded by default" {
   # The default list, not this suite's override — this is the rule that keeps
   # every other bats suite's throwaway repos out of the real registry.
@@ -280,6 +293,73 @@ make_bare_worktree_layout() {
   [ "$output" = "0" ]
 }
 
+# ─── Two-field lines ─────────────────────────────────────────────────────────
+#
+# A registry line is a work-tree path, optionally followed by a tab and the
+# repo identity every worktree of that repo shares. Everything that matches a
+# line compares the path ahead of the tab; the identity is data, not part of
+# the name.
+
+@test "the repo id on a line is not part of the path it names" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" > "$PROJECTS_REGISTRY_FILE"
+
+  run project_registered
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
+@test "a repo already recorded with a repo id is not registered twice" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" > "$PROJECTS_REGISTRY_FILE"
+
+  run project_register "$TMPDIR/alpha"
+  [ "$status" -eq 3 ]
+  run grep -c . "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "1" ]
+}
+
+@test "project_forget drops a line that carries a repo id" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  make_repo "$TMPDIR/beta"
+  printf '%s\t%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" "$TMPDIR/beta" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run project_forget "$TMPDIR/alpha"
+  [ "$status" -eq 0 ]
+  run project_registered
+  [ "$output" = "$TMPDIR/beta" ]
+}
+
+@test "project_prune keeps the repo id on the lines it keeps" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" "$TMPDIR/gone" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run project_prune
+  [ "$output" = "1" ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/alpha"$'\t'"$TMPDIR/alpha/.git" ]
+}
+
+@test "a repeat of a path already carrying an id is pruned" {
+  # Registration is an append guarded by a membership check, so the same repo
+  # can be appended twice — once before its id was recorded and once after.
+  # Both name one repo, and the line holding the id is the one worth keeping.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" "$TMPDIR/alpha" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run project_prune
+  [ "$output" = "1" ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/alpha"$'\t'"$TMPDIR/alpha/.git" ]
+}
+
 # ─── Backfill ────────────────────────────────────────────────────────────────
 
 @test "the backfill seeds the repos Claude Code recorded sessions in" {
@@ -402,7 +482,189 @@ make_bare_worktree_layout() {
   [ "$output" = "$TMPDIR/alpha" ]
 }
 
+# ─── Repo identity ───────────────────────────────────────────────────────────
+#
+# Every worktree of one repo names the same shared git dir, which is what lets
+# work that belongs to the repo be done once instead of once per checkout.
+
+@test "every worktree of one repo answers the same repo id" {
+  make_bare_worktree_layout "$TMPDIR/container"
+
+  run git_shared_dir "$TMPDIR/container/main"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/container/.git" ]
+
+  run git_shared_dir "$TMPDIR/container/feature"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/container/.git" ]
+}
+
+@test "an ordinary clone's repo id is its own .git" {
+  make_repo "$TMPDIR/alpha"
+
+  run git_shared_dir "$TMPDIR/alpha"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/alpha/.git" ]
+}
+
+@test "git_shared_dir refuses a directory that is not in a repo" {
+  mkdir -p "$TMPDIR/plain"
+
+  run git_shared_dir "$TMPDIR/plain"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
+
+@test "a directory git cannot answer for stands for itself" {
+  # Not an error: a repo-scoped migration visits it exactly once, which is what
+  # per-checkout would have done anyway. Nothing is recorded, so the next sync
+  # asks git again.
+  mkdir -p "$TMPDIR/plain"
+
+  run project_repo_id "$TMPDIR/plain"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/plain" ]
+}
+
+@test "record_project_repo_ids fills in the id of a registered worktree" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_bare_worktree_layout "$TMPDIR/container"
+  printf '%s\n' "$TMPDIR/container/main" > "$PROJECTS_REGISTRY_FILE"
+
+  run record_project_repo_ids
+  [ "$status" -eq 0 ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/container/main"$'\t'"$TMPDIR/container/.git" ]
+}
+
+@test "record_project_repo_ids leaves a line it already resolved alone" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_bare_worktree_layout "$TMPDIR/container"
+  printf '%s\n' "$TMPDIR/container/main" > "$PROJECTS_REGISTRY_FILE"
+  record_project_repo_ids
+  local before
+  before="$(cat "$PROJECTS_REGISTRY_FILE")"
+
+  run record_project_repo_ids
+  [ "$status" -eq 0 ]
+  [ "$(cat "$PROJECTS_REGISTRY_FILE")" = "$before" ]
+}
+
+@test "record_project_repo_ids keeps the comment the backfill left" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '# backfilled from /somewhere\n%s\n' "$TMPDIR/alpha" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run record_project_repo_ids
+  [ "$status" -eq 0 ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "${lines[0]}" = "# backfilled from /somewhere" ]
+  [ "${lines[1]}" = "$TMPDIR/alpha"$'\t'"$TMPDIR/alpha/.git" ]
+}
+
+@test "record_project_repo_ids re-resolves an id whose directory is gone" {
+  # A relayout — `git worktree move`, a container rename, a clone gone bare —
+  # moves the shared git dir. Catching that costs a stat rather than the fork
+  # re-resolving every line on every sync would.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/vanished/.git" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run record_project_repo_ids
+  [ "$status" -eq 0 ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/alpha"$'\t'"$TMPDIR/alpha/.git" ]
+}
+
+@test "record_project_repo_ids records nothing for a directory git cannot answer for" {
+  mkdir -p "$WORKBENCH_STATE_DIR" "$TMPDIR/plain"
+  printf '%s\n' "$TMPDIR/plain" > "$PROJECTS_REGISTRY_FILE"
+
+  run record_project_repo_ids
+  [ "$status" -eq 0 ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/plain" ]
+}
+
+@test "record_project_repo_ids clears a stale id it cannot re-resolve" {
+  # The id's directory is gone, so it has to be re-resolved — but the path left
+  # behind is one git cannot answer for either (no re-init here, so it is not a
+  # work tree). The stale id must not survive untouched: project_repo_leaders
+  # trusts any non-empty id field with no directory check of its own, so a
+  # leftover id would keep standing in for a repo that no longer resolves to it.
+  mkdir -p "$WORKBENCH_STATE_DIR" "$TMPDIR/plain"
+  printf '%s\t%s\n' "$TMPDIR/plain" "$TMPDIR/vanished/.git" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run record_project_repo_ids
+  [ "$status" -eq 0 ]
+  run cat "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "$TMPDIR/plain" ]
+}
+
+@test "project_repo_leaders names one worktree per repo" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_bare_worktree_layout "$TMPDIR/container"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\n%s\n%s\n' "$TMPDIR/container/main" "$TMPDIR/container/feature" \
+    "$TMPDIR/alpha" > "$PROJECTS_REGISTRY_FILE"
+
+  run project_repo_leaders
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+  [ "${lines[0]}" = "$TMPDIR/container/.git"$'\t'"$TMPDIR/container/main" ]
+  [ "${lines[1]}" = "$TMPDIR/alpha/.git"$'\t'"$TMPDIR/alpha" ]
+}
+
+@test "project_repo_leaders picks the next worktree when the leader is gone" {
+  # The leader is whichever registered worktree of the repo is still there and
+  # comes first. It does not have to be stable — a repo-scoped state line names
+  # the repo, so a different leader re-runs nothing.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_bare_worktree_layout "$TMPDIR/container"
+  printf '%s\n%s\n' "$TMPDIR/container/main" "$TMPDIR/container/feature" \
+    > "$PROJECTS_REGISTRY_FILE"
+  rm -rf "$TMPDIR/container/main"
+
+  run project_repo_leaders
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/container/.git"$'\t'"$TMPDIR/container/feature" ]
+}
+
+@test "project_repo_leaders reads the id the registry already holds" {
+  # No fork per line: the sync resolved these once, and the pruning that runs
+  # before every migration reads them back.
+  mkdir -p "$WORKBENCH_STATE_DIR" "$TMPDIR/checkout"
+  printf '%s\t%s\n' "$TMPDIR/checkout" "$TMPDIR/elsewhere/.git" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run project_repo_leaders
+  [ "$output" = "$TMPDIR/elsewhere/.git"$'\t'"$TMPDIR/checkout" ]
+}
+
 # ─── Cross-language agreement ────────────────────────────────────────────────
+
+@test "the repo id bash records names the container Python resolves" {
+  # lib/git_layout.py owns container resolution for Python and answers None for
+  # an ordinary clone; the bash id is total and one level deeper. The two agree
+  # about where a bare-repo container is, which is the half they share.
+  make_bare_worktree_layout "$TMPDIR/container"
+
+  run git_shared_dir "$TMPDIR/container/main"
+  [ "$status" -eq 0 ]
+  local shared="$output"
+
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/lib')
+import git_layout
+print(git_layout.container_dir('$TMPDIR/container/main'))
+"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(dirname "$shared")" ]
+}
 
 @test "bash and Python name the same registry file" {
   run python3 -c "
@@ -489,6 +751,39 @@ os.environ.pop('TMPDIR', None)
 print(workbench_projects.register('$TMPDIR/container'))
 "
   [ "$output" = "False" ]
+}
+
+@test "Python reads the path from a line bash gave a repo id" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" > "$PROJECTS_REGISTRY_FILE"
+
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import workbench_projects
+print(*workbench_projects.registered())
+"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$TMPDIR/alpha" ]
+}
+
+@test "Python does not append a repo bash recorded with a repo id" {
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\t%s\n' "$TMPDIR/alpha" "$TMPDIR/alpha/.git" > "$PROJECTS_REGISTRY_FILE"
+
+  run python3 -c "
+import os, sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import workbench_projects
+workbench_projects.TEMP_ROOTS = ()
+os.environ.pop('TMPDIR', None)
+assert workbench_projects.register('$TMPDIR/alpha')
+"
+  [ "$status" -eq 0 ]
+  run grep -c . "$PROJECTS_REGISTRY_FILE"
+  [ "$output" = "1" ]
 }
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────

@@ -11,9 +11,10 @@
 #   - No redundant WORKBENCH_DIR assignment or lib/ui.sh sourcing (provided by framework)
 #   - Nothing that runs at file scope — only the shebang, comments, blanks, `set`
 #     lines, and function definitions (the framework sources the file, then calls it)
-#   - The scope marker and the function signature agree — a project-scoped
-#     migration reads the repo path the framework hands it, and one without the
-#     marker reads no argument, because the framework calls it with none
+#   - The scope marker and the function signature agree — a migration marked
+#     '# checkout-scoped:' or '# repo-scoped:' reads the path the framework
+#     hands it, one without either marker reads no argument because the
+#     framework calls it with none, and no file carries both markers
 #   - A guard that returns because the target is absent says which of the two
 #     absences it is: MIGRATION_DEFERRED (retry when the target appears) or
 #     MIGRATION_NOOP (retired for good). A bare `return 0` there is the shape
@@ -30,9 +31,9 @@ _SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
 . "$_SCRIPT_ROOT/lib/ui.sh"
 # shellcheck source=/dev/null
 . "$_SCRIPT_ROOT/lib/components.sh"
-# For _PROJECT_SCOPED_MARKER: the marker is a contract between a migration file
-# and the framework, so the validator reads the framework's own spelling of it
-# rather than keeping a second copy that can drift.
+# For the scope markers: each is a contract between a migration file and the
+# framework, so the validator reads the framework's own spelling of them rather
+# than keeping a second copy that can drift.
 #
 # LIB_SRC_DIR is pinned to this checkout first. The framework loads its siblings
 # through it, and constants.sh derives it from WORKBENCH_DIR — which names the
@@ -360,23 +361,37 @@ _validate_migration() {
     _pass "$display: no redundant lib/ui.sh sourcing"
   fi
 
-  # The scope marker and the signature have to agree. A project-scoped
-  # migration is called once per registered repo with that repo's path as its
-  # argument, and recorded against it; one that ignored the argument would do
-  # the same global thing once per repo and record a per-repo result for it.
-  # The reverse is as silent: a function that reads $1 without the marker is
+  # The scope marker and the signature have to agree. A migration marked with
+  # either scope is called with a path — a work tree of its own for a
+  # checkout-scoped one, one of the repo's for a repo-scoped one — and recorded
+  # against the target that path stands for; one that ignored the argument would
+  # do the same global thing once per target and record a per-target result for
+  # it. The reverse is as silent: a function that reads $1 without a marker is
   # called with nothing, and works on an empty path.
-  local marked=false reads_arg=false
-  if grep -qE "$_PROJECT_SCOPED_MARKER" "$migration"; then
-    marked=true
+  #
+  # Both markers on one file is its own failure. The two record their state
+  # lines in different shapes, and the framework tests for one before the other
+  # — so a file carrying both is not ambiguous at runtime, it is silently one of
+  # them, and the header says otherwise.
+  local scope="" reads_arg=false both=false
+  if grep -qE "$_CHECKOUT_SCOPED_MARKER" "$migration"; then
+    scope="checkout-scoped"
+  fi
+  if grep -qE "$_REPO_SCOPED_MARKER" "$migration"; then
+    if [[ -n "$scope" ]]; then
+      both=true
+    fi
+    scope="repo-scoped"
   fi
   if _migration_fn_reads_arg "$migration" "$expected_fn"; then
     reads_arg=true
   fi
-  if [[ "$marked" == true && "$reads_arg" == false ]]; then
-    _fail "$display: marked project-scoped but ${expected_fn}() never reads the repo path the framework passes it"
-  elif [[ "$marked" == false && "$reads_arg" == true ]]; then
-    _fail "$display: ${expected_fn}() reads a positional argument but the file carries no '# project-scoped:' header — the framework calls it with none"
+  if [[ "$both" == true ]]; then
+    _fail "$display: carries both '# checkout-scoped:' and '# repo-scoped:' — a migration is recorded under one scope or the other"
+  elif [[ -n "$scope" && "$reads_arg" == false ]]; then
+    _fail "$display: marked $scope but ${expected_fn}() never reads the path the framework passes it"
+  elif [[ -z "$scope" && "$reads_arg" == true ]]; then
+    _fail "$display: ${expected_fn}() reads a positional argument but the file carries no '# checkout-scoped:' or '# repo-scoped:' header — the framework calls it with none"
   else
     _pass "$display: scope marker matches the function's arguments"
   fi

@@ -4958,7 +4958,7 @@ class TestCleanupScope:
         """
         import serde
         from agent_diagnosis import Diagnosis, DiagnosisKind
-        from review_common import FILENAME_PIPELINE_STATE
+        from review_paths import FILENAME_PIPELINE_STATE
         from review_state import PipelineState
 
         def _partial(job, **_kwargs):

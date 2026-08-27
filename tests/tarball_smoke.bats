@@ -95,6 +95,7 @@ teardown() {
 import sys
 sys.path.insert(0, '$TARBALL_ROOT/lib')
 import review_common
+import review_paths
 import review_findings
 import review_preflight
 import review_prompt
@@ -118,6 +119,7 @@ print('ok')
 import sys
 sys.path.insert(0, '$TARBALL_ROOT/lib')
 import review_common
+import review_paths
 import review_findings
 import review_dedup
 import review_format

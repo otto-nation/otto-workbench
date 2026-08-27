@@ -166,15 +166,15 @@ class TestConsumers:
 
         A consumer that reads the root at import time answers a fresh-load
         assertion correctly and still ignores the environment for the rest of
-        the process, which is exactly what review_common used to do — so the
+        the process, which is exactly what this module used to do — so the
         assertion has to be a second resolve, not a first one.
         """
-        import review_common
+        import review_paths
 
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "old"))
-        before = review_common.review_file_path("owner/repo", "42")
+        before = review_paths.review_file_path("owner/repo", "42")
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "new"))
-        after = review_common.review_file_path("owner/repo", "42")
+        after = review_paths.review_file_path("owner/repo", "42")
 
         assert before == tmp_path / "old/reviews/repo-42/review.md"
         assert after == tmp_path / "new/reviews/repo-42/review.md"

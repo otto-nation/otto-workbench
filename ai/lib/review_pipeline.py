@@ -26,10 +26,10 @@ from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES, SCAN_PHASES
 from agent_types import EFFORT_PRESETS, Mode, Phase
 from pr_domains import ReviewStatus
-from review_common import (
+from review_common import phase_skip_argv
+from review_paths import (
     phase_log_path,
     phase_output_path,
-    phase_skip_argv,
     write_review_meta,
 )
 from review_document import ReviewDocument, ReviewHeader, open_counts, review_title

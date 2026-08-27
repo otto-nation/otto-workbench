@@ -33,11 +33,8 @@ from pathlib import Path
 import git_client
 import log
 import serde
-from review_common import (
-    FILENAME_PRIOR_FINDINGS,
-    _derive_path,
-    plural,
-)
+from review_common import plural
+from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review_document import ReviewHeader
 from review_findings import (
     FindingRef,
@@ -377,7 +374,7 @@ def reconcile(
 
 def write(review_file: str, reconciliation: Reconciliation) -> str:
     """Record `reconciliation` beside `review_file`, returning the sidecar's path."""
-    path = _derive_path(review_file, FILENAME_PRIOR_FINDINGS)
+    path = review_artifact_path(review_file, FILENAME_PRIOR_FINDINGS)
     serde.write_json(Path(path), serde.to_dict(reconciliation))
     return path
 

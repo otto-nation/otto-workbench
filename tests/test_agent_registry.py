@@ -63,7 +63,7 @@ class TestPhaseDomains:
         }
 
     def test_review_phases_keep_the_registry_order(self):
-        # review_common globs artifacts in this order, and a reader of
+        # review_paths globs artifacts in this order, and a reader of
         # docs/ai-review.md reads the pipeline in it.
         assert REVIEW_PHASES == tuple(
             p for p in PHASES if PHASES[p].domain is PhaseDomain.REVIEW

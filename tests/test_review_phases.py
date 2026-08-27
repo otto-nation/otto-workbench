@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent_phases
 import review_common
+import review_paths
 import review_pipeline
 import review_phases
 from agent_registry import REVIEW_PHASES
@@ -19,13 +20,13 @@ from agent_types import AgentKind, Effort, Phase, Thinking
 class TestPhaseLogPath:
     def test_derives_into_the_review_directory(self, tmp_path):
         review_file = str(tmp_path / "review.md")
-        assert review_common.phase_log_path(review_file, Phase.HOLISTIC) == str(
+        assert review_paths.phase_log_path(review_file, Phase.HOLISTIC) == str(
             tmp_path / "holistic.jsonl"
         )
 
     def test_group_carries_its_index(self, tmp_path):
         review_file = str(tmp_path / "review.md")
-        assert review_common.phase_log_path(review_file, Phase.GROUP, 3) == str(
+        assert review_paths.phase_log_path(review_file, Phase.GROUP, 3) == str(
             tmp_path / "group-3.jsonl"
         )
 
@@ -33,39 +34,39 @@ class TestPhaseLogPath:
         # Formatting None would yield `group-None.jsonl` — a wrong file
         # rather than an error, which is the failure this change removes.
         with pytest.raises(ValueError):
-            review_common.phase_log_path(str(tmp_path / "review.md"), Phase.GROUP)
+            review_paths.phase_log_path(str(tmp_path / "review.md"), Phase.GROUP)
 
     def test_single_has_no_path_of_its_own(self, tmp_path):
-        assert review_common.phase_log_path(str(tmp_path / "review.md"), Phase.SINGLE) == ""
+        assert review_paths.phase_log_path(str(tmp_path / "review.md"), Phase.SINGLE) == ""
 
     def test_non_indexed_phase_with_an_index_raises(self, tmp_path):
         # Formatting would ignore the index silently — `scout.jsonl` either
         # way — which is the same wrong-file failure the indexed case above
         # already raises on.
         with pytest.raises(ValueError):
-            review_common.phase_log_path(str(tmp_path / "review.md"), Phase.SCOUT, 3)
+            review_paths.phase_log_path(str(tmp_path / "review.md"), Phase.SCOUT, 3)
 
 
 class TestPhaseOutputPath:
     def test_derives_into_the_review_directory(self, tmp_path):
         review_file = str(tmp_path / "review.md")
-        assert review_common.phase_output_path(review_file, Phase.HOLISTIC) == str(
+        assert review_paths.phase_output_path(review_file, Phase.HOLISTIC) == str(
             tmp_path / "holistic.md"
         )
 
     def test_group_carries_its_index(self, tmp_path):
         review_file = str(tmp_path / "review.md")
-        assert review_common.phase_output_path(review_file, Phase.GROUP, 2) == str(
+        assert review_paths.phase_output_path(review_file, Phase.GROUP, 2) == str(
             tmp_path / "group-2.md"
         )
 
     def test_group_without_an_index_raises(self, tmp_path):
         with pytest.raises(ValueError):
-            review_common.phase_output_path(str(tmp_path / "review.md"), Phase.GROUP)
+            review_paths.phase_output_path(str(tmp_path / "review.md"), Phase.GROUP)
 
     def test_non_indexed_phase_with_an_index_raises(self, tmp_path):
         with pytest.raises(ValueError):
-            review_common.phase_output_path(
+            review_paths.phase_output_path(
                 str(tmp_path / "review.md"), Phase.DISPROVE, 3
             )
 
@@ -75,7 +76,7 @@ class TestPhaseOutputPath:
         # that reads as a real one.
         for phase in (Phase.SYNTHESIS, Phase.SINGLE, Phase.FIX):
             with pytest.raises(ValueError):
-                review_common.phase_output_path(str(tmp_path / "review.md"), phase)
+                review_paths.phase_output_path(str(tmp_path / "review.md"), phase)
 
 
 def _job(tmp_path, effort=Effort.MEDIUM):
@@ -323,7 +324,9 @@ class TestNoDuplicateDefaults:
             if name
         }
         duplicates = {
-            name for name, value in vars(review_common).items()
+            f"{mod.__name__}.{name}"
+            for mod in (review_common, review_paths)
+            for name, value in vars(mod).items()
             if isinstance(value, str) and value in artifact_names
         }
         assert duplicates == set()

@@ -27,10 +27,10 @@ import agent_invoke
 import fix_engine
 import land
 import push
-import review_common
 import review_document
 import review_findings
 import review_fix
+import review_paths
 import review_types
 from proc import TIMEOUT_RETURNCODE, CmdResult
 from agent_types import Effort, Phase
@@ -249,7 +249,7 @@ class TestWhatTheReviewLendsTheAgentCall:
         adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")], set())
 
         assert adapter.session_log == Path(
-            review_common.phase_log_path(job.review_file, Phase.FIX),
+            review_paths.phase_log_path(job.review_file, Phase.FIX),
         )
         assert adapter.session_log.parent == Path(job.artifact_dir)
 

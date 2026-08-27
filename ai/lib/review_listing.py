@@ -82,7 +82,7 @@ from dataclasses import dataclass
 
 import serde
 from agent_types import Mode
-from review_common import (
+from review_paths import (
     ReviewEntry, ReviewEntryKind, aggregate_session_usage, iter_review_entries,
 )
 from review_document import ReviewDocument, open_counts, resolve_review_verdict

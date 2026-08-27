@@ -1,18 +1,24 @@
-"""The metadata header a review document opens with.
+"""`review.md` — the artifact the review subsystem exists to produce.
 
-`review.md` begins with a block of HTML comments recording what produced it —
-the date, the head SHA, whether the review covers the whole branch or a delta,
-and how the run that wrote it ended. Every one of those keys is spelled here
-once, so the writers agree on the format by construction rather than by two
-lists of format strings staying in step.
+A review document is a title, a block of HTML-comment metadata recording what
+produced it, and a body. This module owns all three: the keys the header may
+state, the sentence the title is, and where one ends and the next begins. A
+writer that assembles those itself is stating the document's format a second
+time, and the second statement is the one that drifts.
 
 Three things write a header and they do not write the same one. The pipeline
 renders the full block; `review-rebuild` renders the subset a `meta.json` can
 attest to; and on the synthesis and single-agent paths the review agent writes
-its own, following prose in its template. `parse` therefore reads keys wherever
-they appear and in whatever order, and `set_status` edits the line it is asked
-about rather than re-rendering the block — a field this module was never told
-about survives an edit instead of being dropped by it.
+its own, following prose in its template. `ReviewHeader.parse` therefore reads
+keys wherever they appear and in whatever order, and `set_status` edits the line
+it is asked about rather than re-rendering the block — a field this module was
+never told about survives an edit instead of being dropped by it.
+
+`ReviewDocument` is for a document being *built*: it renders the canonical form
+this module defines. Editing one that is already on disk is a different job and
+stays a text edit, because a header read back off disk states only what its
+writer chose to state — re-rendering it would add this module's defaults as
+claims the original never made.
 """
 
 # doc-group: pipeline
@@ -20,9 +26,11 @@ about survives an edit instead of being dropped by it.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from pathlib import Path
 
+from agent_types import Mode
 from pr_domains import ReviewStatus
 from review_types import ReviewMeta, ReviewType, meta_enum
 
@@ -180,3 +188,79 @@ def set_status(content: str, status: ReviewStatus) -> str:
     if generator in content:
         return content.replace(generator, f"{line}\n{generator}", 1)
     return content.replace("## ", f"{line}\n\n## ", 1)
+
+
+def review_title(meta: ReviewMeta) -> str:
+    """The `# ...` line a review opens with, as the attribution in `meta` reads.
+
+    Derived from the sidecar rather than from whatever the caller is holding, so
+    the pipeline, the mechanical fallback and `review-rebuild` cannot name the
+    same review three ways. A self-review has no PR to number and is titled by
+    the branch it covers instead.
+
+    A sidecar that numbers no PR is named by its repository alone — `#None` is
+    a number the review does not have, and stating it is worse than saying
+    nothing.
+    """
+    if meta.mode == Mode.SELF:
+        return f"# Self-Review: {meta.repo} — {meta.head_ref or 'unknown'}"
+    number = f"#{meta.pr_number}" if meta.pr_number is not None else ""
+    title = f"# Review: {meta.repo}{number}"
+    return f"{title} — {meta.title}" if meta.title else title
+
+
+@dataclass(frozen=True)
+class ReviewDocument:
+    """A review document being built: its title, its header, and its body.
+
+    The body is whatever goes below the header, verbatim — findings, prose,
+    sections this module has never heard of. Only the frame is typed, because
+    the frame is the part every writer was spelling out for itself.
+    """
+
+    title: str = ""
+    header: ReviewHeader = field(default_factory=ReviewHeader)
+    body: str = ""
+
+    def render(self) -> str:
+        """The document as it goes on disk: title, header block, blank line, body.
+
+        A document with no title opens with its header, which is what a
+        mechanical merge written before synthesis has.
+        """
+        title = f"{self.title}\n" if self.title else ""
+        return f"{title}{self.header.render()}\n{self.body}"
+
+    def write(self, path: str | Path) -> None:
+        """Render the document to `path`."""
+        Path(path).write_text(self.render())
+
+    @classmethod
+    def parse(cls, text: str) -> ReviewDocument:
+        """The title, header and body `text` is made of.
+
+        The header is the run of metadata comments the document opens with,
+        blank lines included; the body is everything from the first line that is
+        neither. A metadata comment further down belongs to whatever section it
+        sits in and stays in the body, so rendering what was parsed does not
+        hoist it into the header.
+        """
+        lines = text.split("\n")
+        start = 0
+        title = ""
+        if lines and lines[0].startswith("# "):
+            title = lines[0].rstrip()
+            start = 1
+        end = start
+        while end < len(lines) and _is_header_line(lines[end]):
+            end += 1
+        return cls(
+            header=ReviewHeader.parse("\n".join(lines[start:end])),
+            title=title,
+            body="\n".join(lines[end:]),
+        )
+
+
+def _is_header_line(line: str) -> bool:
+    stripped = line.strip()
+    return not stripped or bool(_LINE_RE.fullmatch(stripped))

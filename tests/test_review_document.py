@@ -1,10 +1,13 @@
-"""Tests for the review document's metadata header.
+"""Tests for the review document — its title, its metadata header, and the
+frame that holds them above the body.
 
 The header has three writers and only one of them is this module: the pipeline
 and `review-rebuild` render it, and on the synthesis and single-agent paths the
-review agent writes its own from prose in a template. So the tests come in two
-halves — what `render` and `from_meta` put on disk, and what `parse` and
-`set_status` make of a header they did not write.
+review agent writes its own from prose in a template. So the header tests come
+in two halves — what `render` and `from_meta` put on disk, and what `parse` and
+`set_status` make of a header they did not write. `ReviewDocument` is tested
+against the same split: what it renders for a document being built, and what it
+makes of one it is handed.
 """
 
 import sys
@@ -13,8 +16,9 @@ from pathlib import Path
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
+from agent_types import Mode
 from pr_domains import ReviewStatus
-from review_document import ReviewHeader, set_status
+from review_document import ReviewDocument, ReviewHeader, review_title, set_status
 from review_types import ReviewMeta, ReviewType
 
 
@@ -179,3 +183,114 @@ class TestSetStatus:
         assert "<!-- an_agent_invention: keep me -->" in set_status(
             content, ReviewStatus.PARTIAL,
         )
+
+
+class TestReviewTitle:
+    def test_a_pr_review_names_the_pr_and_its_subject(self):
+        meta = ReviewMeta(repo="acme/widget", pr_number=42, title="add caching")
+        assert review_title(meta) == "# Review: acme/widget#42 — add caching"
+
+    def test_a_pr_with_no_recorded_subject_is_named_by_number_alone(self):
+        meta = ReviewMeta(repo="acme/widget", pr_number=42)
+        assert review_title(meta) == "# Review: acme/widget#42"
+
+    def test_a_sidecar_numbering_no_pr_is_named_by_its_repository(self):
+        """`#None` is a number the review does not have."""
+        assert review_title(ReviewMeta(repo="acme/widget")) == "# Review: acme/widget"
+
+    def test_a_self_review_is_named_by_the_branch_it_covers(self):
+        meta = ReviewMeta(repo="acme/widget", head_ref="feat/caching", mode=Mode.SELF)
+        assert review_title(meta) == "# Self-Review: acme/widget — feat/caching"
+
+    def test_a_self_review_off_an_unnamed_branch_says_so(self):
+        meta = ReviewMeta(repo="acme/widget", mode=Mode.SELF)
+        assert review_title(meta) == "# Self-Review: acme/widget — unknown"
+
+
+class TestDocumentRender:
+    def test_the_frame_goes_above_the_body_in_order(self):
+        document = ReviewDocument(
+            title="# Review: acme/widget#42",
+            header=ReviewHeader(date="2026-08-27", head_sha="abc123"),
+            body="## Summary\nnothing to report\n",
+        )
+        assert document.render() == (
+            "# Review: acme/widget#42\n"
+            "<!-- date: 2026-08-27 -->\n"
+            "<!-- head_sha: abc123 -->\n"
+            "<!-- review_type: full -->\n"
+            "\n"
+            "## Summary\nnothing to report\n"
+        )
+
+    def test_an_untitled_document_opens_with_its_header(self):
+        rendered = ReviewDocument(body="## Summary\n").render()
+        assert rendered.startswith("<!-- review_type: full -->\n")
+
+    def test_write_puts_the_rendered_document_on_disk(self, tmp_path):
+        document = ReviewDocument(title="# Review: acme/widget#42", body="## Summary\n")
+        path = tmp_path / "review.md"
+        document.write(path)
+        assert path.read_text() == document.render()
+
+
+class TestDocumentParse:
+    def test_render_round_trips(self):
+        document = ReviewDocument(
+            title="# Review: acme/widget#42 — add caching",
+            header=ReviewHeader(
+                date="2026-08-27", head_sha="abc123",
+                review_type=ReviewType.INCREMENTAL,
+                prior_sha="def456", prior_date="2026-08-20", delta_files=3,
+                skipped_groups=2, total_groups=7,
+                status=ReviewStatus.PARTIAL, generator_version="2.0.0",
+            ),
+            body="## Summary\nfindings below\n",
+        )
+        assert ReviewDocument.parse(document.render()) == document
+
+    def test_an_agent_written_document_splits_where_the_prose_ends(self):
+        text = (
+            "# Review: acme/widget#42 — add caching\n"
+            "<!-- head_sha: abc123 -->\n"
+            "<!-- date: 2026-08-27 -->\n"
+            "\n"
+            "## Summary\nthe body\n"
+        )
+        document = ReviewDocument.parse(text)
+        assert document.title == "# Review: acme/widget#42 — add caching"
+        assert document.header.head_sha == "abc123"
+        assert document.body == "## Summary\nthe body\n"
+
+    def test_a_document_with_no_title_is_all_header_and_body(self):
+        document = ReviewDocument.parse("<!-- head_sha: abc -->\n\n## Summary\n")
+        assert document.title == ""
+        assert document.header.head_sha == "abc"
+        assert document.body == "## Summary\n"
+
+    def test_a_metadata_comment_further_down_stays_in_the_body(self):
+        """A finding's stable ID is a comment of the same shape. Hoisting one
+        into the header would move it in the document rendering what was
+        parsed."""
+        text = (
+            "# Review: acme/widget#42\n"
+            "<!-- head_sha: abc -->\n"
+            "\n"
+            "## Must fix\n"
+            "- **[M1]** <!-- sid: a1b2c3 --> something\n"
+        )
+        document = ReviewDocument.parse(text)
+        assert "sid: a1b2c3" in document.body
+        assert document.header == ReviewHeader(head_sha="abc")
+
+    def test_a_titled_document_stating_no_metadata_keeps_its_title(self):
+        document = ReviewDocument.parse("# Review: acme/widget#42\n\n## Summary\n")
+        assert document.title == "# Review: acme/widget#42"
+        assert document.header == ReviewHeader()
+        assert document.body == "## Summary\n"
+
+    def test_a_bare_body_parses_to_a_document_with_no_frame(self):
+        document = ReviewDocument.parse("## Summary\nnothing here\n")
+        assert document.title == ""
+        assert document.header == ReviewHeader()
+        assert document.body == "## Summary\nnothing here\n"

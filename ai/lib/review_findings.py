@@ -1327,17 +1327,20 @@ def post_process_findings(review_file: str, wt_path: str = "") -> dict | None:
     return verification
 
 
-def build_mechanical_review(
+def build_mechanical_body(
     merged_content: str,
     *,
-    title: str,
-    meta_header: str,
     group_count: int,
     summary_note: str,
     include_verdict: bool = True,
     file_count: int = 0,
     failures_section: str = "",
 ) -> str:
+    """A review body summarising `merged_content`, with no agent involved.
+
+    The body only — the title and the metadata header above it belong to
+    `review_document.ReviewDocument`, which is what every caller wraps this in.
+    """
     counts = _count_findings(merged_content)
     total = sum(counts.values())
     count_summary = f"{total} finding{plural(total)}" if total else "No findings"
@@ -1349,8 +1352,7 @@ def build_mechanical_review(
 
     failures_block = f"{failures_section}\n" if failures_section else ""
 
-    summary = (
-        f"{title}\n{meta_header}\n"
+    body = (
         f"{failures_block}"
         f"## Summary\n"
         f"{count_summary} {scope}. "
@@ -1358,5 +1360,5 @@ def build_mechanical_review(
         f"{merged_content}\n"
     )
     if not include_verdict:
-        return summary
-    return f"{summary}\n## Verdict\n{mechanical_verdict(counts)}"
+        return body
+    return f"{body}\n## Verdict\n{mechanical_verdict(counts)}"

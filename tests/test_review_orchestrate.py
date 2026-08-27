@@ -1989,13 +1989,12 @@ class TestValidateGroupOutput:
         assert ro._validate_group_output(str(f), "test") is True
 
 
-# ── 31. _build_meta_header ──────────────────────────────────────────────────
+# ── 31. _document ───────────────────────────────────────────────────────────
 
 
-class TestBuildMetaHeader:
-    def test_contains_date_and_sha(self, ro, tmp_path):
-        from datetime import date
-        job = ro.ReviewJob(
+class TestDocument:
+    def _job(self, ro, tmp_path, **kwargs):
+        return ro.ReviewJob(
             repo="org/repo", pr_number="42",
             pr=ro.PRMetadata(title="test", body="", head="feat", base="main",
                              head_sha="abc123", additions=10, deletions=5,
@@ -2004,11 +2003,57 @@ class TestBuildMetaHeader:
             wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
             generator_version="1.0.0",
+            **kwargs,
         )
-        result = ro._build_meta_header(job)
-        assert date.today().isoformat() in result
-        assert "abc123" in result
-        assert "1.0.0" in result
+
+    def test_a_full_review_is_framed_by_what_the_sidecar_records(self, ro, tmp_path):
+        from datetime import date
+        rendered = ro._document(self._job(ro, tmp_path), "## Summary\nbody\n").render()
+        assert rendered == (
+            "# Review: org/repo#42 — test\n"
+            f"<!-- date: {date.today().isoformat()} -->\n"
+            "<!-- head_sha: abc123 -->\n"
+            "<!-- review_type: full -->\n"
+            "<!-- generator: 1.0.0 -->\n"
+            "\n"
+            "## Summary\nbody\n"
+        )
+
+    def test_a_full_review_reports_no_group_ratio(self, ro, tmp_path):
+        """Skipped groups are a claim about an incremental run: the pipeline
+        passes the count on every path, and a full review states none."""
+        document = ro._document(
+            self._job(ro, tmp_path), "## Summary\n",
+            skipped_groups=1, total_groups=4,
+        )
+        assert "skipped_groups" not in document.render()
+
+    def _incremental(self, ro, tmp_path, prior_review=""):
+        job = self._job(ro, tmp_path, prior_review=prior_review)
+        job.preflight = ro.PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            claude_md="", architecture_md="",
+            delta_files=["a.py"], prior_head_sha="def456",
+        )
+        return job
+
+    def test_an_incremental_review_dates_itself_against_the_prior_one(self, ro, tmp_path):
+        prior = (
+            "# Review: org/repo#42\n"
+            "<!-- date: 2026-08-20 -->\n"
+            "<!-- head_sha: old -->\n"
+        )
+        document = ro._document(
+            self._incremental(ro, tmp_path, prior), "## Summary\n",
+            skipped_groups=1, total_groups=4,
+        )
+        assert document.header.prior_date == "2026-08-20"
+        assert document.header.prior_sha == "def456"
+        assert "<!-- skipped_groups: 1/4 -->" in document.render()
+
+    def test_an_incremental_review_with_no_prior_document_says_so(self, ro, tmp_path):
+        job = self._incremental(ro, tmp_path)
+        assert ro._document(job, "## Summary\n").header.prior_date == "unknown"
 
 
 # ── 32. _build_mechanical_fallback ──────────────────────────────────────────
@@ -2027,8 +2072,8 @@ class TestBuildMechanicalFallback:
             mode=ro.Mode.PR,
         )
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
-        result = ro._build_mechanical_fallback(job, 3, merged)
-        assert "# Review:" in result
+        result = ro._build_mechanical_fallback(job, 3, merged).render()
+        assert result.startswith("# Review: org/repo#42 — test PR\n")
         assert "Verdict" in result
         assert "1 finding" in result
 
@@ -2044,8 +2089,8 @@ class TestBuildMechanicalFallback:
             mode=ro.Mode.SELF,
         )
         merged = "## Nit\n- **[N1]** **`file.go:1`** — style\n"
-        result = ro._build_mechanical_fallback(job, 2, merged)
-        assert "# Self-Review:" in result
+        result = ro._build_mechanical_fallback(job, 2, merged).render()
+        assert result.startswith("# Self-Review: org/repo — my-branch\n")
         assert "Verdict" not in result
 
     def test_counts_correct(self, ro, tmp_path):
@@ -2064,7 +2109,7 @@ class TestBuildMechanicalFallback:
             "## Nit\n- **[N1]** **`b.go:2`** — style\n- **[N2]** **`c.go:3`** — naming\n"
         )
         result = ro._build_mechanical_fallback(job, 3, merged)
-        assert "3 findings" in result
+        assert "3 findings" in result.body
 
 
 # ── 33. _write_clean_review ─────────────────────────────────────────────────
@@ -2446,11 +2491,9 @@ class TestRunSynthesisOrFallback:
         state = self._make_state(ro)
 
         def mock_synthesis(job, holistic, count, merged, skipped_groups=0):
-            from pathlib import Path
-            fallback = ro._build_mechanical_fallback(
+            ro._build_mechanical_fallback(
                 job, count, merged, skipped_groups=skipped_groups,
-            )
-            Path(job.review_file).write_text(fallback)
+            ).write(job.review_file)
             return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
 
         monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
@@ -3194,10 +3237,10 @@ class TestReconcileDroppedFindings:
         assert "> - Must fix — `also-deleted.py`: file not found" in result
 
 
-# ── build_mechanical_review ─────────────────────────────────────────────────
+# ── build_mechanical_body ───────────────────────────────────────────────────
 
 
-class TestBuildMechanicalReview:
+class TestBuildMechanicalBody:
     @staticmethod
     def _must_fix_content(ro, count=1):
         must = "Must fix"
@@ -3207,24 +3250,22 @@ class TestBuildMechanicalReview:
             lines.append(f"- **[{prefix}{i}]** **`f{i}.py`** — bug {i}")
         return "\n".join(lines) + "\n"
 
-    def test_includes_title_and_summary(self, ro):
-        result = ro.build_mechanical_review(
+    def test_opens_with_the_summary_it_generates(self, ro):
+        """The body starts at `## Summary` — the title and metadata header above
+        it belong to the document, not to the merge."""
+        result = ro.build_mechanical_body(
             self._must_fix_content(ro),
-            title="# Review: org/repo#1 — title",
-            meta_header="<!-- date: 2026-01-01 -->\n",
             group_count=2,
             summary_note="Test note.",
         )
-        assert result.startswith("# Review: org/repo#1 — title")
+        assert result.startswith("## Summary")
         assert "1 finding" in result
         assert "2 groups" in result
         assert "Test note." in result
 
     def test_includes_verdict_by_default(self, ro):
-        result = ro.build_mechanical_review(
+        result = ro.build_mechanical_body(
             self._must_fix_content(ro),
-            title="# Review",
-            meta_header="",
             group_count=1,
             summary_note="note",
         )
@@ -3232,10 +3273,8 @@ class TestBuildMechanicalReview:
         assert "Request changes" in result
 
     def test_excludes_verdict_when_disabled(self, ro):
-        result = ro.build_mechanical_review(
+        result = ro.build_mechanical_body(
             self._must_fix_content(ro),
-            title="# Self-Review",
-            meta_header="",
             group_count=1,
             summary_note="note",
             include_verdict=False,
@@ -3244,10 +3283,8 @@ class TestBuildMechanicalReview:
 
     def test_no_findings_verdict(self, ro):
         must = "Must fix"
-        result = ro.build_mechanical_review(
+        result = ro.build_mechanical_body(
             f"## {must}\n_none._\n",
-            title="# Review",
-            meta_header="",
             group_count=1,
             summary_note="note",
         )
@@ -3255,10 +3292,8 @@ class TestBuildMechanicalReview:
         assert "Approve" in result
 
     def test_file_count_in_scope(self, ro):
-        result = ro.build_mechanical_review(
+        result = ro.build_mechanical_body(
             self._must_fix_content(ro),
-            title="# Review",
-            meta_header="",
             group_count=2,
             summary_note="note",
             file_count=3,

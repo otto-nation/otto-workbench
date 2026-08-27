@@ -33,12 +33,12 @@ from review_common import (
     phase_skip_argv,
     write_review_meta,
 )
-from review_document import ReviewHeader
+from review_document import ReviewDocument, ReviewHeader, review_title
 from review_findings import (
     _MECHANICAL_NOTE,
     _has_findings,
     annotate_prior_with_stable_ids,
-    build_mechanical_review,
+    build_mechanical_body,
     post_process_findings,
 )
 from review_github import PRData, fetch_pr_data
@@ -170,29 +170,35 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     _write_review_sidecar(job)
 
 
-def _build_meta_header(
-    job: ReviewJob,
+def _document(
+    job: ReviewJob, body: str,
     skipped_groups: int = 0, total_groups: int = 0,
     status: ReviewStatus | None = None,
-) -> str:
+) -> ReviewDocument:
+    """`body` framed as this run's review document.
+
+    The one place the pipeline states a review's title and header. Both come
+    from `_job_meta`, so a document this writes cannot disagree with the sidecar
+    written beside it.
+    """
     meta = _job_meta(job)
     header = ReviewHeader.from_meta(
         meta,
         date=date.today().isoformat(),
         status=status,
     )
-    if meta.review_type != ReviewType.INCREMENTAL:
-        return header.render()
-
-    # The prior review's own header is where its date comes from — a re-review
-    # states what it is a delta against, and only that document knows.
-    prior_date = ReviewHeader.parse(job.prior_review).date if job.prior_review else ""
-    return replace(
-        header,
-        prior_date=prior_date or "unknown",
-        skipped_groups=skipped_groups,
-        total_groups=total_groups,
-    ).render()
+    if meta.review_type == ReviewType.INCREMENTAL:
+        # The prior review's own header is where its date comes from — a
+        # re-review states what it is a delta against, and only that document
+        # knows.
+        prior = ReviewDocument.parse(job.prior_review) if job.prior_review else None
+        header = replace(
+            header,
+            prior_date=(prior.header.date if prior else "") or "unknown",
+            skipped_groups=skipped_groups,
+            total_groups=total_groups,
+        )
+    return ReviewDocument(title=review_title(meta), header=header, body=body)
 
 
 def _is_complete_review(review_file: str) -> bool:
@@ -206,29 +212,22 @@ def _build_mechanical_fallback(
     job: ReviewJob, group_count: int, merged_content: str,
     skipped_groups: int = 0,
     pipeline_state: "PipelineState | None" = None,
-) -> str:
+) -> ReviewDocument:
     review_dir = Path(job.review_file).parent
     status = pipeline_status(review_dir) if review_dir.exists() else ReviewStatus.ERROR
-    meta = _build_meta_header(
-        job, skipped_groups=skipped_groups, total_groups=group_count,
-        status=status,
-    )
-    if job.mode == Mode.SELF:
-        title = f"# Self-Review: {job.repo} — {job.pr.head}"
-    else:
-        title = f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}"
-
     failures_section = build_failures_section(pipeline_state) if pipeline_state else ""
 
-    return build_mechanical_review(
+    body = build_mechanical_body(
         merged_content,
-        title=title,
-        meta_header=meta,
         group_count=group_count,
         summary_note=FALLBACK_SUMMARY,
         include_verdict=(job.mode != Mode.SELF),
         file_count=job.pr.changed_files,
         failures_section=failures_section,
+    )
+    return _document(
+        job, body, skipped_groups=skipped_groups, total_groups=group_count,
+        status=status,
     )
 
 
@@ -238,17 +237,26 @@ def _post_process_review(job: ReviewJob) -> None:
     job.verification = post_process_findings(job.review_file, job.wt_path)
 
 
+def _post_processed_body(job: ReviewJob, body: str) -> str:
+    """`body` written to the review file, post-processed, and read back.
+
+    Evidence verification and renumbering work on the file rather than on a
+    string, so a body has to reach disk before the document framing it can be
+    built out of what survived.
+    """
+    Path(job.review_file).write_text(body)
+    _post_process_review(job)
+    return Path(job.review_file).read_text()
+
+
 def _write_mechanical_fallback(
     job: ReviewJob, group_count: int, merged_content: str,
     skipped_groups: int = 0,
 ):
-    Path(job.review_file).write_text(merged_content)
-    _post_process_review(job)
-    processed = Path(job.review_file).read_text()
-    fallback = _build_mechanical_fallback(
-        job, group_count, processed, skipped_groups=skipped_groups,
-    )
-    Path(job.review_file).write_text(fallback)
+    _build_mechanical_fallback(
+        job, group_count, _post_processed_body(job, merged_content),
+        skipped_groups=skipped_groups,
+    ).write(job.review_file)
 
 
 def _phase_synthesis(
@@ -339,28 +347,19 @@ def _consolidate_logs(
 
 
 def _write_clean_review(job: ReviewJob, group_count: int, skipped_groups: int = 0):
-    meta = _build_meta_header(
-        job, skipped_groups=skipped_groups, total_groups=group_count,
+    kind = "self-review" if job.mode == Mode.SELF else "review"
+    body = (
+        f"## Summary\n"
+        f"Multi-phase {kind} of {job.pr.changed_files} files across {group_count} groups. "
+        f"No issues found.\n"
     )
-    if job.mode == Mode.SELF:
-        content = (
-            f"# Self-Review: {job.repo} — {job.pr.head}\n"
-            f"{meta}\n"
-            f"## Summary\n"
-            f"Multi-phase self-review of {job.pr.changed_files} files across {group_count} groups. "
-            f"No issues found.\n"
-        )
-    else:
-        content = (
-            f"# Review: {job.repo}#{job.pr_number} — {job.pr.title}\n"
-            f"{meta}\n"
-            f"## Summary\n"
-            f"Multi-phase review of {job.pr.changed_files} files across {group_count} groups. "
-            f"No issues found.\n\n"
-            f"## Verdict\n"
-            f"Approve — clean review.\n"
-        )
-    Path(job.review_file).write_text(content)
+    # A self-review is advisory and has no PR to approve, so it states no
+    # verdict — the same rule `resolve_review_verdict` applies when reading one.
+    if job.mode != Mode.SELF:
+        body += "\n## Verdict\nApprove — clean review.\n"
+    _document(
+        job, body, skipped_groups=skipped_groups, total_groups=group_count,
+    ).write(job.review_file)
     _write_review_sidecar(job)
 
 
@@ -531,18 +530,19 @@ def _run_synthesis_or_fallback(
         state.done.add(Phase.SYNTHESIS)
         state.failed[Phase.SYNTHESIS] = why
         _write_pipeline_state(job, state)
-        fallback = _build_mechanical_fallback(
+        _build_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=n_skipped,
             pipeline_state=state,
-        )
-        Path(job.review_file).write_text(fallback)
+        ).write(job.review_file)
         _write_review_sidecar(job)
         return PhaseResult()
 
     if Phase.SYNTHESIS in job.skipped:
         log.info("Synthesis skipped — using mechanical merge")
-        Path(job.review_file).write_text(merged_content)
-        _post_process_review(job)
+        _document(
+            job, _post_processed_body(job, merged_content),
+            skipped_groups=n_skipped, total_groups=group_count,
+        ).write(job.review_file)
         _write_review_sidecar(job)
         state.done.add(Phase.SYNTHESIS)
         _write_pipeline_state(job, state)
@@ -551,7 +551,10 @@ def _run_synthesis_or_fallback(
 
     if cost_so_far > max_cost:
         log.warn("Using merged group output as final review (synthesis skipped due to budget)")
-        Path(job.review_file).write_text(merged_content)
+        _document(
+            job, merged_content,
+            skipped_groups=n_skipped, total_groups=group_count,
+        ).write(job.review_file)
         _write_review_sidecar(job)
         state.done.add(Phase.SYNTHESIS)
         state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)

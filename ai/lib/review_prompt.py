@@ -1,7 +1,11 @@
 """Prompt construction and template rendering for claude-review.
 
-Handles building prompts for each review template: single, holistic, group,
-synthesis, self-review, and self-review-synthesis. Includes section builders,
+`build_prompt` renders the prompt for one review phase: a caller names the
+`Phase` and hands over what the phase cannot derive for itself. Which template
+that renders, and which file the agent is told to write, both come off the
+phase's registry entry. Six phases sit in front of eight templates, because two
+of them read an open PR and the working branch differently — which template a
+mode picks is the spec's answer, not the caller's. Includes section builders,
 budget computation, and prompt size logging.
 """
 
@@ -26,6 +30,7 @@ from review_common import (
     FILENAME_PROMPT_STATS,
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
     _derive_path, build_output_block, build_worktree_block,
+    phase_output_path,
 )
 from review_findings import (
     BOLD_FINDING_ID_RE, annotate_prior_with_stable_ids, strip_sections,
@@ -90,12 +95,10 @@ def _build_pr_header(
     if scoped_files is not None:
         sorted_files = sorted(scoped_files, key=lambda f: f["additions"] + f["deletions"], reverse=True)
         file_stats = "\n".join(FILE_STAT_FMT.format(**f) for f in sorted_files)
-        if file_stats:
-            lines += ["", "### File breakdown (sorted by churn)", file_stats]
     else:
         file_stats = pr.file_stats(EFFORT_PRESETS[effort].multi_phase_line_threshold)
-        if file_stats:
-            lines += ["", "### File breakdown (sorted by churn)", file_stats]
+    if file_stats:
+        lines += ["", "### File breakdown (sorted by churn)", file_stats]
 
     return "\n".join(lines)
 
@@ -827,42 +830,93 @@ def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
     return base_ctx + incremental_note
 
 
-def _prompt_self_review(job, common, extra):
-    prior_ctx = _incremental_prior_ctx(job, (
+# ── Per-phase prompt builders ────────────────────────────────────────────────
+#
+# One builder per phase, registered in `_PROMPT_BUILDERS` below. Each is handed
+# the job, the sections every prompt shares, the phase's own extras, and the
+# path its agent writes to — which `build_prompt` derives from the phase spec,
+# so no caller passes an output path in. Two of them serve both review modes;
+# `job.mode` is what they read to tell the modes apart.
+
+
+# The re-review preamble the single-agent prompt opens its prior findings with.
+# What follows it is the same either way — only what is being re-read differs,
+# which is why the two are spelled out in full rather than assembled from a
+# shared tail and a per-mode head.
+_REREVIEW_CTX: dict[Mode, str] = {
+    Mode.PR: (
+        "This is a re-review. Below are the findings from the previous review. "
+        "For each prior finding:\n"
+        "- If the issue is still present, carry it forward\n"
+        "- If the issue has been fixed, leave it out of the severity sections\n"
+        "- Add any new findings from changes since the last review"
+    ),
+    Mode.SELF: (
         "This is a re-review of your own code. Below are the findings from the previous self-review. "
         "For each prior finding:\n"
         "- If the issue is still present, carry it forward\n"
         "- If the issue has been fixed, leave it out of the severity sections\n"
         "- Add any new findings from changes since the last review"
-    ))
-    prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
+    ),
+}
+
+
+def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
+    """Register what names the review — the only thing the two modes split on.
+
+    A self-review has no PR to point at, so it is identified by its branch and
+    has no reviews on it to read. `pr_only` carries whatever else belongs to the
+    PR side of one template: the verdict wording for the single-agent prompt,
+    the title for synthesis. A caller states that difference rather than
+    restating the split it hangs off.
+    """
+    if job.mode is Mode.SELF:
+        b.set("branch_name", job.pr.head)
+        return
+    b.shared("reviews_section")
+    b.set("pr_number", job.pr_number)
+    for key, value in pr_only.items():
+        b.set(key, value)
+
+
+def _prompt_single(job, common, extra, output):
+    """The one-agent review, of an open PR or of the working branch.
+
+    The modes differ in three places, all of them consequences of there being
+    no PR: a self-review is identified by its branch, has no reviews on it to
+    read, and is not asked for a verdict.
+    """
+    prior_section = _build_prior_section(
+        job.prior_review,
+        _incremental_prior_ctx(job, _REREVIEW_CTX[job.mode]),
+        reply_threads=job.reply_threads,
+    )
     b = PromptBuilder(common)
     b.shared(
-        "pr_header", "state_context", "delta_section", "reply_threads",
-        "env_section", "issue_section", "generator_version",
+        "pr_header", "state_context", "delta_section",
+        "reply_threads", "env_section", "issue_section", "generator_version",
         "omitted_guidance", "max_turns",
     )
-    b.set("branch_name", extra.get("branch_name", job.pr.head))
+    _identify_review(b, job, verdict_options=VERDICT_OPTIONS)
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
-    b.output(job.review_file, stdout_warning=True)
+    b.output(output, stdout_warning=True)
     b.set("preflight_data", _build_preflight_section(job))
     return b, ""
 
 
-def _synthesis_prompt(job, common, extra, *, shared: tuple[str, ...], ident: dict):
-    """Shared body of the PR and self-review synthesis prompts.
+def _prompt_synthesis(job, common, extra, output):
+    """The group findings written up as the review document.
 
-    The two differ only in how the review is identified — PR number and title
-    vs branch name — and whether prior reviews are in scope.
+    Same split as `_prompt_single`, minus the verdict: synthesis asks for one in
+    either mode, each template in its own words.
     """
     b = PromptBuilder(common)
     b.shared(
         "pr_header", "state_context", "delta_section", "reply_threads",
-        "today", "generator_version", "max_turns", *shared,
+        "today", "generator_version", "max_turns",
     )
-    for key, value in ident.items():
-        b.set(key, value)
+    _identify_review(b, job, pr_title=job.pr.title)
     b.set("repo", job.repo)
     b.set("pr_head_sha", job.pr.head_sha)
     b.set("wt_path", job.wt_path)
@@ -871,7 +925,7 @@ def _synthesis_prompt(job, common, extra, *, shared: tuple[str, ...], ident: dic
     b.set("verdict_options", VERDICT_OPTIONS)
     b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")
     b.set("merged_content", extra["merged_content"])
-    b.output(job.review_file)
+    b.output(output)
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
     diff_budget = b.diff_budget(job, skip_file_contents=True, min_diff=0)
@@ -881,42 +935,12 @@ def _synthesis_prompt(job, common, extra, *, shared: tuple[str, ...], ident: dic
     return b, ""
 
 
-def _prompt_self_synthesis(job, common, extra):
-    return _synthesis_prompt(
-        job, common, extra, shared=(),
-        ident={"branch_name": extra.get("branch_name", job.pr.head)},
-    )
+def _survey_prompt(job, common, extra, output):
+    """The survey of the whole PR — the holistic scan and the scout both.
 
-
-def _prompt_single(job, common, extra):
-    prior_ctx = _incremental_prior_ctx(job, (
-        "This is a re-review. Below are the findings from the previous review. "
-        "For each prior finding:\n"
-        "- If the issue is still present, carry it forward\n"
-        "- If the issue has been fixed, leave it out of the severity sections\n"
-        "- Add any new findings from changes since the last review"
-    ))
-    prior_section = _build_prior_section(job.prior_review, prior_ctx, reply_threads=job.reply_threads)
-    b = PromptBuilder(common)
-    b.shared(
-        "pr_header", "state_context", "delta_section", "reviews_section",
-        "reply_threads", "env_section", "issue_section", "generator_version",
-        "omitted_guidance", "max_turns",
-    )
-    b.set("pr_number", job.pr_number)
-    b.set("repo", job.repo)
-    b.set("prior_section", prior_section)
-    b.set("verdict_options", VERDICT_OPTIONS)
-    b.output(job.review_file, stdout_warning=True)
-    b.set("preflight_data", _build_preflight_section(job))
-    return b, ""
-
-
-def _survey_prompt(job, common, extra, output_key: str):
-    """Shared body of the holistic and scout prompts.
-
-    Both survey the whole PR from identical inputs; only the output file
-    differs.
+    The two are alternative first passes over identical inputs. Only the file
+    they write differs, and that is the phase spec's answer rather than
+    anything this builder has to know.
     """
     b = PromptBuilder(common)
     b.shared(
@@ -926,18 +950,14 @@ def _survey_prompt(job, common, extra, output_key: str):
     b.set("pr_number", job.pr_number)
     b.set("repo", job.repo)
     b.set("all_files_formatted", job.pr.all_files_formatted)
-    b.output(extra[output_key])
+    b.output(output)
     b.set("preflight_data", _build_preflight_section(
         job, max_diff_bytes=b.diff_budget(job),
     ))
     return b, ""
 
 
-def _prompt_holistic(job, common, extra):
-    return _survey_prompt(job, common, extra, "holistic_output")
-
-
-def _prompt_group(job, common, extra):
+def _prompt_group(job, common, extra, output):
     group_files = extra.get("group_file_paths", [])
     file_filter = group_files or None
     prior_ctx = _incremental_prior_ctx(job, (
@@ -969,7 +989,7 @@ def _prompt_group(job, common, extra):
     b.set("group_count", extra["group_count"])
     b.set("group_name", extra["group_name"])
     b.set("group_files_formatted", extra["group_files_formatted"])
-    b.output(extra["group_output"])
+    b.output(output)
     diff_budget = b.diff_budget(job, file_filter=file_filter)
 
     # When file contents blow the budget (common for generated-code groups),
@@ -994,34 +1014,27 @@ def _prompt_group(job, common, extra):
     return b, str(extra["group_idx"])
 
 
-def _prompt_synthesis(job, common, extra):
-    return _synthesis_prompt(
-        job, common, extra, shared=("reviews_section",),
-        ident={"pr_number": job.pr_number, "pr_title": job.pr.title},
-    )
-
-
-def _prompt_scout(job, common, extra):
-    return _survey_prompt(job, common, extra, "scout_output")
-
-
-def _prompt_disprove(job, common, extra):
+def _prompt_disprove(job, common, extra, output):
     b = PromptBuilder(common)
     b.shared("max_turns")
     b.set("review_content", extra.get("review_content", ""))
-    b.output(extra["disprove_output"])
+    b.output(output)
     return b, ""
 
 
-_PROMPT_HANDLERS = {
-    PHASES[Phase.SINGLE].template_for(Mode.SELF): _prompt_self_review,
-    PHASES[Phase.SYNTHESIS].template_for(Mode.SELF): _prompt_self_synthesis,
-    PHASES[Phase.SINGLE].template_for(Mode.PR): _prompt_single,
-    PHASES[Phase.HOLISTIC].template_for(): _prompt_holistic,
-    PHASES[Phase.SCOUT].template_for(): _prompt_scout,
-    PHASES[Phase.GROUP].template_for(): _prompt_group,
-    PHASES[Phase.SYNTHESIS].template_for(Mode.PR): _prompt_synthesis,
-    PHASES[Phase.DISPROVE].template_for(): _prompt_disprove,
+# Every phase that renders a review prompt, and the builder that fills it.
+# Keyed by `Phase` rather than by template filename: the filename is the spec's
+# answer to a question this table does not ask, and keying on it left the two
+# registries with no name in common to check each other against — a phase could
+# gain a template and never gain a builder. `test_review_contracts` holds this
+# table to the review phases the registry declares.
+_PROMPT_BUILDERS = {
+    Phase.SINGLE: _prompt_single,
+    Phase.HOLISTIC: _survey_prompt,
+    Phase.SCOUT: _survey_prompt,
+    Phase.GROUP: _prompt_group,
+    Phase.SYNTHESIS: _prompt_synthesis,
+    Phase.DISPROVE: _prompt_disprove,
 }
 
 
@@ -1046,14 +1059,31 @@ def _build_common_sections(job: ReviewJob, *, max_turns: int) -> CommonSections:
     )
 
 
-def build_prompt(template_name: str, job: ReviewJob, *, max_turns: int, **extra) -> str:
-    handler = _PROMPT_HANDLERS.get(template_name)
-    if handler is None:
-        raise ValueError(f"Unknown template: {template_name}")
+def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> str:
+    """Render ``phase``'s prompt for ``job``, with ``max_turns`` turns to spend.
+
+    The template and the file the agent is told to write both come off the
+    phase's registry entry, so a caller names the phase and nothing else about
+    it. ``extra`` carries only what the phase cannot derive — the group's
+    identity and the content a later phase reasons over.
+    """
+    builder = _PROMPT_BUILDERS.get(phase)
+    if builder is None:
+        raise ValueError(f"{phase} renders no review prompt")
+
+    spec = PHASES[phase]
+    # A phase that names an artifact of its own is told that path; the rest
+    # write the review document. `group_idx` is the only index in play, and
+    # `phase_output_path` rejects it for a phase that writes one artifact.
+    output = (
+        phase_output_path(job.review_file, phase, extra.get("group_idx"))
+        if spec.output_filename else job.review_file
+    )
+    template_name = spec.template_for(job.mode)
 
     common = _build_common_sections(job, max_turns=max_turns)
-    builder, label = handler(job, common, extra)
-    template_vars = builder.vars
+    prompt_builder, label = builder(job, common, extra, output)
+    template_vars = prompt_builder.vars
     rendered = agent_templates.render(template_name, **template_vars)
     return _log_prompt_size(template_name, rendered, template_vars, job, label=label)
 

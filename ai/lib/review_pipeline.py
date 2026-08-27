@@ -24,7 +24,6 @@ from pathlib import Path
 import git_client
 import log
 from agent_diagnosis import Diagnosis, DiagnosisKind
-from agent_registry import PHASES
 from agent_types import EFFORT_PRESETS, Mode, Phase
 from review_common import (
     count_severities,
@@ -127,10 +126,7 @@ def _write_review_sidecar(job: ReviewJob):
 def run_single_agent(job: ReviewJob, disprove: bool | None = None):
     runner = PhaseRunner(job, Phase.SINGLE)
     max_turns = runner.max_turns
-    prompt = build_prompt(
-        PHASES[Phase.SINGLE].template_for(job.mode), job,
-        max_turns=max_turns, branch_name=job.pr.head,
-    )
+    prompt = build_prompt(Phase.SINGLE, job, max_turns=max_turns)
     label = f"branch {job.pr.head}" if job.mode == Mode.SELF else f"PR #{job.pr_number} ({job.pr.title})"
     log.info(f"Running review agent on {label}...")
     log.blank()
@@ -269,10 +265,9 @@ def _phase_synthesis(
 
     max_turns = _synthesis_max_turns(merged_content)
     prompt = build_prompt(
-        PHASES[Phase.SYNTHESIS].template_for(job.mode), job,
-        max_turns=max_turns,
+        Phase.SYNTHESIS, job, max_turns=max_turns,
         holistic_content=holistic_content, group_count=group_count,
-        merged_content=merged_content, branch_name=job.pr.head,
+        merged_content=merged_content,
     )
     runner = PhaseRunner(job, Phase.SYNTHESIS)
     synthesis_log = runner.session_log

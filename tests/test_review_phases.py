@@ -452,19 +452,15 @@ class TestExecutorsUseTheResolvedBudget:
         assert seen, "executor never reached the agent"
         return seen[0]
 
-    def test_holistic(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("phase", [Phase.HOLISTIC, Phase.SCOUT])
+    def test_a_scan_takes_the_budget_of_the_phase_it_was_handed(
+        self, phase, tmp_path, monkeypatch,
+    ):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
         inv = self._first_invocation(
-            monkeypatch, lambda: review_phases._phase_holistic(job, 3),
+            monkeypatch, lambda: review_phases.run_phase(job, phase, "scanning..."),
         )
-        assert inv.max_turns == review_phases.job_turns(Phase.HOLISTIC, job)
-
-    def test_scout(self, tmp_path, monkeypatch):
-        job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])
-        inv = self._first_invocation(
-            monkeypatch, lambda: review_phases._phase_scout(job, 3),
-        )
-        assert inv.max_turns == review_phases.job_turns(Phase.SCOUT, job)
+        assert inv.max_turns == review_phases.job_turns(phase, job)
 
     def test_disprove_does_not_pay_for_omitted_files(self, tmp_path, monkeypatch):
         job = _omitted_job(tmp_path, omitted=["big.py", "huge.py"])

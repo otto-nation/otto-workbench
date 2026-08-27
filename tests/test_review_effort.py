@@ -130,12 +130,12 @@ class TestHolisticSkipReason:
     def test_no_holistic_alone_falls_back_to_scout(self, tmp_path):
         job = _make_job(tmp_path, skip_phases=frozenset({Phase.HOLISTIC}))
         assert review_pipeline._holistic_skip_reason(job, False, 10) is None
-        assert review_pipeline._use_scout(job) is True
+        assert review_pipeline._scan_phase(job) is Phase.SCOUT
 
     def test_no_scout_alone_falls_back_to_holistic(self, tmp_path):
         job = _make_job(tmp_path, skip_phases=frozenset({Phase.SCOUT}))
         assert review_pipeline._holistic_skip_reason(job, False, 10) is None
-        assert review_pipeline._use_scout(job) is False
+        assert review_pipeline._scan_phase(job) is Phase.HOLISTIC
 
     def test_low_effort_skips(self, tmp_path):
         reason = review_pipeline._holistic_skip_reason(

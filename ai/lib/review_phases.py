@@ -4,8 +4,13 @@ A review is a sequence of agent phases. What a phase *is* — its built-in spec,
 and how that spec resolves against the config file and the environment — is
 `agent_registry` and `agent_phases`, which the whole workbench shares. This module
 is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
-one review's worktree, session log and throttle, and the executors that run
-each phase.
+one review's worktree, session log and throttle, and `run_phase`, which drives
+one of them end to end.
+
+Running an agent phase is the same nine steps whichever phase it is, so there is
+one function rather than one per phase. What differs is what its artifact means
+afterwards, and that is `_SCANS` — one entry per phase, read through `read_scan`
+so the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
@@ -19,6 +24,7 @@ synthesis and the run drivers stay in review_pipeline.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -158,21 +164,30 @@ class PhaseResult:
     `content` and `output` carry a scan the phases after it read. Phase 1 is
     the only phase that writes for its successors rather than into the review
     file, so it is the only one that fills them.
+
+    `diagnosis` says why `content` is empty. It travels with the result rather
+    than being re-derived, because the reason is only reachable while the retry
+    driver is still holding the session log — by the time a caller notices the
+    empty content, the log has been overwritten by whatever ran next.
     """
 
     log: str = ""
     cost: float = 0.0
     content: str = ""
     output: str = ""
+    diagnosis: Diagnosis | None = None
 
     @classmethod
-    def of(cls, log: str, content: str = "", output: str = "") -> "PhaseResult":
+    def of(
+        cls, log: str, content: str = "", output: str = "",
+        diagnosis: Diagnosis | None = None,
+    ) -> "PhaseResult":
         """Priced from the log the phase just wrote.
 
         A phase that wrote no log reads as free: `_parse_session_cost` takes a
         missing file as zero.
         """
-        return cls(log, _parse_session_cost(log), content, output)
+        return cls(log, _parse_session_cost(log), content, output, diagnosis)
 
 
 def _touch(path: str) -> None:
@@ -185,6 +200,119 @@ def _synthesis_max_turns(merged_content: str) -> int:
     total = sum(counts.values())
     scaled = PHASES[Phase.SYNTHESIS].max_turns + max(0, total - 20) // 10
     return min(scaled, RETRY_MAX_TURNS_GROUP)
+
+
+# ── One agent phase ──────────────────────────────────────────────────────────
+
+
+def _scout_leads(raw: str) -> str:
+    leads, no_scrutiny = parse_scout_output(raw)
+    log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
+    return format_leads_block(leads, no_scrutiny)
+
+
+@dataclass(frozen=True)
+class PhaseScan:
+    """What one phase's artifact means to the run, in the two places it matters.
+
+    `read` turns the raw file into what the phases after it consume, and
+    `without` completes the warning when nothing came back — "keeping all
+    findings" rather than a generic apology, so the log says what the run lost
+    rather than only that it lost something.
+
+    Neither can live on the phase's `PhaseSpec`: `agent_types` imports nothing
+    but the standard library, and that is the point. A table here is the same
+    declaration one layer down, so a phase still spells each of these once.
+    """
+
+    without: str
+    read: Callable[[str], str] = lambda raw: raw
+
+
+# Phase 1's two candidates each write for a successor, so each names how its
+# file becomes the block a group prompt embeds. Disprove reads as itself: it
+# edits the review document in place rather than handing anything on.
+_SCANS: dict[Phase, PhaseScan] = {
+    Phase.HOLISTIC: PhaseScan("continuing without it"),
+    Phase.SCOUT: PhaseScan("continuing without leads", read=_scout_leads),
+    Phase.DISPROVE: PhaseScan("keeping all findings"),
+}
+
+
+def _scan(phase: Phase) -> PhaseScan:
+    """`phase`'s scan entry, or a `ValueError` naming the phase that owes one.
+
+    Raises the way `build_prompt` and `PhaseSpec.template_for` do rather than
+    letting a bare `KeyError` out: a phase added to the registry but not to
+    `_SCANS` is a missing declaration, and the message should say so at the
+    table rather than at whichever line first indexed it.
+    """
+    scan = _SCANS.get(phase)
+    if scan is None:
+        raise ValueError(f"{phase} declares no scan of its own")
+    return scan
+
+
+def read_scan(phase: Phase, raw: str) -> str:
+    """`phase`'s raw artifact as the content the phases after it read.
+
+    Empty in, empty out — a scan that produced nothing has no leads to render.
+
+    Exposed alongside `run_phase` because a resumed run reaches the same file
+    without running the agent that wrote it. Reading it a second way there is
+    how the resume path and the run path came to disagree about what a scout
+    scan is.
+    """
+    return _scan(phase).read(raw) if raw else ""
+
+
+def run_phase(
+    job: ReviewJob, phase: Phase, announce: str, **prompt_args,
+) -> PhaseResult:
+    """Run one agent phase over `job` and report its log, spend and content.
+
+    `announce` is the line printed before the agent starts and `prompt_args`
+    carries what only this phase supplies to its template; everything else — the
+    artifact path, the turn budget, the prompt, the retry and the reading of
+    what landed — comes off the phase's registry entry.
+
+    Only for a phase that writes an artifact of its own. `single` and
+    `synthesis` write the review document instead, and `review_pipeline` drives
+    those, because deciding what the document says when an agent falls short is
+    that module's job rather than this one's.
+
+    A phase that produced nothing warns and comes back with empty `content` and
+    the `diagnosis` saying why, rather than raising. Every phase this runs is
+    one the pipeline has a path around, so the run continues without it.
+    """
+    output = phase_output_path(job.review_file, phase)
+    scan = _scan(phase)
+    _touch(output)
+
+    runner = PhaseRunner(job, phase)
+    max_turns = runner.max_turns
+    prompt = build_prompt(phase, job, max_turns=max_turns, **prompt_args)
+
+    log.info(announce)
+    log.blank()
+    runner.invoke(prompt)
+    log.blank()
+
+    label = PHASES[phase].label
+    diagnosis = _retry_missing_output(
+        runner.invoke, prompt, runner.session_log, output,
+        label=label, max_turns=max_turns,
+    )
+
+    if not _has_output(output):
+        log.warn(
+            f"{label} produced no output ({_render_reason(diagnosis)}) "
+            f"— {scan.without}"
+        )
+        return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
+
+    content = scan.read(Path(output).read_text())
+    return PhaseResult.of(runner.session_log, content, output)
 
 
 # ── Phase executors ──────────────────────────────────────────────────────────
@@ -262,121 +390,32 @@ def _review_group(
     return (i, group_output, failed)
 
 
-def _phase_holistic(job: ReviewJob, group_count: int) -> PhaseResult:
-    holistic_output = phase_output_path(job.review_file, Phase.HOLISTIC)
-
-    _touch(holistic_output)
-
-    runner = PhaseRunner(job, Phase.HOLISTIC)
-    holistic_log = runner.session_log
-    max_turns = runner.max_turns
-    prompt = build_prompt(Phase.HOLISTIC, job, max_turns=max_turns)
-
-    log.info(f"Phase 1/{group_count}: Holistic scan...")
-    log.blank()
-
-    runner.invoke(prompt)
-    log.blank()
-
-    diagnosis = _retry_missing_output(
-        runner.invoke, prompt, holistic_log, holistic_output,
-        label="Holistic scan", max_turns=max_turns,
-    )
-
-    holistic_content = ""
-    if _has_output(holistic_output):
-        holistic_content = Path(holistic_output).read_text()
-    else:
-        log.warn(
-            f"Holistic scan produced no output ({_render_reason(diagnosis)}) "
-            "— continuing without it"
-        )
-
-    return PhaseResult.of(holistic_log, holistic_content, holistic_output)
-
-
-def _phase_scout(job: ReviewJob, group_count: int) -> PhaseResult:
-    scout_output = phase_output_path(job.review_file, Phase.SCOUT)
-
-    _touch(scout_output)
-
-    runner = PhaseRunner(job, Phase.SCOUT)
-    scout_log = runner.session_log
-    max_turns = runner.max_turns
-    prompt = build_prompt(Phase.SCOUT, job, max_turns=max_turns)
-
-    log.info(f"Phase 1/{group_count}: Lead scout scan...")
-    log.blank()
-
-    runner.invoke(prompt)
-    log.blank()
-
-    diagnosis = _retry_missing_output(
-        runner.invoke, prompt, scout_log, scout_output,
-        label="Scout", max_turns=max_turns,
-    )
-
-    if _has_output(scout_output):
-        raw = Path(scout_output).read_text()
-        leads, no_scrutiny = parse_scout_output(raw)
-        log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
-        return PhaseResult.of(
-            scout_log, format_leads_block(leads, no_scrutiny), scout_output,
-        )
-
-    log.warn(f"Scout produced no output ({_render_reason(diagnosis)}) — continuing without leads")
-    return PhaseResult.of(scout_log, output=scout_output)
-
-
 def _phase_disprove(job: ReviewJob) -> PhaseResult:
     review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
     counts = _count_findings(review_content)
     ms_count = counts.get("M", 0) + counts.get("S", 0)
+    label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
-        log.info("Disprove gate skipped — no must-fix or should-fix findings")
+        log.info(f"{label} skipped — no must-fix or should-fix findings")
         return PhaseResult()
 
-    disprove_output = phase_output_path(job.review_file, Phase.DISPROVE)
-
-    _touch(disprove_output)
-
-    runner = PhaseRunner(job, Phase.DISPROVE)
-    disprove_log = runner.session_log
-    max_turns = runner.max_turns
-    prompt = build_prompt(
-        Phase.DISPROVE, job, max_turns=max_turns,
+    result = run_phase(
+        job, Phase.DISPROVE,
+        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
         review_content=review_content,
     )
+    if not result.content:
+        return result
 
-    log.info(f"Disprove gate — challenging {ms_count} must-fix/should-fix findings...")
-    log.blank()
-
-    runner.invoke(prompt)
-    log.blank()
-
-    diagnosis = _retry_missing_output(
-        runner.invoke, prompt, disprove_log, disprove_output,
-        label="Disprove gate", max_turns=max_turns,
-    )
-
-    result = PhaseResult.of(disprove_log)
-
-    if _has_output(disprove_output):
-        raw = Path(disprove_output).read_text()
-        results = parse_disprove_output(raw)
-        updated_text, summary = apply_disprove_results(review_content, results)
-        falsified = summary.get("falsified", 0)
-        if falsified > 0:
-            Path(job.review_file).write_text(updated_text)
-            log.info(f"Disprove gate: {summary['survived']} survived, {falsified} falsified")
-            _log_disprove_falsified(summary)
-        else:
-            log.info(f"Disprove gate: all {summary['survived']} findings survived")
+    results = parse_disprove_output(result.content)
+    updated_text, summary = apply_disprove_results(review_content, results)
+    falsified = summary.get("falsified", 0)
+    if falsified > 0:
+        Path(job.review_file).write_text(updated_text)
+        log.info(f"{label}: {summary['survived']} survived, {falsified} falsified")
+        _log_disprove_falsified(summary)
     else:
-        log.warn(
-            f"Disprove gate produced no output ({_render_reason(diagnosis)}) "
-            "— keeping all findings"
-        )
+        log.info(f"{label}: all {summary['survived']} findings survived")
 
     return result
 

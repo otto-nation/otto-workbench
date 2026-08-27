@@ -164,30 +164,21 @@ class PhaseResult:
     `content` and `output` carry a scan the phases after it read. Phase 1 is
     the only phase that writes for its successors rather than into the review
     file, so it is the only one that fills them.
-
-    `diagnosis` says why `content` is empty. It travels with the result rather
-    than being re-derived, because the reason is only reachable while the retry
-    driver is still holding the session log — by the time a caller notices the
-    empty content, the log has been overwritten by whatever ran next.
     """
 
     log: str = ""
     cost: float = 0.0
     content: str = ""
     output: str = ""
-    diagnosis: Diagnosis | None = None
 
     @classmethod
-    def of(
-        cls, log: str, content: str = "", output: str = "",
-        diagnosis: Diagnosis | None = None,
-    ) -> "PhaseResult":
+    def of(cls, log: str, content: str = "", output: str = "") -> "PhaseResult":
         """Priced from the log the phase just wrote.
 
         A phase that wrote no log reads as free: `_parse_session_cost` takes a
         missing file as zero.
         """
-        return cls(log, _parse_session_cost(log), content, output, diagnosis)
+        return cls(log, _parse_session_cost(log), content, output)
 
 
 def _touch(path: str) -> None:
@@ -205,7 +196,17 @@ def _synthesis_max_turns(merged_content: str) -> int:
 # ── One agent phase ──────────────────────────────────────────────────────────
 
 
+def _verbatim(raw: str) -> str:
+    """A phase whose successors read its artifact exactly as it was written."""
+    return raw
+
+
 def _scout_leads(raw: str) -> str:
+    """A scout scan as the leads block a group prompt embeds.
+
+    Reports the tally as it goes, so a resumed run says what it recovered from
+    the file rather than reaching the group phases having logged nothing.
+    """
     leads, no_scrutiny = parse_scout_output(raw)
     log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
     return format_leads_block(leads, no_scrutiny)
@@ -215,10 +216,12 @@ def _scout_leads(raw: str) -> str:
 class PhaseScan:
     """What one phase's artifact means to the run, in the two places it matters.
 
-    `read` turns the raw file into what the phases after it consume, and
-    `without` completes the warning when nothing came back — "keeping all
-    findings" rather than a generic apology, so the log says what the run lost
-    rather than only that it lost something.
+    `read` turns the raw file into what the phases after it consume — and is
+    what reports the scan, so the tally is logged wherever the file is read
+    rather than only where the agent wrote it. `without` completes the warning
+    when nothing came back — "keeping all findings" rather than a generic
+    apology, so the log says what the run lost rather than only that it lost
+    something.
 
     Neither can live on the phase's `PhaseSpec`: `agent_types` imports nothing
     but the standard library, and that is the point. A table here is the same
@@ -226,7 +229,7 @@ class PhaseScan:
     """
 
     without: str
-    read: Callable[[str], str] = lambda raw: raw
+    read: Callable[[str], str] = _verbatim
 
 
 # Phase 1's two candidates each write for a successor, so each names how its
@@ -281,9 +284,9 @@ def run_phase(
     those, because deciding what the document says when an agent falls short is
     that module's job rather than this one's.
 
-    A phase that produced nothing warns and comes back with empty `content` and
-    the `diagnosis` saying why, rather than raising. Every phase this runs is
-    one the pipeline has a path around, so the run continues without it.
+    A phase that produced nothing warns why and comes back with empty
+    `content`, rather than raising. Every phase this runs is one the pipeline
+    has a path around, so the run continues without it.
     """
     output = phase_output_path(job.review_file, phase)
     scan = _scan(phase)
@@ -309,7 +312,7 @@ def run_phase(
             f"{label} produced no output ({_render_reason(diagnosis)}) "
             f"— {scan.without}"
         )
-        return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
+        return PhaseResult.of(runner.session_log, output=output)
 
     content = scan.read(Path(output).read_text())
     return PhaseResult.of(runner.session_log, content, output)

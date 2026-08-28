@@ -241,7 +241,7 @@ class MarkerComment:
     reconciles against ``body`` would conclude the published comment was empty
     and drop everything already in it.
 
-    The two timestamps answer whether the target is still the last word in the
+    The timestamps answer whether the target is still the last word in the
     conversation, which the same listing already knows. An edit does not move a
     comment or notify anyone, so a caller whose comment has to be read needs to
     know whether anything was said below it. ``created_at`` is the marker's own
@@ -249,6 +249,13 @@ class MarkerComment:
     moving the comment. ``newest_other_at`` is the newest issue comment that is
     not itself a marker comment, so an earlier round's superseded summary does
     not read as someone answering.
+
+    ``updated_at`` answers the other question, and is not interchangeable with
+    ``created_at``: when was ``body`` last written. A marker comment edited in
+    place over several rounds carries rows for surfaces that did not exist when
+    it was posted, so a caller asking "what does the record already hold" has to
+    date the body rather than the comment. Reading ``created_at`` there makes
+    every row added by an edit look newer than the summary carrying it.
 
     ``url`` is how a later comment links back to this one. A caller that spreads
     its record across several marker comments has to give the reader a way to
@@ -260,6 +267,7 @@ class MarkerComment:
     created_at: str = ""
     newest_other_at: str = ""
     url: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -356,6 +364,7 @@ def find_marker_comments(repo: str, pr_number: int, marker: str) -> MarkerHistor
             created_at=c.get("created_at", "") or "",
             newest_other_at=newest_other,
             url=c.get("html_url", "") or "",
+            updated_at=c.get("updated_at", "") or "",
         )
         for c in comments if marker in (c.get("body") or "")
     )

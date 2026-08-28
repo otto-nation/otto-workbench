@@ -5932,6 +5932,8 @@ class TestEveryItemReachesTheTable:
 _SUMMARY_POSTED_AT = "2026-01-02T00:00:00Z"
 _AFTER_THE_SUMMARY = "2026-01-03T00:00:00Z"
 _BEFORE_THE_SUMMARY = "2026-01-01T00:00:00Z"
+_SUMMARY_EDITED_AT = "2026-01-04T00:00:00Z"
+_AFTER_THE_EDIT = "2026-01-05T00:00:00Z"
 _ROUND_ONE_URL = "https://github.com/owner/repo/pull/1#issuecomment-11"
 
 
@@ -5958,18 +5960,20 @@ _ROUND_ONE_OUTCOME = ItemOutcome(
 )
 
 
-def _repost_over(rt, *rows: str, outcomes=(), threads=None, report=None):
+def _repost_over(rt, *rows: str, outcomes=(), threads=None, report=None,
+                 marker=None):
     """Render a second round's summary over a first round that was answered.
 
     Returns the body posted. `rows` is what the first round published, and
     `outcomes` what local state still holds beside round two's own fixed `t2`.
+    `marker` overrides fields on that first round's comment.
     """
     items = [_ROUND_TWO_OUTCOME, *outcomes]
     state = _make_state(_fix(
         items=items, reviewers={o.id: "kgn" for o in items},
         commit_status="no_changes", summary_deferred=True,
     ))
-    with _lookup_returns(_round_one_marker(rt, *rows)), \
+    with _lookup_returns(_round_one_marker(rt, *rows, **(marker or {}))), \
             patch("pr_comments.post_issue_comment", return_value="https://url") as post:
         rt._render_deferred_summary(
             state, report or PRReport(), "owner/repo", 1, threads or {})
@@ -6070,6 +6074,29 @@ class TestASummaryDescribesItsOwnRound:
         body = _repost_over(
             rt, ROUND_ONE_ROW, outcomes=[_ROUND_ONE_OUTCOME],
             threads=_reviewed_thread(_AFTER_THE_SUMMARY),
+        )
+        assert "drop the guard" in body
+        assert "settled in an earlier round" not in body
+
+    def test_a_thread_the_summary_absorbed_by_edit_is_left_where_it_is(self, rt):
+        """A marker comment is edited in place round after round, so its body
+        carries rows for threads opened long after it was posted. Dating it by
+        `created_at` calls every one of them newer than the summary already
+        holding it, and the repost becomes the whole edited history again."""
+        body = _repost_over(
+            rt, ROUND_ONE_ROW, outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_AFTER_THE_SUMMARY),
+            marker={"updated_at": _SUMMARY_EDITED_AT},
+        )
+        assert "drop the guard" not in body
+        assert "1 thread settled in an earlier round" in body
+
+    def test_a_thread_spoken_on_after_the_edit_still_comes_back(self, rt):
+        """The later timestamp narrows the window; it does not close it."""
+        body = _repost_over(
+            rt, ROUND_ONE_ROW, outcomes=[_ROUND_ONE_OUTCOME],
+            threads=_reviewed_thread(_AFTER_THE_EDIT),
+            marker={"updated_at": _SUMMARY_EDITED_AT},
         )
         assert "drop the guard" in body
         assert "settled in an earlier round" not in body

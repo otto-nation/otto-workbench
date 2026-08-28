@@ -2905,9 +2905,14 @@ class RoundScope:
     key with no entry is a row a person rewrote, and states nothing to differ
     from.
 
-    ``since`` is when the newest summary was posted. A thread a reviewer has
-    spoken on after that is this round's business again, however settled it
-    looked.
+    ``since`` is when the newest summary's body was last written. A thread a
+    reviewer has spoken on after that is this round's business again, however
+    settled it looked. It dates the body rather than the comment because the
+    keys it is read alongside come from the body: a summary edited in place over
+    several rounds carries rows for threads opened long after it was posted, and
+    dating it by `created_at` would call every one of them newer than the
+    summary already holding it — restating the whole edited history each round,
+    which is what this scoping exists to stop.
 
     A default-constructed scope covers everything: no keys are published, so no
     row can be left out. That is the reading a run with no summary comment to
@@ -3557,6 +3562,11 @@ def _round_scope(marked: pc.MarkerHistory, answered: bool) -> RoundScope:
     arriving at the chain sees. A row whose newest cell is a person's states no
     outcome and gets no entry, rather than falling back to the generated cell
     an earlier round wrote under it.
+
+    ``since`` dates the target's body, so it takes ``updated_at`` and falls back
+    to ``created_at`` for a listing that carried no edit time. The keys beside it
+    are read out of that body, and the two have to describe the same moment —
+    see `RoundScope`.
     """
     target = marked.newest
     elsewhere = frozenset(
@@ -3571,7 +3581,7 @@ def _round_scope(marked: pc.MarkerHistory, answered: bool) -> RoundScope:
         for row in _summary_table_rows(body):
             outcomes[_summary_row_key(row)] = _action_outcome(_row_action_cell(row))
     return RoundScope(
-        since=target.created_at,
+        since=target.updated_at or target.created_at,
         published_keys=target_own | elsewhere,
         target_keys=frozenset() if answered else target_own - elsewhere,
         elsewhere_keys=elsewhere,

@@ -1897,3 +1897,136 @@ class TestReviewSections:
         text = "## Nits\n\n- **[N1]** **`a.go:1`** — nit\n"
         sections = rp.ReviewSections.from_text(text)
         assert sections.get("nits") == ""
+
+
+class TestDeclinedFindingsAreNotAskedFor:
+    """A declined finding was considered and rejected. Posting it as a comment
+    asks for work the review already decided against, so it is stated in the
+    body instead — and it stays stated whatever the diff says about its line."""
+
+    DIFF = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    def _declined(self, rp):
+        return rp.Finding(
+            id="S1", severity="S", seq=1, path="file.go", line=5, end_line=None,
+            body="use a constant *(declined — the literal is clearer here)*",
+            declined=True, decline_reason="the literal is clearer here",
+        )
+
+    def test_a_declined_finding_in_a_hunk_is_skipped_not_inlined(self, rp):
+        f = self._declined(rp)
+        inline, fl, skipped = rp.classify_findings([f], self.DIFF)
+        assert (len(inline), len(fl), len(skipped)) == (0, 0, 1)
+        assert skipped[0].skip_reason == rp.SKIP_DECLINED
+
+    def test_an_open_finding_beside_it_still_goes_inline(self, rp):
+        open_finding = rp.Finding(
+            id="S2", severity="S", seq=2, path="file.go", line=6, end_line=None,
+            body="real bug",
+        )
+        inline, _, skipped = rp.classify_findings(
+            [self._declined(rp), open_finding], self.DIFF,
+        )
+        assert [f.id for f in inline] == ["S2"]
+        assert [f.id for f in skipped] == ["S1"]
+
+    def test_the_body_states_a_decline_apart_from_what_it_asks_for(self, rp):
+        declined = self._declined(rp)
+        declined.posted_id = "S1"
+        demoted = rp.Finding(
+            id="S2", severity="S", seq=2, path="file.go", line=90, end_line=None,
+            body="real bug", posted_id="S2",
+        )
+        text = rp.format_body_text([demoted, declined], False, {"S"})
+        heading = "**Declined — considered and not carried forward:**"
+        assert heading in text
+        assert text.index("real bug") < text.index(heading), \
+            "the findings being asked for come before the ones that were declined"
+        assert text.index(heading) < text.index("use a constant")
+
+    def test_a_decline_alone_still_renders_its_block(self, rp):
+        declined = self._declined(rp)
+        declined.posted_id = "S1"
+        text = rp.format_body_text([declined], False, {"S"})
+        assert "**Declined — considered and not carried forward:**" in text
+        assert "use a constant" in text
+
+
+class TestPostSkipsResolvedAndDeclinedFindings:
+    """What reaches the payload from a review a fix pass has already worked
+    through: not the findings it ticked, and not the ones it declined."""
+
+    DIFF = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    REVIEW_TEXT = (
+        "<!-- head_sha: aaa1111bbb2222 -->\n"
+        "## Summary\nOk\n\n"
+        "## Should fix\n"
+        "- [x] **[S1]** **`file.go:4`** — already fixed by the fix pass\n"
+        "- [ ] **[S2]** **`file.go:5`** — declined on the merits. "
+        "*(declined — the tradeoff is deliberate)*\n"
+        "- [ ] **[S3]** **`file.go:6`** — genuinely open\n"
+    )
+
+    def _dry_run_payload(self, rp, tmp_path, capsys, review_text=None):
+        import argparse
+        review_dir = tmp_path / "review"
+        review_dir.mkdir(exist_ok=True)
+        review_file = review_dir / "review.md"
+        review_file.write_text(review_text or self.REVIEW_TEXT)
+
+        args = argparse.Namespace()
+        args.repo = "org/repo"
+        args.pr = "1"
+        args.review_file = str(review_file)
+        args.dry_run = True
+        args.submit = False
+        args.chunk_size = 30
+        args.severity = "M,S,N,I"
+        args.debug = False
+
+        with patch.object(rp, "_get_diff", return_value=self.DIFF):
+            rp._run_post(MagicMock(), args, "org/repo", rp.ReviewMeta(repo="org/repo"),
+                         review_file)
+
+        out = capsys.readouterr().out
+        return json.loads(out[out.index("{"):out.rindex("}") + 1])
+
+    def test_only_the_open_finding_is_commented_on(self, rp, tmp_path, capsys):
+        payload = self._dry_run_payload(rp, tmp_path, capsys)
+        bodies = [c["body"] for c in payload["comments"]]
+        assert len(bodies) == 1
+        assert "genuinely open" in bodies[0]
+
+    def test_a_fixed_finding_reaches_neither_comments_nor_body(self, rp, tmp_path, capsys):
+        payload = self._dry_run_payload(rp, tmp_path, capsys)
+        whole = json.dumps(payload)
+        assert "already fixed by the fix pass" not in whole
+
+    def test_a_declined_finding_is_stated_in_the_body_only(self, rp, tmp_path, capsys):
+        payload = self._dry_run_payload(rp, tmp_path, capsys)
+        assert "declined on the merits" in payload["body"]
+        assert not any("declined on the merits" in c["body"] for c in payload["comments"])
+
+    def test_a_wholly_resolved_review_posts_nothing(self, rp, tmp_path, capsys):
+        text = (
+            "<!-- head_sha: aaa1111bbb2222 -->\n"
+            "## Summary\nOk\n\n"
+            "## Should fix\n"
+            "- [x] **[S1]** **`file.go:4`** — already fixed\n"
+        )
+        with pytest.raises(SystemExit) as exc:
+            self._dry_run_payload(rp, tmp_path, capsys, review_text=text)
+        assert exc.value.code == 0

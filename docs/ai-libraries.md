@@ -564,6 +564,12 @@ Only a *declaration* — a finding at the head of its own list item, ``- **[M1]*
 a reference, and references are rewritten through the same map, so a finding
 that cites another one still cites the same one afterwards.
 
+Every severity is renumbered over the whole set of sections rather than one
+section at a time, because a reference need not sit in the section that
+declares what it names. A Must-fix finding citing ``[S1]`` is renumbered by the
+Should-fix map or by nothing at all; a pass confined to the Must-fix section
+left that citation on whichever Should-fix finding later took the number.
+
 Brackets are what make a reference unambiguous. A bare ``S3`` is also an object
 store and a bare ``M1`` is also a laptop, so an unbracketed mention only counts
 when a citing phrase introduces it — ``see S3``, ``duplicate of S3``, ``blocked

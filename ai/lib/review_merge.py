@@ -23,6 +23,12 @@ Only a *declaration* — a finding at the head of its own list item, ``- **[M1]*
 a reference, and references are rewritten through the same map, so a finding
 that cites another one still cites the same one afterwards.
 
+Every severity is renumbered over the whole set of sections rather than one
+section at a time, because a reference need not sit in the section that
+declares what it names. A Must-fix finding citing ``[S1]`` is renumbered by the
+Should-fix map or by nothing at all; a pass confined to the Must-fix section
+left that citation on whichever Should-fix finding later took the number.
+
 Brackets are what make a reference unambiguous. A bare ``S3`` is also an object
 store and a bare ``M1`` is also a laptop, so an unbracketed mention only counts
 when a citing phrase introduces it — ``see S3``, ``duplicate of S3``, ``blocked
@@ -231,27 +237,77 @@ def _rewrite_ids(
     return _id_reference_re(prefix).sub(rewrite, text)
 
 
-def renumber_section(prefix: str, text: str, offset: int) -> tuple[str, int]:
-    """Shift one group's IDs past the groups already merged, references included.
+def _declared_across(sections: dict[str, str], prefix: str) -> list[int]:
+    """The IDs `prefix` is declared with anywhere in `sections`, in reading order.
 
-    Returns the highest ID the group leaves in use, which is what the next group
-    has to clear. Counting declarations instead would under-shift any group
-    whose agent skipped a number — nothing closes those gaps before the merge —
-    and two groups would land on the same ID. Gaps are closed afterwards, over
-    the merged text, where a number freed up by one group can be handed to
-    another.
-
-    Dangling references are left as they are: this runs per group, and an ID
-    this group does not declare may still be declared by another one. The
-    merge-wide pass is the first place that can tell.
+    Every section is read, not just the one whose severity `prefix` names. A
+    review that files a Should-fix declaration under Must fix is malformed, but
+    its ID is still declared, and a map that missed it would rewrite the
+    declaration itself to `[removed]`.
     """
-    if not text:
-        return "", 0
-    declared = _declared_ids(text, prefix)
-    if offset > 0:
-        shifted = {old: old + offset for old in declared}
-        text = _rewrite_ids(text, prefix, shifted, mark_dangling=False)
-    return text, max(declared, default=0)
+    return _declared_ids(_joined(sections), prefix)
+
+
+def _joined(sections: dict[str, str]) -> str:
+    """The severity sections as one text, in the order the review prints them."""
+    return "\n".join(sections[severity.key] for severity in SEVERITIES)
+
+
+def _rewrite_every_prefix(
+    sections: dict[str, str],
+    maps: dict[str, dict[int, int]],
+    *,
+    mark_dangling: bool,
+) -> dict[str, str]:
+    """Rewrite every section through every severity's map, references included.
+
+    A section is rewritten through all four maps rather than its own alone: a
+    reference does not have to live in the section that declares the finding it
+    names, and a Must-fix finding that says "blocked on [S1]" is renumbered by
+    the Should-fix map or by nothing at all. Looking only at each section's own
+    prefix left such a citation on whichever finding later took its number.
+
+    A prefix absent from `maps` is left alone wherever it appears — there is no
+    numbering to move it onto, and every mention of it belongs to some other
+    document.
+    """
+    rewritten: dict[str, str] = {}
+    for key, text in sections.items():
+        for prefix, new_by_old in maps.items():
+            text = _rewrite_ids(text, prefix, new_by_old, mark_dangling=mark_dangling)
+        rewritten[key] = text
+    return rewritten
+
+
+def _gap_map(declared: list[int], merged_into: dict[int, int]) -> dict[int, int]:
+    """Where each declared ID lands once the gaps between them close."""
+    new_by_old = {old: new for new, old in enumerate(declared, 1)}
+    # A deduplicated finding was not dropped, it was merged: its references
+    # belong on the copy that survived, which says the same thing. The survivor
+    # is always declared here — it is the copy dedup kept — but guard anyway, so
+    # a map built from other text cannot quietly point a reference somewhere new.
+    for gone, survivor in merged_into.items():
+        if survivor in new_by_old:
+            new_by_old.setdefault(gone, new_by_old[survivor])
+    return new_by_old
+
+
+def _close_gaps(
+    sections: dict[str, str], merged_into: dict[str, dict[int, int]],
+) -> dict[str, str]:
+    """Close the gaps in every severity's IDs, taking every reference along.
+
+    The maps are built from all the sections at once and applied to all of them,
+    so a reference reaching across severities lands on the finding it named
+    rather than on whatever ended up at that number. `merged_into` says, per
+    severity, which IDs deduplication folded into which survivor.
+    """
+    maps = {}
+    for severity in SEVERITIES:
+        declared = _declared_across(sections, severity.key)
+        if declared:
+            maps[severity.key] = _gap_map(declared, merged_into.get(severity.key, {}))
+    return _rewrite_every_prefix(sections, maps, mark_dangling=True)
 
 
 def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None = None) -> str:
@@ -265,17 +321,9 @@ def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None 
         # Nothing here declares an ID, so there is no map to rewrite through and
         # every occurrence is a reference into text we are not looking at.
         return text
-
-    new_by_old = {old: new for new, old in enumerate(declared, 1)}
-    # A deduplicated finding was not dropped, it was merged: its references
-    # belong on the copy that survived, which says the same thing. The survivor
-    # is always declared here — it is the copy dedup kept — but guard anyway, so
-    # a map built from other text cannot quietly point a reference somewhere new.
-    for gone, survivor in (merged_into or {}).items():
-        if survivor in new_by_old:
-            new_by_old.setdefault(gone, new_by_old[survivor])
-
-    return _rewrite_ids(text, prefix, new_by_old, mark_dangling=True)
+    return _rewrite_ids(
+        text, prefix, _gap_map(declared, merged_into or {}), mark_dangling=True,
+    )
 
 
 def renumber_findings(text: str) -> str:
@@ -339,7 +387,21 @@ def _record_merge(merged_into: dict[int, int], survivor: int | None, dup: int | 
     merged_into[dup] = survivor
 
 
-def _dedup_findings(text: str, prefix: str) -> str:
+@dataclass(frozen=True)
+class _Deduped:
+    """One severity's findings with the repeats dropped, and where they went.
+
+    `merged_into` maps each dropped ID to the copy that survived it, so the
+    renumbering that follows can move references onto the survivor instead of
+    marking them `[removed]`. It is kept apart from `text` because the gaps
+    close across every severity at once, after every section has been deduped.
+    """
+
+    text: str
+    merged_into: dict[int, int] = field(default_factory=dict)
+
+
+def _dedup_findings(text: str, prefix: str) -> _Deduped:
     seen: dict[FindingKey, int | None] = {}
     merged_into: dict[int, int] = {}
     kept: list[str] = []
@@ -356,33 +418,25 @@ def _dedup_findings(text: str, prefix: str) -> str:
         if skipping:
             continue
         kept.append(line)
-    return _renumber_prefix("\n".join(kept), prefix, merged_into)
+    return _Deduped("\n".join(kept), merged_into)
 
 
-def _merge_one_review(
-    content: str, merged_triage: str,
-    merged: dict[str, str], offsets: dict[str, int],
-) -> str:
-    doc = ReviewDocument.parse(content)
-    triage = doc.section(SECTION_FILE_TRIAGE)
-    if triage:
-        cleaned = _clean_triage(triage)
-        if cleaned:
-            merged_triage += cleaned + "\n"
-    # Kept out of the renumbering below: these IDs belong to the prior review,
-    # and each group only dispositions the prior findings for its own files, so
-    # the merged ledger is the union of what every group accounted for.
-    ledger = _clean_section_text(doc.section(SECTION_PRIOR_FINDINGS))
-    if ledger:
-        merged[SECTION_PRIOR_FINDINGS] += ledger + "\n"
-    for severity in SEVERITIES:
-        section = severity.section
-        raw = _clean_section_text(doc.section(section))
-        text, highest = renumber_section(severity.key, raw, offsets[section])
-        if text:
-            merged[section] += text + "\n"
-        offsets[section] += highest
-    return merged_triage
+def _dedup_sections(sections: dict[str, str]) -> dict[str, str]:
+    """Drop each severity's repeated findings, then close the gaps they leave.
+
+    Two findings are duplicates only within one severity — the same problem
+    reported as a Must-fix by one group and a Nit by another is a disagreement,
+    not a repeat — but the numbering closes over all four sections together, so
+    a reference from one severity to another survives the drop.
+    """
+    deduped = {
+        severity.key: _dedup_findings(sections[severity.key], severity.key)
+        for severity in SEVERITIES
+    }
+    return _close_gaps(
+        {key: entry.text for key, entry in deduped.items()},
+        {key: entry.merged_into for key, entry in deduped.items()},
+    )
 
 
 def _dedup_triage(triage: str) -> str:
@@ -437,36 +491,89 @@ def _keep_strongest_disposition(
         lines[index] = entry.text
 
 
-def merge_reviews(group_files: list[str]) -> str:
-    merged_triage = ""
-    merged: dict[str, str] = {s.section: "" for s in SEVERITIES}
-    merged[SECTION_PRIOR_FINDINGS] = ""
-    offsets: dict[str, int] = {s.section: 0 for s in SEVERITIES}
+@dataclass
+class _Merge:
+    """The one document the group reviews are being folded into.
 
+    Severity text is held per severity because each gets its own heading in the
+    output, but renumbering spans all of them at once: a finding may cite one of
+    another severity, and a pass that read each section alone left that citation
+    on whatever number the other groups had put there.
+
+    `offsets` is the highest ID each severity is already using, and a group's
+    IDs are shifted clear of it. Counting the findings before them instead would
+    under-shift any group whose agent skipped a number — nothing closes those
+    gaps before the merge — and two groups would land on the same ID.
+    """
+
+    sections: dict[str, str] = field(
+        default_factory=lambda: {s.key: "" for s in SEVERITIES})
+    offsets: dict[str, int] = field(
+        default_factory=lambda: {s.key: 0 for s in SEVERITIES})
+    triage: str = ""
+    ledger: str = ""
+
+    def add(self, content: str) -> None:
+        """Fold one group review in, its IDs shifted past the groups before it."""
+        doc = ReviewDocument.parse(content)
+        triage = _clean_triage(doc.section(SECTION_FILE_TRIAGE))
+        if triage:
+            self.triage += triage + "\n"
+        # Kept out of the renumbering below: these IDs belong to the prior
+        # review, and each group only dispositions the prior findings for its
+        # own files, so the merged ledger is the union of what every group
+        # accounted for.
+        ledger = _clean_section_text(doc.section(SECTION_PRIOR_FINDINGS))
+        if ledger:
+            self.ledger += ledger + "\n"
+        group = {
+            s.key: _clean_section_text(doc.section(s.section)) for s in SEVERITIES
+        }
+        for key, text in self._shift(group).items():
+            if text:
+                self.sections[key] += text + "\n"
+
+    def _shift(self, group: dict[str, str]) -> dict[str, str]:
+        """One group's sections with every ID moved past what is already in use.
+
+        Dangling references are left as they are: this runs per group, and an ID
+        this group does not declare may still be declared by another one. The
+        merge-wide pass in `_close_gaps` is the first place that can tell.
+        """
+        declared = {
+            severity.key: _declared_across(group, severity.key)
+            for severity in SEVERITIES
+        }
+        maps = {
+            key: {old: old + self.offsets[key] for old in ids}
+            for key, ids in declared.items() if ids and self.offsets[key]
+        }
+        shifted = _rewrite_every_prefix(group, maps, mark_dangling=False)
+        for key, ids in declared.items():
+            self.offsets[key] += max(ids, default=0)
+        return shifted
+
+    def document(self) -> str:
+        """The merged review: the triage, each severity, then the union ledger."""
+        sections = _dedup_sections(self.sections)
+        parts = [f"## {SECTION_FILE_TRIAGE}\n{_dedup_triage(self.triage)}"]
+        for severity in SEVERITIES:
+            if sections[severity.key]:
+                parts.append(f"## {severity.section}\n{sections[severity.key]}")
+        if self.ledger:
+            parts.append(
+                f"## {SECTION_PRIOR_FINDINGS}\n{_dedup_ledger(self.ledger)}"
+            )
+        return "\n".join(parts)
+
+
+def merge_reviews(group_files: list[str]) -> str:
+    merge = _Merge()
     for path in group_files:
         p = Path(path)
-        if not p.exists():
-            continue
-        merged_triage = _merge_one_review(p.read_text(), merged_triage, merged, offsets)
-
-    merged_triage = _dedup_triage(merged_triage)
-
-    for severity in SEVERITIES:
-        if merged[severity.section]:
-            merged[severity.section] = _dedup_findings(
-                merged[severity.section], severity.key
-            )
-
-    parts = [f"## {SECTION_FILE_TRIAGE}\n{merged_triage}"]
-    for severity in SEVERITIES:
-        if merged[severity.section]:
-            parts.append(f"## {severity.section}\n{merged[severity.section]}")
-    if merged[SECTION_PRIOR_FINDINGS]:
-        parts.append(
-            f"## {SECTION_PRIOR_FINDINGS}\n"
-            f"{_dedup_ledger(merged[SECTION_PRIOR_FINDINGS])}"
-        )
-    return "\n".join(parts)
+        if p.exists():
+            merge.add(p.read_text())
+    return merge.document()
 
 
 # ── Stable IDs for carry-forward ─────────────────────────────────────────────

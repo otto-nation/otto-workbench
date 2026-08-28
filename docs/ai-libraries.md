@@ -599,6 +599,12 @@ without asking an agent anything. Only what neither the review nor the tree
 settles is reported as undecided, and every record says which of the two
 settled it, so an inference is never read back as a statement.
 
+Reporting is not the only outcome. `passed_over` asks the same question one
+phase early, against the merged group findings, and hands back the findings
+neither the groups nor the tree settled — while there is still an agent that
+can decide them, rather than after the document is written and the only thing
+left to do is warn.
+
 The record is a sidecar in the review directory rather than a section of the
 review. Reconciliation parses its input for finding-shaped lines, so a
 reconciliation written into the review would come back to the next round

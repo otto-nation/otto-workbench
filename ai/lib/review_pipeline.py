@@ -38,7 +38,9 @@ from review_findings import (
     post_process_findings,
 )
 from review_github import PRData, fetch_pr_data
-from review_merge import annotate_prior_with_stable_ids, record_prior_findings
+from review_merge import (
+    annotate_prior_with_stable_ids, passed_over, record_prior_findings,
+)
 from review_preflight import (
     BUDGET_SUMMARY, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
     GROUP_TIER3, HOLISTIC_MIN_GROUPS, SKIPPED_SUMMARY,
@@ -74,6 +76,7 @@ from review_state import (
     pipeline_status,
     set_failures_section,
 )
+from text import plural
 
 DEFAULT_MAX_COST = 20.0
 
@@ -298,11 +301,20 @@ def _phase_synthesis(
     max_turns = _synthesis_max_turns(merged_content)
     runner = PhaseRunner(job, Phase.SYNTHESIS)
     synthesis_log = runner.session_log
+    # The same reconciliation the run ends with, asked one phase early, while
+    # there is still an agent that can act on the answer. Afterwards the only
+    # thing left to do about a prior finding nobody accounted for is report it.
+    unaccounted = passed_over(job.prior_review, merged_content, job.wt_path, job.pr.head_sha)
+    if unaccounted:
+        log.dim(
+            f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "
+            "— synthesis is asked to settle them"
+        )
     try:
         prompt = build_prompt(
             Phase.SYNTHESIS, job, max_turns=max_turns,
             holistic_content=holistic_content, group_count=group_count,
-            merged_content=merged_content,
+            merged_content=merged_content, unaccounted_prior=unaccounted,
         )
     except PromptTooLarge as exc:
         # The group findings are already on disk; the synthesis agent only

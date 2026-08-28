@@ -26,7 +26,7 @@ ${delta_section}
 9. Add any cross-cutting findings
 10. Omit empty severity sections entirely
 11. Do NOT include a File Triage or Verdict section
-12. If the merged findings contain a ## Prior findings section, copy it into your output verbatim — it records which prior findings the group agents found fixed, and it is stripped before the review is published
+12. If the merged findings contain a ## Prior findings section, copy every line of it into your output unchanged — it records which prior findings the group agents found fixed, and it is stripped before the review is published. Add lines to it only where a section below asks you to
 13. Save the COMPLETE review file as described under ## Output below
 
 ## Output

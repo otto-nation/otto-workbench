@@ -261,6 +261,16 @@ a finished conversation, so don't publish before the discussion is done. A
 drafted run recorded nothing as posted, so the queue is intact — never re-run
 `--fix` to get back to it.
 
+The finish phase also reconciles what it fetches against the recorded outcomes,
+and grades what it finds. A thread carrying a reply of ours that names a verdict
+is recorded as fixed. A thread that is merely resolved on GitHub, with no such
+reply, is recorded as `settled_elsewhere`: nothing is owed on it, but nothing is
+claimed either, so it is counted apart from `fixed`, attributed to no commit,
+and never filed to the tracking issue. That bucket is a reconciliation result
+rather than a fix-pass one, so it appears in the summary comment and the state
+file — not in the `fix_pass` object `--fix` prints, which is built before the
+finish phase runs.
+
 **Preview the closeout first whenever you are passing `--track`.** The tracking
 issue body and the deferral replies are the exception to Step 3's drafts: the
 finish phase builds them, so the fix pass never printed them and the user has

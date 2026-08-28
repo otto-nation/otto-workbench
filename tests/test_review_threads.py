@@ -34,7 +34,7 @@ from proc import CmdResult
 from pr_comments_state import ThreadState
 from pr_comments_fix import FixSummary
 from pr_domains import SupersessionKind
-from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome
+from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome, SettledBy
 from pr_state import PRIdentity, PRState
 from pr_thread_models import (
     CommentItem, PRReport, ReportThread, TrackingResult, TriageResult,
@@ -1586,11 +1586,31 @@ class TestSummaryUsesPerThreadCommit:
             rt,
             ItemOutcome(id="t1", summary="fixed by hand", file="a.py", line=1,
                           outcome=FixOutcome.FIXED,
+                          settled_by=SettledBy.RECONCILIATION,
                           reason=rt._RECONCILED_REASON),
             commit_sha="def5678", commit_status="pushed",
         )
         assert "Fixed in" not in body
         assert "Addressed outside the fix pass" in body
+
+    def test_a_thread_settled_on_the_forge_is_a_row_but_not_a_fix(self, rt):
+        """The bug this member exists for: resolution counted as work done.
+
+        The row is shown — the thread is no longer owed and the reader should
+        see that — but it is reported under its own word, and the fixed tally
+        never sees it.
+        """
+        body = self._post(
+            rt,
+            ItemOutcome(id="t1", summary="deferred by the reviewer", file="a.py", line=1,
+                          outcome=FixOutcome.SETTLED_ELSEWHERE,
+                          settled_by=SettledBy.RECONCILIATION,
+                          reason=rt._RECONCILED_REASON),
+            commit_sha="def5678", commit_status="pushed",
+        )
+        assert rt._RECONCILED_STATUS_TEXT in body
+        assert "fixed**" not in body
+        assert "1 settled elsewhere" in body
 
     def test_a_thread_with_no_sha_does_not_borrow_the_pass(self, rt):
         """The pass committed; this row is not in that commit, so it says so.
@@ -1777,8 +1797,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         """N fixes and no commit is caught, not rendered quietly."""
         cp = rt.CommitPushResult(None, "commit_failed", "hook")
         rt._warn_unattributed_fixes(
-            [CommentItem(id="t1", summary="fix it", file="a.py", line=1)],
-            cp, "owner/repo",
+            [CommentItem(id="t1", summary="fix it", file="a.py", line=1)], cp,
         )
         assert "no commit to attribute" in capsys.readouterr().err
 
@@ -1793,10 +1812,10 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
     """
 
     @staticmethod
-    def _outcome(tid, file, line, reason=""):
+    def _outcome(tid, file, line, settled_by=SettledBy.PASS):
         return ItemOutcome(
-            id=tid, file=file, line=line,
-            summary=f"{tid} summary", outcome=FixOutcome.FIXED, reason=reason,
+            id=tid, file=file, line=line, summary=f"{tid} summary",
+            outcome=FixOutcome.FIXED, settled_by=settled_by,
         )
 
     def _publish(self, rt, threads):
@@ -1828,7 +1847,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
             self._outcome("ic-500-1", "f.go", 10),
             # Settled outside the pass. Uncitable, but the cell says where the
             # fix went, so it is no contradiction to report.
-            self._outcome("t3", "h.go", 30, reason=rt._RECONCILED_REASON),
+            self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION),
         ]
 
     def test_the_count_equals_the_rows_rendered_without_a_claim(self, rt, capsys):
@@ -1856,7 +1875,7 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
     def test_a_table_with_nothing_to_report_stays_quiet(self, rt, capsys):
         """Every row folded or settled leaves no contradiction to warn about."""
         body = self._publish(rt, [
-            self._outcome("t3", "h.go", 30, reason=rt._RECONCILED_REASON),
+            self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION),
         ])
         assert rt._RECONCILED_STATUS_TEXT in body
         assert "no commit to attribute" not in capsys.readouterr().err
@@ -1904,6 +1923,46 @@ class TestRoundContentHasContent:
         it computed as empty must not thereby claim the round has a table.
         """
         assert self._has(content, fixed=[]) is False
+
+
+class TestEveryVerdictReachesTheTable:
+    """A bucket with no branch in the renderer is a row nobody ever reads.
+
+    That is the shape the settled-elsewhere defect had before it had a bucket:
+    the outcome existed, the record held it, and the summary the reviewer read
+    accounted for it under somebody else's heading.
+    """
+
+    # The CI pass's word for an item it refuses to look at on sight. The comment
+    # pass has no such items — every thread triage keeps is attempted — so the
+    # comment summary has no wording for it and no bucket to put it in.
+    _NOT_THE_COMMENT_PASS = frozenset({FixOutcome.SKIPPED})
+
+    def test_each_verdict_renders_exactly_one_row_and_is_counted_once(
+        self, rt, content,
+    ):
+        """The row and the tally are asserted together, over the whole enum.
+
+        They are the pairing that can disagree: a verdict can reach the table
+        under a heading and still be added to `**N fixed**`, or be counted and
+        never printed. Sweeping the enum is what makes the next member fail
+        here rather than land silently in somebody else's bucket.
+        """
+        verdicts = [o for o in FixOutcome if o not in self._NOT_THE_COMMENT_PASS]
+        buckets = {
+            o.value: [CommentItem(id=f"t{n}", file="a.py", line=n,
+                                  reviewer="kgn", summary=f"point {n}")]
+            for n, o in enumerate(verdicts, start=1)
+        }
+        body = rt._build_summary_body(
+            content(**buckets), rt.CommitPushResult("abc1234", "pushed", ""),
+            "owner/repo", 42, {},
+        )
+        assert [f"point {n}" in body for n in range(1, len(verdicts) + 1)] == (
+            [True] * len(verdicts)
+        )
+        counts = next(ln for ln in body.split("\n") if "fixed**" in ln)
+        assert sum(int(n) for n in re.findall(r"\d+", counts)) == len(verdicts)
 
 
 class TestRoundContentNeedsAPerson:
@@ -2518,6 +2577,26 @@ class TestPendingFixReplies:
         with patch("pr_comments.post_thread_reply") as mock_reply:
             rt._post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
+
+    def test_a_thread_settled_on_the_forge_is_neither_replied_to_nor_resolved(
+        self, rt, publishing_on,
+    ):
+        """We know nothing about it beyond that somebody else closed it.
+
+        A reply would claim a verdict the pass never reached, and resolving a
+        thread the reviewer may have deferred by hand would close their own
+        open question on their behalf.
+        """
+        fix, threads_by_id = self._queue(commit_status="pushed", replies_pending=True)
+        fix.fix.items[0].outcome = FixOutcome.SETTLED_ELSEWHERE
+        fix.fix.items[0].settled_by = SettledBy.RECONCILIATION
+        state = _make_state(fix)
+        with patch.object(rt.push, "holds", return_value=True), \
+             patch("pr_comments.post_thread_reply", return_value=True) as mock_reply, \
+             patch("pr_comments.resolve_thread", return_value=True) as mock_resolve:
+            rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
+        mock_reply.assert_not_called()
+        mock_resolve.assert_not_called()
 
     def test_draft_run_keeps_the_queue_for_a_later_post(self, rt):
         fix, threads_by_id = self._queue(commit_status="push_failed", summary_deferred=True)
@@ -3524,12 +3603,34 @@ class TestReconcileFixSnapshot:
         kw.setdefault("is_resolved", False)
         return ReportThread(id="t1", comments=comments, **kw)
 
-    def test_resolved_thread_is_reclaimed(self, rt):
+    def test_a_resolved_thread_is_settled_but_not_claimed_as_fixed(self, rt):
+        """The resolve button is not evidence of a fix.
+
+        It is pressed for a thread that was answered, deferred by agreement, or
+        withdrawn by the reviewer just as readily as one whose fix landed. The
+        row leaves the deferred bucket — nobody owes it — under a verdict that
+        claims no more than the evidence does.
+        """
         state = self._state()
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
         assert rt._reconcile_fix_snapshot(state, threads) == 1
-        assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
+        assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
+
+    def test_a_reconciled_row_records_who_settled_it(self, rt):
+        """Provenance, not the wording of `reason`, is what a renderer reads."""
+        state = self._state()
+        threads = {"t1": self._thread([{"body": "x"}],
+                                      state=ThreadState.RESOLVED, is_resolved=True)}
+        rt._reconcile_fix_snapshot(state, threads)
+        assert state.fix.fix.items[0].settled_by is SettledBy.RECONCILIATION
+
+    def test_an_addressed_thread_is_settled_but_not_claimed_as_fixed(self, rt):
+        """Lifecycle state alone says as little as the resolve button does."""
+        state = self._state()
+        threads = {"t1": self._thread([{"body": "x"}], state=ThreadState.ADDRESSED)}
+        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
 
     def test_thread_with_a_fix_reply_is_reclaimed_even_if_unresolved(self, rt):
         """The 13 contradicted threads on the incident PR all looked like this."""
@@ -3569,14 +3670,19 @@ class TestReconcileFixSnapshot:
         assert state.fix.fix.items[0].outcome == FixOutcome.DEFERRED
 
     def test_a_needs_human_thread_settled_by_hand_is_reclaimed(self, rt):
-        """The pass handed it to the operator; the operator answering it is the ending."""
+        """The pass handed it to the operator; the operator answering it is the ending.
+
+        Answering is exactly what the resolve button most often means on a
+        NEEDS_HUMAN thread, which is why the verdict it lands on says settled
+        rather than fixed.
+        """
         state = _make_state(_fix(head_sha="aaaaaaa", items=[
             ItemOutcome(id="t1", outcome=FixOutcome.NEEDS_HUMAN, reason="contested"),
         ]))
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
         assert rt._reconcile_fix_snapshot(state, threads) == 1
-        assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
+        assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
 
     def test_a_needs_human_thread_still_open_is_left_alone(self, rt):
         state = _make_state(_fix(head_sha="aaaaaaa", items=[
@@ -3599,7 +3705,7 @@ class TestReconcileFixSnapshot:
         threads = {"t1": self._thread([{"body": "x"}],
                                       state=ThreadState.RESOLVED, is_resolved=True)}
         assert rt._reconcile_fix_snapshot(state, threads) == 1
-        assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
+        assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
         assert "reconciled" in state.fix.fix.items[0].reason
 
     def test_a_declined_thread_still_open_is_left_alone(self, rt):
@@ -3612,9 +3718,14 @@ class TestReconcileFixSnapshot:
         assert state.fix.fix.items[0].outcome == FixOutcome.DECLINED
 
     def test_settled_outcomes_are_left_alone(self, rt):
-        """Only the open actions are reconcilable — the rest are already decided."""
+        """Only the open actions are reconcilable — the rest are already decided.
+
+        SETTLED_ELSEWHERE is among them: it is what a previous reconciliation
+        wrote, and asking the same question of the same resolved thread again
+        would re-flip a row nobody owes on every `--finish`.
+        """
         settled = (FixOutcome.FIXED, FixOutcome.DISMISSED,
-                   FixOutcome.ALREADY_ADDRESSED)
+                   FixOutcome.ALREADY_ADDRESSED, FixOutcome.SETTLED_ELSEWHERE)
         state = _make_state(_fix(head_sha="aaaaaaa", items=[
             ItemOutcome(id=f"t{i}", outcome=o)
             for i, o in enumerate(settled)
@@ -3680,7 +3791,8 @@ class TestReconcileRunsBeforeTheWrites:
                 patch.object(rt, "_render_deferred_summary"):
             rt._finish_deferred_work(ctx, report)
         on_disk = pr_state.load_state(worktree / "target")
-        assert on_disk.fix.fix.items[0].outcome == FixOutcome.FIXED
+        assert on_disk.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
+        assert on_disk.fix.fix.items[0].settled_by is SettledBy.RECONCILIATION
 
 
 class TestStaleSnapshotIsAnnounced:
@@ -4326,7 +4438,7 @@ class TestSettledRowsAreNotCreditedToThePass:
 
     def test_an_uncitable_settled_row_says_the_work_was_handled(self, rt):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
-                            reason=rt._SETTLED_REASON)
+                            settled_by=SettledBy.OPERATOR)
         cp = rt.CommitPushResult("aaa1111", "pushed", "")
         cell = rt._fixed_status_for(entry, cp, "owner/repo")
         assert cell == rt._RECONCILED_STATUS_TEXT
@@ -4334,11 +4446,25 @@ class TestSettledRowsAreNotCreditedToThePass:
 
     def test_a_settled_row_that_resolved_a_commit_cites_that_one(self, rt):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
-                            reason=rt._SETTLED_REASON, commit_sha="bbb2222")
+                            settled_by=SettledBy.OPERATOR, commit_sha="bbb2222")
         cp = rt.CommitPushResult("aaa1111", "pushed", "")
         cell = rt._fixed_status_for(entry, cp, "owner/repo")
         assert "bbb2222" in cell
         assert "aaa1111" not in cell
+
+    def test_the_reason_wording_no_longer_decides_the_cell(self, rt):
+        """Provenance decides, not prose.
+
+        The reason text used to be the whole signal, so an entry the pass itself
+        settled would claim the work went somewhere else on the strength of a
+        sentence written for a reviewer to read.
+        """
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
+                            reason=rt._RECONCILED_REASON)
+        cp = rt.CommitPushResult("aaa1111", "pushed", "")
+        assert rt._fixed_status_for(entry, cp, "owner/repo") == (
+            rt._UNATTRIBUTED_STATUS_TEXT
+        )
 
 
 # ── _post_deferred_replies ────────────────────────────────────────────────
@@ -4884,6 +5010,49 @@ class TestTriageResultFromDict:
         assert result.comment_items == [CommentItem(id="c1")]
         assert result.stats.total == 3
         assert result.stats.actionable == 2
+
+    def test_an_invented_enum_value_degrades_to_a_default_item(self):
+        """The entry's own fields are enums now, and serde raises on a bad one.
+
+        Neither key is in the triage schema, so a model emitting one has made
+        it up — and one invented field must not take the whole batch down.
+        """
+        result = triage_result_from_dict({
+            "threads": [{"id": "t1", "settled_by": "the-reviewer"},
+                        {"id": "t2", "summary": "real"}],
+        })
+        assert result.threads == [CommentItem(), CommentItem(id="t2", summary="real")]
+
+
+class TestAnEntryAndAnOutcomeAreInverses:
+    """What goes out through `to_outcome` comes back through `from_outcome`.
+
+    The verdict and its provenance are the pair a renderer reads before it
+    credits the running pass's commit for a row, so a drain that dropped either
+    would leave the reply and the summary reasoning from different records.
+    """
+
+    def test_the_verdict_and_its_provenance_survive_the_round_trip(self):
+        outcome = ItemOutcome(
+            id="t1", file="a.py", line=7, summary="fix it",
+            outcome=FixOutcome.SETTLED_ELSEWHERE,
+            settled_by=SettledBy.RECONCILIATION,
+            reason="reconciled: handled outside the fix pass",
+            commit_sha="abc1234", read_sha="def5678",
+        )
+        assert CommentItem.from_outcome(outcome).to_outcome() == outcome
+
+    def test_an_entry_nobody_decided_records_as_still_owed(self):
+        """An entry triage just built carries no verdict, and defaults to owed."""
+        recorded = CommentItem(id="t1", summary="fix it").to_outcome()
+        assert recorded.outcome is FixOutcome.DEFERRED
+        assert recorded.settled_by is SettledBy.PASS
+
+    def test_an_explicit_verdict_outranks_the_one_the_entry_carries(self):
+        entry = CommentItem.from_outcome(
+            ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED),
+        )
+        assert entry.to_outcome(FixOutcome.FIXED).outcome is FixOutcome.FIXED
 
 
 # ── _classify_triage_entries (complexity) ──────────────────────────────────
@@ -5637,13 +5806,43 @@ class TestActionCellOutcome:
     """
 
     def test_every_fix_status_reads_as_fixed(self, rt):
+        """Every wording but one, which says the fix landed out of the pass's reach."""
         for status in CommitStatus:
+            expected = (
+                FixOutcome.SETTLED_ELSEWHERE if status == CommitStatus.RECONCILED
+                else FixOutcome.FIXED
+            )
             cp = rt.CommitPushResult("9f2e1a0", status, "")
             assert rt._action_outcome(
-                rt._fixed_status_text(cp, "owner/repo")) is FixOutcome.FIXED
+                rt._fixed_status_text(cp, "owner/repo")) is expected
             bare = rt.CommitPushResult(None, status, "")
             assert rt._action_outcome(
-                rt._fixed_status_text(bare, "owner/repo")) is FixOutcome.FIXED
+                rt._fixed_status_text(bare, "owner/repo")) is expected
+
+    def test_every_cell_a_status_builder_can_emit_is_one_we_recognise(self, rt):
+        """A wording with no entry reads as hand-written and freezes its row.
+
+        Swept over the builders rather than listed, because the list is what
+        goes stale: the wording is added in one place and the table it has to be
+        registered in is somewhere else entirely.
+        """
+        entry = CommentItem(id="t1", summary="s", file="a.py", line=1)
+        settled = CommentItem(id="t2", summary="s", file="a.py", line=1,
+                              settled_by=SettledBy.RECONCILIATION)
+        cells = [
+            rt._fixed_status_for(e, rt.CommitPushResult(sha, status, ""), "owner/repo")
+            for status in CommitStatus
+            for sha in ("9f2e1a0", None)
+            for e in (entry, settled)
+        ]
+        cells += [
+            rt._addressed_status_for(
+                rt.AddressedFraming(in_response=r, sha=sha), "owner/repo",
+            )
+            for r in (True, False)
+            for sha in ("9f2e1a0", "")
+        ]
+        assert [c for c in cells if rt._action_outcome(c) is None] == []
 
     def test_a_fix_reported_two_ways_reads_the_same(self, rt):
         """The false positive a cell comparison produces: same outcome, two
@@ -5661,7 +5860,7 @@ class TestActionCellOutcome:
         ("Dismissed (invalid)", FixOutcome.DISMISSED),
         ("Deferred", FixOutcome.DEFERRED),
         ("Deferred → ENG-1", FixOutcome.DEFERRED),
-        ("Addressed outside the fix pass", FixOutcome.FIXED),
+        ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE),
         ("Added to the PR description (no commit)", FixOutcome.FIXED),
     ])
     def test_the_literal_cells_read_as_their_outcome(self, rt, cell, outcome):
@@ -6867,7 +7066,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
         cp = _undetermined_pass(rt, hand_landed_branch)
         with patch.object(rt, "_resolve_default_branch", return_value="main"):
             rt._warn_unattributed_fixes(
-                [_row("t1", 1, "first point")], cp, "owner/repo", None,
+                [_row("t1", 1, "first point")], cp, None,
                 rt.AddressingHistory(hand_landed_branch.path),
                 {"t1": _reviewed("t1", 111)},
             )
@@ -6879,7 +7078,7 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
         cp = _undetermined_pass(rt, hand_landed_branch)
         with patch.object(rt, "_resolve_default_branch", return_value="main"):
             rt._warn_unattributed_fixes(
-                [_row("t3", 3, "third point")], cp, "owner/repo", None,
+                [_row("t3", 3, "third point")], cp, None,
                 rt.AddressingHistory(hand_landed_branch.path),
                 {"t3": _reviewed("t3", 333)},
             )
@@ -6887,18 +7086,18 @@ class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
 
 
 class TestRowsTheFixPassDidNotLandCiteNoCommit:
-    """A reason saying "handled outside the pass" outranks the line history.
+    """A row somebody else settled outranks the line history.
 
     The resolver above answers "which commit changed the line this thread is
     anchored to, after the reviewer asked". For a row the pass fixed that is
-    evidence. For a row it did not, it is a coincidence: reconciliation stamps
-    `fixed` on any thread that merely looks settled on GitHub — resolved covers
-    answered, deferred and declined — so a busy file's newest commit was
+    evidence. For a row it did not, it is a coincidence: reconciliation used to
+    stamp `fixed` on any thread that merely looked settled on GitHub — resolved
+    covers answered, deferred and declined — so a busy file's newest commit was
     credited to a thread whose own standing reply said it was tracked elsewhere
     rather than fixed here.
 
     Same tree as the class above, so the only difference between a cited row and
-    an uncited one is the reason recorded on it.
+    an uncited one is who the record says settled it.
     """
 
     def test_a_reconciled_row_declines_the_commit_that_touched_its_line(
@@ -6906,7 +7105,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
     ):
         body = _summary_over(
             rt, content, hand_landed_branch,
-            [_row("t1", 1, "first point", reason=rt._RECONCILED_REASON)],
+            [_row("t1", 1, "first point", settled_by=SettledBy.RECONCILIATION)],
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
@@ -6916,7 +7115,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         """`--settle` already promises this cell when no commit resolves."""
         body = _summary_over(
             rt, content, hand_landed_branch,
-            [_row("t1", 1, "first point", reason=rt._SETTLED_REASON)],
+            [_row("t1", 1, "first point", settled_by=SettledBy.OPERATOR)],
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
@@ -6925,15 +7124,16 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
     def test_the_reply_declines_the_commit_the_table_declined(
         self, rt, hand_landed_branch,
     ):
-        """The drain path carries the reason in `reasoning`, and it counts too.
+        """The drain path carries the provenance, and the reply reads it too.
 
-        `CommentItem.from_outcome` puts it there for the reply templates, so a
-        predicate reading only `reason` would leave the reply citing a commit
-        the summary row beside it refuses to name.
+        `CommentItem.from_outcome` copies `settled_by` off the record for
+        exactly this: a reply built from a replayed entry has to reach the same
+        answer the summary row beside it reaches, and the reason text it also
+        carries is prose for the reviewer rather than a signal.
         """
         branch = hand_landed_branch
         entry = CommentItem(id="t1", summary="first point", file="a.py", line=1,
-                            reasoning=rt._RECONCILED_REASON)
+                            settled_by=SettledBy.RECONCILIATION)
         with patch.object(rt, "_resolve_default_branch", return_value="main"), \
              patch("pr_comments.post_thread_reply", return_value=True) as post:
             rt._reply_to_fixed(
@@ -6943,6 +7143,17 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         reply = post.call_args[0][3]
         assert branch.first[:7] not in reply
         assert "/commit/" not in reply
+
+    def test_a_row_the_pass_settled_is_cited_however_its_reason_reads(
+        self, rt, content, hand_landed_branch,
+    ):
+        """The reason channel is dead: prose alone withholds no commit."""
+        body = _summary_over(
+            rt, content, hand_landed_branch,
+            [_row("t1", 1, "first point", reason=rt._RECONCILED_REASON)],
+            {"t1": _reviewed("t1", 111)},
+        )
+        assert f"Fixed in [`{hand_landed_branch.first}`]" in body
 
     def test_acted_entry_with_a_handled_outside_reason_still_reads_applied(
         self, rt, hand_landed_branch,
@@ -6961,7 +7172,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         """
         branch = hand_landed_branch
         entry = CommentItem(id="t3", summary="third point", file="a.py", line=3,
-                            reasoning=rt._RECONCILED_REASON)
+                            settled_by=SettledBy.RECONCILIATION)
         with patch.object(rt, "_resolve_default_branch", return_value="main"), \
                 patch("pr_comments.post_thread_reply", return_value=True) as post:
             rt._reply_to_fixed(
@@ -6979,30 +7190,39 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         """Only inference is refused. A SHA `--settle` resolved is a record."""
         body = _summary_over(
             rt, content, hand_landed_branch,
-            [_row("t1", 1, "first point", reason=rt._SETTLED_REASON,
+            [_row("t1", 1, "first point", settled_by=SettledBy.OPERATOR,
                   commit_sha=hand_landed_branch.second)],
             {"t1": _reviewed("t1", 111)},
         )
         assert f"Fixed in [`{hand_landed_branch.second}`]" in body
 
-    def test_a_row_with_no_such_reason_still_cites_its_line(
+    def test_a_row_the_pass_itself_settled_still_cites_its_line(
         self, rt, content, hand_landed_branch,
     ):
-        """The control: the decline is the reason's doing, not the fixture's."""
+        """The control: the decline is the provenance's doing, not the fixture's."""
         body = _summary_over(
             rt, content, hand_landed_branch, [_row("t1", 1, "first point")],
             {"t1": _reviewed("t1", 111)},
         )
         assert f"Fixed in [`{hand_landed_branch.first}`]" in body
 
-    @pytest.mark.parametrize("field", ["reason", "reasoning"])
-    def test_both_reason_fields_are_read(self, rt, field):
-        for text in (rt._RECONCILED_REASON, rt._SETTLED_REASON):
-            assert rt._handled_outside(CommentItem(id="t1", **{field: text}))
+    @pytest.mark.parametrize(
+        "settled_by", [SettledBy.RECONCILIATION, SettledBy.OPERATOR],
+    )
+    def test_every_provenance_but_the_pass_reads_as_handled_outside(
+        self, rt, settled_by,
+    ):
+        assert rt._handled_outside(CommentItem(id="t1", settled_by=settled_by))
 
-    def test_an_ordinary_reason_is_not_one_of_them(self, rt):
-        assert not rt._handled_outside(CommentItem(id="t1", reason="agent gave up"))
+    def test_the_pass_own_entry_is_not_one_of_them(self, rt):
+        """Including one whose reason happens to read like the reconciler's."""
         assert not rt._handled_outside(CommentItem(id="t1"))
+        assert not rt._handled_outside(
+            CommentItem(id="t1", reason=rt._RECONCILED_REASON),
+        )
+        assert not rt._handled_outside(
+            CommentItem(id="t1", reasoning=rt._SETTLED_REASON),
+        )
 
 
 # ── default-branch resolution in commit lookups ────────────────────────────
@@ -7582,12 +7802,52 @@ class TestCommentItemsSettleThroughTheirSource:
             content(needs_human=needs_human), CommitStatus.PUSHED, False) is True
 
     def test_an_item_restating_a_settled_thread_settles_with_it(self, rt):
-        """The duplicate is one finding; one of its two copies being closed closes it."""
+        """The duplicate is one finding; one of its two copies being closed closes it.
+
+        It inherits the thread's grade with it: the copy cannot be better
+        evidence than the thread it is a copy of, and that thread has only its
+        resolve button to show.
+        """
         state = self._state()
         threads = {"t1": ReportThread(
             id="t1", file="a.go", line=7, reviewer="kgn",
             state=ThreadState.RESOLVED, is_resolved=True, comments=[{"body": "x"}],
         )}
+        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert state.fix.fix.items[0].outcome == FixOutcome.SETTLED_ELSEWHERE
+
+    def test_an_item_restating_a_thread_we_replied_to_inherits_the_fix(self, rt):
+        """A standing reply of ours names the verdict, and the copy gets it."""
+        state = self._state()
+        threads = {"t1": ReportThread(
+            id="t1", file="a.go", line=7, reviewer="kgn",
+            state=ThreadState.NEW, is_resolved=False,
+            comments=[{"body": "Applied: dropped the retry\n\nFixed in `abc1234`."}],
+        )}
+        assert rt._reconcile_fix_snapshot(state, threads) == 1
+        assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
+
+    @pytest.mark.parametrize("resolved_first", [True, False])
+    def test_the_stronger_evidence_at_a_location_wins(self, rt, resolved_first):
+        """Two threads on one line, one merely resolved and one we answered.
+
+        The location carries one verdict, so the grades have to be ordered
+        rather than left to whichever thread the map happened to visit last.
+        Both insertion orders run: a last-write-wins fold passes one of them.
+        """
+        state = self._state()
+        resolved = ReportThread(
+            id="t1", file="a.go", line=7, reviewer="kgn",
+            state=ThreadState.RESOLVED, is_resolved=True,
+            comments=[{"body": "x"}],
+        )
+        answered = ReportThread(
+            id="t2", file="a.go", line=7, reviewer="kgn",
+            state=ThreadState.NEW, is_resolved=False,
+            comments=[{"body": "Applied: dropped the retry\n\nFixed in `abc`."}],
+        )
+        pair = [resolved, answered] if resolved_first else [answered, resolved]
+        threads = {t.id: t for t in pair}
         assert rt._reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 

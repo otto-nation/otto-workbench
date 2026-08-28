@@ -339,7 +339,7 @@ def _retry(
         trail.info(
             "fix_retry", "retry pass complete",
             data={
-                "fixed": _count(batch.outcomes, FixOutcome.FIXED),
+                "fixed": sum(1 for o in batch.outcomes if o.outcome.counts_as_fixed),
                 "still_deferred": _count(batch.outcomes, FixOutcome.DEFERRED),
             },
         )
@@ -388,12 +388,12 @@ def _stamp(outcomes: list[ItemOutcome], read_sha: str, commit_sha: str) -> None:
 
     Both SHAs are the engine's to supply: an adapter assembling them would be
     reading the branch a second time, and a fix pass is the only thing that
-    knows which commit its own work went into. Only a fix carries the commit —
-    a declined item is not in it.
+    knows which commit its own work went into. Only an outcome that may cite a
+    commit carries one — a declined item is not in it.
     """
     for outcome in outcomes:
         outcome.read_sha = read_sha
-        if outcome.outcome is FixOutcome.FIXED and commit_sha:
+        if outcome.outcome.may_cite_a_commit and commit_sha:
             outcome.commit_sha = commit_sha
 
 

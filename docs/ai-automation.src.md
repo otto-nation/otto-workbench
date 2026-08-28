@@ -233,9 +233,9 @@ Three things follow, and the first two were bugs —
 omitting it is the worst row to lose. It renders as open, with its reason, in
 every summary a round posts — an open question a reader has to walk the comment
 chain to find is one they will not find. If the operator settled it outside the
-tool — answered the thread, fixed it by hand — `--finish` reconciles the
-snapshot against GitHub first and the row credits that work instead of reporting
-a discussion that already happened.
+tool, `--finish` reconciles the snapshot against GitHub first and grades what
+it finds: a reply of ours naming the verdict credits a fix, a bare resolution
+records `settled_elsewhere` — no fixed tally, no commit, nothing owed.
 
 **A decomposed comment item reconciles through the comment it came from.** An
 item split out of a top-level comment has a synthetic id and no review thread,

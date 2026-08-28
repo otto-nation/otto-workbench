@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import serde
 from pr_comments_state import ThreadState
-from pr_fix import FixOutcome, ItemOutcome
+from pr_fix import FixOutcome, ItemOutcome, SettledBy
 
 
 # ── Core types ─────────────────────────────────────────────────────────────
@@ -58,6 +58,13 @@ class CommentItem:
     # whatever code inherited the number. Empty means "not recorded", which
     # reads as "cannot anchor".
     read_sha: str = ""
+    # What decided this entry, and who decided it. Both are the record's answer
+    # rather than the item's, so they are set only on the replay path — an entry
+    # triage just built is the running pass's own work and holds the defaults.
+    # A renderer asks `settled_by` before crediting the pass's commit for a row;
+    # without the field it would have to recognise the prose in `reason`.
+    outcome: FixOutcome | None = None
+    settled_by: SettledBy = SettledBy.PASS
 
     def __post_init__(self) -> None:
         self.line = int(self.line or 0)
@@ -69,21 +76,28 @@ class CommentItem:
         return bool(self.evidence_file) and self.evidence_line > 0
 
     def to_outcome(
-        self, outcome: FixOutcome, reason: str = "",
+        self, outcome: FixOutcome | None = None, reason: str = "",
     ) -> ItemOutcome:
         """This entry as the record writes it — everything but the reviewer.
+
+        `outcome` is the verdict to record. Omitting it records the one the entry
+        already carries, which is how a round drained from state writes back what
+        it read; an entry carrying none is work nobody decided, and records as
+        DEFERRED for the reason `ItemOutcome` defaults that way.
 
         The login is the item as GitHub handed it over rather than a fact about
         what the pass did, so it is recorded beside the record in
         `FixSummary.reviewers` and does not travel here. `from_outcome` is what
-        puts the two back together.
+        puts the two back together, and the two are inverses: what goes out
+        through one comes back through the other, provenance included.
         """
         return ItemOutcome(
             id=self.id,
             file=self.file,
             line=self.line,
             summary=self.summary,
-            outcome=outcome,
+            outcome=outcome or self.outcome or FixOutcome.DEFERRED,
+            settled_by=self.settled_by,
             reason=reason or self.reason or self.reasoning,
             commit_sha=self.commit_sha,
             read_sha=self.read_sha,
@@ -105,6 +119,11 @@ class CommentItem:
         body of the reply — while the summary table and the tracking issue read
         `reason`, so the caller names the one its surface will look at rather
         than filling both and letting a renderer pick the wrong half.
+
+        The verdict and its provenance travel too. A renderer holding a replayed
+        entry has to know whether the running pass is the thing that settled it
+        before it credits that pass's commit, and the only other trace of that
+        is the wording of `reason`.
         """
         return cls(
             id=outcome.id,
@@ -114,6 +133,8 @@ class CommentItem:
             summary=outcome.summary,
             commit_sha=outcome.commit_sha,
             read_sha=outcome.read_sha,
+            outcome=outcome.outcome,
+            settled_by=outcome.settled_by,
             **{reason_field: outcome.reason},
         )
 
@@ -280,10 +301,22 @@ def _lenient_from_dict(cls, raw):
     pass — should not crash for the whole PR over one malformed field.
     Neither `CommentItem` nor `TriageStats` has a required field, so the only
     way this raises is the non-dict case, not a missing-field one.
+
+    `ValueError` is caught beside it because `CommentItem` carries enum fields
+    the replay path sets, and `serde` raises rather than defaulting for an enum
+    value it does not recognise. Those keys are not in the triage schema, so a
+    model emitting one has invented it — that entry defaults rather than taking
+    the batch down with it.
+
+    Catching it widens the net past the enums, and deliberately: `__post_init__`
+    coerces `line`, `index` and `evidence_line` with `int()`, which raises the
+    same way for a model that writes `"line": "abc"`. That used to crash the
+    pass over one unreadable number, which is the outcome this helper exists to
+    prevent — a malformed field costs the entry, not the PR.
     """
     try:
         return serde.from_dict(cls, raw)
-    except TypeError:
+    except (TypeError, ValueError):
         return cls()
 
 

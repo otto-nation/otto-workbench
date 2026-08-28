@@ -714,7 +714,7 @@ class CIFixAdapter(fix_engine.FixAdapter):
         The push is gated, so a run without `--post` commits the fixes and
         drafts the push instead of making it.
         """
-        fixed = sum(1 for o in outcomes if o.outcome is FixOutcome.FIXED)
+        fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         msg = "fix: address CI failures"
         if fixed:
             msg += f"\n\n{fixed} fixed, {len(outcomes) - fixed} skipped"
@@ -819,7 +819,7 @@ def _run_fix(trail, report: dict, ctx) -> int:
 
     run = fix_engine.run(adapter, trail=trail)
 
-    fixed = sum(1 for o in run.outcomes if o.outcome is FixOutcome.FIXED)
+    fixed = sum(1 for o in run.outcomes if o.outcome.counts_as_fixed)
     unresolved = len(run.outcomes) - fixed
     trail.info(
         "fix_result", f"{fixed} fixed, {unresolved} skipped",

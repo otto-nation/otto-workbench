@@ -129,7 +129,7 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding]) -> str:
     lines: list[str] = []
     _block(lines, "Fixed:", [
         (o.id, _describe(findings.get(o.id), o))
-        for o in outcomes if o.outcome is FixOutcome.FIXED
+        for o in outcomes if o.outcome.counts_as_fixed
     ])
     _block(lines, "Skipped:", [
         (o.id, o.reason or "no auto-fix")
@@ -212,7 +212,7 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
         written.add(finding_id)
         if finding.checked or finding.declined or is_skipped(finding):
             continue
-        if outcome.outcome is FixOutcome.FIXED:
+        if outcome.outcome.counts_as_fixed:
             lines[n] = line.replace("- [ ]", "- [x]", 1)
             continue
         note = _annotation(outcome)
@@ -296,7 +296,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         """
         self.changed = _agent_changed(str(self.workdir), self.before)
         self.summary = _summary(outcomes, self.findings)
-        fixed = sum(1 for o in outcomes if o.outcome is FixOutcome.FIXED)
+        fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"
         if fixed:

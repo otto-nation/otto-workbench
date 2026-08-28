@@ -436,31 +436,77 @@ project_repo_id() {
   printf '%s\n' "${shared:-$dir}"
 }
 
-# project_repo_leaders — one registered work tree per repo, with its repo id.
-# Prints `<repo id><TAB><work-tree path>` — the reverse of a registry line,
-# which is `<path><TAB><id>` — in registry order, the first surviving work
-# tree of each repo winning. The path is what a caller working per repo runs
-# against, and the id is what it records the result under.
+# project_repo_label REPO_ID — the directory REPO_ID's repository lives at.
 #
-# The leader is not stable and does not need to be: a repo-scoped migration's
-# state line names the id, so the leader changing between syncs — because the
-# previous one was removed — re-runs nothing. The id comes from the line when
-# the registry holds one, so a whole sweep costs no forks on a machine the sync
-# has already resolved.
-project_repo_leaders() {
+# The id is a shared git dir, so the repository is its parent whenever that dir
+# is named `.git` — a worktree container and an ordinary clone alike. Anything
+# else is printed back unchanged: a bare clone kept as `<name>.git`, and the
+# work tree standing for itself that `project_repo_id` falls back to.
+project_repo_label() {
+  local id="${1%/}"
+  if [[ "$id" == */.git && "$id" != "/.git" ]]; then
+    printf '%s\n' "${id%/.git}"
+    return 0
+  fi
+  printf '%s\n' "$id"
+}
+
+# project_repo_worktrees — every registered work tree, under the repo it belongs
+# to. Prints `<repo id><TAB><work-tree path>` — the reverse of a registry line,
+# which is `<path><TAB><id>` — with a repo's work trees consecutive, repos in
+# the order the registry first names one of theirs and each repo's work trees in
+# registry order.
+#
+# Grouping is the reading both the list and the machine profile want: a machine
+# that cuts a worktree per branch has one repository behind a dozen entries, and
+# a flat list of them says nothing about how many repos it actually holds. The
+# id comes from the line when the registry holds one, so a whole sweep costs no
+# forks on a machine the sync has already resolved.
+project_repo_worktrees() {
   local line path id
-  local -A seen=()
+  local -a order=()
+  local -A grouped=()
   while IFS= read -r line; do
     _split_project_line "$line" path id
     if [[ -z "$id" ]]; then
       id="$(project_repo_id "$path")"
     fi
-    if [[ -n "${seen[$id]:-}" ]]; then
+    if [[ -z "${grouped[$id]:-}" ]]; then
+      order+=("$id")
+      grouped[$id]="$path"
       continue
     fi
-    seen[$id]=1
-    printf '%s%s%s\n' "$id" "$_PROJECT_FIELD_SEP" "$path"
+    grouped[$id]+=$'\n'"$path"
   done < <(_project_registered_lines)
+
+  for id in "${order[@]}"; do
+    while IFS= read -r path; do
+      printf '%s%s%s\n' "$id" "$_PROJECT_FIELD_SEP" "$path"
+    done <<< "${grouped[$id]}"
+  done
+  return 0
+}
+
+# project_repo_leaders — one registered work tree per repo, with its repo id.
+# Prints the same `<repo id><TAB><work-tree path>` line `project_repo_worktrees`
+# does, keeping the first of each repo's — so the first surviving work tree of
+# each repo wins. The path is what a caller working per repo runs against, and
+# the id is what it records the result under.
+#
+# The leader is not stable and does not need to be: a repo-scoped migration's
+# state line names the id, so the leader changing between syncs — because the
+# previous one was removed — re-runs nothing. Read off the grouped list rather
+# than the registry so one function owns which repo a line belongs to.
+project_repo_leaders() {
+  local line id path last=""
+  while IFS= read -r line; do
+    _split_project_line "$line" id path
+    if [[ "$id" == "$last" ]]; then
+      continue
+    fi
+    last="$id"
+    printf '%s\n' "$line"
+  done < <(project_repo_worktrees)
   return 0
 }
 

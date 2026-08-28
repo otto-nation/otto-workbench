@@ -604,6 +604,51 @@ make_bare_worktree_layout() {
   [ "$output" = "$TMPDIR/plain" ]
 }
 
+@test "project_repo_worktrees puts a repo's worktrees together" {
+  # Registration order is arrival order, so one repo's checkouts are scattered
+  # through the file. Anything rendering the registry wants them consecutive.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_bare_worktree_layout "$TMPDIR/container"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\n%s\n%s\n' "$TMPDIR/container/main" "$TMPDIR/alpha" \
+    "$TMPDIR/container/feature" > "$PROJECTS_REGISTRY_FILE"
+
+  run project_repo_worktrees
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 3 ]
+  [ "${lines[0]}" = "$TMPDIR/container/.git"$'\t'"$TMPDIR/container/main" ]
+  [ "${lines[1]}" = "$TMPDIR/container/.git"$'\t'"$TMPDIR/container/feature" ]
+  [ "${lines[2]}" = "$TMPDIR/alpha/.git"$'\t'"$TMPDIR/alpha" ]
+}
+
+@test "project_repo_worktrees skips a worktree that is gone" {
+  # The same read-time drop every other consumer gets, so a removed checkout
+  # stops being rendered before the sync's prune gets to the line.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_bare_worktree_layout "$TMPDIR/container"
+  printf '%s\n%s\n' "$TMPDIR/container/main" "$TMPDIR/container/feature" \
+    > "$PROJECTS_REGISTRY_FILE"
+  rm -rf "$TMPDIR/container/feature"
+
+  run project_repo_worktrees
+  [ "$output" = "$TMPDIR/container/.git"$'\t'"$TMPDIR/container/main" ]
+}
+
+@test "a repo id names the directory its repository lives at" {
+  run project_repo_label "$TMPDIR/container/.git"
+  [ "$output" = "$TMPDIR/container" ]
+}
+
+@test "a repo id that is not a .git stands for itself" {
+  # A bare clone kept as <name>.git, and the work tree project_repo_id falls
+  # back to when git could name no shared dir — neither has a parent to climb to.
+  run project_repo_label "$TMPDIR/mirror.git"
+  [ "$output" = "$TMPDIR/mirror.git" ]
+
+  run project_repo_label "$TMPDIR/plain"
+  [ "$output" = "$TMPDIR/plain" ]
+}
+
 @test "project_repo_leaders names one worktree per repo" {
   mkdir -p "$WORKBENCH_STATE_DIR"
   make_bare_worktree_layout "$TMPDIR/container"
@@ -814,6 +859,47 @@ assert workbench_projects.register('$TMPDIR/alpha')
   [[ "$output" == *"$TMPDIR/alpha"* ]]
   [[ "$output" == *"$TMPDIR/beta"* ]]
   [[ "$output" == *"2 repo(s)"* ]]
+}
+
+@test "projects list groups a repo's worktrees under it" {
+  # The repos are what the count is of. A machine that cuts a worktree per
+  # branch used to read as a dozen separate projects.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_bare_worktree_layout "$TMPDIR/container"
+  printf '%s\n%s\n' "$TMPDIR/container/main" "$TMPDIR/container/feature" \
+    > "$PROJECTS_REGISTRY_FILE"
+
+  run "$REPO_ROOT/bin/otto-workbench" projects list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  $TMPDIR/container"* ]]
+  [[ "$output" == *"    main"* ]]
+  [[ "$output" == *"    feature"* ]]
+  [[ "$output" == *"1 repo(s), 2 work tree(s)"* ]]
+}
+
+@test "projects list names an ordinary clone once" {
+  # Its only work tree is the repo itself, so a line under it would repeat the
+  # line above it word for word.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\n' "$TMPDIR/alpha" > "$PROJECTS_REGISTRY_FILE"
+
+  run "$REPO_ROOT/bin/otto-workbench" projects list
+  [ "$status" -eq 0 ]
+  run grep -c "$TMPDIR/alpha" <<< "$output"
+  [ "$output" = "1" ]
+}
+
+@test "projects list writes a path under HOME with a tilde" {
+  # The replacement is tilde-expanded before it is substituted in, so an
+  # unescaped ~ puts $HOME back and every path printed in full.
+  mkdir -p "$WORKBENCH_STATE_DIR"
+  make_repo "$TMPDIR/alpha"
+  printf '%s\n' "$TMPDIR/alpha" > "$PROJECTS_REGISTRY_FILE"
+
+  HOME="$TMPDIR" run "$REPO_ROOT/bin/otto-workbench" projects list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"~/alpha"* ]]
 }
 
 @test "projects add refuses a directory that is not a work tree" {

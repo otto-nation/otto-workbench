@@ -181,17 +181,35 @@ for mem_dir in "$CLAUDE_DIR/projects"/*/memory/; do
   fi
 done
 
-declare -a registered=()
-while IFS= read -r repo_dir; do
-  registered+=("$repo_dir")
-done < <(project_registered | sort)
+# One entry per work tree, and a machine that cuts one per branch has a dozen of
+# them behind a single repository — so the table is built per repo, with the
+# repo's own facts on its row and its checkouts under it. `repo_leader` is the
+# work tree those repo facts are read from, since a bare-repo container holds no
+# source files of its own and would answer nothing for the Stack column.
+declare -a repo_order=()
+declare -A repo_leader=() repo_trees=()
+while IFS=$'\t' read -r repo_id work_tree; do
+  if [[ -z "${repo_leader[$repo_id]:-}" ]]; then
+    repo_order+=("$repo_id")
+    repo_leader["$repo_id"]="$work_tree"
+    repo_trees["$repo_id"]="$work_tree"
+    continue
+  fi
+  repo_trees["$repo_id"]+=$'\n'"$work_tree"
+done < <(project_repo_worktrees | sort)
 
-# Where each repo files its issues, resolved for the whole registry in one pass
-# and read back keyed by the directory the resolver echoed. Reading at render
-# time rather than recording a copy in the registry is what makes the column
-# unable to disagree with the repo: the registry is machine-local and built from
-# observed use, and a repo fact kept there would go stale the moment the repo
-# edited its config.
+declare -a registered=()
+for repo_id in "${repo_order[@]}"; do
+  registered+=("${repo_leader[$repo_id]}")
+done
+
+# Where each repo files its issues, resolved for every repo in one pass — one
+# work tree of each, since the answer is the repo's and the scopes the loader
+# reads are the repo's too — and read back keyed by the directory the resolver
+# echoed. Reading at render time rather than recording a copy in the registry is
+# what makes the column unable to disagree with the repo: the registry is
+# machine-local and built from observed use, and a repo fact kept there would go
+# stale the moment the repo edited its config.
 #
 # The resolver is the typed loader, reached through lib/config_cli.py, because
 # it is the only reader that knows all three scopes. A bash reader of the
@@ -210,28 +228,57 @@ if [[ ${#registered[@]} -gt 0 ]]; then
     "$ISSUE_PROVIDER_CONFIG_KEY" "${registered[@]}")
 fi
 
-declare -a project_rows=()
-for repo_dir in "${registered[@]}"; do
-  local_path="${repo_dir/#$HOME/~}"
-  name=$(basename "$repo_dir")
-  slug="${repo_dir//\//-}"
-  mem="${memory_status[$slug]:-no}"
-  # Detect primary stack from presence of key files
-  stack=""
-  [[ -d "$repo_dir/ansible" ]] && stack="ansible"
-  [[ -f "$repo_dir/go.mod" ]] && stack="${stack:+$stack,}go"
-  [[ -f "$repo_dir/package.json" ]] && stack="${stack:+$stack,}node"
-  [[ -f "$repo_dir/pyproject.toml" || -f "$repo_dir/requirements.txt" ]] && \
+# memory_cell DIR — whether Claude holds memories for DIR.
+#
+# Asked of the repo's own directory as well as of each checkout, because a
+# session started in a bare-repo container's worktree keeps its memories under
+# the container — so a table that only asked the checkouts reported "no" for
+# every one of them while the memories sat one level up.
+memory_cell() {
+  local slug="${1//\//-}"
+  printf '%s\n' "${memory_status[$slug]:-no}"
+}
+
+# stack_cell DIR — the primary stack of the checkout at DIR, from the files it
+# holds, and "—" when none of them says.
+stack_cell() {
+  local dir="$1" stack=""
+  [[ -d "$dir/ansible" ]] && stack="ansible"
+  [[ -f "$dir/go.mod" ]] && stack="${stack:+$stack,}go"
+  [[ -f "$dir/package.json" ]] && stack="${stack:+$stack,}node"
+  [[ -f "$dir/pyproject.toml" || -f "$dir/requirements.txt" ]] && \
     stack="${stack:+$stack,}python"
-  [[ -f "$repo_dir/build.gradle.kts" || -f "$repo_dir/pom.xml" ]] && \
+  [[ -f "$dir/build.gradle.kts" || -f "$dir/pom.xml" ]] && \
     stack="${stack:+$stack,}java"
-  [[ $(find "$repo_dir" -maxdepth 2 -name '*.sh' 2>/dev/null | wc -l) -gt 3 ]] && \
+  [[ $(find "$dir" -maxdepth 2 -name '*.sh' 2>/dev/null | wc -l) -gt 3 ]] && \
     [[ -z "$stack" ]] && stack="bash"
-  [[ -z "$stack" ]] && stack="—"
+  printf '%s\n' "${stack:-—}"
+}
+
+# Every repo gets a row carrying what belongs to the repo. A repo whose only
+# work tree is the repo itself — an ordinary clone — is that one row, the way
+# every row used to be; one with worktrees is followed by a `↳` row per checkout
+# carrying what belongs to the checkout, so a dozen entries read as the one
+# repository they are.
+declare -a project_rows=()
+for repo_id in "${repo_order[@]}"; do
+  repo_dir="$(project_repo_label "$repo_id")"
+  leader="${repo_leader[$repo_id]}"
+  stack="$(stack_cell "$leader")"
   # A repo missing from the map got no record back at all, which the same
   # "unset" covers — see issues_cell for what that marker stands for.
-  issues="${repo_issues[$repo_dir]:-unset}"
-  project_rows+=("| $name | $local_path | $stack | $issues | $mem |")
+  issues="${repo_issues[$leader]:-unset}"
+  project_rows+=("| $(basename "$repo_dir") | ${repo_dir/#$HOME/\~} | $stack | $issues | $(memory_cell "$repo_dir") |")
+  if [[ "${repo_trees[$repo_id]}" == "$repo_dir" ]]; then
+    continue
+  fi
+  while IFS= read -r work_tree; do
+    under="${work_tree#"$repo_dir"/}"
+    # A worktree git was pointed at somewhere else entirely — nothing of its
+    # path is implied by the repo's, so the checkout is named by all of it.
+    [[ "$under" == "$work_tree" ]] && under="${work_tree/#$HOME/\~}"
+    project_rows+=("| ↳ $under | ${work_tree/#$HOME/\~} | | | $(memory_cell "$work_tree") |")
+  done <<< "${repo_trees[$repo_id]}"
 done
 
 # ── Write profile ─────────────────────────────────────────────────────────────
@@ -268,10 +315,10 @@ today=$(date +%Y-%m-%d)
   printf '%s\n' "- Homebrew (${brew_count} packages)"
   [[ "$has_task" == "yes" ]] && printf '%s\n' "- task (task runner)"
   if [[ -n "$workbench_dir" ]]; then
-    printf '%s\n' "- otto-workbench: ${workbench_dir/#$HOME/~}"
+    printf '%s\n' "- otto-workbench: ${workbench_dir/#$HOME/\~}"
   else
     printf '%s\n' "- otto-workbench: location unresolved" \
-      "  (expected ${WORKBENCH_STABLE_DIR/#$HOME/~} — re-run \`otto-workbench sync\`)"
+      "  (expected ${WORKBENCH_STABLE_DIR/#$HOME/\~} — re-run \`otto-workbench sync\`)"
   fi
   printf '\n'
 
@@ -282,6 +329,7 @@ today=$(date +%Y-%m-%d)
     for row in "${project_rows[@]}"; do
       printf '%s\n' "$row"
     done
+    printf '\n%s\n' "_A \`↳\` row is a work tree of the repo above it — Stack and Issues are the repo's, Memory is each directory's own._"
   else
     empty_registry_msg="_No repos registered yet. A repo joins the registry the first"
     empty_registry_msg+=" time a workbench command runs in it — see \`otto-workbench projects\`._"

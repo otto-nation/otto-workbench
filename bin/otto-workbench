@@ -634,19 +634,36 @@ _projects_lexical_abs() {
   printf '/%s\n' "$joined"
 }
 
+# A registry line is a work tree, and a machine that cuts one per branch has a
+# dozen of them behind a single repository. The repos are the level an operator
+# reads this at, so each one is named once and its checkouts are listed under it
+# by the part of the path the repo has not already said.
 cmd_projects_list() {
-  local dir count=0
-  while IFS= read -r dir; do
-    printf '  %s\n' "${dir/#$HOME/~}"
-    count=$(( count + 1 ))
-  done < <(project_registered | sort)
+  local line id path label under repos=0 trees=0 named=""
+  while IFS= read -r line; do
+    _split_repo_worktree_line "$line" id path
+    label="$(project_repo_label "$id")"
+    if [[ "$label" != "$named" ]]; then
+      named="$label"
+      repos=$(( repos + 1 ))
+      printf '  %s\n' "${label/#$HOME/\~}"
+    fi
+    trees=$(( trees + 1 ))
+    # An ordinary clone is its own repo's only work tree, and naming it a second
+    # time under itself says nothing the line above did not.
+    if [[ "$path" == "$label" ]]; then
+      continue
+    fi
+    under="$(project_repo_relative "$label" "$path")"
+    printf '    %s\n' "$under"
+  done < <(project_repo_worktrees | sort)
 
-  if (( count == 0 )); then
+  if (( trees == 0 )); then
     info "No repos registered yet — one joins the list the first time a workbench command runs in it"
     return 0
   fi
   echo
-  info "$count repo(s) — ${PROJECTS_REGISTRY_FILE/#$HOME/~}"
+  info "$repos repo(s), $trees work tree(s) — ${PROJECTS_REGISTRY_FILE/#$HOME/\~}"
 }
 
 cmd_projects_add() {
@@ -667,7 +684,7 @@ cmd_projects_add() {
     return 0
   fi
   if (( rc == 2 )); then
-    err "Could not write ${PROJECTS_REGISTRY_FILE/#$HOME/~} — $root qualifies but the registry is unwritable"
+    err "Could not write ${PROJECTS_REGISTRY_FILE/#$HOME/\~} — $root qualifies but the registry is unwritable"
     return 1
   fi
   err "Refused $root — a temporary path, a bare repo's container, or a path holding a tab, not a project"

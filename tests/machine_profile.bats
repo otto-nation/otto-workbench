@@ -105,7 +105,10 @@ profile_row() {
 
   HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
-  [[ "$(profile_row main)" == *"| linear |"* ]]
+  # The repo's row, not the checkout's: the tracker is the repository's answer,
+  # and the container is where it was recorded.
+  [[ "$(profile_row container)" == *"| linear |"* ]]
+  grep -q "^| ↳ main | $TMPDIR/container/main |" "$TMPDIR/home/.claude/machine/machine.md"
 }
 
 @test "the machine profile tags a tracker the repo only inherits" {
@@ -161,6 +164,62 @@ profile_row() {
   HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   [[ "$(profile_row epsilon)" == *"| unset |"* ]]
+}
+
+# ─── Grouping ────────────────────────────────────────────────────────────────
+#
+# One line per work tree is what the registry holds; one row per repository with
+# its checkouts under it is what the table is read for. A machine that cuts a
+# worktree per branch had fifteen rows saying the same repo's name.
+
+@test "the machine profile puts a repo's worktrees under one row" {
+  mkdir -p "$TMPDIR/seed"
+  printf 'seed\n' > "$TMPDIR/seed/README.md"
+  make_container_seed "$TMPDIR/seed"
+  make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
+  git --git-dir="$TMPDIR/container/.git" worktree add -b feature \
+    "$TMPDIR/container/feature" >/dev/null 2>&1
+  project_register "$TMPDIR/container/main"
+  project_register "$TMPDIR/container/feature"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  local profile="$TMPDIR/home/.claude/machine/machine.md"
+  [ "$(grep -c '^| container |' "$profile")" = "1" ]
+  grep -q "^| ↳ main | $TMPDIR/container/main | | |" "$profile"
+  grep -q "^| ↳ feature | $TMPDIR/container/feature | | |" "$profile"
+  grep -q '^_A `↳` row is a work tree of the repo above it' "$profile"
+}
+
+@test "the machine profile reads a worktree repo's stack from a checkout" {
+  # The container holds no source files of its own, so a table that asked it
+  # what the repo was built in answered "—" for every repo with worktrees.
+  mkdir -p "$TMPDIR/seed"
+  printf '{}\n' > "$TMPDIR/seed/package.json"
+  make_container_seed "$TMPDIR/seed"
+  make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
+  project_register "$TMPDIR/container/main"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  [[ "$(profile_row container)" == *"| node |"* ]]
+}
+
+@test "the machine profile finds the memories a worktree repo keeps at its container" {
+  # Claude records a session started in a worktree under the container, so a
+  # table that only asked the checkouts reported "no" for every one of them
+  # while the memories sat one level up.
+  mkdir -p "$TMPDIR/seed"
+  printf 'seed\n' > "$TMPDIR/seed/README.md"
+  make_container_seed "$TMPDIR/seed"
+  make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
+  project_register "$TMPDIR/container/main"
+  mkdir -p "$TMPDIR/home/.claude/projects/${TMPDIR//\//-}-container/memory"
+  printf 'a fact\n' > "$TMPDIR/home/.claude/projects/${TMPDIR//\//-}-container/memory/one.md"
+
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  [ "$status" -eq 0 ]
+  [[ "$(profile_row container)" == *"| yes (1 files) |"* ]]
 }
 
 @test "the machine profile says so when nothing is registered" {

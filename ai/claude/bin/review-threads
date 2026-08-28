@@ -3623,9 +3623,9 @@ def _summary_has_content(
     reports those too, so a round that settled no thread at all still has a
     table to render when one arrived unread.
     """
-    if fixed or needs_human or deferred or dismissed or already_addressed:
-        return True
-    return any(
+    return bool(
+        fixed or needs_human or deferred or dismissed or already_addressed
+    ) or any(
         not c.get("seen") for c in [*issue_comments, *review_body_comments]
     )
 

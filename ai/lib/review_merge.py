@@ -321,8 +321,9 @@ def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None 
         # Nothing here declares an ID, so there is no map to rewrite through and
         # every occurrence is a reference into text we are not looking at.
         return text
-    return _rewrite_ids(text, prefix, _gap_map(declared, merged_into or {}),
-                        mark_dangling=True)
+    return _rewrite_ids(
+        text, prefix, _gap_map(declared, merged_into or {}), mark_dangling=True,
+    )
 
 
 def renumber_findings(text: str) -> str:

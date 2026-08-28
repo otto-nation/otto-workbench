@@ -81,9 +81,9 @@ def content(rt):
     """Build a `RoundContent` from the buckets a test names, and no others.
 
     Keyed by the outcome's own spelling, so a bucket a test does not mention is
-    absent from the mapping rather than present and empty — which is how the
-    round reaches the renderers in production, and what a helper writing every
-    key in would stop these tests from covering.
+    absent from the mapping rather than present and empty — matching how the
+    round reaches the renderers in production. A helper that wrote every key
+    in, mentioned or not, would hide that distinction from these tests.
     """
     def _make(**buckets):
         comments = {

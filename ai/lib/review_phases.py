@@ -46,8 +46,7 @@ from review_paths import (
     phase_log_path,
     phase_output_path,
 )
-from review_document import ReviewDocument
-from review_findings import _validate_group_output
+from review_document import SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument
 from review_merge import merge_reviews
 from review_prompt import PromptTooLarge, build_prompt
 from review_retry import (
@@ -58,7 +57,8 @@ from review_retry import (
 from review_scout import format_leads_block, parse_scout_output
 from review_state import PipelineState, _update_group_done, _update_group_failed
 from review_types import (
-    FILE_STAT_FMT, SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
+    FILE_STAT_FMT, SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip,
+    ReviewJob,
 )
 from review_verify import apply_disprove_results, parse_disprove_output
 
@@ -342,6 +342,34 @@ def run_phase(
 
 
 # ── Phase executors ──────────────────────────────────────────────────────────
+
+# Every heading a group agent may write. A group's output is merged section by
+# section, so one that carries none of these contributes nothing to the review
+# however much the agent wrote into it.
+_VALID_SECTION_HEADERS = (
+    {s.section.lower() for s in SEVERITIES}
+    | {SECTION_FILE_TRIAGE.lower(), SECTION_PRIOR_FINDINGS.lower()}
+)
+
+
+def _validate_group_output(output_path: str, group_name: str) -> bool:
+    """Whether a group's output carries a heading the merge will read.
+
+    Warns when it does not. An empty output is not a failure here — the caller
+    has already established the agent produced something, and a group with
+    nothing to say writes an empty file legitimately.
+    """
+    content = Path(output_path).read_text()
+    if not content.strip():
+        return True
+    has_section = any(
+        line.strip()[3:].strip().lower() in _VALID_SECTION_HEADERS
+        for line in content.split("\n")
+        if line.strip().startswith("## ")
+    )
+    if not has_section:
+        log.warn(f"Group {group_name} output has no recognized sections — findings may be lost")
+    return has_section
 
 
 def _review_group(

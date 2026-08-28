@@ -32,16 +32,23 @@ than by a regex each caller brings, so two readers of one review cannot report
 different things about it.
 
 A finding declaration is part of that format, so the grammar of one lives here
-too: the ID at the head of a list item, the location after it, and the body
-after that. `parse_finding_line` is for a caller holding a single line that is
-not in a findings section — the prior-findings ledger is the one — and every
-other reader asks `ReviewDocument.findings`.
+too: the ID at the head of a list item, the location after it, the body after
+that, and the annotations a later pass writes onto it — declined, skipped.
+`parse_finding_line` is for a caller holding a single line that is not in a
+findings section — the prior-findings ledger is the one — and every other
+reader asks `ReviewDocument.findings`.
 
 Counting them is that same parse, not a second grammar over the same text:
 `open_counts` tallies `open_findings`, so which findings a review is reported
 to have and how many it is reported to have are one answer. A tally written as
 its own regex is how a review came to report four findings it had none of —
 the ledger's lines look like declarations from anywhere but inside the parse.
+
+`build_mechanical_body` is the document this module writes rather than reads:
+the whole body a review has when no synthesis agent produced one. It belongs
+beside the format it renders for the same reason the readers do — a summary,
+findings and a verdict assembled anywhere else would be the canonical form
+stated twice.
 """
 
 # doc-group: pipeline
@@ -50,6 +57,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -60,6 +68,7 @@ from review_types import (
     SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, ReviewMeta, ReviewType,
     meta_enum,
 )
+from text import plural
 
 # The headers a review is written with. `Summary` and `Verdict` are the two this
 # module reads by name; the rest are here because they name sections of the same
@@ -305,6 +314,25 @@ def set_section(content: str, header: str, body: str, *, before: str = "") -> st
     return f"{preceding}{section.rstrip()}\n"
 
 
+def strip_sections(text: str, headers: Iterable[str]) -> str:
+    """`text` with each `## <header>` section in `headers` dropped, heading included.
+
+    For a caller holding a document written for one purpose and reading it for
+    another: the prompt that shows a re-review its predecessor drops the
+    sections that are bookkeeping rather than reviewer claims, and the prior
+    findings ledger is stripped before a review is published because its IDs
+    number the previous review.
+
+    Every occurrence of a header goes, not only the first — a document assembled
+    from group outputs carries one `## File Triage` per group until the merge
+    has run.
+    """
+    for header in headers:
+        while (span := section_span(text, header)) is not None:
+            text = text[:span.heading_start] + text[span.end:]
+    return text
+
+
 def review_title(meta: ReviewMeta) -> str:
     """The `# ...` line a review opens with, as the attribution in `meta` reads.
 
@@ -420,6 +448,18 @@ _DECLINED = r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*"
 _DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
 _DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
 
+# The fix pass's record of a finding it read and left alone, in the same grammar
+# as the decline annotation above and optional in the same way — a skip written
+# without a reason is still a skip, and reading it as an ordinary open finding
+# is what lets a sibling finding's edit report it as fixed.
+#
+# Anchored to head and tail for the reason the decline annotation is: matched
+# anywhere, a finding whose prose quotes the annotation — the docs of the fix
+# pass do, verbatim — would read as carrying it and never be touched again.
+_SKIP = r"\*\(skipped(?:\s*[—–-]+\s*(.+?))?\)\*"
+_SKIP_HEAD_RE = re.compile(rf"^{_SKIP}")
+_SKIP_TAIL_RE = re.compile(rf"{_SKIP}\s*$")
+
 
 def _severity_names() -> dict[str, str]:
     """Every heading a severity answers to, lowercased, mapped to its key."""
@@ -523,6 +563,17 @@ def parse_finding_line(stripped: str) -> Finding | None:
         declined=declined is not None,
         decline_reason=(declined.group(1) or "").strip() if declined else "",
     )
+
+
+def is_skipped(finding: Finding) -> bool:
+    """Whether a previous fix pass recorded that it left this finding alone.
+
+    A checked finding is one the fix pass landed, so it is never skipped
+    however its body reads — the annotation only speaks for an open one.
+    """
+    if finding.checked:
+        return False
+    return bool(_SKIP_HEAD_RE.match(finding.body) or _SKIP_TAIL_RE.search(finding.body))
 
 
 def is_section_boundary(stripped: str) -> bool:
@@ -806,6 +857,64 @@ def resolve_review_verdict(
         return None
     derived = verdict_from_counts(doc.open_counts)
     return stated if stated and stated.outranks(derived) else derived
+
+
+# Stamped into a mechanically written verdict so a reader — and the pipeline's
+# own check for whether synthesis ran — can tell one from a verdict an agent
+# reached.
+MECHANICAL_NOTE = "(mechanically merged, not synthesized)"
+
+
+def mechanical_verdict(counts: dict[str, int]) -> str:
+    """The `## Verdict` body a tally supports, said without an agent.
+
+    What the review states when synthesis did not run: the call
+    `verdict_from_counts` derives, the tally read out, and `MECHANICAL_NOTE` so
+    the absence of a synthesis is on the page rather than inferred from the
+    prose being terse.
+    """
+    prose = counts_prose(counts)
+    if not prose:
+        return f"{ReviewVerdict.APPROVE.prose} — no findings {MECHANICAL_NOTE}.\n"
+    verdict = verdict_from_counts(counts)
+    suffix = " only" if verdict is ReviewVerdict.APPROVE else ""
+    return f"{verdict.prose} — {prose}{suffix} {MECHANICAL_NOTE}.\n"
+
+
+def build_mechanical_body(
+    merged_content: str,
+    *,
+    group_count: int,
+    summary_note: str,
+    include_verdict: bool = True,
+    file_count: int = 0,
+) -> str:
+    """A whole review body around findings no synthesis agent read.
+
+    `merged_content` is the findings sections as merged; `summary_note` is the
+    caller's one sentence on why synthesis was skipped, which is the only part
+    of the summary that is not derived from the findings themselves.
+    `file_count` of 0 leaves the file scope out rather than writing a zero.
+
+    `include_verdict=False` is for a caller that writes the verdict itself —
+    the rebuild reuses the verdict the review already reached.
+    """
+    counts = ReviewDocument(body=merged_content).open_counts
+    total = sum(counts.values())
+    count_summary = f"{total} finding{plural(total)}" if total else "No findings"
+    if file_count:
+        scope = f"across {file_count} file{plural(file_count)} in {group_count} groups"
+    else:
+        scope = f"across {group_count} groups"
+    body = (
+        f"## {SECTION_SUMMARY}\n"
+        f"{count_summary} {scope}. "
+        f"{summary_note}\n\n"
+        f"{merged_content}\n"
+    )
+    if not include_verdict:
+        return body
+    return f"{body}\n## {SECTION_VERDICT}\n{mechanical_verdict(counts)}"
 
 
 def _is_header_line(line: str) -> bool:

@@ -22,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 from trail import Trail, add_trail_args  # noqa: E402
 import gh_client as _gh  # noqa: E402
 import review_dedup as _rd  # noqa: E402
-import review_findings as _rfi  # noqa: E402
 import review_format as _rfmt  # noqa: E402
 import review_github as _rg  # noqa: E402
 import review_paths as _rpath  # noqa: E402
@@ -35,7 +34,6 @@ import proc  # noqa: E402
 from review_dedup import dedup_against_posted  # noqa: E402
 from review_document import ReviewDocument  # noqa: E402
 from review_paths import read_review_meta  # noqa: E402
-from review_findings import parse_diff_hunks  # noqa: E402
 from text import plural  # noqa: E402
 from review_types import Finding, ReviewMeta, SEVERITIES  # noqa: E402
 from review_format import (  # noqa: E402
@@ -67,7 +65,7 @@ from review_sections import ReviewSections  # noqa: E402
 
 SCRIPT = Path(__file__).name
 
-_SUBMODULES = (_gh, _rd, _rfi, _rfmt, _rg, _rpath, _rp, _rs)
+_SUBMODULES = (_gh, _rd, _rfmt, _rg, _rpath, _rp, _rs)
 
 
 class _ProxyModule(type(sys.modules[__name__])):

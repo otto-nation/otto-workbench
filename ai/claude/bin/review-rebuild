@@ -19,9 +19,11 @@ import log
 from trail import Trail, add_trail_args
 from agent_registry import PHASES
 from agent_types import Mode, Phase
-from review_document import ReviewDocument, ReviewHeader, review_title
+from review_document import (
+    ReviewDocument, ReviewHeader, build_mechanical_body, review_title,
+)
 from review_paths import read_review_meta
-from review_findings import build_mechanical_body, post_process_findings
+from review_verify import post_process_findings
 from review_merge import merge_reviews
 
 SCRIPT = Path(__file__).name

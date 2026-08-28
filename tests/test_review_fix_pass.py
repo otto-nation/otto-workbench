@@ -28,7 +28,6 @@ import fix_engine
 import land
 import push
 import review_document
-import review_findings
 import review_fix
 import review_paths
 import review_types
@@ -812,66 +811,49 @@ class TestParseCheckboxState:
         assert by_id["N1"].checked is True
 
 
-class TestExtractSkipReasons:
-    def test_extracts_skip_reason_em_dash(self):
-        findings = [Finding(
+class TestIsSkipped:
+    """`*(skipped — reason)*` is the fix pass's record of work it did not do.
+
+    `run_fix_pass` reads it to leave the line alone rather than re-annotating
+    it, so a skip it fails to recognise ends up saying two things about one
+    finding.
+    """
+
+    def test_a_leading_annotation_registers(self):
+        finding = Finding(
             id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
             body="*(skipped — requires design decision)* — Some finding body",
-        )]
-        review_findings.extract_skip_reasons(findings)
-        assert findings[0].skip_reason == "requires design decision"
+        )
+        assert review_document.is_skipped(finding) is True
 
-    def test_extracts_skip_reason_double_hyphen(self):
-        findings = [Finding(
+    def test_a_trailing_annotation_registers(self):
+        finding = Finding(
             id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
-            body="*(skipped -- needs confirmation)* — body",
-        )]
-        review_findings.extract_skip_reasons(findings)
-        assert findings[0].skip_reason == "needs confirmation"
-
-    def test_no_skip_reason(self):
-        findings = [Finding(
-            id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
-            body="Plain finding body",
-        )]
-        review_findings.extract_skip_reasons(findings)
-        assert findings[0].skip_reason == ""
-
-    def test_skips_checked_findings(self):
-        findings = [Finding(
-            id="M1", severity="M", seq=1, path="a.go", line=1, end_line=None,
-            body="*(skipped — stale)* — body", checked=True,
-        )]
-        review_findings.extract_skip_reasons(findings)
-        assert findings[0].skip_reason == ""
+            body="Some finding body *(skipped -- needs confirmation)*",
+        )
+        assert review_document.is_skipped(finding) is True
 
     def test_a_skip_without_a_reason_still_registers(self):
-        """Mirrors the decline case — a bare annotation is still a skip.
-
-        Read as an ordinary open finding it would be re-annotated by the next
-        fix pass, leaving the line saying two things about one finding.
-        """
+        """Mirrors the decline case — a bare annotation is still a skip."""
         finding = Finding(
             id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
             body="*(skipped)* — Some finding body",
         )
-        assert review_findings.match_skip(finding) is not None
-        review_findings.extract_skip_reasons([finding])
-        assert finding.skip_reason == ""
+        assert review_document.is_skipped(finding) is True
 
     def test_a_plain_finding_carries_no_skip(self):
         finding = Finding(
             id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
             body="Plain finding body",
         )
-        assert review_findings.match_skip(finding) is None
+        assert review_document.is_skipped(finding) is False
 
     def test_a_checked_finding_carries_no_skip(self):
         finding = Finding(
             id="M1", severity="M", seq=1, path="a.go", line=1, end_line=None,
             body="*(skipped — stale)* — body", checked=True,
         )
-        assert review_findings.match_skip(finding) is None
+        assert review_document.is_skipped(finding) is False
 
 
 class TestParseDeclinedFindings:
@@ -916,7 +898,7 @@ class TestParseDeclinedFindings:
         """
         text = (
             "## Must fix\n"
-            "- [ ] **[M1]** `review_findings.py:99` — The `*(declined — reason)*` "
+            "- [ ] **[M1]** `review_document.py:99` — The `*(declined — reason)*` "
             "annotation is matched anywhere in the line, so prose trips it\n"
         )
         findings = review_document.ReviewDocument.parse(text).findings

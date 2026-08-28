@@ -89,7 +89,7 @@ posting normally precedes any fix pass — so both marks arrive only on a review
 posted after one, which is the run these two answers exist for.
 
 `*(skipped — reason)*` is the second annotation vocabulary, written by the fix
-pass rather than by a review, and `match_skip()` is its single owner. It is
+pass rather than by a review, and `is_skipped()` is its single owner. It is
 what `review_fix._apply_outcomes` writes back for a `needs a person` outcome,
 the way it writes `*(declined — reason)*` for a declined one and ticks the box
 for a fix. A skip still belongs to the work set — the next `--fix` retries it —

@@ -1,5 +1,12 @@
 """What a review claims, checked against the tree it claims it about.
 
+`post_process_findings` is that check as a whole pass: a caller hands it a
+finished review file and gets back what verification did to it. Evidence
+checking, evidence stripping and the reconciliation are steps of that pass
+rather than a menu — run in another order they leave a review whose prose
+describes findings by IDs it no longer uses — so they are private and the pass
+is what callers reach for.
+
 Two gates run over a finished review and both only ever remove findings.
 
 Evidence verification is mechanical. Every must-fix and should-fix finding
@@ -52,9 +59,11 @@ from pathlib import Path
 import log
 from pr_domains import ReviewVerdict
 from review_document import (
-    LINE_SUFFIX, SECTION_SUMMARY, SECTION_VERDICT, SPACED_FILE, ReviewDocument,
-    counts_prose, section_span, starts_finding_or_section, verdict_from_counts,
+    LINE_SUFFIX, SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
+    SPACED_FILE, ReviewDocument, counts_prose, section_span,
+    starts_finding_or_section, strip_sections, verdict_from_counts,
 )
+from review_merge import renumber_findings, strip_stable_ids
 from review_types import SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key
 from text import plural
 
@@ -272,7 +281,7 @@ def _drop_reason(detail: dict) -> str:
     return reason
 
 
-def verify_findings(text: str, wt_path: str) -> tuple[str, dict]:
+def _verify_findings(text: str, wt_path: str) -> tuple[str, dict]:
     findings = _parse_findings_for_verification(text)
     dropped: list[str] = []
     details: list[dict] = []
@@ -301,7 +310,7 @@ _EVIDENCE_BLOCK_START_RE = re.compile(r"^ {2,}>\s*```")
 _EVIDENCE_BLOCKQUOTE_RE = re.compile(r"^ {2,}>")
 
 
-def strip_evidence_blocks(text: str) -> str:
+def _strip_evidence_blocks(text: str) -> str:
     lines = text.split("\n")
     kept: list[str] = []
     in_evidence = False
@@ -381,7 +390,7 @@ def _revise_verdict(text: str, counts: dict[str, int], n_dropped: int) -> str:
     return f"{text[:span.start]}\n{revised}\n{text[span.end:].lstrip(chr(10))}"
 
 
-def reconcile_dropped_findings(text: str, verification: dict) -> str:
+def _reconcile_dropped_findings(text: str, verification: dict) -> str:
     """Make a review's prose account for the findings verification removed.
 
     Runs after renumbering, so the counts it reads are the ones the finished
@@ -468,3 +477,41 @@ def apply_disprove_results(
         "falsified_ids": sorted(falsified_ids),
         "reasons": reason_map,
     }
+
+
+# ── The whole pass over a finished review ────────────────────────────────────
+
+def post_process_findings(review_file: str, wt_path: str = "") -> dict | None:
+    """Every gate and cleanup a finished review needs, run over it in place.
+
+    The verification report, or None when `review_file` does not exist — the
+    guard covers all of the sub-steps, so a caller gets no partial result from
+    a review that was never written. Without `wt_path` there is no tree to
+    check evidence against, so verification is skipped and only the cleanups
+    run; the report is None then too.
+
+    The order is the contract rather than an implementation detail. The prior
+    findings ledger goes before renumbering because its IDs number the
+    *previous* review — left in, they both mislead a reader and skew the
+    renumbering of the findings this review actually has. The reconciliation
+    goes after, because it reads the counts the finished file reports and must
+    not name findings by IDs renumbering has since reassigned.
+    """
+    path = Path(review_file)
+    if not path.exists():
+        return None
+    text = path.read_text()
+    verification: dict | None = None
+    if wt_path:
+        text, verification = _verify_findings(text, wt_path)
+        dropped = verification["dropped"]
+        if dropped:
+            log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
+    text = _strip_evidence_blocks(text)
+    text = strip_stable_ids(text)
+    text = strip_sections(text, [SECTION_PRIOR_FINDINGS])
+    text = renumber_findings(text)
+    if verification:
+        text = _reconcile_dropped_findings(text, verification)
+    path.write_text(text)
+    return verification

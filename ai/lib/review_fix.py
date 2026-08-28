@@ -48,8 +48,7 @@ import proc
 from agent_types import Phase
 from pr_fix import FixOutcome, ItemOutcome
 from review_paths import phase_log_path
-from review_document import FINDING_ID_RE, ReviewDocument
-from review_findings import match_skip
+from review_document import FINDING_ID_RE, ReviewDocument, is_skipped
 from review_retry import _has_output
 from review_types import Finding, ReviewJob, severity_by_key
 from trail import Trail
@@ -211,7 +210,7 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
         if finding is None or outcome is None or finding_id in written:
             continue
         written.add(finding_id)
-        if finding.checked or finding.declined or match_skip(finding):
+        if finding.checked or finding.declined or is_skipped(finding):
             continue
         if outcome.outcome is FixOutcome.FIXED:
             lines[n] = line.replace("- [ ]", "- [x]", 1)

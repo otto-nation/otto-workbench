@@ -54,7 +54,7 @@ class TestParseDiffHunks:
         )
         hunks = rp.parse_diff_hunks(diff)
         assert "file.go" in hunks
-        assert (10, 16) in hunks["file.go"]
+        assert rp.HunkRange(10, 16) in hunks["file.go"]
 
     def test_multiple_files(self, rp):
         diff = (
@@ -85,8 +85,8 @@ class TestParseDiffHunks:
         )
         hunks = rp.parse_diff_hunks(diff)
         assert len(hunks["file.go"]) == 2
-        assert (1, 5) in hunks["file.go"]
-        assert (22, 26) in hunks["file.go"]
+        assert rp.HunkRange(1, 5) in hunks["file.go"]
+        assert rp.HunkRange(22, 26) in hunks["file.go"]
 
     def test_hunk_with_omitted_count(self, rp):
         diff = (
@@ -97,7 +97,7 @@ class TestParseDiffHunks:
             "-removed\n"
         )
         hunks = rp.parse_diff_hunks(diff)
-        assert (5, 5) in hunks["file.go"]
+        assert rp.HunkRange(5, 5) in hunks["file.go"]
 
     def test_new_file(self, rp):
         diff = (
@@ -109,7 +109,21 @@ class TestParseDiffHunks:
             "+package main\n"
         )
         hunks = rp.parse_diff_hunks(diff)
-        assert (1, 20) in hunks["new.go"]
+        assert rp.HunkRange(1, 20) in hunks["new.go"]
+
+    def test_no_diff_touches_nothing(self, rp):
+        assert rp.parse_diff_hunks("") == {}
+
+    def test_a_file_with_no_hunks_is_named_but_empty(self, rp):
+        """A rename or a mode change: the diff touches the file and no line of
+        it, which the classifier reads as two different answers."""
+        diff = (
+            "diff --git a/old.go b/new.go\n"
+            "similarity index 100%\n"
+            "--- a/old.go\n"
+            "+++ b/new.go\n"
+        )
+        assert rp.parse_diff_hunks(diff) == {"new.go": []}
 
 
 class TestResolvePath:
@@ -896,23 +910,23 @@ class TestIsLineResolutionError:
 
 class TestHunkEnd:
     def test_line_inside_hunk(self, rp):
-        hunks = [(10, 20), (30, 40)]
+        hunks = [rp.HunkRange(10, 20), rp.HunkRange(30, 40)]
         assert rp._hunk_end(15, hunks) == 20
 
     def test_line_outside_all_hunks(self, rp):
-        hunks = [(10, 20), (30, 40)]
+        hunks = [rp.HunkRange(10, 20), rp.HunkRange(30, 40)]
         assert rp._hunk_end(25, hunks) is None
 
     def test_line_at_hunk_start(self, rp):
-        hunks = [(10, 20)]
+        hunks = [rp.HunkRange(10, 20)]
         assert rp._hunk_end(10, hunks) == 20
 
     def test_line_at_hunk_end(self, rp):
-        hunks = [(10, 20)]
+        hunks = [rp.HunkRange(10, 20)]
         assert rp._hunk_end(20, hunks) == 20
 
     def test_multiple_hunks_returns_correct_end(self, rp):
-        hunks = [(1, 5), (10, 15), (20, 25)]
+        hunks = [rp.HunkRange(1, 5), rp.HunkRange(10, 15), rp.HunkRange(20, 25)]
         assert rp._hunk_end(12, hunks) == 15
         assert rp._hunk_end(3, hunks) == 5
         assert rp._hunk_end(22, hunks) == 25

@@ -155,7 +155,7 @@ print('[M1]' in result and '[M2]' not in result)
   [ "$result" = "True" ]
 }
 
-# ── open_counts / _mechanical_verdict ────────────────────────────────────────
+# ── open_counts ──────────────────────────────────────────────────────────────
 
 @test "open_counts: counts by prefix" {
   result=$(_py "
@@ -174,39 +174,4 @@ counts = mod.ReviewDocument(body=text).open_counts
 print(f\"M={counts['M']},S={counts['S']},N={counts['N']},I={counts['I']}\")
 ")
   [ "$result" = "M=2,S=1,N=3,I=1" ]
-}
-
-@test "mechanical_verdict: must-fix triggers request changes" {
-  result=$(_py "
-counts = {'M': 2, 'S': 1, 'N': 0, 'I': 0}
-print(mod.mechanical_verdict(counts))
-")
-  [[ "$result" == *"Request changes"* ]]
-  [[ "$result" == *"2 must-fix"* ]]
-}
-
-@test "mechanical_verdict: should-fix only triggers needs discussion" {
-  result=$(_py "
-counts = {'M': 0, 'S': 3, 'N': 1, 'I': 0}
-print(mod.mechanical_verdict(counts))
-")
-  [[ "$result" == *"Needs discussion"* ]]
-}
-
-@test "mechanical_verdict: nits only triggers approve" {
-  result=$(_py "
-counts = {'M': 0, 'S': 0, 'N': 2, 'I': 1}
-print(mod.mechanical_verdict(counts))
-")
-  [[ "$result" == *"Approve"* ]]
-  [[ "$result" == *"2 nit"* ]]
-}
-
-@test "mechanical_verdict: no findings triggers approve" {
-  result=$(_py "
-counts = {'M': 0, 'S': 0, 'N': 0, 'I': 0}
-print(mod.mechanical_verdict(counts))
-")
-  [[ "$result" == *"Approve"* ]]
-  [[ "$result" == *"no findings"* ]]
 }

@@ -261,16 +261,23 @@ than by a regex each caller brings, so two readers of one review cannot report
 different things about it.
 
 A finding declaration is part of that format, so the grammar of one lives here
-too: the ID at the head of a list item, the location after it, and the body
-after that. `parse_finding_line` is for a caller holding a single line that is
-not in a findings section — the prior-findings ledger is the one — and every
-other reader asks `ReviewDocument.findings`.
+too: the ID at the head of a list item, the location after it, the body after
+that, and the annotations a later pass writes onto it — declined, skipped.
+`parse_finding_line` is for a caller holding a single line that is not in a
+findings section — the prior-findings ledger is the one — and every other
+reader asks `ReviewDocument.findings`.
 
 Counting them is that same parse, not a second grammar over the same text:
 `open_counts` tallies `open_findings`, so which findings a review is reported
 to have and how many it is reported to have are one answer. A tally written as
 its own regex is how a review came to report four findings it had none of —
 the ledger's lines look like declarations from anywhere but inside the parse.
+
+`build_mechanical_body` is the document this module writes rather than reads:
+the whole body a review has when no synthesis agent produced one. It belongs
+beside the format it renders for the same reason the readers do — a summary,
+findings and a verdict assembled anywhere else would be the canonical form
+stated twice.
 
 ### review_gc.py
 
@@ -480,20 +487,6 @@ Deduplication of findings against already-posted PR comments.
 Fetches existing bot comments (inline and review-body), compares via
 Jaccard similarity, and filters out duplicates before posting.
 
-### review_findings.py
-
-Skip annotations, diff hunks, and the mechanically merged review.
-
-What is left to do once a review's findings exist: read the fix pass's skip
-annotations off them, drop the sections that should not be posted, and assemble
-the summary and verdict for a review no synthesis agent wrote. Shared between
-review-orchestrate, which builds reviews, and review-post, which posts them.
-
-Reading findings off a document is `review_document`'s job, checking them
-against the tree is `review_verify`'s, what happens to them *across* reviews —
-merging, renumbering, carry-forward — is `review_merge`'s, and the `Finding`
-every side holds is `review_types`'.
-
 ### review_fix.py
 
 Fix pass for claude-review.
@@ -536,6 +529,11 @@ Diff classification, renumbering for posting, comment formatting, and permalinks
 
 Classifies findings as inline/file-level/skipped based on the PR diff,
 renumbers them for posted order, and formats as GitHub review comments.
+
+Reading the diff is part of that classification, so `parse_diff_hunks` lives
+here: which lines a hunk covers is the same question as whether a finding can
+be posted inline against them, and asking it twice is how a comment lands on a
+line the diff never touched.
 
 ### review_merge.py
 
@@ -649,6 +647,13 @@ layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
 ### review_verify.py
 
 What a review claims, checked against the tree it claims it about.
+
+`post_process_findings` is that check as a whole pass: a caller hands it a
+finished review file and gets back what verification did to it. Evidence
+checking, evidence stripping and the reconciliation are steps of that pass
+rather than a menu — run in another order they leave a review whose prose
+describes findings by IDs it no longer uses — so they are private and the pass
+is what callers reach for.
 
 Two gates run over a finished review and both only ever remove findings.
 

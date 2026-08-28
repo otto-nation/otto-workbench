@@ -225,7 +225,7 @@ class TestPriorDisposition:
 
 
 class TestParsePriorFindings:
-    """Reconciliation's view of the prior review — see test_review_prior.py."""
+    """Reconciliation's view of the prior review — see test_review_reconcile.py."""
 
     def test_a_findings_quotation_below_its_first_line_travels_with_it(self):
         prior = (

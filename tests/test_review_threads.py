@@ -1941,6 +1941,13 @@ class TestEveryVerdictReachesTheTable:
     def test_each_verdict_renders_exactly_one_row_and_is_counted_once(
         self, rt, content,
     ):
+        """The row and the tally are asserted together, over the whole enum.
+
+        They are the pairing that can disagree: a verdict can reach the table
+        under a heading and still be added to `**N fixed**`, or be counted and
+        never printed. Sweeping the enum is what makes the next member fail
+        here rather than land silently in somebody else's bucket.
+        """
         verdicts = [o for o in FixOutcome if o not in self._NOT_THE_COMMENT_PASS]
         buckets = {
             o.value: [CommentItem(id=f"t{n}", file="a.py", line=n,
@@ -7793,25 +7800,27 @@ class TestCommentItemsSettleThroughTheirSource:
         assert rt._reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 
-    def test_the_stronger_evidence_at_a_location_wins(self, rt):
+    @pytest.mark.parametrize("resolved_first", [True, False])
+    def test_the_stronger_evidence_at_a_location_wins(self, rt, resolved_first):
         """Two threads on one line, one merely resolved and one we answered.
 
         The location carries one verdict, so the grades have to be ordered
         rather than left to whichever thread the map happened to visit last.
+        Both insertion orders run: a last-write-wins fold passes one of them.
         """
         state = self._state()
-        threads = {
-            "t1": ReportThread(
-                id="t1", file="a.go", line=7, reviewer="kgn",
-                state=ThreadState.RESOLVED, is_resolved=True,
-                comments=[{"body": "x"}],
-            ),
-            "t2": ReportThread(
-                id="t2", file="a.go", line=7, reviewer="kgn",
-                state=ThreadState.NEW, is_resolved=False,
-                comments=[{"body": "Applied: dropped the retry\n\nFixed in `abc`."}],
-            ),
-        }
+        resolved = ReportThread(
+            id="t1", file="a.go", line=7, reviewer="kgn",
+            state=ThreadState.RESOLVED, is_resolved=True,
+            comments=[{"body": "x"}],
+        )
+        answered = ReportThread(
+            id="t2", file="a.go", line=7, reviewer="kgn",
+            state=ThreadState.NEW, is_resolved=False,
+            comments=[{"body": "Applied: dropped the retry\n\nFixed in `abc`."}],
+        )
+        pair = [resolved, answered] if resolved_first else [answered, resolved]
+        threads = {t.id: t for t in pair}
         assert rt._reconcile_fix_snapshot(state, threads) == 1
         assert state.fix.fix.items[0].outcome == FixOutcome.FIXED
 

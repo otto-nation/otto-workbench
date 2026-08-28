@@ -307,6 +307,12 @@ def _lenient_from_dict(cls, raw):
     value it does not recognise. Those keys are not in the triage schema, so a
     model emitting one has invented it — that entry defaults rather than taking
     the batch down with it.
+
+    Catching it widens the net past the enums, and deliberately: `__post_init__`
+    coerces `line`, `index` and `evidence_line` with `int()`, which raises the
+    same way for a model that writes `"line": "abc"`. That used to crash the
+    pass over one unreadable number, which is the outcome this helper exists to
+    prevent — a malformed field costs the entry, not the PR.
     """
     try:
         return serde.from_dict(cls, raw)

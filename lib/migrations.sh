@@ -870,8 +870,8 @@ adopt_legacy_workbench_root() {
 }
 
 # run_all_migrations
-# Adopts the legacy root, backfills the project registry, records each repo's
-# identity, prunes stale state, then runs every component's migrations.
+# Adopts the legacy root, backfills and prunes the project registry, records each
+# repo's identity, prunes stale state, then runs every component's migrations.
 run_all_migrations() {
   # Before anything reads the state root: carry a pre-split ~/.config/workbench
   # into the roots that own it now, migrations.applied included.
@@ -883,6 +883,18 @@ run_all_migrations() {
   # would read an empty registry, find nothing, and record itself as applied.
   # No-op after the first run on a machine.
   seed_project_registry
+
+  # Drop the entries whose work tree has gone, so the two passes below walk the
+  # repos the machine has rather than every one it has ever had. After the
+  # backfill because a line it just seeded is a line to keep, and before the
+  # recorder because a dropped line is one fewer to resolve an identity for.
+  # Announced only when it drops something: on a settled machine this is 0 every
+  # sync, and a line saying so every time is noise the operator cannot act on.
+  local _pruned
+  _pruned="$(project_prune)"
+  if (( _pruned > 0 )); then
+    info "Project registry pruned — $_pruned entry(s) whose work tree is gone"
+  fi
 
   # Before the pruning below reads them: give every registry line the repo
   # identity behind it. Ahead of the prune because a repo-scoped entry is

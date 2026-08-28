@@ -164,7 +164,7 @@ Print:
 | Kind | Examples | Log depth | Fix strategy |
 |------|----------|-----------|--------------|
 | **lint** | ShellCheck, ESLint, yamllint | Annotations only | Direct code fix |
-| **test** | pytest, bats, jest | Annotations; logs if missing file/line | Code or test fix |
+| **test** | pytest, bats, jest | Annotations; logs when those are generic | Code or test fix |
 | **build** | Docker, webpack, gradle | Full logs | Dependency/config fix |
 | **infra** | Timeouts, rate limits, OOM | Full logs | Flag to user |
 | **flaky** | Same test passed in prior run | Never | Flag, suggest re-run |

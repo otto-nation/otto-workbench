@@ -26,6 +26,11 @@ from pr_state import PRIdentity, PRState  # noqa: E402
 from proc import CmdResult  # noqa: E402
 
 
+def _no_log_fallback(kind):
+    """A `_log_fallback` result for a job whose logs yielded nothing."""
+    return ci_check._LogFallback([], "", kind, structured=False)
+
+
 # ── _fetch_latest_run_ids ─────────────────────────────────────────────────
 
 
@@ -372,7 +377,7 @@ def test_fetch_job_failure_with_no_annotations():
     job = {"name": "Build", "conclusion": "failure", "databaseId": 10}
     run_data = {"databaseId": 100}
     with patch("ci_check._fetch_annotations", return_value=[]):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)):
             result = ci_check._fetch_job_failure("owner/repo", job, run_data)
     assert result is not None
     assert result["job_name"] == "Build"
@@ -402,7 +407,7 @@ def test_parse_run_skips_null_conclusion_jobs():
         {"name": "Test", "conclusion": None, "databaseId": 12},
     ])
     with patch("ci_check._fetch_annotations", return_value=[]):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)):
             result = ci_check._parse_run("owner/repo", run_data)
     assert len(result.failures) == 1
     assert "lint" in result.failures
@@ -416,7 +421,7 @@ def test_parse_run_skips_success_and_neutral_jobs():
         {"name": "Deploy", "conclusion": "neutral", "databaseId": 12},
     ])
     with patch("ci_check._fetch_annotations", return_value=[]):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)):
             result = ci_check._parse_run("owner/repo", run_data)
     assert len(result.failures) == 1
 
@@ -427,7 +432,7 @@ def test_parse_run_includes_timed_out_jobs():
         {"name": "Slow Test", "conclusion": "timed_out", "databaseId": 10},
     ])
     with patch("ci_check._fetch_annotations", return_value=[]):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.TEST)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.TEST)):
             result = ci_check._parse_run("owner/repo", run_data)
     assert len(result.failures) == 1
 
@@ -445,7 +450,7 @@ def test_parse_run_propagates_source_run_id():
         ],
     }
     with patch("ci_check._fetch_annotations", return_value=[]):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)):
             result = ci_check._parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.items[0].source_run_id == 200
@@ -457,7 +462,7 @@ def test_parse_run_defaults_source_run_id_to_primary():
         {"name": "Lint", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("ci_check._fetch_annotations", return_value=[]):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)):
             result = ci_check._parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.items[0].source_run_id == 100
@@ -519,7 +524,7 @@ def test_parse_run_includes_failed_step():
         },
     ])
     with patch("ci_check._fetch_annotations", return_value=[]):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)):
             result = ci_check._parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.failed_step == "Generate & check drift"
@@ -531,7 +536,7 @@ def test_parse_run_failed_step_none_without_steps():
         {"name": "Lint", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("ci_check._fetch_annotations", return_value=[]):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)):
             result = ci_check._parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.failed_step is None
@@ -654,7 +659,8 @@ def test_parse_run_enriches_uninformative_build_annotations():
         {"name": "Generate & verify", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
-        with patch("ci_check._log_fallback", return_value=(log_annotations, [log_context], ci_check.ci.FailureKind.BUILD)) as mock_fallback:
+        fallback = ci_check._LogFallback(log_annotations, log_context, ci_check.ci.FailureKind.BUILD, structured=False)
+        with patch("ci_check._log_fallback", return_value=fallback) as mock_fallback:
             result = ci_check._parse_run("owner/repo", run_data)
     mock_fallback.assert_called_once()
     group = list(result.failures.values())[0]
@@ -671,7 +677,7 @@ def test_parse_run_keeps_uninformative_annotations_when_log_fallback_empty():
         {"name": "Generate & verify", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
-        with patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)):
+        with patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)):
             result = ci_check._parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert "exit code 1" in group.items[0].annotation
@@ -690,7 +696,8 @@ def test_parse_run_enriches_uninformative_test_annotations():
         {"name": "pytest unit", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("ci_check._fetch_annotations", return_value=uninformative_annotations):
-        with patch("ci_check._log_fallback", return_value=(log_annotations, [log_context], ci_check.ci.FailureKind.TEST)) as mock_fallback:
+        fallback = ci_check._LogFallback(log_annotations, log_context, ci_check.ci.FailureKind.TEST, structured=False)
+        with patch("ci_check._log_fallback", return_value=fallback) as mock_fallback:
             result = ci_check._parse_run("owner/repo", run_data)
     mock_fallback.assert_called_once()
     group = list(result.failures.values())[0]
@@ -852,7 +859,7 @@ _ARTIFACT_CONTEXT = "--- FAIL: TestFoo (0.01s)\n    foo_test.go:42: expected 1, 
 
 
 @patch("ci_check._fetch_test_artifact", return_value=_ARTIFACT_CONTEXT)
-@patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.TEST))
+@patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.TEST))
 @patch("ci_check._fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS)
 def test_fetch_job_failure_uses_artifact_fallback(_mock_ann, _mock_log, _mock_art):
     """When annotations are uninformative and logs are empty, artifact fallback triggers."""
@@ -871,7 +878,9 @@ def test_fetch_job_failure_skips_artifact_when_logs_succeed(_mock_ann, mock_log,
     """When log fallback produces context, artifact download is not attempted."""
     log_context = "--- FAIL: TestBar (0.02s)\n    bar_test.go:10: wrong result"
     log_annotations = [{"message": log_context, "path": "", "start_line": 0, "title": ""}]
-    mock_log.return_value = (log_annotations, [log_context], ci_check.ci.FailureKind.TEST)
+    mock_log.return_value = ci_check._LogFallback(
+        log_annotations, log_context, ci_check.ci.FailureKind.TEST, structured=False,
+    )
     job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10}
     ci_check._fetch_job_failure("owner/repo", job, {"databaseId": 100})
     mock_artifact.assert_not_called()
@@ -889,6 +898,93 @@ def test_fetch_job_failure_no_artifact_for_lint(mock_ann, mock_log, mock_artifac
     ci_check._fetch_job_failure("owner/repo", job, {"databaseId": 100})
     mock_log.assert_not_called()
     mock_artifact.assert_not_called()
+
+
+# ── TAP failures ───────────────────────────────────────────────────────────
+
+# Trimmed from run #2893: the failure near the top, and at the bottom the
+# warning traces and runner exit message the old extraction anchored on.
+_BATS_LOG = "\n".join([
+    "2026-08-28T18:34:33.5541835Z not ok 1648 bats_skip survives a setup in 71ms",
+    "2026-08-28T18:34:33.5542700Z # (in test file tests/ui_facade.bats, line 164)",
+    "2026-08-28T18:34:33.5543479Z #   `[[ \"$output\" == *\"# skip\"* ]]' failed",
+    "2026-08-28T18:34:33.5544239Z ok 1651 output.sh accepts current bash in 27ms",
+    "2026-08-28T18:35:03.5727631Z        in test file tests/install_targeted.bats, line 150)",
+    "2026-08-28T18:35:03.7583872Z ##[error]Process completed with exit code 1.",
+])
+
+_BATS_JOB = {"name": "Tests (bats)", "conclusion": "failure", "databaseId": 10,
+             "_source_run_id": 100}
+
+
+def _bats_items():
+    """`_fetch_job_failure` for a bats job whose only annotation is generic."""
+    with patch("ci_check._fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
+         patch("ci_check._fetch_job_logs", return_value=_BATS_LOG):
+        return ci_check._fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100})["items"]
+
+
+def test_bats_failure_reports_the_failing_assertion():
+    item = _bats_items()[0]
+    assert (item.file, item.line) == ("tests/ui_facade.bats", 164)
+
+
+def test_bats_failure_does_not_inherit_the_generic_annotation_location():
+    """The generic annotation anchors on `.github` — a log location beats it."""
+    item = _bats_items()[0]
+    assert item.file != _UNINFORMATIVE_ANNOTATIONS[0]["path"]
+    assert item.line != _UNINFORMATIVE_ANNOTATIONS[0]["start_line"]
+
+
+def test_bats_failure_headline_names_the_failing_test():
+    assert "bats_skip survives a setup" in _bats_items()[0].headline
+
+
+def test_bats_failure_id_is_stable_across_runs():
+    assert _bats_items()[0].id == _bats_items()[0].id == "err-tests/ui_facade.bats-164"
+
+
+def test_every_bats_failure_gets_its_own_item():
+    log = "\n".join([
+        "2026-08-28T18:34:33.5541835Z not ok 2 failing early in 3ms",
+        "2026-08-28T18:34:33.5542700Z # (in test file tests/a.bats, line 10)",
+        "2026-08-28T18:34:33.5544239Z ok 3 passing later in 1ms",
+        "2026-08-28T18:34:33.5545000Z not ok 4 failing late in 1ms",
+        "2026-08-28T18:34:33.5546000Z # (in test file tests/b.bats, line 18)",
+    ])
+    with patch("ci_check._fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
+         patch("ci_check._fetch_job_logs", return_value=log):
+        result = ci_check._fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100})
+    assert [(i.file, i.line) for i in result["items"]] == [
+        ("tests/a.bats", 10), ("tests/b.bats", 18),
+    ]
+
+
+def test_an_unlocated_tap_failure_keys_on_its_test_name():
+    """`hash()` is randomised per process, so a message hash never matches twice."""
+    log = "2026-08-28T18:34:33.5541835Z not ok 1 setup_file failed in 2ms"
+    with patch("ci_check._fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
+         patch("ci_check._fetch_job_logs", return_value=log):
+        result = ci_check._fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100})
+    assert result["items"][0].id == "Tests (bats)-setup-file-failed"
+
+
+def test_job_logs_allow_escape_sequences():
+    """gh refuses a coloured log outright, which reads here as a job with no logs."""
+    with patch("gh_client.api", return_value=CmdResult(0, "logs")) as mock_api:
+        ci_check._fetch_job_logs("owner/repo", 10)
+    assert mock_api.call_args.kwargs["allow_escape_sequences"] is True
+
+
+def test_a_non_tap_log_still_keeps_the_original_annotations():
+    """Only a location the log reported displaces GitHub's own annotation."""
+    log = "2026-06-22T17:22:01Z --- FAIL: TestFoo (0.01s)\n2026-06-22T17:22:01Z FAIL"
+    job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10}
+    with patch("ci_check._fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
+         patch("ci_check._fetch_job_logs", return_value=log):
+        result = ci_check._fetch_job_failure("owner/repo", job, {"databaseId": 100})
+    assert result["items"][0].file == _UNINFORMATIVE_ANNOTATIONS[0]["path"]
+    assert "FAIL: TestFoo" in result["items"][0].context
 
 
 # ── _count_job_states ──────────────────────────────────────────────────────
@@ -993,7 +1089,7 @@ def test_run_ci_wait_emits_partial_on_new_failure(capsys):
     with patch("ci_check._fetch_latest_run_ids", side_effect=[[100], [100]]), \
          patch("ci_check._fetch_run_data", side_effect=mock_fetch_data), \
          patch("ci_check._fetch_annotations", return_value=[]), \
-         patch("ci_check._log_fallback", return_value=([], [], ci_check.ci.FailureKind.BUILD)), \
+         patch("ci_check._log_fallback", return_value=_no_log_fallback(ci_check.ci.FailureKind.BUILD)), \
          patch("ci_check._commits_behind_main", return_value=0), \
          patch("ci_check.time.sleep"):
         result = ci_check._run_ci_wait(mock_trail, mock_args, mock_ctx)

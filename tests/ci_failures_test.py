@@ -12,8 +12,8 @@ if str(LIB_DIR) not in sys.path:
 from ci_failures import (
     FailureKind, Outcome, classify_job, FailureItem, FailureGroup, RunState,
     compute_progression, sync_ci_domain, render_dashboard,
-    extract_failure_context, extract_headline, LogMarker, LOG_MARKERS,
-    _MAX_CONTEXT_CHARS,
+    extract_failure_context, extract_headline, extract_tap_failures,
+    LogMarker, LOG_MARKERS, SourceLocation, _MAX_CONTEXT_CHARS,
 )
 from pr_domains import CIDomain
 
@@ -395,6 +395,120 @@ def test_extract_failure_context_gha_error():
     ])
     result = extract_failure_context(log, FailureKind.BUILD)
     assert "##[error]" in result
+
+
+# ── TAP Extraction Tests ─────────────────────────────────────────────────
+
+# Trimmed from run #2893, job 98945392702 — the shape that defeated the old
+# extraction. The one real failure is near the top; the last lines before the
+# runner's exit message are BW02 warning traces naming a test that passed, and
+# `gha-error`'s two-line window landed on those.
+_BATS_RUN_2893 = "\n".join([
+    "2026-08-28T18:34:33.5540874Z ok 1647 output.sh version guard contains helpful message in 23ms",
+    "2026-08-28T18:34:33.5541835Z not ok 1648 bats_skip survives a setup that sources lib/ui.sh in 71ms",
+    "2026-08-28T18:34:33.5542700Z # (in test file tests/ui_facade.bats, line 164)",
+    "2026-08-28T18:34:33.5543479Z #   `[[ \"$output\" == *\"# skip dependency missing\"* ]]' failed",
+    "2026-08-28T18:34:33.5544239Z ok 1651 output.sh accepts current bash in 27ms",
+    "2026-08-28T18:35:03.5717242Z ",
+    "2026-08-28T18:35:03.5717379Z The following warnings were encountered during tests:",
+    "2026-08-28T18:35:03.5717717Z # bats warning: Executed 1992 instead of expected 1994 tests",
+    "2026-08-28T18:35:03.5726059Z BW02: Using flags on `run` requires at least BATS_VERSION=1.5.0.",
+    "2026-08-28T18:35:03.5726707Z       (from function `bats_warn_minimum_guaranteed_version' in file /usr/lib/bats-core/warnings.bash, line 32,",
+    "2026-08-28T18:35:03.5727234Z        from function `run' in file /usr/lib/bats-core/test_functions.bash, line 351,",
+    "2026-08-28T18:35:03.5727631Z        in test file tests/install_targeted.bats, line 150)",
+    "2026-08-28T18:35:03.7583872Z ##[error]Process completed with exit code 1.",
+])
+
+
+def _as_log_failed(log: str) -> str:
+    """The same log as `gh run view --log-failed` renders it — job/step prefixed."""
+    return "\n".join(f"Tests (bats)\tRun bats tests\t{line}" for line in log.splitlines())
+
+
+def test_extract_tap_failures_anchors_on_the_failing_assertion():
+    failures = extract_tap_failures(_BATS_RUN_2893)
+    assert len(failures) == 1
+    assert failures[0].location == SourceLocation("tests/ui_facade.bats", 164)
+    assert failures[0].name == "bats_skip survives a setup that sources lib/ui.sh"
+
+
+def test_extract_tap_failures_ignores_trailing_warning_traces():
+    failures = extract_tap_failures(_BATS_RUN_2893)
+    assert all("install_targeted" not in f.location.file for f in failures)
+
+
+def test_extract_tap_failures_reads_log_failed_prefixed_lines():
+    prefixed = extract_tap_failures(_as_log_failed(_BATS_RUN_2893))
+    assert prefixed == extract_tap_failures(_BATS_RUN_2893)
+
+
+def test_extract_tap_failures_prefers_the_test_file_over_the_helper():
+    log = "\n".join([
+        "not ok 4 failing later with helper in 1ms",
+        "# (from function `helper_fn' in file tests/helper.bash, line 22,",
+        "#  in test file tests/b.bats, line 18)",
+        "#   `helper_fn' failed",
+    ])
+    assert extract_tap_failures(log)[0].location == SourceLocation("tests/b.bats", 18)
+
+
+def test_extract_tap_failures_surfaces_every_failure():
+    log = "\n".join([
+        "1..4",
+        "ok 1 passing first in 3ms",
+        "not ok 2 failing early in 3ms",
+        "# (in test file tests/a.bats, line 10)",
+        "ok 3 passing later in 1ms",
+        "not ok 4 failing late in 1ms",
+        "# (in test file tests/b.bats, line 18)",
+    ])
+    failures = extract_tap_failures(log)
+    assert [f.location for f in failures] == [
+        SourceLocation("tests/a.bats", 10), SourceLocation("tests/b.bats", 18),
+    ]
+
+
+def test_extract_tap_failures_without_a_location():
+    failures = extract_tap_failures("not ok 1 setup_file failed in 2ms")
+    assert failures[0].location is None
+    assert failures[0].name == "setup_file failed"
+
+
+def test_extract_tap_failures_keeps_an_undescribed_failure():
+    failures = extract_tap_failures("not ok 5\n# (in test file tests/a.bats, line 3)\nnot ok 6 named")
+    assert [f.name for f in failures] == ["test 5", "named"]
+    assert failures[0].location == SourceLocation("tests/a.bats", 3)
+
+
+def test_extract_tap_failures_empty_for_a_non_tap_log():
+    assert extract_tap_failures("--- FAIL: TestFoo (0.01s)\nFAIL") == ()
+
+
+def test_extract_failure_context_bats_uses_the_tap_block():
+    result = extract_failure_context(_BATS_RUN_2893, FailureKind.TEST)
+    assert result.startswith("not ok 1648 ")
+    assert "tests/ui_facade.bats, line 164" in result
+    assert "##[error]" not in result
+    assert "install_targeted" not in result
+
+
+def test_extract_failure_context_strips_the_log_failed_job_step_prefix():
+    prefixed = extract_failure_context(_as_log_failed(_BATS_RUN_2893), FailureKind.TEST)
+    assert prefixed == extract_failure_context(_BATS_RUN_2893, FailureKind.TEST)
+
+
+def test_prefix_stripping_leaves_go_fail_lines_alone():
+    log = "FAIL\tgithub.com/x/y\t0.123s\n--- FAIL: TestThing (0.00s)"
+    result = extract_failure_context(log, FailureKind.TEST)
+    assert "FAIL\tgithub.com/x/y\t0.123s" in result
+
+
+def test_extract_headline_tap_fail():
+    context = "\n".join([
+        "not ok 1648 bats_skip survives a setup that sources lib/ui.sh in 71ms",
+        "# (in test file tests/ui_facade.bats, line 164)",
+    ])
+    assert extract_headline(context).startswith("not ok 1648 bats_skip survives")
 
 
 # ── LogMarker Tests ──────────────────────────────────────────────────────

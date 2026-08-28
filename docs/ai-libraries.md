@@ -225,6 +225,23 @@ permission to save can still be recovered.
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
 
+### review_collect.py
+
+What a review collects before a prompt is built, and what it may cost.
+
+Gathers the diff, the commit log, the changed files' contents and permissions,
+the repository's own review context, and the delta against a prior review;
+fits the result to the prompt's byte budget; and formats it into the
+pre-collected data block a phase sends.
+
+The budget is this module's subject as much as the collection is. Every bound
+on what a prompt may carry is a constant here, and `_fit_to_budget` is the one
+place that decides which files a review can afford to inline — so a phase
+asking for less diff and a collector deciding what to gather read the same
+numbers. How the collected files are ranked and divided is `review_grouping`'s,
+what a phase does with the block is `review_prompt`'s, and the records this
+fills in are `review_types`'.
+
 ### review_document.py
 
 `review.md` — the artifact the review subsystem exists to produce.
@@ -404,15 +421,16 @@ to review_gc, which the orchestrator runs once every phase is done.
 
 ### review_preflight.py
 
-Pre-flight data collection and PR fetching.
+What a review knows about its PR before any agent runs.
 
-Handles everything needed before prompt construction: collecting diffs, commit logs,
-file contents, and permissions.
+Fetches the PR's metadata and its surrounding conversation — commits, reviews,
+review comments, issue comments — and classifies the reply threads a re-review
+has to answer. A branch with no PR behind it is described from the worktree
+instead, so a self-review reaches the same `PRMetadata` by another route.
 
-How the collected files are ranked and divided is `review_grouping`'s, and the
-records this fills in — `PRMetadata`, `PRContext`, `PreflightData`, `Group` and
-the `ReviewJob` they hang off — are `review_types`', so a consumer that only
-needs to name a job does not import the collection that builds one.
+What a review *collects* off that surface — the diff, the files, the budget it
+all has to fit — is `review_collect`'s; how the collected files are ranked and
+divided is `review_grouping`'s; and the records this fills in are `review_types`'.
 
 ### review_prompt.py
 

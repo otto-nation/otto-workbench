@@ -43,6 +43,10 @@ from agent_registry import PHASES
 from agent_templates import build_output_block, build_worktree_block
 from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from pr_domains import ReviewVerdict
+from review_collect import (
+    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
+    build_project_context, format_preflight_data, scope_diff, truncate_diff,
+)
 from review_document import (
     BOLD_FINDING_ID_RE, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS, finding_spans, strip_sections,
@@ -56,11 +60,9 @@ from review_scout import (
     is_scout_output, parse_scout_output,
 )
 from review_preflight import (
-    MAX_PROMPT_BYTES, MAX_REVIEW_BODY_LEN, MIN_DIFF_BYTES,
-    NON_PREFLIGHT_OVERHEAD_BYTES,
+    MAX_REVIEW_BODY_LEN,
     THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
     THREAD_RESOLVED, THREAD_UNREPLIED,
-    _scope_diff, _truncate_diff, build_project_context, format_preflight_data,
 )
 from review_types import (
     FILE_STAT_FMT, PRContext, PreflightData, PRMetadata, PriorDisposition,
@@ -445,8 +447,9 @@ def _build_holistic_block(
 # what the agent reviews — so the tail costs bytes no reader spends. Both lists
 # were uncapped until a rebased branch produced 4,974 delta files for a 107-file
 # PR and 260KB of `- \`path\`` lines pushed the synthesis prompt 75% past its
-# budget. `_scope_to_surface` bounds the count itself now; this bounds the
-# rendering, so no future way of over-counting can spend the whole budget on it.
+# budget. `review_collect` bounds the count itself now, by narrowing the delta to
+# the review's surface; this bounds the rendering, so no future way of
+# over-counting can spend the whole budget on it.
 MAX_DELTA_LIST_ENTRIES = 200
 
 # Below this the diff fence holds a fragment of one hunk, which reads as
@@ -521,13 +524,13 @@ def _build_delta_section(
     diff_text = ""
     if preflight.delta_diff:
         diff_text = (
-            _scope_diff(preflight.delta_diff, file_filter) if file_filter
+            scope_diff(preflight.delta_diff, file_filter) if file_filter
             else preflight.delta_diff
         )
     if diff_text and max_bytes is not None:
         fence = ["", "### Delta diff", "", "```diff", "", "```"]
         room = max_bytes - len("\n".join(head + fence + tail).encode())
-        diff_text = _truncate_diff(diff_text, room)[0] if room >= MIN_DELTA_DIFF_BYTES else ""
+        diff_text = truncate_diff(diff_text, room).text if room >= MIN_DELTA_DIFF_BYTES else ""
 
     diff_block = ["", "### Delta diff", "", "```diff", diff_text, "```"] if diff_text else []
     return "\n".join(head + diff_block + tail)

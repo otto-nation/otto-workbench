@@ -1,13 +1,9 @@
-"""Tests for review_preflight._collect_delta and pinned metadata fetching."""
+"""Tests for review_preflight's pinned metadata fetching."""
 
 from __future__ import annotations
 
-import json
 import sys
-from dataclasses import replace
 from pathlib import Path
-
-from conftest import git_out
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -16,25 +12,10 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import review_preflight as rp
+from review_types import ReviewJob
 
 
-def _git(repo: Path, *args: str) -> str:
-    """The shared git runner, stripped — see conftest.run_checked."""
-    return git_out(repo, *args).strip()
-
-
-def _init_repo(tmp_path: Path) -> Path:
-    """An empty repo with an identity and no signing, ready to commit into."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main", "-q")
-    _git(repo, "config", "user.email", "test@test.com")
-    _git(repo, "config", "user.name", "Test")
-    _git(repo, "config", "commit.gpgsign", "false")
-    return repo
-
-
-def _make_job(head_sha: str, prior_review: str = "") -> rp.ReviewJob:
+def _make_job(head_sha: str, prior_review: str = "") -> ReviewJob:
     pr = rp.PRMetadata(
         title="test",
         body="",
@@ -47,7 +28,7 @@ def _make_job(head_sha: str, prior_review: str = "") -> rp.ReviewJob:
         files=[],
     )
     ctx = rp.PRContext()
-    return rp.ReviewJob(
+    return ReviewJob(
         repo="owner/repo",
         pr_number="1",
         pr=pr,
@@ -57,117 +38,6 @@ def _make_job(head_sha: str, prior_review: str = "") -> rp.ReviewJob:
         session_log="/tmp/session.log",
         prior_review=prior_review,
     )
-
-
-class TestCollectDeltaSameSha:
-    def test_prior_sha_equals_head_sha_returns_empty(self):
-        sha = "abc1234def5678901234567890abcdef12345678"
-        prior_review = f"<!-- head_sha: {sha} -->\nsome review content"
-        job = _make_job(head_sha=sha, prior_review=prior_review)
-        result = rp._collect_delta(job)
-        assert result == ("", "", [], "")
-
-    def test_no_prior_review_returns_empty(self):
-        job = _make_job(head_sha="abc123", prior_review="")
-        result = rp._collect_delta(job)
-        assert result == ("", "", [], "")
-
-    def test_prior_review_without_sha_returns_empty(self):
-        job = _make_job(head_sha="abc123", prior_review="no sha marker here")
-        result = rp._collect_delta(job)
-        assert result == ("", "", [], "")
-
-
-class TestCollectDeltaMode:
-    """The delta surface follows the same rule as the full diff: self mode
-    reaches into the working tree, PR mode stops at HEAD."""
-
-    @staticmethod
-    def _repo_with_prior_commit(tmp_path: Path) -> tuple[Path, str]:
-        repo = _init_repo(tmp_path)
-        (repo / "reviewed.go").write_text("package main\n")
-        _git(repo, "add", ".")
-        _git(repo, "commit", "-q", "--no-verify", "-m", "reviewed")
-        prior_sha = _git(repo, "rev-parse", "HEAD")
-        (repo / "committed.go").write_text("package main\nfunc committed() {}\n")
-        _git(repo, "add", ".")
-        _git(repo, "commit", "-q", "--no-verify", "-m", "since review")
-        (repo / "reviewed.go").write_text("package main\nfunc uncommitted() {}\n")
-        (repo / "untracked.go").write_text("package main\nfunc untracked() {}\n")
-        return repo, prior_sha
-
-    def _job(self, tmp_path: Path, mode: str) -> rp.ReviewJob:
-        repo, prior_sha = self._repo_with_prior_commit(tmp_path)
-        job = _make_job(
-            head_sha=_git(repo, "rev-parse", "HEAD"),
-            prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
-        )
-        return replace(job, wt_path=str(repo), mode=mode)
-
-    def test_self_mode_delta_includes_worktree_changes(self, tmp_path, capsys):
-        delta_diff, _, delta_files, _ = rp._collect_delta(self._job(tmp_path, "self"))
-        capsys.readouterr()
-        assert "func committed" in delta_diff
-        assert "func uncommitted" in delta_diff
-        assert "func untracked" in delta_diff
-        assert sorted(delta_files) == ["committed.go", "reviewed.go", "untracked.go"]
-
-    def test_pr_mode_delta_stops_at_head(self, tmp_path, capsys):
-        delta_diff, _, delta_files, _ = rp._collect_delta(self._job(tmp_path, "pr"))
-        capsys.readouterr()
-        assert "func committed" in delta_diff
-        assert "func uncommitted" not in delta_diff
-        assert delta_files == ["committed.go"]
-
-
-class TestCollectDeltaSurface:
-    """The delta is bounded by the PR, not by what the base branch did.
-
-    `prior_sha..HEAD` spans the base as well as the branch, so a rebase onto a
-    moved base puts every commit the base gained into the delta. One 107-file
-    review reported 4,974 changed files that way, and the file list alone —
-    260KB — pushed the synthesis prompt 75% past its budget. It also defeated
-    incremental group skipping: with every group's files in the delta set,
-    nothing was skipped and the re-review cost a full one.
-    """
-
-    @staticmethod
-    def _repo(tmp_path: Path) -> tuple[Path, str]:
-        repo = _init_repo(tmp_path)
-        (repo / "mine.go").write_text("package main\n")
-        _git(repo, "add", ".")
-        _git(repo, "commit", "-q", "--no-verify", "-m", "reviewed")
-        prior_sha = _git(repo, "rev-parse", "HEAD")
-        (repo / "mine.go").write_text("package main\nfunc mine() {}\n")
-        (repo / "theirs.go").write_text("package main\nfunc theirs() {}\n")
-        _git(repo, "add", ".")
-        _git(repo, "commit", "-q", "--no-verify", "-m", "mine plus a rebased base commit")
-        return repo, prior_sha
-
-    def _job(self, tmp_path: Path, files: list[dict]) -> rp.ReviewJob:
-        repo, prior_sha = self._repo(tmp_path)
-        job = _make_job(
-            head_sha=_git(repo, "rev-parse", "HEAD"),
-            prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
-        )
-        return replace(
-            job, wt_path=str(repo), pr=replace(job.pr, files=files),
-        )
-
-    def test_files_outside_the_pr_are_not_in_the_delta(self, tmp_path, capsys):
-        job = self._job(tmp_path, [{"path": "mine.go", "additions": 1, "deletions": 0}])
-        delta_diff, delta_log, delta_files, _ = rp._collect_delta(job)
-        capsys.readouterr()
-        assert delta_files == ["mine.go"]
-        assert "func mine" in delta_diff
-        assert "theirs.go" not in delta_diff
-        assert "theirs.go" not in delta_log
-
-    def test_a_job_with_no_surface_keeps_the_whole_range(self, tmp_path, capsys):
-        """Branch reviews reach `_collect_delta` before the file list exists."""
-        _, _, delta_files, _ = rp._collect_delta(self._job(tmp_path, []))
-        capsys.readouterr()
-        assert sorted(delta_files) == ["mine.go", "theirs.go"]
 
 
 class TestArtifactDir:

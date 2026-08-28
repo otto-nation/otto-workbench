@@ -48,6 +48,20 @@ _REPLY_OUTCOMES = frozenset({
 # The record fields a pre-fold state file wrote at the top level of this domain.
 _LEGACY_RECORD_KEYS = ("commit_sha", "commit_status", "head_sha")
 
+# How the status line spells each verdict, in the order it prints them. Every
+# `FixOutcome` member has an entry — a verdict with none is silently dropped
+# from the count, so the domain would report fewer threads than it holds.
+_STATUS_LABELS: dict[FixOutcome, str] = {
+    FixOutcome.FIXED: "**{n} fixed**",
+    FixOutcome.DEFERRED: "{n} deferred",
+    FixOutcome.NEEDS_HUMAN: "{n} need discussion",
+    FixOutcome.DECLINED: "{n} declined",
+    FixOutcome.DISMISSED: "{n} dismissed",
+    FixOutcome.ALREADY_ADDRESSED: "{n} already addressed",
+    FixOutcome.SETTLED_ELSEWHERE: "{n} settled elsewhere",
+    FixOutcome.SKIPPED: "{n} skipped",
+}
+
 
 @dataclass(frozen=True)
 class CloseoutDebt:
@@ -252,16 +266,8 @@ class FixSummary(Domain):
         by_outcome: dict[str, int] = {}
         for o in self.fix.items:
             by_outcome[o.outcome] = by_outcome.get(o.outcome, 0) + 1
-        labels = [
-            (FixOutcome.FIXED, "**{n} fixed**"),
-            (FixOutcome.DEFERRED, "{n} deferred"),
-            (FixOutcome.NEEDS_HUMAN, "{n} need discussion"),
-            (FixOutcome.DECLINED, "{n} declined"),
-            (FixOutcome.DISMISSED, "{n} dismissed"),
-            (FixOutcome.ALREADY_ADDRESSED, "{n} already addressed"),
-        ]
         parts = [tmpl.format(n=by_outcome[outcome])
-                 for outcome, tmpl in labels if by_outcome.get(outcome, 0)]
+                 for outcome, tmpl in _STATUS_LABELS.items() if by_outcome.get(outcome, 0)]
         summary = " · ".join(parts) if parts else "no threads"
         lines = [f"**Fix**: {summary}"]
         if self.fix.commit_sha:

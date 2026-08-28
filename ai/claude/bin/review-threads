@@ -43,7 +43,7 @@ import run_lock
 import publishing
 import push
 from pr_comments_state import ThreadRecord, ThreadState
-from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome
+from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome, SettledBy
 import review_issue
 import text
 import timeouts
@@ -1216,34 +1216,26 @@ def _thread_opened_at(thread: ReportThread | None) -> float:
         return 0.0
 
 
-# Reason stamped on an outcome the fix pass never landed. Read back by
-# _handled_outside, which is what keeps the pass's commit — and the row's own
-# line history — from being credited for it.
+# Prose stamped on an outcome the fix pass never landed, for the person reading
+# the summary row. It says nothing to the code: what keeps the pass's commit —
+# and the row's own line history — from being credited is
+# `SettledBy.RECONCILIATION`, recorded beside it.
 #
 # Distinct from CommitClaim.RECONCILED, the commit-attribution resolver's
 # claim for "the pass recorded nothing and exactly one published commit
-# landed outside it" — this constant marks snapshot reconciliation against
-# GitHub instead (see _reconcile_fix_snapshot). _fixed_status_for checks this
-# reason before falling through to the claim-based one; the two "reconciled"
-# names are not the same mechanism.
+# landed outside it" — this reason accompanies snapshot reconciliation against
+# GitHub instead (see _reconcile_fix_snapshot). The two "reconciled" names are
+# not the same mechanism.
 _RECONCILED_REASON = "reconciled: handled outside the fix pass"
 
-# Reason stamped on an outcome the operator settled by hand and told the CLI
-# about with --settle. Read back for the reason _RECONCILED_REASON is: the fix
-# pass did not land this work, so its commit must not be credited for it.
+# Prose for an outcome the operator settled by hand and told the CLI about with
+# --settle, recorded beside `SettledBy.OPERATOR`.
 #
-# The two are kept apart because they are different evidence. Reconciliation is
-# the tool inferring a settlement from what GitHub shows; this is the operator
-# stating one. Only the second can be trusted for a thread nobody has replied to
-# yet, which is exactly the thread --settle exists for.
+# The two provenances are kept apart because they are different evidence.
+# Reconciliation is the tool inferring a settlement from what GitHub shows; this
+# is the operator stating one. Only the second can be trusted for a thread
+# nobody has replied to yet, which is exactly the thread --settle exists for.
 _SETTLED_REASON = "settled: recorded by hand"
-
-# Every reason that says a FIXED row landed outside the fix pass. Such a row can
-# still name a commit that was *recorded* for it — the SHA --settle resolved, or
-# the single commit that landed outside the pass — but never one inferred from
-# its line history, and when nothing names one the cell says the work was
-# handled rather than crediting whatever the running pass happened to commit.
-_HANDLED_OUTSIDE_REASONS = frozenset({_RECONCILED_REASON, _SETTLED_REASON})
 
 
 def _handled_outside(entry: CommentItem) -> bool:
@@ -1253,17 +1245,18 @@ def _handled_outside(entry: CommentItem) -> bool:
     ask before naming a commit for a row, so the summary cell, the thread reply
     and the permalink under it cannot answer it differently.
 
-    Both reason fields are read because `CommentItem.from_outcome` puts a
-    recorded reason in whichever one the surface about to render it looks at —
-    `reason` for the summary table and the tracking issue, `reasoning` for the
-    reply templates. Asking only the first would decline a citation in the table
-    and let the reply beside it make one.
+    Such a row can still name a commit that was *recorded* for it — the SHA
+    --settle resolved, or the single commit that landed outside the pass — but
+    never one inferred from its line history, and when nothing names one the
+    cell says the work was handled rather than crediting whatever the running
+    pass happened to commit.
+
+    Answered from the provenance the record carries rather than from the wording
+    of the reason beside it: the reason is written for a person, and a renderer
+    matching on it is one rewording away from crediting a commit for work that
+    commit does not contain.
     """
-    return bool(
-        _HANDLED_OUTSIDE_REASONS.intersection({
-            getattr(entry, "reason", ""), getattr(entry, "reasoning", ""),
-        })
-    )
+    return entry.settled_by is not SettledBy.PASS
 
 
 @dataclass(frozen=True)
@@ -1725,21 +1718,31 @@ _RECONCILED_STATUS_TEXT = "Addressed outside the fix pass"
 _UNATTRIBUTED_STATUS_TEXT = "Fix applied (commit not recorded)"
 
 
-def _thread_looks_handled(thread: ReportThread | None) -> bool:
-    """True when GitHub shows this thread as dealt with, by anyone.
+def _settlement_for(thread: ReportThread | None) -> FixOutcome | None:
+    """What GitHub shows became of this thread, or None when it shows nothing.
 
-    Resolution is the strong signal, but a thread can be answered and left open
-    for the reviewer to close. Both count: what disqualifies a thread from being
-    reported as deferred is evidence that someone acted on it.
+    Two grades of evidence, and which one it is decides what may be claimed. A
+    standing reply of ours — applied, already addressed, dismissed — names the
+    verdict outright, so the thread reads as FIXED however its resolve button
+    stands.
+
+    Resolution on its own names nothing of the sort. The button covers a
+    reviewer who was answered, who deferred the point, or who withdrew it, as
+    readily as one whose fix landed, so it settles the thread without saying
+    anybody fixed anything: SETTLED_ELSEWHERE. Both grades disqualify the thread
+    from being reported as deferred, which is what this is asked for; only the
+    first is a fix.
     """
     if not thread:
-        return False
-    if thread.is_resolved or thread.state in (ThreadState.RESOLVED, ThreadState.ADDRESSED):
-        return True
-    return any(
+        return None
+    if any(
         str(c.get("body", "")).startswith(_HANDLED_REPLY_PREFIXES)
         for c in thread.comments
-    )
+    ):
+        return FixOutcome.FIXED
+    if thread.is_resolved or thread.state in (ThreadState.RESOLVED, ThreadState.ADDRESSED):
+        return FixOutcome.SETTLED_ELSEWHERE
+    return None
 
 
 def _finding_location(entry: CommentItem | ReportThread) -> str:
@@ -1778,7 +1781,7 @@ def _answered_comment_sources(
 ) -> frozenset[str]:
     """Source comment ids our standing reply on the PR reports as handled.
 
-    A decomposed comment item has no review thread, so `_thread_looks_handled`
+    A decomposed comment item has no review thread, so `_settlement_for`
     has nothing to read for one: the item is a fragment of a top-level comment,
     and a top-level comment carries no thread of its own. What it does carry is
     a reply of ours further down the PR citing its permalink — the same evidence
@@ -1816,13 +1819,13 @@ def _answered_comment_sources(
     return frozenset(answered)
 
 
-def _entry_looks_handled(
+def _entry_settlement(
     entry: CommentItem,
     threads_by_id: dict[str, ReportThread],
     answered_sources: frozenset[str],
-    handled_locations: set[str],
-) -> bool:
-    """True when GitHub shows this snapshot row as dealt with, by anyone.
+    handled_locations: dict[str, FixOutcome],
+) -> FixOutcome | None:
+    """What GitHub shows became of this snapshot row, or None when nothing did.
 
     Two kinds of row reach here. A review thread carries its own evidence and is
     read directly. A comment item has none to carry — looking its synthetic id
@@ -1830,16 +1833,42 @@ def _entry_looks_handled(
     source comment having been answered, or by a review thread saying the same
     thing about the same line being settled: triage decomposes a top-level
     comment without knowing which of its points an inline thread already covers.
+
+    An item settled through a thread inherits that thread's grade rather than
+    being promoted: the evidence is the thread's, so the claim it supports is
+    too. An answered source is our own reply naming the verdict, which is the
+    same evidence a thread reply is.
     """
     thread = threads_by_id.get(entry.id)
     if thread:
-        return _thread_looks_handled(thread)
+        return _settlement_for(thread)
     source = _comment_item_source(entry)
     if not source.ok:
-        return False
+        return None
     if source.id in answered_sources:
-        return True
-    return _finding_location(entry) in handled_locations
+        return FixOutcome.FIXED
+    return handled_locations.get(_finding_location(entry))
+
+
+def _settled_locations(
+    threads_by_id: dict[str, ReportThread],
+) -> dict[str, FixOutcome]:
+    """Each code location a settled thread occupies, and how it was settled.
+
+    Keyed by `_finding_location`, so a decomposed comment item restating an
+    inline thread can find it. A location two settled threads share takes the
+    better-evidenced of the two: a reply naming the verdict outranks a resolve
+    button that names nothing.
+    """
+    located: dict[str, FixOutcome] = {}
+    for thread in threads_by_id.values():
+        settlement = _settlement_for(thread)
+        key = _finding_location(thread)
+        if not settlement or not key:
+            continue
+        if settlement.counts_as_fixed or key not in located:
+            located[key] = settlement
+    return located
 
 
 def _reconcile_fix_snapshot(
@@ -1864,11 +1893,13 @@ def _reconcile_fix_snapshot(
     the decomposed items — see `_answered_comment_sources`. It defaults to
     nothing asked, which is the honest reading for a caller that consulted only
     the review threads.
+
+    What each row flips *to* is graded by the evidence behind it, not fixed at
+    FIXED — see `_settlement_for`. A thread whose only evidence is the resolve
+    button lands on SETTLED_ELSEWHERE, so it leaves the deferred bucket without
+    being counted as work this cycle did or attributed to a commit.
     """
-    handled_locations = {
-        _finding_location(t) for t in threads_by_id.values()
-        if _thread_looks_handled(t)
-    } - {""}
+    handled_locations = _settled_locations(threads_by_id)
     flipped = 0
     for outcome in state.fix.fix.items:
         if outcome.outcome not in _UNSETTLED_OUTCOMES:
@@ -1876,11 +1907,13 @@ def _reconcile_fix_snapshot(
         entry = CommentItem.from_outcome(
             outcome, state.fix.reviewers.get(outcome.id, ""),
         )
-        if not _entry_looks_handled(
+        settlement = _entry_settlement(
             entry, threads_by_id, answered_sources, handled_locations,
-        ):
+        )
+        if settlement is None:
             continue
-        outcome.outcome = FixOutcome.FIXED
+        outcome.outcome = settlement
+        outcome.settled_by = SettledBy.RECONCILIATION
         outcome.reason = _RECONCILED_REASON
         flipped += 1
     if flipped:
@@ -2325,15 +2358,31 @@ def _fixed_status_for(
     attribution = _attribute_commit(entry, cp, history, thread)
     if attribution.cited:
         return _fixed_in_cell(attribution.sha, repo)
-    # A row settled outside the pass — reconciled at drain time, or recorded by
-    # the operator with --settle — landed in a commit this run could not resolve.
-    # That is true of the row whatever the running pass did, so it is answered
-    # before the pass-level text gets a say.
-    if _handled_outside(entry):
+    # A row settled outside the pass landed in a commit this run could not
+    # resolve. That is true of the row whatever the running pass did, so it is
+    # answered before the pass-level text gets a say.
+    if _settled_outside_the_pass(entry, cp):
         return _RECONCILED_STATUS_TEXT
     if attribution.claim is CommitClaim.PASS:
         return _fixed_status_text(cp, repo)
     return _UNATTRIBUTED_STATUS_TEXT
+
+
+def _settled_outside_the_pass(entry: CommentItem, cp: CommitPushResult) -> bool:
+    """Whether this fixed row's work landed where the running pass cannot name it.
+
+    Two ways that happens and one cell for both. The record says so — reconciled
+    at drain time, or recorded by the operator with `--settle` — or the branch
+    does, HEAD having moved past the fix snapshot onto a commit no reviewer can
+    be sent to.
+
+    Asked by the renderer and by the warning that counts what the renderer is
+    about to publish, so the table and the count beneath it cannot disagree
+    about which rows assert a fix the branch does not account for. The warning
+    used to compare the rendered cell text, which made a reworded cell a silent
+    change to what gets warned about.
+    """
+    return _handled_outside(entry) or cp.status == CommitStatus.RECONCILED
 
 
 def _fixed_in_cell(sha: str, repo: str) -> str:
@@ -2391,7 +2440,6 @@ def _fixed_status_text(cp: CommitPushResult, repo: str) -> str:
 def _warn_unattributed_fixes(
     fixed: list,
     cp: CommitPushResult,
-    repo: str,
     folded: set[str] | None = None,
     history: "AddressingHistory | None" = None,
     threads_by_id: dict[str, ReportThread] | None = None,
@@ -2408,22 +2456,23 @@ def _warn_unattributed_fixes(
     - `folded` drops the entries the renderer will fold into a thread's row.
       They reach no reader, so counting them describes a list nobody sees and
       reads as a larger attribution problem than the branch has.
-    - A row the renderer settles as `_RECONCILED_STATUS_TEXT` is not counted.
-      The resolver declines to cite it, which is why it used to be, but the
-      cell it renders is a specific claim about where the fix went — the work
-      is on the branch, in a commit this run cannot name. Nothing about it
-      contradicts itself, and the warning's own wording ("without a claim")
-      never fitted it. What is left is the case the warning exists for: a row
-      asserting a fix with nothing on the branch to show for it.
+    - A row `_settled_outside_the_pass` recognises is not counted. The resolver
+      declines to cite it, which is why it used to be, but the cell it renders
+      is a specific claim about where the fix went — the work is on the branch,
+      in a commit this run cannot name. Nothing about it contradicts itself, and
+      the warning's own wording ("without a claim") never fitted it. What is
+      left is the case the warning exists for: a row asserting a fix with
+      nothing on the branch to show for it.
 
-    The second half is asked of `_fixed_status_for`, the renderer, rather than
-    re-derived — the count and the rows under it are two readings of one answer
-    and must not be able to disagree. `history` is passed on for the same
-    reason: a row the table resolves to a commit is attributed, and counting it
-    here would report an attribution problem the reader cannot see. Asking both
-    of the same row costs one line lookup, not two — `history` memoizes on the
-    location a row cites, which is why the caller hands over the instance the
-    table will use rather than letting each build its own.
+    The second half is asked through the same predicate the renderer asks, and
+    of the record rather than of the rendered cell — the count and the rows
+    under it are two readings of one answer and must not be able to disagree.
+    `history` is passed on for the same reason: a row the table resolves to a
+    commit is attributed, and counting it here would report an attribution
+    problem the reader cannot see. Asking both of the same row costs one line
+    lookup, not two — `history` memoizes on the location a row cites, which is
+    why the caller hands over the instance the table will use rather than
+    letting each build its own.
 
     An unpushed commit is not this either: the work is committed and the row
     says so, it is only the link that has to wait.
@@ -2436,9 +2485,7 @@ def _warn_unattributed_fixes(
         e for e in fixed
         if e.id not in folded
         and not _attribute_commit(e, cp, history, threads_by_id.get(e.id)).cited
-        and _fixed_status_for(
-            e, cp, repo, history, threads_by_id.get(e.id),
-        ) != _RECONCILED_STATUS_TEXT
+        and not _settled_outside_the_pass(e, cp)
     ]
     if not orphans:
         return
@@ -2811,7 +2858,11 @@ _ACTION_OUTCOMES: Mapping[str, FixOutcome] = {
     "Fix committed and pushed": FixOutcome.FIXED,
     "Fix pending": FixOutcome.FIXED,
     "Added to the PR description (no commit)": FixOutcome.FIXED,
-    _RECONCILED_STATUS_TEXT: FixOutcome.FIXED,
+    # Not FIXED, though a fixed row can render it: the cell says the work landed
+    # somewhere this run cannot name, which is the same thing a settled-elsewhere
+    # row says. Both sides of the comparison read the cell, so a fixed row
+    # reading back as this one is not a change and does not restate the row.
+    _RECONCILED_STATUS_TEXT: FixOutcome.SETTLED_ELSEWHERE,
     "Deferred": FixOutcome.DEFERRED,
     "Already addressed": FixOutcome.ALREADY_ADDRESSED,
     "Dismissed (invalid)": FixOutcome.DISMISSED,
@@ -3081,13 +3132,17 @@ def _build_summary_body(
     fixed = unfolded(FixOutcome.FIXED)
     already_addressed = unfolded(FixOutcome.ALREADY_ADDRESSED)
     dismissed = unfolded(FixOutcome.DISMISSED)
+    settled_elsewhere = unfolded(FixOutcome.SETTLED_ELSEWHERE)
     needs_human = [e for e in content.needs_a_person if e.id not in folded]
     deferred = unfolded(FixOutcome.DEFERRED)
 
     rows: list[str] = []
     held: list[str] = []
-    settled_elsewhere: list[str] = []
-    open_elsewhere: list[str] = []
+    # Row keys this render left to an earlier summary comment, not entries — the
+    # two lists below feed the notes under the table, and are unrelated to the
+    # SETTLED_ELSEWHERE bucket above.
+    settled_earlier: list[str] = []
+    open_earlier: list[str] = []
     # The fix commit is the tree the table describes; fall back to the reviewed
     # head when nothing was committed.
     link_sha = cp.sha or head_sha
@@ -3121,7 +3176,7 @@ def _build_summary_body(
             key, _entry_activity_at(entry, threads_by_id, sources_at),
             _action_outcome(status),
         ):
-            (open_elsewhere if open_thread else settled_elsewhere).append(key)
+            (open_earlier if open_thread else settled_earlier).append(key)
             return False
         published = held_by_key.get(key)
         if published is None:
@@ -3163,6 +3218,13 @@ def _build_summary_body(
         1 for f, shown in addressed_shown if shown and not f.in_response
     )
     dismissed_count = sum([emit(e, "Dismissed (invalid)", link_sha) for e in dismissed])
+    # Its own count, kept out of the fixed one. The row reports that the thread
+    # is no longer owed, which is all its evidence supports: GitHub's resolve
+    # button covers a reviewer who was answered or who withdrew the point as
+    # readily as one whose fix landed.
+    settled_count = sum([
+        emit(e, _RECONCILED_STATUS_TEXT, link_sha) for e in settled_elsewhere
+    ])
     human_count = sum([
         emit(e, HumanReason.prose_for(e.reason), link_sha, open_thread=True)
         for e in needs_human
@@ -3180,6 +3242,8 @@ def _build_summary_body(
         counts.append(f"{addressed_count} already addressed")
     if dismissed_count:
         counts.append(f"{dismissed_count} dismissed")
+    if settled_count:
+        counts.append(f"{settled_count} settled elsewhere")
     if deferred_count:
         counts.append(f"{deferred_count} deferred")
     if human_count:
@@ -3204,11 +3268,11 @@ def _build_summary_body(
         carried_count, "row", "carried over from an earlier round that this "
         "checkout's state file does not cover."))
     parts.extend(_table_note(
-        len(open_elsewhere), "thread", "still open and awaiting an answer — raised "
+        len(open_earlier), "thread", "still open and awaiting an answer — raised "
         "in an earlier round and quiet since, left as published there rather than "
         "restated here."))
     parts.extend(_table_note(
-        len(settled_elsewhere), "thread", "settled in an earlier round and quiet "
+        len(settled_earlier), "thread", "settled in an earlier round and quiet "
         "since — left as published there rather than restated here."))
 
     if not has_comment_items:
@@ -3890,8 +3954,10 @@ def _render_deferred_summary(
     # the threads that took the most operator judgment.
     #
     # _finish_deferred_work reconciles the snapshot against GitHub before
-    # calling this, so a thread settled outside the fix pass has already been
-    # flipped to FIXED and cannot still be sitting in DEFERRED or NEEDS_HUMAN.
+    # calling this, so a thread settled outside the fix pass has already left
+    # DEFERRED and NEEDS_HUMAN — for FIXED where our own reply names the
+    # verdict, and for SETTLED_ELSEWHERE where the resolve button is the whole
+    # of the evidence.
     #
     # The rows are entries again before any of it: the reviewer column, the
     # permalink and the fold key are all read off an entry, and rebuilding them
@@ -3912,7 +3978,7 @@ def _render_deferred_summary(
     # question of the same rows, and `git log -L` is a process per location.
     history = AddressingHistory(wt_path)
     _warn_unattributed_fixes(
-        content.of(FixOutcome.FIXED), cp, repo,
+        content.of(FixOutcome.FIXED), cp,
         _folded_item_ids(content, threads_by_id),
         history, threads_by_id,
     )
@@ -3987,7 +4053,7 @@ def _post_or_defer_summary(
     # question of the same rows, and `git log -L` is a process per location.
     history = AddressingHistory(wt_path)
     _warn_unattributed_fixes(
-        content.of(FixOutcome.FIXED), cp, repo,
+        content.of(FixOutcome.FIXED), cp,
         _folded_item_ids(content, threads_by_id),
         history, threads_by_id,
     )
@@ -4117,13 +4183,15 @@ def _build_fix_record(
     has to grow a parameter — and every caller a positional argument — each
     time that vocabulary does.
 
-    `commit_sha` is stamped on the fixed entries only, through `_stamp_pass_commit`
-    — the one writer of that field, and safe to call here even when a caller
-    already stamped `fixed` upstream, since the writer is a no-op on an entry
-    that already names a commit. The others were not landed by this commit, and
-    a SHA on them would read as if they had been.
+    `commit_sha` is stamped only on the buckets whose outcome may cite a commit,
+    through `_stamp_pass_commit` — the one writer of that field, and safe to
+    call here even when a caller already stamped `fixed` upstream, since the
+    writer is a no-op on an entry that already names a commit. The others were
+    not landed by this commit, and a SHA on them would read as if they had been.
     """
-    _stamp_pass_commit(by_outcome.get(FixOutcome.FIXED, []), commit_sha)
+    for outcome, entries in by_outcome.items():
+        if outcome.may_cite_a_commit:
+            _stamp_pass_commit(entries, commit_sha)
     return FixRecord(
         items=[
             entry.to_outcome(outcome)
@@ -4410,7 +4478,7 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         landing nothing to stage — see `_replayed_commit`, which is what finds
         that commit again after a rebase.
         """
-        fixed = sum(1 for o in outcomes if o.outcome is FixOutcome.FIXED)
+        fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         deferred = sum(1 for o in outcomes if o.outcome is FixOutcome.DEFERRED)
         msg = "fix: address review comments"
         if fixed:
@@ -5073,11 +5141,12 @@ def _record_settlement(
     """
     before = (outcome.outcome, outcome.reason, outcome.commit_sha)
     outcome.outcome = kind
+    outcome.settled_by = SettledBy.OPERATOR
     # The operator's words for a dismissal, because that is the one settlement
     # whose reply is an argument the reviewer may answer. The other two render
-    # from the summary, so their reason carries provenance instead.
+    # from the summary, so their reason says what the provenance field records.
     outcome.reason = reason if kind is FixOutcome.DISMISSED else _SETTLED_REASON
-    outcome.commit_sha = (sha or outcome.commit_sha) if kind is FixOutcome.FIXED else ""
+    outcome.commit_sha = (sha or outcome.commit_sha) if kind.may_cite_a_commit else ""
     return (outcome.outcome, outcome.reason, outcome.commit_sha) != before
 
 
@@ -5095,7 +5164,7 @@ def _settled_commits(
     Only a fix cites a commit — the other two settlements render from the
     summary — so the rest come back uncited without git being asked at all.
     """
-    if kind is not FixOutcome.FIXED:
+    if not kind.may_cite_a_commit:
         return ["" for _ in picked]
     resolved = [_resolve_settled_commit(wt_path, o, commit) for o in picked]
     failed = next((r for r in resolved if not r.ok), None)
@@ -5117,7 +5186,7 @@ def _report_settlement(
     replaced = f" (was {was.value})" if was != kind else ""
     cited = f", fixed in {sha}" if sha else ""
     log.info(f"{outcome.id}: recorded as {kind.value}{replaced}{cited}")
-    if kind is FixOutcome.FIXED and not sha:
+    if kind.may_cite_a_commit and not sha:
         log.info(
             f"{outcome.id}: no pushed commit found for {outcome.file}:"
             f"{outcome.line} — the summary row will read "
@@ -5141,7 +5210,7 @@ def _settle_flag_error(kind: FixOutcome, reason: str, commit: str) -> str:
         )
     if reason and kind is not FixOutcome.DISMISSED:
         return f"--reason is only read for --as dismissed; --as {kind.value} renders none"
-    if commit and kind is not FixOutcome.FIXED:
+    if commit and not kind.may_cite_a_commit:
         return f"--commit is only read for --as fixed; --as {kind.value} cites no commit"
     return ""
 

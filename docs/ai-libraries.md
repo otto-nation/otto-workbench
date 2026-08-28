@@ -1194,6 +1194,18 @@ it, and it imports nothing from ``ai/lib`` in return. That is what lets the
 record hang off the base class without the domains and the vocabulary they are
 written in forming a cycle.
 
+Not every member of :class:`FixOutcome` is a verdict a pass reached. An item can
+turn out to have been settled somewhere else entirely — a thread the reviewer
+resolved on the forge, a row the operator closed by hand — and the vocabulary
+says so rather than calling it a fix, because a resolved thread covers a
+reviewer who was answered, who agreed to defer, or who withdrew the point as
+readily as one whose code changed. Two predicates on the enum,
+:attr:`FixOutcome.counts_as_fixed` and :attr:`FixOutcome.may_cite_a_commit`, are
+where that reading lives, so a tally and a commit attribution ask the vocabulary
+instead of each re-listing the members it should believe.
+:class:`SettledBy` records the other half — who reached the outcome, which is
+what tells the pass's own work from a reconciliation or an operator's say-so.
+
 The CI and comment passes both write one, through :mod:`fix_engine` — the
 shared pipeline all three now run on, and the thing that produces the
 :class:`ItemOutcome` list a record is assembled from. Running on the engine is

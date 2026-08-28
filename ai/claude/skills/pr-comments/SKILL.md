@@ -114,6 +114,7 @@ The `fix_pass` object contains:
 | `dismissed` | Threads and items dismissed because the reviewer's premise was factually wrong |
 | `already_addressed` | Threads and items the code already satisfies — agreement with the reviewer, not rejection |
 | `deferred` | Threads the agent could not auto-fix in the current pass |
+| `settled_elsewhere` | Threads `--finish` found resolved on GitHub with no reply naming a verdict — nothing is owed, but nothing is claimed either: counted apart from `fixed` and never attributed to a commit |
 | `commit_sha` | Short SHA of the fix commit, or null |
 | `commit_status` | `pushed`, `no_changes`, `commit_failed`, `push_failed`, `push_held`, `push_lost`, or `push_unverified` |
 | `replies_posted` | Count of per-thread replies posted to GitHub |

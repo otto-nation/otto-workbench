@@ -67,6 +67,38 @@ def test_fix_render_already_addressed():
     assert "1 already addressed" in lines[0]
 
 
+def test_fix_render_settled_elsewhere():
+    """Reported under its own word, and never folded into the fixed count."""
+    lines = _summary(FixOutcome.SETTLED_ELSEWHERE, FixOutcome.FIXED).render_status()
+    assert "1 settled elsewhere" in lines[0]
+    assert "**1 fixed**" in lines[0]
+
+
+def test_every_verdict_has_a_word_on_the_status_line():
+    """A member with no label is silently dropped, so the count under-reports.
+
+    Swept over the enum rather than listed: the label table is in one module and
+    the vocabulary in another, so a new verdict lands nowhere near this.
+    """
+    assert set(pr_comments_fix._STATUS_LABELS) == set(FixOutcome)
+
+
+def test_the_status_line_counts_every_verdict_it_was_handed():
+    """The other half of the sweep — a label that never renders is no label."""
+    lines = _summary(*FixOutcome).render_status()
+    assert len(lines[0].removeprefix("**Fix**: ").split(" · ")) == len(FixOutcome)
+
+
+def test_a_thread_settled_on_the_forge_owes_no_reply():
+    """Nothing was decided here, so there is nothing to tell the reviewer."""
+    assert FixOutcome.SETTLED_ELSEWHERE not in pr_comments_fix._REPLY_OUTCOMES
+    assert _summary(
+        FixOutcome.SETTLED_ELSEWHERE,
+        fix=FixRecord(commit_sha="abc1234", commit_status=CommitStatus.PUSHED),
+        replies_pending=True,
+    ).closeout_debt().reply_count == 0
+
+
 def test_fix_render_deferred_issue():
     lines = _summary(
         FixOutcome.DEFERRED,

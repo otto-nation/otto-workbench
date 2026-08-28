@@ -45,11 +45,13 @@ def test_fix_outcome_keeps_the_strings_the_comment_pass_persisted():
 
 
 def test_fix_outcome_adds_only_what_no_comment_thread_had():
-    """SKIPPED alone — the other members are the comment pass's own vocabulary."""
+    """The members no comment thread ever wrote — the rest are that pass's own."""
     persisted = {
         "FIXED", "DEFERRED", "NEEDS_HUMAN", "DISMISSED", "ALREADY_ADDRESSED", "DECLINED",
     }
-    assert {o.name for o in pr_fix.FixOutcome} - persisted == {"SKIPPED"}
+    assert {o.name for o in pr_fix.FixOutcome} - persisted == {
+        "SKIPPED", "SETTLED_ELSEWHERE",
+    }
 
 
 def test_fix_outcome_serializes_as_its_string():
@@ -58,6 +60,47 @@ def test_fix_outcome_serializes_as_its_string():
     assert serde.from_dict(pr_fix.ItemOutcome, {"outcome": "declined"}) == pr_fix.ItemOutcome(
         outcome=pr_fix.FixOutcome.DECLINED,
     )
+
+
+# ── The two shared predicates ─────────────────────────────────────────────
+
+
+def test_only_a_fix_counts_as_one():
+    """Every tally of fixed work reads this, so the answer lives in one place."""
+    counted = {o for o in pr_fix.FixOutcome if o.counts_as_fixed}
+    assert counted == {pr_fix.FixOutcome.FIXED}
+
+
+def test_only_a_fix_may_name_a_commit():
+    """Stamping a SHA on anything else credits a commit with work it lacks."""
+    citing = {o for o in pr_fix.FixOutcome if o.may_cite_a_commit}
+    assert citing == {pr_fix.FixOutcome.FIXED}
+
+
+def test_a_thread_settled_on_the_forge_is_neither_fixed_nor_attributable():
+    """The point of the member: resolution is not evidence that code changed."""
+    settled = pr_fix.FixOutcome.SETTLED_ELSEWHERE
+    assert not settled.counts_as_fixed
+    assert not settled.may_cite_a_commit
+
+
+# ── SettledBy ─────────────────────────────────────────────────────────────
+
+
+def test_an_outcome_written_before_provenance_existed_reads_as_the_pass():
+    """A state file with no `settled_by` recorded the pass's own work."""
+    restored = serde.from_dict(pr_fix.ItemOutcome, {"id": "i1", "outcome": "fixed"})
+    assert restored.settled_by is pr_fix.SettledBy.PASS
+
+
+def test_provenance_survives_the_round_trip():
+    item = pr_fix.ItemOutcome(
+        id="i1",
+        outcome=pr_fix.FixOutcome.SETTLED_ELSEWHERE,
+        settled_by=pr_fix.SettledBy.RECONCILIATION,
+    )
+    assert serde.to_dict(item)["settled_by"] == "reconciliation"
+    assert serde.from_dict(pr_fix.ItemOutcome, serde.to_dict(item)) == item
 
 
 # ── ItemOutcome ───────────────────────────────────────────────────────────

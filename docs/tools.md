@@ -486,7 +486,8 @@ it, and gives it a summary row attributed to the commit that carries the change.
   `--finish` renders that same cell for a thread it reconciled against GitHub.
   Neither is credited afterwards to whatever commit last touched the line the
   thread is anchored to: that history is evidence about a fix the pass landed,
-  and both of these say it did not.
+  and both of these say it did not. What withholds the citation is the record of
+  who settled the row, not the wording of the reason printed beside it.
 - Naming an id no fix pass recorded is an error listing the threads that are
   waiting on a person, for the same reason `--track` errors on one. Recording
   the outcome a thread already carries is a no-op that says so; recording a

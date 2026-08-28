@@ -47,7 +47,15 @@ HOLISTIC_MIN_GROUPS = 8
 GROUP_TIER1 = "tier1-critical"
 GROUP_TIER3 = "tier3-generated"
 
+# What the Summary says when no synthesis agent wrote the review. Each names
+# why synthesis did not produce the document, because a reader who cannot tell a
+# failed agent from one nobody asked to run reads the same review two ways.
 FALLBACK_SUMMARY = "Synthesis agent failed — findings below are from individual group reviews."
+SKIPPED_SUMMARY = "Synthesis skipped by --no-synthesis — findings below are from individual group reviews."
+BUDGET_SUMMARY = (
+    "Synthesis did not run — the cost budget was reached first. "
+    "Findings below are from individual group reviews."
+)
 
 TIER1_BASENAMES = {
     "CLAUDE.md", ".cursorrules", "AGENTS.md", "GEMINI.md",

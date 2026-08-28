@@ -1440,6 +1440,104 @@ class TestRunSynthesisOrFallback:
         assert state.failed == {}
         assert "api.go:10" in Path(job.review_file).read_text()
 
+    def test_no_synthesis_writes_a_summary_the_gate_can_resume_from(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """`--no-synthesis` leaves a review `_is_complete_review` accepts.
+
+        Without the section a run resumed at the disprove gate reads its own
+        review as unfinished and re-enters synthesis to rewrite it.
+        """
+        import review_pipeline
+
+        job = self._make_job(
+            ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
+        (tmp_path / "wt").mkdir()
+        (tmp_path / "wt" / "api.go").write_text("\n" * 20)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, self.MERGED, [], 0, 0.0, 20.0,
+        )
+
+        written = Path(job.review_file).read_text()
+        assert "## Summary" in written
+        assert ro.SKIPPED_SUMMARY in written
+        # The operator stopped synthesis; no agent failed.
+        assert ro.FALLBACK_SUMMARY not in written
+        assert ro._is_complete_review(job.review_file)
+
+    def test_a_budget_cut_off_writes_a_summary_naming_the_budget(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """The budget path says why synthesis did not run, not that it failed."""
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        (tmp_path / "wt").mkdir()
+        (tmp_path / "wt" / "api.go").write_text("\n" * 20)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, self.MERGED, [], 0, 25.0, 20.0,
+        )
+
+        written = Path(job.review_file).read_text()
+        assert "## Summary" in written
+        assert ro.BUDGET_SUMMARY in written
+        assert ro.FALLBACK_SUMMARY not in written
+        assert ro._is_complete_review(job.review_file)
+
+    def test_a_budget_cut_off_still_checks_its_findings_against_the_tree(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """The run least able to afford an unchecked claim still checks them.
+
+        Evidence verification and prior-finding reconciliation read the work
+        tree and spend none of the budget that ran out, so the path that ships
+        group output on a cut-off post-processes it like every other one.
+        """
+        import review_pipeline
+
+        job = self._make_job(ro, tmp_path)
+        (tmp_path / "wt").mkdir()
+        (tmp_path / "wt" / "api.go").write_text("\n" * 20)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, self.MERGED, [], 0, 25.0, 20.0,
+        )
+
+        assert job.verification is not None
+
+    @pytest.mark.parametrize(
+        ("skipped", "cost_so_far"), [(True, 0.0), (False, 25.0)],
+        ids=["no-synthesis", "budget"],
+    )
+    def test_neither_no_synthesis_path_states_a_verdict(
+        self, ro, tmp_path, monkeypatch, skipped, cost_so_far,
+    ):
+        """Neither path weighed the review, so neither approves or blocks it."""
+        import review_pipeline
+
+        job = self._make_job(
+            ro, tmp_path,
+            skip_phases=frozenset({ro.Phase.SYNTHESIS}) if skipped else frozenset(),
+        )
+        (tmp_path / "wt").mkdir()
+        (tmp_path / "wt" / "api.go").write_text("\n" * 20)
+        state = self._make_state(ro)
+        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+
+        ro._run_synthesis_or_fallback(
+            job, state, "", 1, self.MERGED, [], 0, cost_so_far, 20.0,
+        )
+
+        assert "## Verdict" not in Path(job.review_file).read_text()
+
 
 class TestIsRetryable:
     def test_max_turns_is_retryable(self, ro):

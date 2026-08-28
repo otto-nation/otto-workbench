@@ -392,12 +392,14 @@ def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | No
     # Annotations absent or uninformative — try logs, then artifact
     have_original = bool(annotations)
     fallback = _log_fallback(repo, job, run_data, kind)
-    ctx = fallback.context if fallback.ok else _fetch_test_artifact(repo, source_run_id, job_name)
 
     # A location the log reported beats the one GitHub attached to the failed
-    # step, which for a generic step failure anchors on the workflow file.
+    # step, which for a generic step failure anchors on the workflow file. The
+    # annotations carry their own context here, so nothing below is needed.
     if fallback.structured:
         return _make_result(job_name, fallback.kind, fallback.annotations, source_run_id, failed_step)
+
+    ctx = fallback.context if fallback.ok else _fetch_test_artifact(repo, source_run_id, job_name)
     if ctx and have_original:
         return _make_result(job_name, fallback.kind if fallback.ok else kind, annotations, source_run_id, failed_step, context=ctx)
     if ctx:

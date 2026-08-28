@@ -474,6 +474,12 @@ def test_extract_tap_failures_without_a_location():
     assert failures[0].name == "setup_file failed"
 
 
+def test_extract_tap_failures_keeps_an_undescribed_failure():
+    failures = extract_tap_failures("not ok 5\n# (in test file tests/a.bats, line 3)\nnot ok 6 named")
+    assert [f.name for f in failures] == ["test 5", "named"]
+    assert failures[0].location == SourceLocation("tests/a.bats", 3)
+
+
 def test_extract_tap_failures_empty_for_a_non_tap_log():
     assert extract_tap_failures("--- FAIL: TestFoo (0.01s)\nFAIL") == ()
 

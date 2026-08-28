@@ -139,8 +139,15 @@ class LogMarker:
     after: int = 30
 
 
+# The TAP section below parses the very lines this marker finds, so both use
+# one pattern — two spellings of "is this a failure line" drift apart, and a
+# line only one of them accepts is a failure that reaches the window but never
+# becomes an item. The description is optional because TAP allows `not ok 5`
+# with nothing after the number.
+_TAP_FAIL_RE = re.compile(r"^not ok (\d+)(.*)$")
+
 LOG_MARKERS: list[LogMarker] = [
-    LogMarker("tap-fail", re.compile(r"^not ok \d+"), FailureKind.TEST, before=0, after=10),
+    LogMarker("tap-fail", _TAP_FAIL_RE, FailureKind.TEST, before=0, after=10),
     LogMarker("go-test-fail", re.compile(r"--- FAIL:"), FailureKind.TEST),
     LogMarker("go-pkg-fail", re.compile(r"^FAIL\s+"), FailureKind.TEST),
     LogMarker("go-testsum-fail", re.compile(r"=== FAIL"), FailureKind.TEST),
@@ -206,7 +213,6 @@ def _strip_timestamps(text: str) -> str:
 
 # ── TAP ────────────────────────────────────────────────────────────────────
 
-_TAP_FAIL_RE = re.compile(r"^not ok \d+ (.+)$")
 _TAP_DIAGNOSTIC_RE = re.compile(r"^#")
 _TAP_TEST_FILE_RE = re.compile(r"\bin test file (.+?), line (\d+)")
 _TAP_TIMING_RE = re.compile(r" in \d+m?s$")
@@ -234,19 +240,22 @@ def _tap_failures(lines: list[str]) -> list[TestFailure]:
     under it, which is where bats writes the location and the assertion that
     failed. The location is the *last* `in test file` in the block: a failure
     inside a helper reports the helper first and the test file second, and it
-    is the test file the reader has to open.
+    is the test file the reader has to open. A failure TAP left undescribed
+    falls back to its number, so it still gets an item of its own rather than
+    being dropped from a run whose other failures were named.
     """
     failures: list[TestFailure] = []
     for i, line in enumerate(lines):
         match = _TAP_FAIL_RE.match(line)
         if not match:
             continue
+        number, description = match.groups()
         end = i + 1
         while end < len(lines) and _TAP_DIAGNOSTIC_RE.match(lines[end]):
             end += 1
         located = _TAP_TEST_FILE_RE.findall("\n".join(lines[i + 1:end]))
         failures.append(TestFailure(
-            name=_TAP_TIMING_RE.sub("", match.group(1)),
+            name=_TAP_TIMING_RE.sub("", description.strip()) or f"test {number}",
             location=SourceLocation(located[-1][0], int(located[-1][1])) if located else None,
             context="\n".join(lines[i:end]),
         ))

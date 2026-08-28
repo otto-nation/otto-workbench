@@ -316,7 +316,8 @@ def _gap_renumbering(
     for severity in SEVERITIES:
         for new, old in enumerate(_declared_ids(text, severity.key), 1):
             moves[FindingId(severity.key, old)] = FindingId(severity.key, new)
-    # A severity is answered for exactly when something declares it here.
+    # Only the severities declared here: at merge-wide scope an undeclared one
+    # belongs to some other document, so `_Renumbering` has to leave it alone.
     prefixes = {old.prefix for old in moves}
     # A deduplicated finding was not dropped, it was merged: its references
     # belong on the copy that survived, which says the same thing. The survivor
@@ -589,6 +590,8 @@ class _Merge:
             FindingId(key, old): FindingId(key, old + self.offsets[key])
             for key, ids in declared.items() for old in ids
         }
+        # Every severity, declared here or not: at group scope an undeclared one
+        # is a reference to nothing, which `_Renumbering` marks.
         renumbering = _Renumbering(moves, frozenset(declared))
         shifted = {key: renumbering.rewrite(text) for key, text in group.items()}
         for key, ids in declared.items():

@@ -17,7 +17,7 @@ import workbench_config as wc
 from agent_types import Effort, Phase, Thinking
 
 # The PyYAML write path only exists for a machine without yq, so the tests for
-# it only run where PyYAML is installed — the same shape test_review_profiles
+# it only run where PyYAML is installed — the same shape test_review_grouping
 # uses for the reader.
 needs_yaml = pytest.mark.skipif(wc.yaml is None, reason="PyYAML not installed")
 

@@ -1,10 +1,11 @@
-"""Pre-flight data collection, tier classification, file grouping, and PR fetching.
+"""Pre-flight data collection and PR fetching.
 
 Handles everything needed before prompt construction: collecting diffs, commit logs,
-file contents, permissions, and organizing files into review groups.
+file contents, and permissions.
 
-The records this fills in — `PRMetadata`, `PRContext`, `PreflightData`, `Group`
-and the `ReviewJob` they hang off — are `review_types`', so a consumer that only
+How the collected files are ranked and divided is `review_grouping`'s, and the
+records this fills in — `PRMetadata`, `PRContext`, `PreflightData`, `Group` and
+the `ReviewJob` they hang off — are `review_types`', so a consumer that only
 needs to name a job does not import the collection that builds one.
 """
 
@@ -25,27 +26,20 @@ import git_client
 import log
 import pr_context
 from agent_types import Mode
-from agent_types import Mode
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_dedup import _get_bot_login
 from review_document import BOLD_FINDING_ID_RE, ReviewHeader
 from review_github import PRData
-from review_profiles import (
-    format_profiles_section, load_profiles, match_profiles,
+from review_grouping import (
+    classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
 from review_types import (
-    Group, PRContext, PreflightData, PRMetadata, ReviewJob,
+    PRContext, PreflightData, PRMetadata, ReviewJob,
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-MAX_GROUP_LINES = 800
-MAX_GROUP_FILES = 15
 DEFAULT_MAX_PARALLEL = 1
-HOLISTIC_MIN_GROUPS = 8
-
-GROUP_TIER1 = "tier1-critical"
-GROUP_TIER3 = "tier3-generated"
 
 # What the Summary says when no synthesis agent wrote the review. Each names
 # why synthesis did not produce the document, because a reader who cannot tell a
@@ -56,22 +50,6 @@ BUDGET_SUMMARY = (
     "Synthesis did not run — the cost budget was reached first. "
     "Findings below are from individual group reviews."
 )
-
-TIER1_BASENAMES = {
-    "CLAUDE.md", ".cursorrules", "AGENTS.md", "GEMINI.md",
-    "go.mod", "package.json", "package-lock.json", "requirements.txt", "Gemfile",
-}
-TIER1_EXTENSIONS = {".proto", ".graphql"}
-TIER1_PATH_SEGMENTS = {
-    "migrations", "auth", "crypto", "permissions",
-    "vault", "network-policies", "authorization-policies",
-}
-TIER3_BASENAMES = {"go.sum"}
-TIER3_BASENAMES_SUFFIXES = (
-    ".pb.go", "_pb2.py", "_pb.ts", "_pb2_grpc.py",
-    ".latest.sql", ".ko.yaml",
-)
-TIER3_PATH_SEGMENTS = {"gen", "testdata"}
 
 MAX_PROMPT_TOKENS = 120_000
 MAX_PROMPT_BYTES = MAX_PROMPT_TOKENS * 4
@@ -592,118 +570,6 @@ def format_preflight_data(
             parts += ["", project_ctx]
 
     return "\n".join(parts)
-
-
-# ── Tier classification ──────────────────────────────────────────────────────
-
-def classify_tier(path: str) -> int:
-    parts = path.split("/")
-    basename = parts[-1]
-
-    if any(seg in TIER3_PATH_SEGMENTS for seg in parts):
-        return 3
-    if basename in TIER3_BASENAMES or basename.endswith(TIER3_BASENAMES_SUFFIXES):
-        return 3
-    if basename in TIER1_BASENAMES:
-        return 1
-    if any(basename.endswith(ext) for ext in TIER1_EXTENSIONS):
-        return 1
-    if any(seg in TIER1_PATH_SEGMENTS for seg in parts):
-        return 1
-    return 2
-
-
-# ── File grouping ─────────────────────────────────────────────────────────────
-
-def _split_large_dir(name: str, files: list[str], file_lines: dict[str, int]) -> list[Group]:
-    groups: list[Group] = []
-    sub_files: list[str] = []
-    sub_lines = 0
-    sub_idx = 1
-    for f in files:
-        fl = file_lines[f]
-        if sub_files and (sub_lines + fl > MAX_GROUP_LINES or len(sub_files) >= MAX_GROUP_FILES):
-            groups.append(Group(f"{name}-{sub_idx}", sub_files, sub_lines))
-            sub_files = []
-            sub_lines = 0
-            sub_idx += 1
-        sub_files.append(f)
-        sub_lines += fl
-    if sub_files:
-        groups.append(Group(f"{name}-{sub_idx}", sub_files, sub_lines))
-    return groups
-
-
-def group_files(pr: PRMetadata) -> list[Group]:
-    file_lines = {f["path"]: f["additions"] + f["deletions"] for f in pr.files}
-
-    tiers: dict[int, list[str]] = {1: [], 2: [], 3: []}
-    tier_lines: dict[int, int] = {1: 0, 2: 0, 3: 0}
-
-    for path, lines in file_lines.items():
-        t = classify_tier(path)
-        tiers[t].append(path)
-        tier_lines[t] += lines
-
-    groups: list[Group] = []
-
-    if tiers[1]:
-        groups.append(Group(GROUP_TIER1, tiers[1], tier_lines[1]))
-
-    dir_files: dict[str, list[str]] = {}
-    dir_lines: dict[str, int] = {}
-    dir_order: list[str] = []
-    for f in tiers[2]:
-        d = f.split("/")[0]
-        if d not in dir_files:
-            dir_files[d] = []
-            dir_lines[d] = 0
-            dir_order.append(d)
-        dir_files[d].append(f)
-        dir_lines[d] += file_lines[f]
-
-    for d in dir_order:
-        files = dir_files[d]
-        total = dir_lines[d]
-        if total > MAX_GROUP_LINES or len(files) > MAX_GROUP_FILES:
-            groups.extend(_split_large_dir(d, files, file_lines))
-        else:
-            groups.append(Group(d, files, total))
-
-    if tiers[3]:
-        groups.append(Group(GROUP_TIER3, tiers[3], tier_lines[3]))
-
-    return groups
-
-
-def _merge_score(a: Group, b: Group) -> tuple[int, int]:
-    """Lower score = better merge: longest shared name prefix, then smallest combined size."""
-    # os.path.commonprefix is character-based (not path-component-based), which is
-    # intentional here — we want a quick name-similarity heuristic, not strict path ancestry.
-    shared = len(os.path.commonprefix([a.name, b.name]))
-    return (-shared, a.lines + b.lines)
-
-
-def _find_best_merge_pair(groups: list[Group]) -> tuple[int, int]:
-    pairs = [(i, j) for i in range(len(groups)) for j in range(i + 1, len(groups))]
-    return min(pairs, key=lambda p: _merge_score(groups[p[0]], groups[p[1]]))
-
-
-def _merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
-    groups = list(groups)
-    while len(groups) > max_groups:
-        i, j = _find_best_merge_pair(groups)
-        a, b = groups[i], groups[j]
-        merged = Group(
-            name=f"{a.name}+{b.name}",
-            files=a.files + b.files,
-            lines=a.lines + b.lines,
-        )
-        groups = [g for k, g in enumerate(groups) if k not in (i, j)]
-        groups.append(merged)
-    return groups
-
-
 
 
 # ── PR data fetching ──────────────────────────────────────────────────────────

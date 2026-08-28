@@ -454,7 +454,7 @@ def read_yaml(path: Path) -> dict:
     """One YAML file as a plain dict, or ``{}`` when there is no file.
 
     PyYAML when it is installed, ``yq`` otherwise. PyYAML is not a declared
-    dependency of this repo (``review_profiles.py`` treats it the same way),
+    dependency of this repo (``review_grouping.py`` treats it the same way),
     and ``yq`` already is one — ``lib/state.sh`` cannot work without it — so
     between them there is always a reader.
     """

@@ -306,6 +306,19 @@ the terminal `pr_outcome` event it fires, no longer depends on someone typing
 `pr gc` by hand. The step is skipped on an install without the ai component,
 which is what puts `pr` on the path.
 
+### review_grouping.py
+
+How a review's changed files are divided, and what doctrine applies to each.
+
+Tier classification ranks a path by the scrutiny it warrants; grouping turns
+the ranked file list into the review groups one agent each is given; profiles
+are the per-domain doctrine `.claude/review/profiles/*.yml` declares, routed to
+a group by the paths it holds.
+
+The three answer one question between them — what a given file is worth to a
+reviewer — which is why the prompt's byte budget asks here before deciding what
+it can afford to carry.
+
 ### review_paths.py
 
 Where a review lives on disk, and what is allowed to be there.
@@ -382,22 +395,15 @@ to review_gc, which the orchestrator runs once every phase is done.
 
 ### review_preflight.py
 
-Pre-flight data collection, tier classification, file grouping, and PR fetching.
+Pre-flight data collection and PR fetching.
 
 Handles everything needed before prompt construction: collecting diffs, commit logs,
-file contents, permissions, and organizing files into review groups.
+file contents, and permissions.
 
-The records this fills in — `PRMetadata`, `PRContext`, `PreflightData`, `Group`
-and the `ReviewJob` they hang off — are `review_types`', so a consumer that only
+How the collected files are ranked and divided is `review_grouping`'s, and the
+records this fills in — `PRMetadata`, `PRContext`, `PreflightData`, `Group` and
+the `ReviewJob` they hang off — are `review_types`', so a consumer that only
 needs to name a job does not import the collection that builds one.
-
-### review_profiles.py
-
-Review profiles: per-domain review doctrine routed by file paths.
-
-Profiles live in `.claude/review/profiles/*.yml` and contain structured
-review rules matched against changed file paths. Group reviewers receive
-only the profiles relevant to their files.
 
 ### review_prompt.py
 

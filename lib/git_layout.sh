@@ -23,6 +23,15 @@
 #
 # `bin/resolve-worktree` owns the other direction — container → the worktree it
 # stands in for.
+#
+# The hooks in `git/hooks/` ask the same question of their own repository and
+# deliberately do not come here. `git_shared_dir` clears the git environment and
+# re-discovers from a directory, while the repository a hook answers for is the
+# one git named in the environment it exported: `git --git-dir=X --work-tree=Y
+# commit` runs a hook in Y with `GIT_DIR` set to X, and discovery from Y finds no
+# repository at all — or, worse, whichever one happens to enclose it. A hook is
+# the one caller that must leave the environment alone, so it asks
+# `git rev-parse --git-common-dir` itself.
 
 [[ -n "${_LIB_GIT_LAYOUT_SH:-}" ]] && return
 _LIB_GIT_LAYOUT_SH=1

@@ -21,11 +21,11 @@ teardown() {
 }
 
 # Runs the migration against PROJECT_DIR with the ui.sh helpers stubbed out.
-# Sources the real lib/migrations.sh for MIGRATION_NOOP and lib/gitenv.sh for
-# git_env_clear — both reach the migration from the framework's own sourcing
-# environment, so neither is redefined here. Exit status is the function's own:
-# the framework reads it to tell a deletion (0) from a container that had
-# nothing to delete (MIGRATION_NOOP).
+# Sources the real lib/migrations.sh for MIGRATION_NOOP, lib/gitenv.sh for
+# git_env_clear, and lib/git_layout.sh for git_shared_dir — all three reach the
+# migration from the framework's own sourcing environment, so none is redefined
+# here. Exit status is the function's own: the framework reads it to tell a
+# deletion (0) from a container that had nothing to delete (MIGRATION_NOOP).
 _run_migration() {
   bash -c '
     success() { echo "OK $*"; }
@@ -35,6 +35,7 @@ _run_migration() {
     BIN_SRC_DIR="$3/bin"
     LEGACY_WORKBENCH_ROOT="$4/.unused-legacy"
     . "$WORKBENCH_DIR/lib/gitenv.sh"
+    . "$WORKBENCH_DIR/lib/git_layout.sh"
     . "$WORKBENCH_DIR/lib/migrations.sh"
     . "$1"
     migration_20260824_drop_container_anatomy "$2"
@@ -156,4 +157,21 @@ _seed_stale() {
   GIT_DIR="$SEED/.git" run _run_migration "$TMPDIR/c/main"
   [ "$status" -eq 0 ]
   [ ! -e "$TMPDIR/c/.claude/anatomy.md" ]
+}
+
+@test "an inherited GIT_DIR does not turn an ordinary repo into a container" {
+  # git_shared_dir clears the environment for its own lookup, but resolve-worktree
+  # is a separate process that discovers from the directory it is handed — which
+  # is why the clear stays here as well. Answered for the hook's repository it
+  # cannot even find its own checkout, and the status it exits with is the one
+  # this migration reads as "a container whose default branch has no worktree":
+  # the deletion would go ahead against a real tree's committed index.
+  local repo="$TMPDIR/plain"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  _seed_stale "$repo"
+
+  GIT_DIR="$SEED/.git" run _run_migration "$repo"
+  [ "$status" -eq 3 ]
+  [ -f "$repo/.claude/anatomy.md" ]
 }

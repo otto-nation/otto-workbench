@@ -31,11 +31,9 @@ from review_paths import (
     phase_output_path,
     write_review_meta,
 )
-from review_document import ReviewDocument, ReviewHeader, open_counts, review_title
-from review_findings import (
-    _MECHANICAL_NOTE,
-    build_mechanical_body,
-    post_process_findings,
+from review_document import (
+    MECHANICAL_NOTE, ReviewDocument, ReviewHeader, build_mechanical_body,
+    open_counts, review_title,
 )
 from review_github import PRData, fetch_pr_data
 from review_merge import (
@@ -76,6 +74,7 @@ from review_state import (
     pipeline_status,
     set_failures_section,
 )
+from review_verify import post_process_findings
 from text import plural
 
 DEFAULT_MAX_COST = 20.0
@@ -635,7 +634,7 @@ def _run_synthesis_or_fallback(
     )
     state.done.add(Phase.SYNTHESIS)
     review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
-    if _MECHANICAL_NOTE in review_content or FALLBACK_SUMMARY in review_content:
+    if MECHANICAL_NOTE in review_content or FALLBACK_SUMMARY in review_content:
         state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK)
     _write_pipeline_state(job, state)
     _inject_failures_and_status(job.review_file, state)

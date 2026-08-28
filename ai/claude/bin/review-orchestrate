@@ -32,7 +32,6 @@ import agent_diagnosis as _ad  # noqa: E402
 import agent_invoke as _ai  # noqa: E402
 import agent_phases as _aph  # noqa: E402
 import ai_usage as _au  # noqa: E402
-import review_findings as _rf  # noqa: E402
 import review_preflight as _rp  # noqa: E402
 import review_prompt as _rpmt  # noqa: E402
 import review_agent as _ra  # noqa: E402
@@ -80,7 +79,7 @@ import ai_backend  # noqa: E402
 SCRIPT = Path(__file__).name
 
 _SUBMODULES = (
-    _ad, _ai, _aph, _au, _rf, _rp, _rpmt, _ra, _rpl, _rfx, _rgc, _rpath, _rph,
+    _ad, _ai, _aph, _au, _rp, _rpmt, _ra, _rpl, _rfx, _rgc, _rpath, _rph,
     _rrt, _rst, _rt,
 )
 

@@ -2,6 +2,11 @@
 
 Classifies findings as inline/file-level/skipped based on the PR diff,
 renumbers them for posted order, and formats as GitHub review comments.
+
+Reading the diff is part of that classification, so `parse_diff_hunks` lives
+here: which lines a hunk covers is the same question as whether a finding can
+be posted inline against them, and asking it twice is how a comment lands on a
+line the diff never touched.
 """
 
 # doc-group: findings
@@ -9,9 +14,9 @@ renumbers them for posted order, and formats as GitHub review comments.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from pr_domains import VERDICT_PROSE_PREFIX_RE
-from review_findings import parse_diff_hunks
 from review_sections import ReviewSections, SectionConfig
 from review_types import SEVERITIES, Finding, severity_by_key
 
@@ -28,6 +33,48 @@ CLASS_SKIPPED = "skipped"
 SKIP_DECLINED = "declined"
 
 DIFF_SIDE_RIGHT = "RIGHT"
+
+
+# ── Diff hunk parsing ───────────────────────────────────────────────────────
+
+_DIFF_FILE_RE = re.compile(r"^\+\+\+ b/(.+)")
+_DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+@dataclass(frozen=True)
+class HunkRange:
+    """The lines of the post-image one diff hunk covers, both ends inclusive."""
+
+    start: int
+    end: int
+
+    def contains(self, line: int) -> bool:
+        """Whether `line` falls inside the hunk."""
+        return self.start <= line <= self.end
+
+
+def parse_diff_hunks(diff_text: str) -> dict[str, list[HunkRange]]:
+    """The post-image line ranges a unified diff touches, by file path.
+
+    A file the diff names with no hunks under it maps to an empty list rather
+    than being absent, so "the diff touches this file" and "the diff touches
+    this line" stay separate questions — a rename or a mode change is the first
+    without being the second.
+    """
+    hunks: dict[str, list[HunkRange]] = {}
+    current_file: str | None = None
+    for line in diff_text.splitlines():
+        m = _DIFF_FILE_RE.match(line)
+        if m:
+            current_file = m.group(1)
+            hunks.setdefault(current_file, [])
+            continue
+        m = _DIFF_HUNK_RE.match(line)
+        if m and current_file is not None:
+            start = int(m.group(1))
+            length = int(m.group(2)) if m.group(2) is not None else 1
+            hunks[current_file].append(HunkRange(start, start + length - 1))
+    return hunks
 
 
 # ── Diff classification ────────────────────────────────────────────────────
@@ -50,11 +97,11 @@ def _resolve_path(path: str, hunks: dict[str, list]) -> str | None:
     return None
 
 
-def _hunk_end(line: int, hunks: list[tuple[int, int]]) -> int | None:
+def _hunk_end(line: int, hunks: list[HunkRange]) -> int | None:
     """Return the end of the hunk containing line, or None."""
-    for s, e in hunks:
-        if s <= line <= e:
-            return e
+    for hunk in hunks:
+        if hunk.contains(line):
+            return hunk.end
     return None
 
 

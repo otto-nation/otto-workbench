@@ -8,6 +8,11 @@ import pytest
 
 from conftest import REPO_ROOT, load_script
 
+LIB_DIR = str(REPO_ROOT / "ai" / "lib")
+if LIB_DIR not in sys.path:
+    sys.path.insert(0, LIB_DIR)
+from review_format import HunkRange  # noqa: E402
+
 SCRIPT = REPO_ROOT / "ai" / "claude" / "bin" / "validate-review-positions"
 
 
@@ -57,37 +62,11 @@ def _run_cli(tmp_path, diff_text, findings_json):
     return result
 
 
-# --- TestParseDiffHunks ---
-
-class TestParseDiffHunks:
-    def test_extracts_file_paths(self, vp):
-        hunks = vp.parse_diff_hunks(SAMPLE_DIFF)
-        assert set(hunks.keys()) == {"src/app.py", "src/util.py"}
-
-    def test_parses_multiline_hunk_range(self, vp):
-        hunks = vp.parse_diff_hunks(SAMPLE_DIFF)
-        # @@ -10,4 +10,6 @@ → lines 10..15
-        assert (10, 15) in hunks["src/app.py"]
-
-    def test_parses_second_hunk(self, vp):
-        hunks = vp.parse_diff_hunks(SAMPLE_DIFF)
-        # @@ -30,2 +32,3 @@ → lines 32..34
-        assert (32, 34) in hunks["src/app.py"]
-
-    def test_parses_single_line_hunk(self, vp):
-        hunks = vp.parse_diff_hunks(SAMPLE_DIFF)
-        # @@ -5 +5 @@ → no comma means length=1, so line 5..5
-        assert (5, 5) in hunks["src/util.py"]
-
-    def test_empty_diff_returns_empty_dict(self, vp):
-        assert vp.parse_diff_hunks("") == {}
-
-
 # --- TestValidate ---
 
 class TestValidate:
     def test_finding_in_hunk_is_valid(self, vp):
-        hunks = {"src/app.py": [(10, 15)]}
+        hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [{"path": "src/app.py", "line": 12, "body": "issue"}]
         valid, file_level, skipped = vp.validate(hunks, findings)
         assert len(valid) == 1
@@ -96,7 +75,7 @@ class TestValidate:
         assert not skipped
 
     def test_finding_outside_hunk_is_file_level(self, vp):
-        hunks = {"src/app.py": [(10, 15)]}
+        hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [{"path": "src/app.py", "line": 50, "body": "issue"}]
         valid, file_level, skipped = vp.validate(hunks, findings)
         assert not valid
@@ -105,7 +84,7 @@ class TestValidate:
         assert not skipped
 
     def test_finding_for_missing_path_is_skipped(self, vp):
-        hunks = {"src/app.py": [(10, 15)]}
+        hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [{"path": "src/other.py", "line": 5, "body": "issue"}]
         valid, file_level, skipped = vp.validate(hunks, findings)
         assert not valid
@@ -114,7 +93,7 @@ class TestValidate:
         assert "path not in diff" in skipped[0]["reason"]
 
     def test_finding_without_line_is_valid(self, vp):
-        hunks = {"src/app.py": [(10, 15)]}
+        hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [{"path": "src/app.py", "body": "general comment"}]
         valid, file_level, skipped = vp.validate(hunks, findings)
         assert len(valid) == 1
@@ -122,7 +101,7 @@ class TestValidate:
         assert not skipped
 
     def test_mixed_findings(self, vp):
-        hunks = {"src/app.py": [(10, 15)]}
+        hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [
             {"path": "src/app.py", "line": 12, "body": "in hunk"},
             {"path": "src/app.py", "line": 50, "body": "outside hunk"},
@@ -134,7 +113,7 @@ class TestValidate:
         assert len(skipped) == 1
 
     def test_empty_findings_list(self, vp):
-        hunks = {"src/app.py": [(10, 15)]}
+        hunks = {"src/app.py": [HunkRange(10, 15)]}
         valid, file_level, skipped = vp.validate(hunks, [])
         assert valid == []
         assert file_level == []

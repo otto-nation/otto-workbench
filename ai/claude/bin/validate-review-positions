@@ -18,30 +18,12 @@ Exit codes:
 
 import argparse
 import json
-import re
 import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
-def parse_diff_hunks(diff_text):
-    """Parse unified diff into {path: [(start, end), ...]} for the new side."""
-    hunks = {}
-    current_file = None
-    file_re = re.compile(r"^\+\+\+ b/(.+)")
-    hunk_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-
-    for line in diff_text.splitlines():
-        m = file_re.match(line)
-        if m:
-            current_file = m.group(1)
-            hunks.setdefault(current_file, [])
-            continue
-        m = hunk_re.match(line)
-        if m and current_file is not None:
-            start = int(m.group(1))
-            length = int(m.group(2)) if m.group(2) is not None else 1
-            hunks[current_file].append((start, start + length - 1))
-
-    return hunks
+from review_format import parse_diff_hunks  # noqa: E402
 
 
 def validate(hunks, findings):
@@ -56,7 +38,7 @@ def validate(hunks, findings):
             skipped.append({**f, "reason": "path not in diff"})
         elif line is None:
             valid.append(f)
-        elif not any(s <= line <= e for s, e in hunks[path]):
+        elif not any(hunk.contains(line) for hunk in hunks[path]):
             file_level.append(
                 {**f, "reason": f"line {line} not in any diff hunk"}
             )

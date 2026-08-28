@@ -57,7 +57,7 @@ POST_LIB_MODULES = [
 ]
 
 SHARED_LIB_MODULES = [
-    "review_findings",
+    "review_document",
     "review_paths",
 ]
 

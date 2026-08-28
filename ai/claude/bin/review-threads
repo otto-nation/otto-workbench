@@ -3567,6 +3567,35 @@ def _publish_summary(
     )
 
 
+def _summary_has_content(
+    *,
+    fixed: list,
+    needs_human: list,
+    deferred: list,
+    dismissed: list,
+    already_addressed: list,
+    issue_comments: list[dict],
+    review_body_comments: list[dict],
+) -> bool:
+    """Whether a round has anything for the fix summary to say.
+
+    One owner for the question, because two callers have to agree on it:
+    `_post_fix_summary` renders nothing when the answer is no, and
+    `_summary_still_owed` must leave a summary owed exactly when a render would
+    produce one. Asked separately they drift, and a bucket one of them forgets
+    is a round whose table is printed and never published.
+
+    An unseen issue or review-body comment counts on its own. The summary
+    reports those too, so a round that settled no thread at all still has a
+    table to render when one arrived unread.
+    """
+    if fixed or needs_human or deferred or dismissed or already_addressed:
+        return True
+    return any(
+        not c.get("seen") for c in [*issue_comments, *review_body_comments]
+    )
+
+
 def _post_fix_summary(
     fixed: list[CommentItem],
     needs_human: list[CommentItem],
@@ -3590,12 +3619,12 @@ def _post_fix_summary(
     already_addressed = already_addressed or []
     issue_comments = issue_comments or []
     review_body_comments = review_body_comments or []
-    has_unseen = (
-        any(not c.get("seen") for c in issue_comments)
-        or any(not c.get("seen") for c in review_body_comments)
-    )
-    if (not fixed and not needs_human and not deferred and not dismissed
-            and not already_addressed and not has_unseen):
+    if not _summary_has_content(
+        fixed=fixed, needs_human=needs_human, deferred=deferred,
+        dismissed=dismissed, already_addressed=already_addressed,
+        issue_comments=issue_comments,
+        review_body_comments=review_body_comments,
+    ):
         return None
     url = _publish_summary(repo, pr_number, functools.partial(
         _build_summary_body,
@@ -3869,12 +3898,26 @@ def _summary_still_owed(
     dismissed: list,
     commit_status: str,
     has_unaccounted: bool,
+    *,
+    already_addressed: list,
+    issue_comments: list[dict],
+    review_body_comments: list[dict],
 ) -> bool:
-    """Whether --finish must re-render the fix summary later.
+    """Whether this round has a fix summary the PR has not been told about.
 
-    Discussion that is still open, or a commit that never reached the remote,
-    both make the summary premature. So does a draft run: it printed the summary
-    instead of posting it, so everything it had to say is still owed.
+    Discussion that is still open, a commit that never reached the remote, or
+    threads this pass could not account for all make the summary premature, so
+    it has to be rendered again later whatever went out. Otherwise the round
+    owes a summary exactly when it has one to render, which is
+    `_summary_has_content` — not the outcomes this pass produced. A round
+    settled entirely as `already_addressed`, by the agent or by `--settle`,
+    renders a full table while producing neither a fix nor a dismissal, and a
+    clause naming only those two buckets closes it out with the published
+    comment still holding the previous round's rows.
+
+    Whether the summary then went out is not asked here: the caller pairs this
+    with `summary_url is None`, so a draft that printed the table and a post the
+    API refused both leave it owed without this reading the publishing gate.
 
     A hand-written Action cell does not retire the render this owes, and is not
     read here. The question is whether local state still has something to say,
@@ -3887,7 +3930,12 @@ def _summary_still_owed(
         return True
     if _commit_unpushed(commit_status):
         return True
-    return not publishing.enabled() and bool(fixed or dismissed)
+    return _summary_has_content(
+        fixed=fixed, needs_human=needs_human, deferred=deferred,
+        dismissed=dismissed, already_addressed=already_addressed,
+        issue_comments=issue_comments,
+        review_body_comments=review_body_comments,
+    )
 
 
 def _post_or_defer_summary(
@@ -4407,6 +4455,9 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         pending_deferred = _summary_still_owed(
             all_fixed, open_to_a_person, all_deferred, self.dismissed,
             cp.status, self.has_unaccounted,
+            already_addressed=self.already_addressed,
+            issue_comments=self.report.issue_comments,
+            review_body_comments=self.report.review_body_comments,
         )
 
         summary_url = _post_or_defer_summary(
@@ -4556,11 +4607,32 @@ def _run_comment_fix(
     )
 
     if not all_fixable:
-        early_deferred = bool(all_needs_human) or has_unaccounted
+        # The same question the pass with fixes to make asks after committing,
+        # asked here through the same owner. A round with nothing to fix still
+        # renders a table for what triage settled, and a rule of its own here
+        # is how an `already_addressed`-only round came to print one and record
+        # that it owed nothing.
+        #
+        # Whether to try posting reads the same owner below, so the two answers
+        # cannot disagree. Naming the buckets there instead left the round that
+        # has only an unread issue comment owing a summary it never attempted —
+        # recoverable on the next `--finish`, but a cycle late.
+        early_deferred = _summary_still_owed(
+            [], all_needs_human, [], all_dismissed,
+            no_commit.status, has_unaccounted,
+            already_addressed=all_addressed,
+            issue_comments=report.issue_comments,
+            review_body_comments=report.review_body_comments,
+        )
         if has_unaccounted:
             log.info("Deferred fix summary — unresolved threads not yet addressed")
             summary_url = None
-        elif all_dismissed or all_needs_human or all_addressed:
+        elif _summary_has_content(
+            fixed=[], needs_human=all_needs_human, deferred=[],
+            dismissed=all_dismissed, already_addressed=all_addressed,
+            issue_comments=report.issue_comments,
+            review_body_comments=report.review_body_comments,
+        ):
             summary_url = _post_or_defer_summary(
                 [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
                 threads_by_id, dismissed=all_dismissed,

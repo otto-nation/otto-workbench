@@ -9,6 +9,8 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from conftest import add_self_origin, commit_all, git_out, init_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -139,6 +141,9 @@ class TestReadFileSafe:
         f.write_text("x" * (rc.MAX_FILE_BYTES * 2))
         assert "truncated" in rc._read_file_safe(f)
 
+    @pytest.mark.skipif(
+        os.geteuid() == 0, reason="root reads a 0o000 file, so the mode proves nothing",
+    )
     def test_permission_denied(self, tmp_path):
         f = tmp_path / "noperm.txt"
         f.write_text("secret")

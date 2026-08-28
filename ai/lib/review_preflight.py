@@ -51,7 +51,6 @@ BUDGET_SUMMARY = (
 MAX_REVIEW_BODY_LEN = 200
 
 
-
 # ── PR data fetching ──────────────────────────────────────────────────────────
 
 def _parse_numstat(numstat: str) -> tuple[list[dict], int, int]:

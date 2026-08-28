@@ -150,6 +150,16 @@ _split_project_line() {
   [[ "$1" == "$__path" ]] || __id="${1#*"$_PROJECT_FIELD_SEP"}"
 }
 
+# _split_repo_worktree_line LINE ID_VAR PATH_VAR
+# Split a `<repo id><TAB><work-tree path>` line — what project_repo_worktrees
+# emits, the reverse field order of a registry line — into the repo identity
+# and the work-tree path.
+_split_repo_worktree_line() {
+  local -n __id="$2" __path="$3"
+  __id="${1%%"$_PROJECT_FIELD_SEP"*}"
+  __path="${1#*"$_PROJECT_FIELD_SEP"}"
+}
+
 # ─── Membership rules ────────────────────────────────────────────────────────
 
 # The path prefixes nothing under is ever registered.
@@ -451,11 +461,29 @@ project_repo_label() {
   printf '%s\n' "$id"
 }
 
+# project_repo_relative REPO_DIR WORK_TREE — WORK_TREE named by the part of its
+# path REPO_DIR has not already said, for a display that lists a repo's work
+# trees under the repo's own row.
+#
+# A worktree git was pointed at somewhere else entirely has nothing of its path
+# implied by the repo's, so the fallback is the full path, tilde-shortened like
+# every other path this display prints.
+project_repo_relative() {
+  local repo_dir="$1" work_tree="$2" under
+  under="${work_tree#"$repo_dir"/}"
+  if [[ "$under" == "$work_tree" ]]; then
+    under="${work_tree/#$HOME/\~}"
+  fi
+  printf '%s\n' "$under"
+}
+
 # project_repo_worktrees — every registered work tree, under the repo it belongs
 # to. Prints `<repo id><TAB><work-tree path>` — the reverse of a registry line,
 # which is `<path><TAB><id>` — with a repo's work trees consecutive, repos in
 # the order the registry first names one of theirs and each repo's work trees in
-# registry order.
+# registry order. Both production callers pipe this through `sort`, which
+# reorders the repos alphabetically by id but leaves each repo's work trees
+# consecutive underneath it.
 #
 # Grouping is the reading both the list and the machine profile want: a machine
 # that cuts a worktree per branch has one repository behind a dozen entries, and
@@ -500,7 +528,7 @@ project_repo_worktrees() {
 project_repo_leaders() {
   local line id path last=""
   while IFS= read -r line; do
-    _split_project_line "$line" id path
+    _split_repo_worktree_line "$line" id path
     if [[ "$id" == "$last" ]]; then
       continue
     fi

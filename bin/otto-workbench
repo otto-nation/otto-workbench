@@ -641,7 +641,7 @@ _projects_lexical_abs() {
 cmd_projects_list() {
   local line id path label under repos=0 trees=0 named=""
   while IFS= read -r line; do
-    _split_project_line "$line" id path
+    _split_repo_worktree_line "$line" id path
     label="$(project_repo_label "$id")"
     if [[ "$label" != "$named" ]]; then
       named="$label"
@@ -654,10 +654,7 @@ cmd_projects_list() {
     if [[ "$path" == "$label" ]]; then
       continue
     fi
-    under="${path#"$label"/}"
-    # A worktree git was pointed at somewhere else entirely — nothing of its
-    # path is implied by the repo's, so all of it is printed.
-    [[ "$under" == "$path" ]] && under="${path/#$HOME/\~}"
+    under="$(project_repo_relative "$label" "$path")"
     printf '    %s\n' "$under"
   done < <(project_repo_worktrees | sort)
 

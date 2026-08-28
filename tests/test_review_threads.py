@@ -6798,6 +6798,35 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         assert branch.first[:7] not in reply
         assert "/commit/" not in reply
 
+    def test_acted_entry_with_a_handled_outside_reason_still_reads_applied(
+        self, rt, hand_landed_branch,
+    ):
+        """`acted` outranks `_handled_outside` in the reply's wording, not its citation.
+
+        `_attribute_commit` already declined a commit for this row, which is why
+        it lands in `_reply_to_fixed`'s unattributed bucket and reaches
+        `_post_already_addressed_replies` with `acted=True`. `line 3`'s only
+        commit predates the review, so `landed_after` is False there too — but
+        `AddressingHistory.framing` checks `acted and not landed_after` before
+        `_handled_outside`, so the reply still reads "Applied", not "Already
+        addressed": the pass is the one that reported this outcome, and a commit
+        that predates the review cannot outrank what the pass itself said
+        happened.
+        """
+        branch = hand_landed_branch
+        entry = CommentItem(id="t3", summary="third point", file="a.py", line=3,
+                            reasoning=rt._RECONCILED_REASON)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+                patch("pr_comments.post_thread_reply", return_value=True) as post:
+            rt._reply_to_fixed(
+                [entry], {"t3": _reviewed("t3", 333)}, "owner/repo", 42,
+                _undetermined_pass(rt, branch), branch.path,
+            )
+        reply = post.call_args[0][3]
+        assert reply.startswith(f"{rt._APPLIED_REPLY_PREFIX}:")
+        assert rt._ADDRESSED_REPLY_PREFIX not in reply
+        assert branch.stale[:7] not in reply
+
     def test_a_recorded_commit_survives_the_decline(self, rt, hand_landed_branch):
         """Only inference is refused. A SHA `--settle` resolved is a record."""
         body = _summary_over(

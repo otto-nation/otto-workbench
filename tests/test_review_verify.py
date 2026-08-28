@@ -31,6 +31,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import review_document
 import review_verify
 from review_document import SECTION_PRIOR_FINDINGS
 from review_types import SEVERITY_MUST, severity_by_key
@@ -329,6 +330,63 @@ class TestParseVerificationSpacedPaths:
         assert review_verify._parse_findings_for_verification(text) == []
 
 
+class TestVerificationReadsEachFindingsOwnBody:
+    """A finding is checked against the evidence written under it and no other.
+
+    `_VERIFY_FINDING_RE` selects which findings this gate checks; it does not
+    decide where one ends. A declaration it cannot read used to be appended to
+    the finding above it, which is how a finding came to be verified against a
+    quotation belonging to its neighbour.
+    """
+
+    UNREADABLE_LOCATION = (
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "  > ```go\n"
+        "  > x := 1\n"
+        "  > ```\n"
+        "- **[M2]** Nil pointer dereference at handler.go:42\n"
+        "  > ```go\n"
+        "  > y := 2\n"
+        "  > ```\n"
+        "- **[M3]** **`c.go:3`** — three\n"
+    )
+
+    def test_an_unreadable_location_is_not_checked(self):
+        findings = review_verify._parse_findings_for_verification(self.UNREADABLE_LOCATION)
+        assert [f["id"] for f in findings] == ["M1", "M3"]
+
+    def test_an_unreadable_location_does_not_join_the_finding_above_it(self):
+        findings = review_verify._parse_findings_for_verification(self.UNREADABLE_LOCATION)
+        assert review_verify._extract_evidence(findings[0]["body"]) == "x := 1"
+
+    def test_a_ledger_entry_is_not_checked(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "## Prior findings\n"
+            "- **[S1]** **`old.go:2`** — Fixed\n"
+        )
+        findings = review_verify._parse_findings_for_verification(text)
+        assert [f["id"] for f in findings] == ["M1"]
+
+    def test_a_body_stops_at_the_resolved_finding_below_it(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "  > ```go\n"
+            "  > x := 1\n"
+            "  > ```\n"
+            "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
+            "  > ```go\n"
+            "  > y := 2\n"
+            "  > ```\n"
+        )
+        findings = review_verify._parse_findings_for_verification(text)
+        assert [f["id"] for f in findings] == ["M1"]
+        assert "y := 2" not in findings[0]["body"]
+
+
 class TestStripEvidenceBlocks:
     def test_strips_evidence_preserves_finding(self):
         text = (
@@ -383,6 +441,130 @@ class TestStripEvidenceBlocks:
         assert "**[N1]**" in result
 
 
+# ── What both gates take out ─────────────────────────────────────────────────
+#
+# Evidence verification and the disprove gate each drop findings from a
+# finished review, and they used to measure a finding's body for themselves.
+# The table below is run through both, asserting the same bytes each time, so a
+# reading that drifts into one of them fails here rather than passing twice.
+
+
+def _by_evidence_gate(text: str, ids: list[str]) -> str:
+    """What evidence verification leaves behind when it drops `ids`."""
+    return review_document.drop_findings(text, ids)
+
+
+def _by_disprove_gate(text: str, ids: list[str]) -> str:
+    """What the disprove gate leaves behind when `ids` are falsified."""
+    results = [DisproveResult(fid, "FALSIFIED", "challenged") for fid in ids]
+    return apply_disprove_results(text, results)[0]
+
+
+GATES = [
+    pytest.param(_by_evidence_gate, id="evidence"),
+    pytest.param(_by_disprove_gate, id="disprove"),
+]
+
+DROP_CASES = [
+    pytest.param(
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "- a flat bullet continuing the finding\n"
+        "- **[M2]** **`b.go:2`** — two\n",
+        ["M1"],
+        "## Must fix\n"
+        "- **[M2]** **`b.go:2`** — two\n",
+        id="a-flat-bullet-is-the-finding's-own-body",
+    ),
+    pytest.param(
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
+        "- **[M3]** **`c.go:3`** — three\n",
+        ["M1"],
+        "## Must fix\n"
+        "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
+        "- **[M3]** **`c.go:3`** — three\n",
+        id="a-resolved-finding-below-a-dropped-one-survives",
+    ),
+    pytest.param(
+        "## Must fix\n"
+        "### Group A\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "### Group B\n"
+        "- **[M2]** **`b.go:2`** — two\n",
+        ["M1"],
+        "## Must fix\n"
+        "### Group A\n"
+        "### Group B\n"
+        "- **[M2]** **`b.go:2`** — two\n",
+        id="a-sub-heading-below-a-dropped-finding-survives",
+    ),
+    pytest.param(
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "  - **[M2]** **`b.go:2`** — nested declaration\n"
+        "- **[M3]** **`c.go:3`** — three\n",
+        ["M1"],
+        "## Must fix\n"
+        "  - **[M2]** **`b.go:2`** — nested declaration\n"
+        "- **[M3]** **`c.go:3`** — three\n",
+        id="an-indented-declaration-is-a-declaration",
+    ),
+    pytest.param(
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "## Prior findings\n"
+        "- **[M1]** `old.go` — Fixed\n",
+        ["M1"],
+        "## Must fix\n"
+        "## Prior findings\n"
+        "- **[M1]** `old.go` — Fixed\n",
+        id="a-ledger-entry-whose-id-collides-is-left-alone",
+    ),
+    pytest.param(
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "  > ```go\n"
+        "  > x := 1\n"
+        "  > ```\n"
+        "\n"
+        "- **[M2]** **`b.go:2`** — two\n",
+        ["M1"],
+        "## Must fix\n"
+        "- **[M2]** **`b.go:2`** — two\n",
+        id="an-evidence-block-goes-with-the-finding-that-quotes-it",
+    ),
+    pytest.param(
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n"
+        "## Nit\n"
+        "- **[N1]** **`b.go:2`** — two\n",
+        ["M1", "N1"],
+        # The document's last finding owns the blank line closing the file, so
+        # a review whose last finding goes loses its trailing newline with it.
+        "## Must fix\n"
+        "## Nit",
+        id="every-named-finding-goes-at-once",
+    ),
+    pytest.param(
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n",
+        ["S9"],
+        "## Must fix\n"
+        "- **[M1]** **`a.go:1`** — one\n",
+        id="an-id-the-review-does-not-declare-changes-nothing",
+    ),
+]
+
+
+@pytest.mark.parametrize("gate", GATES)
+@pytest.mark.parametrize("text,ids,expected", DROP_CASES)
+class TestBothGatesCutTheSameSpan:
+    def test_the_gate_leaves_exactly_this(self, gate, text, ids, expected):
+        assert gate(text, ids) == expected
+
+
 class TestRemoveDroppedFindings:
     def test_remove_single(self):
         text = (
@@ -390,7 +572,7 @@ class TestRemoveDroppedFindings:
             "- **[M1]** **`file.go:1`** — issue one\n"
             "- **[M2]** **`file.go:5`** — issue two\n"
         )
-        result = review_verify._remove_dropped_findings(text, ["M1"])
+        result = _by_evidence_gate(text, ["M1"])
         assert "issue one" not in result
         assert "issue two" in result
 
@@ -401,21 +583,21 @@ class TestRemoveDroppedFindings:
             "  more detail\n"
             "- **[M2]** **`file.go:5`** — issue two\n"
         )
-        result = review_verify._remove_dropped_findings(text, ["M1"])
+        result = _by_evidence_gate(text, ["M1"])
         assert "issue one" not in result
         assert "continuation line" not in result
         assert "issue two" in result
 
     def test_empty_dropped_list(self):
         text = "- **[M1]** **`file.go:1`** — issue\n"
-        assert review_verify._remove_dropped_findings(text, []) == text
+        assert _by_evidence_gate(text, []) == text
 
     def test_remove_last_finding(self):
         text = (
             "## Must fix\n"
             "- **[M1]** **`file.go:1`** — only finding\n"
         )
-        result = review_verify._remove_dropped_findings(text, ["M1"])
+        result = _by_evidence_gate(text, ["M1"])
         assert "only finding" not in result
         assert "## Must fix" in result
 

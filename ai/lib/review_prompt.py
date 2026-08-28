@@ -16,12 +16,18 @@ shortfall requires, rewrites the environment section to send the agent after
 whatever it dropped, and reports the cuts in the prompt's size log. A prompt
 still over budget once every lever is pulled raises `PromptTooLarge` rather than
 being sent: the phase reports it before an agent starts, so it costs nothing.
+
+Scoping the prior review to the files a group is reviewing cuts it a finding at
+a time, and where a finding stops is `review_document`'s `finding_spans` — the
+same measure the gates that trim a finished review use. A prompt that measured
+it here would quote an agent evidence belonging to a finding it was not shown.
 """
 
 # doc-group: pipeline
 
 from __future__ import annotations
 
+import bisect
 import re
 import sys
 from dataclasses import asdict, dataclass, fields
@@ -39,7 +45,7 @@ from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from pr_domains import ReviewVerdict
 from review_document import (
     BOLD_FINDING_ID_RE, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS, strip_sections,
+    SECTION_STATIC_ANALYSIS, finding_spans, strip_sections,
 )
 from review_merge import PriorFinding, annotate_prior_with_stable_ids
 from review_paths import (
@@ -547,43 +553,37 @@ _FINDING_LINE_RE = re.compile(
 )
 
 
-def _classify_prior_line(stripped: str, filter_set: set[str], in_matched: bool) -> bool:
-    m = _FINDING_LINE_RE.match(stripped)
-    if m:
-        return m.group(1) in filter_set
-    return in_matched
+def _in_scope(line: str, filter_set: set[str]) -> bool:
+    """Whether the finding line names a file the scoped review is about."""
+    m = _FINDING_LINE_RE.match(line)
+    return bool(m) and m.group(1) in filter_set
 
 
 def _collect_scoped_sections(
-    lines: list[str], filter_set: set[str],
+    prior_text: str, filter_set: set[str],
 ) -> list[tuple[str, list[str]]]:
-    sections: list[tuple[str, list[str]]] = []
-    current_header = ""
-    current_lines: list[str] = []
-    in_matched_finding = False
+    """Each `## ` section of `prior_text` and the in-scope findings under it.
 
-    for line in lines:
-        stripped = line.strip()
-        is_header = stripped.startswith("## ")
-        if is_header and current_header:
-            sections.append((current_header, current_lines))
-        if is_header:
-            current_header = line
-            current_lines = []
-            in_matched_finding = False
+    `_FINDING_LINE_RE` picks the findings; `finding_spans` says how much of the
+    text each one brings with it, so a finding kept for its path keeps the
+    evidence quoted under it and nothing quoted under its neighbour. Sections
+    come back in document order, empty ones included — the caller decides
+    whether a heading with no findings left is worth printing.
+    """
+    lines = prior_text.split("\n")
+    headers = [i for i, line in enumerate(lines) if line.strip().startswith("## ")]
+    sections: list[tuple[str, list[str]]] = [(lines[i], []) for i in headers]
+    for span in finding_spans(prior_text):
+        owner = bisect.bisect_right(headers, span.start) - 1
+        if owner < 0 or not _in_scope(span.line, filter_set):
             continue
-        in_matched_finding = _classify_prior_line(stripped, filter_set, in_matched_finding)
-        if in_matched_finding:
-            current_lines.append(line)
-
-    if current_header:
-        sections.append((current_header, current_lines))
+        sections[owner][1].extend(span.text_of(prior_text).split("\n"))
     return sections
 
 
 def _scope_prior_review(prior_text: str, file_filter: list[str]) -> str:
     filter_set = set(file_filter)
-    sections = _collect_scoped_sections(prior_text.split("\n"), filter_set)
+    sections = _collect_scoped_sections(prior_text, filter_set)
 
     parts: list[str] = []
     for header, lines in sections:

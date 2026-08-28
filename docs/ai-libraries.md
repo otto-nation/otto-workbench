@@ -267,6 +267,15 @@ that, and the annotations a later pass writes onto it — declined, skipped.
 findings section — the prior-findings ledger is the one — and every other
 reader asks `ReviewDocument.findings`.
 
+Where that body stops is the same one owner. `ends_finding_body` is the answer
+and `finding_spans` is the traversal built on it, so a reader walking a review
+a finding at a time gets the same line ranges wherever it walks from.
+`drop_findings` is what an editing caller asks instead: the gates that trim a
+finished review remove spans this module measured rather than lines each of
+them recognised, because two gates that disagreed about where a body ended cut
+one review two different ways — one of them swallowing the resolved finding
+below the one it was told to drop.
+
 Counting them is that same parse, not a second grammar over the same text:
 `open_counts` tallies `open_findings`, so which findings a review is reported
 to have and how many it is reported to have are one answer. A tally written as
@@ -426,6 +435,11 @@ whatever it dropped, and reports the cuts in the prompt's size log. A prompt
 still over budget once every lever is pulled raises `PromptTooLarge` rather than
 being sent: the phase reports it before an agent starts, so it costs nothing.
 
+Scoping the prior review to the files a group is reviewing cuts it a finding at
+a time, and where a finding stops is `review_document`'s `finding_spans` — the
+same measure the gates that trim a finished review use. A prompt that measured
+it here would quote an agent evidence belonging to a finding it was not shown.
+
 ### review_retry.py
 
 Retry and diagnosis routing for the review pipeline.
@@ -556,6 +570,13 @@ finding a later review restates.
 Reading a review is `review_document`'s job, checking findings against the
 tree is `review_verify`'s, and the `Finding` every side holds is
 `review_types`' — a consumer that only holds findings needs none of this.
+
+Where a finding's body ends is `review_document`'s too. Deduplication and the
+prior-review reading both walk `finding_spans`, and a repeat is removed with
+`cut_spans`, so a duplicate takes exactly the lines out of the merged document
+that a falsified finding does. Each keeps its own head pattern for *which*
+declarations it wants — `_finding_dedup_key` and `_ANNOTATE_FINDING_RE` read
+different things off a finding line — and neither says where one stops.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -700,6 +721,14 @@ Which verdict a tally supports in the first place is `review_document`'s, and
 so is the finding-line grammar read here: `_VERIFY_FINDING_RE` is a stricter
 shape over the same location vocabulary, and the two have to agree or a finding
 parses one way and verifies against the other.
+
+So is where a finding's body ends. Both gates walk the review through
+`finding_spans` and remove what they drop through `drop_findings`, because two
+gates that measured a finding themselves measured it differently: one of them
+took the resolved finding below a dropped one out with it, and neither of them
+left a `### ` sub-heading standing. `_VERIFY_FINDING_RE` selects which findings
+this gate checks and reads the location it checks them against; it no longer
+says where one stops.
 
 ## Publishing
 

@@ -303,7 +303,7 @@ def _phase_synthesis(
     # The same reconciliation the run ends with, asked one phase early, while
     # there is still an agent that can act on the answer. Afterwards the only
     # thing left to do about a prior finding nobody accounted for is report it.
-    unaccounted = passed_over(job.prior_review, merged_content, job.wt_path)
+    unaccounted = passed_over(job.prior_review, merged_content, job.wt_path, job.pr.head_sha)
     if unaccounted:
         log.dim(
             f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "

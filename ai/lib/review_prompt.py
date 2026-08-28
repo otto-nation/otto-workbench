@@ -700,10 +700,14 @@ def _build_prior_section(
 # prevent is the third one — the document saying nothing about it at all, which
 # the next round cannot tell apart from the finding never having existed.
 _UNACCOUNTED_CTX = """These prior findings reached no disposition: the group
-agents did not mention them, and the worktree still holds what each one points
-at. Decide each one here, on the text below and the merged findings above.
-Omitting one is not a third option — a prior finding this document does not
-mention is reported as unaccounted for, and comes back unsettled next round."""
+agents did not mention them, and nothing in the tree confirmed the issue was
+resolved. Decide each one here, on the text below and the merged findings
+above. Omitting one is not a third option — a prior finding this document
+does not mention is reported as unaccounted for, and comes back unsettled
+next round. Your output holds one `## Prior findings` section total: if the
+merged findings above already carry one, add these findings' verdicts as
+lines to that same section instead of writing a second one; only write it
+fresh below if none exists yet."""
 
 
 def _build_unaccounted_section(findings: list[PriorFinding]) -> str:

@@ -39,12 +39,12 @@ from review_github import PRData, fetch_pr_data
 from review_merge import (
     annotate_prior_with_stable_ids, passed_over, record_prior_findings,
 )
+from review_grouping import (
+    GROUP_TIER3, HOLISTIC_MIN_GROUPS, group_files, merge_smallest_groups,
+)
 from review_preflight import (
-    BUDGET_SUMMARY, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
-    GROUP_TIER3, HOLISTIC_MIN_GROUPS, SKIPPED_SUMMARY,
-    _merge_smallest_groups,
+    BUDGET_SUMMARY, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY, SKIPPED_SUMMARY,
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
-    group_files,
 )
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD,
@@ -699,7 +699,7 @@ def run_multi_phase(
 ):
     groups = group_files(job.pr)
     effective_max_groups = max_groups or EFFORT_PRESETS[job.effort].max_groups
-    groups = _merge_smallest_groups(groups, effective_max_groups)
+    groups = merge_smallest_groups(groups, effective_max_groups)
 
     if not job.include_generated:
         before = len(groups)

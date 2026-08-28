@@ -18,6 +18,17 @@ teardown() {
   common_teardown
 }
 
+@test "review-orchestrate --help exits 0" {
+  run "$ORCHESTRATE" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Review orchestration"* ]]
+}
+
+@test "review-orchestrate missing required args exits non-zero" {
+  run "$ORCHESTRATE" --pr 42
+  [ "$status" -ne 0 ]
+}
+
 @test "_build_agent_cmd: includes max-turns when set" {
   result=$(_py '
 import ai_backend_claude as abc

@@ -1,4 +1,4 @@
-"""Tests for review_profiles: profile loading, matching, and formatting."""
+"""Tests for review_grouping: tier classification, file grouping, and profiles."""
 
 import sys
 from pathlib import Path
@@ -10,14 +10,21 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_profiles import (
+from review_grouping import (
+    GROUP_TIER1,
+    GROUP_TIER3,
+    MAX_GROUP_FILES,
     ReviewProfile,
     ReviewRule,
+    _split_large_dir,
+    classify_tier,
     format_profiles_section,
+    group_files,
     load_profiles,
     match_profiles,
-    match_profiles_for_group,
+    merge_smallest_groups,
 )
+from review_types import Group, PRMetadata
 
 try:
     import yaml as _yaml
@@ -25,6 +32,179 @@ except ImportError:
     _yaml = None
 
 needs_yaml = pytest.mark.skipif(_yaml is None, reason="PyYAML not installed")
+
+
+# ── classify_tier ────────────────────────────────────────────────────────────
+
+
+class TestClassifyTier:
+    def test_tier1_migrations(self):
+        assert classify_tier("db/migrations/001_init.sql") == 1
+
+    def test_tier1_proto(self):
+        assert classify_tier("api/service.proto") == 1
+
+    def test_tier1_claude_md(self):
+        assert classify_tier("CLAUDE.md") == 1
+
+    def test_tier1_go_mod(self):
+        assert classify_tier("go.mod") == 1
+
+    def test_tier1_auth_path(self):
+        assert classify_tier("pkg/auth/handler.go") == 1
+
+    def test_tier2_normal(self):
+        assert classify_tier("pkg/service/handler.go") == 2
+
+    def test_tier3_pb_go(self):
+        assert classify_tier("api/service.pb.go") == 3
+
+    def test_tier3_go_sum(self):
+        assert classify_tier("go.sum") == 3
+
+    def test_tier3_gen_path(self):
+        assert classify_tier("gen/api/types.go") == 3
+
+    def test_tier3_testdata_path(self):
+        assert classify_tier("pkg/testdata/fixture.json") == 3
+
+    def test_generated_wins_over_critical(self):
+        assert classify_tier("pkg/auth/service.pb.go") == 3
+
+
+# ── _split_large_dir ─────────────────────────────────────────────────────────
+
+
+class TestSplitLargeDir:
+    def test_fits_in_one_group(self):
+        files = ["a.go", "b.go"]
+        file_lines = {"a.go": 100, "b.go": 100}
+        groups = _split_large_dir("pkg", files, file_lines)
+        assert len(groups) == 1
+        assert groups[0].name == "pkg-1"
+        assert groups[0].files == files
+
+    def test_requires_split(self):
+        files = ["a.go", "b.go", "c.go"]
+        file_lines = {"a.go": 500, "b.go": 500, "c.go": 500}
+        groups = _split_large_dir("pkg", files, file_lines)
+        assert len(groups) > 1
+        all_files = [f for g in groups for f in g.files]
+        assert set(all_files) == set(files)
+
+    def test_splits_on_file_count(self):
+        files = [f"f{i}.py" for i in range(20)]
+        file_lines = {f: 10 for f in files}
+        groups = _split_large_dir("pkg", files, file_lines)
+        assert len(groups) > 1
+        assert all(len(g.files) <= MAX_GROUP_FILES for g in groups)
+        all_files = [f for g in groups for f in g.files]
+        assert set(all_files) == set(files)
+
+
+# ── group_files ──────────────────────────────────────────────────────────────
+
+
+def _pr(files: list[dict]) -> PRMetadata:
+    return PRMetadata(
+        title="test", body="", head="feat", base="main", head_sha="abc",
+        additions=sum(f["additions"] for f in files),
+        deletions=sum(f["deletions"] for f in files),
+        changed_files=len(files), files=files,
+    )
+
+
+class TestGroupFiles:
+    def test_mix_of_tiers(self):
+        pr = _pr([
+            {"path": "CLAUDE.md", "additions": 10, "deletions": 5},
+            {"path": "pkg/handler.go", "additions": 50, "deletions": 20},
+            {"path": "go.sum", "additions": 40, "deletions": 25},
+        ])
+        names = [g.name for g in group_files(pr)]
+        assert GROUP_TIER1 in names
+        assert GROUP_TIER3 in names
+        assert "pkg" in names
+
+    def test_large_dir_split(self):
+        pr = _pr([
+            {"path": f"pkg/file{i}.go", "additions": 500, "deletions": 0}
+            for i in range(5)
+        ])
+        # pkg dir has 2500 lines, so it must be split
+        pkg_groups = [g for g in group_files(pr) if g.name.startswith("pkg")]
+        assert len(pkg_groups) > 1
+
+    def test_many_files_split(self):
+        pr = _pr([
+            {"path": f"pkg/file{i}.go", "additions": 10, "deletions": 5}
+            for i in range(20)
+        ])
+        pkg_groups = [g for g in group_files(pr) if g.name.startswith("pkg")]
+        assert len(pkg_groups) > 1
+        assert all(len(g.files) <= MAX_GROUP_FILES for g in pkg_groups)
+        all_files = [f for g in pkg_groups for f in g.files]
+        assert set(all_files) == {f"pkg/file{i}.go" for i in range(20)}
+
+    def test_exactly_max_files_no_split(self):
+        # group_files uses > MAX_GROUP_FILES, so exactly MAX_GROUP_FILES files
+        # must not trigger a split — verifies the threshold is exclusive
+        pr = _pr([
+            {"path": f"pkg/file{i}.go", "additions": 10, "deletions": 0}
+            for i in range(MAX_GROUP_FILES)
+        ])
+        pkg_groups = [g for g in group_files(pr) if g.name.startswith("pkg")]
+        assert len(pkg_groups) == 1
+
+
+# ── merge_smallest_groups ────────────────────────────────────────────────────
+
+
+class TestMergeSmallestGroups:
+    def test_under_limit(self):
+        groups = [Group("a", ["f1"], 10), Group("b", ["f2"], 20)]
+        assert len(merge_smallest_groups(groups, 5)) == 2
+
+    def test_over_limit(self):
+        groups = [
+            Group("a", ["f1"], 10),
+            Group("b", ["f2"], 20),
+            Group("c", ["f3"], 30),
+        ]
+        assert len(merge_smallest_groups(groups, 2)) == 2
+
+    def test_merged_name_and_files(self):
+        groups = [Group("a", ["f1"], 10), Group("b", ["f2"], 20)]
+        result = merge_smallest_groups(groups, 1)
+        assert len(result) == 1
+        assert "a" in result[0].name
+        assert "b" in result[0].name
+        assert set(result[0].files) == {"f1", "f2"}
+        assert result[0].lines == 30
+
+    def test_prefers_shared_directory_prefix(self):
+        groups = [
+            Group("src/api", ["api.go"], 100),
+            Group("src/auth", ["auth.go"], 100),
+            Group("tests/unit", ["test.go"], 50),
+        ]
+        result = merge_smallest_groups(groups, 2)
+        assert len(result) == 2
+        merged = [g for g in result if "+" in g.name][0]
+        assert "src/api" in merged.name
+        assert "src/auth" in merged.name
+
+    def test_falls_back_to_size_without_shared_prefix(self):
+        groups = [
+            Group("alpha", ["a.go"], 500),
+            Group("beta", ["b.go"], 10),
+            Group("gamma", ["c.go"], 20),
+        ]
+        result = merge_smallest_groups(groups, 2)
+        assert len(result) == 2
+        merged = [g for g in result if "+" in g.name][0]
+        assert "beta" in merged.name
+        assert "gamma" in merged.name
 
 
 # ── load_profiles ────────────────────────────────────────────────────────────
@@ -187,17 +367,12 @@ class TestMatchProfiles:
         matched = match_profiles(profiles, ["frontend/app.js"])
         assert matched == []
 
-
-# ── match_profiles_for_group ─────────────────────────────────────────────────
-
-
-class TestMatchProfilesForGroup:
-    def test_filters_to_group_files(self):
+    def test_narrows_to_one_groups_files(self):
         profiles = [
             ReviewProfile("auth", "", paths=["auth/**"], rules=[]),
             ReviewProfile("db", "", paths=["db/**"], rules=[]),
         ]
-        matched = match_profiles_for_group(profiles, ["auth/login.py"])
+        matched = match_profiles(profiles, ["auth/login.py"])
         assert len(matched) == 1
         assert matched[0].name == "auth"
 

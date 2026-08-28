@@ -23,17 +23,20 @@
 # _drop_container_anatomy_container DIR — the bare-repo container DIR sits in,
 # or a non-zero status when DIR is not in that layout.
 #
-# Called through a command substitution, which is what scopes its `cd` and its
-# cleared git environment to the lookup. GIT_DIR beats `git -C`, so a sync run
-# from inside a git hook would otherwise answer for the hook's repository.
+# The shared git dir comes from lib/git_layout.sh, which owns that lookup and
+# clears the git environment inside its own subshell. The clear is repeated here
+# for resolve-worktree below: it discovers from the directory it is handed, and a
+# sync run from inside a git hook has GIT_DIR exported — which git reads ahead of
+# any directory, so the answer would be the hook's repository and would look
+# entirely ordinary. Called through a command substitution, which is what scopes
+# the clear to the lookup.
 _drop_container_anatomy_container() {
   local dir="$1" common container rc=0
 
   git_env_clear
 
-  cd "$dir" 2>/dev/null || return 1
-  common="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
-  container="$(cd "$(dirname "$common")" 2>/dev/null && pwd -P)" || return 1
+  common="$(git_shared_dir "$dir")" || return 1
+  container="$(dirname "$common")"
 
   # resolve-worktree owns "is this a bare-repo container" in bash. 0 is a
   # container with a worktree on its default branch and 1 is one whose default

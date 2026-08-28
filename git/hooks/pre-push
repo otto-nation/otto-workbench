@@ -171,7 +171,13 @@ fi
 
 # ── Repo-local delegation ──────────────────────────────────────────────────
 
-# Use --git-common-dir so delegation works from worktrees (where .git is a file, not a dir)
+# --git-common-dir so delegation works from worktrees, where .git is a file and
+# the hooks live in the directory every worktree shares. Asked with the git
+# environment git exported to this hook rather than through lib/git_layout.sh's
+# git_shared_dir — see that module's header for why a hook is the one caller
+# that must not clear it. This hook has the workbench checkout resolved above
+# and could reach the library; the reason it does not is the question, not the
+# path.
 _git_common="$(git rev-parse --git-common-dir)"
 _local_hook="$_git_common/hooks/pre-push"
 

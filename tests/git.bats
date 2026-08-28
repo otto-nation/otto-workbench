@@ -146,6 +146,78 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+# ── Local hooks ──────────────────────────────────────────────────────────────
+#
+# Every case here runs step_local_hooks from a directory that is not the
+# checkout it is installing into, because that is the only position where the
+# lookup's answer can be wrong: on this machine the workbench is a bare-repo
+# container, whose --git-common-dir is absolute whoever asks.
+
+@test "local hooks land in the checkout's git dir, not the caller's cwd" {
+  # `git -C DIR rev-parse --git-common-dir` reports a plain `.git` for an
+  # ordinary clone, and that resolves against the caller's cwd rather than DIR.
+  local repo="$TMPDIR/checkout" elsewhere="$TMPDIR/elsewhere"
+  git init -q "$repo"
+  mkdir -p "$elsewhere"
+  cd "$elsewhere" || return 1
+
+  WORKBENCH_DIR="$repo" run step_local_hooks
+  [ "$status" -eq 0 ]
+  [ -x "$repo/.git/hooks/pre-commit" ]
+  [ -x "$repo/.git/hooks/pre-push" ]
+  [ ! -e "$elsewhere/.git" ]
+}
+
+@test "local hooks of a worktree land in the git dir its checkouts share" {
+  local repo="$TMPDIR/checkout"
+  git init -q "$repo"
+  git -C "$repo" -c user.name=Test -c user.email=test@example.com \
+    commit -q --allow-empty -m base
+  git -C "$repo" worktree add -q "$TMPDIR/wt" -b feat
+
+  WORKBENCH_DIR="$TMPDIR/wt" run step_local_hooks
+  [ "$status" -eq 0 ]
+  [ -x "$repo/.git/hooks/pre-commit" ]
+  [ ! -e "$TMPDIR/wt/.git/hooks" ]
+}
+
+@test "an inherited GIT_DIR does not redirect the local hook install" {
+  # Sync runs from inside a git hook, which exports GIT_DIR — and git reads it
+  # ahead of the directory `-C` names, so the dispatchers would be written into
+  # the hook's repository and the answer would look entirely ordinary.
+  local repo="$TMPDIR/checkout" other="$TMPDIR/other"
+  git init -q "$repo"
+  git init -q "$other"
+
+  GIT_DIR="$other/.git" WORKBENCH_DIR="$repo" run step_local_hooks
+  [ "$status" -eq 0 ]
+  [ -x "$repo/.git/hooks/pre-commit" ]
+  [ ! -e "$other/.git/hooks/pre-commit" ]
+}
+
+@test "the disabling hooksPath is cleared in the checkout, not the caller's repo" {
+  local repo="$TMPDIR/checkout" elsewhere="$TMPDIR/elsewhere"
+  git init -q "$repo"
+  git init -q "$elsewhere"
+  git -C "$repo" config --local core.hooksPath /dev/null
+  git -C "$elsewhere" config --local core.hooksPath /dev/null
+  cd "$elsewhere" || return 1
+
+  WORKBENCH_DIR="$repo" run step_local_hooks
+  [ "$status" -eq 0 ]
+  run git -C "$repo" config --local core.hooksPath
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$elsewhere" config --local core.hooksPath)" = "/dev/null" ]
+}
+
+@test "a directory git cannot answer for fails the step instead of installing" {
+  mkdir -p "$TMPDIR/loose"
+
+  WORKBENCH_DIR="$TMPDIR/loose" run step_local_hooks
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"names no git dir"* ]]
+}
+
 # ── Commit identity guard ────────────────────────────────────────────────────
 
 # _make_identity_repo NAME EMAIL [ORIGIN] — a staged temp repo committing as
@@ -222,6 +294,32 @@ _refute_identity_rejection() {
   run "$GIT_HOOKS_SRC_DIR/pre-commit"
 
   _refute_identity_rejection
+}
+
+# ── Repo-local delegation ────────────────────────────────────────────────────
+
+@test "pre-commit finds the local hook through the environment git exported" {
+  # `git --git-dir=X --work-tree=Y commit` runs the hook in Y with GIT_DIR set
+  # to X, and Y is no repository on its own. Clearing the environment and
+  # discovering from Y — what lib/git_layout.sh's git_shared_dir does, and the
+  # reason a hook does not call it — finds no repository at all, or worse
+  # whichever one happens to enclose Y.
+  if ! command -v gitleaks >/dev/null 2>&1; then
+    bats_skip "gitleaks not installed — the hook exits before it reaches delegation"
+  fi
+  local gitdir="$TMPDIR/store/repo.git" tree="$TMPDIR/tree"
+  mkdir -p "$TMPDIR/store" "$tree"
+  git init -q --bare "$gitdir"
+  printf '#!/usr/bin/env bash\necho "LOCAL delegated"\n' > "$gitdir/hooks/pre-commit"
+  chmod +x "$gitdir/hooks/pre-commit"
+  printf 'hello\n' > "$tree/file.txt"
+  cd "$tree" || return 1
+  GIT_DIR="$gitdir" GIT_WORK_TREE="$tree" git add file.txt
+
+  GIT_DIR="$gitdir" GIT_WORK_TREE="$tree" run "$GIT_HOOKS_SRC_DIR/pre-commit"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LOCAL delegated"* ]]
 }
 
 @test "all git hooks use portable shebang" {

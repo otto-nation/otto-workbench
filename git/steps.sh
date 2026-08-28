@@ -493,16 +493,27 @@ step_global_hooks() {
 # The global hooks delegate back to .git/hooks/ if present,
 # so this step is required for repo-local hooks to run.
 step_local_hooks() {
-  # Use --git-common-dir so this works from worktrees (where .git is a file)
+  # The directory every checkout of this repo shares, which is where its hooks
+  # live — in a worktree `.git` is a file, not a directory. lib/git_layout.sh
+  # owns the lookup, and answers with an absolute path: `git -C DIR rev-parse
+  # --git-common-dir` reports a plain `.git` for an ordinary clone, resolved
+  # against the caller's cwd rather than against DIR, so a sync run from
+  # anywhere else wrote the dispatchers into a `.git/hooks` it created there.
   local dot_git
-  dot_git="$(git -C "$WORKBENCH_DIR" rev-parse --git-common-dir)"
+  dot_git="$(git_shared_dir "$WORKBENCH_DIR")" || {
+    err "local git hooks: git names no git dir for $WORKBENCH_DIR"
+    return 1
+  }
   mkdir -p "$dot_git/hooks"
 
-  # Auto-heal: if something set core.hooksPath to /dev/null, hooks are silently disabled
+  # Auto-heal: if something set core.hooksPath to /dev/null, hooks are silently disabled.
+  # Addressed to the workbench checkout for the same reason as above — cwd is
+  # whatever the operator ran the sync from, and unsetting the key there would
+  # re-enable hooks in somebody else's repository.
   local hooks_path
-  hooks_path=$(git config --local core.hooksPath 2>/dev/null) || true
+  hooks_path=$(git -C "$WORKBENCH_DIR" config --local core.hooksPath 2>/dev/null) || true
   if [[ "$hooks_path" == "/dev/null" ]]; then
-    git config --unset core.hooksPath
+    git -C "$WORKBENCH_DIR" config --unset core.hooksPath
     warn "removed core.hooksPath=/dev/null from local config (hooks were disabled)"
   fi
 

@@ -3,6 +3,20 @@
 
 REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 
+# bats_skip REASON — bats' own skip, kept reachable after a workbench lib
+# shadows it. Use it in any test file whose setup sources lib/ui.sh.
+#
+# lib/output.sh defines a skip() that prints a "⊘ label" line and returns, and
+# every steps.sh calls it, so the name cannot simply be given back to bats. A
+# test file that sources lib/ui.sh loses bats' skip outright: the guard prints
+# its reason, returns 0, and the body runs on — so a case meant to be skipped
+# fails on the very dependency it just reported missing, and the reason reads
+# as a stray line of output rather than a skip. Capturing the definition here,
+# while bats' is still the one in scope, keeps both callers served.
+if ! declare -F bats_skip >/dev/null; then
+  eval "bats_skip() $(declare -f skip | tail -n +2)"
+fi
+
 # _assert_not_real_repo — fails hard if PWD is inside the real workbench repo.
 _assert_not_real_repo() {
   local toplevel

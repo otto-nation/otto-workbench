@@ -11,9 +11,10 @@ file leaves the file holding text the quote no longer has, and a quote copied
 verbatim out of the file then fails to match it.
 
 The disprove gate is the second half — reading an agent's verdicts back and
-applying them. Reconciling the prose against what either gate removed is
-driven through `post_process_findings`, so those tests live with the rest of
-the post-processing pipeline in `test_review_orchestrate.py`.
+applying them. What is not here is the reconciliation that makes a review's
+Summary and Verdict account for what either gate removed: nothing calls it
+directly, so it is exercised through `post_process_findings` alongside the
+rest of the post-processing pipeline in `test_review_orchestrate.py`.
 """
 
 import sys

@@ -448,14 +448,11 @@ def apply_disprove_results(
     lines = review_text.split("\n")
     kept: list[str] = []
     dropping = False
-    dropped: list[str] = []
 
     for line in lines:
         m = _FINDING_LINE_RE.match(line)
         if m:
-            fid = m.group(2)
-            dropping = fid in falsified_ids
-            dropped.extend([fid] if dropping else [])
+            dropping = m.group(2) in falsified_ids
         elif dropping and not (line.startswith("- ") or line.startswith("## ")):
             continue
         elif dropping:

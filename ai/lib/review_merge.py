@@ -58,6 +58,12 @@ without asking an agent anything. Only what neither the review nor the tree
 settles is reported as undecided, and every record says which of the two
 settled it, so an inference is never read back as a statement.
 
+Reporting is not the only outcome. `passed_over` asks the same question one
+phase early, against the merged group findings, and hands back the findings
+neither the groups nor the tree settled — while there is still an agent that
+can decide them, rather than after the document is written and the only thing
+left to do is warn.
+
 The record is a sidecar in the review directory rather than a section of the
 review. Reconciliation parses its input for finding-shaped lines, so a
 reconciliation written into the review would come back to the next round
@@ -919,6 +925,40 @@ def reconcile(
             for finding in _parse_prior_findings(prior_text)
         ],
     )
+
+
+def passed_over(
+    prior_text: str, review_text: str, wt_path: str = "", head_sha: str = "",
+) -> list[PriorFinding]:
+    """The prior findings `review_text` left out that the tree at `wt_path` still holds.
+
+    Findings rather than records: a `PriorRecord` says what became of a
+    finding, and a caller asking for a disposition needs the finding itself —
+    the lines the prior review wrote, to put back in front of an agent.
+
+    `head_sha` only reaches `reconcile()` to skip its own `git_client.head_sha`
+    lookup — this function never reads `Reconciliation.head_sha` itself, so a
+    caller that already has the value in hand should pass it.
+
+    Only `NOT_MENTIONED` qualifies. It is the one undecided reason that is the
+    review's own omission; the other three are this pipeline's failures — a
+    verdict it could not parse, a location it could not read, a tree it had
+    nothing to check against — and asking an agent again settles none of them.
+
+    Records come back one per finding in parse order, so the two lists are
+    zipped rather than matched on a label, which two findings in one file may
+    share.
+    """
+    if not prior_text:
+        return []
+    reconciliation = reconcile(prior_text, review_text, wt_path, head_sha)
+    return [
+        finding
+        for finding, record in zip(
+            _parse_prior_findings(prior_text), reconciliation.records, strict=True,
+        )
+        if not record.decided and record.reason is UndecidedReason.NOT_MENTIONED
+    ]
 
 
 def _write(review_file: str, reconciliation: Reconciliation) -> str:

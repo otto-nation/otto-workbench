@@ -26,7 +26,6 @@ from agent_diagnosis import Diagnosis, DiagnosisKind
 from agent_registry import PHASES, SCAN_PHASES, phase_skip_argv
 from agent_types import EFFORT_PRESETS, Mode, Phase
 from pr_domains import ReviewStatus
-from review_common import plural
 from review_paths import (
     phase_log_path,
     phase_output_path,
@@ -39,7 +38,9 @@ from review_findings import (
     post_process_findings,
 )
 from review_github import PRData, fetch_pr_data
-from review_merge import annotate_prior_with_stable_ids, record_prior_findings
+from review_merge import (
+    annotate_prior_with_stable_ids, passed_over, record_prior_findings,
+)
 from review_preflight import (
     BUDGET_SUMMARY, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
     GROUP_TIER3, HOLISTIC_MIN_GROUPS, SKIPPED_SUMMARY,
@@ -47,7 +48,6 @@ from review_preflight import (
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
     group_files,
 )
-from review_common import plural
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD,
     Group, GroupSkip, PRContext, PRMetadata, ReviewJob, ReviewMeta, ReviewType,
@@ -76,6 +76,7 @@ from review_state import (
     pipeline_status,
     set_failures_section,
 )
+from text import plural
 
 DEFAULT_MAX_COST = 20.0
 

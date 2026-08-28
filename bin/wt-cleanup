@@ -25,7 +25,9 @@ removing worktrees that another session is actively using.
 A merged worktree holding uncommitted changes is reported rather than removed,
 but two kinds of residue do not count as changes: a file the default branch
 already ignores, which a worktree cut before the rule landed still reports, and
-a file whose lines only moved. Both are named in the cleanup log when forgiven.
+a file whose lines only moved. The same check applies to an --age removal of an
+unmerged worktree — disposable residue there does not hold it back either. Both
+are named in the cleanup log when forgiven.
 
 Usage: $(basename "$0") [options]
 
@@ -74,7 +76,8 @@ _describe_changes() {
 _change_kind() {
   local code="$1"
   case "$code" in
-    '??'|'!!') echo "untracked"; return 0 ;;
+    '??') echo "untracked"; return 0 ;;
+    UU|AA|DD|AU|UA|UD|DU) echo "conflicted"; return 0 ;;
   esac
   case "${code:1:1}" in
     M) echo "modified"; return 0 ;;
@@ -87,18 +90,25 @@ _change_kind() {
   echo "staged"
 }
 
-# _default_ignores PATH — whether the default branch's ignore rules cover PATH.
+# _default_ignored_paths PATH... — of the given untracked PATHs, the ones the
+# default branch's ignore rules cover, one per line on stdout.
 #
 # Asked in the default branch's own work tree, so the `.gitignore` files a repo
-# keeps below its root are read at the depth they apply. A worktree cut before
-# an ignore rule landed does not carry the rule, which is the whole reason git
-# reports the file: the branch is merged, so the default branch's copy of the
-# rules is the one that decides whether the file is worth preserving. With no
-# work tree for the default branch nothing is forgiven, leaving the operator the
-# report they get today.
-_default_ignores() {
+# keeps below its root are read at the depth they apply — and, since that work
+# tree is read rather than asked for its branch, on whatever it currently has
+# checked out, which is assumed to still be the default branch. A worktree cut
+# before an ignore rule landed does not carry the rule, which is the whole
+# reason git reports the file: the branch is merged, so the default branch's
+# copy of the rules is the one that decides whether the file is worth
+# preserving. All PATHs are checked in a single `check-ignore` call rather than
+# one per file — `-uall` can expand an ignored directory into hundreds of
+# entries. With no work tree for the default branch nothing is forgiven,
+# leaving the operator the report they get today.
+_default_ignored_paths() {
   [[ -n "$default_wt" && -d "$default_wt" ]] || return 1
-  git -C "$default_wt" check-ignore --no-index -q -- "$1" 2>/dev/null
+  [[ $# -gt 0 ]] || return 0
+  printf '%s\0' "$@" \
+    | git -C "$default_wt" check-ignore --no-index -z --stdin 2>/dev/null
 }
 
 # _is_reordered WT_PATH REL — whether REL holds exactly the lines its committed
@@ -106,8 +116,8 @@ _default_ignores() {
 #
 # Claude Code rewrites `ai/claude/settings.json` with its allow list sorted, so
 # a worktree that has merely been opened in a session reports a modified file no
-# content changed. Only a merged worktree is asked, and there the branch is
-# already in the default branch — a reordering of it is residue, not work.
+# content changed. Compared against the worktree's own HEAD, so a reordering is
+# residue rather than work whether or not the branch has merged.
 _is_reordered() {
   local wt_path="$1" rel="$2" committed
   [[ -f "$wt_path/$rel" ]] || return 1
@@ -118,8 +128,9 @@ _is_reordered() {
 
 # _live_changes WT_PATH BRANCH — the kinds of change in WT_PATH that removing the
 # worktree would actually lose, comma-joined, and nothing at all when its residue
-# is entirely disposable. Returns 1 when the work tree cannot be read, which
-# leaves the caller on the flags `wt list` carries.
+# is entirely disposable. Returns 1 when the work tree cannot be read, or when
+# `git status` itself fails (e.g. a lock held by another session), which leaves
+# the caller on the flags `wt list` carries.
 #
 # Every path forgiven is named in the cleanup log with the reason, so a removal
 # this widens can be audited after the fact.
@@ -128,11 +139,40 @@ _live_changes() {
   [[ -n "$wt_path" && -d "$wt_path" ]] || return 1
   git -C "$wt_path" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
 
+  # `git status` writes -z-delimited records, which can't survive a command
+  # substitution (bash strings can't hold NUL bytes) — captured to a file
+  # instead, so the command's own exit status is the one checked, not the
+  # trailing `echo` at the end of this function.
+  local tmp_status
+  tmp_status=$(mktemp) || return 1
   # -uall so an untracked directory arrives as the files inside it. Collapsed to
   # the directory, one file the default branch does not ignore would speak for
   # every one it does, and whether it collapsed at all would depend on where the
   # checkout happened to have a tracked sibling.
-  local entry code rel kinds="" kind ordered=""
+  if ! git -C "$wt_path" status --porcelain -z -uall >"$tmp_status" 2>/dev/null; then
+    rm -f "$tmp_status"
+    return 1
+  fi
+
+  local entry code rel
+  local untracked=()
+  while IFS= read -r -d '' entry; do
+    code="${entry:0:2}"
+    rel="${entry:3}"
+    case "$code" in
+      R*|C*) IFS= read -r -d '' _ || true ;;
+    esac
+    [[ "$code" == '??' ]] && untracked+=("$rel")
+  done < "$tmp_status"
+
+  declare -A ignored=()
+  if [[ ${#untracked[@]} -gt 0 ]]; then
+    while IFS= read -r -d '' rel; do
+      ignored["$rel"]=1
+    done < <(_default_ignored_paths "${untracked[@]}")
+  fi
+
+  local kinds="" kind ordered=""
   while IFS= read -r -d '' entry; do
     code="${entry:0:2}"
     rel="${entry:3}"
@@ -141,7 +181,7 @@ _live_changes() {
     case "$code" in
       R*|C*) IFS= read -r -d '' _ || true ;;
     esac
-    if [[ "$code" == '??' ]] && _default_ignores "$rel"; then
+    if [[ "$code" == '??' && -n "${ignored[$rel]:-}" ]]; then
       _log "DISPOSABLE-PATH branch=$branch path=$rel reason=ignored-on-$default_branch"
       continue
     fi
@@ -150,7 +190,8 @@ _live_changes() {
       continue
     fi
     kinds+=" $(_change_kind "$code")"
-  done < <(git -C "$wt_path" status --porcelain -z -uall 2>/dev/null)
+  done < "$tmp_status"
+  rm -f "$tmp_status"
 
   for kind in staged modified untracked renamed deleted; do
     if [[ "$kinds " == *" $kind "* ]]; then

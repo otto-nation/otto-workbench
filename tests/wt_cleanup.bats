@@ -524,6 +524,59 @@ JSON
   [[ "$output" == *"modified"* ]]
 }
 
+@test "a git status failure leaves a merged worktree's residue in the flags' charge" {
+  # A transient failure (e.g. index.lock held by another session) must not read
+  # as "nothing here is worth keeping" — it must fall back to the flags `wt
+  # list` already carries, the same as an unreadable path.
+  _make_worktrees
+  printf 'real work\n' > "$FEAT_WT/notes.md"
+  _write_merged_pair '{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}'
+
+  local real_git fake_bin
+  real_git="$(command -v git)"
+  fake_bin="$TMPDIR/fake-git-bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/git" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "-C" && "\$2" == "$FEAT_WT" && "\$3" == "status" ]]; then
+  exit 1
+fi
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$fake_bin/git"
+
+  local old_path="$PATH"
+  export PATH="$fake_bin:$PATH"
+  _run_cleanup --no-grace-period
+  export PATH="$old_path"
+
+  [ "$status" -eq 0 ]
+  [ ! -f "$WT_REMOVE_LOG" ]
+  [[ "$output" == *"Merged worktrees with uncommitted changes"* ]]
+  [[ "$output" == *"untracked"* ]]
+}
+
+@test "an unmerged worktree with only disposable residue is removed by age" {
+  # Disposable residue is judged the same way regardless of merge state: an
+  # ignored file is not work to lose whether or not the branch has landed.
+  _make_worktrees
+  _ignore_on_main '*.tar.gz'
+  printf 'artifact\n' > "$FEAT_WT/build.tar.gz"
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[
+  {"branch":"main","path":"$MAIN_WT","is_main":true,"is_current":false,"main_state":"clean","symbols":"","commit":{"timestamp":0}},
+  {"branch":"feature","path":"$FEAT_WT","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":$old_timestamp},"working_tree":{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}}
+]
+JSON
+
+  _run_cleanup --age 30 --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feature"* ]]
+  [[ "$output" == *"inactive"* ]]
+}
+
 # ── Grace period ────────────────────────────────────────────────────────────
 
 @test "recently created worktree is skipped by grace period" {

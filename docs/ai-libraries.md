@@ -131,10 +131,10 @@ through a ``TEMPLATE_DIR`` and a ``Template(...).safe_substitute`` of their own.
 Three spellings of one path is three chances for a moved template to break one
 caller and not the others.
 
-The two blocks below are the other half of that: instructions every template
+The blocks below are the other half of that: instructions every template
 renders the same way, owned here rather than hand-copied into each one, so an
-agent's write mechanism and its worktree are described identically wherever the
-prompt came from.
+agent's write mechanism, its worktree, and what it owes a generated file are
+described identically wherever the prompt came from.
 
 Stdlib only, like ``agent_types`` and for the same reason: a prompt is the last
 thing that should need the PR state machine to render.

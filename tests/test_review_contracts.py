@@ -668,6 +668,17 @@ class TestOutputBlockContract:
         assert agent_templates.build_worktree_block(str(tmp_path)) in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
+    def test_fix_templates_share_the_generated_block(self, render, cc, rt, tmp_path):
+        """Any fix pass can edit a source whose artifact then needs rebuilding.
+
+        Not a property of the domain — a CI fix, a comment fix and a finding fix
+        all reach `lib/` docstrings and `.src` documents — so every template
+        carries it and none of them words it for itself.
+        """
+        rendered = _FIX_RENDERERS[render](cc, rt, tmp_path)
+        assert agent_templates.GENERATED_BLOCK in rendered
+
+    @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_explain_every_box_the_checklist_offers(
         self, render, cc, rt, tmp_path,
     ):

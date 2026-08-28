@@ -25,6 +25,10 @@ ${answer_format}
 - If a failure is ambiguous or requires a design choice, tick `needs a person` and say what the choice is — leaving it unticked reports it as unread
 - Do not add comments explaining the change
 
+## Generated files
+
+${generated_block}
+
 ## Tracking file location
 ${tracking_file}
 

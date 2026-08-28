@@ -21,7 +21,7 @@ from review_types import (
 from agent_types import Effort, Mode, Phase
 from dataclasses import asdict
 
-from review_findings import _parse_ledger_line
+from review_merge import _parse_ledger_line
 from review_prompt import (
     _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, BudgetLever, Cut,
     MAX_DELTA_LIST_ENTRIES,

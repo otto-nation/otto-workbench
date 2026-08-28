@@ -128,6 +128,42 @@ teardown() {
   grep -q "brew install bash" "$REPO_ROOT/lib/output.sh"
 }
 
+# ─── skip name collision with bats ─────────────────────────────────────────
+
+@test "bats_skip survives a setup that sources lib/ui.sh" {
+  # output.sh's skip() takes the name from bats, so a guard written as
+  # `skip "reason"` in such a file prints its reason and returns 0 — the body
+  # runs on and fails on the dependency it just reported missing. Run the pair
+  # in a nested bats so this case reports the outcome instead of being skipped
+  # itself.
+  local probe="$BATS_TEST_TMPDIR/skip_collision.bats"
+  cat > "$probe" <<EOF
+#!/usr/bin/env bats
+
+setup() {
+  load '$REPO_ROOT/tests/test_helper'
+  REPO_ROOT='$REPO_ROOT'
+  . "\$REPO_ROOT/lib/ui.sh"
+}
+
+@test "a guard reached after ui.sh is sourced marks the test skipped" {
+  bats_skip "dependency missing"
+  false
+}
+
+@test "the workbench skip still answers to its own name" {
+  run skip "workbench label"
+  [ "\$status" -eq 0 ]
+  [[ "\$output" == *"workbench label"* ]]
+}
+EOF
+
+  run bats "$probe"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"# skip dependency missing"* ]]
+}
+
 @test "output.sh accepts current bash" {
   run bash -c ". '$REPO_ROOT/lib/output.sh' && echo ok"
   [ "$status" -eq 0 ]

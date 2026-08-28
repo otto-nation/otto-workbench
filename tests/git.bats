@@ -305,7 +305,7 @@ _refute_identity_rejection() {
   # reason a hook does not call it — finds no repository at all, or worse
   # whichever one happens to enclose Y.
   if ! command -v gitleaks >/dev/null 2>&1; then
-    skip "gitleaks not installed — the hook exits before it reaches delegation"
+    bats_skip "gitleaks not installed — the hook exits before it reaches delegation"
   fi
   local gitdir="$TMPDIR/store/repo.git" tree="$TMPDIR/tree"
   mkdir -p "$TMPDIR/store" "$tree"

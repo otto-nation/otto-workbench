@@ -24,7 +24,10 @@ ${answer_format}
 - For each fix, make the minimal correct change — do not refactor surrounding code
 - If a finding is ambiguous or requires a design choice, tick `needs a person` and say what the choice is — leaving it unticked reports it as unread
 - If the code a finding points at carries a `// ceiling:` or `// ceiling-permanent:` comment naming that exact tradeoff, the tradeoff is a documented decision. Do not "fix" it — tick `declined` and say so
-- When a generated file needs fixing, fix the source template AND the generated output
+
+## Generated files
+
+${generated_block}
 
 ## Tracking file location
 ${tracking_file}

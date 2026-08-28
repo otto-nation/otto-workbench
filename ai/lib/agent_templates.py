@@ -7,10 +7,10 @@ through a ``TEMPLATE_DIR`` and a ``Template(...).safe_substitute`` of their own.
 Three spellings of one path is three chances for a moved template to break one
 caller and not the others.
 
-The two blocks below are the other half of that: instructions every template
+The blocks below are the other half of that: instructions every template
 renders the same way, owned here rather than hand-copied into each one, so an
-agent's write mechanism and its worktree are described identically wherever the
-prompt came from.
+agent's write mechanism, its worktree, and what it owes a generated file are
+described identically wherever the prompt came from.
 
 Stdlib only, like ``agent_types`` and for the same reason: a prompt is the last
 thing that should need the PR state machine to render.
@@ -70,6 +70,36 @@ def build_output_block(output_path: str, *, stdout_warning: bool = False) -> str
         "and do not fall back to Bash (`cat`, heredoc, python). Do NOT create "
         f"directories or empty files.{stdout_line}"
     )
+
+
+# What an agent owes a file that generates another. A constant rather than a
+# builder like the two above, because nothing about it varies by caller.
+#
+# Deliberately names no command, no filename convention and no generator: these
+# templates render for every repo a fix pass runs in, and those repos agree on
+# none of them. It describes the source/artifact relationship and sends the
+# agent to the repo's own documentation for the rest, which is the only part
+# that can be true everywhere.
+#
+# Both directions are in it. A pass told only "fix the source too" still leaves
+# a stale artifact behind when its edit landed on a source it was not thinking
+# of as one — the common case is a doc comment that some reference build
+# publishes, edited as prose, with the built artifact never rebuilt.
+GENERATED_BLOCK = (
+    "Some files are generated from others, and the generated side is not yours "
+    "to edit: a reference doc built from source comments, a schema built from a "
+    "type, a lockfile from a manifest, any file carrying a "
+    "'do not edit — generated' banner.\n"
+    "\n"
+    "If your change touches a source, rebuild its artifact and leave both in "
+    "the tree. This applies even when the artifact is not what the item asked "
+    "you to fix — editing a comment, a type or a manifest is enough to make one "
+    "stale. Repos check the two against each other, so a stale artifact fails "
+    "the push and the fix never lands.\n"
+    "\n"
+    "Find the regeneration command in the repo's own documentation. Do not "
+    "guess at one, and do not hand-edit the artifact to match."
+)
 
 
 def build_worktree_block(wt_path: str) -> str:

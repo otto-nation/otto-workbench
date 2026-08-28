@@ -35,6 +35,10 @@ Process threads in this order to maximize fixes within the turn budget:
 - When a "PR diff for this file" section is included, use it to understand what the PR changed before applying the fix
 - Never run `gh` or any other command that writes to GitHub — posting is not your job and the tool will refuse the call. Everything you produce is delivered later, once the operator publishes
 
+## Generated files
+
+${generated_block}
+
 ## PR description
 
 A comment is sometimes answered by rewriting the PR description rather than the

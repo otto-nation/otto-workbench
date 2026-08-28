@@ -504,6 +504,20 @@ def test_find_marker_comments_carries_each_comments_url():
     assert history.comments[0].url == "https://gh/pull/1#issuecomment-10"
 
 
+def test_find_marker_comments_dates_the_body_as_well_as_the_comment():
+    """A summary edited in place holds rows for surfaces newer than its post
+    time, so a caller asking what the record covers needs the edit time too."""
+    listing = _pages([
+        {"id": 10, "body": MARKER,
+         "created_at": "2026-01-02T00:00:00Z",
+         "updated_at": "2026-01-06T00:00:00Z"},
+    ])
+    with _listing(listing):
+        history = pr_comments.find_marker_comments(REPO, 1, MARKER)
+    assert history.comments[0].created_at == "2026-01-02T00:00:00Z"
+    assert history.comments[0].updated_at == "2026-01-06T00:00:00Z"
+
+
 def test_find_marker_comments_reports_an_unread_listing_as_no_history():
     """`found` distinguishes it from a PR that genuinely has no summary yet."""
     with _listing(None):

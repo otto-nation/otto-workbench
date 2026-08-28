@@ -136,6 +136,12 @@ teardown() {
   # runs on and fails on the dependency it just reported missing. Run the pair
   # in a nested bats so this case reports the outcome instead of being skipped
   # itself.
+  # bats' preprocessor scans line by line and knows nothing of heredocs, so a
+  # literal `@test` below would register as a test of this file — declared in
+  # the plan but never defined as a function, which fails the run with "unknown
+  # test name". Interpolating the keyword keeps the probe's declarations off
+  # the preprocessor's radar.
+  local at='@test'
   local probe="$BATS_TEST_TMPDIR/skip_collision.bats"
   cat > "$probe" <<EOF
 #!/usr/bin/env bats
@@ -146,12 +152,12 @@ setup() {
   . "\$REPO_ROOT/lib/ui.sh"
 }
 
-@test "a guard reached after ui.sh is sourced marks the test skipped" {
+$at "a guard reached after ui.sh is sourced marks the test skipped" {
   bats_skip "dependency missing"
   false
 }
 
-@test "the workbench skip still answers to its own name" {
+$at "the workbench skip still answers to its own name" {
   run skip "workbench label"
   [ "\$status" -eq 0 ]
   [[ "\$output" == *"workbench label"* ]]

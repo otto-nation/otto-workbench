@@ -27,8 +27,9 @@ from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
     FINDING_ID_RE, ReviewDocument, ReviewHeader, _close_previous, _extract_body_text,
     _finalize_finding, _FIRST_FILE_RE, _match_severity_header, finding_location,
-    is_section_boundary, open_counts, parse_finding_line, resolve_review_verdict,
-    review_title, section_span, set_section, set_status,
+    counts_prose, is_section_boundary, open_counts, parse_finding_line,
+    resolve_review_verdict, review_title, section_span, set_section, set_status,
+    starts_finding_or_section, verdict_from_counts,
 )
 from review_types import Finding, ReviewMeta, ReviewType
 
@@ -761,6 +762,26 @@ class TestIsSectionBoundary:
         assert is_section_boundary("## Must fix") is False
 
 
+class TestStartsFindingOrSection:
+    def test_finding_line(self):
+        assert starts_finding_or_section("- **[M1]** desc") is True
+
+    def test_checkbox_finding(self):
+        assert starts_finding_or_section("- [ ] **[S1]** desc") is True
+
+    def test_section_header(self):
+        assert starts_finding_or_section("## Must fix") is True
+
+    def test_plain_text(self):
+        assert starts_finding_or_section("just plain text") is False
+
+    def test_continuation_line(self):
+        assert starts_finding_or_section("  continuation") is False
+
+    def test_bullet_no_finding(self):
+        assert starts_finding_or_section("- regular bullet") is False
+
+
 class TestMatchSeverityHeader:
     def test_h2_must_fix(self):
         assert _match_severity_header("## Must fix") == "M"
@@ -1191,3 +1212,30 @@ class TestResolveVerdict:
             _write(tmp_path, "## Should fix\n- **[S1]** a.py:1 — improvement\n\n## Verdict\nApprove — fine.\n"),
         )
         assert resolve_review_verdict(document) is ReviewVerdict.NEEDS_DISCUSSION
+
+
+class TestVerdictFromCounts:
+    def test_a_must_fix_blocks(self):
+        assert verdict_from_counts({"M": 1, "S": 0}) is ReviewVerdict.CHANGES_REQUESTED
+
+    def test_a_should_fix_opens_a_discussion(self):
+        assert verdict_from_counts({"M": 0, "S": 2}) is ReviewVerdict.NEEDS_DISCUSSION
+
+    def test_nothing_blocking_approves(self):
+        assert verdict_from_counts({"N": 3}) is ReviewVerdict.APPROVE
+
+    def test_a_severity_the_tally_omits_counts_as_none(self):
+        """A partial tally is read rather than refused — the mechanical paths
+        hand this whatever counts they have."""
+        assert verdict_from_counts({}) is ReviewVerdict.APPROVE
+
+
+class TestCountsProse:
+    def test_severities_read_out_in_order(self):
+        assert counts_prose({"M": 2, "S": 1, "N": 1}) == "2 must-fix, 1 should-fix, 1 nit"
+
+    def test_a_severity_with_none_is_left_out(self):
+        assert counts_prose({"M": 0, "S": 1}) == "1 should-fix"
+
+    def test_an_empty_tally_reads_as_nothing(self):
+        assert counts_prose({"M": 0, "S": 0, "N": 0, "I": 0}) == ""

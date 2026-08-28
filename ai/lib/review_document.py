@@ -360,7 +360,7 @@ _PATH_CHAR = r"[^\s:*`—]"
 _SEGMENT_CHAR = r"[^\s/:*`—]"
 
 # The `:12` or `:12-18` a location may carry after its filename. Public with
-# `SPACED_FILE` below: the evidence-verification reader in `review_findings`
+# `SPACED_FILE` below: the evidence-verification reader in `review_verify`
 # reads the same location off the same line with a stricter shape, and the two
 # have to agree on what a location is or a finding parses one way and verifies
 # against the other.
@@ -532,6 +532,25 @@ def is_section_boundary(stripped: str) -> bool:
     and the lines below it belong to nothing.
     """
     return stripped.startswith("### ") or bool(_STRIKETHROUGH_RE.match(stripped))
+
+
+def starts_finding_or_section(stripped: str) -> bool:
+    """Whether the line opens a finding declaration or a `## ` section.
+
+    What ends a run of lines being read as one finding's body, for a reader
+    walking the document a line at a time rather than parsing it.
+
+    Deliberately not `is_section_boundary`, which answers a different question
+    over the same lines: a struck-through finding ends the body before it and
+    opens nothing, and a `### ` sub-heading ends one without starting either.
+    A reader that needs both asks both.
+    """
+    return (
+        stripped.startswith("- **[")
+        or stripped.startswith("- [ ] **[")
+        or stripped.startswith("- [x] **[")
+        or stripped.startswith("## ")
+    )
 
 
 def _match_severity_header(stripped: str) -> str | None:
@@ -735,6 +754,31 @@ def open_counts(doc: ReviewDocument | None) -> dict[str, int]:
     return doc.open_counts if doc else ReviewDocument().open_counts
 
 
+def verdict_from_counts(counts: dict[str, int]) -> ReviewVerdict:
+    """The verdict a tally of open findings supports on its own.
+
+    The counts alone, with no prose read: what `resolve_review_verdict`
+    reconciles the agent's stated call against, what a mechanically merged
+    review states outright for want of an agent, and what a drop leaves a
+    stated verdict to be lowered to. A severity the tally omits counts as none
+    of that severity, so a partial tally is read rather than refused.
+    """
+    return ReviewVerdict.from_counts(
+        counts.get(SEVERITY_MUST, 0), counts.get(SEVERITY_SHOULD, 0),
+    )
+
+
+def counts_prose(counts: dict[str, int]) -> str:
+    """A tally read out as prose — `2 must-fix, 1 nit` — or "" when it is empty.
+
+    Severities in the order `SEVERITIES` declares them, and one the review has
+    none of is left out rather than written as a zero. What a caller says
+    instead of the empty string is its own: a verdict reads "no findings" where
+    a count summary reads nothing at all.
+    """
+    return ", ".join(f"{counts[s.key]} {s.label}" for s in SEVERITIES if counts.get(s.key))
+
+
 def resolve_review_verdict(
     doc: ReviewDocument | None, *, self_review: bool = False,
 ) -> ReviewVerdict | None:
@@ -760,10 +804,7 @@ def resolve_review_verdict(
     # is the exception above: it judges the approach, which holds without a PR.
     if self_review:
         return None
-    counts = doc.open_counts
-    derived = ReviewVerdict.from_counts(
-        counts[SEVERITY_MUST], counts[SEVERITY_SHOULD],
-    )
+    derived = verdict_from_counts(doc.open_counts)
     return stated if stated and stated.outranks(derived) else derived
 
 

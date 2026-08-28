@@ -46,7 +46,6 @@ from review_paths import (
     phase_log_path,
     phase_output_path,
 )
-from review_disprove import apply_disprove_results, parse_disprove_output
 from review_document import ReviewDocument
 from review_findings import _validate_group_output, merge_reviews
 from review_prompt import PromptTooLarge, build_prompt
@@ -60,6 +59,7 @@ from review_state import PipelineState, _update_group_done, _update_group_failed
 from review_types import (
     FILE_STAT_FMT, SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip, ReviewJob,
 )
+from review_verify import apply_disprove_results, parse_disprove_output
 
 # The group phase's own retry ceiling, off its registry entry. Synthesis borrows
 # it as an upper bound for the same reason it always has: both are review phases

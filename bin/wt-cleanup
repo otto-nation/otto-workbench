@@ -22,6 +22,11 @@ nothing about whether the work landed.
 Worktrees created less than ${GRACE_PERIOD_SECS}s ago are always skipped to avoid
 removing worktrees that another session is actively using.
 
+A merged worktree holding uncommitted changes is reported rather than removed,
+but two kinds of residue do not count as changes: a file the default branch
+already ignores, which a worktree cut before the rule landed still reports, and
+a file whose lines only moved. Both are named in the cleanup log when forgiven.
+
 Usage: $(basename "$0") [options]
 
 Options:
@@ -62,6 +67,97 @@ _describe_changes() {
   echo "$worktrees" | jq -r "
     .[$idx].working_tree | to_entries
     | map(select(.value == true) | .key) | join(\", \")"
+}
+
+# _change_kind CODE — the word for a porcelain status CODE, from the same
+# vocabulary the `wt list` flags use so both descriptions read alike.
+_change_kind() {
+  local code="$1"
+  case "$code" in
+    '??'|'!!') echo "untracked"; return 0 ;;
+  esac
+  case "${code:1:1}" in
+    M) echo "modified"; return 0 ;;
+    D) echo "deleted";  return 0 ;;
+  esac
+  case "${code:0:1}" in
+    R|C) echo "renamed"; return 0 ;;
+    D)   echo "deleted"; return 0 ;;
+  esac
+  echo "staged"
+}
+
+# _default_ignores PATH — whether the default branch's ignore rules cover PATH.
+#
+# Asked in the default branch's own work tree, so the `.gitignore` files a repo
+# keeps below its root are read at the depth they apply. A worktree cut before
+# an ignore rule landed does not carry the rule, which is the whole reason git
+# reports the file: the branch is merged, so the default branch's copy of the
+# rules is the one that decides whether the file is worth preserving. With no
+# work tree for the default branch nothing is forgiven, leaving the operator the
+# report they get today.
+_default_ignores() {
+  [[ -n "$default_wt" && -d "$default_wt" ]] || return 1
+  git -C "$default_wt" check-ignore --no-index -q -- "$1" 2>/dev/null
+}
+
+# _is_reordered WT_PATH REL — whether REL holds exactly the lines its committed
+# copy holds, in some other order.
+#
+# Claude Code rewrites `ai/claude/settings.json` with its allow list sorted, so
+# a worktree that has merely been opened in a session reports a modified file no
+# content changed. Only a merged worktree is asked, and there the branch is
+# already in the default branch — a reordering of it is residue, not work.
+_is_reordered() {
+  local wt_path="$1" rel="$2" committed
+  [[ -f "$wt_path/$rel" ]] || return 1
+  git -C "$wt_path" cat-file -e "HEAD:$rel" 2>/dev/null || return 1
+  committed=$(git -C "$wt_path" show "HEAD:$rel" 2>/dev/null | sort)
+  [[ "$committed" == "$(sort "$wt_path/$rel")" ]]
+}
+
+# _live_changes WT_PATH BRANCH — the kinds of change in WT_PATH that removing the
+# worktree would actually lose, comma-joined, and nothing at all when its residue
+# is entirely disposable. Returns 1 when the work tree cannot be read, which
+# leaves the caller on the flags `wt list` carries.
+#
+# Every path forgiven is named in the cleanup log with the reason, so a removal
+# this widens can be audited after the fact.
+_live_changes() {
+  local wt_path="$1" branch="$2"
+  [[ -n "$wt_path" && -d "$wt_path" ]] || return 1
+  git -C "$wt_path" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+
+  # -uall so an untracked directory arrives as the files inside it. Collapsed to
+  # the directory, one file the default branch does not ignore would speak for
+  # every one it does, and whether it collapsed at all would depend on where the
+  # checkout happened to have a tracked sibling.
+  local entry code rel kinds="" kind ordered=""
+  while IFS= read -r -d '' entry; do
+    code="${entry:0:2}"
+    rel="${entry:3}"
+    # A rename carries its old path in a second record; drop it here so the
+    # codes keep landing on the field that holds one.
+    case "$code" in
+      R*|C*) IFS= read -r -d '' _ || true ;;
+    esac
+    if [[ "$code" == '??' ]] && _default_ignores "$rel"; then
+      _log "DISPOSABLE-PATH branch=$branch path=$rel reason=ignored-on-$default_branch"
+      continue
+    fi
+    if [[ "$code" == *M* ]] && _is_reordered "$wt_path" "$rel"; then
+      _log "DISPOSABLE-PATH branch=$branch path=$rel reason=reordered"
+      continue
+    fi
+    kinds+=" $(_change_kind "$code")"
+  done < <(git -C "$wt_path" status --porcelain -z -uall 2>/dev/null)
+
+  for kind in staged modified untracked renamed deleted; do
+    if [[ "$kinds " == *" $kind "* ]]; then
+      ordered="${ordered:+$ordered, }$kind"
+    fi
+  done
+  echo "$ordered"
 }
 
 _pr_state() {
@@ -136,6 +232,12 @@ main() {
   worktrees=$(wt list --format json 2>/dev/null) || return 0
   count=$(echo "$worktrees" | jq 'length')
 
+  # The default branch's own checkout, which is where its ignore rules are asked
+  # — see _default_ignores. Empty when the machine has none, and nothing is
+  # forgiven then.
+  default_wt=$(echo "$worktrees" | jq -r '
+    map(select(.is_main)) | .[0].path // ""')
+
   # One lookup for the whole repo, before the loop — asking per worktree cost a
   # sequential round trip each. Empty when no tracker is reachable, which leaves
   # every verdict to the git signals wt list already carries.
@@ -168,10 +270,21 @@ main() {
       continue
     fi
 
+    # What the worktree would actually lose, read from the work tree itself. The
+    # flags `wt list` carries are the fallback for a path this cannot open: they
+    # name every kind of change without asking whether any of it is still worth
+    # keeping.
+    changes=""
     if _has_uncommitted_changes "$i"; then
+      changes="$(_live_changes "$wt_path" "$branch")" \
+        || changes="$(_describe_changes "$i")"
+      [[ -n "$changes" ]] || _log "DISPOSABLE-RESIDUE branch=$branch"
+    fi
+
+    if [[ -n "$changes" ]]; then
       _is_merged "$main_state" "$symbols" "$pr_state" \
         && dirty_merged_branches+=("$branch") \
-        && dirty_merged_changes+=("$(_describe_changes "$i")")
+        && dirty_merged_changes+=("$changes")
       continue
     fi
 

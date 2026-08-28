@@ -41,7 +41,7 @@ import review_fix  # noqa: E402
 import review_prompt  # noqa: E402
 import review_types  # noqa: E402
 from pr_state import PRIdentity, PRState  # noqa: E402
-from review_preflight import MAX_PROMPT_BYTES  # noqa: E402
+from review_collect import MAX_PROMPT_BYTES  # noqa: E402
 from review_types import (  # noqa: E402
     PRContext, PreflightData, PRMetadata, ReviewJob,
 )

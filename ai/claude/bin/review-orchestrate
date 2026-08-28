@@ -59,8 +59,9 @@ from review_paths import (  # noqa: E402
     FILENAME_SESSION, review_artifact_path, stamp_reviewed,
 )
 from tool_parser import enum_arg  # noqa: E402
+from review_collect import collect_preflight_data  # noqa: E402
 from review_preflight import (  # noqa: E402
-    DEFAULT_MAX_PARALLEL, collect_preflight_data, fetch_reply_threads,
+    DEFAULT_MAX_PARALLEL, fetch_reply_threads,
 )
 from review_types import Pipeline, ReviewJob, ViewerRole  # noqa: E402
 from agent_invoke import QuotaThrottle  # noqa: E402

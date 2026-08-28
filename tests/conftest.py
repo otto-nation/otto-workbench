@@ -630,6 +630,40 @@ def seed_repo(path) -> Path:
     return Path(path)
 
 
+def init_repo(path) -> Path:
+    """An empty repo at *path*, configured to commit without signing.
+
+    For a test that drives a long sequence of git commands against a repo it
+    owns, where `seed_repo`'s per-commit `-c` flags would be repeated on every
+    one of them. The identity goes in the repo's own config, which is the
+    throwaway `tmp_path` copy rather than anything the repo-config guard
+    watches.
+    """
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    git_in(path, "init", "-b", "main", "-q")
+    git_in(path, "config", "user.email", "test@test.com")
+    git_in(path, "config", "user.name", "Test")
+    git_in(path, "config", "commit.gpgsign", "false")
+    return path
+
+
+def commit_all(path, message: str) -> None:
+    """Stage everything in the repo at *path* and commit it, hooks skipped."""
+    git_in(path, "add", ".")
+    git_in(path, "commit", "-q", "--no-verify", "-m", message)
+
+
+def add_self_origin(path) -> None:
+    """Give the repo at *path* itself as `origin`, with `main` already fetched.
+
+    Enough for code that resolves `origin/<base>` without a second repo to
+    clone from.
+    """
+    git_in(path, "remote", "add", "origin", str(path))
+    git_in(path, "fetch", "-q", "origin", "main")
+
+
 @pytest.fixture
 def container(tmp_path) -> Path:
     """The bare-repo worktree layout: worktrees as peers of a bare `.git`.

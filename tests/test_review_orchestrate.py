@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from conftest import git_out, synthetic_review
+from conftest import add_self_origin, commit_all, git_out, init_repo, synthetic_review
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -41,117 +41,6 @@ class TestParseNumstat:
         assert files == []
         assert total_add == 0
         assert total_del == 0
-
-
-# ── 13. _scope_diff ─────────────────────────────────────────────────────────
-
-
-class TestScopeDiff:
-    def test_filter_one_of_two(self, ro):
-        diff = (
-            "diff --git a/file1.go b/file1.go\n"
-            "--- a/file1.go\n+++ b/file1.go\n@@ -1 +1 @@\n-old\n+new\n"
-            "diff --git a/file2.go b/file2.go\n"
-            "--- a/file2.go\n+++ b/file2.go\n@@ -1 +1 @@\n-old2\n+new2\n"
-        )
-        result = ro._scope_diff(diff, ["file1.go"])
-        assert "file1.go" in result
-        assert "file2.go" not in result
-
-    def test_filter_two_of_three(self, ro):
-        diff = (
-            "diff --git a/foo.go b/foo.go\n"
-            "--- a/foo.go\n+++ b/foo.go\n@@ -1,3 +1,4 @@\n package main\n+import \"fmt\"\n\n"
-            "diff --git a/bar.go b/bar.go\n"
-            "--- a/bar.go\n+++ b/bar.go\n@@ -1,3 +1,3 @@\n-package old\n+package bar\n\n"
-            "diff --git a/baz.go b/baz.go\n"
-            "--- a/baz.go\n+++ b/baz.go\n@@ -1 +1 @@\n-old\n+new\n"
-        )
-        result = ro._scope_diff(diff, ["foo.go", "baz.go"])
-        assert "foo.go" in result
-        assert "bar.go" not in result
-        assert "baz.go" in result
-
-    def test_filter_no_match(self, ro):
-        diff = "diff --git a/file1.go b/file1.go\n--- a/file1.go\n+++ b/file1.go\n"
-        result = ro._scope_diff(diff, ["other.go"])
-        assert result == ""
-
-    def test_filter_all_files(self, ro):
-        diff = (
-            "diff --git a/a.go b/a.go\ncontent a\n"
-            "diff --git a/b.go b/b.go\ncontent b\n"
-        )
-        result = ro._scope_diff(diff, ["a.go", "b.go"])
-        assert "a.go" in result
-        assert "b.go" in result
-
-
-# ── 14. _truncate_diff ──────────────────────────────────────────────────────
-
-
-class TestTruncateDiff:
-    def test_under_budget(self, ro):
-        diff = "diff --git a/f.go b/f.go\nshort\n"
-        result, omitted = ro._truncate_diff(diff, 10000)
-        assert result == diff
-        assert omitted == []
-
-    def test_over_budget(self, ro):
-        diff = (
-            "diff --git a/a.go b/a.go\n" + "+" * 500 + "\n"
-            "diff --git a/b.go b/b.go\n" + "+" * 500 + "\n"
-        )
-        result, omitted = ro._truncate_diff(diff, 600)
-        assert len(omitted) > 0
-
-    def test_single_file_over_budget(self, ro):
-        diff = "diff --git a/big.go b/big.go\n" + "x" * 5000 + "\n"
-        result, omitted = ro._truncate_diff(diff, 100)
-        assert len(result.encode()) < len(diff.encode())
-
-    def test_empty_diff(self, ro):
-        result, omitted = ro._truncate_diff("", 1000)
-        assert result == ""
-        assert omitted == []
-
-
-# ── 15. _read_file_safe ─────────────────────────────────────────────────────
-
-
-class TestReadFileSafe:
-    def test_normal_read(self, ro, tmp_path):
-        f = tmp_path / "test.txt"
-        f.write_text("hello world")
-        assert ro._read_file_safe(f) == "hello world"
-
-    def test_binary_file(self, ro, tmp_path):
-        f = tmp_path / "binary.bin"
-        f.write_bytes(b"\x80\x81\x82\xff\xfe")
-        result = ro._read_file_safe(f)
-        assert "binary file" in result
-
-    def test_file_not_found(self, ro, tmp_path):
-        result = ro._read_file_safe(tmp_path / "missing.txt")
-        assert result == "<file deleted>"
-
-    def test_large_file_truncation(self, ro, tmp_path):
-        f = tmp_path / "large.txt"
-        # MAX_FILE_BYTES is 100_000, so write more than that
-        f.write_text("x" * 200_000)
-        result = ro._read_file_safe(f)
-        assert "truncated" in result
-
-    def test_permission_denied(self, ro, tmp_path):
-        import os
-        f = tmp_path / "noperm.txt"
-        f.write_text("secret")
-        os.chmod(str(f), 0o000)
-        try:
-            result = ro._read_file_safe(f)
-            assert result == "<permission denied>"
-        finally:
-            os.chmod(str(f), 0o644)
 
 
 # ── 18. _check_serial_abort ─────────────────────────────────────────────────
@@ -1633,59 +1522,6 @@ class TestRetryFailedGroups:
         assert "grp-b" in result_names
 
 
-# ── Density-based file content skipping ─────────────────────────────────────
-
-
-class TestDensitySkipping:
-    @staticmethod
-    def _make_job(ro, tmp_path, files):
-        pr = ro.PRMetadata(
-            title="Test PR", body="", head="feat/test", base="main",
-            head_sha="abc123", additions=0, deletions=0,
-            changed_files=len(files), files=files,
-        )
-        ctx = ro.PRContext()
-        return ro.ReviewJob(
-            repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
-            wt_path=str(tmp_path), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-        )
-
-    def test_large_file_small_diff_omitted(self, ro, tmp_path, monkeypatch):
-        big_file = tmp_path / "big.py"
-        big_file.write_text("x = 1\n" * 2000)
-        files = [{"path": "big.py", "additions": 2, "deletions": 1}]
-        job = self._make_job(ro, tmp_path, files)
-
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-
-        assert "big.py" not in data.file_contents
-        assert "big.py" in data.omitted_files
-
-    def test_small_file_always_included(self, ro, tmp_path, monkeypatch):
-        small_file = tmp_path / "small.py"
-        small_file.write_text("x = 1\n")
-        files = [{"path": "small.py", "additions": 1, "deletions": 0}]
-        job = self._make_job(ro, tmp_path, files)
-
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-
-        assert "small.py" in data.file_contents
-
-    def test_high_density_file_included(self, ro, tmp_path, monkeypatch):
-        file = tmp_path / "refactored.py"
-        file.write_text("line\n" * 100)
-        files = [{"path": "refactored.py", "additions": 80, "deletions": 70}]
-        job = self._make_job(ro, tmp_path, files)
-
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-
-        assert "refactored.py" in data.file_contents
-
-
 # ── Prompt stats persistence ────────────────────────────────────────────────
 
 
@@ -1902,159 +1738,6 @@ class TestIsQuotaError:
         log = tmp_path / "session.jsonl"
         log.write_text("")
         assert ro.is_quota_error(str(log)) is False
-
-
-# ── format_preflight_data ──────────────────────────────────────────────
-
-
-class TestFormatPreflightData:
-    def test_includes_all_sections(self, ro):
-        data = ro.PreflightData(
-            diff="--- a/foo.go\n+++ b/foo.go\n@@ -1 +1 @@\n-old\n+new",
-            commit_log="abc123 fix bug",
-            file_contents={"foo.go": "package main\n", "bar.go": "package bar\n"},
-            file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
-            claude_md="# My Project",
-            architecture_md="## Known Constraints",
-            review_checklists={"security.md": "# Security checks"},
-        )
-        result = ro.format_preflight_data(data)
-        assert "Pre-collected data" in result
-        assert "```diff" in result
-        assert "foo.go" in result
-        assert "bar.go" in result
-        assert "# My Project" in result
-        assert "Known Constraints" in result
-        assert "Security checks" in result
-        assert "abc123 fix bug" in result
-
-    def test_file_filter_scopes_file_contents(self, ro):
-        data = ro.PreflightData(
-            diff="full diff",
-            commit_log="log",
-            file_contents={"foo.go": "package main", "bar.go": "package bar"},
-            file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
-            claude_md="",
-            architecture_md="",
-        )
-        result = ro.format_preflight_data(data, file_filter=["foo.go"])
-        assert "package main" in result
-        assert "package bar" not in result
-
-    def test_file_filter_scopes_diff(self, ro):
-        diff_text = (
-            "diff --git a/foo.go b/foo.go\n"
-            "--- a/foo.go\n"
-            "+++ b/foo.go\n"
-            "@@ -1 +1 @@\n"
-            "-old\n"
-            "+new\n"
-            "\n"
-            "diff --git a/bar.go b/bar.go\n"
-            "--- a/bar.go\n"
-            "+++ b/bar.go\n"
-            "@@ -1 +1 @@\n"
-            "-old\n"
-            "+new\n"
-        )
-        data = ro.PreflightData(
-            diff=diff_text,
-            commit_log="log",
-            file_contents={"foo.go": "package main", "bar.go": "package bar"},
-            file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
-            claude_md="",
-            architecture_md="",
-        )
-        result = ro.format_preflight_data(data, file_filter=["foo.go"])
-        assert "a/foo.go" in result
-        assert "a/bar.go" not in result
-
-    def test_empty_commit_log_omits_section(self, ro):
-        data = ro.PreflightData(
-            diff="--- a/f.go\n+++ b/f.go",
-            commit_log="",
-            file_contents={"f.go": "code"},
-            file_permissions={"f.go": "0o644"},
-            claude_md="",
-            architecture_md="",
-        )
-        result = ro.format_preflight_data(data)
-        assert "Commit history" not in result
-
-    def test_omitted_files_listed_in_output(self, ro):
-        data = ro.PreflightData(
-            diff="--- a/a.go\n+++ b/a.go",
-            commit_log="log",
-            file_contents={"a.go": "code"},
-            file_permissions={"a.go": "0o644"},
-            claude_md="",
-            architecture_md="",
-            omitted_files=["big.go", "huge.go"],
-        )
-        result = ro.format_preflight_data(data)
-        assert "Files not pre-collected" in result
-        assert "- big.go" in result
-        assert "- huge.go" in result
-        assert "a.go" in result
-
-    def test_no_omitted_section_when_all_files_included(self, ro):
-        data = ro.PreflightData(
-            diff="--- a/a.go\n+++ b/a.go",
-            commit_log="log",
-            file_contents={"a.go": "code"},
-            file_permissions={"a.go": "0o644"},
-            claude_md="",
-            architecture_md="",
-        )
-        result = ro.format_preflight_data(data)
-        assert "Files not pre-collected" not in result
-
-    def test_skip_file_contents_names_what_it_did_not_inline(self, ro):
-        """Dropping the contents cannot also drop the list of them.
-
-        The list is the only place the prompt says which files exist, and the
-        environment section sends the agent to read exactly it. Omitting both
-        left the agent told its files were pre-collected and shown neither
-        them nor their names.
-        """
-        data = ro.PreflightData(
-            diff="--- a/foo.go\n+++ b/foo.go",
-            commit_log="abc123 fix bug",
-            file_contents={"foo.go": "package main"},
-            file_permissions={"foo.go": "0o644"},
-            claude_md="# Project",
-            architecture_md="",
-            omitted_files=["bar.go"],
-        )
-        result = ro.format_preflight_data(data, skip_file_contents=True)
-        assert "```diff" in result
-        assert "abc123 fix bug" in result
-        assert "# Project" in result
-        assert "package main" not in result
-        assert "Changed file contents" not in result
-        assert "### Files not pre-collected (read directly)" in result
-        assert "- foo.go" in result
-        assert "- bar.go" in result
-
-
-# ── _file_permissions ──────────────────────────────────────────────────
-
-
-class TestFilePermissions:
-    def test_returns_octal_for_normal_file(self, ro, tmp_path):
-        f = tmp_path / "perm.txt"
-        f.write_text("test\n")
-        f.chmod(0o644)
-        assert ro._file_permissions(f) == "0o644"
-
-    def test_returns_question_mark_for_missing_file(self, ro, tmp_path):
-        assert ro._file_permissions(tmp_path / "nonexistent.txt") == "?"
-
-    def test_returns_executable_mode(self, ro, tmp_path):
-        f = tmp_path / "exec.sh"
-        f.write_text("#!/bin/sh\n")
-        f.chmod(0o755)
-        assert ro._file_permissions(f) == "0o755"
 
 
 # ── build_prompt (preflight) ──────────────────────────────────────────
@@ -2300,346 +1983,18 @@ class TestBuildPromptPreflight:
         assert "Read source files directly" in result
 
 
-# ── collect_preflight_data (git repo tests) ───────────────────────────
-
-
-class TestCollectPreflightData:
-    @staticmethod
-    def _init_repo(path):
-        """Initialize a git repo with standard test config."""
-        git_out(path, "init", "-b", "main", "-q")
-        git_out(path, "config", "user.email", "test@test.com")
-        git_out(path, "config", "user.name", "Test")
-        git_out(path, "config", "commit.gpgsign", "false")
-
-    @staticmethod
-    def _add_origin(path):
-        """Add the repo itself as origin and fetch main."""
-        git_out(path, "remote", "add", "origin", str(path))
-        git_out(path, "fetch", "-q", "origin", "main")
-
-    @staticmethod
-    def _commit_all(path, message):
-        """Stage every change in the repo and commit it."""
-        git_out(path, "add", ".")
-        git_out(path, "commit", "-q", "--no-verify", "-m", message)
-
-    def test_oversized_file_in_diff_but_omitted_from_contents(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
-        (repo / "big.txt").write_text("x" * 600_000)
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "big.txt").write_text("y" * 600_000)
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "change")
-
-        pr = ro.PRMetadata(
-            title="t", body="", head="feat", base="main", head_sha="abc",
-            additions=1, deletions=0, changed_files=1,
-            files=[{"path": "big.txt", "additions": 1, "deletions": 0}],
-        )
-        ctx = ro.PRContext()
-        job = ro.ReviewJob(
-            repo="r", pr_number="1", pr=pr, ctx=ctx,
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert data is not None
-        assert len(data.diff) > 0
-        assert data.omitted_files == ["big.txt"]
-        assert data.file_contents == {}
-
-    def test_large_diff_includes_diff_but_omits_some_files(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
-        for i in range(1, 6):
-            content = "".join(
-                f"original_line_content_padding_{j}\n" for j in range(10_000)
-            )
-            (repo / f"file{i}.go").write_text(content)
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        for i in range(1, 6):
-            content = "".join(
-                f"modified_line_content_padding_{j}\n" for j in range(10_000)
-            )
-            (repo / f"file{i}.go").write_text(content)
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "change")
-
-        pr = ro.PRMetadata(
-            title="t", body="", head="feat", base="main", head_sha="abc",
-            additions=50_000, deletions=50_000, changed_files=5,
-            files=[
-                {"path": f"file{i}.go", "additions": 10_000, "deletions": 10_000}
-                for i in range(1, 6)
-            ],
-        )
-        ctx = ro.PRContext()
-        job = ro.ReviewJob(
-            repo="r", pr_number="1", pr=pr, ctx=ctx,
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert data is not None
-        assert len(data.diff) > 0
-        assert len(data.omitted_files) > 0
-        assert len(data.file_contents) + len(data.omitted_files) == 5
-
-    def test_success_path_collects_all_data(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        (repo / ".claude" / "review").mkdir(parents=True)
-        self._init_repo(repo)
-        (repo / "main.go").write_text("package main\n")
-        (repo / "CLAUDE.md").write_text("# Project\n")
-        (repo / ".claude" / "architecture.md").write_text("## Known Constraints\n")
-        (repo / ".claude" / "review" / "security.md").write_text("# Security\n")
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "add hello")
-
-        pr = ro.PRMetadata(
-            title="t", body="", head="feat", base="main", head_sha="abc",
-            additions=1, deletions=0, changed_files=1,
-            files=[{"path": "main.go", "additions": 1, "deletions": 0}],
-        )
-        ctx = ro.PRContext()
-        job = ro.ReviewJob(
-            repo="r", pr_number="1", pr=pr, ctx=ctx,
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert data is not None
-        assert "main.go" in data.file_contents
-        assert "main.go" in data.file_permissions
-        assert data.file_permissions["main.go"] != "?"
-        assert "# Project" in data.claude_md
-        assert "## Known Constraints" in data.architecture_md
-        assert "security.md" in data.review_checklists
-        assert len(data.diff) > 0
-        assert len(data.commit_log) > 0
-        assert data.omitted_files == []
-
-    def test_handles_deleted_files_in_pr(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
-        (repo / "removed.txt").write_text("old content\n")
-        (repo / "kept.txt").write_text("keep\n")
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "removed.txt").unlink()
-        (repo / "kept.txt").write_text("updated\n")
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "remove file")
-
-        pr = ro.PRMetadata(
-            title="t", body="", head="feat", base="main", head_sha="abc",
-            additions=1, deletions=1, changed_files=2,
-            files=[
-                {"path": "removed.txt", "additions": 0, "deletions": 1},
-                {"path": "kept.txt", "additions": 1, "deletions": 0},
-            ],
-        )
-        ctx = ro.PRContext()
-        job = ro.ReviewJob(
-            repo="r", pr_number="1", pr=pr, ctx=ctx,
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert data.file_contents["removed.txt"] == "<file deleted>"
-        assert "updated" in data.file_contents["kept.txt"]
-        assert len(data.diff) > 0
-
-    def test_captures_uncommitted_diff_when_no_commits_on_branch(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
-        (repo / "main.go").write_text("package main\n")
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
-        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        ctx = ro.PRContext()
-        job = ro.ReviewJob(
-            repo="r", pr_number="", pr=pr, ctx=ctx,
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-            mode="self",
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert "func hello" in data.diff
-        assert "main.go" in data.file_contents
-
-    def _repo_with_worktree_changes(self, repo):
-        """Branch with one commit, one uncommitted edit and one untracked file."""
-        self._init_repo(repo)
-        (repo / "main.go").write_text("package main\n")
-        (repo / "helper.go").write_text("package main\n")
-        self._commit_all(repo, "init")
-        self._add_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "main.go").write_text("package main\nfunc committed() {}\n")
-        self._commit_all(repo, "add committed")
-        (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
-        (repo / "extra.go").write_text("package main\nfunc untracked() {}\n")
-
-    def test_self_mode_diff_spans_the_whole_worktree(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._repo_with_worktree_changes(repo)
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        job = ro.ReviewJob(
-            repo="r", pr_number="", pr=pr, ctx=ro.PRContext(),
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-            mode="self",
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert "func committed" in data.diff
-        assert "func uncommitted" in data.diff
-        assert "func untracked" in data.diff
-        assert set(data.file_contents) == {"main.go", "helper.go", "extra.go"}
-
-    def test_pr_mode_diff_stops_at_head(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._repo_with_worktree_changes(repo)
-
-        pr = ro.PRMetadata(
-            title="t", body="", head="feat", base="main", head_sha="abc",
-            additions=1, deletions=0, changed_files=1,
-            files=[{"path": "main.go", "additions": 1, "deletions": 0}],
-        )
-        job = ro.ReviewJob(
-            repo="r", pr_number="1", pr=pr, ctx=ro.PRContext(),
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert "func committed" in data.diff
-        assert "func uncommitted" not in data.diff
-        assert "func untracked" not in data.diff
-
-    def test_low_density_large_file_omitted_from_contents(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
-        (repo / "big.py").write_text("x = 1\n" * 2000)
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        with open(str(repo / "big.py"), "a") as f:
-            f.write("new_line_1\n")
-            f.write("new_line_2\n")
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "small change")
-
-        pr = ro.PRMetadata(
-            title="t", body="", head="feat", base="main", head_sha="abc",
-            additions=2, deletions=0, changed_files=1,
-            files=[{"path": "big.py", "additions": 2, "deletions": 0}],
-        )
-        ctx = ro.PRContext()
-        job = ro.ReviewJob(
-            repo="r", pr_number="1", pr=pr, ctx=ctx,
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert "big.py" not in data.file_contents
-        assert "big.py" in data.omitted_files
-
-    def test_tier1_files_prioritized_over_tier2_when_budget_tight(
-        self, ro, tmp_path, monkeypatch,
-    ):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
-        (repo / "CLAUDE.md").write_text("# Rules\n" * 10)
-        (repo / "util.go").write_text("package main\n" + "func f() {}\n" * 3000)
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "CLAUDE.md").write_text("# Updated rules\n" * 10)
-        (repo / "util.go").write_text("package main\n" + "func g() {}\n" * 3000)
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "change")
-
-        pr = ro.PRMetadata(
-            title="t", body="", head="feat", base="main", head_sha="abc",
-            additions=2, deletions=2, changed_files=2,
-            files=[
-                {"path": "util.go", "additions": 3000, "deletions": 3000},
-                {"path": "CLAUDE.md", "additions": 10, "deletions": 10},
-            ],
-        )
-        ctx = ro.PRContext()
-        job = ro.ReviewJob(
-            repo="r", pr_number="1", pr=pr, ctx=ctx,
-            wt_path=str(repo), review_file=str(tmp_path / "review.md"),
-            session_log=str(tmp_path / "session.jsonl"),
-        )
-        # Set budget so diff fits but only ~1000 bytes remain for file contents
-        diff_size = len(ro.git_client.out(
-            "diff", "origin/main...HEAD", cwd=str(repo),
-        ).encode())
-        monkeypatch.setattr(ro, "MAX_PROMPT_BYTES", diff_size + ro.TEMPLATE_OVERHEAD_BYTES + 1000)
-        with contextlib.redirect_stdout(io.StringIO()):
-            data = ro.collect_preflight_data(job)
-        assert "CLAUDE.md" in data.file_contents
-        assert "util.go" in data.omitted_files
-
-
 # ── fetch_branch_metadata ─────────────────────────────────────────────
 
 
 class TestFetchBranchMetadata:
-    # Shared with TestCollectPreflightData — single source of truth for repo helpers.
-    _init_repo = staticmethod(TestCollectPreflightData._init_repo)
-    _add_origin = staticmethod(TestCollectPreflightData._add_origin)
-    _commit_all = staticmethod(TestCollectPreflightData._commit_all)
-
     def test_includes_uncommitted_changes_when_no_commits_on_branch(
         self, ro, tmp_path,
     ):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
+        repo = init_repo(tmp_path / "repo")
         (repo / "main.go").write_text("package main\n")
         git_out(repo, "add", ".")
         git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
+        add_self_origin(repo)
         # Stay on main but modify a file without committing
         (repo / "main.go").write_text("package main\nfunc hello() {}\n")
 
@@ -2650,13 +2005,11 @@ class TestFetchBranchMetadata:
     def test_includes_staged_changes_when_no_commits_on_branch(
         self, ro, tmp_path,
     ):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
+        repo = init_repo(tmp_path / "repo")
         (repo / "main.go").write_text("package main\n")
         git_out(repo, "add", ".")
         git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        self._add_origin(repo)
+        add_self_origin(repo)
         # Stage changes without committing
         (repo / "main.go").write_text("package main\nfunc staged() {}\n")
         git_out(repo, "add", "main.go")
@@ -2667,17 +2020,15 @@ class TestFetchBranchMetadata:
     def test_committed_uncommitted_and_untracked_changes_all_appear(
         self, ro, tmp_path,
     ):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
+        repo = init_repo(tmp_path / "repo")
         (repo / "main.go").write_text("package main\n")
         (repo / "helper.go").write_text("package main\n")
         (repo / ".gitignore").write_text("secret.txt\n")
-        self._commit_all(repo, "init")
-        self._add_origin(repo)
+        commit_all(repo, "init")
+        add_self_origin(repo)
         git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "main.go").write_text("package main\nfunc committed() {}\n")
-        self._commit_all(repo, "add committed")
+        commit_all(repo, "add committed")
         (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
         (repo / "extra.go").write_text("package main\nfunc untracked() {}\n")
         (repo / "secret.txt").write_text("ignored\n")
@@ -2689,12 +2040,10 @@ class TestFetchBranchMetadata:
         assert "secret.txt" not in paths
 
     def test_untracked_files_are_counted_as_whole_file_additions(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
+        repo = init_repo(tmp_path / "repo")
         (repo / "main.go").write_text("package main\n")
-        self._commit_all(repo, "init")
-        self._add_origin(repo)
+        commit_all(repo, "init")
+        add_self_origin(repo)
         (repo / "new.go").write_text("one\ntwo\nthree\n")
 
         pr = ro.fetch_branch_metadata(str(repo))
@@ -2703,19 +2052,17 @@ class TestFetchBranchMetadata:
         assert pr.deletions == 0
 
     def test_commits_on_base_are_not_reported_as_branch_changes(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
+        repo = init_repo(tmp_path / "repo")
         (repo / "main.go").write_text("package main\n")
-        self._commit_all(repo, "init")
-        self._add_origin(repo)
+        commit_all(repo, "init")
+        add_self_origin(repo)
         git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
-        self._commit_all(repo, "add feat")
+        commit_all(repo, "add feat")
         # Move main forward behind the branch's back, so the branch is stale
         git_out(repo, "checkout", "main", "-q")
         (repo / "other.go").write_text("package main\nfunc other() {}\n")
-        self._commit_all(repo, "add other")
+        commit_all(repo, "add other")
         git_out(repo, "fetch", "-q", "origin", "main")
         git_out(repo, "checkout", "feat", "-q")
 
@@ -2724,35 +2071,31 @@ class TestFetchBranchMetadata:
         assert paths == ["feat.go"]
 
     def test_the_base_ref_is_fetched_before_the_range_is_built(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
+        repo = init_repo(tmp_path / "repo")
         (repo / "main.go").write_text("package main\n")
-        self._commit_all(repo, "init")
+        commit_all(repo, "init")
         # Origin is added but never fetched, so origin/main does not resolve and
         # the fork point would collapse to HEAD — hiding every commit.
         git_out(repo, "remote", "add", "origin", str(repo))
         git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
-        self._commit_all(repo, "add feat")
+        commit_all(repo, "add feat")
 
         pr = ro.fetch_branch_metadata(str(repo))
         assert [f["path"] for f in pr.files] == ["feat.go"]
 
     def test_base_argument_selects_the_diff_range(self, ro, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        self._init_repo(repo)
+        repo = init_repo(tmp_path / "repo")
         (repo / "main.go").write_text("package main\n")
-        self._commit_all(repo, "init")
+        commit_all(repo, "init")
         git_out(repo, "checkout", "-b", "develop", "-q")
         (repo / "dev.go").write_text("package main\nfunc dev() {}\n")
-        self._commit_all(repo, "add dev")
-        self._add_origin(repo)
+        commit_all(repo, "add dev")
+        add_self_origin(repo)
         git_out(repo, "fetch", "-q", "origin", "develop")
         git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
-        self._commit_all(repo, "add feat")
+        commit_all(repo, "add feat")
 
         pr = ro.fetch_branch_metadata(str(repo), "develop")
         assert [f["path"] for f in pr.files] == ["feat.go"]
@@ -2774,12 +2117,12 @@ class TestFetchBranchMetadata:
         git_out(repo, "config", "user.name", "Test")
         git_out(repo, "config", "commit.gpgsign", "false")
         (repo / "main.go").write_text("package main\n")
-        self._commit_all(repo, "init")
+        commit_all(repo, "init")
         git_out(repo, "remote", "add", "origin", str(repo))
         git_out(repo, "fetch", "-q", "origin", "master")
         git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
-        self._commit_all(repo, "add feat")
+        commit_all(repo, "add feat")
 
         pr = ro.fetch_branch_metadata(str(repo))
         assert pr.base == "master"
@@ -2855,15 +2198,13 @@ class TestWithLocalDiff:
 
 class TestFetchMetadataSelfMode:
     def test_self_review_of_a_pr_sees_unpushed_commits(self, ro, tmp_path, monkeypatch):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        TestFetchBranchMetadata._init_repo(repo)
+        repo = init_repo(tmp_path / "repo")
         (repo / "main.go").write_text("package main\n")
-        TestFetchBranchMetadata._commit_all(repo, "init")
-        TestFetchBranchMetadata._add_origin(repo)
+        commit_all(repo, "init")
+        add_self_origin(repo)
         git_out(repo, "checkout", "-b", "feat", "-q")
         (repo / "unpushed.go").write_text("package main\nfunc unpushed() {}\n")
-        TestFetchBranchMetadata._commit_all(repo, "add unpushed")
+        commit_all(repo, "add unpushed")
 
         monkeypatch.setattr(
             ro._rpl, "fetch_pr_metadata",

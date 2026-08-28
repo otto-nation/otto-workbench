@@ -12,7 +12,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_preflight import (
+from review_collect import (
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES, format_preflight_data,
 )
 from review_types import (

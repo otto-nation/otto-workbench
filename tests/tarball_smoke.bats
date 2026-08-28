@@ -95,6 +95,7 @@ teardown() {
 import sys
 sys.path.insert(0, '$TARBALL_ROOT/lib')
 import review_paths
+import review_collect
 import review_preflight
 import review_prompt
 import review_agent

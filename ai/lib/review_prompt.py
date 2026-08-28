@@ -41,8 +41,8 @@ from review_document import (
     BOLD_FINDING_ID_RE, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS,
 )
-from review_findings import PriorFinding, strip_sections
-from review_merge import annotate_prior_with_stable_ids
+from review_findings import strip_sections
+from review_merge import PriorFinding, annotate_prior_with_stable_ids
 from review_paths import (
     FILENAME_PROMPT_STATS, phase_output_path, review_artifact_path,
 )

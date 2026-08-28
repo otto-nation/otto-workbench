@@ -12,6 +12,13 @@ Reading a review is `review_document`'s job, checking findings against the
 tree is `review_verify`'s, and the `Finding` every side holds is
 `review_types`' — a consumer that only holds findings needs none of this.
 
+Where a finding's body ends is `review_document`'s too. Deduplication and the
+prior-review reading both walk `finding_spans`, and a repeat is removed with
+`cut_spans`, so a duplicate takes exactly the lines out of the merged document
+that a falsified finding does. Each keeps its own head pattern for *which*
+declarations it wants — `_finding_dedup_key` and `_ANNOTATE_FINDING_RE` read
+different things off a finding line — and neither says where one stops.
+
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
 they like; merging, deduplication, and evidence verification all remove
@@ -91,8 +98,8 @@ import log
 import serde
 from review_document import (
     BOLD_FINDING_ID_RE, FINDING_ID_RE, SECTION_FILE_TRIAGE,
-    SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader, finding_location,
-    is_section_boundary, parse_finding_line, starts_finding_or_section,
+    SECTION_PRIOR_FINDINGS, FindingSpan, ReviewDocument, ReviewHeader,
+    cut_spans, finding_location, finding_spans, parse_finding_line,
 )
 from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review_types import (
@@ -402,23 +409,25 @@ class _Deduped:
 
 
 def _dedup_findings(text: str, prefix: str) -> _Deduped:
+    """One severity's text with the repeats removed, and where each one went.
+
+    `_finding_dedup_key` chooses which declarations are candidates; how much of
+    the text a dropped one takes with it is `finding_spans`', so a repeat and a
+    finding the disprove gate falsifies lose exactly the same lines.
+    """
     seen: dict[FindingKey, int | None] = {}
     merged_into: dict[int, int] = {}
-    kept: list[str] = []
-    skipping = False
-    for line in text.split("\n"):
-        key = _finding_dedup_key(line)
-        if key is not None and key in seen:
-            skipping = True
-            _record_merge(merged_into, seen[key], _declared_id(line, prefix))
+    repeats: list[FindingSpan] = []
+    for span in finding_spans(text):
+        key = _finding_dedup_key(span.line)
+        if key is None:
             continue
-        if key is not None:
-            seen[key] = _declared_id(line, prefix)
-            skipping = False
-        if skipping:
+        if key in seen:
+            repeats.append(span)
+            _record_merge(merged_into, seen[key], _declared_id(span.line, prefix))
             continue
-        kept.append(line)
-    return _Deduped("\n".join(kept), merged_into)
+        seen[key] = _declared_id(span.line, prefix)
+    return _Deduped(cut_spans(text, repeats), merged_into)
 
 
 def _dedup_sections(sections: dict[str, str]) -> dict[str, str]:
@@ -677,33 +686,34 @@ def _parse_ledger(review_text: str) -> list[LedgerEntry]:
     return [entry for entry in entries if entry]
 
 
-def _prior_finding(block: list[str]) -> PriorFinding:
+def _prior_finding(span: FindingSpan, prior_text: str) -> PriorFinding:
     """One prior finding, read from its own line down to whatever ends it."""
-    text: list[str] = []
-    for raw in block:
-        stripped = raw.strip()
-        if text and (starts_finding_or_section(stripped) or is_section_boundary(stripped)):
-            break
-        text.append(stripped)
-    line = text[0]
+    line = span.line
     m = _ANNOTATE_FINDING_RE.match(line)
     label_m = BOLD_FINDING_ID_RE.search(line)
+    body = [raw.strip() for raw in span.text_of(prior_text).split("\n")]
     return PriorFinding(
         ref=FindingRef(
             label_m.group(1) if label_m else "",
             _extract_finding_path(line, line[m.end():]),
         ),
         stable_id=_finding_stable_id(line, m),
-        text="\n".join(text).strip(),
+        text="\n".join(body).strip(),
     )
 
 
 def _parse_prior_findings(prior_text: str) -> list[PriorFinding]:
-    """Every finding the prior review reported, each with the text reporting it."""
-    lines = prior_text.split("\n")
-    starts = [i for i, raw in enumerate(lines) if _ANNOTATE_FINDING_RE.match(raw.strip())]
-    ends = [*starts[1:], len(lines)]
-    return [_prior_finding(lines[start:end]) for start, end in zip(starts, ends)]
+    """Every finding the prior review reported, each with the text reporting it.
+
+    `_ANNOTATE_FINDING_RE` chooses which declarations count — the shape the
+    stable-ID annotator writes, which is what carry-forward matches on — and
+    `finding_spans` says how far down each one's text runs.
+    """
+    return [
+        _prior_finding(span, prior_text)
+        for span in finding_spans(prior_text)
+        if _ANNOTATE_FINDING_RE.match(span.line)
+    ]
 
 
 # ── Reconciliation against the prior review ──────────────────────────────────

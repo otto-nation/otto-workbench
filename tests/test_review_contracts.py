@@ -349,6 +349,24 @@ class TestFindingIdRegex:
         assert m.group(2) == "N"
         assert m.group(3) == "7"
 
+    def test_finding_span_boundary_agrees_with_the_id_regex(self):
+        """Every line that opens a finding also ends the one above it.
+
+        A head pattern that recognised a declaration the boundary did not would
+        let one span open inside another, which is how a finding came to own the
+        evidence written under its neighbour.
+        """
+        for line in [
+            '- **[M1]** **`handler.go:42`** — description',
+            '- [ ] **[S2]** **`api.go:10`** — missing context',
+            '- [x] **[N3]** `README.md:1` — typo',
+            '- ~~**[I4]** **`old.go:1`** — resolved~~',
+        ]:
+            assert review_document.FINDING_ID_RE.match(line)
+            assert review_document.ends_finding_body(line), (
+                f"opens a finding but does not end the one above it: {line!r}"
+            )
+
     def test_agent_example_format_from_reviewer_md(self):
         reviewer_path = AGENTS_DIR / "reviewer.md"
         if not reviewer_path.exists():
@@ -368,6 +386,84 @@ class TestFindingIdRegex:
             m = review_document.FINDING_ID_RE.match(line.strip())
             assert m is not None, (
                 f"FINDING_ID_RE does not match reviewer.md example: {line.strip()!r}"
+            )
+
+
+_EXAMPLE_BLOCK_RE = re.compile(r"^```[a-z]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
+_EXAMPLE_FINDING_RE = re.compile(
+    r"^- (?:\[[ x]\] )?(?:~~)?\*\*\[[MSNI]\d+\]", re.MULTILINE,
+)
+
+
+def _example_reviews() -> list[tuple[str, str]]:
+    """Every fenced block in the specs that writes out a review, named by file.
+
+    Scraped rather than listed, so a spec that starts demonstrating a new shape
+    under a finding is checked without this file being edited.
+    """
+    sources = [AGENTS_DIR / "reviewer.md", *sorted(TEMPLATE_DIR.glob("*.md"))]
+    return [
+        (path.name, block)
+        for path in sources if path.exists()
+        for block in _EXAMPLE_BLOCK_RE.findall(path.read_text())
+        if _EXAMPLE_FINDING_RE.search(block)
+    ]
+
+
+def _documented_body_lines(block: str) -> list[str]:
+    """Every line the example writes under a finding declaration.
+
+    A heading or a blank line closes the run: what follows either is the spec
+    talking about something other than the finding above it.
+    """
+    body: list[str] = []
+    under_finding = False
+    for raw in block.split("\n"):
+        stripped = raw.strip()
+        if _EXAMPLE_FINDING_RE.match(stripped):
+            under_finding = True
+        elif not stripped or stripped.startswith("#"):
+            under_finding = False
+        elif under_finding:
+            body.append(stripped)
+    return body
+
+
+class TestSpecBodyShapesBelongToTheFindingAboveThem:
+    """What the specs write under a finding, `finding_spans` reads as its body.
+
+    The agents write reviews to these examples, so a continuation shape one of
+    them demonstrates that `ends_finding_body` treats as a boundary is a body
+    the pipeline would cut in half — the finding loses its evidence and an
+    orphan fragment is left where the finding used to end.
+    """
+
+    def test_the_specs_demonstrate_body_shapes_at_all(self):
+        assert any(_documented_body_lines(block) for _, block in _example_reviews())
+
+    @pytest.mark.parametrize(
+        "source,block", _example_reviews(), ids=lambda v: v if len(v) < 24 else "block",
+    )
+    def test_no_documented_body_line_ends_the_finding(self, source, block):
+        for line in _documented_body_lines(block):
+            assert not review_document.ends_finding_body(line), (
+                f"{source} writes this under a finding, "
+                f"but ends_finding_body reads it as a boundary: {line!r}"
+            )
+
+    @pytest.mark.parametrize(
+        "source,block", _example_reviews(), ids=lambda v: v if len(v) < 24 else "block",
+    )
+    def test_every_documented_body_line_lands_in_a_span(self, source, block):
+        claimed: set[str] = set()
+        for span in review_document.finding_spans(block):
+            claimed.update(
+                line.strip() for line in span.text_of(block).split("\n") if line.strip()
+            )
+        for line in _documented_body_lines(block):
+            assert line in claimed, (
+                f"{source} writes this under a finding, "
+                f"but no finding span claims it: {line!r}"
             )
 
 

@@ -38,6 +38,15 @@ that, and the annotations a later pass writes onto it — declined, skipped.
 findings section — the prior-findings ledger is the one — and every other
 reader asks `ReviewDocument.findings`.
 
+Where that body stops is the same one owner. `ends_finding_body` is the answer
+and `finding_spans` is the traversal built on it, so a reader walking a review
+a finding at a time gets the same line ranges wherever it walks from.
+`drop_findings` is what an editing caller asks instead: the gates that trim a
+finished review remove spans this module measured rather than lines each of
+them recognised, because two gates that disagreed about where a body ended cut
+one review two different ways — one of them swallowing the resolved finding
+below the one it was told to drop.
+
 Counting them is that same parse, not a second grammar over the same text:
 `open_counts` tallies `open_findings`, so which findings a review is reported
 to have and how many it is reported to have are one answer. A tally written as
@@ -611,6 +620,30 @@ def _match_severity_header(stripped: str) -> str | None:
     return _SEVERITY_NAMES.get(text)
 
 
+def ends_finding_body(stripped: str) -> bool:
+    """Whether the line ends the finding body running above it.
+
+    The one answer to where a finding stops. Five things end one: the next
+    declaration, a `## ` section, a `### ` sub-heading, a struck-through
+    finding the review resolved, and a heading of any depth naming a severity.
+    Everything else belongs to the finding above it, an indented bullet and a
+    blockquoted evidence fence included.
+
+    A plain unindented `- ` bullet is body rather than boundary. `reviewer.md`
+    asks for evidence indented two spaces under the finding line, so a flat
+    bullet inside a severity section is a continuation someone typed without
+    the indent rather than a list the finding is not part of — and no review
+    written since this parser existed has one. Callers that read it the other
+    way cut the same review two different ways.
+    """
+    return (
+        starts_finding_or_section(stripped)
+        or is_section_boundary(stripped)
+        or bool(FINDING_ID_RE.match(stripped))
+        or _match_severity_header(stripped) is not None
+    )
+
+
 def _finalize_finding(finding: Finding, body_lines: list[str]):
     body = "\n".join(body_lines).strip()
     if not body:
@@ -619,49 +652,174 @@ def _finalize_finding(finding: Finding, body_lines: list[str]):
     finding.body = body
 
 
-def _close_previous(findings: list[Finding], body_lines: list[str]):
-    if findings:
-        _finalize_finding(findings[-1], body_lines)
-    body_lines.clear()
+class FindingScope(StrEnum):
+    """What the heading above a finding declaration makes of it.
+
+    `DECLARED` is a declaration under a severity heading — a finding the text
+    reports as its own. `REPORTED` is one under a heading that names no
+    severity: the `## Prior findings` ledger repeats the last review's findings
+    there, and its IDs number that review rather than this one, so an edit that
+    touched them would rewrite the record of a review it is not looking at.
+    `UNHEADED` is a declaration with no heading above it at all, which is what
+    a caller holding one severity's findings on their own hands in.
+    """
+
+    DECLARED = "declared"
+    REPORTED = "reported"
+    UNHEADED = "unheaded"
+
+
+@dataclass(frozen=True)
+class FindingSpan:
+    """A finding declaration and the lines belonging to it.
+
+    `line` is the declaration itself, stripped — what a caller with a narrower
+    grammar than `FINDING_ID_RE` matches against to decide whether this is a
+    finding it wants. `start` and `end` are line indices into the text the span
+    was read from: the declaration's own line, and the line after the last one
+    its body claims. `text_of` is the slice they name.
+
+    The coordinates live here rather than on `Finding`, which the fix pass
+    serializes to disk — a line number from one reading of one document is not
+    something a stored finding should carry around.
+    """
+
+    finding: Finding
+    line: str
+    start: int
+    end: int
+    scope: FindingScope = FindingScope.UNHEADED
+
+    @property
+    def reported(self) -> bool:
+        """Whether the span sits under a heading reporting on another review."""
+        return self.scope is FindingScope.REPORTED
+
+    def text_of(self, text: str) -> str:
+        """The lines the span claims, verbatim.
+
+        Trailing blank lines included, since a caller removing the span has to
+        name every line the span owns or it leaves the gap behind.
+        """
+        return "\n".join(text.split("\n")[self.start:self.end])
+
+
+def _scope_after(stripped: str, scope: FindingScope) -> FindingScope:
+    """The scope a heading line puts the walk into, or the one it was in."""
+    if _match_severity_header(stripped) is not None:
+        return FindingScope.DECLARED
+    if stripped.startswith("## "):
+        return FindingScope.REPORTED
+    return scope
+
+
+class _SpanWalk:
+    """One pass over a text, accumulating a span per finding declaration."""
+
+    def __init__(self) -> None:
+        self.spans: list[FindingSpan] = []
+        self.scope = FindingScope.UNHEADED
+        self._finding: Finding | None = None
+        self._line = ""
+        self._start = 0
+        self._opened_in = FindingScope.UNHEADED
+        self._body: list[str] = []
+
+    def open(self, stripped: str, index: int) -> None:
+        """Start a span at `index` when `stripped` declares a finding."""
+        finding = parse_finding_line(stripped)
+        if finding is None:
+            return
+        self._finding = finding
+        self._line = stripped
+        self._start = index
+        self._opened_in = self.scope
+        self._body = [finding.body] if finding.body else []
+
+    def extend(self, raw_line: str) -> None:
+        """Add a body line to the open span, if one is open and it says anything."""
+        if self._finding is not None and raw_line.strip():
+            self._body.append(raw_line.rstrip())
+
+    def close(self, end: int) -> None:
+        """Finish the open span at `end`, if one is open."""
+        if self._finding is None:
+            return
+        _finalize_finding(self._finding, self._body)
+        self.spans.append(FindingSpan(
+            self._finding, self._line, self._start, end, self._opened_in,
+        ))
+        self._finding = None
+        self._body = []
+
+
+def finding_spans(text: str) -> list[FindingSpan]:
+    """Every finding `text` declares, each with the lines its body claims.
+
+    One traversal, and the only one: a declaration starts where `FINDING_ID_RE`
+    says and its body stops where `ends_finding_body` says, so no two readers
+    of one review can cut it in different places. Spans come back in the order
+    the text declares them and never overlap.
+
+    Every declaration is returned wherever it sits, because the answer to
+    "which of these count" differs by caller: one after the findings a review
+    reports asks `ReviewDocument.findings`, and one editing the text filters on
+    `reported` so the prior-findings ledger is left as its own review wrote it.
+    """
+    walk = _SpanWalk()
+    lines = text.split("\n")
+    for index, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if not ends_finding_body(stripped):
+            walk.extend(raw_line)
+            continue
+        walk.close(index)
+        walk.scope = _scope_after(stripped, walk.scope)
+        # A struck-through finding ends the body above it and opens nothing:
+        # the review resolved that one, so the lines below belong to neither.
+        if not is_section_boundary(stripped):
+            walk.open(stripped, index)
+    walk.close(len(lines))
+    return walk.spans
+
+
+def cut_spans(text: str, spans: Iterable[FindingSpan]) -> str:
+    """`text` with the lines `spans` claim removed and every other byte intact.
+
+    An edit rather than a re-render, so what is left is exactly what was there:
+    a review a gate trimmed still reads as the document its author wrote.
+    """
+    removed: set[int] = set()
+    for span in spans:
+        removed.update(range(span.start, span.end))
+    if not removed:
+        return text
+    return "\n".join(
+        line for index, line in enumerate(text.split("\n")) if index not in removed
+    )
+
+
+def drop_findings(text: str, ids: Iterable[str]) -> str:
+    """`text` with each finding `ids` names, and the body under it, removed.
+
+    The one owner of what leaves a review when a gate drops a finding, so the
+    evidence check and the disprove gate cannot take different amounts of it.
+    A declaration under a heading naming no severity is left alone: the
+    prior-findings ledger reports on the last review, and an ID that collides
+    with a dropped finding numbers that review rather than this one.
+    """
+    wanted = set(ids)
+    return cut_spans(text, [
+        span for span in finding_spans(text)
+        if span.finding.id in wanted and not span.reported
+    ])
 
 
 def _parse_findings(text: str) -> list[Finding]:
-    findings: list[Finding] = []
-    current_severity: str | None = None
-    body_lines: list[str] = []
-    accumulating = False
-
-    for raw_line in text.split("\n"):
-        stripped = raw_line.strip()
-        severity = _match_severity_header(stripped)
-        if severity is not None:
-            _close_previous(findings, body_lines)
-            current_severity = severity
-            accumulating = False
-            continue
-        if stripped.startswith("## "):
-            _close_previous(findings, body_lines)
-            current_severity = None
-            accumulating = False
-            continue
-        if current_severity is None:
-            continue
-        if is_section_boundary(stripped):
-            _close_previous(findings, body_lines)
-            accumulating = False
-            continue
-        finding = parse_finding_line(stripped)
-        if finding:
-            _close_previous(findings, body_lines)
-            body_lines = [finding.body] if finding.body else []
-            findings.append(finding)
-            accumulating = True
-            continue
-        if accumulating and stripped:
-            body_lines.append(raw_line.rstrip())
-
-    _close_previous(findings, body_lines)
-    return findings
+    return [
+        span.finding for span in finding_spans(text)
+        if span.scope is FindingScope.DECLARED
+    ]
 
 
 @dataclass(frozen=True)

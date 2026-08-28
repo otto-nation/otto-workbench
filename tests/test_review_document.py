@@ -25,10 +25,11 @@ import pytest
 from agent_types import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
-    FINDING_ID_RE, MECHANICAL_NOTE, ReviewDocument, ReviewHeader, _close_previous,
+    FINDING_ID_RE, FindingScope, MECHANICAL_NOTE, ReviewDocument, ReviewHeader,
     _extract_body_text, _finalize_finding, _FIRST_FILE_RE, _match_severity_header,
-    build_mechanical_body, counts_prose, finding_location, is_section_boundary,
-    mechanical_verdict, open_counts, parse_finding_line,
+    build_mechanical_body, counts_prose, drop_findings, ends_finding_body,
+    finding_location, finding_spans, is_section_boundary, mechanical_verdict,
+    open_counts, parse_finding_line,
     resolve_review_verdict, review_title, section_span, set_section, set_status,
     starts_finding_or_section, strip_sections, verdict_from_counts,
 )
@@ -865,26 +866,168 @@ class TestFinalizeFinding:
         assert "actual content" in f.body
 
 
-class TestClosePrevious:
-    def test_with_findings_and_body_lines(self):
-        f = Finding(id="M1", severity="M", seq=1, path="file.go", line=10,
-                    end_line=None, body="original")
-        body_lines = ["updated body content", "more content"]
-        _close_previous([f], body_lines)
-        assert "updated body content" in f.body
-        assert len(body_lines) == 0
+class TestEndsFindingBody:
+    """The one answer to where a finding stops, which every span walk asks."""
 
-    def test_empty_findings_is_noop(self):
-        body_lines = ["some text"]
-        _close_previous([], body_lines)
-        assert len(body_lines) == 0
+    @pytest.mark.parametrize("line", [
+        "- **[M2]** **`b.go:2`** — the next declaration",
+        "- [ ] **[M2]** **`b.go:2`** — the next declaration, unchecked",
+        "- [x] **[M2]** **`b.go:2`** — the next declaration, ticked off",
+        "## Should fix",
+        "## Prior findings",
+        "### Group B",
+        "#### Idioms",
+        "- ~~**[M2]** **`b.go:2`** — resolved~~",
+    ])
+    def test_a_boundary_ends_the_body(self, line):
+        assert ends_finding_body(line) is True
 
-    def test_body_lines_cleared_after_call(self):
-        f = Finding(id="M1", severity="M", seq=1, path="file.go", line=10,
-                    end_line=None, body="x")
-        body_lines = ["line1", "line2"]
-        _close_previous([f], body_lines)
-        assert body_lines == []
+    @pytest.mark.parametrize("line", [
+        "- a plain bullet someone typed without the indent",
+        "  - an indented bullet",
+        "> ```go",
+        "prose about the finding",
+        "",
+    ])
+    def test_a_continuation_does_not(self, line):
+        assert ends_finding_body(line) is False
+
+    def test_a_plain_bullet_is_body_because_the_prompt_asks_for_indentation(self):
+        """`reviewer.md` indents evidence under the finding line, so a flat
+        bullet in a severity section is a continuation, not a new list."""
+        document = ReviewDocument.parse(
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "- see also the helper above\n"
+        )
+        assert document.findings[0].body.endswith("see also the helper above")
+
+
+class TestFindingSpans:
+    def test_a_span_runs_from_the_declaration_to_the_next_one(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "  detail\n"
+            "\n"
+            "- **[M2]** **`b.go:2`** — two\n"
+        )
+        spans = finding_spans(text)
+        assert [(s.finding.id, s.start, s.end) for s in spans] == [
+            ("M1", 1, 4), ("M2", 4, 6),
+        ]
+
+    def test_text_of_returns_the_lines_the_span_claims(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "  > ```go\n"
+            "  > x := 1\n"
+            "  > ```\n"
+            "- **[M2]** **`b.go:2`** — two\n"
+        )
+        first = finding_spans(text)[0]
+        assert first.text_of(text) == (
+            "- **[M1]** **`a.go:1`** — one\n"
+            "  > ```go\n"
+            "  > x := 1\n"
+            "  > ```"
+        )
+
+    def test_the_declaration_line_comes_back_stripped(self):
+        spans = finding_spans("## Nit\n  - **[N1]** **`a.go:1`** — nested\n")
+        assert spans[0].line == "- **[N1]** **`a.go:1`** — nested"
+
+    def test_a_severity_heading_declares_the_findings_below_it(self):
+        spans = finding_spans("## Must fix\n- **[M1]** **`a.go:1`** — one\n")
+        assert spans[0].scope is FindingScope.DECLARED
+        assert spans[0].reported is False
+
+    def test_a_ledger_entry_reports_rather_than_declares(self):
+        spans = finding_spans("## Prior findings\n- **[M1]** `old.go` — Fixed\n")
+        assert spans[0].scope is FindingScope.REPORTED
+        assert spans[0].reported is True
+
+    def test_a_fragment_with_no_heading_is_neither(self):
+        """What a caller holding one severity's findings on their own hands in."""
+        spans = finding_spans("- **[M1]** **`a.go:1`** — one\n")
+        assert spans[0].scope is FindingScope.UNHEADED
+
+    def test_a_resolved_finding_ends_the_span_above_it_and_opens_none(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "- ~~**[M2]** **`b.go:2`** — resolved~~\n"
+        )
+        spans = finding_spans(text)
+        assert [(s.finding.id, s.end) for s in spans] == [("M1", 2)]
+
+    def test_a_sub_heading_ends_the_span_above_it(self):
+        text = (
+            "## Must fix\n"
+            "### Group A\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "### Group B\n"
+            "- **[M2]** **`b.go:2`** — two\n"
+        )
+        spans = finding_spans(text)
+        assert [(s.finding.id, s.start, s.end) for s in spans] == [
+            ("M1", 2, 3), ("M2", 4, 6),
+        ]
+
+    def test_an_indented_declaration_is_its_own_span(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "  - **[M2]** **`b.go:2`** — nested\n"
+        )
+        assert [s.finding.id for s in finding_spans(text)] == ["M1", "M2"]
+
+    def test_spans_never_overlap(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "  detail\n"
+            "- **[M2]** **`b.go:2`** — two\n"
+            "## Nit\n"
+            "- **[N1]** **`c.go:3`** — three\n"
+        )
+        spans = finding_spans(text)
+        assert all(a.end <= b.start for a, b in zip(spans, spans[1:]))
+
+
+class TestDropFindings:
+    def test_the_finding_and_its_body_go(self):
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "  detail\n"
+            "- **[M2]** **`b.go:2`** — two\n"
+        )
+        assert drop_findings(text, ["M1"]) == (
+            "## Must fix\n"
+            "- **[M2]** **`b.go:2`** — two\n"
+        )
+
+    def test_dropping_nothing_leaves_every_byte(self):
+        text = "## Must fix\n- **[M1]** **`a.go:1`** — one\n"
+        assert drop_findings(text, []) == text
+        assert drop_findings(text, ["S9"]) == text
+
+    def test_a_ledger_entry_sharing_an_id_is_left_alone(self):
+        """The ledger's IDs number the prior review, so a collision there is
+        not the finding this gate was told to drop."""
+        text = (
+            "## Must fix\n"
+            "- **[M1]** **`a.go:1`** — one\n"
+            "## Prior findings\n"
+            "- **[M1]** `old.go` — Fixed\n"
+        )
+        assert drop_findings(text, ["M1"]) == (
+            "## Must fix\n"
+            "## Prior findings\n"
+            "- **[M1]** `old.go` — Fixed\n"
+        )
 
 
 class TestFindings:

@@ -46,6 +46,14 @@ Which verdict a tally supports in the first place is `review_document`'s, and
 so is the finding-line grammar read here: `_VERIFY_FINDING_RE` is a stricter
 shape over the same location vocabulary, and the two have to agree or a finding
 parses one way and verifies against the other.
+
+So is where a finding's body ends. Both gates walk the review through
+`finding_spans` and remove what they drop through `drop_findings`, because two
+gates that measured a finding themselves measured it differently: one of them
+took the resolved finding below a dropped one out with it, and neither of them
+left a `### ` sub-heading standing. `_VERIFY_FINDING_RE` selects which findings
+this gate checks and reads the location it checks them against; it no longer
+says where one stops.
 """
 
 # doc-group: findings
@@ -60,8 +68,8 @@ import log
 from pr_domains import ReviewVerdict
 from review_document import (
     LINE_SUFFIX, SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
-    SPACED_FILE, ReviewDocument, counts_prose, section_span,
-    starts_finding_or_section, strip_sections, verdict_from_counts,
+    SPACED_FILE, FindingSpan, ReviewDocument, counts_prose, drop_findings,
+    finding_spans, section_span, strip_sections, verdict_from_counts,
 )
 from review_merge import renumber_findings, strip_stable_ids
 from review_types import SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key
@@ -188,14 +196,16 @@ def _match_evidence(path: str, evidence: str | None, wt_path: str) -> dict:
     return detail
 
 
-# This pattern selects as well as reads: a finding line it does not match is
-# appended to the previous finding's body, so the previous finding is then
-# evidence-checked against text that is not its own. That is why the
-# space-free class stays exactly as it was — anything the delimiters cannot
-# hold, line suffix included, which `rsplit` strips below — and why the spaced
-# shape is added beside it rather than replacing it. Every location that
-# parsed before parses the same way, since a space-free span never reaches
-# the second alternative at all.
+# This pattern selects: which findings this gate checks, and the location it
+# checks each one against. Where a finding's body ends is not its business —
+# `finding_spans` measures that, so a line this pattern cannot read ends the
+# span above it instead of joining that finding's evidence.
+#
+# The space-free class stays exactly as it was — anything the delimiters cannot
+# hold, line suffix included, which `rsplit` strips below — and the spaced
+# shape is beside it rather than replacing it. Every location that parsed
+# before parses the same way, since a space-free span never reaches the second
+# alternative at all.
 #
 # `SPACED_FILE` needs the same bound it has in `review_document`'s location
 # grammar, where a lookahead makes the filename account for the whole span.
@@ -213,56 +223,40 @@ _VERIFY_FINDING_RE = re.compile(
 )
 
 
-def _flush_finding(findings: list[dict], current: dict | None, body_lines: list[str]) -> None:
-    if not current:
-        return
-    current["body"] = "\n".join(body_lines)
-    findings.append(current)
+def _verification_body(span: FindingSpan, head: str, text: str) -> str:
+    """The finding's own words: what follows the em dash, and the lines below it.
+
+    Read off the span, so the evidence a finding is checked against is the
+    evidence written under that finding and nothing written under the next.
+    """
+    below = [line.rstrip() for line in span.text_of(text).split("\n")[1:] if line.strip()]
+    return "\n".join([head, *below] if head else below)
+
+
+def _verification_finding(span: FindingSpan, text: str) -> dict | None:
+    """What this gate checks about one finding, or None when it checks none.
+
+    A declaration whose location `_VERIFY_FINDING_RE` cannot read is skipped:
+    there is no path to match the evidence against, so the check has nothing to
+    say about it. A declaration in the prior-findings ledger is skipped too —
+    it reports the last review's finding, and the file it names was quoted
+    against a commit this one is not looking at.
+    """
+    m = _VERIFY_FINDING_RE.match(span.line)
+    if not m or span.reported:
+        return None
+    raw_path = (m.group(3) or m.group(4) or "").replace("\\_", "_")
+    return {
+        "id": f"{m.group(1)}{m.group(2)}",
+        "severity": m.group(1),
+        "path": raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path,
+        "body": _verification_body(span, m.group(5), text),
+    }
 
 
 def _parse_findings_for_verification(text: str) -> list[dict]:
-    findings: list[dict] = []
-    current: dict | None = None
-    body_lines: list[str] = []
-    for line in text.split("\n"):
-        stripped = line.strip()
-        m = _VERIFY_FINDING_RE.match(stripped)
-        if m:
-            _flush_finding(findings, current, body_lines)
-            raw_path = (m.group(3) or m.group(4) or "").replace("\\_", "_")
-            path_str = raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path
-            current = {
-                "id": f"{m.group(1)}{m.group(2)}",
-                "severity": m.group(1),
-                "path": path_str,
-                "body": m.group(5),
-            }
-            body_lines = [m.group(5)] if m.group(5) else []
-        elif current and stripped and not stripped.startswith("## "):
-            body_lines.append(line.rstrip())
-        elif current and stripped.startswith("## "):
-            _flush_finding(findings, current, body_lines)
-            current = None
-            body_lines = []
-    _flush_finding(findings, current, body_lines)
-    return findings
-
-
-def _remove_dropped_findings(text: str, dropped: list[str]) -> str:
-    dropped_set = set(dropped)
-    kept: list[str] = []
-    skip_until_next = False
-    for line in text.split("\n"):
-        stripped = line.strip()
-        m = _VERIFY_FINDING_RE.match(stripped)
-        if m:
-            skip_until_next = f"{m.group(1)}{m.group(2)}" in dropped_set
-        elif skip_until_next and starts_finding_or_section(stripped):
-            skip_until_next = False
-        if skip_until_next:
-            continue
-        kept.append(line)
-    return "\n".join(kept)
+    checked = (_verification_finding(span, text) for span in finding_spans(text))
+    return [finding for finding in checked if finding]
 
 
 def _verification_detail(
@@ -302,7 +296,7 @@ def _verify_findings(text: str, wt_path: str) -> tuple[str, dict]:
         "details": details,
     }
     if dropped:
-        text = _remove_dropped_findings(text, dropped)
+        text = drop_findings(text, dropped)
     return text, result
 
 
@@ -432,11 +426,6 @@ def parse_disprove_output(text: str) -> list[DisproveResult]:
     return results
 
 
-_FINDING_LINE_RE = re.compile(
-    r"^(- (?:\[ \] )?\*\*\[([A-Z]\d+)\]\*\*)",
-)
-
-
 def apply_disprove_results(
     review_text: str, results: list[DisproveResult],
 ) -> tuple[str, dict]:
@@ -454,23 +443,8 @@ def apply_disprove_results(
             "reasons": {},
         }
 
-    lines = review_text.split("\n")
-    kept: list[str] = []
-    dropping = False
-
-    for line in lines:
-        m = _FINDING_LINE_RE.match(line)
-        if m:
-            dropping = m.group(2) in falsified_ids
-        elif dropping and not (line.startswith("- ") or line.startswith("## ")):
-            continue
-        elif dropping:
-            dropping = False
-        if not dropping:
-            kept.append(line)
-
     survived = len(results) - len(falsified_ids)
-    return "\n".join(kept), {
+    return drop_findings(review_text, falsified_ids), {
         "total_challenged": len(results),
         "survived": survived,
         "falsified": len(falsified_ids),

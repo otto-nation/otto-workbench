@@ -15,6 +15,7 @@ When adding or modifying a review phase, verify these integration points:
 - `review_merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — everything that happens to findings across reviews, reconciliation against the prior one included. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
 - `review_prompt.py`: a builder in `_PROMPT_BUILDERS` keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
 - `review_document.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`) and `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
+- `review_document.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`, `drop_findings()`, `cut_spans()`. A pass that walks a review a finding at a time asks these rather than recognising the next head itself, and keeps only its own selection pattern (which findings it wants) over `FindingSpan.line`. Six passes once measured a body for themselves and cut the same review four different ways, one of them deleting the resolved finding below a dropped one
 - `review-post`: `renumber_for_posting()`, `classify_findings()` posting routing
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
 - `lib/review-templates/`: section headers referenced in synthesis and group templates

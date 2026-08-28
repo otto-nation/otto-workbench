@@ -2621,14 +2621,87 @@ def _duplicate_item_ids(
     }
 
 
+def _unseen(comments: list[dict]) -> list[dict]:
+    """The comments no summary has reported yet.
+
+    One spelling of the flag for its two readers — `RoundContent.unseen`, which
+    decides whether a round has anything to say, and
+    `_render_raw_comment_sections`, which prints them.
+    """
+    return [c for c in comments if not c.get("seen")]
+
+
+@dataclass(frozen=True)
+class RoundContent:
+    """Everything one round of the fix pass has to say, in one value.
+
+    The buckets are a mapping keyed by `FixOutcome` for the reason
+    `_build_fix_record` takes one: the outcomes are `FixOutcome`'s to name, and
+    a value spelling them out as fields has to grow a field — and every
+    construction site an argument — each time that vocabulary does. A mapping
+    also makes miswiring unrepresentable, since a bucket is reached by the
+    outcome naming it rather than by position; the five keyword-only parameters
+    `_folded_item_ids` used to take were a guard against exactly that.
+
+    The unseen top-level comments ride along because the questions a round is
+    asked are asked of both halves at once — see `has_content`. Every field is
+    required: the round that printed a table and recorded that it owed nothing
+    was one caller passing a bucket another caller did not, and a default here
+    would leave that available to the next construction site.
+    """
+
+    by_outcome: Mapping[FixOutcome, list[CommentItem]]
+    issue_comments: list[dict]
+    review_body_comments: list[dict]
+
+    def of(self, *outcomes: FixOutcome) -> list[CommentItem]:
+        """The entries under these outcomes, in the order the outcomes are given.
+
+        An outcome no entry reached contributes nothing rather than raising. A
+        round is under no obligation to produce every outcome — the pass with
+        nothing to fix produces three of them at most — so absence is an
+        ordinary answer here, not a missing key.
+        """
+        return [e for o in outcomes for e in self.by_outcome.get(o, [])]
+
+    @property
+    def needs_a_person(self) -> list[CommentItem]:
+        """The entries a reviewer has to answer, under every outcome meaning that.
+
+        One coarsening, in one place. The state file keeps `DECLINED` apart from
+        `NEEDS_HUMAN` because the reason each carries is worth telling apart,
+        and they travel together to every reviewer-facing surface — see
+        `_NEEDS_A_PERSON`. Spelled out at a call site instead, a member added to
+        that constant reaches the surfaces that read it and silently misses the
+        ones that listed its members by hand.
+        """
+        return self.of(*_NEEDS_A_PERSON)
+
+    @property
+    def unseen(self) -> list[dict]:
+        """The top-level comments no summary has reported yet, both kinds at once."""
+        return _unseen([*self.issue_comments, *self.review_body_comments])
+
+    @property
+    def has_content(self) -> bool:
+        """Whether this round has anything for the fix summary to say.
+
+        One owner for the question, because three callers have to agree on it:
+        `_post_fix_summary` renders nothing when the answer is no,
+        `_summary_still_owed` must leave a summary owed exactly when a render
+        would produce one, and the no-fixable path decides from it whether to
+        attempt the post at all. Asked separately they drift, and a bucket one
+        of them forgets is a round whose table is printed and never published.
+
+        An unseen issue or review-body comment counts on its own. The summary
+        reports those too, so a round that settled no thread at all still has a
+        table to render when one arrived unread.
+        """
+        return bool(any(self.by_outcome.values()) or self.unseen)
+
+
 def _folded_item_ids(
-    *,
-    fixed: list[CommentItem],
-    needs_human: list[CommentItem],
-    deferred: list[CommentItem],
-    dismissed: list[CommentItem],
-    already_addressed: list[CommentItem],
-    threads_by_id: dict[str, ReportThread],
+    content: RoundContent, threads_by_id: dict[str, ReportThread],
 ) -> set[str]:
     """The ids no bucket will render, folded across every bucket at once.
 
@@ -2645,13 +2718,13 @@ def _folded_item_ids(
     construction, where a threaded value could arrive stale and put the count
     back out of step with the table — the very fault this answers.
 
-    The buckets are keyword-only for the same reason. Five arguments of one
-    type, ordered differently at one call site, would silently fold the wrong
-    set, and every reading downstream would agree with itself while being
-    wrong.
+    Every bucket the round has, not a list of them named here: an outcome added
+    to the round's vocabulary is folded across from the moment it exists, where
+    a signature naming the buckets would keep folding the old set until someone
+    noticed.
     """
     return _duplicate_item_ids(
-        [*fixed, *already_addressed, *dismissed, *needs_human, *deferred],
+        [e for entries in content.by_outcome.values() for e in entries],
         threads_by_id,
     )
 
@@ -2944,17 +3017,11 @@ class HeldRow:
 
 
 def _build_summary_body(
-    fixed: list[CommentItem],
-    needs_human: list[CommentItem],
-    deferred: list[CommentItem],
+    content: RoundContent,
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
-    dismissed: list[CommentItem] | None = None,
-    already_addressed: list[CommentItem] | None = None,
-    issue_comments: list[dict] | None = None,
-    review_body_comments: list[dict] | None = None,
     deferred_issue_id: str = "",
     deferred_issue_url: str = "",
     has_comment_items: bool = False,
@@ -2997,30 +3064,25 @@ def _build_summary_body(
     the footer that makes leaving them out safe to read: every summary comment
     already on the PR, linked in order.
     """
-    dismissed = dismissed or []
-    already_addressed = already_addressed or []
-    issue_comments = issue_comments or []
-    review_body_comments = review_body_comments or []
     carried_over = carried_over or []
     scope = scope or RoundScope()
     chain = chain or []
+    issue_comments = content.issue_comments
+    review_body_comments = content.review_body_comments
     sources_at = _comment_timestamps(issue_comments, review_body_comments)
     held_by_key = {row.key: row.published for row in hand_held or []}
     # Ahead of the counts, not just the rows: a count with no row under it is a
     # claim the table cannot show the reader.
-    folded = _folded_item_ids(
-        fixed=fixed,
-        needs_human=needs_human,
-        deferred=deferred,
-        dismissed=dismissed,
-        already_addressed=already_addressed,
-        threads_by_id=threads_by_id,
-    )
-    fixed = [e for e in fixed if e.id not in folded]
-    already_addressed = [e for e in already_addressed if e.id not in folded]
-    dismissed = [e for e in dismissed if e.id not in folded]
-    needs_human = [e for e in needs_human if e.id not in folded]
-    deferred = [e for e in deferred if e.id not in folded]
+    folded = _folded_item_ids(content, threads_by_id)
+
+    def unfolded(*outcomes: FixOutcome) -> list[CommentItem]:
+        return [e for e in content.of(*outcomes) if e.id not in folded]
+
+    fixed = unfolded(FixOutcome.FIXED)
+    already_addressed = unfolded(FixOutcome.ALREADY_ADDRESSED)
+    dismissed = unfolded(FixOutcome.DISMISSED)
+    needs_human = [e for e in content.needs_a_person if e.id not in folded]
+    deferred = unfolded(FixOutcome.DEFERRED)
 
     rows: list[str] = []
     held: list[str] = []
@@ -3188,15 +3250,22 @@ def _render_raw_comment_sections(
     review_body_comments: list[dict],
     issue_comments: list[dict],
 ) -> list[str]:
-    """Render unseen comments as summary sections (fallback when items weren't decomposed)."""
+    """Render unseen comments as summary sections (fallback when items weren't decomposed).
+
+    Each kind gets its own section, so the two lists are filtered apart here
+    rather than read off `RoundContent.unseen`. What must not drift is the
+    predicate, not the partition: a comment this prints is one that made
+    `has_content` true, and a round whose only content was an unread comment
+    would otherwise publish a table with nothing under it.
+    """
     parts: list[str] = []
-    unseen_reviews = [c for c in review_body_comments if not c.get("seen")]
+    unseen_reviews = _unseen(review_body_comments)
     if unseen_reviews:
         parts.extend(["### Review-Level Comments", ""])
         parts.extend(_format_review_body_items(unseen_reviews))
         parts.append("")
 
-    unseen_issue = [c for c in issue_comments if not c.get("seen")]
+    unseen_issue = _unseen(issue_comments)
     if unseen_issue:
         parts.extend(["### Discussion Comments", ""])
         parts.extend(_format_issue_comment_items(unseen_issue))
@@ -3601,47 +3670,12 @@ def _publish_summary(
     )
 
 
-def _summary_has_content(
-    *,
-    fixed: list,
-    needs_human: list,
-    deferred: list,
-    dismissed: list,
-    already_addressed: list,
-    issue_comments: list[dict],
-    review_body_comments: list[dict],
-) -> bool:
-    """Whether a round has anything for the fix summary to say.
-
-    One owner for the question, because two callers have to agree on it:
-    `_post_fix_summary` renders nothing when the answer is no, and
-    `_summary_still_owed` must leave a summary owed exactly when a render would
-    produce one. Asked separately they drift, and a bucket one of them forgets
-    is a round whose table is printed and never published.
-
-    An unseen issue or review-body comment counts on its own. The summary
-    reports those too, so a round that settled no thread at all still has a
-    table to render when one arrived unread.
-    """
-    return bool(
-        fixed or needs_human or deferred or dismissed or already_addressed
-    ) or any(
-        not c.get("seen") for c in [*issue_comments, *review_body_comments]
-    )
-
-
 def _post_fix_summary(
-    fixed: list[CommentItem],
-    needs_human: list[CommentItem],
-    deferred: list[CommentItem],
+    content: RoundContent,
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
-    dismissed: list[CommentItem] | None = None,
-    already_addressed: list[CommentItem] | None = None,
-    issue_comments: list[dict] | None = None,
-    review_body_comments: list[dict] | None = None,
     has_comment_items: bool = False,
     head_sha: str = "",
     activity_at: str = "",
@@ -3649,24 +3683,11 @@ def _post_fix_summary(
     history: "AddressingHistory | None" = None,
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
-    dismissed = dismissed or []
-    already_addressed = already_addressed or []
-    issue_comments = issue_comments or []
-    review_body_comments = review_body_comments or []
-    if not _summary_has_content(
-        fixed=fixed, needs_human=needs_human, deferred=deferred,
-        dismissed=dismissed, already_addressed=already_addressed,
-        issue_comments=issue_comments,
-        review_body_comments=review_body_comments,
-    ):
+    if not content.has_content:
         return None
     url = _publish_summary(repo, pr_number, functools.partial(
         _build_summary_body,
-        fixed, needs_human, deferred, cp, repo, pr_number, threads_by_id,
-        dismissed=dismissed,
-        already_addressed=already_addressed,
-        issue_comments=issue_comments,
-        review_body_comments=review_body_comments,
+        content, cp, repo, pr_number, threads_by_id,
         has_comment_items=has_comment_items,
         head_sha=head_sha,
         wt_path=wt_path,
@@ -3875,41 +3896,29 @@ def _render_deferred_summary(
     # The rows are entries again before any of it: the reviewer column, the
     # permalink and the fold key are all read off an entry, and rebuilding them
     # here is what leaves every renderer downstream with one type to handle.
-    def bucket(*outcomes: FixOutcome) -> list[CommentItem]:
-        return [
-            CommentItem.from_outcome(o, fix.reviewers.get(o.id, ""))
-            for o in record.items if o.outcome in outcomes
-        ]
-
-    fixed = bucket(FixOutcome.FIXED)
-    needs_human = bucket(*_NEEDS_A_PERSON)
-    deferred = bucket(FixOutcome.DEFERRED)
-    dismissed = bucket(FixOutcome.DISMISSED)
-    already_addressed = bucket(FixOutcome.ALREADY_ADDRESSED)
+    by_outcome: dict[FixOutcome, list[CommentItem]] = {}
+    for o in record.items:
+        by_outcome.setdefault(o.outcome, []).append(
+            CommentItem.from_outcome(o, fix.reviewers.get(o.id, "")),
+        )
+    content = RoundContent(
+        by_outcome=by_outcome,
+        issue_comments=report.issue_comments,
+        review_body_comments=report.review_body_comments,
+    )
 
     cp = _reconciled_commit(record, status, wt_path)
     # One per render, shared with the table below: the warning asks the same
     # question of the same rows, and `git log -L` is a process per location.
     history = AddressingHistory(wt_path)
     _warn_unattributed_fixes(
-        fixed, cp, repo,
-        _folded_item_ids(
-            fixed=fixed,
-            needs_human=needs_human,
-            deferred=deferred,
-            dismissed=dismissed,
-            already_addressed=already_addressed,
-            threads_by_id=threads_by_id,
-        ),
+        content.of(FixOutcome.FIXED), cp, repo,
+        _folded_item_ids(content, threads_by_id),
         history, threads_by_id,
     )
     url = _publish_summary(repo, pr_number, functools.partial(
         _build_summary_body,
-        fixed, needs_human, deferred, cp, repo, pr_number, threads_by_id,
-        dismissed=dismissed,
-        already_addressed=already_addressed,
-        issue_comments=report.issue_comments,
-        review_body_comments=report.review_body_comments,
+        content, cp, repo, pr_number, threads_by_id,
         deferred_issue_id=fix.deferred_issue_id,
         deferred_issue_url=fix.deferred_issue_url,
         has_comment_items=fix.has_comment_items,
@@ -3926,16 +3935,7 @@ def _render_deferred_summary(
 
 
 def _summary_still_owed(
-    fixed: list,
-    needs_human: list,
-    deferred: list,
-    dismissed: list,
-    commit_status: str,
-    has_unaccounted: bool,
-    *,
-    already_addressed: list,
-    issue_comments: list[dict],
-    review_body_comments: list[dict],
+    content: RoundContent, commit_status: str, has_unaccounted: bool,
 ) -> bool:
     """Whether this round has a fix summary the PR has not been told about.
 
@@ -3943,7 +3943,7 @@ def _summary_still_owed(
     threads this pass could not account for all make the summary premature, so
     it has to be rendered again later whatever went out. Otherwise the round
     owes a summary exactly when it has one to render, which is
-    `_summary_has_content` — not the outcomes this pass produced. A round
+    `RoundContent.has_content` — not the outcomes this pass produced. A round
     settled entirely as `already_addressed`, by the agent or by `--settle`,
     renders a full table while producing neither a fix nor a dismissal, and a
     clause naming only those two buckets closes it out with the published
@@ -3960,30 +3960,19 @@ def _summary_still_owed(
     published comment from here would cost a second listing per run to change
     nothing but which of two harmless renders happens.
     """
-    if deferred or needs_human or has_unaccounted:
+    if content.of(FixOutcome.DEFERRED) or content.needs_a_person or has_unaccounted:
         return True
     if _commit_unpushed(commit_status):
         return True
-    return _summary_has_content(
-        fixed=fixed, needs_human=needs_human, deferred=deferred,
-        dismissed=dismissed, already_addressed=already_addressed,
-        issue_comments=issue_comments,
-        review_body_comments=review_body_comments,
-    )
+    return content.has_content
 
 
 def _post_or_defer_summary(
-    fixed: list[CommentItem],
-    needs_human: list[CommentItem],
-    deferred: list[CommentItem],
+    content: RoundContent,
     cp: CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
-    dismissed: list[CommentItem] | None = None,
-    already_addressed: list[CommentItem] | None = None,
-    issue_comments: list[dict] | None = None,
-    review_body_comments: list[dict] | None = None,
     has_comment_items: bool = False,
     head_sha: str = "",
     activity_at: str = "",
@@ -3998,28 +3987,17 @@ def _post_or_defer_summary(
     # question of the same rows, and `git log -L` is a process per location.
     history = AddressingHistory(wt_path)
     _warn_unattributed_fixes(
-        fixed, cp, repo,
-        _folded_item_ids(
-            fixed=fixed,
-            needs_human=needs_human,
-            deferred=deferred,
-            dismissed=dismissed or [],
-            already_addressed=already_addressed or [],
-            threads_by_id=threads_by_id,
-        ),
+        content.of(FixOutcome.FIXED), cp, repo,
+        _folded_item_ids(content, threads_by_id),
         history, threads_by_id,
     )
     if _commit_unpushed(cp.status):
         log.info("Deferred fix summary — commit not on the remote, will post after push lands")
         return None
 
-    if not needs_human and not deferred:
+    if not content.needs_a_person and not content.of(FixOutcome.DEFERRED):
         return _post_fix_summary(
-            fixed, needs_human, deferred, cp, repo, pr_number,
-            threads_by_id, dismissed=dismissed,
-            already_addressed=already_addressed,
-            issue_comments=issue_comments,
-            review_body_comments=review_body_comments,
+            content, cp, repo, pr_number, threads_by_id,
             has_comment_items=has_comment_items,
             head_sha=head_sha,
             activity_at=activity_at,
@@ -4476,37 +4454,19 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         all_deferred = tracking.both(FixOutcome.DEFERRED)
         # Two verdicts the agent reached and one triage did. They part company
         # in the state file, where the reason each carries is worth telling
-        # apart, and travel together to every reviewer-facing surface — see
-        # `_NEEDS_A_PERSON`.
+        # apart, and travel together to every reviewer-facing surface — which
+        # `RoundContent.needs_a_person` is the one place that folds them.
         agent_needs_human = tracking.both(FixOutcome.NEEDS_HUMAN)
         declined = tracking.both(FixOutcome.DECLINED)
-        open_to_a_person = self.needs_human + agent_needs_human + declined
 
         pr_body_pending = _deliver_pr_body(
             self.workdir, self.repo, self.report.pr_number,
         )
 
-        pending_deferred = _summary_still_owed(
-            all_fixed, open_to_a_person, all_deferred, self.dismissed,
-            cp.status, self.has_unaccounted,
-            already_addressed=self.already_addressed,
-            issue_comments=self.report.issue_comments,
-            review_body_comments=self.report.review_body_comments,
-        )
-
-        summary_url = _post_or_defer_summary(
-            all_fixed, open_to_a_person, all_deferred, cp,
-            self.repo, self.report.pr_number,
-            self.threads_by_id, dismissed=self.dismissed,
-            already_addressed=self.already_addressed,
-            issue_comments=self.report.issue_comments,
-            review_body_comments=self.report.review_body_comments,
-            has_comment_items=self.has_items,
-            head_sha=cp.sha or self.ctx.head_sha,
-            activity_at=_newest_reviewer_activity(self.report),
-            wt_path=self.workdir,
-        )
-
+        # Built once, ahead of both readers: the record keeps `DECLINED` apart
+        # from `NEEDS_HUMAN` and the summary shows them together, and taking
+        # that coarsening off `RoundContent` is what keeps the two spellings of
+        # it from parting company — see `RoundContent.needs_a_person`.
         by_outcome = {
             FixOutcome.FIXED: all_fixed,
             FixOutcome.DEFERRED: all_deferred,
@@ -4515,6 +4475,24 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             FixOutcome.DISMISSED: self.dismissed,
             FixOutcome.ALREADY_ADDRESSED: self.already_addressed,
         }
+        content = RoundContent(
+            by_outcome=by_outcome,
+            issue_comments=self.report.issue_comments,
+            review_body_comments=self.report.review_body_comments,
+        )
+
+        pending_deferred = _summary_still_owed(
+            content, cp.status, self.has_unaccounted,
+        )
+
+        summary_url = _post_or_defer_summary(
+            content, cp, self.repo, self.report.pr_number, self.threads_by_id,
+            has_comment_items=self.has_items,
+            head_sha=cp.sha or self.ctx.head_sha,
+            activity_at=_newest_reviewer_activity(self.report),
+            wt_path=self.workdir,
+        )
+
         _persist_fix_state(pr_comments_fix.FixSummary(
             fix=_build_fix_record(
                 by_outcome,
@@ -4538,12 +4516,16 @@ class CommentFixAdapter(fix_engine.FixAdapter):
             updated_at=pr_state.now_iso(),
         ), self.workdir, self.ctx, self.trail, resolved=resolved)
 
+        # Read off the content rather than rebuilt beside it: these five fields
+        # are the round's buckets flattened for the stdout JSON, whose shape
+        # `pr-comments` documents, so the content owns them and this projects
+        # them.
         self.result = CommentFixResult(
-            fixed=all_fixed,
-            needs_human=open_to_a_person,
-            dismissed=self.dismissed,
-            already_addressed=self.already_addressed,
-            deferred=all_deferred,
+            fixed=content.of(FixOutcome.FIXED),
+            needs_human=content.needs_a_person,
+            dismissed=content.of(FixOutcome.DISMISSED),
+            already_addressed=content.of(FixOutcome.ALREADY_ADDRESSED),
+            deferred=content.of(FixOutcome.DEFERRED),
             commit_sha=cp.sha,
             commit_status=cp.status,
             replies_posted=replies_posted,
@@ -4642,37 +4624,34 @@ def _run_comment_fix(
 
     if not all_fixable:
         # The same question the pass with fixes to make asks after committing,
-        # asked here through the same owner. A round with nothing to fix still
+        # asked here of the same value. A round with nothing to fix still
         # renders a table for what triage settled, and a rule of its own here
         # is how an `already_addressed`-only round came to print one and record
         # that it owed nothing.
         #
-        # Whether to try posting reads the same owner below, so the two answers
-        # cannot disagree. Naming the buckets there instead left the round that
-        # has only an unread issue comment owing a summary it never attempted —
-        # recoverable on the next `--finish`, but a cycle late.
-        early_deferred = _summary_still_owed(
-            [], all_needs_human, [], all_dismissed,
-            no_commit.status, has_unaccounted,
-            already_addressed=all_addressed,
+        # The buckets this round has no entries for are absent from the mapping
+        # rather than passed as empty lists to each reader in turn. Three
+        # readers spelling out their own emptiness is three chances to spell it
+        # differently, which is the shape the fault above had.
+        by_outcome = {
+            FixOutcome.NEEDS_HUMAN: all_needs_human,
+            FixOutcome.DISMISSED: all_dismissed,
+            FixOutcome.ALREADY_ADDRESSED: all_addressed,
+        }
+        content = RoundContent(
+            by_outcome=by_outcome,
             issue_comments=report.issue_comments,
             review_body_comments=report.review_body_comments,
+        )
+        early_deferred = _summary_still_owed(
+            content, no_commit.status, has_unaccounted,
         )
         if has_unaccounted:
             log.info("Deferred fix summary — unresolved threads not yet addressed")
             summary_url = None
-        elif _summary_has_content(
-            fixed=[], needs_human=all_needs_human, deferred=[],
-            dismissed=all_dismissed, already_addressed=all_addressed,
-            issue_comments=report.issue_comments,
-            review_body_comments=report.review_body_comments,
-        ):
+        elif content.has_content:
             summary_url = _post_or_defer_summary(
-                [], all_needs_human, [], no_commit, ctx.repo, report.pr_number,
-                threads_by_id, dismissed=all_dismissed,
-                already_addressed=all_addressed,
-                issue_comments=report.issue_comments,
-                review_body_comments=report.review_body_comments,
+                content, no_commit, ctx.repo, report.pr_number, threads_by_id,
                 has_comment_items=has_items,
                 head_sha=ctx.head_sha,
                 activity_at=_newest_reviewer_activity(report),
@@ -4682,11 +4661,6 @@ def _run_comment_fix(
             summary_url = None
         empty_result.summary_url = summary_url
         empty_result.summary_deferred = summary_url is None and early_deferred
-        by_outcome = {
-            FixOutcome.NEEDS_HUMAN: all_needs_human,
-            FixOutcome.DISMISSED: all_dismissed,
-            FixOutcome.ALREADY_ADDRESSED: all_addressed,
-        }
         _persist_fix_state(pr_comments_fix.FixSummary(
             fix=_build_fix_record(
                 by_outcome,

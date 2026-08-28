@@ -619,10 +619,15 @@ move to the copy that survived.
 
 Text that declares no findings of a given severity is left untouched, since
 there is no map to rewrite through and every ID in it belongs to some other
-document. The same reasoning applies while groups are still being merged: each
-group's IDs are shifted past the groups before it, references included, but a
-reference the group cannot resolve is left alone — another group may well
-declare it, and the merge-wide pass is the first place that can tell.
+document.
+
+While the groups are still being merged the scope is one group, and there every
+severity is answered for. A group numbers from ``[M1]`` independently of the
+others and sees only its own files, so a reference can only mean the finding its
+own group declared; one that names anything else becomes ``[removed]`` as the
+group's IDs are shifted past the groups before it. Deferring that to the
+merge-wide pass would misdirect it: group provenance is gone by then, and the
+pooled map answers with whichever group happens to have declared that number.
 
 Reconciliation is the cross-review half. A re-review ends with a `## Prior
 findings` ledger: one line per finding the previous review reported, saying

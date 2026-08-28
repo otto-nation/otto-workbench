@@ -34,11 +34,11 @@ from review_paths import (
 from review_document import ReviewDocument, ReviewHeader, open_counts, review_title
 from review_findings import (
     _MECHANICAL_NOTE,
-    annotate_prior_with_stable_ids,
     build_mechanical_body,
     post_process_findings,
 )
 from review_github import PRData, fetch_pr_data
+from review_merge import annotate_prior_with_stable_ids, record_prior_findings
 from review_preflight import (
     DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY,
     GROUP_TIER3, HOLISTIC_MIN_GROUPS,
@@ -46,7 +46,6 @@ from review_preflight import (
     fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
     group_files,
 )
-from review_prior import record_prior_findings
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD,
     Group, GroupSkip, PRContext, PRMetadata, ReviewJob, ReviewMeta, ReviewType,

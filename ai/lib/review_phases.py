@@ -47,7 +47,8 @@ from review_paths import (
     phase_output_path,
 )
 from review_document import ReviewDocument
-from review_findings import _validate_group_output, merge_reviews
+from review_findings import _validate_group_output
+from review_merge import merge_reviews
 from review_prompt import PromptTooLarge, build_prompt
 from review_retry import (
     GroupFailure,

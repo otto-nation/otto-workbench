@@ -482,43 +482,17 @@ Jaccard similarity, and filters out duplicates before posting.
 
 ### review_findings.py
 
-Finding renumbering, deduplication, and stable IDs.
+Skip annotations, diff hunks, and the mechanically merged review.
 
-What happens to findings *after* a document has been read: shared between
-review-orchestrate, which merges them, and review-post, which renumbers them
-for posting. Reading them off a review is `review_document`'s job, checking
-them against the tree is `review_verify`'s, and the `Finding` both sides hold
-is `review_types`' — a consumer that only holds findings needs none of them.
+What is left to do once a review's findings exist: read the fix pass's skip
+annotations off them, drop the sections that should not be posted, and assemble
+the summary and verdict for a review no synthesis agent wrote. Shared between
+review-orchestrate, which builds reviews, and review-post, which posts them.
 
-Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
-only meaningful inside the review that carries them. Agents write whatever IDs
-they like; merging, deduplication, and evidence verification all remove
-findings, and a final pass closes the gaps so each severity numbers from 1 with
-no holes.
-
-Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
-…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
-a reference, and references are rewritten through the same map, so a finding
-that cites another one still cites the same one afterwards.
-
-Brackets are what make a reference unambiguous. A bare ``S3`` is also an object
-store and a bare ``M1`` is also a laptop, so an unbracketed mention only counts
-when a citing phrase introduces it — ``see S3``, ``duplicate of S3``, ``blocked
-on S3``. Anything else is left as prose; ``_REFERENCE_CUES`` is the phrase list.
-
-A reference to a finding that is no longer in the review becomes ``[removed]``.
-Leaving the ID alone would be worse than useless: the number it names has since
-been reassigned to a different finding, and a reader who follows it lands
-somewhere unrelated with nothing to signal the misdirection. Deduplication is
-the exception — a duplicate is merged rather than dropped, so references to it
-move to the copy that survived.
-
-Text that declares no findings of a given severity is left untouched, since
-there is no map to rewrite through and every ID in it belongs to some other
-document. The same reasoning applies while groups are still being merged: each
-group's IDs are shifted past the groups before it, references included, but a
-reference the group cannot resolve is left alone — another group may well
-declare it, and the merge-wide pass is the first place that can tell.
+Reading findings off a document is `review_document`'s job, checking them
+against the tree is `review_verify`'s, what happens to them *across* reviews —
+merging, renumbering, carry-forward — is `review_merge`'s, and the `Finding`
+every side holds is `review_types`'.
 
 ### review_fix.py
 
@@ -563,17 +537,60 @@ Diff classification, renumbering for posting, comment formatting, and permalinks
 Classifies findings as inline/file-level/skipped based on the PR diff,
 renumbers them for posted order, and formats as GitHub review comments.
 
-### review_prior.py
+### review_merge.py
 
-What became of the findings the previous review left behind.
+What becomes of findings across the reviews that report them.
 
-A re-review ends with a `## Prior findings` ledger: one line per finding the
-previous review reported, saying whether the change fixed it, left it open, or
-declined it. The ledger is bookkeeping — it is stripped before the review is
-published — and it is written by the agent that has just spent its attention on
-the review itself, so it is the first thing to come up short.
+Three jobs over one vocabulary: merging the group reviews into a single
+document, giving each finding an identity that outlives the review carrying
+it, and reconciling what the previous review reported against what this one
+did. They live together because they read the same finding line — the path and
+description that decide whether two findings are duplicates are the pair that
+hashes to a stable ID, and a stable ID is how reconciliation recognises a
+finding a later review restates.
 
-Coming up short used to mean a line on stderr and nothing else. This module
+Reading a review is `review_document`'s job, checking findings against the
+tree is `review_verify`'s, and the `Finding` every side holds is
+`review_types`' — a consumer that only holds findings needs none of this.
+
+Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
+only meaningful inside the review that carries them. Agents write whatever IDs
+they like; merging, deduplication, and evidence verification all remove
+findings, and a final pass closes the gaps so each severity numbers from 1 with
+no holes.
+
+Only a *declaration* — a finding at the head of its own list item, ``- **[M1]**
+…`` or ``- [ ] **[M1]** …`` — gets a number. Everything else that names an ID is
+a reference, and references are rewritten through the same map, so a finding
+that cites another one still cites the same one afterwards.
+
+Brackets are what make a reference unambiguous. A bare ``S3`` is also an object
+store and a bare ``M1`` is also a laptop, so an unbracketed mention only counts
+when a citing phrase introduces it — ``see S3``, ``duplicate of S3``, ``blocked
+on S3``. Anything else is left as prose; ``_REFERENCE_CUES`` is the phrase list.
+
+A reference to a finding that is no longer in the review becomes ``[removed]``.
+Leaving the ID alone would be worse than useless: the number it names has since
+been reassigned to a different finding, and a reader who follows it lands
+somewhere unrelated with nothing to signal the misdirection. Deduplication is
+the exception — a duplicate is merged rather than dropped, so references to it
+move to the copy that survived.
+
+Text that declares no findings of a given severity is left untouched, since
+there is no map to rewrite through and every ID in it belongs to some other
+document. The same reasoning applies while groups are still being merged: each
+group's IDs are shifted past the groups before it, references included, but a
+reference the group cannot resolve is left alone — another group may well
+declare it, and the merge-wide pass is the first place that can tell.
+
+Reconciliation is the cross-review half. A re-review ends with a `## Prior
+findings` ledger: one line per finding the previous review reported, saying
+whether the change fixed it, left it open, or declined it. The ledger is
+bookkeeping — it is stripped before the review is published — and it is written
+by the agent that has just spent its attention on the review itself, so it is
+the first thing to come up short.
+
+Coming up short used to mean a line on stderr and nothing else. `reconcile`
 replaces that with a disposition for every prior finding and a record of them
 that outlives the run. A finding the ledger passes over is not automatically
 unaccounted for: whether the file it names is still in the tree, and whether

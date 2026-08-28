@@ -480,49 +480,15 @@ Deduplication of findings against already-posted PR comments.
 Fetches existing bot comments (inline and review-body), compares via
 Jaccard similarity, and filters out duplicates before posting.
 
-### review_disprove.py
-
-Disprove-it gate: adversarial falsification of review findings.
-
-After synthesis, each Must-fix and Should-fix finding is challenged.
-Findings that cannot survive scrutiny are dropped before posting.
-
-Every must-fix and should-fix finding quotes the code it is about. After the
-review is written, that quote is checked against the file: a finding whose
-evidence does not match what is on disk is dropped, and the survivors are
-renumbered. Roughly a quarter of reviews drop at least one finding this way.
-
-The synthesis agent wrote the ``## Summary`` and the ``## Verdict`` before that
-check ran, so both can describe findings that are no longer in the file.
-Regenerating them would cost the agent's qualitative assessment, which is the
-part of a review a reader cannot reconstruct from counts. So the prose stays and
-the review says what left it:
-
-* A blockquote at the end of ``## Summary`` names each dropped finding by
-  severity and path — not by ID, since renumbering has already reassigned those
-  — and why it was dropped.
-* ``## Verdict`` is rewritten when the surviving counts no longer support the
-  stated action. A drop can only remove findings, so this only ever lowers a
-  verdict: ``Request changes`` → ``Needs discussion`` → ``Approve``. A verdict
-  the remaining findings still support is left exactly as written, and
-  ``Disapprove`` is never touched — it means the overall approach is wrong,
-  which the counts do not derive, so no drop refutes it.
-
-Both are idempotent — a review that already carries the note is left alone, so
-re-running post-processing does not stack notes or re-lower a verdict.
-
-This lowering rule only ever revises a verdict a drop leaves unsupported. How a
-verdict is decided in the first place belongs to ``ReviewVerdict``.
-
 ### review_findings.py
 
-Finding renumbering, deduplication, verification, and stable IDs.
+Finding renumbering, deduplication, and stable IDs.
 
 What happens to findings *after* a document has been read: shared between
-review-orchestrate, which merges and verifies them, and review-post, which
-renumbers them for posting. Reading them off a review is `review_document`'s
-job, and the `Finding` both sides hold is `review_types`' — a consumer that
-only holds findings needs neither the parser nor this.
+review-orchestrate, which merges them, and review-post, which renumbers them
+for posting. Reading them off a review is `review_document`'s job, checking
+them against the tree is `review_verify`'s, and the `Finding` both sides hold
+is `review_types`' — a consumer that only holds findings needs none of them.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -650,6 +616,50 @@ Nothing in the review layer is imported here, and nothing should be: this is the
 layer everything else in it sits on. The heavier imports — `agent_types`,
 `serde`, `workbench_config` and `pr_state.now_iso` — are all below the review
 layer; `ReviewMeta` reaches for `serde` and `ReviewJob` for the rest.
+
+### review_verify.py
+
+What a review claims, checked against the tree it claims it about.
+
+Two gates run over a finished review and both only ever remove findings.
+
+Evidence verification is mechanical. Every must-fix and should-fix finding
+quotes the code it is about; that quote is checked against the file on disk,
+and a finding whose evidence is not there is dropped. Roughly a quarter of
+reviews lose at least one finding this way. The comparison is a substring test
+over two sides normalized the same way — comments stripped, indentation and
+blank lines collapsed — because a reviewer annotates a quote with lines the
+file does not carry, and stripping only the quote leaves the file holding text
+the quote no longer has, which makes a verbatim quote fail to match itself.
+
+The disprove gate is adversarial. Each must-fix and should-fix finding is
+challenged by an agent, and one that cannot survive the challenge is dropped
+before the review is posted. Reading that agent's verdicts back and applying
+them is here; whether the gate runs at all is `review_phases`'.
+
+The synthesis agent wrote the ``## Summary`` and the ``## Verdict`` before
+either gate ran, so both can describe findings that are no longer in the file.
+Regenerating them would cost the agent's qualitative assessment, which is the
+part of a review a reader cannot reconstruct from counts. So the prose stays
+and the review says what left it:
+
+* A blockquote at the end of ``## Summary`` names each dropped finding by
+  severity and path — not by ID, since renumbering has already reassigned
+  those — and why it was dropped.
+* ``## Verdict`` is rewritten when the surviving counts no longer support the
+  stated action. A drop can only remove findings, so this only ever lowers a
+  verdict: ``Request changes`` → ``Needs discussion`` → ``Approve``. A verdict
+  the remaining findings still support is left exactly as written, and
+  ``Disapprove`` is never touched — it means the overall approach is wrong,
+  which the counts do not derive, so no drop refutes it.
+
+Both are idempotent — a review that already carries the note is left alone, so
+re-running post-processing does not stack notes or re-lower a verdict.
+
+Which verdict a tally supports in the first place is `review_document`'s, and
+so is the finding-line grammar read here: `_VERIFY_FINDING_RE` is a stricter
+shape over the same location vocabulary, and the two have to agree or a finding
+parses one way and verifies against the other.
 
 ## Publishing
 

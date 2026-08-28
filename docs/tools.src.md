@@ -79,6 +79,20 @@ wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet]
 | `--quiet` | No output (for hooks) | — |
 | `-h`, `--help` | Show help | — |
 
+A merged worktree holding uncommitted changes is reported rather than removed, and the
+question of what counts as a change is asked of the default branch rather than of the
+worktree's own index. The branch is already in the default branch, so the default
+branch's ignore rules are the ones that decide whether a file is worth preserving —
+and a worktree cut before a rule landed does not carry it, which is the only reason git
+reports the file at all. A file whose lines merely moved is forgiven on the same
+grounds: a reordering of a branch that already landed is residue, not work.
+
+Nothing else is forgiven. A file the default branch does not ignore, one that gained or
+lost a line, a staged change, a rename, and a deletion all still hold the worktree back
+and are named in the summary. Every path the check forgives is written to
+`~/.local/state/workbench/logs/wt-cleanup.log` with its reason, so a removal this
+widens can be audited afterwards.
+
 ### `wt-init`
 
 Convert a regular git repo to a bare repo with worktrees.

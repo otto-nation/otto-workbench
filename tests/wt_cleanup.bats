@@ -354,6 +354,229 @@ JSON
   [[ "$output" == *"feat/squash-dirty"* ]]
 }
 
+# ── Disposable residue ──────────────────────────────────────────────────────
+#
+# A merged worktree's residue is judged against the default branch, because the
+# branch is already in it: a file the default branch ignores is a file the
+# project decided weeks ago was not worth keeping, and a worktree cut before the
+# rule landed reports it only because its own copy of the rules is stale. The
+# flags `wt list` carries cannot see either — they answer whether the worktree's
+# own index calls a file dirty, which for a merged worktree is the wrong
+# question.
+
+# _make_worktrees — a repo checked out at `main` with a `feature` worktree of the
+# same commit, in MAIN_WT and FEAT_WT. The feature worktree's HEAD is the commit
+# main was at when it was cut, which is what lets a test land an ignore rule on
+# main that the worktree does not carry.
+_make_worktrees() {
+  MAIN_WT="$TMPDIR/repo"
+  FEAT_WT="$TMPDIR/feature"
+  mkdir -p "$MAIN_WT"
+  git -C "$MAIN_WT" init -q --initial-branch=main
+  git -C "$MAIN_WT" config user.email test@example.com
+  git -C "$MAIN_WT" config user.name Test
+  printf 'alpha\nbeta\ngamma\n' > "$MAIN_WT/list.txt"
+  git -C "$MAIN_WT" add -A
+  git -C "$MAIN_WT" commit -qm init
+  git -C "$MAIN_WT" worktree add -q -b feature "$FEAT_WT"
+}
+
+# _ignore_on_main PATTERN — commit PATTERN to main's .gitignore, after the
+# feature worktree was cut so the worktree does not have it.
+_ignore_on_main() {
+  printf '%s\n' "$1" >> "$MAIN_WT/.gitignore"
+  git -C "$MAIN_WT" add .gitignore
+  git -C "$MAIN_WT" commit -qm "ignore $1"
+}
+
+# _write_merged_pair FLAGS — the two-worktree list the tests above write by
+# hand: main, plus a merged `feature` carrying the working_tree FLAGS.
+_write_merged_pair() {
+  _write_worktrees <<JSON
+[
+  {"branch":"main","path":"$MAIN_WT","is_main":true,"is_current":false,"main_state":"clean","symbols":"","commit":{"timestamp":0}},
+  {"branch":"feature","path":"$FEAT_WT","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0},"working_tree":$1}
+]
+JSON
+}
+
+@test "untracked file the default branch ignores does not hold a worktree back" {
+  _make_worktrees
+  _ignore_on_main '*.tar.gz'
+  printf 'artifact\n' > "$FEAT_WT/build.tar.gz"
+  _write_merged_pair '{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}'
+
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feature"* ]]
+  [[ "$output" != *"uncommitted"* ]]
+}
+
+@test "an untracked directory the default branch ignores is forgiven too" {
+  # The whole directory is untracked, which git would otherwise collapse into
+  # one entry naming the directory — a path the ignore rule under it does not
+  # cover, and one the check would refuse for the wrong reason.
+  _make_worktrees
+  _ignore_on_main 'docs/scratch/'
+  mkdir -p "$FEAT_WT/docs/scratch"
+  printf 'notes\n' > "$FEAT_WT/docs/scratch/plan.md"
+  _write_merged_pair '{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}'
+
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feature"* ]]
+}
+
+@test "untracked file the default branch does not ignore still holds it back" {
+  _make_worktrees
+  printf 'real work\n' > "$FEAT_WT/notes.md"
+  _write_merged_pair '{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}'
+
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [ ! -f "$WT_REMOVE_LOG" ]
+  [[ "$output" == *"Merged worktrees with uncommitted changes"* ]]
+  [[ "$output" == *"untracked"* ]]
+}
+
+@test "a file whose lines only moved does not hold a worktree back" {
+  _make_worktrees
+  printf 'gamma\nalpha\nbeta\n' > "$FEAT_WT/list.txt"
+  _write_merged_pair '{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}'
+
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feature"* ]]
+}
+
+@test "a file that gained a line still holds a worktree back" {
+  _make_worktrees
+  printf 'gamma\nalpha\nbeta\ndelta\n' > "$FEAT_WT/list.txt"
+  _write_merged_pair '{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}'
+
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [ ! -f "$WT_REMOVE_LOG" ]
+  [[ "$output" == *"modified"* ]]
+}
+
+@test "the summary names only the changes that survived the check" {
+  # The flags would have said "modified, untracked" for this worktree. Reporting
+  # a kind that was forgiven is what makes the warning stop being read.
+  _make_worktrees
+  _ignore_on_main '*.tar.gz'
+  printf 'artifact\n' > "$FEAT_WT/build.tar.gz"
+  printf 'alpha\nbeta\ngamma\ndelta\n' > "$FEAT_WT/list.txt"
+  _write_merged_pair '{"staged":false,"modified":true,"untracked":true,"renamed":false,"deleted":false}'
+
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"modified"* ]]
+  [[ "$output" != *"untracked"* ]]
+}
+
+@test "a deleted file is never forgiven" {
+  _make_worktrees
+  rm "$FEAT_WT/list.txt"
+  _write_merged_pair '{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":true}'
+
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [ ! -f "$WT_REMOVE_LOG" ]
+  [[ "$output" == *"deleted"* ]]
+}
+
+@test "every path forgiven is named in the cleanup log" {
+  _make_worktrees
+  _ignore_on_main '*.tar.gz'
+  printf 'artifact\n' > "$FEAT_WT/build.tar.gz"
+  _write_merged_pair '{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}'
+
+  _run_cleanup --quiet --no-grace-period
+  [ "$status" -eq 0 ]
+  local log_file="$TMPDIR/logs/wt-cleanup.log"
+  grep -q "DISPOSABLE-PATH branch=feature path=build.tar.gz reason=ignored-on-" "$log_file"
+  grep -q "DISPOSABLE-RESIDUE branch=feature" "$log_file"
+}
+
+@test "a reordered file is named in the cleanup log with its reason" {
+  _make_worktrees
+  printf 'gamma\nalpha\nbeta\n' > "$FEAT_WT/list.txt"
+  _write_merged_pair '{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}'
+
+  _run_cleanup --quiet --no-grace-period
+  [ "$status" -eq 0 ]
+  grep -q "DISPOSABLE-PATH branch=feature path=list.txt reason=reordered" \
+    "$TMPDIR/logs/wt-cleanup.log"
+}
+
+@test "an unreadable work-tree path leaves the flags in charge" {
+  # Every other test in this file names no path at all, which is this case: the
+  # check cannot open the work tree, so nothing is forgiven and the worktree is
+  # reported exactly as it was before.
+  _write_worktrees <<JSON
+[{"branch":"feat/gone","path":"$TMPDIR/no-such-worktree","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0},"working_tree":{"staged":false,"modified":true,"untracked":false,"renamed":false,"deleted":false}}]
+JSON
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [ ! -f "$WT_REMOVE_LOG" ]
+  [[ "$output" == *"feat/gone"* ]]
+  [[ "$output" == *"modified"* ]]
+}
+
+@test "a git status failure leaves a merged worktree's residue in the flags' charge" {
+  # A transient failure (e.g. index.lock held by another session) must not read
+  # as "nothing here is worth keeping" — it must fall back to the flags `wt
+  # list` already carries, the same as an unreadable path.
+  _make_worktrees
+  printf 'real work\n' > "$FEAT_WT/notes.md"
+  _write_merged_pair '{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}'
+
+  local real_git fake_bin
+  real_git="$(command -v git)"
+  fake_bin="$TMPDIR/fake-git-bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/git" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "-C" && "\$2" == "$FEAT_WT" && "\$3" == "status" ]]; then
+  exit 1
+fi
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$fake_bin/git"
+
+  local old_path="$PATH"
+  export PATH="$fake_bin:$PATH"
+  _run_cleanup --no-grace-period
+  export PATH="$old_path"
+
+  [ "$status" -eq 0 ]
+  [ ! -f "$WT_REMOVE_LOG" ]
+  [[ "$output" == *"Merged worktrees with uncommitted changes"* ]]
+  [[ "$output" == *"untracked"* ]]
+}
+
+@test "an unmerged worktree with only disposable residue is removed by age" {
+  # Disposable residue is judged the same way regardless of merge state: an
+  # ignored file is not work to lose whether or not the branch has landed.
+  _make_worktrees
+  _ignore_on_main '*.tar.gz'
+  printf 'artifact\n' > "$FEAT_WT/build.tar.gz"
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+  _write_worktrees <<JSON
+[
+  {"branch":"main","path":"$MAIN_WT","is_main":true,"is_current":false,"main_state":"clean","symbols":"","commit":{"timestamp":0}},
+  {"branch":"feature","path":"$FEAT_WT","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":$old_timestamp},"working_tree":{"staged":false,"modified":false,"untracked":true,"renamed":false,"deleted":false}}
+]
+JSON
+
+  _run_cleanup --age 30 --no-grace-period
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removing: feature"* ]]
+  [[ "$output" == *"inactive"* ]]
+}
+
 # ── Grace period ────────────────────────────────────────────────────────────
 
 @test "recently created worktree is skipped by grace period" {

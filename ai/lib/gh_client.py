@@ -288,6 +288,7 @@ def _api_argv(
     fields: dict[str, str] | None,
     raw_fields: dict[str, str] | None,
     body_on_stdin: bool = False,
+    allow_escape_sequences: bool = False,
 ) -> tuple[str, ...]:
     """The full `gh api` argv, in the order gh documents.
 
@@ -295,12 +296,20 @@ def _api_argv(
     it, so a caller that passes a body and forgets the flag sends an empty
     request and reads GitHub's complaint about the missing field as a bug in
     the payload it built.
+
+    *allow_escape_sequences* adds `--allow-escape-sequences`. Without it gh
+    refuses to print a response containing terminal escapes and exits 1, which
+    a caller reading only stdout sees as an empty body rather than as a
+    refusal — the shape a log endpoint hits whenever the job coloured its
+    output.
     """
     argv = ["api", endpoint]
     if method != "GET":
         argv += ["--method", method]
     if body_on_stdin:
         argv += ["--input", "-"]
+    if allow_escape_sequences:
+        argv.append("--allow-escape-sequences")
     if paginate:
         argv.append("--paginate")
     if slurp:
@@ -328,6 +337,7 @@ def api(
     raw_fields: dict[str, str] | None = None,
     input_text: str | None = None,
     retry: bool = True,
+    allow_escape_sequences: bool = False,
 ) -> CmdResult:
     """One `gh api` call, retried when waiting is the remedy.
 
@@ -335,6 +345,8 @@ def api(
     are passed as `-f` and stay strings. *input_text* is fed to gh on stdin as
     the whole request body, which is how a JSON document too nested for a field
     list is sent — the callers that used to write it to a temporary file first.
+    *allow_escape_sequences* lets a response carrying terminal escapes through
+    instead of gh refusing to print it, which only a log endpoint needs.
 
     Retry is on by default because rate limiting is a property of the API
     rather than of any one caller. Pass ``retry=False`` where a second attempt
@@ -343,6 +355,7 @@ def api(
     argv = _api_argv(
         endpoint, method, jq, paginate, slurp, headers, fields, raw_fields,
         body_on_stdin=input_text is not None,
+        allow_escape_sequences=allow_escape_sequences,
     )
     call = functools.partial(run, *argv, input_text=input_text)
     return _with_retries(call, f"{method} {endpoint}") if retry else call()

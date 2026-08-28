@@ -15,12 +15,14 @@ Usage:
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
@@ -101,8 +103,16 @@ def _fetch_annotations(repo: str, job_id: int) -> list[dict]:
 
 
 def _fetch_job_logs(repo: str, job_id: int) -> str:
-    """Fetch logs for a single job via API. Smaller and faster than per-run."""
-    r = gh_client.api(f"repos/{repo}/actions/jobs/{job_id}/logs")
+    """Fetch logs for a single job via API. Smaller and faster than per-run.
+
+    Escape sequences are allowed through because a job that coloured its output
+    has them on every line, and gh refuses the whole response over them — which
+    reads here as a job with no logs and silently demotes every such job to the
+    per-run fallback. `ci_failures` strips them.
+    """
+    r = gh_client.api(
+        f"repos/{repo}/actions/jobs/{job_id}/logs", allow_escape_sequences=True,
+    )
     return r.stdout if r.ok else ""
 
 
@@ -113,15 +123,28 @@ def _fetch_failed_logs(repo: str, run_id: int) -> str:
 
 
 def _build_failure_id(annotation: dict, job_name: str) -> str:
-    """Build a deterministic failure item ID from annotation data."""
+    """Build a deterministic failure item ID from annotation data.
+
+    A title is preferred over the message hash for a pathless annotation
+    because Python randomises string hashing per process: an id built that way
+    never matches the same failure in the next run, so progression reports it
+    as new every time.
+    """
     path = annotation.get("path", "")
     line = annotation.get("start_line", 0)
     title = annotation.get("title", "")
     if path and line:
         slug = title.split(":")[0].strip().lower() if title else "err"
         return f"{slug}-{path}-{line}"
+    if title:
+        return f"{job_name}-{_slugify(title)}"
     message = annotation.get("message", "")
     return f"{job_name}-{hash(message) & 0xFFFFFFFF:08x}"
+
+
+def _slugify(text: str) -> str:
+    """Lowercase, hyphen-joined, alphanumerics only — stable across processes."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 def _annotations_to_items(
@@ -194,20 +217,74 @@ def _annotations_uninformative(annotations: list[dict]) -> bool:
     return True
 
 
-def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> tuple[list[dict], list[str], ci.FailureKind]:
-    """Fetch job logs and extract failure context as synthetic annotations."""
+@dataclass(frozen=True)
+class _LogFallback:
+    """What a job's logs yielded once its annotations turned out to be too thin.
+
+    `structured` is the distinction the caller acts on: one annotation per
+    failure, as the log itself delimited them, is worth more than whatever
+    GitHub attached to the failed step — which for a generic step failure is
+    the workflow file and a line number in the log. An unstructured extraction
+    is one window over the whole run and only good for context, so it leaves
+    the original annotations in place.
+    """
+    annotations: list[dict]
+    context: str
+    kind: ci.FailureKind
+    structured: bool
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.annotations)
+
+
+def _tap_annotation(failure: ci.TestFailure) -> dict:
+    """One TAP failure in the annotation shape `_annotations_to_items` reads.
+
+    A located failure withholds the title so its id stays `err-<path>-<line>`;
+    the test name is the first line of the message either way. An unlocated one
+    passes the name, which is the only stable thing left to key it on.
+    """
+    if not failure.location:
+        return {"message": failure.context, "path": "", "start_line": 0, "title": failure.name}
+    return {
+        "message": failure.context,
+        "path": failure.location.file,
+        "start_line": failure.location.line,
+        "title": "",
+    }
+
+
+def _log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> _LogFallback:
+    """Fetch job logs and extract failure context as synthetic annotations.
+
+    A TAP log becomes one annotation per failing test rather than one window
+    over the whole run, so a suite with several failures surfaces as several
+    items and each carries the location bats printed under it.
+    """
     job_id = job.get("databaseId", 0)
     log_text = _fetch_job_logs(repo, job_id) if job_id else ""
     if not log_text:
         source_run_id = job.get("_source_run_id", run_data["databaseId"])
         log_text = _fetch_failed_logs(repo, source_run_id)
     if not log_text:
-        return [], [], kind
+        return _LogFallback([], "", kind, structured=False)
+
+    job_name = job.get("name", "unknown")
+    tap = ci.extract_tap_failures(log_text)
+    if tap:
+        context = "\n\n".join(f.context for f in tap)
+        return _LogFallback(
+            [_tap_annotation(f) for f in tap], context,
+            ci.classify_job(job_name, [context]),
+            structured=True,
+        )
+
     context = ci.extract_failure_context(log_text, kind)
     if not context:
-        return [], [], kind
+        return _LogFallback([], "", kind, structured=False)
     annotations = [{"message": context, "path": "", "start_line": 0, "title": ""}]
-    return annotations, [context], ci.classify_job(job.get("name", "unknown"), [context])
+    return _LogFallback(annotations, context, ci.classify_job(job_name, [context]), structured=False)
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -314,11 +391,15 @@ def _fetch_job_failure(repo: str, job: dict, run_data: dict) -> _JobFailure | No
 
     # Annotations absent or uninformative — try logs, then artifact
     have_original = bool(annotations)
-    log_ann, log_texts, log_kind = _log_fallback(repo, job, run_data, kind)
-    ctx = log_texts[0] if log_ann else _fetch_test_artifact(repo, source_run_id, job_name)
+    fallback = _log_fallback(repo, job, run_data, kind)
+    ctx = fallback.context if fallback.ok else _fetch_test_artifact(repo, source_run_id, job_name)
 
+    # A location the log reported beats the one GitHub attached to the failed
+    # step, which for a generic step failure anchors on the workflow file.
+    if fallback.structured:
+        return _make_result(job_name, fallback.kind, fallback.annotations, source_run_id, failed_step)
     if ctx and have_original:
-        return _make_result(job_name, log_kind if log_ann else kind, annotations, source_run_id, failed_step, context=ctx)
+        return _make_result(job_name, fallback.kind if fallback.ok else kind, annotations, source_run_id, failed_step, context=ctx)
     if ctx:
         annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
         kind = ci.classify_job(job_name, [ctx])

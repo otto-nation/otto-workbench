@@ -120,6 +120,7 @@ def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*")
+_JOB_STEP_PREFIX_RE = re.compile(r"^[^\t]*\t[^\t]*\t(?=\d{4}-\d{2}-\d{2}T)")
 
 _MAX_HEADLINE_LEN = 200
 
@@ -139,6 +140,7 @@ class LogMarker:
 
 
 LOG_MARKERS: list[LogMarker] = [
+    LogMarker("tap-fail", re.compile(r"^not ok \d+"), FailureKind.TEST, before=0, after=10),
     LogMarker("go-test-fail", re.compile(r"--- FAIL:"), FailureKind.TEST),
     LogMarker("go-pkg-fail", re.compile(r"^FAIL\s+"), FailureKind.TEST),
     LogMarker("go-testsum-fail", re.compile(r"=== FAIL"), FailureKind.TEST),
@@ -187,10 +189,77 @@ def extract_headline(context: str | None, max_len: int = _MAX_HEADLINE_LEN) -> s
 
 
 def _strip_timestamps(text: str) -> str:
-    """Remove GitHub Actions timestamp prefixes and ANSI escapes from log lines."""
+    """Remove GitHub Actions line prefixes and ANSI escapes from log lines.
+
+    `gh run view --log-failed` prefixes every line with `<job>\\t<step>\\t`
+    ahead of the timestamp the jobs API emits alone. Both forms reach the
+    extractors here, and every marker below anchors on `^`, so the prefixed
+    form matches none of them unless it is normalised to the other. The
+    lookahead means only a prefix followed by a timestamp is taken — a log line
+    that merely contains tabs, such as Go's `FAIL\\tpkg\\t0.1s`, is left alone.
+    """
     return "\n".join(
-        _ANSI_RE.sub("", _TIMESTAMP_RE.sub("", line)) for line in text.splitlines()
+        _ANSI_RE.sub("", _TIMESTAMP_RE.sub("", _JOB_STEP_PREFIX_RE.sub("", line)))
+        for line in text.splitlines()
     )
+
+
+# ── TAP ────────────────────────────────────────────────────────────────────
+
+_TAP_FAIL_RE = re.compile(r"^not ok \d+ (.+)$")
+_TAP_DIAGNOSTIC_RE = re.compile(r"^#")
+_TAP_TEST_FILE_RE = re.compile(r"\bin test file (.+?), line (\d+)")
+_TAP_TIMING_RE = re.compile(r" in \d+m?s$")
+
+
+@dataclass(frozen=True)
+class SourceLocation:
+    """Where in the source a failure happened, as the log itself reported it."""
+    file: str
+    line: int
+
+
+@dataclass(frozen=True)
+class TestFailure:
+    """One failing test: its name, where it failed, and the log block saying so."""
+    name: str
+    location: SourceLocation | None
+    context: str
+
+
+def _tap_failures(lines: list[str]) -> list[TestFailure]:
+    """Every `not ok` in already-cleaned TAP output, with its diagnostic block.
+
+    A failure's block is the `not ok` line plus the `#` continuation lines
+    under it, which is where bats writes the location and the assertion that
+    failed. The location is the *last* `in test file` in the block: a failure
+    inside a helper reports the helper first and the test file second, and it
+    is the test file the reader has to open.
+    """
+    failures: list[TestFailure] = []
+    for i, line in enumerate(lines):
+        match = _TAP_FAIL_RE.match(line)
+        if not match:
+            continue
+        end = i + 1
+        while end < len(lines) and _TAP_DIAGNOSTIC_RE.match(lines[end]):
+            end += 1
+        located = _TAP_TEST_FILE_RE.findall("\n".join(lines[i + 1:end]))
+        failures.append(TestFailure(
+            name=_TAP_TIMING_RE.sub("", match.group(1)),
+            location=SourceLocation(located[-1][0], int(located[-1][1])) if located else None,
+            context="\n".join(lines[i:end]),
+        ))
+    return failures
+
+
+def extract_tap_failures(log_text: str) -> tuple[TestFailure, ...]:
+    """The failing tests a TAP log reports, in the order it reported them.
+
+    Empty for a log in any other format, which is what lets a caller ask every
+    test job and act only on the ones that answer.
+    """
+    return tuple(_tap_failures(_strip_timestamps(log_text).splitlines()))
 
 
 def extract_failure_context(log_text: str, kind: FailureKind) -> str:
@@ -220,7 +289,17 @@ def extract_failure_context(log_text: str, kind: FailureKind) -> str:
 
 
 def _extract_test_context(lines: list[str]) -> str:
-    """Extract test failure output — captures from first failure marker to summary."""
+    """Extract test failure output — captures from first failure marker to summary.
+
+    TAP is handled first and per failure. The window below spans the first
+    marker to the last, so a suite whose failures are thousands of lines apart
+    truncates at `_MAX_CONTEXT_CHARS` and loses every failure after the first —
+    joining the blocks instead keeps all of them.
+    """
+    tap = _tap_failures(lines)
+    if tap:
+        return "\n\n".join(failure.context for failure in tap)
+
     fail_indices = []
     for i, line in enumerate(lines):
         if re.match(r"--- FAIL:", line) or re.match(r"FAIL\s+", line) or re.match(r"=== FAIL", line):

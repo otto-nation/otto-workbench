@@ -327,6 +327,19 @@ def test_a_body_on_stdin_names_itself_in_the_argv():
     assert argv == ("api", "repos/o/r/pulls/1/reviews", "--method", "POST", "--input", "-")
 
 
+def test_escape_sequences_are_refused_unless_asked_for():
+    """gh exits 1 on a response carrying terminal escapes rather than printing it."""
+    plain = gh_client._api_argv(
+        "repos/o/r/actions/jobs/1/logs", "GET", "", False, False, None, None, None,
+    )
+    allowed = gh_client._api_argv(
+        "repos/o/r/actions/jobs/1/logs", "GET", "", False, False, None, None, None,
+        allow_escape_sequences=True,
+    )
+    assert "--allow-escape-sequences" not in plain
+    assert "--allow-escape-sequences" in allowed
+
+
 # ── Request bodies ──────────────────────────────────────────────────────────
 
 

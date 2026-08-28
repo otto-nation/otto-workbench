@@ -36,6 +36,7 @@ from review_dedup import dedup_against_posted  # noqa: E402
 from review_document import ReviewDocument  # noqa: E402
 from review_paths import read_review_meta  # noqa: E402
 from review_findings import parse_diff_hunks  # noqa: E402
+from text import plural  # noqa: E402
 from review_types import Finding, ReviewMeta, SEVERITIES  # noqa: E402
 from review_format import (  # noqa: E402
     CLASS_FILE_LEVEL, CLASS_INLINE,
@@ -103,10 +104,27 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> None:
 
     sections = ReviewSections.from_text(text)
 
-    all_findings = ReviewDocument.parse(text).findings
-    log.info(f"Parsed {len(all_findings)} findings from review file")
-    trail.info("parse_findings", f"parsed {len(all_findings)} findings",
-               data={"total": len(all_findings), "review_sha": review_sha})
+    doc = ReviewDocument.parse(text)
+    declared = doc.findings
+    log.info(f"Parsed {len(declared)} findings from review file")
+    trail.info("parse_findings", f"parsed {len(declared)} findings",
+               data={"total": len(declared), "review_sha": review_sha})
+
+    # A finding whose box the fix pass ticked is resolved, and posting it asks a
+    # reviewer to look at work that is already done. Dropped outright rather than
+    # stated in the body, which is where a *declined* finding goes: a decline is a
+    # judgement someone may still want to read, a fix is nothing left to say.
+    # `open_findings` is the document's own reading of which is which.
+    all_findings = doc.open_findings
+    fixed = len(declared) - len(all_findings)
+    if fixed:
+        log.info(f"Excluded {fixed} finding{plural(fixed)} the fix pass already resolved")
+    trail.decision(
+        "filter_fixed",
+        f"kept {len(all_findings)} of {len(declared)} findings",
+        reason="a checked finding is resolved and has nothing to post",
+        data={"kept": len(all_findings), "excluded": fixed},
+    )
 
     findings = [f for f in all_findings if f.severity in severity_filter]
     filtered = len(all_findings) - len(findings)

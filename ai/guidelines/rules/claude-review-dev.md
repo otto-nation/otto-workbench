@@ -77,6 +77,17 @@ turns it would have bought. The fix template treats a `ceiling:` or
 `ceiling-permanent:` marked tradeoff as grounds for the agent's own `declined`
 box rather than a defect to fix.
 
+Posting reads the same two marks and answers them differently, because they are
+not the same case. A ticked box is work that is done, so `review-post` drops the
+finding before it classifies anything — `ReviewDocument.open_findings` is the
+reading it takes, and a review whose findings are all ticked posts nothing at
+all. A decline is a judgement rather than work, so it is stated: it is skipped
+by `classify_findings()` whatever the diff says about its line, and rendered by
+`format_body_text()` under its own heading in the review body, apart from the
+findings the review is asking for. The ordering is what makes either reachable —
+posting normally precedes any fix pass — so both marks arrive only on a review
+posted after one, which is the run these two answers exist for.
+
 `*(skipped — reason)*` is the second annotation vocabulary, written by the fix
 pass rather than by a review, and `match_skip()` is its single owner. It is
 what `review_fix._apply_outcomes` writes back for a `needs a person` outcome,

@@ -22,6 +22,11 @@ CLASS_INLINE = "inline"
 CLASS_FILE_LEVEL = "file_level"
 CLASS_SKIPPED = "skipped"
 
+# Why a declined finding is held out of the actionable comments. Read by
+# `format_body_text` to gather them into their own block, so the classification
+# and the rendering agree on which findings are the adjudicated ones.
+SKIP_DECLINED = "declined"
+
 DIFF_SIDE_RIGHT = "RIGHT"
 
 
@@ -56,11 +61,26 @@ def _hunk_end(line: int, hunks: list[tuple[int, int]]) -> int | None:
 def classify_findings(
     findings: list[Finding], diff_text: str,
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
-    """Classify findings as inline, file_level, or skipped."""
+    """Classify findings as inline, file_level, or skipped.
+
+    A declined finding is skipped whatever the diff says about it. It was
+    considered and rejected, so posting it as an inline or file-level comment
+    asks for work the review already decided against — but it is still a
+    judgement worth stating, which is why it is skipped rather than dropped:
+    `format_body_text` gathers the skipped declines into their own block. This
+    is checked first so a retry through `_reclassify_and_retry` cannot promote
+    one back to inline on a diff that happens to cover its line.
+    """
     hunks = parse_diff_hunks(diff_text)
     inline, file_level, skipped = [], [], []
 
     for f in findings:
+        if f.declined:
+            f.classification = CLASS_SKIPPED
+            f.skip_reason = SKIP_DECLINED
+            skipped.append(f)
+            continue
+
         if not f.path:
             f.classification = CLASS_FILE_LEVEL
             f.skip_reason = "general finding (no file reference)"
@@ -225,6 +245,18 @@ def _append_body_only_findings(
             _append_details_findings(parts, sev, by_file[sev])
 
 
+def _append_declined_findings(
+    parts: list[str], findings: list[Finding],
+) -> None:
+    """Append the findings the review declined, stated rather than asked for."""
+    parts.append("")
+    parts.append("**Declined — considered and not carried forward:**")
+    parts.append("")
+    for f in sorted(findings, key=lambda f: (not f.path, f.path or "", f.line or 0)):
+        parts.append(_format_finding_line(f))
+    parts.append("")
+
+
 def _render_before_findings(
     parts: list[str],
     before: list[tuple[SectionConfig, str]],
@@ -263,7 +295,14 @@ def format_body_text(
     severity_filter: set[str],
     sections: ReviewSections | None = None,
 ) -> str:
-    """Format the review body text with body/skipped findings."""
+    """Format the review body text with body/skipped findings.
+
+    Findings the review declined are stated in a block of their own rather than
+    listed among the ones it is asking for. Partitioned off `Finding.declined`
+    rather than taken as an argument, so every caller renders them the same way
+    without having to carry the split — `classify_findings` is what put them in
+    the body set to begin with.
+    """
     if sections is None:
         sections = ReviewSections()
 
@@ -289,10 +328,13 @@ def format_body_text(
         _render_after_findings(parts, after)
         return "\n".join(parts).rstrip("\n")
 
+    declined = [f for f in body_findings if f.declined]
     by_sev: dict[str, list[Finding]] = {}
     by_file: dict[str, list[Finding]] = {}
 
     for f in body_findings:
+        if f.declined:
+            continue
         config = severity_by_key(f.severity)
         if config.body_group == "by_file":
             by_file.setdefault(f.severity, []).append(f)
@@ -304,6 +346,9 @@ def format_body_text(
 
     if by_file:
         _append_body_only_findings(parts, by_file)
+
+    if declined:
+        _append_declined_findings(parts, declined)
 
     _render_after_findings(parts, after)
 

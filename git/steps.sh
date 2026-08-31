@@ -640,9 +640,14 @@ step_worktrunk_pre_switch_fetch() {
   fi
 
   if grep -q '^\[pre-switch\]' "$config_file"; then
-    # Append under existing [pre-switch] section
-    sed_i '/^\[pre-switch\]/a\
-'"$hook_cmd"'' "$config_file"
+    # Append under existing [pre-switch] section. awk rather than sed's `a\`:
+    # BSD sed emits no trailing newline after the appended text when the
+    # script itself lacks one, running it into the next line with nothing
+    # between them — GNU sed is forgiving here, BSD (macOS) is not.
+    local tmp
+    tmp=$(mktemp "${config_file}.XXXXXX")
+    awk -v line="$hook_cmd" '/^\[pre-switch\]/ { print; print line; next } { print }' "$config_file" > "$tmp"
+    mv "$tmp" "$config_file"
   else
     # Append new section at end of file
     printf '\n[pre-switch]\n%s\n' "$hook_cmd" >> "$config_file"

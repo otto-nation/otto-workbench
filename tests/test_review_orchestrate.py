@@ -590,41 +590,46 @@ class TestBuildMechanicalFallback:
 
 
 class TestWriteCleanReview:
-    def test_pr_mode(self, ro, tmp_path):
-        review_file = tmp_path / "review.md"
-        job = ro.ReviewJob(
-            repo="org/repo", pr_number="42",
+    TRIAGE = "## File Triage\n- `a.py` — tier 2, reviewed\n- `b.py` — tier 3, skimmed\n"
+
+    @staticmethod
+    def _job(ro, tmp_path, mode):
+        return ro.ReviewJob(
+            repo="org/repo", pr_number="42" if mode == ro.Mode.PR else "",
             pr=ro.PRMetadata(title="clean PR", body="", head="feat", base="main",
                              head_sha="abc", additions=10, deletions=5,
                              changed_files=3, files=[]),
             ctx=ro.PRContext(),
-            wt_path="/tmp/wt", review_file=str(review_file),
+            wt_path="/tmp/wt", review_file=str(tmp_path / "review.md"),
             session_log=str(tmp_path / "session.jsonl"),
-            mode=ro.Mode.PR,
+            mode=mode,
         )
-        ro._write_clean_review(job, 2)
-        content = review_file.read_text()
+
+    def test_pr_mode(self, ro, tmp_path):
+        job = self._job(ro, tmp_path, ro.Mode.PR)
+        ro._write_clean_review(job, 2, self.TRIAGE)
+        content = Path(job.review_file).read_text()
         assert "# Review:" in content
-        assert "No issues found" in content
-        assert "Approve" in content
+        assert "No findings across 3 files in 2 groups" in content
+        assert "Approve — clean review." in content
 
     def test_self_review_mode(self, ro, tmp_path):
-        review_file = tmp_path / "review.md"
-        job = ro.ReviewJob(
-            repo="org/repo", pr_number="",
-            pr=ro.PRMetadata(title="self", body="", head="my-branch", base="main",
-                             head_sha="abc", additions=10, deletions=5,
-                             changed_files=3, files=[]),
-            ctx=ro.PRContext(),
-            wt_path="/tmp/wt", review_file=str(review_file),
-            session_log=str(tmp_path / "session.jsonl"),
-            mode=ro.Mode.SELF,
-        )
-        ro._write_clean_review(job, 2)
-        content = review_file.read_text()
+        job = self._job(ro, tmp_path, ro.Mode.SELF)
+        ro._write_clean_review(job, 2, self.TRIAGE)
+        content = Path(job.review_file).read_text()
         assert "# Self-Review:" in content
-        assert "No issues found" in content
+        assert "No findings across 3 files in 2 groups" in content
         assert "Verdict" not in content
+
+    def test_carries_the_triage_its_groups_merged(self, ro, tmp_path):
+        """The triage is the only evidence a findings-free run leaves that the
+        groups examined anything, and it was the one path that dropped it."""
+        job = self._job(ro, tmp_path, ro.Mode.PR)
+        ro._write_clean_review(job, 2, self.TRIAGE)
+        content = Path(job.review_file).read_text()
+        assert "## File Triage" in content
+        assert "- `a.py` — tier 2, reviewed" in content
+        assert "- `b.py` — tier 3, skimmed" in content
 
 
 # ── 34. _parse_session_cost ─────────────────────────────────────────────────

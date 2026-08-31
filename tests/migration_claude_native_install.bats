@@ -91,23 +91,27 @@ _installer_writes_nothing() {
 
 _have_cask() { : > "$CASK_MARKER"; }
 
-# Runs the migration with the ui.sh helpers stubbed out. lib/migrations.sh is
-# sourced for MIGRATION_NOOP, the way the framework provides it. PATH is
-# narrowed after the libs are loaded rather than before: the outer bash has to
-# be a modern one for output.sh's 4.3 guard, and only the migration's own
-# lookups need confining to the stubs.
+# Runs the migration with the ui.sh helpers stubbed out. lib/setup.sh is sourced
+# for run_remote_installer and lib/migrations.sh for MIGRATION_NOOP — both reach
+# a migration from the framework's own sourcing environment, so neither is
+# redefined here. The stubs are declared after them because setup.sh pulls in
+# output.sh, whose real info/warn/success would otherwise replace them.
 #
-# PATH_OVERRIDE lets a test drop the stubs to model a machine without Homebrew.
+# PATH is narrowed after the libs are loaded rather than before: the outer bash
+# has to be a modern one for output.sh's 4.3 guard, and only the migration's own
+# lookups need confining to the stubs. PATH_OVERRIDE lets a test drop the stubs
+# to model a machine without Homebrew.
 _run_migration() {
   bash -c '
-    info()    { echo "INFO $*"; }
-    success() { echo "OK $*"; }
-    warn()    { echo "WARN $*"; }
     WORKBENCH_DIR="$2"
     LIB_SRC_DIR="$2/lib"
     BIN_SRC_DIR="$2/bin"
     LEGACY_WORKBENCH_ROOT="$5"
+    . "$WORKBENCH_DIR/lib/setup.sh"
     . "$WORKBENCH_DIR/lib/migrations.sh"
+    info()    { echo "INFO $*"; }
+    success() { echo "OK $*"; }
+    warn()    { echo "WARN $*"; }
     . "$1"
     CLAUDE_NATIVE_BIN="$3"
     CLAUDE_INSTALL_URL="https://example.invalid/install.sh"

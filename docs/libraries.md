@@ -764,6 +764,7 @@ Bash-only. Used primarily by `install.sh` and component setup scripts.
 | `register_step NAME FN` | appends a step to the STEPS array. STEPS must be declared as an array in the calling script before register_step is used. |
 | `run_steps` | prints all registered steps upfront, then runs each with [Y/n/a] confirmation. Steps are read from the global STEPS array (populated via register_step). Prints a summary of ran/skipped counts when complete. |
 | `require_command NAME [MESSAGE]` | returns 1 with a warning if NAME is not in PATH. Caller decides whether to exit or return: require_command foo "msg" \|\| exit 0 |
+| `run_remote_installer URL` | downloads the install script at URL and runs it, returning non-zero when either the download or the script fails. Prints nothing: the caller owns the message. |
 | `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. This function sources a single migrations.sh file with no state tracking. Kept for backward compatibility until all callers are migrated. |
 
 Loaded via `ui.sh`.

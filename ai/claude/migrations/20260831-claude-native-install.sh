@@ -39,10 +39,7 @@ migration_20260831_claude_native_install() {
 
   if [[ ! -x "$CLAUDE_NATIVE_BIN" ]]; then
     info "Installing Claude Code via its own installer..."
-    # pipefail, because a pipeline reports the exit status of its last command:
-    # a curl that 404s prints nothing, bash reads the empty script and exits 0,
-    # and the download failure would reach the operator as "does not run".
-    if ! ( set -o pipefail; curl -fsSL "$CLAUDE_INSTALL_URL" | bash ); then
+    if ! run_remote_installer "$CLAUDE_INSTALL_URL"; then
       warn "Claude Code's installer failed — leaving the Homebrew cask in place"
       return 1
     fi

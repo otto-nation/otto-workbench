@@ -68,6 +68,20 @@ require_command() {
   return 1
 }
 
+# run_remote_installer URL — downloads the install script at URL and runs it,
+# returning non-zero when either the download or the script fails. Prints
+# nothing: the caller owns the message.
+#
+# The pipeline runs under pipefail because a pipeline otherwise reports only its
+# last command's status. A curl that 404s prints nothing, bash reads the empty
+# script and exits 0, and a download that never happened becomes
+# indistinguishable from a completed install — which for a caller that removes
+# the previous copy afterwards is the difference between a swap and a machine
+# left with neither.
+run_remote_installer() {
+  ( set -o pipefail; curl -fsSL "$1" | bash )
+}
+
 # run_migrations DIR
 # DEPRECATED: Use run_component_migrations from lib/migrations.sh instead.
 # This function sources a single migrations.sh file with no state tracking.

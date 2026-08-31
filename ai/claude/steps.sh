@@ -379,10 +379,7 @@ step_install_claude() {
   fi
   require_command curl "curl not found — install Claude Code manually: $CLAUDE_INSTALL_URL" || return
   info "Installing Claude Code..."
-  # pipefail, because a pipeline reports the exit status of its last command:
-  # a curl that 404s prints nothing, bash reads the empty script and succeeds,
-  # and a failed download would otherwise be announced as an install.
-  if ! ( set -o pipefail; curl -fsSL "$CLAUDE_INSTALL_URL" | bash ); then
+  if ! run_remote_installer "$CLAUDE_INSTALL_URL"; then
     warn "Claude Code's installer failed — install it manually: $CLAUDE_INSTALL_URL"
     return 1
   fi

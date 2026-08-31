@@ -1527,6 +1527,17 @@ invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
 
 prompt() uses print mode (pi -p) for simplicity.
 
+Tool allowlists:
+  --tools is a membership filter over every registered tool, built-in and
+  extension alike, so naming a tool this machine does not have costs nothing and
+  nothing here mirrors the pi-extensions membership check in ai/pi/steps.sh — a
+  machine outside the package's org simply runs with the built-ins. Agent runs
+  get the read-only GitHub tools plus web and Go navigation; fix runs get web and
+  Go navigation only, because a fix pass has no GitHub business. The extension's
+  gh_pr_reply_comment, gh_pr_bulk_reply and gh_pr_post_comment are in neither
+  list: our scripts own what reaches a PR, and naming a tool is the only way the
+  allowlist grants it.
+
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)
   --mode rpc       Bidirectional JSONL over stdin/stdout

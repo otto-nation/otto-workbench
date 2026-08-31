@@ -10,6 +10,17 @@ invoke_agent and invoke_fix use RPC mode (--mode rpc) for bidirectional control:
 
 prompt() uses print mode (pi -p) for simplicity.
 
+Tool allowlists:
+  --tools is a membership filter over every registered tool, built-in and
+  extension alike, so naming a tool this machine does not have costs nothing and
+  nothing here mirrors the pi-extensions membership check in ai/pi/steps.sh — a
+  machine outside the package's org simply runs with the built-ins. Agent runs
+  get the read-only GitHub tools plus web and Go navigation; fix runs get web and
+  Go navigation only, because a fix pass has no GitHub business. The extension's
+  gh_pr_reply_comment, gh_pr_bulk_reply and gh_pr_post_comment are in neither
+  list: our scripts own what reaches a PR, and naming a tool is the only way the
+  allowlist grants it.
+
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)
   --mode rpc       Bidirectional JSONL over stdin/stdout
@@ -50,6 +61,17 @@ from ai_backend_events import (
 from log import ANSI_DIM, ANSI_RESET, _print_lock
 
 PI_TOOLS = "bash,read,write,edit,grep,find,ls"
+
+# Tools from the shared pi-extensions package, installed globally by ai/pi/steps.sh.
+# See the module docstring for why the posting tools are absent from both lists.
+PI_GITHUB_TOOLS = (
+    "gh_pr_context,gh_pr_diff,gh_pr_unresolved_comments,"
+    "gh_ci_failures,gh_merge_queue_failures"
+)
+PI_RESEARCH_TOOLS = "web_search,web_fetch,docs_index,go_references,go_call_hierarchy"
+
+PI_AGENT_TOOLS = f"{PI_TOOLS},{PI_GITHUB_TOOLS},{PI_RESEARCH_TOOLS}"
+PI_FIX_TOOLS = f"{PI_TOOLS},{PI_RESEARCH_TOOLS}"
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
 PI_SKILLS_DIR = Path.home() / ".pi" / "agent" / "skills"
@@ -101,7 +123,7 @@ def _build_prompt_cmd(
 def _build_agent_cmd(inv: AgentInvocation, extension: str | None = None) -> list[str]:
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
-        "--tools", PI_TOOLS,
+        "--tools", PI_AGENT_TOOLS,
     ]
     if inv.agent:
         skill_path = _resolve_skill_path(inv.agent)
@@ -129,9 +151,13 @@ def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[s
     # so, but here that is trusted rather than enforced; the outward writes that
     # matter are gated at the write instead (see `publishing`). Upgrade when pi
     # grows per-command bash permissions.
+    #
+    # PI_GITHUB_TOOLS is withheld for the same reason: naming a tool is how the
+    # allowlist grants it, so the one form of GitHub reach this list can express
+    # is the one it declines to.
     cmd = [
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
-        "--tools", PI_TOOLS,
+        "--tools", PI_FIX_TOOLS,
     ]
     if inv.provider:
         cmd += ["--provider", inv.provider]

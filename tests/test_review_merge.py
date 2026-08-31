@@ -290,11 +290,20 @@ class TestShiftGroup:
         # What the next group has to clear, not how many findings this one had.
         assert merge.offsets["S"] == 9
 
-    def test_a_reference_this_group_cannot_resolve_is_left_alone(self):
-        # Only the merge-wide pass can tell a dangling reference from one whose
-        # finding lives in another group.
+    def test_a_reference_to_a_number_the_group_skipped_names_nothing(self):
+        # The group declared S1 and nothing else, so S4 is not another group's
+        # finding — no group can name one — it is a reference to nothing. This
+        # is the last pass that knows the reference came from this group.
         merge = _shift({"S": 2}, S="- **[S1]** first, see S4 elsewhere")
-        assert "see S4 elsewhere" in merge.sections["S"]
+        assert "see [removed] elsewhere" in merge.sections["S"]
+        assert "S4" not in merge.sections["S"]
+
+    def test_a_reference_to_a_severity_the_group_declares_none_of_names_nothing(self):
+        # Every group numbers its Should-fix findings from [S1] independently,
+        # so this one cannot be citing another group's. Left alone, the pooled
+        # map would resolve it onto whichever group did declare an S1.
+        merge = _shift({"M": 1}, M="- **[M1]** **`a.go:1`** — issue a, blocked on [S1]")
+        assert "issue a, blocked on [removed]" in merge.sections["M"]
 
     def test_a_citation_across_severities_moves_with_what_it_names(self):
         # The Should-fix section is shifted past the earlier groups; the Must-fix
@@ -321,7 +330,7 @@ class TestShiftGroup:
         assert merge.offsets == {s.key: 0 for s in SEVERITIES}
 
 
-# ── 4. _renumber_prefix ─────────────────────────────────────────────────────
+# ── 4. renumber_findings ────────────────────────────────────────────────────
 
 
 def _decl(prefix: str, num: int, body: str = "finding") -> str:
@@ -329,14 +338,14 @@ def _decl(prefix: str, num: int, body: str = "finding") -> str:
     return f"- **[{prefix}{num}]** **`file.go:{num}`** — {body}"
 
 
-class TestRenumberPrefix:
+class TestRenumberFindings:
     def test_sequential_already(self):
         text = f"{_decl('S', 1, 'first')}\n{_decl('S', 2, 'second')}"
-        assert review_merge._renumber_prefix(text, "S") == text
+        assert review_merge.renumber_findings(text) == text
 
     def test_with_gaps(self):
         text = f"{_decl('S', 1, 'first')}\n{_decl('S', 3, 'third')}"
-        result = review_merge._renumber_prefix(text, "S")
+        result = review_merge.renumber_findings(text)
         assert "[S1]" in result
         assert "[S2]" in result
         assert "[S3]" not in result
@@ -345,13 +354,13 @@ class TestRenumberPrefix:
         text = "\n".join([
             _decl("S", 3, "first"), _decl("S", 1, "second"), _decl("S", 3, "repeat"),
         ])
-        result = review_merge._renumber_prefix(text, "S")
+        result = review_merge.renumber_findings(text)
         assert result.count("[S1]") == 2  # S3 appears first -> becomes S1
         assert "[S2]" in result  # S1 appears second -> becomes S2
 
     def test_unbracketed_cross_refs(self):
         text = f"{_decl('S', 3)}\nsee S3 above"
-        result = review_merge._renumber_prefix(text, "S")
+        result = review_merge.renumber_findings(text)
         assert "see S1 above" in result
         assert "S3" not in result
 
@@ -359,13 +368,13 @@ class TestRenumberPrefix:
         # S1 was dropped by verification, so only its reference is left. Closing
         # the gap on S2 frees up the number 1, and the reference must not take it.
         text = f"{_decl('S', 2, 'real problem')}\nblocked on [S1]"
-        result = review_merge._renumber_prefix(text, "S")
+        result = review_merge.renumber_findings(text)
         assert "- **[S1]** **`file.go:2`** — real problem" in result
         assert "blocked on [removed]" in result
 
     def test_bare_reference_to_a_dropped_finding_points_nowhere(self):
         text = f"{_decl('S', 2, 'real problem')}\nblocked on S1"
-        assert "blocked on [removed]" in review_merge._renumber_prefix(text, "S")
+        assert "blocked on [removed]" in review_merge.renumber_findings(text)
 
     def test_prose_that_merely_looks_like_an_id_is_left_alone(self):
         # S3 the object store, M1 the laptop. Nothing cites them, so nothing
@@ -374,41 +383,33 @@ class TestRenumberPrefix:
             _decl("S", 3, "uploads to an S3 bucket on every M1 build"),
             _decl("S", 5, "second"),
         ])
-        result = review_merge._renumber_prefix(text, "S")
+        result = review_merge.renumber_findings(text)
         assert "uploads to an S3 bucket on every M1 build" in result
         assert "- **[S1]**" in result
         assert "- **[S2]**" in result
 
     def test_a_cited_bare_reference_is_still_rewritten(self):
         text = f"{_decl('S', 3, 'first')}\n{_decl('S', 5, 'second, duplicate of S3')}"
-        assert "duplicate of S1" in review_merge._renumber_prefix(text, "S")
+        assert "duplicate of S1" in review_merge.renumber_findings(text)
 
     def test_references_survive_a_second_pass(self):
         text = f"{_decl('S', 2, 'real problem')}\nblocked on [S1]"
-        once = review_merge._renumber_prefix(text, "S")
-        assert review_merge._renumber_prefix(once, "S") == once
+        once = review_merge.renumber_findings(text)
+        assert review_merge.renumber_findings(once) == once
 
     def test_text_that_declares_nothing_is_left_alone(self):
         # A section can mention IDs it does not own — the triage list, a prior
         # review's ledger. With no declaration there is no map to rewrite through.
         text = "carried over from [S4] and [S7]"
-        assert review_merge._renumber_prefix(text, "S") == text
+        assert review_merge.renumber_findings(text) == text
 
     def test_checklist_findings_declare_their_ids(self):
         # Self-review writes findings as checkboxes; they are declarations too.
         text = "- [ ] **[S3]** `file.go:1` — finding\nsee [S3]"
-        result = review_merge._renumber_prefix(text, "S")
+        result = review_merge.renumber_findings(text)
         assert "- [ ] **[S1]** `file.go:1` — finding" in result
         assert "see [S1]" in result
 
-    def test_empty_text(self):
-        assert review_merge._renumber_prefix("", "S") == ""
-
-
-# ── 5. renumber_findings ────────────────────────────────────────────────────
-
-
-class TestRenumberFindings:
     def test_renumbers_gaps(self):
         text = "\n".join([
             _decl("M", 1, "first"), _decl("M", 3, "third"),
@@ -424,7 +425,7 @@ class TestRenumberFindings:
 
     def test_each_severity_is_renumbered_independently(self):
         # A Nit citing a dropped Must-fix loses the citation; its own ID does not
-        # move, because the M pass never looks at N numbers.
+        # move, because each severity's gaps close over that severity alone.
         text = "\n".join([
             _decl("M", 2, "kept"),
             "- **[N1]** **`file.go:9`** — revisit once [M1] lands",
@@ -556,6 +557,37 @@ class TestMergeReviews:
         assert "- **[S3]** **`b.go:2`** — issue e" in result
         assert "- **[M2]** **`b.go:1`** — issue d, blocked on [S3]" in result
         assert "- **[N1]** **`b.go:3`** — issue f, see S3 above" in result
+
+    def _misdirected_pair(self, tmp_path, *, citing_first: bool) -> str:
+        """One group citing a Should-fix ID it never declared, and one declaring one."""
+        citing = tmp_path / "citing.md"
+        citing.write_text(
+            "## File Triage\n- `a.go` — reviewed\n"
+            "## Must fix\n- **[M1]** **`a.go:1`** — issue a, blocked on [S1]\n"
+            "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        declaring = tmp_path / "declaring.md"
+        declaring.write_text(
+            "## File Triage\n- `b.go` — reviewed\n"
+            "## Must fix\n_None._\n"
+            "## Should fix\n- **[S1]** **`b.go:2`** — unrelated issue in group two\n"
+            "## Nit\n_None._\n## Idioms\n_None._\n"
+        )
+        order = (citing, declaring) if citing_first else (declaring, citing)
+        return review_merge.merge_reviews([str(path) for path in order])
+
+    def test_merge_does_not_point_a_dangling_reference_at_another_group(self, tmp_path):
+        # No group can name another group's finding — every group numbers from
+        # [S1] over its own files alone. Resolving this citation through the
+        # pooled map lands the reader on a real finding about a different file.
+        result = self._misdirected_pair(tmp_path, citing_first=True)
+        assert "- **[M1]** **`a.go:1`** — issue a, blocked on [removed]" in result
+        assert "- **[S1]** **`b.go:2`** — unrelated issue in group two" in result
+
+    def test_a_dangling_reference_is_marked_whichever_group_merges_first(self, tmp_path):
+        result = self._misdirected_pair(tmp_path, citing_first=False)
+        assert "- **[M1]** **`a.go:1`** — issue a, blocked on [removed]" in result
+        assert "- **[S1]** **`b.go:2`** — unrelated issue in group two" in result
 
     def test_merge_clears_a_gap_the_first_group_left(self, tmp_path):
         # Nothing closes a group's gaps before the merge, so offsetting by the
@@ -823,7 +855,7 @@ class TestDedupFindings:
             "- **[M1]** **`file.go:1`** — same issue\n"
             "- **[M2]** **`file.go:1`** — same issue\n"
         )
-        result = review_merge._dedup_findings(text, "M")
+        result = review_merge._dedup_findings(text)
         assert result.text.count("same issue") == 1
 
     def test_no_duplicates(self):
@@ -831,7 +863,7 @@ class TestDedupFindings:
             "- **[M1]** **`a.go:1`** — issue a\n"
             "- **[M2]** **`b.go:2`** — issue b\n"
         )
-        result = review_merge._dedup_findings(text, "M")
+        result = review_merge._dedup_findings(text)
         assert "issue a" in result.text
         assert "issue b" in result.text
         assert result.merged_into == {}
@@ -843,7 +875,7 @@ class TestDedupFindings:
             "- **[M2]** **`file.go:1`** — same issue\n"
             "  another continuation\n"
         )
-        result = review_merge._dedup_findings(text, "M")
+        result = review_merge._dedup_findings(text)
         assert result.text.count("same issue") == 1
         assert "another continuation" not in result.text
 
@@ -854,7 +886,21 @@ class TestDedupFindings:
             "- **[M1]** **`file.go:1`** — same issue\n"
             "- **[M2]** **`file.go:1`** — same issue\n"
         )
-        assert review_merge._dedup_findings(text, "M").merged_into == {2: 1}
+        assert review_merge._dedup_findings(text).merged_into == {
+            review_merge.FindingId("M", 2): review_merge.FindingId("M", 1),
+        }
+
+    def test_a_duplicate_filed_under_the_wrong_severity_still_declares_an_id(self):
+        # The copy dropped here sits in the Should-fix section carrying a
+        # Must-fix ID. Reading only the section's own prefix found no
+        # declaration on it, so nothing recorded where its references should go.
+        text = (
+            "- **[S1]** **`file.go:1`** — same issue\n"
+            "- **[M4]** **`file.go:1`** — same issue\n"
+        )
+        assert review_merge._dedup_findings(text).merged_into == {
+            review_merge.FindingId("M", 4): review_merge.FindingId("S", 1),
+        }
 
 
 # ── 11b. _dedup_sections ────────────────────────────────────────────────────
@@ -888,6 +934,21 @@ class TestDedupSections:
         )
         result = review_merge._dedup_sections(sections)
         assert "blocked on [removed]" in result["M"]
+
+    def test_a_citation_of_a_misfiled_duplicate_follows_the_survivor(self):
+        # The second copy is filed under Should fix carrying a Must-fix ID.
+        # Dedup drops it, and the citation belongs on the copy that survived —
+        # which is a Should-fix finding, so the reference changes severity too.
+        sections = _sections(
+            M="- **[M1]** **`other.go:2`** — see [M4] for context",
+            S=(
+                "- **[S1]** **`file.go:1`** — same issue\n"
+                "- **[M4]** **`file.go:1`** — same issue\n"
+            ),
+        )
+        result = review_merge._dedup_sections(sections)
+        assert "- **[M1]** **`other.go:2`** — see [S1] for context" in result["M"]
+        assert result["S"].count("same issue") == 1
 
     def test_a_severity_nothing_declares_is_left_alone(self):
         # No Should-fix finding anywhere, so every S in the text belongs to some

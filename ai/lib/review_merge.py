@@ -50,10 +50,15 @@ move to the copy that survived.
 
 Text that declares no findings of a given severity is left untouched, since
 there is no map to rewrite through and every ID in it belongs to some other
-document. The same reasoning applies while groups are still being merged: each
-group's IDs are shifted past the groups before it, references included, but a
-reference the group cannot resolve is left alone — another group may well
-declare it, and the merge-wide pass is the first place that can tell.
+document.
+
+While the groups are still being merged the scope is one group, and there every
+severity is answered for. A group numbers from ``[M1]`` independently of the
+others and sees only its own files, so a reference can only mean the finding its
+own group declared; one that names anything else becomes ``[removed]`` as the
+group's IDs are shifted past the groups before it. Deferring that to the
+merge-wide pass would misdirect it: group provenance is gone by then, and the
+pooled map answers with whichever group happens to have declared that number.
 
 Reconciliation is the cross-review half. A re-review ends with a `## Prior
 findings` ledger: one line per finding the previous review reported, saying
@@ -210,59 +215,56 @@ _REFERENCE_CUES = (
 )
 
 
-def _declared_ids(text: str, prefix: str) -> list[int]:
-    """The IDs `text` declares under `prefix`, in the order they first appear.
+_ID_PREFIXES = "".join(severity.key for severity in SEVERITIES)
+
+# Every way a review names a finding: `[M1]`, and a cited bare `M1`. One pattern
+# over every prefix rather than one per prefix, because a rewrite may move a
+# reference from one severity to another — a duplicate filed under the wrong one
+# is merged into a survivor that carries the right one — and a pass per prefix
+# would then hand what it just wrote to the next pass.
+_ID_REFERENCE_RE = re.compile(
+    rf"\[([{_ID_PREFIXES}])(\d+)\]"
+    rf"|(\b(?i:{_REFERENCE_CUES})\s+)([{_ID_PREFIXES}])(\d+)(?![\d\]])"
+)
+
+
+@dataclass(frozen=True)
+class FindingId:
+    """A finding ID as its two halves: the severity prefix and the number.
+
+    They travel together because a number means nothing without its prefix, and
+    the prefix is not implied by the section a line sits in — a review that
+    files a Should-fix declaration under Must fix is malformed, but the ID it
+    declared is still `S1`.
+    """
+
+    prefix: str
+    number: int
+
+    def __str__(self) -> str:
+        return f"{self.prefix}{self.number}"
+
+
+def _declaration(line: str) -> FindingId | None:
+    """The ID `line` declares, or None when it declares none.
 
     A finding declares its ID at the head of its own list item; every other
     occurrence is a reference to a declaration. Only declarations get numbers,
     because a reference can name a finding that evidence verification or
     deduplication has since taken out of the review.
     """
+    m = FINDING_ID_RE.match(line.strip())
+    return FindingId(m.group(2), int(m.group(3))) if m else None
+
+
+def _declared_ids(text: str, prefix: str) -> list[int]:
+    """The IDs `text` declares under `prefix`, in the order they first appear."""
     ids: list[int] = []
     for line in text.split("\n"):
-        m = FINDING_ID_RE.match(line.strip())
-        if not m or m.group(2) != prefix or int(m.group(3)) in ids:
-            continue
-        ids.append(int(m.group(3)))
+        declared = _declaration(line)
+        if declared and declared.prefix == prefix and declared.number not in ids:
+            ids.append(declared.number)
     return ids
-
-
-def _declared_id(line: str, prefix: str) -> int | None:
-    ids = _declared_ids(line, prefix)
-    return ids[0] if ids else None
-
-
-def _id_reference_re(prefix: str) -> re.Pattern[str]:
-    """Every way a review names a finding: `[M1]`, and a cited bare `M1`."""
-    return re.compile(
-        rf"\[{prefix}(\d+)\]"
-        rf"|(\b(?i:{_REFERENCE_CUES})\s+){prefix}(\d+)(?![\d\]])"
-    )
-
-
-def _rewrite_ids(
-    text: str, prefix: str, new_by_old: dict[int, int], *, mark_dangling: bool,
-) -> str:
-    """Move every ID and every reference to one onto its new number."""
-    def rewrite(m: re.Match[str]) -> str:
-        bracketed, cue, bare = m.group(1), m.group(2) or "", m.group(3)
-        new = new_by_old.get(int(bracketed or bare))
-        if new is None:
-            return m.group(0) if not mark_dangling else f"{cue}{_REMOVED_REF}"
-        return f"{cue}[{prefix}{new}]" if bracketed else f"{cue}{prefix}{new}"
-
-    return _id_reference_re(prefix).sub(rewrite, text)
-
-
-def _declared_across(sections: dict[str, str], prefix: str) -> list[int]:
-    """The IDs `prefix` is declared with anywhere in `sections`, in reading order.
-
-    Every section is read, not just the one whose severity `prefix` names. A
-    review that files a Should-fix declaration under Must fix is malformed, but
-    its ID is still declared, and a map that missed it would rewrite the
-    declaration itself to `[removed]`.
-    """
-    return _declared_ids(_joined(sections), prefix)
 
 
 def _joined(sections: dict[str, str]) -> str:
@@ -270,83 +272,86 @@ def _joined(sections: dict[str, str]) -> str:
     return "\n".join(sections[severity.key] for severity in SEVERITIES)
 
 
-def _rewrite_every_prefix(
-    sections: dict[str, str],
-    maps: dict[str, dict[int, int]],
-    *,
-    mark_dangling: bool,
-) -> dict[str, str]:
-    """Rewrite every section through every severity's map, references included.
+@dataclass(frozen=True)
+class _Renumbering:
+    """Where every finding ID moves, and which prefixes the map answers for.
 
-    A section is rewritten through all four maps rather than its own alone: a
-    reference does not have to live in the section that declares the finding it
-    names, and a Must-fix finding that says "blocked on [S1]" is renumbered by
-    the Should-fix map or by nothing at all. Looking only at each section's own
-    prefix left such a citation on whichever finding later took its number.
-
-    A prefix absent from `maps` is left alone wherever it appears — there is no
-    numbering to move it onto, and every mention of it belongs to some other
-    document.
+    `prefixes` is not `moves`' own key set, because "nothing declares this
+    prefix" means different things at different scopes. Inside one group it
+    means every reference to that prefix is to a finding that is gone, since a
+    group can only cite its own. Over the merged document it means the mentions
+    belong to some other document — a prior review's ledger, a quoted log line
+    — and have to come out exactly as they went in.
     """
-    rewritten: dict[str, str] = {}
-    for key, text in sections.items():
-        for prefix, new_by_old in maps.items():
-            text = _rewrite_ids(text, prefix, new_by_old, mark_dangling=mark_dangling)
-        rewritten[key] = text
-    return rewritten
+
+    moves: dict[FindingId, FindingId]
+    prefixes: frozenset[str]
+
+    def rewrite(self, text: str) -> str:
+        """Move every ID and every reference to one onto its new number."""
+        return _ID_REFERENCE_RE.sub(self._rewrite_one, text)
+
+    def _rewrite_one(self, m: re.Match[str]) -> str:
+        bracketed, cue = m.group(1), m.group(3) or ""
+        old = FindingId(bracketed or m.group(4), int(m.group(2) or m.group(5)))
+        if old.prefix not in self.prefixes:
+            return m.group(0)
+        new = self.moves.get(old)
+        if new is None:
+            return f"{cue}{_REMOVED_REF}"
+        return f"{cue}[{new}]" if bracketed else f"{cue}{new}"
 
 
-def _gap_map(declared: list[int], merged_into: dict[int, int]) -> dict[int, int]:
-    """Where each declared ID lands once the gaps between them close."""
-    new_by_old = {old: new for new, old in enumerate(declared, 1)}
+def _gap_renumbering(
+    text: str, merged_into: dict[FindingId, FindingId],
+) -> _Renumbering:
+    """Where each ID `text` declares lands once the gaps between them close.
+
+    Every severity is read over the whole text rather than section by section:
+    a reference need not sit in the section that declares what it names, and a
+    declaration filed under the wrong severity is still a declaration — a map
+    that missed it would rewrite the declaration itself to `[removed]`.
+    """
+    moves: dict[FindingId, FindingId] = {}
+    for severity in SEVERITIES:
+        for new, old in enumerate(_declared_ids(text, severity.key), 1):
+            moves[FindingId(severity.key, old)] = FindingId(severity.key, new)
+    # Only the severities declared here: at merge-wide scope an undeclared one
+    # belongs to some other document, so `_Renumbering` has to leave it alone.
+    prefixes = {old.prefix for old in moves}
     # A deduplicated finding was not dropped, it was merged: its references
     # belong on the copy that survived, which says the same thing. The survivor
     # is always declared here — it is the copy dedup kept — but guard anyway, so
     # a map built from other text cannot quietly point a reference somewhere new.
     for gone, survivor in merged_into.items():
-        if survivor in new_by_old:
-            new_by_old.setdefault(gone, new_by_old[survivor])
-    return new_by_old
+        if survivor in moves:
+            moves.setdefault(gone, moves[survivor])
+            prefixes.add(gone.prefix)
+    return _Renumbering(moves, frozenset(prefixes))
 
 
 def _close_gaps(
-    sections: dict[str, str], merged_into: dict[str, dict[int, int]],
+    sections: dict[str, str], merged_into: dict[FindingId, FindingId],
 ) -> dict[str, str]:
     """Close the gaps in every severity's IDs, taking every reference along.
 
-    The maps are built from all the sections at once and applied to all of them,
+    The map is built from all the sections at once and applied to all of them,
     so a reference reaching across severities lands on the finding it named
-    rather than on whatever ended up at that number. `merged_into` says, per
-    severity, which IDs deduplication folded into which survivor.
+    rather than on whatever ended up at that number. `merged_into` says which
+    IDs deduplication folded into which survivor.
     """
-    maps = {}
-    for severity in SEVERITIES:
-        declared = _declared_across(sections, severity.key)
-        if declared:
-            maps[severity.key] = _gap_map(declared, merged_into.get(severity.key, {}))
-    return _rewrite_every_prefix(sections, maps, mark_dangling=True)
-
-
-def _renumber_prefix(text: str, prefix: str, merged_into: dict[int, int] | None = None) -> str:
-    """Close the gaps in `prefix` IDs, taking every reference along with them.
-
-    References are rewritten through the same map as the declarations, so a
-    finding that cites another one still cites the same one afterwards.
-    """
-    declared = _declared_ids(text, prefix)
-    if not declared:
-        # Nothing here declares an ID, so there is no map to rewrite through and
-        # every occurrence is a reference into text we are not looking at.
-        return text
-    return _rewrite_ids(
-        text, prefix, _gap_map(declared, merged_into or {}), mark_dangling=True,
-    )
+    renumbering = _gap_renumbering(_joined(sections), merged_into)
+    return {key: renumbering.rewrite(text) for key, text in sections.items()}
 
 
 def renumber_findings(text: str) -> str:
-    for severity in SEVERITIES:
-        text = _renumber_prefix(text, severity.key)
-    return text
+    """Close the gaps in every severity's IDs, taking every reference along.
+
+    References are rewritten through the same map as the declarations, so a
+    finding that cites another one still cites the same one afterwards, and one
+    that names a finding nothing declares any more becomes `[removed]`.
+    """
+    return _gap_renumbering(text, {}).rewrite(text)
 
 
 # ── Triage and deduplication ─────────────────────────────────────────────────
@@ -397,7 +402,11 @@ def _finding_dedup_key(line: str) -> FindingKey | None:
     return FindingKey(path, dm.group(1).strip().lower() if dm else "")
 
 
-def _record_merge(merged_into: dict[int, int], survivor: int | None, dup: int | None) -> None:
+def _record_merge(
+    merged_into: dict[FindingId, FindingId],
+    survivor: FindingId | None,
+    dup: FindingId | None,
+) -> None:
     """Remember that `dup`'s references should end up on `survivor`."""
     if survivor is None or dup is None:
         return
@@ -410,23 +419,26 @@ class _Deduped:
 
     `merged_into` maps each dropped ID to the copy that survived it, so the
     renumbering that follows can move references onto the survivor instead of
-    marking them `[removed]`. It is kept apart from `text` because the gaps
-    close across every severity at once, after every section has been deduped.
+    marking them `[removed]`. Both halves are whole IDs rather than numbers,
+    because a duplicate filed under the wrong severity still declares one and
+    the copy that survives it need not carry the same prefix. It is kept apart
+    from `text` because the gaps close across every severity at once, after
+    every section has been deduped.
     """
 
     text: str
-    merged_into: dict[int, int] = field(default_factory=dict)
+    merged_into: dict[FindingId, FindingId] = field(default_factory=dict)
 
 
-def _dedup_findings(text: str, prefix: str) -> _Deduped:
+def _dedup_findings(text: str) -> _Deduped:
     """One severity's text with the repeats removed, and where each one went.
 
     `_finding_dedup_key` chooses which declarations are candidates; how much of
     the text a dropped one takes with it is `finding_spans`', so a repeat and a
     finding the disprove gate falsifies lose exactly the same lines.
     """
-    seen: dict[FindingKey, int | None] = {}
-    merged_into: dict[int, int] = {}
+    seen: dict[FindingKey, FindingId | None] = {}
+    merged_into: dict[FindingId, FindingId] = {}
     repeats: list[FindingSpan] = []
     for span in finding_spans(text):
         key = _finding_dedup_key(span.line)
@@ -434,9 +446,9 @@ def _dedup_findings(text: str, prefix: str) -> _Deduped:
             continue
         if key in seen:
             repeats.append(span)
-            _record_merge(merged_into, seen[key], _declared_id(span.line, prefix))
+            _record_merge(merged_into, seen[key], _declaration(span.line))
             continue
-        seen[key] = _declared_id(span.line, prefix)
+        seen[key] = _declaration(span.line)
     return _Deduped(cut_spans(text, repeats), merged_into)
 
 
@@ -449,12 +461,14 @@ def _dedup_sections(sections: dict[str, str]) -> dict[str, str]:
     a reference from one severity to another survives the drop.
     """
     deduped = {
-        severity.key: _dedup_findings(sections[severity.key], severity.key)
+        severity.key: _dedup_findings(sections[severity.key])
         for severity in SEVERITIES
     }
+    merged_into: dict[FindingId, FindingId] = {}
+    for entry in deduped.values():
+        merged_into.update(entry.merged_into)
     return _close_gaps(
-        {key: entry.text for key, entry in deduped.items()},
-        {key: entry.merged_into for key, entry in deduped.items()},
+        {key: entry.text for key, entry in deduped.items()}, merged_into,
     )
 
 
@@ -555,19 +569,28 @@ class _Merge:
     def _shift(self, group: dict[str, str]) -> dict[str, str]:
         """One group's sections with every ID moved past what is already in use.
 
-        Dangling references are left as they are: this runs per group, and an ID
-        this group does not declare may still be declared by another one. The
-        merge-wide pass in `_close_gaps` is the first place that can tell.
+        Every severity is answered for, so a reference to one this group
+        declares nothing of becomes `[removed]` here rather than being left for
+        `_close_gaps`. Groups are told to number from `[M1]`, `[S1]`, `[N1]`,
+        `[I1]` independently and each sees only its own files, so a reference
+        can only mean a finding its own group declared — and this is the last
+        pass that knows which group a line came from. Left alone, such a
+        reference would resolve through the pooled map onto a real finding of
+        another group's, in a different file about a different problem.
         """
+        joined = _joined(group)
         declared = {
-            severity.key: _declared_across(group, severity.key)
+            severity.key: _declared_ids(joined, severity.key)
             for severity in SEVERITIES
         }
-        maps = {
-            key: {old: old + self.offsets[key] for old in ids}
-            for key, ids in declared.items() if ids and self.offsets[key]
+        moves = {
+            FindingId(key, old): FindingId(key, old + self.offsets[key])
+            for key, ids in declared.items() for old in ids
         }
-        shifted = _rewrite_every_prefix(group, maps, mark_dangling=False)
+        # Every severity, declared here or not: at group scope an undeclared one
+        # is a reference to nothing, which `_Renumbering` marks.
+        renumbering = _Renumbering(moves, frozenset(declared))
+        shifted = {key: renumbering.rewrite(text) for key, text in group.items()}
         for key, ids in declared.items():
             self.offsets[key] += max(ids, default=0)
         return shifted

@@ -180,6 +180,27 @@ class Pipeline(StrEnum):
     SINGLE = "single"
 
 
+class ReplyState(StrEnum):
+    """What became of a finding the last review posted, as its thread reads now.
+
+    Answered from the reviewer's side: the bot posted the root comment, and the
+    state is what the author did with it. `UNREPLIED` and `RESOLVED` are the two
+    ends — nothing said, and closed on GitHub — and the three between them are
+    read off the last non-bot reply.
+
+    `pr_comments_state.ThreadState` is a second vocabulary for where a thread
+    stands, and the two are not interchangeable: that one answers the question
+    from the author's side, for threads a human opened on the author's own PR.
+    They share `contested` and `resolved` and agree on neither of the rest.
+    """
+
+    RESOLVED = "resolved"
+    ACKNOWLEDGED = "acknowledged"
+    CONTESTED = "contested"
+    REPLIED = "replied"
+    UNREPLIED = "unreplied"
+
+
 class GroupSkip(StrEnum):
     """Why the group phase is not running a group.
 

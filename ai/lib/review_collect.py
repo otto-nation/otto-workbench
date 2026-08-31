@@ -5,6 +5,11 @@ the repository's own review context, and the delta against a prior review;
 fits the result to the prompt's byte budget; and formats it into the
 pre-collected data block a phase sends.
 
+`fetch_branch_metadata` is here for the same reason: a self-review with no PR
+behind it describes itself out of the worktree, off the same fork point and the
+same `worktree_diff` the collection uses. Its counterpart for a branch that does
+have a PR is `review_github.fetch_pr_metadata`, and both fill in `PRMetadata`.
+
 The budget is this module's subject as much as the collection is. Every bound
 on what a prompt may carry is a constant here, and `_fit_to_budget` is the one
 place that decides which files a review can afford to inline — so a phase
@@ -32,7 +37,7 @@ from review_document import ReviewHeader
 from review_grouping import (
     classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
-from review_types import PreflightData, ReviewJob
+from review_types import PreflightData, PRMetadata, ReviewJob
 
 # ── Byte budgets ──────────────────────────────────────────────────────────────
 
@@ -126,6 +131,82 @@ def worktree_diff(wt_path: str, since: str, *, numstat: bool = False) -> str:
     return _join_nonempty(
         git_client.out("diff", *flags, since, cwd=wt_path),
         _diff_untracked(wt_path, _untracked_files(wt_path), numstat=numstat),
+    )
+
+
+@dataclass(frozen=True)
+class Numstat:
+    """What ``git diff --numstat`` says a change set touched.
+
+    ``files`` is one ``{path, additions, deletions}`` entry per line, in the
+    order git listed them; ``additions`` and ``deletions`` are the totals over
+    all of them.
+    """
+
+    files: list[dict]
+    additions: int
+    deletions: int
+
+
+def parse_numstat(numstat: str) -> Numstat:
+    """Read ``git diff --numstat`` output into per-file and total counts.
+
+    A binary file's counts are ``-``; they land as zero rather than being
+    dropped, so the file still appears in the review's file list.
+    """
+    files = []
+    total_add = 0
+    total_del = 0
+    for line in numstat.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        add = int(parts[0]) if parts[0] != "-" else 0
+        delete = int(parts[1]) if parts[1] != "-" else 0
+        files.append({"path": parts[2], "additions": add, "deletions": delete})
+        total_add += add
+        total_del += delete
+    return Numstat(files=files, additions=total_add, deletions=total_del)
+
+
+def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
+    """Describe a branch from its worktree, the way a PR describes itself.
+
+    ``base`` is the branch to measure against; it is resolved from the
+    repository's default when the caller has none. This is the no-PR
+    self-review's route to the same `PRMetadata` `review_github` fetches, so a
+    phase downstream cannot tell which one filled it in.
+    """
+    # Resolved rather than defaulted to "main" in the signature: this is the
+    # no-PR self-review path, so nothing upstream has named a base, and a
+    # `master` repository was previously fetched and diffed against a branch it
+    # does not have.
+    base = base or pr_context.default_branch(wt_path)
+    fetch_base(wt_path, base)
+    head_sha = git_client.head_sha(cwd=wt_path)
+    branch = git_client.current_branch(cwd=wt_path)
+    log_range = f"origin/{base}..HEAD"
+
+    log_output = git_client.out("log", log_range, "--oneline", cwd=wt_path)
+    first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
+
+    # Diffing from the fork point reaches the working tree, so the file list
+    # matches the diff `worktree_diff` builds for self-review: committed,
+    # uncommitted and untracked changes alike.
+    counts = parse_numstat(worktree_diff(wt_path, fork_point(wt_path, base), numstat=True))
+
+    return PRMetadata(
+        title=first_subject,
+        body="",
+        head=branch,
+        base=base,
+        head_sha=head_sha,
+        additions=counts.additions,
+        deletions=counts.deletions,
+        changed_files=len(counts.files),
+        files=counts.files,
     )
 
 

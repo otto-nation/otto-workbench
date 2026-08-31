@@ -765,14 +765,14 @@ class TestSubmitReview:
         assert "Failed to submit" in capsys.readouterr().err
 
 
-class TestFetchPrMetadata:
+class TestFetchPrRefs:
     def test_success(self, rp):
         pr_json = json.dumps({
             "head": {"sha": "abc123", "ref": "feat/branch"},
             "base": {"ref": "main"},
         })
         with patch("gh_client.api", return_value=CmdResult(0, pr_json)):
-            meta = rp._fetch_pr_metadata("org/repo", "1")
+            meta = rp._fetch_pr_refs("org/repo", "1")
             assert meta["head_sha"] == "abc123"
             assert meta["head_ref"] == "feat/branch"
             assert meta["base_ref"] == "main"
@@ -782,7 +782,7 @@ class TestFetchPrMetadata:
             patch("gh_client.api", return_value=CmdResult(1)),
             pytest.raises(SystemExit),
         ):
-            rp._fetch_pr_metadata("org/repo", "1")
+            rp._fetch_pr_refs("org/repo", "1")
 
 
 class TestGetDiff:

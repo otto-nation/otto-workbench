@@ -32,7 +32,6 @@ import agent_diagnosis as _ad  # noqa: E402
 import agent_invoke as _ai  # noqa: E402
 import agent_phases as _aph  # noqa: E402
 import ai_usage as _au  # noqa: E402
-import review_preflight as _rp  # noqa: E402
 import review_prompt as _rpmt  # noqa: E402
 import review_agent as _ra  # noqa: E402
 import review_pipeline as _rpl  # noqa: E402
@@ -60,16 +59,14 @@ from review_paths import (  # noqa: E402
 )
 from tool_parser import enum_arg  # noqa: E402
 from review_collect import collect_preflight_data  # noqa: E402
-from review_preflight import (  # noqa: E402
-    DEFAULT_MAX_PARALLEL, fetch_reply_threads,
-)
+from review_merge import fetch_reply_threads  # noqa: E402
 from review_types import Pipeline, ReviewJob, ViewerRole  # noqa: E402
 from agent_invoke import QuotaThrottle  # noqa: E402
 from review_fix import run_fix_pass  # noqa: E402
 from review_gc import cleaned_on_success  # noqa: E402
 from agent_phases import collect_phase_models, resolve_effort  # noqa: E402
 from review_pipeline import (  # noqa: E402
-    DEFAULT_MAX_COST, EFFORT_PRESETS, _fetch_metadata,
+    DEFAULT_MAX_COST, DEFAULT_MAX_PARALLEL, EFFORT_PRESETS, _fetch_metadata,
     run_multi_phase, run_single_agent,
 )
 from review_static_analysis import (  # noqa: E402
@@ -80,7 +77,7 @@ import ai_backend  # noqa: E402
 SCRIPT = Path(__file__).name
 
 _SUBMODULES = (
-    _ad, _ai, _aph, _au, _rp, _rpmt, _ra, _rpl, _rfx, _rgc, _rpath, _rph,
+    _ad, _ai, _aph, _au, _rpmt, _ra, _rpl, _rfx, _rgc, _rpath, _rph,
     _rrt, _rst, _rt,
 )
 

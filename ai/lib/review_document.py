@@ -1039,6 +1039,18 @@ def mechanical_verdict(counts: dict[str, int]) -> str:
     return f"{verdict.prose} — {prose}{suffix} {MECHANICAL_NOTE}.\n"
 
 
+# What the Summary says when no synthesis agent wrote the review — the
+# `summary_note` a caller of `build_mechanical_body` hands in. Each names why
+# synthesis did not produce the document, because a reader who cannot tell a
+# failed agent from one nobody asked to run reads the same review two ways.
+FALLBACK_SUMMARY = "Synthesis agent failed — findings below are from individual group reviews."
+SKIPPED_SUMMARY = "Synthesis skipped by --no-synthesis — findings below are from individual group reviews."
+BUDGET_SUMMARY = (
+    "Synthesis did not run — the cost budget was reached first. "
+    "Findings below are from individual group reviews."
+)
+
+
 def build_mechanical_body(
     merged_content: str,
     *,

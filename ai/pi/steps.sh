@@ -174,7 +174,13 @@ _export_pi_config() {
 
 # sync_pi — runs all Pi sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
+#
+# A machine without Pi is left alone rather than installed onto: sync re-applies
+# config, and the install belongs to setup, where the operator chose the tool.
+# Same guard sync_claude carries.
 sync_pi() {
+  command -v pi >/dev/null 2>&1 || { warn "pi not found in PATH — skipping"; return; }
+
   sync_header "pi settings → $PI_SETTINGS_FILE"
   step_pi_settings
 

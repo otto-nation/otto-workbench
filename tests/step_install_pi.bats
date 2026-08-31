@@ -85,6 +85,24 @@ _run_step() {
   [ ! -e "$INSTALLER_RAN" ]
 }
 
+@test "sync leaves a machine without pi alone" {
+  # sync re-applies config; it does not install. Without the guard it writes
+  # settings and skills for a binary that is not there — the state this branch
+  # exists to end. HOME is redirected before the libs load, since the Pi paths
+  # in lib/constants.sh are resolved from it at source time.
+  mkdir -p "$TMPDIR/home"
+  run bash -c '
+    HOME="$3"
+    . "$2/lib/ui.sh"
+    . "$2/ai/pi/steps.sh"
+    PATH="$1"
+    sync_pi
+  ' _ "$STUBS:/usr/bin:/bin" "$REPO_ROOT" "$TMPDIR/home"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi not found"* ]]
+  [ ! -e "$TMPDIR/home/.pi" ]
+}
+
 @test "the install step is registered ahead of the config steps" {
   run bash -c '
     . "$1/lib/ui.sh"

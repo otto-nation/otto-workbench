@@ -98,13 +98,37 @@ run_remote_installer() {
 install_cask() {
   local cmd="$1" cask="$2" label="$3" manual_url="$4"
   if command -v "$cmd" >/dev/null 2>&1; then
-    success "$cmd already installed"
+    success "$label already installed"
     return
   fi
   require_command brew "Homebrew not found — install $label manually: $manual_url" || return
   info "Installing $label..."
   if ! brew install --cask "$cask"; then
     warn "Homebrew could not install $label — install it manually: $manual_url"
+    return 1
+  fi
+  success "$label installed"
+}
+
+# install_via_installer CMD URL LABEL — installs LABEL by running the vendor's
+# own install script at URL when CMD is not already in PATH, announcing it as
+# LABEL and returning non-zero with a pointer to URL when curl is missing or the
+# installer fails.
+#
+# The counterpart to install_cask for a tool whose artifact is a bare
+# executable: the installer's curl download carries no com.apple.quarantine
+# attribute, so Gatekeeper never asks the question a cask's bare Mach-O cannot
+# answer. Such installers also self-update, which a cask does not.
+install_via_installer() {
+  local cmd="$1" url="$2" label="$3"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    success "$label already installed"
+    return
+  fi
+  require_command curl "curl not found — install $label manually: $url" || return
+  info "Installing $label..."
+  if ! run_remote_installer "$url"; then
+    warn "$label's installer failed — install it manually: $url"
     return 1
   fi
   success "$label installed"

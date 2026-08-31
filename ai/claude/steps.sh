@@ -373,17 +373,7 @@ step_claude_restore_memory() {
 # The installer's curl download carries no quarantine attribute, so the question
 # is never asked. It also self-updates, which the cask does not.
 step_install_claude() {
-  if command -v claude >/dev/null 2>&1; then
-    success "claude already installed"
-    return
-  fi
-  require_command curl "curl not found — install Claude Code manually: $CLAUDE_INSTALL_URL" || return
-  info "Installing Claude Code..."
-  if ! run_remote_installer "$CLAUDE_INSTALL_URL"; then
-    warn "Claude Code's installer failed — install it manually: $CLAUDE_INSTALL_URL"
-    return 1
-  fi
-  success "Claude Code installed"
+  install_via_installer claude "$CLAUDE_INSTALL_URL" "Claude Code"
 }
 
 # step_claude_worktrunk_plugin — installs Worktrunk's Claude Code plugin for

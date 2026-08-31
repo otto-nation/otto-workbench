@@ -767,6 +767,7 @@ Bash-only. Used primarily by `install.sh` and component setup scripts.
 | `require_command NAME [MESSAGE]` | returns 1 with a warning if NAME is not in PATH. Caller decides whether to exit or return: require_command foo "msg" \|\| exit 0 |
 | `run_remote_installer URL` | downloads the install script at URL and runs it, returning non-zero when either the download or the script fails. Prints nothing: the caller owns the message. |
 | `install_cask CMD CASK LABEL MANUAL_URL` | installs CASK through Homebrew when CMD is not already in PATH, announcing it as LABEL and returning non-zero with a pointer to MANUAL_URL when Homebrew is missing or the install fails. |
+| `install_via_installer CMD URL LABEL` | installs LABEL by running the vendor's own install script at URL when CMD is not already in PATH, announcing it as LABEL and returning non-zero with a pointer to URL when curl is missing or the installer fails. |
 | `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. This function sources a single migrations.sh file with no state tracking. Kept for backward compatibility until all callers are migrated. |
 
 Loaded via `ui.sh`.

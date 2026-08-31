@@ -1076,9 +1076,9 @@ def build_mechanical_body(
     leaves the file scope out rather than writing a zero.
 
     `include_verdict=False` writes no verdict section at all, for a path that
-    states no call — the two that ship group output after the operator or the
-    budget stopped the run. `verdict` overrides what a verdict section says,
-    defaulting to the one `mechanical_verdict` derives from the tally.
+    reaches no verdict — the two that ship group output after the operator or
+    the budget stopped the run. `verdict` overrides what a verdict section
+    says, defaulting to the one `mechanical_verdict` derives from the tally.
 
     Every path that reaches the review file without a synthesis agent composes
     here, so which sections such a review carries has one answer. A caller that

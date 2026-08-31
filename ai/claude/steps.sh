@@ -362,9 +362,28 @@ step_claude_restore_memory() {
   fi
 }
 
-# step_install_claude — installs claude-code via brew if not already in PATH.
+# step_install_claude — installs Claude Code via its own installer if not
+# already in PATH.
+#
+# The native installer rather than the Homebrew cask. The cask's artifact is a
+# bare Mach-O binary, and brew stamps com.apple.quarantine on what it downloads;
+# a notarization ticket cannot be stapled to a bare Mach-O, so Gatekeeper has to
+# look one up online at exec time and refuses the launch outright — "Apple could
+# not verify claude is free of malware", with Move to Trash as the only offer.
+# The installer's curl download carries no quarantine attribute, so the question
+# is never asked. It also self-updates, which the cask does not.
 step_install_claude() {
-  install_cask "claude" "claude-code" "claude-code" "https://www.anthropic.com/claude-code"
+  if command -v claude >/dev/null 2>&1; then
+    success "claude already installed"
+    return
+  fi
+  require_command curl "curl not found — install Claude Code manually: $CLAUDE_INSTALL_URL" || return
+  info "Installing Claude Code..."
+  if ! run_remote_installer "$CLAUDE_INSTALL_URL"; then
+    warn "Claude Code's installer failed — install it manually: $CLAUDE_INSTALL_URL"
+    return 1
+  fi
+  success "Claude Code installed"
 }
 
 # step_claude_worktrunk_plugin — installs Worktrunk's Claude Code plugin for

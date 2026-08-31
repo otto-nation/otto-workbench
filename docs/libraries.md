@@ -755,7 +755,8 @@ name a month, which is what keeps it visible under `--since`.
 
 ### setup.sh
 
-Install workflow helpers: step registration, requirement checks, cask installs.
+Install workflow helpers: step registration, requirement checks, cask and
+remote-installer installs.
 
 Bash-only. Used primarily by `install.sh` and component setup scripts.
 
@@ -764,7 +765,8 @@ Bash-only. Used primarily by `install.sh` and component setup scripts.
 | `register_step NAME FN` | appends a step to the STEPS array. STEPS must be declared as an array in the calling script before register_step is used. |
 | `run_steps` | prints all registered steps upfront, then runs each with [Y/n/a] confirmation. Steps are read from the global STEPS array (populated via register_step). Prints a summary of ran/skipped counts when complete. |
 | `require_command NAME [MESSAGE]` | returns 1 with a warning if NAME is not in PATH. Caller decides whether to exit or return: require_command foo "msg" \|\| exit 0 |
-| `install_cask CMD CASK LABEL MANUAL_URL` | Installs a tool via Homebrew cask if CMD is not already in PATH. Falls back to a manual install message if brew is unavailable. |
+| `run_remote_installer URL` | downloads the install script at URL and runs it, returning non-zero when either the download or the script fails. Prints nothing: the caller owns the message. |
+| `install_cask CMD CASK LABEL MANUAL_URL` | installs CASK through Homebrew when CMD is not already in PATH, announcing it as LABEL and returning non-zero with a pointer to MANUAL_URL when Homebrew is missing or the install fails. |
 | `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. This function sources a single migrations.sh file with no state tracking. Kept for backward compatibility until all callers are migrated. |
 
 Loaded via `ui.sh`.

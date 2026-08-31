@@ -333,7 +333,7 @@ class TestParseVerificationSpacedPaths:
 class TestVerificationReadsEachFindingsOwnBody:
     """A finding is checked against the evidence written under it and no other.
 
-    `_VERIFY_FINDING_RE` selects which findings this gate checks; it does not
+    `VERIFY_FINDING_RE` selects which findings this gate checks; it does not
     decide where one ends. A declaration it cannot read used to be appended to
     the finding above it, which is how a finding came to be verified against a
     quotation belonging to its neighbour.

@@ -14,7 +14,8 @@ When adding or modifying a review phase, verify these integration points:
 - `review_types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
 - `review_merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — everything that happens to findings across reviews, reconciliation against the prior one included. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
 - `review_prompt.py`: a builder in `_PROMPT_BUILDERS` keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
-- `review_document.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`) and `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
+- `review_grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
+- `review_document.py`: `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
 - `review_document.py`: where a finding *stops* — `ends_finding_body()`, `finding_spans()`, `drop_findings()`, `cut_spans()`. A pass that walks a review a finding at a time asks these rather than recognising the next head itself, and keeps only its own selection pattern (which findings it wants) over `FindingSpan.line`. Six passes once measured a body for themselves and cut the same review four different ways, one of them deleting the resolved finding below a dropped one
 - `review-post`: `renumber_for_posting()`, `classify_findings()` posting routing
 - `agents/reviewer.md`: output format (Phase 10 markdown template), finding ID patterns (`[M1]`, `[S1]`, etc.)
@@ -54,10 +55,11 @@ gone, or whose quoted code was in that file at the prior review's `head_sha`
 and is not in it now. `DispositionSource` records which of those answered, so
 an inference is never read back as something the review stated, and the tree is
 asked last because it cannot produce `Declined`. Every source reads a location
-through `_extract_finding_path()`, which asks `finding_location()` first so a
-finding citing a bare `` `path` `` with no `:<line>` still yields a path and a
-stable ID — without one it can be neither carried forward nor checked against
-the tree.
+through `review_grammar.FindingIdentity`, which asks `finding_location()` first
+so a finding citing a bare `` `path` `` with no `:<line>` still yields a path
+and a stable ID — without one it can be neither carried forward nor checked
+against the tree. That one type answers both the dedup key and the stable ID,
+so two findings cannot be duplicates for one pass and distinct for the other.
 
 What none of them settles is undecided, and `UndecidedReason` says which kind:
 an unreadable ledger verdict and a location nothing could parse are defects

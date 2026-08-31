@@ -25,14 +25,18 @@ import pytest
 from agent_types import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
-    CLEAN_VERDICT, FINDING_ID_RE, MECHANICAL_NOTE,
+    CLEAN_VERDICT, MECHANICAL_NOTE,
     ReviewDocument, ReviewHeader,
-    _extract_body_text, _finalize_finding, _FIRST_FILE_RE, _match_severity_header,
+    _finalize_finding, _match_severity_header,
     build_mechanical_body, counts_prose, drop_findings, ends_finding_body,
-    finding_location, finding_spans, is_section_boundary, mechanical_verdict,
-    open_counts, parse_finding_line,
+    finding_spans, is_section_boundary, mechanical_verdict,
+    open_counts,
     resolve_review_verdict, review_title, section_span, set_section, set_status,
     starts_finding_or_section, strip_sections, verdict_from_counts,
+)
+from review_grammar import (
+    FINDING_ID_RE, _extract_body_text, _FIRST_FILE_RE, finding_location,
+    parse_finding_line,
 )
 from review_types import Finding, FindingScope, ReviewMeta, ReviewType
 

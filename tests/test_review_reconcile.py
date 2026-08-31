@@ -22,7 +22,8 @@ if LIB_DIR not in sys.path:
 import review_merge
 from review_document import SECTION_PRIOR_FINDINGS
 from review_paths import FILENAME_PRIOR_FINDINGS
-from review_merge import DispositionSource, UndecidedReason, compute_stable_id
+from review_grammar import FindingIdentity
+from review_merge import DispositionSource, UndecidedReason
 from review_types import PriorDisposition
 
 PRIOR_ONE_FINDING = (
@@ -97,7 +98,7 @@ class TestAccountedByTheReview:
         assert review_merge.reconcile("", "<!-- sid:abc -->").records == []
 
     def test_sid_marker_carries_finding_forward(self):
-        sid = compute_stable_id("handler.go", "missing error check")
+        sid = FindingIdentity("handler.go", None, "missing error check").stable_id
         review = (
             "## Must fix\n"
             f"- **[M1]** <!-- sid:{sid} --> **`other.go:1`** — reworded\n"

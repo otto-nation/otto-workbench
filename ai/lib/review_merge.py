@@ -3,21 +3,22 @@
 Three jobs over one vocabulary: merging the group reviews into a single
 document, giving each finding an identity that outlives the review carrying
 it, and reconciling what the previous review reported against what this one
-did. They live together because they read the same finding line — the path and
+did. They live together because they act on the same identity — the path and
 description that decide whether two findings are duplicates are the pair that
 hashes to a stable ID, and a stable ID is how reconciliation recognises a
 finding a later review restates.
 
-Reading a review is `review_document`'s job, checking findings against the
-tree is `review_verify`'s, and the `Finding` every side holds is
-`review_types`' — a consumer that only holds findings needs none of this.
+Reading that identity off a finding line is `review_grammar`'s job, not this
+module's: `FindingIdentity` answers both questions, so deduplication and
+carry-forward cannot come to different conclusions about one line. Reading a
+review is `review_document`'s job, checking findings against the tree is
+`review_verify`'s, and the `Finding` every side holds is `review_types`' — a
+consumer that only holds findings needs none of this.
 
 Where a finding's body ends is `review_document`'s too. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
 `cut_spans`, so a duplicate takes exactly the lines out of the merged document
-that a falsified finding does. Each keeps its own head pattern for *which*
-declarations it wants — `_finding_dedup_key` and `_ANNOTATE_FINDING_RE` read
-different things off a finding line — and neither says where one stops.
+that a falsified finding does. Neither says where one stops.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -99,7 +100,6 @@ accounts of the same set of findings.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -111,9 +111,12 @@ import serde
 from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_dedup import _get_bot_login
 from review_document import (
-    BOLD_FINDING_ID_RE, FINDING_ID_RE, SECTION_FILE_TRIAGE,
-    SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader,
-    cut_spans, finding_location, finding_spans, parse_finding_line,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader,
+    cut_spans, finding_spans,
+)
+from review_grammar import (
+    ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, FINDING_ID_RE, TRIAGE_LINE_RE,
+    FindingIdentity, parse_finding_line,
 )
 from review_github import PRData
 from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
@@ -308,39 +311,11 @@ def _clean_section_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-_TRIAGE_LINE_RE = re.compile(r"^- `[^`]+`\s")
-
-
 def _clean_triage(text: str) -> str:
     return "\n".join(
         line for line in text.split("\n")
-        if _TRIAGE_LINE_RE.match(line)
+        if TRIAGE_LINE_RE.match(line)
     )
-
-
-_FINDING_PATH_RE = re.compile(
-    r"^- (?:\[ \] )?\*\*\[\w+\d+\]\*\*"
-    r"\s+(?:<!-- sid:\w+ -->\s+)?"
-    r"\*\*(?:`([^`]+)`|([^*]+))\*\*"
-)
-_FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
-
-
-@dataclass(frozen=True)
-class FindingKey:
-    """What makes two findings the same one: where they point and what they say."""
-
-    path: str
-    desc: str
-
-
-def _finding_dedup_key(line: str) -> FindingKey | None:
-    m = _FINDING_PATH_RE.match(line)
-    if not m:
-        return None
-    path = (m.group(1) or m.group(2) or "").replace("\\_", "_").strip()
-    dm = _FINDING_DESC_RE.search(line)
-    return FindingKey(path, dm.group(1).strip().lower() if dm else "")
 
 
 def _record_merge(
@@ -374,17 +349,18 @@ class _Deduped:
 def _dedup_findings(text: str) -> _Deduped:
     """One severity's text with the repeats removed, and where each one went.
 
-    `_finding_dedup_key` chooses which declarations are candidates; how much of
+    `FindingIdentity` chooses which declarations are candidates; how much of
     the text a dropped one takes with it is `finding_spans`', so a repeat and a
     finding the disprove gate falsifies lose exactly the same lines.
     """
-    seen: dict[FindingKey, FindingId | None] = {}
+    seen: dict[tuple[str, str], FindingId | None] = {}
     merged_into: dict[FindingId, FindingId] = {}
     repeats: list[FindingSpan] = []
     for span in finding_spans(text):
-        key = _finding_dedup_key(span.line)
-        if key is None:
+        identity = FindingIdentity.of(span.line)
+        if identity is None:
             continue
+        key = identity.dedup_key
         if key in seen:
             repeats.append(span)
             _record_merge(merged_into, seen[key], _declaration(span.line))
@@ -417,7 +393,7 @@ def _dedup_triage(triage: str) -> str:
     seen: set[str] = set()
     lines = []
     for line in triage.split("\n"):
-        m = re.match(r"^- `([^`]+)`", line)
+        m = TRIAGE_LINE_RE.match(line)
         key = m.group(1) if m else line
         if key not in seen:
             seen.add(key)
@@ -561,64 +537,18 @@ def merge_reviews(group_files: list[str]) -> str:
 
 # ── Stable IDs for carry-forward ─────────────────────────────────────────────
 
-def compute_stable_id(path: str, desc: str) -> str:
-    key = f"{path.strip().lower()}:{desc[:80].strip().lower()}"
-    return hashlib.sha256(key.encode()).hexdigest()[:8]
-
-
-_ANNOTATE_FINDING_RE = re.compile(
-    r"^(- (?:\[ \] )?\*\*\[[A-Z]\d+\]\*\*)\s+"
-)
-
-
-def _extract_finding_path(line: str, after: str) -> str:
-    """The file a finding line names, or "" when it names none.
-
-    `finding_location` answers first because it is the same reading the rest of
-    the parser gives a location, and it is the only rung that recognises a
-    plain-backtick file with no `:<line>` after it — the shape a review writes
-    whenever the finding is about a file rather than a line of one. Reading
-    that as no path at all left the finding with no stable ID either, so
-    neither carry-forward nor the tree could account for it.
-
-    The two rungs below it are what this function used to be, kept because they
-    read locations `finding_location` declines: a bold span that is a label
-    rather than a filename, and a bare `path:12` in no span at all. Identity
-    is the point here — a finding whose location is `**Documentation**` still
-    has to hash to the same thing across reviews to be carried forward.
-    """
-    location = finding_location(after)
-    if location.named:
-        return location.path
-    path_m = _FINDING_PATH_RE.match(line)
-    if path_m:
-        path_str = (path_m.group(1) or path_m.group(2) or "").replace("\\_", "_").strip()
-        return path_str.rsplit(":", 1)[0] if ":" in path_str else path_str
-    cb_path_re = re.match(r"[`]?(\S+?)[`]?:\d+", after)
-    return cb_path_re.group(1) if cb_path_re else ""
-
-
-def _finding_stable_id(line: str, m: re.Match) -> str:
-    """The stable ID a finding line hashes to, or "" when it names no path."""
-    path_str = _extract_finding_path(line, line[m.end():])
-    if not path_str:
-        return ""
-    desc_m = _FINDING_DESC_RE.search(line)
-    return compute_stable_id(path_str, desc_m.group(1).strip() if desc_m else "")
-
-
 def _annotate_finding_line(line: str, m: re.Match) -> str:
-    sid = _finding_stable_id(line, m)
-    if not sid:
+    identity = FindingIdentity.of(line)
+    if identity is None:
         return line
-    return f"{m.group(1)} <!-- sid:{sid} --> {line[m.end():]}"
+    return f"{m.group(1)} <!-- sid:{identity.stable_id} --> {line[m.end():]}"
 
 
 def annotate_prior_with_stable_ids(review_text: str) -> str:
     lines = review_text.split("\n")
     result: list[str] = []
     for line in lines:
-        m = _ANNOTATE_FINDING_RE.match(line)
+        m = ANNOTATE_FINDING_RE.match(line)
         if m and "<!-- sid:" not in line:
             result.append(_annotate_finding_line(line, m))
         else:
@@ -643,11 +573,9 @@ def _stable_ids(text: str) -> set[str]:
     """
     ids = set(_SID_MARKER_RE.findall(text))
     for raw in text.split("\n"):
-        line = raw.strip()
-        m = _ANNOTATE_FINDING_RE.match(line)
-        if m:
-            ids.add(_finding_stable_id(line, m))
-    ids.discard("")
+        identity = FindingIdentity.of(raw.strip())
+        if identity:
+            ids.add(identity.stable_id)
     return ids
 
 
@@ -663,15 +591,15 @@ def _parse_ledger(review_text: str) -> list[LedgerEntry]:
 def _prior_finding(span: FindingSpan, prior_text: str) -> PriorFinding:
     """One prior finding, read from its own line down to whatever ends it."""
     line = span.line
-    m = _ANNOTATE_FINDING_RE.match(line)
+    identity = FindingIdentity.of(line)
     label_m = BOLD_FINDING_ID_RE.search(line)
     body = [raw.strip() for raw in span.text_of(prior_text).split("\n")]
     return PriorFinding(
         ref=FindingRef(
             label_m.group(1) if label_m else "",
-            _extract_finding_path(line, line[m.end():]),
+            identity.path if identity else "",
         ),
-        stable_id=_finding_stable_id(line, m),
+        stable_id=identity.stable_id if identity else "",
         text="\n".join(body).strip(),
     )
 
@@ -679,14 +607,14 @@ def _prior_finding(span: FindingSpan, prior_text: str) -> PriorFinding:
 def _parse_prior_findings(prior_text: str) -> list[PriorFinding]:
     """Every finding the prior review reported, each with the text reporting it.
 
-    `_ANNOTATE_FINDING_RE` chooses which declarations count — the shape the
+    `ANNOTATE_FINDING_RE` chooses which declarations count — the shape the
     stable-ID annotator writes, which is what carry-forward matches on — and
     `finding_spans` says how far down each one's text runs.
     """
     return [
         _prior_finding(span, prior_text)
         for span in finding_spans(prior_text)
-        if _ANNOTATE_FINDING_RE.match(span.line)
+        if ANNOTATE_FINDING_RE.match(span.line)
     ]
 
 

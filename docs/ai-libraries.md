@@ -282,12 +282,15 @@ severity, and the call it reached — is answered off the parsed document rather
 than by a regex each caller brings, so two readers of one review cannot report
 different things about it.
 
-A finding declaration is part of that format, so the grammar of one lives here
-too: the ID at the head of a list item, the location after it, the body after
-that, and the annotations a later pass writes onto it — declined, skipped.
-`parse_finding_line` is for a caller holding a single line that is not in a
-findings section — the prior-findings ledger is the one — and every other
-reader asks `ReviewDocument.findings`.
+A finding declaration is part of that format, but not part of this module: the
+grammar of one — the ID at the head of a list item, the location after it, the
+body after that — is `review_grammar`'s, and this module reads a document
+through it. `parse_finding_line` is for a caller holding a single line that is
+not in a findings section — the prior-findings ledger is the one — and every
+other reader asks `ReviewDocument.findings`. The annotation a fix pass writes
+onto a finding it left alone is the exception that stays: `is_skipped` is a
+question about a `Finding` this module has already parsed rather than about
+the line that declared it.
 
 Where that body stops is the same one owner. `ends_finding_body` is the answer
 and `finding_spans` is the traversal built on it, so a reader walking a review
@@ -565,6 +568,25 @@ here: which lines a hunk covers is the same question as whether a finding can
 be posted inline against them, and asking it twice is how a comment lands on a
 line the diff never touched.
 
+### review_grammar.py
+
+The one reading of a finding line: its ID, its location, its identity.
+
+Every regex that parses a finding declaration lives here, and so does the
+identity two findings are compared on. Before this module there were eleven
+such regexes in five files, and they disagreed: dedup read a path only when it
+was bold, while carry-forward read all four shapes and hashed them together, so
+a finding written with plain backticks was carried forward and deduplicated
+against nothing.
+
+One owner does not mean one pattern. `VERIFY_FINDING_RE` bounds a spaced
+filename with the closing delimiter where `_FIRST_FILE_RE` uses a lookahead,
+and the two have to keep reading the same line the same way for different
+purposes. Both live here so a change to one is made next to the other.
+
+What a document is assembled from is `review_document`'s; what a finding means
+once parsed is `review_types`'.
+
 ### review_merge.py
 
 What becomes of findings across the reviews that report them.
@@ -572,21 +594,22 @@ What becomes of findings across the reviews that report them.
 Three jobs over one vocabulary: merging the group reviews into a single
 document, giving each finding an identity that outlives the review carrying
 it, and reconciling what the previous review reported against what this one
-did. They live together because they read the same finding line — the path and
+did. They live together because they act on the same identity — the path and
 description that decide whether two findings are duplicates are the pair that
 hashes to a stable ID, and a stable ID is how reconciliation recognises a
 finding a later review restates.
 
-Reading a review is `review_document`'s job, checking findings against the
-tree is `review_verify`'s, and the `Finding` every side holds is
-`review_types`' — a consumer that only holds findings needs none of this.
+Reading that identity off a finding line is `review_grammar`'s job, not this
+module's: `FindingIdentity` answers both questions, so deduplication and
+carry-forward cannot come to different conclusions about one line. Reading a
+review is `review_document`'s job, checking findings against the tree is
+`review_verify`'s, and the `Finding` every side holds is `review_types`' — a
+consumer that only holds findings needs none of this.
 
 Where a finding's body ends is `review_document`'s too. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
 `cut_spans`, so a duplicate takes exactly the lines out of the merged document
-that a falsified finding does. Each keeps its own head pattern for *which*
-declarations it wants — `_finding_dedup_key` and `_ANNOTATE_FINDING_RE` read
-different things off a finding line — and neither says where one stops.
+that a falsified finding does. Neither says where one stops.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -739,18 +762,19 @@ and the review says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review_document`'s, and
-so is the finding-line grammar read here: `_VERIFY_FINDING_RE` is a stricter
-shape over the same location vocabulary, and the two have to agree or a finding
-parses one way and verifies against the other.
+Which verdict a tally supports in the first place is `review_document`'s. The
+finding-line grammar read here is `review_grammar`'s: `VERIFY_FINDING_RE` is a
+stricter shape over the same location vocabulary, and the two have to agree or
+a finding parses one way and verifies against the other — which is why they
+live next to each other rather than here.
 
-So is where a finding's body ends. Both gates walk the review through
-`finding_spans` and remove what they drop through `drop_findings`, because two
-gates that measured a finding themselves measured it differently: one of them
-took the resolved finding below a dropped one out with it, and neither of them
-left a `### ` sub-heading standing. `_VERIFY_FINDING_RE` selects which findings
-this gate checks and reads the location it checks them against; it no longer
-says where one stops.
+Where a finding's body ends is `review_document`'s. Both gates walk the review
+through `finding_spans` and remove what they drop through `drop_findings`,
+because two gates that measured a finding themselves measured it differently:
+one of them took the resolved finding below a dropped one out with it, and
+neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
+which findings this gate checks and reads the location it checks them against;
+it does not say where one stops.
 
 ## Publishing
 

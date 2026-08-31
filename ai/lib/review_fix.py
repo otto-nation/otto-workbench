@@ -48,7 +48,8 @@ import proc
 from agent_types import Phase
 from pr_fix import FixOutcome, ItemOutcome
 from review_paths import phase_log_path
-from review_document import FINDING_ID_RE, ReviewDocument, is_skipped
+from review_document import ReviewDocument, is_skipped
+from review_grammar import FINDING_ID_RE
 from review_retry import _has_output
 from review_types import Finding, ReviewJob, severity_by_key
 from trail import Trail

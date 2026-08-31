@@ -28,7 +28,6 @@ it here would quote an agent evidence belonging to a finding it was not shown.
 from __future__ import annotations
 
 import bisect
-import re
 import sys
 from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
@@ -48,9 +47,10 @@ from review_collect import (
     build_project_context, format_preflight_data, scope_diff, truncate_diff,
 )
 from review_document import (
-    BOLD_FINDING_ID_RE, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS, finding_spans, strip_sections,
 )
+from review_grammar import BOLD_FINDING_ID_RE, SCOPED_FINDING_RE
 from review_merge import annotate_prior_with_stable_ids
 from review_paths import (
     FILENAME_PROMPT_STATS, phase_output_path, review_artifact_path,
@@ -550,17 +550,9 @@ def _build_issue_section(issue_link: str, issue_context: str) -> str:
     return ""
 
 
-_FINDING_LINE_RE = re.compile(
-    r"- (?:\[[ x]\] )?"                       # optional checkbox
-    r"\*\*\[[A-Z]\d+\]\*\*"                   # finding ID
-    r"\s+(?:<!-- sid:\w+ -->\s+)?"             # optional stable ID
-    r"(?:\*\*)?[`]?(\S+?)[`]?(?:\*\*)?:\d+"   # path with optional bold/backtick wrapping
-)
-
-
 def _in_scope(line: str, filter_set: set[str]) -> bool:
     """Whether the finding line names a file the scoped review is about."""
-    m = _FINDING_LINE_RE.match(line)
+    m = SCOPED_FINDING_RE.match(line)
     return bool(m) and m.group(1) in filter_set
 
 
@@ -569,7 +561,7 @@ def _collect_scoped_sections(
 ) -> list[tuple[str, list[str]]]:
     """Each `## ` section of `prior_text` and the in-scope findings under it.
 
-    `_FINDING_LINE_RE` picks the findings; `finding_spans` says how much of the
+    `SCOPED_FINDING_RE` picks the findings; `finding_spans` says how much of the
     text each one brings with it, so a finding kept for its path keeps the
     evidence quoted under it and nothing quoted under its neighbour. Sections
     come back in document order, empty ones included — the caller decides

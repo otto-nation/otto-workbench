@@ -38,6 +38,7 @@ from agent_registry import PHASES, REVIEW_PHASES  # noqa: E402
 from agent_types import Mode, Phase, PhaseShape  # noqa: E402
 import review_document  # noqa: E402
 import review_fix  # noqa: E402
+import review_grammar  # noqa: E402
 import review_prompt  # noqa: E402
 import review_types  # noqa: E402
 from pr_state import PRIdentity, PRState  # noqa: E402
@@ -243,7 +244,7 @@ class TestSeverityConsistency:
 
     def test_finding_id_regex_accepts_all_severity_keys(self):
         keys = [s.key for s in review_types.SEVERITIES]
-        regex_keys = review_document.FINDING_ID_RE.pattern
+        regex_keys = review_grammar.FINDING_ID_RE.pattern
         for key in keys:
             assert key in regex_keys, f"FINDING_ID_RE does not include severity key {key}"
 
@@ -313,7 +314,7 @@ class TestFindingIdRegex:
         ids=["must-fix", "should-fix", "nit", "idiom"],
     )
     def test_standard_finding_format(self, severity, seq, line):
-        m = review_document.FINDING_ID_RE.match(line)
+        m = review_grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match: {line!r}"
         assert m.group(2) == severity
         assert int(m.group(3)) == seq
@@ -327,7 +328,7 @@ class TestFindingIdRegex:
         ids=["checkbox-M", "checkbox-S"],
     )
     def test_checkbox_format(self, line):
-        m = review_document.FINDING_ID_RE.match(line)
+        m = review_grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match checkbox format: {line!r}"
 
     @pytest.mark.parametrize(
@@ -339,12 +340,12 @@ class TestFindingIdRegex:
         ids=["strikethrough-S", "strikethrough-M"],
     )
     def test_strikethrough_format(self, line):
-        m = review_document.FINDING_ID_RE.match(line)
+        m = review_grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match strikethrough: {line!r}"
 
     def test_extracts_severity_and_seq(self):
         line = '- **[N7]** **`foo.py:1`** — trailing whitespace'
-        m = review_document.FINDING_ID_RE.match(line)
+        m = review_grammar.FINDING_ID_RE.match(line)
         assert m is not None
         assert m.group(2) == "N"
         assert m.group(3) == "7"
@@ -362,7 +363,7 @@ class TestFindingIdRegex:
             '- [x] **[N3]** `README.md:1` — typo',
             '- ~~**[I4]** **`old.go:1`** — resolved~~',
         ]:
-            assert review_document.FINDING_ID_RE.match(line)
+            assert review_grammar.FINDING_ID_RE.match(line)
             assert review_document.ends_finding_body(line), (
                 f"opens a finding but does not end the one above it: {line!r}"
             )
@@ -383,7 +384,7 @@ class TestFindingIdRegex:
             if example_re.match(line.strip())
         ]
         for line in example_lines:
-            m = review_document.FINDING_ID_RE.match(line.strip())
+            m = review_grammar.FINDING_ID_RE.match(line.strip())
             assert m is not None, (
                 f"FINDING_ID_RE does not match reviewer.md example: {line.strip()!r}"
             )

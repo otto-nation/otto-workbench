@@ -1,0 +1,345 @@
+"""The one reading of a finding line: its ID, its location, its identity.
+
+Every regex that parses a finding declaration lives here, and so does the
+identity two findings are compared on. Before this module there were eleven
+such regexes in five files, and they disagreed: dedup read a path only when it
+was bold, while carry-forward read all four shapes and hashed them together, so
+a finding written with plain backticks was carried forward and deduplicated
+against nothing.
+
+One owner does not mean one pattern. `VERIFY_FINDING_RE` bounds a spaced
+filename with the closing delimiter where `_FIRST_FILE_RE` uses a lookahead,
+and the two have to keep reading the same line the same way for different
+purposes. Both live here so a change to one is made next to the other.
+
+What a document is assembled from is `review_document`'s; what a finding means
+once parsed is `review_types`'.
+"""
+
+# doc-group: findings
+
+from __future__ import annotations
+
+import hashlib
+import re
+from dataclasses import dataclass
+
+from review_types import Finding, FindingLocation
+
+# ── The head of a declaration ────────────────────────────────────────────────
+
+# The head of a finding declaration: a list item opening with the bold ID,
+# carrying the fix pass's checkbox and a resolved finding's strikethrough when
+# it has them, and the stable-ID marker a carried finding keeps. What follows
+# the match is the location and the body.
+FINDING_ID_RE = re.compile(
+    r"^- (?:\[([ x])\] )?"
+    r"(?:~~)?"
+    r"\*\*\[([MSNI])(\d+)\](?:\*\*)?"
+    r"\s+"
+    r"(?:<!-- sid:\w+ -->\s+)?"
+)
+
+# A finding's ID wherever it appears, declaration or reference.
+BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
+
+# A declaration the review struck through, which is how it says the finding was
+# resolved. It ends the body above it and opens nothing.
+STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
+
+# The head as the stable-ID annotator requires it, with the head itself
+# captured so a `<!-- sid: -->` marker can be written after it. Stricter than
+# `FINDING_ID_RE` on purpose: the closing `**` is required and a checked or
+# struck-through finding is passed over, because carry-forward is about
+# findings still open. The marker is deliberately outside the match — the
+# annotator asks whether the line already carries one before it writes another.
+ANNOTATE_FINDING_RE = re.compile(
+    r"^(- (?:\[ \] )?\*\*\[[A-Z]\d+\]\*\*)\s+"
+)
+
+
+# ── The location a declaration names ─────────────────────────────────────────
+
+_PATH_SECTION_RE = re.compile(
+    r"\*\*`(.+?)`\*\*"
+    r"|"
+    r"\*\*(.+?)\*\*"
+    r"|"
+    r"`(.+?)`"
+)
+# What a path may hold, now that `_PATH_SECTION_RE` has already delimited the
+# span. The class says what a path is not: whitespace, the `:` that introduces
+# the line suffix, the `*` and backtick that close the span, and the em dash
+# that separates a location from its body. Everything else is an ordinary
+# filename character — non-ASCII included, because `src/café.py` names a file
+# the same way `src/cafe.py` does.
+_PATH_CHAR = r"[^\s:*`—]"
+_SEGMENT_CHAR = r"[^\s/:*`—]"
+
+# The `:12` or `:12-18` a location may carry after its filename. A fragment
+# rather than a reader: `_FIRST_FILE_RE`, `VERIFY_FINDING_RE` and
+# `BODY_FINDING_RE` each bound it differently, and they have to agree on what a
+# line suffix is or a finding parses one way and verifies against the other.
+LINE_SUFFIX = r"(?::\d+(?:[-–]\d+)?)?"
+
+# A filename holding spaces. It has no character class to stop it, so every
+# use has to bound it: the extension ends it, and whatever follows has to be
+# the end of the span it was found in.
+SPACED_FILE = rf"{_PATH_CHAR}+(?: {_PATH_CHAR}+)+\.\w+"
+
+# Three shapes, tried in this order:
+#
+#   1. pkg/handler.go            — an extension ends the filename
+#   2. src/café brûlé.py         — a filename holding spaces
+#   3. ai/claude/bin/ci-check    — an extensionless script, slash required
+#
+# Shapes 1 and 3 keep prose out by starting at the span's first character and
+# stopping at the first space: a sentence only passes if its opening word is
+# already shaped like a file. A slash is what shape 3 has instead of an
+# extension, and prose is full of slashes, so that shape cannot be allowed to
+# reach across a space either.
+#
+# Shape 2 has no such boundary, so it earns the space a different way: it must
+# end in an extension and, per the lookahead, account for the whole span, line
+# suffix included. "the fix lands in v2.0 of the tool" fails that — the words
+# after the dotted token are left over — while "src/café brûlé.py:12-18"
+# satisfies it. The same lookahead is what stops a greedy space run from
+# walking past the real filename, since anything it swallowed would have to be
+# part of the span's final extension.
+#
+# Shape 2 is tried after shape 1 so it only runs where the space-free shapes
+# found nothing: every location a review already parsed still parses the same
+# way, and a span naming one path before some prose still yields that path
+# rather than the whole span.
+_FIRST_FILE_RE = re.compile(
+    r"("
+    rf"{_PATH_CHAR}+\.\w+"
+    r"|"
+    rf"{SPACED_FILE}(?={LINE_SUFFIX}\s*$)"
+    r"|"
+    rf"{_SEGMENT_CHAR}+(?:/{_SEGMENT_CHAR}+)+"
+    r")"
+    r"(?::(\d+)(?:[-–](\d+))?)?"
+)
+
+
+def finding_location(after_id: str) -> FindingLocation:
+    """The location a finding line names, having had its ID stripped.
+
+    An unnamed `FindingLocation` when the line names none — `named` is the
+    question to ask rather than the emptiness of `path`.
+
+    The location has to open the remainder of the line, in a bold or backtick
+    span: a path mentioned mid-sentence is the finding's prose rather than its
+    location, and reading one as the other points the posted comment at a file
+    the finding only mentions.
+    """
+    section_match = _PATH_SECTION_RE.match(after_id)
+    if not section_match:
+        return FindingLocation()
+    section_text = section_match.group(1) or section_match.group(2) or section_match.group(3) or ""
+    section_text = section_text.replace("\\_", "_")
+    file_match = _FIRST_FILE_RE.match(section_text)
+    if not file_match:
+        return FindingLocation()
+    return FindingLocation(
+        path=file_match.group(1).strip(),
+        line=int(file_match.group(2)) if file_match.group(2) else None,
+        end_line=int(file_match.group(3)) if file_match.group(3) else None,
+    )
+
+
+# ── The body below the location ──────────────────────────────────────────────
+
+# The review file's record of `PriorDisposition.DECLINED`. The ledger is
+# stripped before the file is finished, so the verdict has to survive on the
+# finding line itself or the next `--fix` sees an ordinary open finding. The
+# reason is optional so a decline written without one still registers.
+_DECLINED = r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*"
+
+# An annotation, not prose. Matched anywhere in the line, a finding that merely
+# quotes the annotation — which any review of this parser writes — reads as
+# declined and is silently dropped from the fix pass's work set with no warning
+# anywhere. So the match is anchored to the two places the templates put an
+# annotation: at the head of the finding body, and at the end of the line.
+_DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
+_DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
+
+
+def _match_decline(body: str, line: str) -> re.Match[str] | None:
+    """The decline annotation a finding line carries, if it carries one."""
+    return _DECLINED_HEAD_RE.match(body) or _DECLINED_TAIL_RE.search(line)
+
+
+def _extract_body_text(line: str) -> str:
+    em_dash_pos = line.find("—")
+    if em_dash_pos != -1:
+        return line[em_dash_pos + 1:].strip()
+    for sep in (" -- ", " - "):
+        pos = line.find(sep)
+        if pos != -1:
+            return line[pos + len(sep):].strip()
+    return ""
+
+
+def parse_finding_line(stripped: str) -> Finding | None:
+    """The finding `stripped` declares, or None when it declares none.
+
+    For a caller holding one line that is not in a findings section — the
+    prior-findings ledger writes finding lines under its own heading. A caller
+    after the findings of a whole review asks `ReviewDocument.findings`, which
+    is the reading that knows which headings declare findings.
+    """
+    id_match = FINDING_ID_RE.match(stripped)
+    if not id_match:
+        return None
+    checkbox = id_match.group(1)
+    sev = id_match.group(2)
+    seq = int(id_match.group(3))
+    after_id = stripped[id_match.end():]
+    location = finding_location(after_id)
+    body = _extract_body_text(stripped) if location.named else after_id.strip()
+    declined = _match_decline(body, stripped)
+    return Finding(
+        id=f"{sev}{seq}", severity=sev, seq=seq,
+        path=location.path, line=location.line, end_line=location.end_line,
+        body=body,
+        checked=(checkbox is not None and checkbox.lower() == "x"),
+        declined=declined is not None,
+        decline_reason=(declined.group(1) or "").strip() if declined else "",
+    )
+
+
+# ── Readers with bounds of their own ─────────────────────────────────────────
+
+# This pattern selects: which findings the evidence gate checks, and the
+# location it checks each one against. Where a finding's body ends is not its
+# business — `finding_spans` measures that, so a line this pattern cannot read
+# ends the span above it instead of joining that finding's evidence.
+#
+# The space-free class stays exactly as it was — anything the delimiters cannot
+# hold, line suffix included, which `rsplit` strips at the call site — and the
+# spaced shape is beside it rather than replacing it. Every location that
+# parsed before parses the same way, since a space-free span never reaches the
+# second alternative at all.
+#
+# `SPACED_FILE` needs the same bound it has in `_FIRST_FILE_RE` above, where a
+# lookahead makes the filename account for the whole span. Here the closing
+# delimiter is that bound: the extension and its optional line suffix have to
+# run right up to it, so "the fix lands in v2.0 of the tool" is still no path
+# and a greedy space run cannot walk past the real filename.
+VERIFY_FINDING_RE = re.compile(
+    r"^- (?:\[ \] )?"
+    r"\*\*\[([MSNI])(\d+)\]\*\*"
+    r"\s+(?:<!-- sid:\w+ -->\s+)?"
+    rf"(?:\*\*[`]?([^`*\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`]?\*\*"
+    rf"|[`]([^`\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`])"
+    rf"{LINE_SUFFIX}"
+    r"\s*—\s*(.*)"
+)
+
+# A declaration whose location names a line of a file, with the path captured.
+# What a scoped re-review filters the prior review's findings on: a finding
+# about a file rather than a line of one names no line to keep it against, so
+# the `:\d+` is required here where every other reader has it optional.
+SCOPED_FINDING_RE = re.compile(
+    r"- (?:\[[ x]\] )?"                       # optional checkbox
+    r"\*\*\[[A-Z]\d+\]\*\*"                   # finding ID
+    r"\s+(?:<!-- sid:\w+ -->\s+)?"             # optional stable ID
+    r"(?:\*\*)?[`]?(\S+?)[`]?(?:\*\*)?:\d+"   # path with optional bold/backtick wrapping
+)
+
+# A declaration as it reads once posted, in the body of a review comment rather
+# than in the review file: no checkbox, since the fix pass has not seen it, and
+# the path and the body captured so a finding about to be posted can be matched
+# against one already there. Scanned with `finditer` over a whole comment body,
+# which is why it is the one reader here carrying `re.MULTILINE`.
+BODY_FINDING_RE = re.compile(
+    r"^- \*\*\[[MSNI]\d+\]\*\*\s+"
+    r"(?:\*\*`?([^`*\s]+?)`?\*\*|`([^`\s]+?)`)"
+    rf"{LINE_SUFFIX}"
+    r"\s*—\s*(.*)",
+    re.MULTILINE,
+)
+
+# A file-triage line: the file a group looked at, in backticks, and its note on
+# what it found there. The note is what makes it a triage entry rather than a
+# bare bullet, so the trailing space is part of the shape; the path is captured
+# because two groups reporting on one file report it once.
+TRIAGE_LINE_RE = re.compile(r"^- `([^`]+)`\s")
+
+
+# ── The identity two findings are compared on ────────────────────────────────
+
+_FINDING_PATH_RE = re.compile(
+    r"^- (?:\[ \] )?\*\*\[\w+\d+\]\*\*"
+    r"\s+(?:<!-- sid:\w+ -->\s+)?"
+    r"\*\*(?:`([^`]+)`|([^*]+))\*\*"
+)
+_FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
+
+
+def _fallback_location(line: str, after: str) -> tuple[str, int | None]:
+    """The two readings `finding_location` declines: a bold label, and a bare `path:12`.
+
+    A finding whose location is `**Documentation**` is not a file, but it still
+    has to hash to the same thing across reviews to be carried forward.
+    """
+    path_m = _FINDING_PATH_RE.match(line)
+    if path_m:
+        raw = (path_m.group(1) or path_m.group(2) or "").replace("\\_", "_").strip()
+        head, _, tail = raw.rpartition(":")
+        return (head, int(tail)) if head and tail.isdigit() else (raw, None)
+    bare = re.match(r"[`]?(\S+?)[`]?:(\d+)", after)
+    return (bare.group(1), int(bare.group(2))) if bare else ("", None)
+
+
+@dataclass(frozen=True)
+class FindingIdentity:
+    """What makes two findings the same one: where they point and what they say.
+
+    `path` is stripped of any `:line` suffix and `line` is kept beside it,
+    because the two readings this type replaces disagreed on that point.
+    `stable_id` hashes the path alone, so a finding survives the code moving
+    down the file; `dedup_key` puts the line back, so two findings about two
+    lines of one file stay two findings.
+    """
+
+    path: str
+    line: int | None
+    desc: str
+
+    @classmethod
+    def of(cls, text: str) -> "FindingIdentity | None":
+        """The identity of the finding `text` declares, or None if it declares none.
+
+        `finding_location` answers first because it is the same reading the
+        rest of the parser gives a location, and it is the only rung that
+        recognises a plain-backtick file with no `:<line>` after it — the shape
+        a review writes whenever the finding is about a file rather than a line
+        of one. `_fallback_location` is what reads the two shapes it declines.
+        """
+        m = ANNOTATE_FINDING_RE.match(text)
+        if not m:
+            return None
+        after = text[m.end():]
+        location = finding_location(after)
+        path, line = location.path, location.line
+        if not path:
+            path, line = _fallback_location(text, after)
+        if not path:
+            return None
+        desc_m = _FINDING_DESC_RE.search(text)
+        return cls(path, line, desc_m.group(1).strip() if desc_m else "")
+
+    @property
+    def dedup_key(self) -> tuple[str, str]:
+        """Where the finding points and what it says, lowercased."""
+        located = f"{self.path}:{self.line}" if self.line else self.path
+        return (located, self.desc.lower())
+
+    @property
+    def stable_id(self) -> str:
+        """The eight hex digits a `<!-- sid: -->` marker carries."""
+        key = f"{self.path.strip().lower()}:{self.desc[:80].strip().lower()}"
+        return hashlib.sha256(key.encode()).hexdigest()[:8]

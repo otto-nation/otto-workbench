@@ -31,12 +31,15 @@ severity, and the call it reached — is answered off the parsed document rather
 than by a regex each caller brings, so two readers of one review cannot report
 different things about it.
 
-A finding declaration is part of that format, so the grammar of one lives here
-too: the ID at the head of a list item, the location after it, the body after
-that, and the annotations a later pass writes onto it — declined, skipped.
-`parse_finding_line` is for a caller holding a single line that is not in a
-findings section — the prior-findings ledger is the one — and every other
-reader asks `ReviewDocument.findings`.
+A finding declaration is part of that format, but not part of this module: the
+grammar of one — the ID at the head of a list item, the location after it, the
+body after that — is `review_grammar`'s, and this module reads a document
+through it. `parse_finding_line` is for a caller holding a single line that is
+not in a findings section — the prior-findings ledger is the one — and every
+other reader asks `ReviewDocument.findings`. The annotation a fix pass writes
+onto a finding it left alone is the exception that stays: `is_skipped` is a
+question about a `Finding` this module has already parsed rather than about
+the line that declared it.
 
 Where that body stops is the same one owner. `ends_finding_body` is the answer
 and `finding_spans` is the traversal built on it, so a reader walking a review
@@ -73,9 +76,10 @@ from pathlib import Path
 
 from agent_types import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
+from review_grammar import FINDING_ID_RE, STRIKETHROUGH_RE, parse_finding_line
 from review_types import (
-    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, FindingLocation,
-    FindingScope, FindingSpan, ReviewMeta, ReviewType, meta_enum,
+    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, FindingScope,
+    FindingSpan, ReviewMeta, ReviewType, meta_enum,
 )
 from text import plural
 
@@ -363,104 +367,10 @@ def review_title(meta: ReviewMeta) -> str:
 
 # ── Finding lines ────────────────────────────────────────────────────────────
 
-# The head of a finding declaration: a list item opening with the bold ID,
-# carrying the fix pass's checkbox and a resolved finding's strikethrough when
-# it has them, and the stable-ID marker a carried finding keeps. What follows
-# the match is the location and the body.
-FINDING_ID_RE = re.compile(
-    r"^- (?:\[([ x])\] )?"
-    r"(?:~~)?"
-    r"\*\*\[([MSNI])(\d+)\](?:\*\*)?"
-    r"\s+"
-    r"(?:<!-- sid:\w+ -->\s+)?"
-)
-
-# A finding's ID wherever it appears, declaration or reference.
-BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
-
-_STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
-
-_PATH_SECTION_RE = re.compile(
-    r"\*\*`(.+?)`\*\*"
-    r"|"
-    r"\*\*(.+?)\*\*"
-    r"|"
-    r"`(.+?)`"
-)
-# What a path may hold, now that `_PATH_SECTION_RE` has already delimited the
-# span. The class says what a path is not: whitespace, the `:` that introduces
-# the line suffix, the `*` and backtick that close the span, and the em dash
-# that separates a location from its body. Everything else is an ordinary
-# filename character — non-ASCII included, because `src/café.py` names a file
-# the same way `src/cafe.py` does.
-_PATH_CHAR = r"[^\s:*`—]"
-_SEGMENT_CHAR = r"[^\s/:*`—]"
-
-# The `:12` or `:12-18` a location may carry after its filename. Public with
-# `SPACED_FILE` below: the evidence-verification reader in `review_verify`
-# reads the same location off the same line with a stricter shape, and the two
-# have to agree on what a location is or a finding parses one way and verifies
-# against the other.
-LINE_SUFFIX = r"(?::\d+(?:[-–]\d+)?)?"
-
-# A filename holding spaces. It has no character class to stop it, so every
-# use has to bound it: the extension ends it, and whatever follows has to be
-# the end of the span it was found in.
-SPACED_FILE = rf"{_PATH_CHAR}+(?: {_PATH_CHAR}+)+\.\w+"
-
-# Three shapes, tried in this order:
-#
-#   1. pkg/handler.go            — an extension ends the filename
-#   2. src/café brûlé.py         — a filename holding spaces
-#   3. ai/claude/bin/ci-check    — an extensionless script, slash required
-#
-# Shapes 1 and 3 keep prose out by starting at the span's first character and
-# stopping at the first space: a sentence only passes if its opening word is
-# already shaped like a file. A slash is what shape 3 has instead of an
-# extension, and prose is full of slashes, so that shape cannot be allowed to
-# reach across a space either.
-#
-# Shape 2 has no such boundary, so it earns the space a different way: it must
-# end in an extension and, per the lookahead, account for the whole span, line
-# suffix included. "the fix lands in v2.0 of the tool" fails that — the words
-# after the dotted token are left over — while "src/café brûlé.py:12-18"
-# satisfies it. The same lookahead is what stops a greedy space run from
-# walking past the real filename, since anything it swallowed would have to be
-# part of the span's final extension.
-#
-# Shape 2 is tried after shape 1 so it only runs where the space-free shapes
-# found nothing: every location a review already parsed still parses the same
-# way, and a span naming one path before some prose still yields that path
-# rather than the whole span.
-_FIRST_FILE_RE = re.compile(
-    r"("
-    rf"{_PATH_CHAR}+\.\w+"
-    r"|"
-    rf"{SPACED_FILE}(?={LINE_SUFFIX}\s*$)"
-    r"|"
-    rf"{_SEGMENT_CHAR}+(?:/{_SEGMENT_CHAR}+)+"
-    r")"
-    r"(?::(\d+)(?:[-–](\d+))?)?"
-)
-
-# The review file's record of `PriorDisposition.DECLINED`. The ledger is
-# stripped before the file is finished, so the verdict has to survive on the
-# finding line itself or the next `--fix` sees an ordinary open finding. The
-# reason is optional so a decline written without one still registers.
-_DECLINED = r"\*\(declined(?:\s*[—–-]+\s*(.+?))?\)\*"
-
-# An annotation, not prose. Matched anywhere in the line, a finding that merely
-# quotes the annotation — which any review of this parser writes — reads as
-# declined and is silently dropped from the fix pass's work set with no warning
-# anywhere. So the match is anchored to the two places the templates put an
-# annotation: at the head of the finding body, and at the end of the line.
-_DECLINED_HEAD_RE = re.compile(rf"^{_DECLINED}", re.IGNORECASE)
-_DECLINED_TAIL_RE = re.compile(rf"{_DECLINED}\s*$", re.IGNORECASE)
-
 # The fix pass's record of a finding it read and left alone, in the same grammar
-# as the decline annotation above and optional in the same way — a skip written
-# without a reason is still a skip, and reading it as an ordinary open finding
-# is what lets a sibling finding's edit report it as fixed.
+# as `review_grammar`'s decline annotation and optional in the same way — a skip
+# written without a reason is still a skip, and reading it as an ordinary open
+# finding is what lets a sibling finding's edit report it as fixed.
 #
 # Anchored to head and tail for the reason the decline annotation is: matched
 # anywhere, a finding whose prose quotes the annotation — the docs of the fix
@@ -486,76 +396,6 @@ def _severity_names() -> dict[str, str]:
 _SEVERITY_NAMES = _severity_names()
 
 
-def finding_location(after_id: str) -> FindingLocation:
-    """The location a finding line names, having had its ID stripped.
-
-    An unnamed `FindingLocation` when the line names none — `named` is the
-    question to ask rather than the emptiness of `path`.
-
-    The location has to open the remainder of the line, in a bold or backtick
-    span: a path mentioned mid-sentence is the finding's prose rather than its
-    location, and reading one as the other points the posted comment at a file
-    the finding only mentions.
-    """
-    section_match = _PATH_SECTION_RE.match(after_id)
-    if not section_match:
-        return FindingLocation()
-    section_text = section_match.group(1) or section_match.group(2) or section_match.group(3) or ""
-    section_text = section_text.replace("\\_", "_")
-    file_match = _FIRST_FILE_RE.match(section_text)
-    if not file_match:
-        return FindingLocation()
-    return FindingLocation(
-        path=file_match.group(1).strip(),
-        line=int(file_match.group(2)) if file_match.group(2) else None,
-        end_line=int(file_match.group(3)) if file_match.group(3) else None,
-    )
-
-
-def _match_decline(body: str, line: str) -> re.Match[str] | None:
-    """The decline annotation a finding line carries, if it carries one."""
-    return _DECLINED_HEAD_RE.match(body) or _DECLINED_TAIL_RE.search(line)
-
-
-def _extract_body_text(line: str) -> str:
-    em_dash_pos = line.find("—")
-    if em_dash_pos != -1:
-        return line[em_dash_pos + 1:].strip()
-    for sep in (" -- ", " - "):
-        pos = line.find(sep)
-        if pos != -1:
-            return line[pos + len(sep):].strip()
-    return ""
-
-
-def parse_finding_line(stripped: str) -> Finding | None:
-    """The finding `stripped` declares, or None when it declares none.
-
-    For a caller holding one line that is not in a findings section — the
-    prior-findings ledger writes finding lines under its own heading. A caller
-    after the findings of a whole review asks `ReviewDocument.findings`, which
-    is the reading that knows which headings declare findings.
-    """
-    id_match = FINDING_ID_RE.match(stripped)
-    if not id_match:
-        return None
-    checkbox = id_match.group(1)
-    sev = id_match.group(2)
-    seq = int(id_match.group(3))
-    after_id = stripped[id_match.end():]
-    location = finding_location(after_id)
-    body = _extract_body_text(stripped) if location.named else after_id.strip()
-    declined = _match_decline(body, stripped)
-    return Finding(
-        id=f"{sev}{seq}", severity=sev, seq=seq,
-        path=location.path, line=location.line, end_line=location.end_line,
-        body=body,
-        checked=(checkbox is not None and checkbox.lower() == "x"),
-        declined=declined is not None,
-        decline_reason=(declined.group(1) or "").strip() if declined else "",
-    )
-
-
 def is_skipped(finding: Finding) -> bool:
     """Whether a previous fix pass recorded that it left this finding alone.
 
@@ -573,7 +413,7 @@ def is_section_boundary(stripped: str) -> bool:
     A sub-heading or a struck-through finding — the review resolved that one,
     and the lines below it belong to nothing.
     """
-    return stripped.startswith("### ") or bool(_STRIKETHROUGH_RE.match(stripped))
+    return stripped.startswith("### ") or bool(STRIKETHROUGH_RE.match(stripped))
 
 
 def starts_finding_or_section(stripped: str) -> bool:

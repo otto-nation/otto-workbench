@@ -16,6 +16,7 @@ import gh_client
 from review_github import PRData, GQL_REVIEWS_LIMIT
 
 from review_format import CLASS_SKIPPED
+from review_grammar import BODY_FINDING_RE
 from review_types import Finding
 
 
@@ -42,18 +43,9 @@ def jaccard(a: set[str], b: set[str]) -> float:
 
 # ── Body finding extraction ────────────────────────────────────────────────
 
-_BODY_FINDING_RE = re.compile(
-    r"^- \*\*\[[MSNI]\d+\]\*\*\s+"
-    r"(?:\*\*`?([^`*\s]+?)`?\*\*|`([^`\s]+?)`)"
-    r"(?::\d+(?:[-–]\d+)?)?"
-    r"\s*—\s*(.*)",
-    re.MULTILINE,
-)
-
-
 def _extract_body_findings(body: str) -> list[dict]:
     results = []
-    for m in _BODY_FINDING_RE.finditer(body):
+    for m in BODY_FINDING_RE.finditer(body):
         raw_path = (m.group(1) or m.group(2) or "")
         path = raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path
         results.append({"path": path, "body": m.group(3)})

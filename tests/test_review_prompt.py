@@ -16,12 +16,13 @@ from review_collect import (
     MAX_PROMPT_BYTES, MIN_DIFF_BYTES, format_preflight_data,
 )
 from review_types import (
-    PRContext, PreflightData, PRMetadata, PriorDisposition, ReviewJob,
+    FindingRef, PRContext, PreflightData, PriorDisposition, PriorFinding,
+    PRMetadata, ReviewJob,
 )
 from agent_types import Effort, Mode, Phase
 from dataclasses import asdict
 
-from review_merge import FindingRef, PriorFinding, _parse_ledger_line
+from review_merge import _parse_ledger_line
 from review_prompt import (
     _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, BudgetLever, Cut,
     MAX_DELTA_LIST_ENTRIES,

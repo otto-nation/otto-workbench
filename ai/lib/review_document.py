@@ -74,8 +74,8 @@ from pathlib import Path
 from agent_types import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_types import (
-    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, ReviewMeta, ReviewType,
-    meta_enum,
+    SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Finding, FindingLocation,
+    FindingScope, FindingSpan, ReviewMeta, ReviewType, meta_enum,
 )
 from text import plural
 
@@ -486,24 +486,6 @@ def _severity_names() -> dict[str, str]:
 _SEVERITY_NAMES = _severity_names()
 
 
-@dataclass(frozen=True)
-class FindingLocation:
-    """Where in the tree a finding line says its finding is.
-
-    `line` and `end_line` are the range the location names — both absent when
-    it names a file and no line of it.
-    """
-
-    path: str = ""
-    line: int | None = None
-    end_line: int | None = None
-
-    @property
-    def named(self) -> bool:
-        """Whether the line named a location at all."""
-        return bool(self.path)
-
-
 def finding_location(after_id: str) -> FindingLocation:
     """The location a finding line names, having had its ID stripped.
 
@@ -650,58 +632,6 @@ def _finalize_finding(finding: Finding, body_lines: list[str]):
         return
     body = re.sub(r"\n+###[^\n]*$", "", body, flags=re.DOTALL).strip()
     finding.body = body
-
-
-class FindingScope(StrEnum):
-    """What the heading above a finding declaration makes of it.
-
-    `DECLARED` is a declaration under a severity heading — a finding the text
-    reports as its own. `REPORTED` is one under a heading that names no
-    severity: the `## Prior findings` ledger repeats the last review's findings
-    there, and its IDs number that review rather than this one, so an edit that
-    touched them would rewrite the record of a review it is not looking at.
-    `UNHEADED` is a declaration with no heading above it at all, which is what
-    a caller holding one severity's findings on their own hands in.
-    """
-
-    DECLARED = "declared"
-    REPORTED = "reported"
-    UNHEADED = "unheaded"
-
-
-@dataclass(frozen=True)
-class FindingSpan:
-    """A finding declaration and the lines belonging to it.
-
-    `line` is the declaration itself, stripped — what a caller with a narrower
-    grammar than `FINDING_ID_RE` matches against to decide whether this is a
-    finding it wants. `start` and `end` are line indices into the text the span
-    was read from: the declaration's own line, and the line after the last one
-    its body claims. `text_of` is the slice they name.
-
-    The coordinates live here rather than on `Finding`, which the fix pass
-    serializes to disk — a line number from one reading of one document is not
-    something a stored finding should carry around.
-    """
-
-    finding: Finding
-    line: str
-    start: int
-    end: int
-    scope: FindingScope = FindingScope.UNHEADED
-
-    @property
-    def reported(self) -> bool:
-        """Whether the span sits under a heading reporting on another review."""
-        return self.scope is FindingScope.REPORTED
-
-    def text_of(self, text: str) -> str:
-        """The lines the span claims, verbatim.
-
-        Trailing blank lines included, since a caller removing the span has to
-        name every line the span owns or it leaves the gap behind.
-        """
-        return "\n".join(text.split("\n")[self.start:self.end])
 
 
 def _scope_after(stripped: str, scope: FindingScope) -> FindingScope:

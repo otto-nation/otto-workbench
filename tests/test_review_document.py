@@ -25,7 +25,7 @@ import pytest
 from agent_types import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
-    CLEAN_VERDICT, FINDING_ID_RE, FindingScope, MECHANICAL_NOTE,
+    CLEAN_VERDICT, FINDING_ID_RE, MECHANICAL_NOTE,
     ReviewDocument, ReviewHeader,
     _extract_body_text, _finalize_finding, _FIRST_FILE_RE, _match_severity_header,
     build_mechanical_body, counts_prose, drop_findings, ends_finding_body,
@@ -34,7 +34,7 @@ from review_document import (
     resolve_review_verdict, review_title, section_span, set_section, set_status,
     starts_finding_or_section, strip_sections, verdict_from_counts,
 )
-from review_types import Finding, ReviewMeta, ReviewType
+from review_types import Finding, FindingScope, ReviewMeta, ReviewType
 
 
 def _write(tmp_path, body: str) -> Path:

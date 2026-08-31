@@ -68,11 +68,13 @@ import log
 from pr_domains import ReviewVerdict
 from review_document import (
     LINE_SUFFIX, SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
-    SPACED_FILE, FindingSpan, ReviewDocument, counts_prose, drop_findings,
+    SPACED_FILE, ReviewDocument, counts_prose, drop_findings,
     finding_spans, section_span, strip_sections, verdict_from_counts,
 )
 from review_merge import renumber_findings, strip_stable_ids
-from review_types import SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key
+from review_types import (
+    SEVERITY_MUST, SEVERITY_SHOULD, FindingSpan, severity_by_key,
+)
 from text import plural
 
 # ── Evidence verification ────────────────────────────────────────────────────

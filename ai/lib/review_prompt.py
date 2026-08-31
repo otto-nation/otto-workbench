@@ -51,7 +51,7 @@ from review_document import (
     BOLD_FINDING_ID_RE, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS, finding_spans, strip_sections,
 )
-from review_merge import PriorFinding, annotate_prior_with_stable_ids
+from review_merge import annotate_prior_with_stable_ids
 from review_paths import (
     FILENAME_PROMPT_STATS, phase_output_path, review_artifact_path,
 )
@@ -60,8 +60,8 @@ from review_scout import (
     is_scout_output, parse_scout_output,
 )
 from review_types import (
-    FILE_STAT_FMT, PRContext, PreflightData, PRMetadata, PriorDisposition,
-    ReplyState, ReviewJob,
+    FILE_STAT_FMT, PRContext, PreflightData, PriorDisposition, PriorFinding,
+    PRMetadata, ReplyState, ReviewJob,
 )
 
 # The verdicts the prompt offers, written from the same members the review's

@@ -112,76 +112,17 @@ from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_dedup import _get_bot_login
 from review_document import (
     BOLD_FINDING_ID_RE, FINDING_ID_RE, SECTION_FILE_TRIAGE,
-    SECTION_PRIOR_FINDINGS, FindingSpan, ReviewDocument, ReviewHeader,
+    SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader,
     cut_spans, finding_location, finding_spans, parse_finding_line,
 )
 from review_github import PRData
 from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review_types import (
-    DISPOSITION_TAIL_PUNCTUATION, SEVERITIES, PriorDisposition, ReplyState,
+    DISPOSITION_TAIL_PUNCTUATION, SEVERITIES, FindingRef, FindingSpan,
+    LedgerEntry, PriorDisposition, PriorFinding, ReplyState,
     disposition_precedence,
 )
 from text import plural
-
-
-# ── Prior-finding vocabulary ─────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class FindingRef:
-    """How a re-review names a prior finding: its ID and its path.
-
-    The pair travels together because neither half identifies a finding on its
-    own — IDs are per-review sequence numbers and one file holds many findings.
-    """
-
-    finding_id: str = ""
-    path: str = ""
-
-    @property
-    def label(self) -> str:
-        """How the reference reads in a log line.
-
-        A reference with no path is the ID alone rather than the ID and an
-        empty pair of backticks — the line is already reporting that nothing
-        read a path off the finding, and printing `` there says it twice.
-        """
-        if not self.path:
-            return self.finding_id
-        return f"{self.finding_id} `{self.path}`".strip()
-
-
-@dataclass(frozen=True)
-class LedgerEntry:
-    """One `## Prior findings` line: a prior finding, and what became of it."""
-
-    ref: FindingRef
-    disposition: PriorDisposition | None
-    text: str
-
-    def covers(self, ref: FindingRef) -> bool:
-        """Whether this entry accounts for `ref`.
-
-        An entry that names no path stands on its ID alone; one that names a
-        path has to name the right one, or a single entry would account for
-        every prior finding in its file.
-        """
-        if self.ref.finding_id != ref.finding_id:
-            return False
-        return not self.ref.path or self.ref.path == ref.path
-
-
-@dataclass(frozen=True)
-class PriorFinding:
-    """A finding line from the prior review, as reconciliation sees it.
-
-    `text` runs from the finding line to whatever ends it, so a finding that
-    quotes the code it objects to below its first line keeps the quotation —
-    which is what lets reconciliation ask whether that code is still there.
-    """
-
-    ref: FindingRef
-    stable_id: str
-    text: str = ""
 
 
 def _parse_ledger_line(raw: str) -> LedgerEntry | None:

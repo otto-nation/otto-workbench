@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install workflow helpers: step registration, requirement checks, cask installs.
+# Install workflow helpers: step registration and requirement checks.
 #
 # Bash-only. Used primarily by `install.sh` and component setup scripts.
 
@@ -66,21 +66,6 @@ require_command() {
   command -v "$name" >/dev/null 2>&1 && return 0
   warn "$msg"
   return 1
-}
-
-# install_cask CMD CASK LABEL MANUAL_URL
-# Installs a tool via Homebrew cask if CMD is not already in PATH.
-# Falls back to a manual install message if brew is unavailable.
-install_cask() {
-  local cmd="$1" cask="$2" label="$3" manual_url="$4"
-  if command -v "$cmd" >/dev/null 2>&1; then
-    success "$cmd already installed"
-    return
-  fi
-  require_command brew "Homebrew not found — install $label manually: $manual_url" || return
-  info "Installing $label..."
-  brew install --cask "$cask"
-  success "$label installed"
 }
 
 # run_migrations DIR

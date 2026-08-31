@@ -153,6 +153,13 @@ CLAUDE_SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 CLAUDE_RULES_DIR="$HOME/.claude/rules"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+# Claude Code's own installer, which step_install_claude pipes to bash and the
+# cask migration replays.
+CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
+# The launcher that installer manages, a symlink into ~/.local/share/claude.
+# The migration tests this path by name rather than asking `command -v claude`,
+# which a Homebrew cask still on PATH answers just as readily.
+CLAUDE_NATIVE_BIN="$HOME/.local/bin/claude"
 
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"

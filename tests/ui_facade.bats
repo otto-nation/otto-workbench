@@ -30,7 +30,7 @@ teardown() {
 }
 
 @test "ui.sh facade makes setup functions available" {
-  run bash -c ". '$REPO_ROOT/lib/ui.sh' && type require_command && type install_cask && type register_step"
+  run bash -c ". '$REPO_ROOT/lib/ui.sh' && type require_command && type register_step"
   [ "$status" -eq 0 ]
 }
 

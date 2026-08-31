@@ -21,6 +21,14 @@
 # appears in neither and its current state is left untouched, so an offline sync
 # neither installs a package it cannot verify nor strips one that already works.
 #
+# Withdrawal is therefore a membership verdict, not a diff against the template.
+# A package the template stops declaring is left in the live file, because
+# nothing here can tell it from one the operator installed — ai/claude's
+# equivalent answers that with a `_workbench` key recording what it managed, and
+# that is a key Pi would have to accept in a file it validates. Removing a
+# package the workbench once installed is a migration, the same way this branch
+# removes the settings file the sync once wrote to the wrong path.
+#
 # Entries are identified the way Pi identifies them: by source with any trailing
 # @ref removed, so a pinned ref and an object-form entry carrying filters both
 # match the plain source string and are left alone rather than duplicated.

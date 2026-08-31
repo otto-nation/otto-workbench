@@ -23,6 +23,11 @@ teardown() {
 # lib/migrations.sh for MIGRATION_NOOP. Exit status is the function's own: the
 # framework reads it to tell a drained file (0) from a machine that never had
 # one (MIGRATION_NOOP).
+#
+# LEGACY_WORKBENCH_ROOT is set because lib/migrations.sh reads it while being
+# sourced; the migration itself never touches it, and the path deliberately does
+# not exist. Without it the source fails and every case answers 0 rather than
+# MIGRATION_NOOP, which reads as a migration that did work on an empty machine.
 _run_migration() {
   bash -c '
     success() { echo "OK $*"; }
@@ -93,4 +98,18 @@ _run_migration() {
   run _run_migration
   [ "$status" -eq 3 ]
   [ "$(jq -r '.defaultModel' "$LEGACY.pre-move")" = "hand-picked" ]
+}
+
+@test "a backup already there is never the file overwritten" {
+  # Reachable when the state line was cleared and the legacy file recreated: the
+  # earlier copy is one the operator was told to keep, so the second goes beside it.
+  printf '{\n  "defaultModel": "first"\n}\n' > "$LEGACY"
+  run _run_migration
+  [ "$status" -eq 0 ]
+
+  printf '{\n  "defaultModel": "second"\n}\n' > "$LEGACY"
+  run _run_migration
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.defaultModel' "$LEGACY.pre-move")" = "first" ]
+  [ "$(jq -r '.defaultModel' "$LEGACY.pre-move.2")" = "second" ]
 }

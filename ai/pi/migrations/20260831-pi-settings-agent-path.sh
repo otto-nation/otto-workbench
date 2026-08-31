@@ -22,7 +22,15 @@ migration_20260831_pi_settings_agent_path() {
     return 0
   fi
 
-  local kept="$PI_LEGACY_SETTINGS_FILE.pre-move"
+  # A backup already sitting there is a file the operator was told to keep, so it
+  # is never the one overwritten — the second copy goes beside it. Reachable when
+  # the state line was cleared and the legacy file recreated between runs.
+  local kept="$PI_LEGACY_SETTINGS_FILE.pre-move" n=1
+  while [[ -e "$kept" ]]; do
+    n=$((n + 1))
+    kept="$PI_LEGACY_SETTINGS_FILE.pre-move.$n"
+  done
+
   mv "$PI_LEGACY_SETTINGS_FILE" "$kept"
   warn "Pi never read $PI_LEGACY_SETTINGS_FILE — its edits are kept at $kept"
   success "Pi settings now sync to $PI_SETTINGS_FILE"

@@ -13,7 +13,9 @@ setup() {
   TEMPLATE="$TMPDIR/template.json"
   BIN="$TMPDIR/bin"
   mkdir -p "$BIN"
-  _write_template '["git:github.com/usemaximum/pi-extensions"]'
+  ORG="usemaximum"
+  PKG="git:github.com/$ORG/pi-extensions"
+  _write_template "$(jq -nc --arg p "$PKG" '[$p]')"
 }
 
 teardown() {
@@ -36,6 +38,13 @@ JSON
 _write_live() {
   mkdir -p "$AGENT_DIR"
   printf '%s\n' "$1" > "$LIVE"
+}
+
+# _write_live_packages ENTRY... — a live file whose packages hold ENTRY..., each
+# a plain source string. Built with jq so the sources stay shell values rather
+# than becoming a second spelling of $PKG inside a JSON literal.
+_write_live_packages() {
+  _write_live "$(jq -nc '$ARGS.positional | {packages: .}' --args "$@")"
 }
 
 # _stub_gh BODY — a gh on PATH whose whole behaviour is BODY.
@@ -116,11 +125,11 @@ _live() {
 
   run _run_step
   [ "$status" -eq 0 ]
-  [ "$(_live '.packages[0]')" = "git:github.com/usemaximum/pi-extensions" ]
+  [ "$(_live '.packages[0]')" = "$PKG" ]
 }
 
 @test "keeps a package the operator installed themselves" {
-  _write_live '{"packages": ["npm:pi-thing"]}'
+  _write_live_packages "npm:pi-thing"
   _stub_gh 'echo active'
 
   run _run_step
@@ -130,17 +139,17 @@ _live() {
 }
 
 @test "a pinned ref of the same package is left as the operator pinned it" {
-  _write_live '{"packages": ["git:github.com/usemaximum/pi-extensions@v2"]}'
+  _write_live_packages "$PKG@v2"
   _stub_gh 'echo active'
 
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(_live '.packages | length')" = "1" ]
-  [ "$(_live '.packages[0]')" = "git:github.com/usemaximum/pi-extensions@v2" ]
+  [ "$(_live '.packages[0]')" = "$PKG@v2" ]
 }
 
 @test "an object-form entry carrying filters is not duplicated by the plain source" {
-  _write_live '{"packages": [{"source": "git:github.com/usemaximum/pi-extensions", "tools": ["web_fetch"]}]}'
+  _write_live "$(jq -nc --arg p "$PKG" '{packages: [{source: $p, tools: ["web_fetch"]}]}')"
   _stub_gh 'echo active'
 
   run _run_step
@@ -152,13 +161,13 @@ _live() {
 @test "withdraws the package when the org refuses the membership lookup" {
   # A non-member cannot clone a private repo, so leaving the entry in place
   # buys a failing clone on every Pi startup.
-  _write_live '{"packages": ["git:github.com/usemaximum/pi-extensions"]}'
+  _write_live_packages "$PKG"
   _stub_gh 'echo "gh: Not Found (HTTP 404)" >&2; exit 1'
 
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(_live '.packages | length')" = "0" ]
-  [[ "$output" == *"no active usemaximum membership"* ]]
+  [[ "$output" == *"no active $ORG membership"* ]]
 }
 
 @test "a pending invitation is not membership" {
@@ -171,13 +180,13 @@ _live() {
 
 @test "an unverifiable membership leaves a working package alone" {
   # A sync run offline must not withdraw what already works.
-  _write_live '{"packages": ["git:github.com/usemaximum/pi-extensions"]}'
+  _write_live_packages "$PKG"
   _stub_gh 'echo "dial tcp: lookup api.github.com: no such host" >&2; exit 1'
 
   run _run_step
   [ "$status" -eq 0 ]
-  [ "$(_live '.packages[0]')" = "git:github.com/usemaximum/pi-extensions" ]
-  [[ "$output" == *"could not verify usemaximum membership"* ]]
+  [ "$(_live '.packages[0]')" = "$PKG" ]
+  [[ "$output" == *"could not verify $ORG membership"* ]]
 }
 
 @test "an unverifiable membership does not install the package either" {
@@ -193,7 +202,7 @@ _live() {
 
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"could not verify usemaximum membership"* ]]
+  [[ "$output" == *"could not verify $ORG membership"* ]]
 }
 
 @test "a package with no GitHub org is not gated on membership" {
@@ -203,6 +212,19 @@ _live() {
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(_live '.packages[0]')" = "npm:pi-thing" ]
+}
+
+@test "a package the template no longer declares is left where it is" {
+  # Withdrawal is a membership verdict, not a diff against the template: nothing
+  # here can tell a dropped template entry from one the operator installed.
+  # Removing a package the workbench once installed is a migration's job.
+  _write_live_packages "$PKG"
+  _write_template '[]'
+  _stub_gh 'echo active'
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [ "$(_live '.packages[0]')" = "$PKG" ]
 }
 
 @test "no packages key is invented when there is nothing to record" {
@@ -229,5 +251,5 @@ _live() {
 @test "the shipped template declares the pi-extensions package" {
   run jq -r '.packages[0]' "$REPO_ROOT/ai/pi/settings.json"
   [ "$status" -eq 0 ]
-  [ "$output" = "git:github.com/usemaximum/pi-extensions" ]
+  [ "$output" = "$PKG" ]
 }

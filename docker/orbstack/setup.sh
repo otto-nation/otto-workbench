@@ -5,12 +5,10 @@
 # We clean up any stale Colima socket symlink so DOCKER_HOST doesn't point at
 # a non-existent socket.
 
-if ! command -v orb >/dev/null 2>&1; then
-  require_command brew "Homebrew not found — install OrbStack manually: https://orbstack.dev" || return
-  info "Installing orbstack..."
-  brew install --cask orbstack
-  success "orbstack installed"
-fi
+# `|| return` returns from this sourced file, the way the inline install it
+# replaced did: with no Homebrew there is no orb to start and no socket of its
+# to reason about, so the rest of the file has nothing to act on.
+install_cask orb orbstack OrbStack https://orbstack.dev || return
 
 # Start OrbStack if not running — idempotent, launches instantly.
 if ! docker info &>/dev/null; then

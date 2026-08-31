@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install workflow helpers: step registration and requirement checks.
+# Install workflow helpers: step registration, requirement checks, cask and
+# remote-installer installs.
 #
 # Bash-only. Used primarily by `install.sh` and component setup scripts.
 
@@ -80,6 +81,33 @@ require_command() {
 # left with neither.
 run_remote_installer() {
   ( set -o pipefail; curl -fsSL "$1" | bash )
+}
+
+# install_cask CMD CASK LABEL MANUAL_URL — installs CASK through Homebrew when
+# CMD is not already in PATH, announcing it as LABEL and returning non-zero
+# with a pointer to MANUAL_URL when Homebrew is missing or the install fails.
+#
+# For a cask whose artifact is an app bundle. brew stamps com.apple.quarantine
+# on what it downloads, and a bundle carries a notarization ticket stapled to
+# it, so Gatekeeper clears the first launch offline and the user sees at most
+# the ordinary "downloaded from the Internet" prompt. A ticket cannot be stapled
+# to a bare executable — stapling needs a bundle, a dmg, or a pkg — so a cask
+# shipping one is refused outright the first time it runs, offering Move to
+# Trash and nothing else. Install those with run_remote_installer or the
+# vendor's own installer instead.
+install_cask() {
+  local cmd="$1" cask="$2" label="$3" manual_url="$4"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    success "$cmd already installed"
+    return
+  fi
+  require_command brew "Homebrew not found — install $label manually: $manual_url" || return
+  info "Installing $label..."
+  if ! brew install --cask "$cask"; then
+    warn "Homebrew could not install $label — install it manually: $manual_url"
+    return 1
+  fi
+  success "$label installed"
 }
 
 # run_migrations DIR

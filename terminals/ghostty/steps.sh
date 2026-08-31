@@ -13,14 +13,7 @@ fi
 
 # step_ghostty_install — installs the Ghostty cask if not already present.
 step_ghostty_install() {
-  if command -v ghostty >/dev/null 2>&1; then
-    echo -e "  ${DIM}✓ ghostty already installed${NC}"
-    return
-  fi
-  require_command brew "Homebrew not found — install Ghostty manually: https://ghostty.org" || return
-  info "Installing Ghostty..."
-  brew install --cask ghostty
-  success "Ghostty installed"
+  install_cask ghostty ghostty Ghostty https://ghostty.org
 }
 
 # step_ghostty_config — creates ~/.config/ghostty/config from template if absent.

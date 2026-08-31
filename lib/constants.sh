@@ -154,6 +154,15 @@ CLAUDE_RULES_DIR="$HOME/.claude/rules"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 
+# ─── Pi coding agent ──────────────────────────────────────────────────────────
+# Pi reads global settings from ~/.pi/agent/settings.json. PI_LEGACY_SETTINGS_FILE
+# is the path an earlier sync wrote to, which Pi never read.
+PI_HOME="$HOME/.pi"
+PI_AGENT_DIR="$PI_HOME/agent"
+PI_SETTINGS_FILE="$PI_AGENT_DIR/settings.json"
+PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
+PI_SKILLS_DIR="$PI_AGENT_DIR/skills"
+
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
 BIN_REGISTRY_FILE="$WORKBENCH_DIR/bin/registry.yml"
@@ -208,8 +217,8 @@ AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
+PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
 PI_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/pi/skills"
-PI_SKILLS_DIR="$HOME/.pi/agent/skills"
 SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
 CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"

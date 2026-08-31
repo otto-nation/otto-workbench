@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 400 -->
+<!-- doc-budget: 430 -->
 
 # AI Automation
 
@@ -352,6 +352,34 @@ scan is arity-blind for the same reason. A test reads `value_taking_options` off
 of their subparsers — the same function the probe answers with — and fails the build
 the day one of them declares an option that consumes a value, naming the two ways out:
 list the command as taking no target, or give it a delegate to ask.
+
+### The Pi package the sync declares, and who gets it
+
+Pi reads *and writes* `~/.pi/agent/settings.json` — `pi install`, `pi config` and
+Ctrl+S in `/model` all land there — so `step_pi_settings`
+([`ai/pi/steps.sh`](../ai/pi/steps.sh)) merges the workbench's template into that
+file rather than copying over it. Scalar keys are seeds: one the live file
+already carries stays as whatever set it first, which also means a changed
+template default never reaches a machine that already has the key. Delete the key
+there to be re-seeded.
+
+`packages` is reconciled instead, because a list gains an entry without
+displacing one. The template declares `git:github.com/usemaximum/pi-extensions`,
+private to its org, so the sync asks GitHub whether this machine's account is an
+active member first. The answer is three-valued and only two of the three act:
+
+| Verdict | What the sync does |
+|---|---|
+| active member | declares the package |
+| refused, or an invitation still pending | withdraws it, so Pi stops retrying a clone it cannot complete |
+| no `gh`, no auth, no network | leaves the entry however the live file has it |
+
+The third row is why the check is not a boolean: a sync run offline must neither
+install a package it could not verify nor strip one that already works. What the
+extensions then expose to a run is a separate decision, made in
+[`ai_backend_pi.py`](ai-libraries.md#ai_backend_pipy); how an entry already in
+the file is recognised is one [`sync-settings.jq`](../ai/pi/sync-settings.jq)
+documents at the top.
 
 ### Five shared foundations under `ai/`
 

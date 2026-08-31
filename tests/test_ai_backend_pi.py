@@ -22,7 +22,18 @@ class TestBuildFixCmd:
         cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         assert "--tools" in cmd
         idx = cmd.index("--tools")
-        assert cmd[idx + 1] == ai_backend_pi.PI_TOOLS
+        assert cmd[idx + 1] == ai_backend_pi.PI_FIX_TOOLS
+
+    def test_withholds_github_tools(self):
+        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        tools = cmd[cmd.index("--tools") + 1].split(",")
+        assert [t for t in tools if t.startswith("gh_")] == []
+
+    def test_grants_research_tools(self):
+        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        tools = cmd[cmd.index("--tools") + 1].split(",")
+        assert "web_fetch" in tools
+        assert "go_references" in tools
 
     def test_model_flag(self):
         cmd = ai_backend_pi._build_fix_cmd(
@@ -53,6 +64,18 @@ class TestBuildAgentCmd:
         cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         assert cmd[:2] == ["pi", "--mode"]
         assert cmd[2] == "rpc"
+
+    def test_includes_tools(self):
+        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        assert "--tools" in cmd
+        idx = cmd.index("--tools")
+        assert cmd[idx + 1] == ai_backend_pi.PI_AGENT_TOOLS
+
+    def test_grants_read_only_github_tools(self):
+        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        tools = cmd[cmd.index("--tools") + 1].split(",")
+        assert "gh_pr_unresolved_comments" in tools
+        assert "gh_ci_failures" in tools
 
     def test_thinking_level(self):
         cmd = ai_backend_pi._build_agent_cmd(
@@ -89,6 +112,30 @@ class TestBuildAgentCmd:
             ai_backend_pi._build_agent_cmd(
                 ai_backend_pi.AgentInvocation(prompt="", agent="nonexistent"),
             )
+
+
+class TestToolAllowlists:
+    """Our scripts own what reaches a PR, so no list may name a posting tool.
+
+    The github-pr extension registers gh_pr_reply_comment, gh_pr_bulk_reply and
+    gh_pr_post_comment alongside the read-only ones. Naming a tool is how the
+    allowlist grants it, so leaving them out is the whole gate.
+    """
+
+    POSTING_TOOLS = ("gh_pr_reply_comment", "gh_pr_bulk_reply", "gh_pr_post_comment")
+
+    @pytest.mark.parametrize("tool", POSTING_TOOLS)
+    def test_agent_list_withholds_posting_tools(self, tool):
+        assert tool not in ai_backend_pi.PI_AGENT_TOOLS.split(",")
+
+    @pytest.mark.parametrize("tool", POSTING_TOOLS)
+    def test_fix_list_withholds_posting_tools(self, tool):
+        assert tool not in ai_backend_pi.PI_FIX_TOOLS.split(",")
+
+    def test_both_lists_keep_the_built_ins(self):
+        for name in ai_backend_pi.PI_TOOLS.split(","):
+            assert name in ai_backend_pi.PI_AGENT_TOOLS.split(",")
+            assert name in ai_backend_pi.PI_FIX_TOOLS.split(",")
 
 
 class TestCheckLimits:

@@ -25,7 +25,8 @@ import pytest
 from agent_types import Mode
 from pr_domains import ReviewStatus, ReviewVerdict
 from review_document import (
-    FINDING_ID_RE, FindingScope, MECHANICAL_NOTE, ReviewDocument, ReviewHeader,
+    CLEAN_VERDICT, FINDING_ID_RE, FindingScope, MECHANICAL_NOTE,
+    ReviewDocument, ReviewHeader,
     _extract_body_text, _finalize_finding, _FIRST_FILE_RE, _match_severity_header,
     build_mechanical_body, counts_prose, drop_findings, ends_finding_body,
     finding_location, finding_spans, is_section_boundary, mechanical_verdict,
@@ -1483,6 +1484,17 @@ class TestBuildMechanicalBody:
             include_verdict=False,
         )
         assert "## Verdict" not in result
+
+    def test_a_stated_verdict_replaces_the_derived_one(self):
+        """A path that reached the review file without an agent but knows what
+        the call is says so — the clean run does, and its verdict carries no
+        mechanical note because nothing stood in for a synthesis."""
+        result = build_mechanical_body(
+            "## File Triage\n- `a.py` — tier 2\n", group_count=1,
+            summary_note="note", verdict=CLEAN_VERDICT,
+        )
+        assert "Approve — clean review." in result
+        assert MECHANICAL_NOTE not in result
 
     def test_no_findings_verdict(self):
         result = build_mechanical_body(

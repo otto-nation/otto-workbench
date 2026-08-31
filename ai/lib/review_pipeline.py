@@ -33,7 +33,8 @@ from review_paths import (
 )
 from review_collect import fetch_branch_metadata
 from review_document import (
-    BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY,
+    BUDGET_SUMMARY, CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY,
+    MECHANICAL_NOTE, SKIPPED_SUMMARY,
     ReviewDocument, ReviewHeader, build_mechanical_body,
     open_counts, review_title,
 )
@@ -404,17 +405,28 @@ def _consolidate_logs(
         pass
 
 
-def _write_clean_review(job: ReviewJob, group_count: int, skipped_groups: int = 0):
-    kind = "self-review" if job.mode == Mode.SELF else "review"
-    body = (
-        f"## Summary\n"
-        f"Multi-phase {kind} of {job.pr.changed_files} files across {group_count} groups. "
-        f"No issues found.\n"
+def _write_clean_review(
+    job: ReviewJob, group_count: int, merged_content: str,
+    skipped_groups: int = 0,
+):
+    """The review a run that found nothing ships.
+
+    Composed through `build_mechanical_body` like every other path that reaches
+    the review file without a synthesis agent, so `merged_content` — which on a
+    findings-free run is the file triage and nothing else — is on the page. It
+    is the only evidence such a run leaves that the groups examined anything.
+    """
+    body = build_mechanical_body(
+        merged_content,
+        group_count=group_count,
+        summary_note=CLEAN_SUMMARY,
+        # A self-review is advisory and has no PR to approve, so it states no
+        # verdict — the same rule `resolve_review_verdict` applies when reading
+        # one.
+        include_verdict=(job.mode != Mode.SELF),
+        verdict=CLEAN_VERDICT,
+        file_count=job.pr.changed_files,
     )
-    # A self-review is advisory and has no PR to approve, so it states no
-    # verdict — the same rule `resolve_review_verdict` applies when reading one.
-    if job.mode != Mode.SELF:
-        body += "\n## Verdict\nApprove — clean review.\n"
     _document(
         job, body, skipped_groups=skipped_groups, total_groups=group_count,
     ).write(job.review_file)
@@ -570,7 +582,9 @@ def _run_synthesis_or_fallback(
 
     if not ReviewDocument(body=merged_content).findings and not failed_groups:
         log.info("No findings from any group — writing clean review")
-        _write_clean_review(job, group_count, skipped_groups=n_skipped)
+        _write_clean_review(
+            job, group_count, merged_content, skipped_groups=n_skipped,
+        )
         state.done.add(Phase.SYNTHESIS)
         _write_pipeline_state(job, state)
         return PhaseResult()

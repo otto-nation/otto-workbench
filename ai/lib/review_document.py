@@ -1039,6 +1039,12 @@ def mechanical_verdict(counts: dict[str, int]) -> str:
     return f"{verdict.prose} — {prose}{suffix} {MECHANICAL_NOTE}.\n"
 
 
+# The `## Verdict` a run that found nothing states. It carries no
+# `MECHANICAL_NOTE`: the note exists to say a merge stood in for a synthesis
+# that had findings to weigh, and a review with none had nothing to synthesize.
+CLEAN_VERDICT = f"{ReviewVerdict.APPROVE.prose} — clean review.\n"
+
+
 # What the Summary says when no synthesis agent wrote the review — the
 # `summary_note` a caller of `build_mechanical_body` hands in. Each names why
 # synthesis did not produce the document, because a reader who cannot tell a
@@ -1049,6 +1055,7 @@ BUDGET_SUMMARY = (
     "Synthesis did not run — the cost budget was reached first. "
     "Findings below are from individual group reviews."
 )
+CLEAN_SUMMARY = "Synthesis did not run — no group reported a finding."
 
 
 def build_mechanical_body(
@@ -1057,17 +1064,26 @@ def build_mechanical_body(
     group_count: int,
     summary_note: str,
     include_verdict: bool = True,
+    verdict: str = "",
     file_count: int = 0,
 ) -> str:
     """A whole review body around findings no synthesis agent read.
 
-    `merged_content` is the findings sections as merged; `summary_note` is the
-    caller's one sentence on why synthesis was skipped, which is the only part
-    of the summary that is not derived from the findings themselves.
-    `file_count` of 0 leaves the file scope out rather than writing a zero.
+    `merged_content` is the sections as merged — the file triage every group
+    wrote and whatever findings they reported; `summary_note` is the caller's
+    one sentence on why synthesis was skipped, which is the only part of the
+    summary that is not derived from the findings themselves. `file_count` of 0
+    leaves the file scope out rather than writing a zero.
 
-    `include_verdict=False` is for a caller that writes the verdict itself —
-    the rebuild reuses the verdict the review already reached.
+    `include_verdict=False` writes no verdict section at all, for a path that
+    states no call — the two that ship group output after the operator or the
+    budget stopped the run. `verdict` overrides what a verdict section says,
+    defaulting to the one `mechanical_verdict` derives from the tally.
+
+    Every path that reaches the review file without a synthesis agent composes
+    here, so which sections such a review carries has one answer. A caller that
+    assembles its own body decides that question again, which is how a clean
+    run came to drop the triage its groups had already merged.
     """
     counts = ReviewDocument(body=merged_content).open_counts
     total = sum(counts.values())
@@ -1084,7 +1100,7 @@ def build_mechanical_body(
     )
     if not include_verdict:
         return body
-    return f"{body}\n## {SECTION_VERDICT}\n{mechanical_verdict(counts)}"
+    return f"{body}\n## {SECTION_VERDICT}\n{verdict or mechanical_verdict(counts)}"
 
 
 def _is_header_line(line: str) -> bool:

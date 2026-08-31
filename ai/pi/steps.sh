@@ -85,6 +85,17 @@ _pi_partition_packages() {
   return 0
 }
 
+# step_install_pi — installs Pi via its own installer if not already in PATH.
+#
+# Pi ships as an npm package with no Homebrew formula, and its installer owns
+# the managed install root and the launcher symlink that `pi update` later
+# replaces — so `npm install -g` would produce a copy Pi cannot update itself.
+# The installer prompts on /dev/tty for a missing Node and for a PATH edit it
+# does not need here, and skips both when no terminal is attached.
+step_install_pi() {
+  install_via_installer pi "$PI_INSTALL_URL" "Pi"
+}
+
 # step_pi_settings — merges the workbench's managed keys into Pi's global settings.
 #
 # Merged rather than copied because Pi writes to the same file: `pi install`,
@@ -172,6 +183,7 @@ sync_pi() {
 }
 
 register_pi_steps() {
+  register_step "Install pi" step_install_pi
   register_step "Pi settings" step_pi_settings
   register_step "Pi skills"   step_pi_skills
 }

@@ -169,6 +169,11 @@ PI_AGENT_DIR="$PI_HOME/agent"
 PI_SETTINGS_FILE="$PI_AGENT_DIR/settings.json"
 PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
 PI_SKILLS_DIR="$PI_AGENT_DIR/skills"
+# Pi's own installer, which step_install_pi pipes to bash. It installs the npm
+# package into a managed root under ~/.pi and links the launcher into the first
+# writable PATH directory it recognises — ~/.local/bin here, which the workbench
+# already puts on PATH.
+PI_INSTALL_URL="https://pi.dev/install.sh"
 
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"

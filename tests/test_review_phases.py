@@ -290,24 +290,12 @@ class TestPhaseRunnerReachesBackend:
 class TestNoDuplicateDefaults:
     """One owner per default. A second copy drifts silently."""
 
-    def test_max_cost_defined_once(self):
-        import review_preflight
-
-        assert not hasattr(review_preflight, "DEFAULT_MAX_COST")
+    def test_run_wide_defaults_live_with_the_pipeline_that_spends_them(self):
+        # Both bound what one run may consume, and `review-orchestrate` offers
+        # both as flags off these values — a second copy elsewhere would answer
+        # for whichever import a caller reached first.
         assert hasattr(review_pipeline, "DEFAULT_MAX_COST")
-
-    def test_turn_and_budget_defaults_not_in_preflight(self):
-        import review_preflight
-
-        for name in (
-            "DEFAULT_MAX_TURNS",
-            "DEFAULT_MAX_TURNS_GROUP",
-            "DEFAULT_MAX_TURNS_HOLISTIC",
-            "DEFAULT_MAX_TURNS_SYNTHESIS",
-            "DEFAULT_MAX_TURNS_SINGLE",
-            "DEFAULT_MAX_BUDGET_PER_AGENT",
-        ):
-            assert not hasattr(review_preflight, name), f"{name} is a stale copy"
+        assert hasattr(review_pipeline, "DEFAULT_MAX_PARALLEL")
 
     def test_phase_artifact_names_are_not_also_constants(self):
         # `PhaseSpec.log_filename` and `PhaseSpec.output_filename` are the one

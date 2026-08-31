@@ -13,34 +13,9 @@ from conftest import add_self_origin, commit_all, git_out, init_repo, synthetic_
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent_types import Phase
+from review_document import BUDGET_SUMMARY, FALLBACK_SUMMARY, SKIPPED_SUMMARY
 
 
-# ── 12. _parse_numstat ──────────────────────────────────────────────────────
-
-
-class TestParseNumstat:
-    def test_normal_output(self, ro):
-        numstat = "10\t5\tpkg/handler.go\n3\t1\tpkg/util.go\n"
-        files, total_add, total_del = ro._parse_numstat(numstat)
-        assert len(files) == 2
-        assert files[0] == {"path": "pkg/handler.go", "additions": 10, "deletions": 5}
-        assert total_add == 13
-        assert total_del == 6
-
-    def test_binary_files(self, ro):
-        numstat = "-\t-\timage.png\n5\t2\tfile.go\n"
-        files, total_add, total_del = ro._parse_numstat(numstat)
-        assert len(files) == 2
-        assert files[0]["additions"] == 0
-        assert files[0]["deletions"] == 0
-        assert total_add == 5
-        assert total_del == 2
-
-    def test_empty_input(self, ro):
-        files, total_add, total_del = ro._parse_numstat("")
-        assert files == []
-        assert total_add == 0
-        assert total_del == 0
 
 
 # ── 18. _check_serial_abort ─────────────────────────────────────────────────
@@ -752,7 +727,7 @@ class TestPhaseSynthesis:
         from pathlib import Path
         result = Path(job.review_file).read_text()
         assert "## Summary" in result
-        assert ro.FALLBACK_SUMMARY not in result
+        assert FALLBACK_SUMMARY not in result
 
     def test_cost_comes_from_the_session_log(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
@@ -786,7 +761,7 @@ class TestPhaseSynthesis:
         merged = "## Must fix\n- **[M1]** **`file.go:1`** — issue\n"
         result = ro._phase_synthesis(job, "", 3, merged)
 
-        assert ro.FALLBACK_SUMMARY in Path(job.review_file).read_text()
+        assert FALLBACK_SUMMARY in Path(job.review_file).read_text()
         assert result.cost == 2.5
 
     def test_an_unpromptable_synthesis_falls_back_to_the_merge(
@@ -818,7 +793,7 @@ class TestPhaseSynthesis:
 
         assert invoked == []
         written = Path(job.review_file).read_text()
-        assert ro.FALLBACK_SUMMARY in written
+        assert FALLBACK_SUMMARY in written
         assert "file.go:1" in written
 
     def test_agent_fails_no_output(self, ro, tmp_path, monkeypatch):
@@ -840,7 +815,7 @@ class TestPhaseSynthesis:
 
         from pathlib import Path
         result = Path(job.review_file).read_text()
-        assert ro.FALLBACK_SUMMARY in result
+        assert FALLBACK_SUMMARY in result
 
     def test_incomplete_output_falls_back(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
@@ -859,7 +834,7 @@ class TestPhaseSynthesis:
 
         from pathlib import Path
         result = Path(job.review_file).read_text()
-        assert ro.FALLBACK_SUMMARY in result
+        assert FALLBACK_SUMMARY in result
 
     def test_transient_error_retries_then_succeeds(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
@@ -886,7 +861,7 @@ class TestPhaseSynthesis:
         from pathlib import Path
         result = Path(job.review_file).read_text()
         assert "## Summary" in result
-        assert ro.FALLBACK_SUMMARY not in result
+        assert FALLBACK_SUMMARY not in result
         assert len(calls) == 2
 
     def test_transient_error_retries_then_falls_back(self, ro, tmp_path, monkeypatch):
@@ -913,7 +888,7 @@ class TestPhaseSynthesis:
 
         from pathlib import Path
         result = Path(job.review_file).read_text()
-        assert ro.FALLBACK_SUMMARY in result
+        assert FALLBACK_SUMMARY in result
         assert len(calls) == 2
 
     def test_non_transient_error_does_not_retry(self, ro, tmp_path, monkeypatch):
@@ -940,7 +915,7 @@ class TestPhaseSynthesis:
 
         from pathlib import Path
         result = Path(job.review_file).read_text()
-        assert ro.FALLBACK_SUMMARY in result
+        assert FALLBACK_SUMMARY in result
         assert len(calls) == 1
 
 
@@ -1208,9 +1183,9 @@ class TestRunSynthesisOrFallback:
 
         written = Path(job.review_file).read_text()
         assert "## Summary" in written
-        assert ro.SKIPPED_SUMMARY in written
+        assert SKIPPED_SUMMARY in written
         # The operator stopped synthesis; no agent failed.
-        assert ro.FALLBACK_SUMMARY not in written
+        assert FALLBACK_SUMMARY not in written
         assert ro._is_complete_review(job.review_file)
 
     def test_a_budget_cut_off_writes_a_summary_naming_the_budget(
@@ -1231,8 +1206,8 @@ class TestRunSynthesisOrFallback:
 
         written = Path(job.review_file).read_text()
         assert "## Summary" in written
-        assert ro.BUDGET_SUMMARY in written
-        assert ro.FALLBACK_SUMMARY not in written
+        assert BUDGET_SUMMARY in written
+        assert FALLBACK_SUMMARY not in written
         assert ro._is_complete_review(job.review_file)
 
     def test_a_budget_cut_off_still_checks_its_findings_against_the_tree(
@@ -1981,152 +1956,6 @@ class TestBuildPromptPreflight:
         assert "NOT in the PR" not in result
         assert "must be read directly" not in result
         assert "Read source files directly" in result
-
-
-# ── fetch_branch_metadata ─────────────────────────────────────────────
-
-
-class TestFetchBranchMetadata:
-    def test_includes_uncommitted_changes_when_no_commits_on_branch(
-        self, ro, tmp_path,
-    ):
-        repo = init_repo(tmp_path / "repo")
-        (repo / "main.go").write_text("package main\n")
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        add_self_origin(repo)
-        # Stay on main but modify a file without committing
-        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        assert pr.changed_files == 1
-        assert pr.files[0]["path"] == "main.go"
-
-    def test_includes_staged_changes_when_no_commits_on_branch(
-        self, ro, tmp_path,
-    ):
-        repo = init_repo(tmp_path / "repo")
-        (repo / "main.go").write_text("package main\n")
-        git_out(repo, "add", ".")
-        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
-        add_self_origin(repo)
-        # Stage changes without committing
-        (repo / "main.go").write_text("package main\nfunc staged() {}\n")
-        git_out(repo, "add", "main.go")
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        assert pr.changed_files == 1
-
-    def test_committed_uncommitted_and_untracked_changes_all_appear(
-        self, ro, tmp_path,
-    ):
-        repo = init_repo(tmp_path / "repo")
-        (repo / "main.go").write_text("package main\n")
-        (repo / "helper.go").write_text("package main\n")
-        (repo / ".gitignore").write_text("secret.txt\n")
-        commit_all(repo, "init")
-        add_self_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "main.go").write_text("package main\nfunc committed() {}\n")
-        commit_all(repo, "add committed")
-        (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
-        (repo / "extra.go").write_text("package main\nfunc untracked() {}\n")
-        (repo / "secret.txt").write_text("ignored\n")
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        paths = sorted(f["path"] for f in pr.files)
-        assert paths == ["extra.go", "helper.go", "main.go"]
-        assert pr.changed_files == 3
-        assert "secret.txt" not in paths
-
-    def test_untracked_files_are_counted_as_whole_file_additions(self, ro, tmp_path):
-        repo = init_repo(tmp_path / "repo")
-        (repo / "main.go").write_text("package main\n")
-        commit_all(repo, "init")
-        add_self_origin(repo)
-        (repo / "new.go").write_text("one\ntwo\nthree\n")
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        assert pr.files == [{"path": "new.go", "additions": 3, "deletions": 0}]
-        assert pr.additions == 3
-        assert pr.deletions == 0
-
-    def test_commits_on_base_are_not_reported_as_branch_changes(self, ro, tmp_path):
-        repo = init_repo(tmp_path / "repo")
-        (repo / "main.go").write_text("package main\n")
-        commit_all(repo, "init")
-        add_self_origin(repo)
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
-        commit_all(repo, "add feat")
-        # Move main forward behind the branch's back, so the branch is stale
-        git_out(repo, "checkout", "main", "-q")
-        (repo / "other.go").write_text("package main\nfunc other() {}\n")
-        commit_all(repo, "add other")
-        git_out(repo, "fetch", "-q", "origin", "main")
-        git_out(repo, "checkout", "feat", "-q")
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        paths = [f["path"] for f in pr.files]
-        assert paths == ["feat.go"]
-
-    def test_the_base_ref_is_fetched_before_the_range_is_built(self, ro, tmp_path):
-        repo = init_repo(tmp_path / "repo")
-        (repo / "main.go").write_text("package main\n")
-        commit_all(repo, "init")
-        # Origin is added but never fetched, so origin/main does not resolve and
-        # the fork point would collapse to HEAD — hiding every commit.
-        git_out(repo, "remote", "add", "origin", str(repo))
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
-        commit_all(repo, "add feat")
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        assert [f["path"] for f in pr.files] == ["feat.go"]
-
-    def test_base_argument_selects_the_diff_range(self, ro, tmp_path):
-        repo = init_repo(tmp_path / "repo")
-        (repo / "main.go").write_text("package main\n")
-        commit_all(repo, "init")
-        git_out(repo, "checkout", "-b", "develop", "-q")
-        (repo / "dev.go").write_text("package main\nfunc dev() {}\n")
-        commit_all(repo, "add dev")
-        add_self_origin(repo)
-        git_out(repo, "fetch", "-q", "origin", "develop")
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
-        commit_all(repo, "add feat")
-
-        pr = ro.fetch_branch_metadata(str(repo), "develop")
-        assert [f["path"] for f in pr.files] == ["feat.go"]
-        assert pr.base == "develop"
-
-    def test_an_omitted_base_resolves_the_trunk_instead_of_assuming_main(
-        self, ro, tmp_path,
-    ):
-        """A `master` repository is diffed against origin/master.
-
-        This is the no-PR self-review path, where nothing upstream names a base.
-        The signature used to default to the literal "main", so every range here
-        was against a ref the repository does not have.
-        """
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        git_out(repo, "init", "-b", "master", "-q")
-        git_out(repo, "config", "user.email", "test@test.com")
-        git_out(repo, "config", "user.name", "Test")
-        git_out(repo, "config", "commit.gpgsign", "false")
-        (repo / "main.go").write_text("package main\n")
-        commit_all(repo, "init")
-        git_out(repo, "remote", "add", "origin", str(repo))
-        git_out(repo, "fetch", "-q", "origin", "master")
-        git_out(repo, "checkout", "-b", "feat", "-q")
-        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
-        commit_all(repo, "add feat")
-
-        pr = ro.fetch_branch_metadata(str(repo))
-        assert pr.base == "master"
-        assert [f["path"] for f in pr.files] == ["feat.go"]
 
 
 # ── self-review metadata ──────────────────────────────────────────────

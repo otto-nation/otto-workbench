@@ -21,7 +21,7 @@ if str(LIB_DIR) not in sys.path:
 
 import git_client
 import review_collect as rc
-from review_preflight import fetch_branch_metadata
+from review_collect import fetch_branch_metadata
 from review_types import PRContext, PreflightData, PRMetadata, ReviewJob
 
 
@@ -710,6 +710,180 @@ class TestCollectDeltaSurface:
         _, _, delta_files, _ = rc._collect_delta(self._job(tmp_path, []))
         capsys.readouterr()
         assert sorted(delta_files) == ["mine.go", "theirs.go"]
+
+
+# ── fetch_branch_metadata ─────────────────────────────────────────────
+
+
+class TestFetchBranchMetadata:
+    def test_includes_uncommitted_changes_when_no_commits_on_branch(
+        self, tmp_path,
+    ):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
+        add_self_origin(repo)
+        # Stay on main but modify a file without committing
+        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
+
+        pr = fetch_branch_metadata(str(repo))
+        assert pr.changed_files == 1
+        assert pr.files[0]["path"] == "main.go"
+
+    def test_includes_staged_changes_when_no_commits_on_branch(
+        self, tmp_path,
+    ):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        git_out(repo, "add", ".")
+        git_out(repo, "commit", "-q", "--no-verify", "-m", "init")
+        add_self_origin(repo)
+        # Stage changes without committing
+        (repo / "main.go").write_text("package main\nfunc staged() {}\n")
+        git_out(repo, "add", "main.go")
+
+        pr = fetch_branch_metadata(str(repo))
+        assert pr.changed_files == 1
+
+    def test_committed_uncommitted_and_untracked_changes_all_appear(
+        self, tmp_path,
+    ):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        (repo / "helper.go").write_text("package main\n")
+        (repo / ".gitignore").write_text("secret.txt\n")
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "main.go").write_text("package main\nfunc committed() {}\n")
+        commit_all(repo, "add committed")
+        (repo / "helper.go").write_text("package main\nfunc uncommitted() {}\n")
+        (repo / "extra.go").write_text("package main\nfunc untracked() {}\n")
+        (repo / "secret.txt").write_text("ignored\n")
+
+        pr = fetch_branch_metadata(str(repo))
+        paths = sorted(f["path"] for f in pr.files)
+        assert paths == ["extra.go", "helper.go", "main.go"]
+        assert pr.changed_files == 3
+        assert "secret.txt" not in paths
+
+    def test_untracked_files_are_counted_as_whole_file_additions(self, tmp_path):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        (repo / "new.go").write_text("one\ntwo\nthree\n")
+
+        pr = fetch_branch_metadata(str(repo))
+        assert pr.files == [{"path": "new.go", "additions": 3, "deletions": 0}]
+        assert pr.additions == 3
+        assert pr.deletions == 0
+
+    def test_commits_on_base_are_not_reported_as_branch_changes(self, tmp_path):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        commit_all(repo, "add feat")
+        # Move main forward behind the branch's back, so the branch is stale
+        git_out(repo, "checkout", "main", "-q")
+        (repo / "other.go").write_text("package main\nfunc other() {}\n")
+        commit_all(repo, "add other")
+        git_out(repo, "fetch", "-q", "origin", "main")
+        git_out(repo, "checkout", "feat", "-q")
+
+        pr = fetch_branch_metadata(str(repo))
+        paths = [f["path"] for f in pr.files]
+        assert paths == ["feat.go"]
+
+    def test_the_base_ref_is_fetched_before_the_range_is_built(self, tmp_path):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        # Origin is added but never fetched, so origin/main does not resolve and
+        # the fork point would collapse to HEAD — hiding every commit.
+        git_out(repo, "remote", "add", "origin", str(repo))
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        commit_all(repo, "add feat")
+
+        pr = fetch_branch_metadata(str(repo))
+        assert [f["path"] for f in pr.files] == ["feat.go"]
+
+    def test_base_argument_selects_the_diff_range(self, tmp_path):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        git_out(repo, "checkout", "-b", "develop", "-q")
+        (repo / "dev.go").write_text("package main\nfunc dev() {}\n")
+        commit_all(repo, "add dev")
+        add_self_origin(repo)
+        git_out(repo, "fetch", "-q", "origin", "develop")
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        commit_all(repo, "add feat")
+
+        pr = fetch_branch_metadata(str(repo), "develop")
+        assert [f["path"] for f in pr.files] == ["feat.go"]
+        assert pr.base == "develop"
+
+    def test_an_omitted_base_resolves_the_trunk_instead_of_assuming_main(
+        self, tmp_path,
+    ):
+        """A `master` repository is diffed against origin/master.
+
+        This is the no-PR self-review path, where nothing upstream names a base.
+        The signature used to default to the literal "main", so every range here
+        was against a ref the repository does not have.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        git_out(repo, "init", "-b", "master", "-q")
+        git_out(repo, "config", "user.email", "test@test.com")
+        git_out(repo, "config", "user.name", "Test")
+        git_out(repo, "config", "commit.gpgsign", "false")
+        (repo / "main.go").write_text("package main\n")
+        commit_all(repo, "init")
+        git_out(repo, "remote", "add", "origin", str(repo))
+        git_out(repo, "fetch", "-q", "origin", "master")
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "feat.go").write_text("package main\nfunc feat() {}\n")
+        commit_all(repo, "add feat")
+
+        pr = fetch_branch_metadata(str(repo))
+        assert pr.base == "master"
+        assert [f["path"] for f in pr.files] == ["feat.go"]
+
+
+# ── parse_numstat ───────────────────────────────────────────────────────────
+
+
+class TestParseNumstat:
+    def test_normal_output(self):
+        counts = rc.parse_numstat("10\t5\tpkg/handler.go\n3\t1\tpkg/util.go\n")
+        assert len(counts.files) == 2
+        assert counts.files[0] == {
+            "path": "pkg/handler.go", "additions": 10, "deletions": 5,
+        }
+        assert counts.additions == 13
+        assert counts.deletions == 6
+
+    def test_binary_files(self):
+        counts = rc.parse_numstat("-\t-\timage.png\n5\t2\tfile.go\n")
+        assert len(counts.files) == 2
+        assert counts.files[0]["additions"] == 0
+        assert counts.files[0]["deletions"] == 0
+        assert counts.additions == 5
+        assert counts.deletions == 2
+
+    def test_empty_input(self):
+        counts = rc.parse_numstat("")
+        assert counts.files == []
+        assert counts.additions == 0
+        assert counts.deletions == 0
 
 
 # ── worktree_diff ───────────────────────────────────────────────────────────

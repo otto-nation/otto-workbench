@@ -46,7 +46,7 @@ from review_format import (  # noqa: E402
 from gh_client import LineResolutionError  # noqa: E402
 from review_github import (  # noqa: E402
     PRData, fetch_pr_data,
-    _fetch_pr_metadata, _get_diff,
+    _fetch_pr_refs, _get_diff,
     _check_existing_pending, _count_new_commits,
 )
 from review_dedup import (  # noqa: E402

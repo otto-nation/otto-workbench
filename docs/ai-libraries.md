@@ -234,6 +234,11 @@ the repository's own review context, and the delta against a prior review;
 fits the result to the prompt's byte budget; and formats it into the
 pre-collected data block a phase sends.
 
+`fetch_branch_metadata` is here for the same reason: a self-review with no PR
+behind it describes itself out of the worktree, off the same fork point and the
+same `worktree_diff` the collection uses. Its counterpart for a branch that does
+have a PR is `review_github.fetch_pr_metadata`, and both fill in `PRMetadata`.
+
 The budget is this module's subject as much as the collection is. Every bound
 on what a prompt may carry is a constant here, and `_fit_to_budget` is the one
 place that decides which files a review can afford to inline — so a phase
@@ -418,19 +423,6 @@ the session logs, and fetching the PR metadata a run starts from.
 The run ends when the review file is written — what happens to the findings
 afterwards belongs to review_fix, and removing what the run left behind belongs
 to review_gc, which the orchestrator runs once every phase is done.
-
-### review_preflight.py
-
-What a review knows about its PR before any agent runs.
-
-Fetches the PR's metadata and its surrounding conversation — commits, reviews,
-review comments, issue comments — and classifies the reply threads a re-review
-has to answer. A branch with no PR behind it is described from the worktree
-instead, so a self-review reaches the same `PRMetadata` by another route.
-
-What a review *collects* off that surface — the diff, the files, the budget it
-all has to fit — is `review_collect`'s; how the collected files are ranked and
-divided is `review_grouping`'s; and the records this fills in are `review_types`'.
 
 ### review_prompt.py
 
@@ -659,6 +651,13 @@ review. Reconciliation parses its input for finding-shaped lines, so a
 reconciliation written into the review would come back to the next round
 looking like a fresh set of prior findings.
 
+The ledger is not the only account of what became of a prior finding. Every
+finding posted inline opened a review thread, and what the author did with that
+thread — answered it, argued with it, resolved it — is the other one.
+`fetch_reply_threads` classifies those threads into `ReplyState` and matches
+each back to the finding ID its root comment declared, so a re-review reads both
+accounts of the same set of findings.
+
 ### review_summary.py
 
 The machine-readable summary of a finished review.
@@ -881,13 +880,18 @@ than an issue being filed to a tracker nobody named.
 
 The review system's reads of a PR, and the GraphQL queries behind them.
 
-PR metadata, the diff, the pending-review check, and the consolidated
-review-thread query. Used by review_posting and review_dedup.
+The PR's own metadata, its surrounding conversation, the diff, the
+pending-review check, and the consolidated review-thread query. Used by the
+pipeline before any agent runs, and by review_posting and review_dedup after.
 
 The transport is not here. ``gh_client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
 it reads the answer. Nothing here decides how a call is made, so a change to
 retry or to a bound is made once, in the client, for every caller.
+
+Nor is the worktree. A branch with no PR behind it is described from local git
+by `review_collect.fetch_branch_metadata`, which reaches the same `PRMetadata`
+this fetches — every read here goes to GitHub.
 
 ### review_issue.py
 

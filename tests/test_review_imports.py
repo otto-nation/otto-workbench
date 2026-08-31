@@ -554,7 +554,7 @@ def test_cross_module_bare_refs_are_imported(source_name, source_path):
     be explicitly imported.
 
     Bare name lookups use globals() — if a name is defined in
-    review_preflight but used bare in review_pipeline without an
+    review_github but used bare in review_pipeline without an
     explicit import, it's a NameError at runtime. Dynamically
     discovered from module ASTs so adding modules or functions
     automatically adds coverage.

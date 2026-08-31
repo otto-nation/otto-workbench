@@ -31,20 +31,20 @@ from review_paths import (
     phase_output_path,
     write_review_meta,
 )
+from review_collect import fetch_branch_metadata
 from review_document import (
-    MECHANICAL_NOTE, ReviewDocument, ReviewHeader, build_mechanical_body,
+    BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY,
+    ReviewDocument, ReviewHeader, build_mechanical_body,
     open_counts, review_title,
 )
-from review_github import PRData, fetch_pr_data
+from review_github import (
+    PRData, fetch_pr_context, fetch_pr_data, fetch_pr_metadata,
+)
 from review_merge import (
     annotate_prior_with_stable_ids, passed_over, record_prior_findings,
 )
 from review_grouping import (
     GROUP_TIER3, HOLISTIC_MIN_GROUPS, group_files, merge_smallest_groups,
-)
-from review_preflight import (
-    BUDGET_SUMMARY, DEFAULT_MAX_PARALLEL, FALLBACK_SUMMARY, SKIPPED_SUMMARY,
-    fetch_branch_metadata, fetch_pr_context, fetch_pr_metadata,
 )
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD,
@@ -78,6 +78,11 @@ from review_verify import post_process_findings
 from text import plural
 
 DEFAULT_MAX_COST = 20.0
+
+# One group review at a time by default. Concurrency here multiplies the agent
+# spend against a budget the run checks between phases, so raising it is the
+# caller's call rather than the pipeline's.
+DEFAULT_MAX_PARALLEL = 1
 
 DISPROVE_MIN_FINDINGS = 3
 

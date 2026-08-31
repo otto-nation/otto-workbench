@@ -59,20 +59,22 @@ from review_scout import (
     format_leads_block,
     is_scout_output, parse_scout_output,
 )
-from review_preflight import (
-    MAX_REVIEW_BODY_LEN,
-    THREAD_ACKNOWLEDGED, THREAD_CONTESTED, THREAD_REPLIED,
-    THREAD_RESOLVED, THREAD_UNREPLIED,
-)
 from review_types import (
     FILE_STAT_FMT, PRContext, PreflightData, PRMetadata, PriorDisposition,
-    ReviewJob,
+    ReplyState, ReviewJob,
 )
 
 # The verdicts the prompt offers, written from the same members the review's
 # `## Verdict` line is parsed against — the wording an agent is asked for cannot
 # drift from the wording that is recognised.
 VERDICT_OPTIONS = " / ".join(v.prose for v in ReviewVerdict)
+
+# How much of somebody else's prose a prompt quotes back: a prior review's body,
+# a review comment, the root of a thread being re-reviewed. Each one is a
+# gist — enough for the agent to recognise what was said and go read the thread
+# — and there is no bound on how many of them a busy PR contributes, which is
+# why the cap is per-body rather than on the section they land in.
+MAX_REVIEW_BODY_LEN = 200
 
 
 def _build_pr_header(
@@ -215,11 +217,11 @@ def _build_reviews_section(ctx: PRContext) -> str:
 
 
 _THREAD_STATE_ORDER = [
-    (THREAD_CONTESTED, "Contested — re-evaluate in light of the author's explanation"),
-    (THREAD_REPLIED, "Author replied — review the response"),
-    (THREAD_ACKNOWLEDGED, "Acknowledged — verify the fix exists in the diff"),
-    (THREAD_RESOLVED, "Resolved on GitHub — drop from this review"),
-    (THREAD_UNREPLIED, "No reply — carry forward as before"),
+    (ReplyState.CONTESTED, "Contested — re-evaluate in light of the author's explanation"),
+    (ReplyState.REPLIED, "Author replied — review the response"),
+    (ReplyState.ACKNOWLEDGED, "Acknowledged — verify the fix exists in the diff"),
+    (ReplyState.RESOLVED, "Resolved on GitHub — drop from this review"),
+    (ReplyState.UNREPLIED, "No reply — carry forward as before"),
 ]
 
 
@@ -230,7 +232,7 @@ def _format_thread_item(t: dict, state: str) -> list[str]:
         loc += f":{t['line']}"
     label = f"[{fid}] " if fid else ""
     lines = [f"- {label}`{loc}`" if loc else f"- {label}(general comment)"]
-    if state in (THREAD_CONTESTED, THREAD_REPLIED):
+    if state in (ReplyState.CONTESTED, ReplyState.REPLIED):
         for r in t.get("replies", []):
             body = r.get("body", "").replace("\n", " ")[:MAX_REVIEW_BODY_LEN]
             lines.append(f"  > @{r.get('author', '?')}: {body}")
@@ -611,10 +613,10 @@ def _strip_internal_sections(prior_text: str) -> str:
 
 
 _STATE_LABELS = {
-    THREAD_CONTESTED: "[CONTESTED]",
-    THREAD_ACKNOWLEDGED: "[ACKNOWLEDGED]",
-    THREAD_RESOLVED: "[RESOLVED]",
-    THREAD_REPLIED: "[REPLIED]",
+    ReplyState.CONTESTED: "[CONTESTED]",
+    ReplyState.ACKNOWLEDGED: "[ACKNOWLEDGED]",
+    ReplyState.RESOLVED: "[RESOLVED]",
+    ReplyState.REPLIED: "[REPLIED]",
 }
 
 def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:

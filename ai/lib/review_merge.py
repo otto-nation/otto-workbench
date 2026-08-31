@@ -450,9 +450,6 @@ def _dedup_findings(text: str) -> _Deduped:
             continue
         seen[key] = _declaration(span.line)
     return _Deduped(cut_spans(text, repeats), merged_into)
-            continue
-        seen[key] = _declared_id(span.line, prefix)
-    return _Deduped(cut_spans(text, repeats), merged_into)
 
 
 def _dedup_sections(sections: dict[str, str]) -> dict[str, str]:

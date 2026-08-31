@@ -60,7 +60,7 @@ _run_step() {
 
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"already installed"* ]]
+  [[ "$output" == *"Claude Code already installed"* ]]
   [ ! -e "$INSTALLER_RAN" ]
 }
 

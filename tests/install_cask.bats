@@ -53,7 +53,9 @@ _run_install_cask() {
 
   run _run_install_cask
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ghostty already installed"* ]]
+  # Named as the label the caller passed, the same way the install branch names
+  # it — not as the bare command, which reads as a different tool.
+  [[ "$output" == *"Ghostty already installed"* ]]
   [ ! -e "$BREW_LOG" ]
 }
 

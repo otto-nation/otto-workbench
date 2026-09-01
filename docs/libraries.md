@@ -716,6 +716,15 @@ The rule is keyed on those names, not on the `.jsonl` extension, because the
 review artifacts (`session.jsonl`, `post.jsonl`, `*.holistic.jsonl`) are
 whole-file writes whose convention is prior-content-first.
 
+Sourcing this file twice in one process is routine — `ui.sh` reaches it through
+`constants.sh`, and `registries.sh` loads it on its own — so each root is
+resolved afresh every time rather than the first source winning forever. A root
+a caller named stays put across those re-sources; a root this file derived
+re-derives, which is what lets a caller change `HOME` and get the roots that go
+with it. Without that, a test sandboxing `HOME` wrote its settings file to the
+sandbox and its manifest to the machine's real state root, because `CLAUDE_DIR`
+re-derives from `HOME` and `WORKBENCH_STATE_DIR` did not.
+
 Its own module rather than part of `constants.sh` because two other consumers
 need the roots without the rest: the `otto-ai-tools` tarball ships `roots.sh`
 alongside its own `ui.sh` facade (see `BASH_MODULES` in

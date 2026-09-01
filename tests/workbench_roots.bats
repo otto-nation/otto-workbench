@@ -130,11 +130,15 @@ resolve_zsh_state() {
   [ "$(resolve_zsh_state)" = "$HOME/.local/state/workbench" ]
 }
 
-@test "sourcing roots.sh does not leave its helper defined" {
+@test "sourcing roots.sh does not leave its helpers defined" {
   # roots.sh reaches every script that loads lib/ui.sh, so a helper left behind
   # is a name every one of them has to avoid.
   run bash -c '. "$1/lib/roots.sh"; declare -F _wb_root' _ "$REPO_ROOT"
   [ "$status" -ne 0 ]
+  run bash -c '. "$1/lib/roots.sh"; declare -F _wb_mark' _ "$REPO_ROOT"
+  [ "$status" -ne 0 ]
+  run bash -c '. "$1/lib/roots.sh"; printf "%s" "${_wb_had_state-unset}"' _ "$REPO_ROOT"
+  [ "$output" = "unset" ]
 }
 
 @test "re-sourcing roots.sh keeps an already-resolved root stable" {
@@ -142,6 +146,39 @@ resolve_zsh_state() {
   run bash -c '. "$1/lib/roots.sh"; . "$1/lib/roots.sh"; printf "%s" "$WORKBENCH_CONFIG_DIR"' _ "$REPO_ROOT"
   [ "$status" -eq 0 ]
   [ "$output" = "$TMPDIR/xdg-config/workbench" ]
+}
+
+@test "re-sourcing roots.sh under a changed HOME re-derives every root" {
+  # lib/registries.sh loads roots.sh on its own, so a caller that sources it and
+  # then sandboxes HOME re-sources with all three roots already set. Reading its
+  # own last answer as an override pinned them to the first HOME: the settings
+  # file went to the sandbox and the manifest to the real state root.
+  run bash -c '
+    . "$1/lib/roots.sh"
+    HOME="$2"
+    . "$1/lib/roots.sh"
+    printf "%s\n%s\n%s" "$WORKBENCH_CONFIG_DIR" "$WORKBENCH_STATE_DIR" "$WORKBENCH_CACHE_DIR"
+  ' _ "$REPO_ROOT" "$TMPDIR/second"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "$TMPDIR/second/.config/workbench" ]
+  [ "${lines[1]}" = "$TMPDIR/second/.local/state/workbench" ]
+  [ "${lines[2]}" = "$TMPDIR/second/.cache/workbench" ]
+}
+
+@test "an override survives a re-source under a changed HOME" {
+  # Only this file's own output re-derives. A caller that named a root still
+  # gets it after HOME moves, which is how tests point one root at a sandbox
+  # and leave the rest alone.
+  export WORKBENCH_STATE_DIR="$TMPDIR/pinned"
+  run bash -c '
+    . "$1/lib/roots.sh"
+    HOME="$2"
+    . "$1/lib/roots.sh"
+    printf "%s\n%s" "$WORKBENCH_STATE_DIR" "$WORKBENCH_CACHE_DIR"
+  ' _ "$REPO_ROOT" "$TMPDIR/second"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "$TMPDIR/pinned" ]
+  [ "${lines[1]}" = "$TMPDIR/second/.cache/workbench" ]
 }
 
 # ─── Cross-validation matrix ────────────────────────────────────────────────

@@ -356,6 +356,20 @@ The three answer one question between them — what a given file is worth to a
 reviewer — which is why the prompt's byte budget asks here before deciding what
 it can afford to carry.
 
+### review_outcome.py
+
+What a run writes to the review file, and what it claims about itself.
+
+Every path that reaches a review file without a synthesis agent comes through
+here: the clean review, the mechanical fallback, the two skip paths. Each
+carries a different summary and a different claim about whether a verdict was
+reached, and getting those to agree is this module's whole job — a header that
+says the run completed while the sidecar beside it says otherwise is a document
+nobody can act on.
+
+Deciding which of those paths a run takes is `review_steps`'; sequencing the
+phases that lead there is `review_pipeline`'s.
+
 ### review_paths.py
 
 Where a review lives on disk, and what is allowed to be there.
@@ -414,17 +428,18 @@ The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
 share the executor and its budget rules.
 
-What a phase *produces* is somebody else's problem: the review document, the
-synthesis and the run drivers stay in review_pipeline.
+What a phase *produces* is somebody else's problem: sequencing the phases into
+a run is `review_pipeline`'s, deciding what each phase's output means for the
+run is `review_steps`', and writing the result to the review file is
+`review_outcome`'s.
 
 ### review_pipeline.py
 
 Pipeline orchestration for claude-review.
 
 Drives the single-agent and multi-phase runs end to end: sequencing the phases
-review_phases defines, deciding what a resumed run may skip, assembling the
-review document (synthesis, mechanical fallback, meta header), consolidating
-the session logs, and fetching the PR metadata a run starts from.
+review_steps defines, deciding what a resumed run may skip, consolidating the
+session logs, and fetching the PR metadata a run starts from.
 
 The run ends when the review file is written — what happens to the findings
 afterwards belongs to review_fix, and removing what the run left behind belongs
@@ -538,6 +553,18 @@ Static analysis framework for the review pipeline.
 Runs machine-checkable tools against changed files and formats violations
 for inclusion in review output. Each checker is a plain function with the
 signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
+
+### review_steps.py
+
+One function per phase of a multi-phase review.
+
+Each takes the job and the run's state, does that phase's work, and reports
+what it spent. They are ordered here as the run orders them, but none of them
+calls the next: sequencing is `review_pipeline`'s, so a phase can be skipped,
+resumed, or budgeted out without any other phase knowing.
+
+Invoking an agent is `review_phases`'; writing the result to the review file is
+`review_outcome`'s.
 
 ### review_verdict.py
 

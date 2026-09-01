@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import agent_phases
 import review_phases
 import review_pipeline
+import review_steps
 from agent_types import AgentKind, Effort, Phase, Thinking
 from review_phases import PhaseResult
 from review_state import PipelineState
@@ -117,91 +118,91 @@ class TestHolisticSkipReason:
     """Phase 1 is two candidate scans, so it drops out only when both are off."""
 
     def test_incremental_skips(self, tmp_path):
-        reason = review_pipeline._holistic_skip_reason(
+        reason = review_steps._holistic_skip_reason(
             _make_job(tmp_path), True, 10)
         assert reason == "incremental review"
 
     def test_both_scan_flags_skip(self, tmp_path):
         job = _make_job(
             tmp_path, skip_phases=frozenset({Phase.HOLISTIC, Phase.SCOUT}))
-        assert review_pipeline._holistic_skip_reason(job, False, 10) == \
+        assert review_steps._holistic_skip_reason(job, False, 10) == \
             "--no-holistic --no-scout"
 
     def test_no_holistic_alone_falls_back_to_scout(self, tmp_path):
         job = _make_job(tmp_path, skip_phases=frozenset({Phase.HOLISTIC}))
-        assert review_pipeline._holistic_skip_reason(job, False, 10) is None
-        assert review_pipeline._scan_phase(job) is Phase.SCOUT
+        assert review_steps._holistic_skip_reason(job, False, 10) is None
+        assert review_steps._scan_phase(job) is Phase.SCOUT
 
     def test_no_scout_alone_falls_back_to_holistic(self, tmp_path):
         job = _make_job(tmp_path, skip_phases=frozenset({Phase.SCOUT}))
-        assert review_pipeline._holistic_skip_reason(job, False, 10) is None
-        assert review_pipeline._scan_phase(job) is Phase.HOLISTIC
+        assert review_steps._holistic_skip_reason(job, False, 10) is None
+        assert review_steps._scan_phase(job) is Phase.HOLISTIC
 
     def test_low_effort_skips(self, tmp_path):
-        reason = review_pipeline._holistic_skip_reason(
+        reason = review_steps._holistic_skip_reason(
             _make_job(tmp_path, effort=Effort.LOW), False, 10)
         assert reason == "effort=low"
 
     def test_medium_effort_does_not_skip(self, tmp_path):
-        reason = review_pipeline._holistic_skip_reason(
+        reason = review_steps._holistic_skip_reason(
             _make_job(tmp_path, effort=Effort.MEDIUM), False, 10)
         assert reason is None
 
     def test_high_effort_does_not_skip(self, tmp_path):
-        reason = review_pipeline._holistic_skip_reason(
+        reason = review_steps._holistic_skip_reason(
             _make_job(tmp_path, effort=Effort.HIGH), False, 10)
         assert reason is None
 
     def test_few_groups_skips(self, tmp_path):
-        reason = review_pipeline._holistic_skip_reason(
+        reason = review_steps._holistic_skip_reason(
             _make_job(tmp_path), False, 2)
         assert "threshold" in reason
 
     def test_enough_groups_does_not_skip(self, tmp_path):
-        reason = review_pipeline._holistic_skip_reason(
+        reason = review_steps._holistic_skip_reason(
             _make_job(tmp_path), False, 10)
         assert reason is None
 
 
 class TestHolisticPhaseStateUpdate:
-    @patch.object(review_pipeline, "_write_pipeline_state")
+    @patch.object(review_steps, "_write_pipeline_state")
     def test_skip_incremental_marks_done(self, mock_write, tmp_path):
         job = _make_job(tmp_path)
         state = PipelineState(head_sha="abc", group_names=["g1"])
         assert state.scanned is False
 
-        result = review_pipeline._run_holistic_phase(
+        result = review_steps._run_holistic_phase(
             job, group_count=1, state=state, incremental=True,
         )
         assert result == PhaseResult()
         assert state.scanned is True
         mock_write.assert_called_once_with(job, state)
 
-    @patch.object(review_pipeline, "_write_pipeline_state")
+    @patch.object(review_steps, "_write_pipeline_state")
     def test_skip_both_scan_flags_marks_done(self, mock_write, tmp_path):
         job = _make_job(
             tmp_path, skip_phases=frozenset({Phase.HOLISTIC, Phase.SCOUT}))
         state = PipelineState(head_sha="abc", group_names=["g1"])
 
-        review_pipeline._run_holistic_phase(
+        review_steps._run_holistic_phase(
             job, group_count=10, state=state, incremental=False,
         )
         assert state.scanned is True
         mock_write.assert_called_once()
 
-    @patch.object(review_pipeline, "_write_pipeline_state")
+    @patch.object(review_steps, "_write_pipeline_state")
     def test_skip_already_done_no_write(self, mock_write, tmp_path):
         job = _make_job(tmp_path)
         state = PipelineState(
             head_sha="abc", group_names=["g1"], done={Phase.SCOUT})
 
-        review_pipeline._run_holistic_phase(
+        review_steps._run_holistic_phase(
             job, group_count=1, state=state, incremental=True,
         )
         assert state.scanned is True
         mock_write.assert_not_called()
 
-    @patch.object(review_pipeline, "_write_pipeline_state")
+    @patch.object(review_steps, "_write_pipeline_state")
     def test_a_skipped_scan_records_the_scan_it_would_have_run(
         self, mock_write, tmp_path,
     ):
@@ -211,7 +212,7 @@ class TestHolisticPhaseStateUpdate:
         job = _make_job(tmp_path, skip_phases=frozenset({Phase.SCOUT}))
         state = PipelineState(head_sha="abc", group_names=["g1"])
 
-        review_pipeline._run_holistic_phase(
+        review_steps._run_holistic_phase(
             job, group_count=1, state=state, incremental=True,
         )
         assert state.done == {Phase.HOLISTIC}

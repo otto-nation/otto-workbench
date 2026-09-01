@@ -12,6 +12,7 @@ import agent_phases
 import review_paths
 import review_pipeline
 import review_phases
+import review_steps
 from agent_registry import REVIEW_PHASES
 from agent_types import AgentKind, Effort, Phase, Thinking
 
@@ -457,7 +458,7 @@ class TestExecutorsUseTheResolvedBudget:
         Path(job.review_file).write_text(
             "## Must fix\n- [ ] **[M1]** must fix something\n")
         inv = self._first_invocation(
-            monkeypatch, lambda: review_phases._phase_disprove(job),
+            monkeypatch, lambda: review_steps._phase_disprove(job),
         )
         assert inv.max_turns == review_phases.PHASES[Phase.DISPROVE].max_turns
 

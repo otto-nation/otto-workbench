@@ -1213,6 +1213,80 @@ _run_sync() {
   [ "$tracked" = '["guard-v2"]' ]
 }
 
+# ── the shell half: splitting the envelope across two files ──────────────────
+# The tests above drive sync-settings.jq directly. These drive
+# step_claude_settings, which is what reads the sidecar off disk, splits the
+# envelope, and publishes each half — a swapped selector or a wrong path would
+# pass every test above.
+
+# _sync_run FAKE_HOME STATE_DIR — one step_claude_settings against a sandbox.
+# In a subshell because constants.sh freezes every path from HOME and the state
+# root at source time: a second run needs a fresh process, not a second call.
+_sync_run() {
+  ( HOME="$1"
+    export WORKBENCH_STATE_DIR="$2"
+    export WORKBENCH_DIR="$REPO_ROOT"
+    export WORKBENCH_STABLE_DIR="$REPO_ROOT"
+    export NO_COLOR=1
+    mkdir -p "$HOME"
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/lib/ui.sh"
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/ai/claude/steps.sh"
+    step_claude_settings >/dev/null )
+}
+
+@test "shell: the manifest lands in the state root, not the settings file" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _sync_run "$home" "$state"
+  [ -f "$home/.claude/settings.json" ]
+  [ -f "$state/claude-settings.manifest.json" ]
+  # The manifest holds bookkeeping and nothing else; the settings file holds the
+  # template's own keys. Naming both is what catches a swapped selector.
+  run jq -ec 'keys' "$state/claude-settings.manifest.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["hooks","permissions"]' ]
+  run jq -e 'has("statusLine") and has("hooks")' "$home/.claude/settings.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "shell: the settings file it writes carries no _workbench key" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _sync_run "$home" "$state"
+  run jq -e 'has("_workbench")' "$home/.claude/settings.json"
+  [ "$status" -ne 0 ]
+}
+
+@test "shell: a second run reproduces both files byte for byte" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _sync_run "$home" "$state"
+  cp "$home/.claude/settings.json" "$BATS_TEST_TMPDIR/settings.first"
+  cp "$state/claude-settings.manifest.json" "$BATS_TEST_TMPDIR/manifest.first"
+  _sync_run "$home" "$state"
+  diff "$BATS_TEST_TMPDIR/settings.first" "$home/.claude/settings.json"
+  diff "$BATS_TEST_TMPDIR/manifest.first" "$state/claude-settings.manifest.json"
+}
+
+@test "shell: the sidecar it wrote is what the next run classifies against" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _sync_run "$home" "$state"
+
+  local settings="$home/.claude/settings.json"
+  local sidecar="$state/claude-settings.manifest.json"
+  # A rule the last sync managed but the template no longer carries, and one the
+  # operator added. Only the first is the sidecar's to withdraw.
+  local tmp="$BATS_TEST_TMPDIR/edit.json"
+  jq '.permissions.allow += ["Bash(retired-managed:*)","Bash(operator-added:*)"]' \
+    "$settings" > "$tmp" && mv "$tmp" "$settings"
+  jq '.permissions.allow += ["Bash(retired-managed:*)"]' "$sidecar" > "$tmp" && mv "$tmp" "$sidecar"
+
+  _sync_run "$home" "$state"
+  run jq -e '.permissions.allow | index("Bash(retired-managed:*)")' "$settings"
+  [ "$status" -ne 0 ]
+  run jq -e '.permissions.allow | index("Bash(operator-added:*)")' "$settings"
+  [ "$status" -eq 0 ]
+}
+
 # ── script paths referenced from settings ────────────────────────────────────
 # Hook and statusline commands name installed scripts by absolute path, and
 # nothing resolves those paths at install time. A wrong directory therefore

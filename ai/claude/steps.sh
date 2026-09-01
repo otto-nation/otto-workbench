@@ -205,9 +205,26 @@ step_claude_settings() {
     -f "$CLAUDE_SYNC_SETTINGS_JQ") \
     || { err "Failed to sync settings.json"; return 1; }
 
+  # Both halves are staged before either is published. The two files describe
+  # each other: a manifest that ran ahead of the settings file — or trailed it —
+  # reclassifies the difference as user entries the next sync must never touch,
+  # so a template can lose an entry and the live file keep it forever. Staging
+  # narrows the window a failed write leaves open to the pair of moves below.
+  local settings_tmp manifest_tmp
+  settings_tmp=$(mktemp)
+  manifest_tmp=$(mktemp)
+  if ! jq '.settings' <<< "$result" > "$settings_tmp" \
+    || ! jq '.manifest' <<< "$result" > "$manifest_tmp"; then
+    rm -f "$settings_tmp" "$manifest_tmp"
+    err "Failed to render settings.json"
+    return 1
+  fi
+
+  # mktemp answers 0600; the files these replace are world-readable config.
+  chmod 644 "$settings_tmp" "$manifest_tmp"
   mkdir -p "$(dirname "$CLAUDE_SETTINGS_MANIFEST")"
-  jq '.manifest' <<< "$result" > "$CLAUDE_SETTINGS_MANIFEST"
-  jq '.settings' <<< "$result" > "$CLAUDE_SETTINGS_FILE"
+  mv "$settings_tmp" "$CLAUDE_SETTINGS_FILE"
+  mv "$manifest_tmp" "$CLAUDE_SETTINGS_MANIFEST"
   local label="settings.json synced"
   [[ "$existing" == "{}" ]] && label="settings.json written"
   [[ -f "$USER_SETTINGS_SRC" ]] && label+=" (+ user overrides)"

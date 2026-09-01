@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Removes the reviewer copy step_pi_skills spliced into ~/.pi/agent/skills/.
+# Removes the reviewer copy a retired Pi sync step spliced into ~/.pi/agent/skills/.
 #
 # The skill now installs to ~/.agents/skills/reviewer, which Pi also discovers.
 # Left in place, both are found and Pi resolves the collision by keeping whichever

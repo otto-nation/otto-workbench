@@ -422,7 +422,7 @@ EOF
   cat > "$LIB_DIR/roots.sh" << 'EOF'
 # Hand-authored settings: config.yml, overrides/.
 WORKBENCH_CONFIG_DIR="$(_wb_root "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
-_wb_mark _WB_DERIVED_CONFIG_DIR "$WORKBENCH_CONFIG_DIR" "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}"
+_wb_mark "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}" _WB_DERIVED_CONFIG_DIR "$WORKBENCH_CONFIG_DIR"
 EOF
   run _roots_table
   [[ "$output" == *'| `WORKBENCH_CONFIG_DIR` | Hand-authored settings: config.yml, overrides/ | `XDG_CONFIG_HOME` | `~/.config/workbench` |'* ]]

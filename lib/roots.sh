@@ -110,15 +110,20 @@ _wb_root() {
   fi
 }
 
-# _wb_mark NAME RESOLVED OVERRIDE PREVIOUS — record RESOLVED under NAME as this
+# _wb_mark OVERRIDE PREVIOUS NAME RESOLVED — record RESOLVED under NAME as this
 # file's own output, or empty NAME when OVERRIDE was a caller's choice.
+#
+# OVERRIDE and PREVIOUS lead here for the same reason they lead `_wb_root`: the
+# two calls for one root pass that pair identically, so keeping it in the same
+# two positions lets the call sites be compared column by column rather than
+# against two signatures.
 #
 # Emptying is what keeps a caller's root pinned across a re-source: the next one
 # compares against an empty record, so the value it finds can never be mistaken
 # for ours. Recording every resolution instead would retire the override after
 # one source, since a caller's value and our own would then look the same.
 _wb_mark() {
-  local name="$1" resolved="$2" override="$3" previous="$4"
+  local override="$1" previous="$2" name="$3" resolved="$4"
   if [[ -n "$override" && "$override" != "$previous" ]]; then
     declare -g "$name="
   else
@@ -136,7 +141,7 @@ _wb_had_cache="${WORKBENCH_CACHE_DIR:-}"
 
 # Hand-authored settings: config.yml, overrides/.
 WORKBENCH_CONFIG_DIR="$(_wb_root "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
-_wb_mark _WB_DERIVED_CONFIG_DIR "$WORKBENCH_CONFIG_DIR" "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}"
+_wb_mark "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}" _WB_DERIVED_CONFIG_DIR "$WORKBENCH_CONFIG_DIR"
 
 # Generated, machine-local data: reviews/, trail/, usage/, install.yml, migrations.applied.
 # Written by setup scripts; read by zsh snippets and sync steps. Never committed.
@@ -145,11 +150,11 @@ _wb_mark _WB_DERIVED_CONFIG_DIR "$WORKBENCH_CONFIG_DIR" "$_wb_had_config" "${_WB
 # back to the legacy path. What carries the data is the one-time adoption in
 # lib/migrations.sh, which runs before any migration reads its own bookkeeping.
 WORKBENCH_STATE_DIR="$(_wb_root "$_wb_had_state" "${_WB_DERIVED_STATE_DIR:-}" "${XDG_STATE_HOME:-}" "$HOME/.local/state/workbench")"
-_wb_mark _WB_DERIVED_STATE_DIR "$WORKBENCH_STATE_DIR" "$_wb_had_state" "${_WB_DERIVED_STATE_DIR:-}"
+_wb_mark "$_wb_had_state" "${_WB_DERIVED_STATE_DIR:-}" _WB_DERIVED_STATE_DIR "$WORKBENCH_STATE_DIR"
 
 # Recomputable data, safe to delete at any time: vertex-quota/.
 WORKBENCH_CACHE_DIR="$(_wb_root "$_wb_had_cache" "${_WB_DERIVED_CACHE_DIR:-}" "${XDG_CACHE_HOME:-}" "$HOME/.cache/workbench")"
-_wb_mark _WB_DERIVED_CACHE_DIR "$WORKBENCH_CACHE_DIR" "$_wb_had_cache" "${_WB_DERIVED_CACHE_DIR:-}"
+_wb_mark "$_wb_had_cache" "${_WB_DERIVED_CACHE_DIR:-}" _WB_DERIVED_CACHE_DIR "$WORKBENCH_CACHE_DIR"
 
 # The resolver has done its work. This file is sourced into every script that
 # loads lib/ui.sh, so leaving the helpers defined would leak them into all of

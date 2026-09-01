@@ -58,11 +58,16 @@ for _editor in "${SELECTED_EDITORS[@]}"; do
   echo
   # shellcheck source=/dev/null
   . "$_EDITORS_DIR/$_editor/setup.sh"
-  if [[ "$_replaying" != true ]]; then
-    state_append_list "$_STATE_KEY" "$_editor"
-  fi
 done
-unset _editor _replaying
+unset _editor
+
+# One write, after every selected editor is set up. A replay writes back what it
+# read, so the branch that produced the selection does not change what is
+# recorded — and until this line the previous selection is still what sync reads.
+if [[ "$_replaying" != true ]]; then
+  state_set_list "$_STATE_KEY" "${SELECTED_EDITORS[@]}"
+fi
+unset _replaying
 
 echo
 success "Editor setup complete!"

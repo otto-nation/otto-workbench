@@ -126,11 +126,11 @@ done
 
 run_steps
 
-# Record installed component and sub-tools in state
+# Record installed component and sub-tools in state. The selection replaces the
+# saved one wholesale rather than being appended to it, so deselecting a tool
+# takes effect; until this line the previous selection is still what sync reads.
 state_record "ai"
-for _tool in "${SELECTED_TOOLS[@]}"; do
-  state_append_list "$_STATE_KEY" "$_tool"
-done
+state_set_list "$_STATE_KEY" "${SELECTED_TOOLS[@]}"
 
 echo
 success "AI tools setup complete!"

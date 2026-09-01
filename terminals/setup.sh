@@ -61,11 +61,16 @@ for _terminal in "${SELECTED_TERMINALS[@]}"; do
   echo
   # shellcheck source=/dev/null
   . "$SCRIPT_DIR/$_terminal/setup.sh"
-  if [[ "$_replaying" != true ]]; then
-    state_append_list "$_STATE_KEY" "$_terminal"
-  fi
 done
-unset _terminal _replaying
+unset _terminal
+
+# One write, after every selected terminal is set up. A replay writes back what
+# it read, so the branch that produced the selection does not change what is
+# recorded — and until this line the previous selection is still what sync reads.
+if [[ "$_replaying" != true ]]; then
+  state_set_list "$_STATE_KEY" "${SELECTED_TERMINALS[@]}"
+fi
+unset _replaying
 
 echo
 success "Terminal setup complete!"

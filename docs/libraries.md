@@ -811,9 +811,9 @@ state_file_exists           # returns 0 if state file exists
 | `state_prune_orphans` | removes YAML entries that have no matching steps.sh. Requires lib/components.sh to be sourced (provides discover_step_files). |
 | `state_detect_installed` | detects currently installed components and records them. Uses heuristics (config files, symlinks, directories) to determine what is present. Called by the initial-state migration and by `otto-workbench discover regenerate`. |
 | `state_set KEY VALUE` | sets an arbitrary YAML path under components. Example: state_set "docker.runtime" "orbstack" |
-| `state_clear_list KEY` | resets a YAML list to empty sequence. |
 | `state_append_list KEY VALUE` | appends VALUE to a YAML list (idempotent). Example: state_append_list "brew.stacks" "infra/kubernetes" |
 | `state_get KEY` | reads a YAML value. Returns empty string for missing/null keys. |
+| `state_set_list KEY [VALUE...]` | replaces a YAML list with exactly VALUE..., or empties it when no values are given. Values must not contain newlines, the same assumption `state_get_list` makes by printing one per line. |
 | `state_get_list KEY` | reads a YAML list, one item per line. |
 | `state_load_selections STATE_KEY SCRIPT_DIR RESULT_ARRAY [AVAILABLE_ARRAY]` | Loads saved selections from YAML, validates each against SCRIPT_DIR. When AVAILABLE_ARRAY is provided, detects new tools on disk that aren't in the saved list — forces a fresh menu so the user can opt in (or deselect). |
 

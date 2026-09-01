@@ -272,10 +272,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
             pf_future = pool.submit(collect_preflight_data, job)
             rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)
             job.preflight = pf_future.result()
-            reply_threads = rt_future.result()
-            job.reply_threads = {
-                "threads": reply_threads.threads, "summary": reply_threads.summary,
-            }
+            job.reply_threads = rt_future.result()
     else:
         job.preflight = collect_preflight_data(job)
 

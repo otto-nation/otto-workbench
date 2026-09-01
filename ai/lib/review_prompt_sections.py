@@ -39,6 +39,7 @@ from review_document import (
 )
 from review_grammar import BOLD_FINDING_ID_RE, SCOPED_FINDING_RE
 from review_merge import annotate_prior_with_stable_ids
+from review_reconcile import ReplyThreads
 from review_scout import format_leads_block, is_scout_output, parse_scout_output
 from review_spans import finding_spans
 from review_types import (
@@ -210,10 +211,10 @@ def _format_thread_item(t: dict, state: str) -> list[str]:
 
 
 def _build_reply_threads_section(
-    reply_threads: dict,
+    reply_threads: ReplyThreads | None,
     file_filter: list[str] | None = None,
 ) -> str:
-    threads = reply_threads.get("threads", [])
+    threads = reply_threads.threads if reply_threads else []
     if file_filter:
         filter_set = set(file_filter)
         threads = [t for t in threads if t.get("path", "") in filter_set]
@@ -578,8 +579,8 @@ _STATE_LABELS = {
     ReplyState.REPLIED: "[REPLIED]",
 }
 
-def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
-    threads = reply_threads.get("threads", [])
+def _annotate_with_thread_state(review_text: str, reply_threads: ReplyThreads | None) -> str:
+    threads = reply_threads.threads if reply_threads else []
     if not threads:
         return review_text
     id_to_state = {}
@@ -636,7 +637,7 @@ def _build_prior_section(
     prior_review: str,
     context: str = "",
     file_filter: list[str] | None = None,
-    reply_threads: dict | None = None,
+    reply_threads: ReplyThreads | None = None,
 ) -> str:
     if not prior_review:
         return ""
@@ -645,7 +646,9 @@ def _build_prior_section(
         review_text = _scope_prior_review(review_text, file_filter)
     if not review_text:
         return ""
-    if reply_threads:
+    # A frozen dataclass is truthy even with an empty `threads` list, unlike the
+    # dict this replaced — so the emptiness has to be asked of the field itself.
+    if reply_threads and reply_threads.threads:
         review_text = _annotate_with_thread_state(review_text, reply_threads)
     return f"""
 ## Prior review

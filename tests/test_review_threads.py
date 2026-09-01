@@ -367,11 +367,11 @@ class TestFetchReplyThreads:
 
 class TestBuildReplyThreadsSection:
     def test_empty_when_no_threads(self):
-        assert _build_reply_threads_section({}) == ""
-        assert _build_reply_threads_section({"threads": []}) == ""
+        assert _build_reply_threads_section(None) == ""
+        assert _build_reply_threads_section(ReplyThreads(threads=[], summary={})) == ""
 
     def test_groups_by_state(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.CONTESTED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "I disagree because X"},
@@ -380,7 +380,7 @@ class TestBuildReplyThreadsSection:
              "line": 5, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "Fixed"},
              ]},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "### Contested" in section
         assert "### Acknowledged" in section
@@ -388,46 +388,46 @@ class TestBuildReplyThreadsSection:
         assert "[S1]" in section
 
     def test_includes_reply_text_for_contested(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.CONTESTED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "I disagree because X"},
              ]},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "@alice: I disagree because X" in section
 
     def test_no_reply_text_for_resolved(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.RESOLVED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": []},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "### Resolved" in section
         assert "> @" not in section
 
     def test_unreplied_threads(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.UNREPLIED, "finding_id": "M2", "path": "c.py",
              "line": 1, "root_body": "issue", "replies": []},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "### No reply" in section
         assert "[M2]" in section
 
     def test_replied_threads_include_text(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.REPLIED, "finding_id": "S1", "path": "d.py",
              "line": 3, "root_body": "issue", "replies": [
                  {"author": "bob", "body": "Let me look into this"},
              ]},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "### Author replied" in section
         assert "@bob: Let me look into this" in section
 
     def test_file_filter_scopes_to_matching_paths(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.CONTESTED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "I disagree"},
@@ -436,27 +436,27 @@ class TestBuildReplyThreadsSection:
              "line": 5, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "Also disagree"},
              ]},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data, file_filter=["a.py"])
         assert "[M1]" in section
         assert "[M2]" not in section
 
     def test_file_filter_none_includes_all(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.ACKNOWLEDGED, "finding_id": "S1", "path": "a.py",
              "line": 1, "root_body": "issue", "replies": []},
             {"state": ReplyState.ACKNOWLEDGED, "finding_id": "S2", "path": "b.py",
              "line": 2, "root_body": "issue", "replies": []},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data, file_filter=None)
         assert "[S1]" in section
         assert "[S2]" in section
 
     def test_file_filter_no_matches_returns_empty(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.CONTESTED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": []},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data, file_filter=["other.py"])
         assert section == ""
 
@@ -470,31 +470,31 @@ class TestAnnotateWithThreadState:
             "- **[M1]** `a.py:10` — Missing error check\n"
             "- **[M2]** `b.py:5` — SQL injection\n"
         )
-        threads = {"threads": [
+        threads = ReplyThreads(threads=[
             {"finding_id": "M1", "state": ReplyState.CONTESTED},
             {"finding_id": "M2", "state": ReplyState.ACKNOWLEDGED},
-        ]}
+        ], summary={})
         result = _annotate_with_thread_state(review, threads)
         assert "[CONTESTED]" in result
         assert "[ACKNOWLEDGED]" in result
 
     def test_no_label_for_unreplied(self):
         review = "- **[M1]** `a.py:10` — Issue\n"
-        threads = {"threads": [
+        threads = ReplyThreads(threads=[
             {"finding_id": "M1", "state": ReplyState.UNREPLIED},
-        ]}
+        ], summary={})
         result = _annotate_with_thread_state(review, threads)
         assert "[UNREPLIED]" not in result
         assert result.strip() == review.strip()
 
     def test_empty_threads(self):
         review = "- **[M1]** `a.py:10` — Issue\n"
-        result = _annotate_with_thread_state(review, {"threads": []})
+        result = _annotate_with_thread_state(review, ReplyThreads(threads=[], summary={}))
         assert result == review
 
-    def test_no_threads_key(self):
+    def test_no_reply_threads_at_all(self):
         review = "- **[M1]** `a.py:10` — Issue\n"
-        result = _annotate_with_thread_state(review, {})
+        result = _annotate_with_thread_state(review, None)
         assert result == review
 
 
@@ -507,9 +507,9 @@ class TestBuildPriorSectionWithThreads:
         assert "Prior review" in result
 
     def test_with_threads_annotates(self):
-        threads = {"threads": [
+        threads = ReplyThreads(threads=[
             {"finding_id": "M1", "state": ReplyState.CONTESTED},
-        ]}
+        ], summary={})
         result = _build_prior_section(
             "## Must-fix\n- **[M1]** `a.py:10` — Issue",
             reply_threads=threads,
@@ -517,7 +517,7 @@ class TestBuildPriorSectionWithThreads:
         assert "[CONTESTED]" in result
 
     def test_empty_prior_returns_empty(self):
-        assert _build_prior_section("", reply_threads={"threads": []}) == ""
+        assert _build_prior_section("", reply_threads=ReplyThreads(threads=[], summary={})) == ""
 
 
 class TestBuildPriorSectionLedger:

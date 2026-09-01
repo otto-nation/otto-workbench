@@ -12,10 +12,20 @@
 # _sync_settings_into FAKE_HOME REPO_ROOT — runs step_claude_settings against a
 # sandbox HOME. constants.sh derives every path from HOME at source time, so
 # presetting it keeps the real ~/.claude untouched.
+#
+# A root is derived from HOME only when nothing has set it yet — roots.sh prefers
+# an existing value, and whichever source runs first is the one that decides. The
+# registries.sh above loads roots.sh under the real HOME, so WORKBENCH_STATE_DIR
+# arrives here already pointing at the real state root and survives the HOME
+# swap; step_claude_settings then writes its manifest into ~/.local/state. Name
+# every root the sandbox owns rather than trusting HOME to imply them.
 _sync_settings_into() {
   local fake_home="$1" repo_root="$2"
   mkdir -p "$fake_home"
   HOME="$fake_home"
+  export WORKBENCH_CONFIG_DIR="$fake_home/.config/workbench"
+  export WORKBENCH_STATE_DIR="$fake_home/.local/state/workbench"
+  export WORKBENCH_CACHE_DIR="$fake_home/.cache/workbench"
   export WORKBENCH_DIR="$repo_root"
   export WORKBENCH_STABLE_DIR="$repo_root"
   export NO_COLOR=1
@@ -1224,7 +1234,9 @@ _run_sync() {
 # root at source time: a second run needs a fresh process, not a second call.
 _sync_run() {
   ( HOME="$1"
+    export WORKBENCH_CONFIG_DIR="$1/.config/workbench"
     export WORKBENCH_STATE_DIR="$2"
+    export WORKBENCH_CACHE_DIR="$1/.cache/workbench"
     export WORKBENCH_DIR="$REPO_ROOT"
     export WORKBENCH_STABLE_DIR="$REPO_ROOT"
     export NO_COLOR=1
@@ -1234,6 +1246,14 @@ _sync_run() {
     # shellcheck source=/dev/null
     source "$REPO_ROOT/ai/claude/steps.sh"
     step_claude_settings >/dev/null )
+}
+
+@test "shell: the file-level sync keeps its manifest inside the sandbox" {
+  # A sandbox is only as good as the roots it names. setup_file swaps HOME, but
+  # roots.sh keeps a root something already set — and the registries.sh it loads
+  # first resolves them from the real HOME — so this manifest is the one that
+  # would otherwise be written into the operator's own ~/.local/state/workbench.
+  [ -f "$BATS_FILE_TMPDIR/home/.local/state/workbench/claude-settings.manifest.json" ]
 }
 
 @test "shell: the manifest lands in the state root, not the settings file" {

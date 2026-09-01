@@ -48,7 +48,7 @@ stricter shape over the same location vocabulary, and the two have to agree or
 a finding parses one way and verifies against the other — which is why they
 live next to each other rather than here.
 
-Where a finding's body ends is `review_document`'s. Both gates walk the review
+Where a finding's body ends is `review_spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and
@@ -69,11 +69,11 @@ import log
 from pr_domains import ReviewVerdict
 from review_document import (
     SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewDocument, drop_findings,
-    finding_spans, section_span, strip_sections,
+    ReviewDocument, section_span, strip_sections,
 )
 from review_grammar import VERIFY_FINDING_RE, strip_line_suffix
 from review_merge import renumber_findings, strip_stable_ids
+from review_spans import drop_findings, finding_spans
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD, FindingSpan, severity_by_key,
 )

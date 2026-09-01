@@ -290,16 +290,9 @@ not in a findings section — the prior-findings ledger is the one — and every
 other reader asks `ReviewDocument.findings`. The annotation a fix pass writes
 onto a finding it left alone is the exception that stays: `is_skipped` is a
 question about a `Finding` this module has already parsed rather than about
-the line that declared it.
-
-Where that body stops is the same one owner. `ends_finding_body` is the answer
-and `finding_spans` is the traversal built on it, so a reader walking a review
-a finding at a time gets the same line ranges wherever it walks from.
-`drop_findings` is what an editing caller asks instead: the gates that trim a
-finished review remove spans this module measured rather than lines each of
-them recognised, because two gates that disagreed about where a body ended cut
-one review two different ways — one of them swallowing the resolved finding
-below the one it was told to drop.
+the line that declared it. Where a finding's body starts and stops is
+`review_spans`'s, and this module reads through `finding_spans` the same way
+it reads a single line through `review_grammar`.
 
 Counting them is that same parse, not a second grammar over the same text:
 `open_counts` tallies `open_findings`, so which findings a review is reported
@@ -447,7 +440,7 @@ still over budget once every lever is pulled raises `PromptTooLarge` rather than
 being sent: the phase reports it before an agent starts, so it costs nothing.
 
 Scoping the prior review to the files a group is reviewing cuts it a finding at
-a time, and where a finding stops is `review_document`'s `finding_spans` — the
+a time, and where a finding stops is `review_spans`'s `finding_spans` — the
 same measure the gates that trim a finished review use. A prompt that measured
 it here would quote an agent evidence belonging to a finding it was not shown.
 
@@ -625,7 +618,7 @@ review is `review_document`'s job, checking findings against the tree is
 `review_verify`'s, and the `Finding` every side holds is `review_types`' — a
 consumer that only holds findings needs none of this.
 
-Where a finding's body ends is `review_document`'s too. Deduplication and the
+Where a finding's body ends is `review_spans`'s. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
 `cut_spans`, so a duplicate takes exactly the lines out of the merged document
 that a falsified finding does. Neither says where one stops.
@@ -704,6 +697,24 @@ thread — answered it, argued with it, resolved it — is the other one.
 `fetch_reply_threads` classifies those threads into `ReplyState` and matches
 each back to the finding ID its root comment declared, so a re-review reads both
 accounts of the same set of findings.
+
+### review_spans.py
+
+Where a finding declaration starts in a document, and where its body stops.
+
+Where that body stops is the same one owner. `ends_finding_body` is the answer
+and `finding_spans` is the traversal built on it, so a reader walking a review
+a finding at a time gets the same line ranges wherever it walks from.
+`drop_findings` is what an editing caller asks instead: the gates that trim a
+finished review remove spans this module measured rather than lines each of
+them recognised, because two gates that disagreed about where a body ended cut
+one review two different ways — one of them swallowing the resolved finding
+below the one it was told to drop.
+
+`finding_spans` makes one traversal guarantee: a declaration starts where
+`FINDING_ID_RE` says and its body stops where `ends_finding_body` says, in a
+single pass over the text, so no two readers of one review can cut it in
+different places.
 
 ### review_summary.py
 
@@ -787,7 +798,7 @@ stricter shape over the same location vocabulary, and the two have to agree or
 a finding parses one way and verifies against the other — which is why they
 live next to each other rather than here.
 
-Where a finding's body ends is `review_document`'s. Both gates walk the review
+Where a finding's body ends is `review_spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and

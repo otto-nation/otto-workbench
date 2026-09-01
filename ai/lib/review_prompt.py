@@ -18,7 +18,7 @@ still over budget once every lever is pulled raises `PromptTooLarge` rather than
 being sent: the phase reports it before an agent starts, so it costs nothing.
 
 Scoping the prior review to the files a group is reviewing cuts it a finding at
-a time, and where a finding stops is `review_document`'s `finding_spans` — the
+a time, and where a finding stops is `review_spans`'s `finding_spans` — the
 same measure the gates that trim a finished review use. A prompt that measured
 it here would quote an agent evidence belonging to a finding it was not shown.
 """
@@ -48,7 +48,7 @@ from review_collect import (
 )
 from review_document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS, finding_spans, strip_sections,
+    SECTION_STATIC_ANALYSIS, strip_sections,
 )
 from review_grammar import BOLD_FINDING_ID_RE, SCOPED_FINDING_RE
 from review_merge import annotate_prior_with_stable_ids
@@ -59,6 +59,7 @@ from review_scout import (
     format_leads_block,
     is_scout_output, parse_scout_output,
 )
+from review_spans import finding_spans
 from review_types import (
     FILE_STAT_FMT, PRContext, PreflightData, PriorDisposition, PriorFinding,
     PRMetadata, ReplyState, ReviewJob,

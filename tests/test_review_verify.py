@@ -31,7 +31,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import review_document
+import review_spans
 import review_verify
 from review_document import SECTION_PRIOR_FINDINGS
 from review_types import SEVERITY_MUST, severity_by_key
@@ -476,7 +476,7 @@ class TestStripEvidenceBlocks:
 
 def _by_evidence_gate(text: str, ids: list[str]) -> str:
     """What evidence verification leaves behind when it drops `ids`."""
-    return review_document.drop_findings(text, ids)
+    return review_spans.drop_findings(text, ids)
 
 
 def _by_disprove_gate(text: str, ids: list[str]) -> str:

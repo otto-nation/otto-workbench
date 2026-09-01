@@ -15,7 +15,7 @@ review is `review_document`'s job, checking findings against the tree is
 `review_verify`'s, and the `Finding` every side holds is `review_types`' — a
 consumer that only holds findings needs none of this.
 
-Where a finding's body ends is `review_document`'s too. Deduplication and the
+Where a finding's body ends is `review_spans`'s. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
 `cut_spans`, so a duplicate takes exactly the lines out of the merged document
 that a falsified finding does. Neither says where one stops.
@@ -112,7 +112,6 @@ from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
 from review_dedup import _get_bot_login
 from review_document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader,
-    cut_spans, finding_spans,
 )
 from review_grammar import (
     ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, FINDING_ID_RE, TRIAGE_LINE_RE,
@@ -120,6 +119,7 @@ from review_grammar import (
 )
 from review_github import PRData
 from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
+from review_spans import cut_spans, finding_spans
 from review_types import (
     DISPOSITION_TAIL_PUNCTUATION, SEVERITIES, FindingRef, FindingSpan,
     LedgerEntry, PriorDisposition, PriorFinding, ReplyState,

@@ -33,7 +33,9 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from review_types import Finding, FindingLocation
+from review_types import (
+    Finding, FindingLocation, FindingRef, LedgerEntry, PriorDisposition,
+)
 
 # ── The head of a declaration ────────────────────────────────────────────────
 
@@ -235,6 +237,23 @@ def parse_finding_line(stripped: str) -> Finding | None:
         checked=(checkbox is not None and checkbox.lower() == "x"),
         declined=declined is not None,
         decline_reason=(declined.group(1) or "").strip() if declined else "",
+    )
+
+
+def parse_ledger_line(raw: str) -> LedgerEntry | None:
+    """The entry a ledger line carries, or None when it names no finding.
+
+    The grammar of one ledger line, exactly as `parse_finding_line` is the
+    grammar of one finding line — a ledger entry is a finding line whose body
+    is read as a verdict instead of a description.
+    """
+    parsed = parse_finding_line(raw.strip())
+    if not parsed:
+        return None
+    return LedgerEntry(
+        ref=FindingRef(parsed.id, parsed.path),
+        disposition=PriorDisposition.parse(parsed.body),
+        text=raw,
     )
 
 

@@ -1,9 +1,10 @@
-"""Tests for `review_merge` — what happens to findings across reviews.
+"""Tests for `review_merge` — merging group reviews into one document.
 
-Merging a review's groups into one document, the stable IDs that give a finding
-an identity later reviews can recognise, and reading the prior review's ledger.
-Reconciling this review against the prior one is the same module's other half
-and lives in `test_review_reconcile.py`.
+Folding the group reviews together, deduplicating and renumbering findings,
+unioning the prior-findings ledger across groups, and the stable IDs that give
+a finding an identity later reviews can recognise. Reconciling this review
+against the prior one is `review_reconcile`'s job, tested in
+`test_review_reconcile.py`.
 """
 
 import sys
@@ -166,12 +167,6 @@ class TestMergeReviewsCleanup:
         assert "---" not in result
 
 
-PRIOR_ONE_FINDING = (
-    "## Must fix\n"
-    "- **[M1]** **`handler.go:42`** — missing error check\n"
-)
-
-
 class TestPriorDisposition:
     def test_parses_the_word_the_prompt_asks_for(self):
         assert PriorDisposition.parse("Fixed") is PriorDisposition.FIXED
@@ -214,24 +209,6 @@ class TestPriorDisposition:
             > PriorDisposition.FIXED.precedence
         )
 
-
-class TestParsePriorFindings:
-    """Reconciliation's view of the prior review — see test_review_reconcile.py."""
-
-    def test_a_findings_quotation_below_its_first_line_travels_with_it(self):
-        prior = (
-            PRIOR_ONE_FINDING
-            + "  The call reads `rows, _ := db.Query(sql)` today.\n"
-            + "- **[M2]** **`cache.go:9`** — stale entry\n"
-        )
-        first, second = review_merge._parse_prior_findings(prior)
-        assert "rows, _ := db.Query(sql)" in first.text
-        assert "rows, _ := db.Query(sql)" not in second.text
-
-    def test_a_findings_text_stops_at_the_next_section(self):
-        prior = PRIOR_ONE_FINDING + "\n## Verdict\nRequest changes.\n"
-        first = review_merge._parse_prior_findings(prior)[0]
-        assert "Request changes" not in first.text
 
 # ── 3. shifting one group's IDs ─────────────────────────────────────────────
 

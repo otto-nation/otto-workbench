@@ -22,7 +22,7 @@ from review_types import (
 from agent_types import Effort, Mode, Phase
 from dataclasses import asdict
 
-from review_merge import _parse_ledger_line
+from review_grammar import parse_ledger_line
 from review_prompt import (
     _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, BudgetLever, Cut,
     MAX_DELTA_LIST_ENTRIES,
@@ -570,6 +570,6 @@ class TestLedgerInstructionParses:
         examples = self._examples()
         assert examples, "the instruction shows no ledger lines"
         for example in examples:
-            entry = _parse_ledger_line(example)
+            entry = parse_ledger_line(example)
             assert entry, f"the instruction's example does not parse: {example}"
             assert entry.disposition and entry.disposition.value in example

@@ -601,22 +601,22 @@ once parsed is `review_types`'.
 
 ### review_merge.py
 
-What becomes of findings across the reviews that report them.
+What becomes of findings as the group reviews are folded into one document.
 
-Three jobs over one vocabulary: merging the group reviews into a single
-document, giving each finding an identity that outlives the review carrying
-it, and reconciling what the previous review reported against what this one
-did. They live together because they act on the same identity — the path and
-description that decide whether two findings are duplicates are the pair that
-hashes to a stable ID, and a stable ID is how reconciliation recognises a
-finding a later review restates.
+Two jobs over one vocabulary: merging the group reviews into a single
+document, and giving each finding an identity that outlives the review
+carrying it. They live together because they act on the same identity — the
+path and description that decide whether two findings are duplicates are the
+pair that hashes to a stable ID, and a stable ID is how a later reconciliation
+recognises a finding a review restates.
 
 Reading that identity off a finding line is `review_grammar`'s job, not this
 module's: `FindingIdentity` answers both questions, so deduplication and
 carry-forward cannot come to different conclusions about one line. Reading a
 review is `review_document`'s job, checking findings against the tree is
 `review_verify`'s, and the `Finding` every side holds is `review_types`' — a
-consumer that only holds findings needs none of this.
+consumer that only holds findings needs none of this. Deciding what became of
+a finding the prior review reported is `review_reconcile`'s.
 
 Where a finding's body ends is `review_spans`'s. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
@@ -664,12 +664,30 @@ group's IDs are shifted past the groups before it. Deferring that to the
 merge-wide pass would misdirect it: group provenance is gone by then, and the
 pooled map answers with whichever group happens to have declared that number.
 
-Reconciliation is the cross-review half. A re-review ends with a `## Prior
-findings` ledger: one line per finding the previous review reported, saying
-whether the change fixed it, left it open, or declined it. The ledger is
-bookkeeping — it is stripped before the review is published — and it is written
-by the agent that has just spent its attention on the review itself, so it is
-the first thing to come up short.
+The ledger `review_reconcile` reads is not the only account of what became of
+a prior finding. Every finding posted inline opened a review thread,
+independent of that ledger, and what the author did with that thread —
+answered it, argued with it, resolved it — is the other one. `fetch_reply_threads`
+classifies those threads into `ReplyState` and matches each back to the finding
+ID its root comment declared, so a re-review can read the thread's account of
+a finding beside the ledger's.
+
+### review_reconcile.py
+
+Deciding what became of each finding the last review reported.
+
+Given a prior review and this round's merged output, works out for every prior
+finding whether it was fixed, still stands, was declined, or was passed over
+with nobody accounting for it — and where that answer came from.
+
+The merge that produces this round's output is `review_merge`'s; the identity
+two findings are matched on is `review_grammar`'s. This module only decides.
+
+A re-review ends with a `## Prior findings` ledger: one line per finding the
+previous review reported, saying whether the change fixed it, left it open, or
+declined it. The ledger is bookkeeping — it is stripped before the review is
+published — and it is written by the agent that has just spent its attention
+on the review itself, so it is the first thing to come up short.
 
 Coming up short used to mean a line on stderr and nothing else. `reconcile`
 replaces that with a disposition for every prior finding and a record of them
@@ -690,13 +708,6 @@ The record is a sidecar in the review directory rather than a section of the
 review. Reconciliation parses its input for finding-shaped lines, so a
 reconciliation written into the review would come back to the next round
 looking like a fresh set of prior findings.
-
-The ledger is not the only account of what became of a prior finding. Every
-finding posted inline opened a review thread, and what the author did with that
-thread — answered it, argued with it, resolved it — is the other one.
-`fetch_reply_threads` classifies those threads into `ReplyState` and matches
-each back to the finding ID its root comment declared, so a re-review reads both
-accounts of the same set of findings.
 
 ### review_spans.py
 

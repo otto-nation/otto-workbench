@@ -645,7 +645,7 @@ def _annotate_with_thread_state(review_text: str, reply_threads: dict) -> str:
 # rejects is expressible, and stays invisible until a re-review's bookkeeping
 # is lost. So the instruction says where the verdict goes as well as what it
 # is, and `TestLedgerInstructionParses` reads every example back through
-# `_parse_ledger_line` to hold the two together.
+# `review_grammar.parse_ledger_line` to hold the two together.
 _LEDGER_INSTRUCTION = f"""
 End your output with a `## {SECTION_PRIOR_FINDINGS}` section listing EVERY prior
 finding above, one line each, copying its ID and path exactly as written there:

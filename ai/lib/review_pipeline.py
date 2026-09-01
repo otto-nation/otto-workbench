@@ -44,9 +44,8 @@ from review_verdict import (
 from review_github import (
     PRData, fetch_pr_context, fetch_pr_data, fetch_pr_metadata,
 )
-from review_merge import (
-    annotate_prior_with_stable_ids, passed_over, record_prior_findings,
-)
+from review_merge import annotate_prior_with_stable_ids
+from review_reconcile import passed_over, record_prior_findings
 from review_grouping import (
     GROUP_TIER3, HOLISTIC_MIN_GROUPS, group_files, merge_smallest_groups,
 )

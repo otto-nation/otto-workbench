@@ -12,7 +12,8 @@ paths:
 
 When adding or modifying a review phase, verify these integration points:
 - `review_types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
-- `review_merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — everything that happens to findings across reviews, reconciliation against the prior one included. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
+- `review_merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — merging the group reviews into one document. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
+- `review_reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`
 - `review_prompt.py`: a builder in `_PROMPT_BUILDERS` keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
 - `review_grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
 - `review_document.py`: `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
@@ -30,7 +31,7 @@ verdicts are `PriorDisposition`, and `_build_prior_section()`'s instruction
 interpolates the enum's values, so the words asked for and the words parsed
 cannot drift apart. Where the verdict sits in the line is held together by a
 test instead: `TestLedgerInstructionParses` reads every example the instruction
-shows back through `_parse_ledger_line`, because an example the parser rejects
+shows back through `review_grammar.parse_ledger_line`, because an example the parser rejects
 is invisible until a whole re-review's bookkeeping is lost. A verdict parses
 when it comes first and ends the line or breaks with one of
 `DISPOSITION_TAIL_PUNCTUATION`; a comma is deliberately not on that list, so
@@ -44,7 +45,7 @@ the prior review, not this one. Changing any one of `SECTION_PRIOR_FINDINGS`,
 `PriorDisposition`, the merge, the synthesis templates, or
 `_build_prior_section()`'s instruction means checking the others.
 
-`review_merge.reconcile()` gives every prior finding a disposition, and
+`review_reconcile.reconcile()` gives every prior finding a disposition, and
 `record_prior_findings()` runs it from `_post_process_review()` — before the
 strip, which is the last moment the review still says what it made of them.
 Sources, in the order they are asked: a ledger entry matching the prior

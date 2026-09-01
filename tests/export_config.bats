@@ -156,17 +156,34 @@ _build_tarball() {
   [ -f "$EXPORT_DIR/agents/reviewer.md" ]
 }
 
+# The exclusion is structural, not a server-profile preference — no profile lists
+# reviewer, and an unrecognised profile name matches nothing in profiles.yml, so
+# this is the case that would ship the placeholder if the filter lived there.
+@test "_export_claude_config: excludes the agent-backed skill under any profile" {
+  local dest="$TMPDIR/export-dev"
+  _export_claude_config "$dest" "dev"
+
+  [ ! -d "$dest/skills/reviewer" ]
+  [ -d "$dest/skills/anatomy" ]
+  [ -d "$dest/skills/dream" ]
+}
+
 @test "_export_claude_config: includes non-excluded skills" {
   [ -d "$EXPORT_DIR/skills/anatomy" ]
   [ -d "$EXPORT_DIR/skills/pr-comments" ]
 }
 
+# Both subtrahends are read from the data rather than from the code under test —
+# the profile list from profiles.yml, the agent-backed count by grepping the
+# frontmatter — so the arithmetic cannot agree with a filter that has gone wrong
+# in the same direction.
 @test "_export_claude_config: total skill count matches source minus excluded" {
-  local src_count excluded_count dest_count expected
+  local src_count excluded_count agent_count dest_count expected
   src_count=$(find "$REPO_ROOT/ai/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
   excluded_count=$(yq '.profiles.server.exclude.skills | length' "$REPO_ROOT/ai/profiles.yml")
+  agent_count=$(grep -lE '^agent:[[:space:]]' "$REPO_ROOT"/ai/skills/*/SKILL.md | wc -l | tr -d ' ')
   dest_count=$(find "$EXPORT_DIR/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
-  expected=$((src_count - excluded_count))
+  expected=$((src_count - excluded_count - agent_count))
   [ "$dest_count" -eq "$expected" ]
 }
 

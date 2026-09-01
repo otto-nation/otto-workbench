@@ -296,7 +296,7 @@ _emit_ai_installs() {
   local skill_names=()
   for d in "$skills_src"/*/; do
     [[ -d "$d" ]] || continue
-    if [[ -f "$d/SKILL.md" ]] && [[ -n "$(_extract_frontmatter_field "$d/SKILL.md" "agent")" ]]; then
+    if [[ -n "$(skill_agent "$d/SKILL.md")" ]]; then
       continue
     fi
     skill_names+=("$(basename "$d")")
@@ -370,7 +370,7 @@ _emit_skill_reference() {
     # type: they reach Pi through a review agent's dispatch, and Claude Code
     # reads the same protocol as an agent. Falling through would document a
     # `/<name>` slash command that neither harness answers.
-    if [[ -n "$(_extract_frontmatter_field "$skill_file" "agent")" ]]; then
+    if [[ -n "$(skill_agent "$skill_file")" ]]; then
       continue
     fi
 

@@ -273,7 +273,7 @@ Sourced directly by `lib/ai/core.sh` and the git generation scripts
 ### files.sh
 
 File operations with idempotency: symlinks, copies, directory operations,
-layer merging.
+layer merging, and the frontmatter reads that decide where a layered item installs.
 
 Bash-only — it uses `local`, arrays, and the prompt helpers.
 
@@ -287,6 +287,7 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 | `list_shell_scripts ROOT` | prints every file under ROOT whose *first* line is a shell or bats shebang, one per line, sorted. Skips .git, ignore/, __pycache__, node_modules/, and .py. |
 | `resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF` | Merges two directory layers into an associative array: basename -> source_path. User dir wins for same-named files. A .disabled sentinel in user dir suppresses both. RESULT_NAMEREF must be a declared associative array in the caller. |
 | `is_disabled USER_DIR NAME` | returns 0 if a .disabled sentinel exists. |
+| `skill_agent SKILL_FILE` | prints the agent name SKILL_FILE's frontmatter declares, and nothing at all for a skill that declares none or for a path that does not exist yet. |
 | `install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]` | Writes a thin dispatcher script that execs the hook from the current worktree. Unlike symlinks, dispatchers resolve at runtime — so worktrees always run their own branch's version of the hook, not main's. |
 | `apply_config_patch FILE OLD NEW` | Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched or if FILE does not exist. Assumes OLD and NEW do not contain the \| character. |
 

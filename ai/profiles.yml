@@ -1,6 +1,11 @@
 # Profile definitions for workbench config exports.
 # Components not listed under exclude are included by default.
 # The dev profile (local workstations) includes everything — it's implicit.
+#
+# This file holds preferences, not correctness. A skill that no profile could
+# sensibly ship — an agent-backed one, whose exported body would be an unresolved
+# placeholder — is dropped by _export_claude_config itself, so no profile has to
+# remember to list it and an unrecognised profile name cannot let it through.
 
 profiles:
   server:
@@ -9,8 +14,3 @@ profiles:
         - dream
         - promote
         - machine
-        # Agent-backed: its body is an unresolved AGENT_PROTOCOL_PLACEHOLDER
-        # until ai/skills/steps.sh splices the protocol in at install time, and
-        # the export copies the source tree verbatim. Claude Code reads the same
-        # protocol from agents/reviewer.md, which the export already carries.
-        - reviewer

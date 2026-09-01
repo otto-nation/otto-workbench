@@ -67,6 +67,27 @@ _run_step() {
   "
 }
 
+# _run_step_interrupted — runs the step with a zero file-size limit, which is the
+# one way to stop _install_agent_skill between its two writes from the outside.
+#
+# Creating an empty file is still permitted under the cap, so the marker write
+# succeeds and the splice — the only thing here that writes bytes — dies on the
+# limit and takes the step down with it under set -e. That asymmetry is what makes
+# the write order observable: whichever of the two runs first is the one that
+# survives, so a directory left behind carrying the marker means the marker went
+# first, and one left behind without it means it did not.
+_run_step_interrupted() {
+  run bash -c "
+    set -e
+    export WORKBENCH_DIR='$FAKE_WORKBENCH'
+    export WORKBENCH_STABLE_DIR='$FAKE_WORKBENCH'
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$FAKE_WORKBENCH/ai/skills/steps.sh'
+    ulimit -f 0
+    step_skills
+  "
+}
+
 @test "installs a plain skill into both discovery roots" {
   _make_skill anatomy
 
@@ -226,6 +247,35 @@ _run_step() {
   rm -rf "$FAKE_WORKBENCH/ai/skills/reviewer"
   _run_step
   [ ! -e "$HOME/.agents/skills/reviewer" ]
+}
+
+@test "a spliced skill is stamped with the workbench's ownership marker" {
+  _make_skill reviewer reviewer
+  _make_agent reviewer "REVIEW PROTOCOL BODY"
+
+  _run_step
+  [ -f "$HOME/.agents/skills/reviewer/.installed-by-otto-workbench" ]
+}
+
+@test "an interrupted install still leaves the ownership marker behind" {
+  _make_skill reviewer reviewer
+  _make_agent reviewer "REVIEW PROTOCOL BODY"
+
+  _run_step_interrupted
+  [ -d "$HOME/.agents/skills/reviewer" ]
+  [ -f "$HOME/.agents/skills/reviewer/.installed-by-otto-workbench" ]
+  [ ! -s "$HOME/.agents/skills/reviewer/SKILL.md" ]
+}
+
+@test "the next run repairs an install interrupted before its content" {
+  _make_skill reviewer reviewer
+  _make_agent reviewer "REVIEW PROTOCOL BODY"
+  _run_step_interrupted
+
+  _run_step
+  [ "$status" -eq 0 ]
+  grep -q "REVIEW PROTOCOL BODY" "$HOME/.agents/skills/reviewer/SKILL.md"
+  [[ "$output" != *"was not installed by the workbench"* ]]
 }
 
 @test "an agent file with no frontmatter is skipped rather than spliced empty" {

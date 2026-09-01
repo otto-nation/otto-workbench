@@ -450,10 +450,21 @@ _export_claude_config() {
   done
 
   # Skills: copy directories, filtered by profile
+  #
+  # An agent-backed skill is dropped before the profile is consulted, because the
+  # reason it cannot ship is structural rather than a preference any profile could
+  # hold. What is on disk for one is a frontmatter block over an unresolved
+  # AGENT_PROTOCOL_PLACEHOLDER — ai/skills/steps.sh splices the protocol in at
+  # install time, and this export is a verbatim copy. Shipped, it would land in the
+  # target host's ~/.claude/skills/ as a skill with no instructions in it, and the
+  # protocol it is missing is already in this same export as agents/<name>.md.
   local skill skill_name
   for skill in "$SKILLS_SRC_DIR"/*/; do
     [[ -d "$skill" ]] || continue
     skill_name=$(basename "$skill")
+    if [[ -n "$(skill_agent "$skill/SKILL.md")" ]]; then
+      continue
+    fi
     if _profile_excludes_skill "$profile" "$skill_name"; then
       continue
     fi

@@ -39,6 +39,22 @@ _run_migration() {
   echo "mine" > "$HOME/.pi/agent/skills/mine/SKILL.md"
 
   _run_migration
+  [ "$status" -eq 3 ]
+  [ -f "$HOME/.pi/agent/skills/mine/SKILL.md" ]
+}
+
+# The only path where the migration both removes something and finds the parent
+# still occupied, so the rmdir it ends on has to fail harmlessly. Unguarded, that
+# non-zero return would be the function's own — reported as a failed migration
+# against work that in fact completed.
+@test "removes the spliced copy without disturbing a hand-authored neighbour" {
+  mkdir -p "$HOME/.pi/agent/skills/reviewer" "$HOME/.pi/agent/skills/mine"
+  echo "spliced" > "$HOME/.pi/agent/skills/reviewer/SKILL.md"
+  echo "mine" > "$HOME/.pi/agent/skills/mine/SKILL.md"
+
+  _run_migration
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.pi/agent/skills/reviewer" ]
   [ -f "$HOME/.pi/agent/skills/mine/SKILL.md" ]
 }
 

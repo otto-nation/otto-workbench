@@ -24,18 +24,6 @@ AGENT_PROTOCOL_PLACEHOLDER_MARKER="<!-- AGENT_PROTOCOL_PLACEHOLDER:"
 # licence to delete.
 SKILL_INSTALL_MARKER=".installed-by-otto-workbench"
 
-# _skill_agent SKILL_FILE — prints the agent name the skill's frontmatter declares.
-#
-# Prints nothing for a skill with no `agent:` field, which is every skill that
-# reads the same under both harnesses.
-_skill_agent() {
-  awk 'NR==1 && /^---$/ { in_fm=1; next }
-       in_fm && /^---$/ { exit }
-       in_fm && /^agent:[[:space:]]/ {
-         sub(/^agent:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit
-       }' "$1"
-}
-
 # _resolve_agent_file AGENT — prints the path to an agent's markdown, honouring
 # the user override layer.
 _resolve_agent_file() {
@@ -170,14 +158,14 @@ step_skills() {
   for name in "${!layers[@]}"; do
     source="${layers[$name]}"
 
-    # awk exits 2 on a file it cannot open, and sync runs this step under set -e
-    # with no soft-failure wrapper — one override directory without a SKILL.md
-    # would otherwise abort the whole run with half the skills installed.
+    # skill_agent answers empty for a file that is not there, so the warning is
+    # this step's own: an override directory left without a SKILL.md is a mistake
+    # worth naming, not a skill that happens to be Claude-only.
     if [[ ! -f "$source/SKILL.md" ]]; then
       warn "No SKILL.md in $source — skipping $name"
       continue
     fi
-    agent="$(_skill_agent "$source/SKILL.md")"
+    agent="$(skill_agent "$source/SKILL.md")"
 
     if [[ -n "$agent" ]]; then
       # Both layers still provide this name, so the pruning above left the

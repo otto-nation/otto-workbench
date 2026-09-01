@@ -13,9 +13,11 @@ migration_20260901_drop_spliced_pi_skills() {
   local skills_dir="$HOME/.pi/agent/skills"
   [[ -d "$skills_dir" ]] || return "$MIGRATION_NOOP"
 
-  # Named entries only, and declared inside the function because a migration
-  # file may run nothing at file scope: an operator's own skills live in this
-  # same directory and are not ours to remove.
+  # Named entries only, and declared inside the function because a migration file
+  # may run nothing at file scope. Deleting these by name with no ownership check
+  # is safe for the one reason that they are named: the retired sync step rewrote
+  # exactly these paths on every run, so nothing hand-written can have survived at
+  # one of them. Any other directory here is the operator's and is left alone.
   local -a spliced=(reviewer)
 
   local name removed=0

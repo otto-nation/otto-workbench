@@ -68,7 +68,7 @@ def _format_theme(rule_file: str, examples: list[dict]) -> list[str]:
     return lines
 
 
-def format_report(scan_data: dict, version: str = "") -> str:
+def format_report(scan_data: dict, version: str) -> str:
     """The scan's markdown report.
 
     `version` names the scanner build in the report's header comment; it comes

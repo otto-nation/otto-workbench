@@ -357,7 +357,7 @@ scan_data = {
         {"filename": "security.md", "matched": 1},
     ],
 }
-report = mod.format_report(scan_data)
+report = mod.format_report(scan_data, "retro-scan test")
 print(report)
 PY
 )
@@ -371,7 +371,7 @@ PY
 @test "format_report: handles empty scan" {
   result=$(_py_here <<'PY'
 scan_data = {"repos": [], "rules_summary": []}
-report = mod.format_report(scan_data)
+report = mod.format_report(scan_data, "retro-scan test")
 print(report)
 PY
 )
@@ -552,7 +552,7 @@ scan_data = {
     "rules_summary": [],
     "themes": {},
 }
-report = mod.format_report(scan_data)
+report = mod.format_report(scan_data, "retro-scan test")
 print("ok" if "gave: 1" in report and "received: 1" in report else "missing")
 PY
 )
@@ -575,7 +575,7 @@ scan_data = {
     "rules_summary": [],
     "themes": {},
 }
-report = mod.format_report(scan_data)
+report = mod.format_report(scan_data, "retro-scan test")
 print("ok" if "3 unmatched" in report else "missing")
 PY
 )
@@ -603,7 +603,7 @@ scan_data = {
         ],
     },
 }
-report = mod.format_report(scan_data)
+report = mod.format_report(scan_data, "retro-scan test")
 has_section = "Repeated Themes" in report
 has_count = "3 occurrences" in report
 has_example = "hardcoded secret" in report
@@ -628,7 +628,7 @@ scan_data = {
     "rules_summary": [],
     "themes": {"security.md": [{"pr": 1, "body": "only one"}]},
 }
-report = mod.format_report(scan_data)
+report = mod.format_report(scan_data, "retro-scan test")
 print("ok" if "Repeated Themes" not in report else "present")
 PY
 )

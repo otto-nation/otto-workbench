@@ -19,9 +19,10 @@ from review_paths import (
     aggregate_session_usage,
     read_review_meta,
 )
-from review_document import ReviewDocument, open_counts, resolve_review_verdict
+from review_document import ReviewDocument
 from review_state import build_failure_detail, read_pipeline_status
 from review_types import SEVERITIES, ReviewMeta
+from review_verdict import open_counts, resolve_review_verdict
 
 
 def _read_review(path: Path | None) -> str | None:

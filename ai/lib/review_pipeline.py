@@ -33,10 +33,13 @@ from review_paths import (
 )
 from review_collect import fetch_branch_metadata
 from review_document import (
+    SECTION_SUMMARY, SECTION_VERDICT,
+    ReviewDocument, ReviewHeader, review_title,
+)
+from review_verdict import (
     BUDGET_SUMMARY, CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY,
     MECHANICAL_NOTE, SKIPPED_SUMMARY,
-    ReviewDocument, ReviewHeader, build_mechanical_body,
-    open_counts, review_title,
+    build_mechanical_body, open_counts,
 )
 from review_github import (
     PRData, fetch_pr_context, fetch_pr_data, fetch_pr_metadata,
@@ -218,7 +221,7 @@ def _is_complete_review(review_file: str) -> bool:
     if not Path(review_file).exists():
         return False
     content = Path(review_file).read_text()
-    return "## Summary" in content or "## Verdict" in content
+    return f"## {SECTION_SUMMARY}" in content or f"## {SECTION_VERDICT}" in content
 
 
 def _build_mechanical_fallback(

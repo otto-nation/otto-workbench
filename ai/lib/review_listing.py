@@ -85,9 +85,10 @@ from agent_types import Mode
 from review_paths import (
     ReviewEntry, ReviewEntryKind, aggregate_session_usage, iter_review_entries,
 )
-from review_document import ReviewDocument, open_counts, resolve_review_verdict
+from review_document import ReviewDocument
 from review_state import build_failure_detail, read_pipeline_status
 from review_types import SEVERITIES
+from review_verdict import open_counts, resolve_review_verdict
 
 # Row-schema versions this build serves, oldest first. See "Version policy" in
 # docs/ai-automation.md: a new optional field does not bump it, a removed or

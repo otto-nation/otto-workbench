@@ -42,7 +42,7 @@ and the review says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review_document`'s. The
+Which verdict a tally supports in the first place is `review_verdict`'s. The
 finding-line grammar read here is `review_grammar`'s: `VERIFY_FINDING_RE` is a
 stricter shape over the same location vocabulary, and the two have to agree or
 a finding parses one way and verifies against the other — which is why they
@@ -69,14 +69,15 @@ import log
 from pr_domains import ReviewVerdict
 from review_document import (
     SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewDocument, counts_prose, drop_findings,
-    finding_spans, section_span, strip_sections, verdict_from_counts,
+    ReviewDocument, drop_findings,
+    finding_spans, section_span, strip_sections,
 )
 from review_grammar import VERIFY_FINDING_RE, strip_line_suffix
 from review_merge import renumber_findings, strip_stable_ids
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD, FindingSpan, severity_by_key,
 )
+from review_verdict import counts_prose, verdict_from_counts
 from text import plural
 
 # ── Evidence verification ────────────────────────────────────────────────────

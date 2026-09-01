@@ -60,6 +60,7 @@ SHARED_LIB_MODULES = [
     "review_document",
     "review_grammar",
     "review_paths",
+    "review_verdict",
 ]
 
 

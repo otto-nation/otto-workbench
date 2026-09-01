@@ -307,11 +307,9 @@ to have and how many it is reported to have are one answer. A tally written as
 its own regex is how a review came to report four findings it had none of —
 the ledger's lines look like declarations from anywhere but inside the parse.
 
-`build_mechanical_body` is the document this module writes rather than reads:
-the whole body a review has when no synthesis agent produced one. It belongs
-beside the format it renders for the same reason the readers do — a summary,
-findings and a verdict assembled anywhere else would be the canonical form
-stated twice.
+What a tally of them means — the verdict it supports, and the body a review
+carries when no synthesis agent wrote one — is `review_verdict`'s: a judgement
+over this module's shape rather than part of the shape itself.
 
 ### review_gc.py
 
@@ -504,6 +502,18 @@ Static analysis framework for the review pipeline.
 Runs machine-checkable tools against changed files and formats violations
 for inclusion in review output. Each checker is a plain function with the
 signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
+
+### review_verdict.py
+
+What a set of counts means, and the review a run without an agent writes.
+
+The policy layer over `review_document`: how many open findings of each
+severity add up to an approve or a request-for-changes, how that reads in
+prose, and the body a mechanically merged review carries when no synthesis
+agent produced one.
+
+Kept apart from the document itself because the document is a shape and this is
+a judgement — a review file parses the same way whatever this module decides.
 
 ### review_worktree.py
 
@@ -771,7 +781,7 @@ and the review says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review_document`'s. The
+Which verdict a tally supports in the first place is `review_verdict`'s. The
 finding-line grammar read here is `review_grammar`'s: `VERIFY_FINDING_RE` is a
 stricter shape over the same location vocabulary, and the two have to agree or
 a finding parses one way and verifies against the other — which is why they

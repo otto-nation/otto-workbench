@@ -24,12 +24,13 @@ from agent_types import Effort, Mode, Phase
 from dataclasses import asdict
 
 from review_grammar import parse_ledger_line
-from review_prompt import (
-    _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, BudgetLever, Cut,
-    _build_ci_failure_items, _build_common_sections, _build_delta_section,
+from review_prompt import BudgetLever, Cut, _build_common_sections, _fit_budget
+from review_prompt_sections import (
+    _LEDGER_INSTRUCTION, _build_ci_failure_items, _build_delta_section,
     _build_env_section, _build_omitted_guidance, _build_pr_header,
-    _build_unaccounted_section, _fit_budget,
+    _build_unaccounted_section,
 )
+import review_registry
 from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr_domains import CIDomain
 
@@ -485,8 +486,8 @@ class TestSharedPromptBodies:
     def _vars(self, phase, output, mode=Mode.PR, **extra):
         job = _make_job(_make_preflight(), mode=mode)
         common = _build_common_sections(job, max_turns=10)
-        builder, _ = _PROMPT_BUILDERS[phase](job, common, extra, output)
-        return builder.vars
+        built = review_registry.for_phase(phase).build(job, common, extra, output)
+        return built.builder.vars
 
     def test_scout_and_holistic_are_the_same_prompt(self):
         """One builder, two artifacts: the phase spec is the whole difference.
@@ -495,7 +496,10 @@ class TestSharedPromptBodies:
         the builder is what keeps them that way — a section added for one is
         added for both, and the file each writes is the spec's answer.
         """
-        assert _PROMPT_BUILDERS[Phase.HOLISTIC] is _PROMPT_BUILDERS[Phase.SCOUT]
+        assert (
+            review_registry.for_phase(Phase.HOLISTIC).build
+            is review_registry.for_phase(Phase.SCOUT).build
+        )
         holistic = self._vars(Phase.HOLISTIC, "/tmp/h.md")
         scout = self._vars(Phase.SCOUT, "/tmp/s.md")
         assert holistic.keys() == scout.keys()
@@ -537,7 +541,8 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         return job
 
     def test_a_prompt_over_the_budget_raises(self, tmp_path):
-        from review_prompt import PromptTooLarge, build_prompt
+        from review_prompt import PromptTooLarge
+        from review_registry import build_prompt
 
         job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge) as exc:
@@ -546,7 +551,8 @@ class TestBuildPromptRefusesAnOversizedPrompt:
 
     def test_the_oversized_prompt_is_on_disk_to_look_at(self, tmp_path):
         """The stats are written before the raise, so the run is diagnosable."""
-        from review_prompt import PromptTooLarge, build_prompt
+        from review_prompt import PromptTooLarge
+        from review_registry import build_prompt
 
         job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge):
@@ -556,7 +562,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         assert (tmp_path / "prompt-scout.md").exists()
 
     def test_an_ordinary_prompt_still_renders(self, tmp_path):
-        from review_prompt import build_prompt
+        from review_registry import build_prompt
 
         prompt = build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         assert len(prompt.encode()) <= MAX_PROMPT_BYTES
@@ -607,15 +613,15 @@ class TestUnaccountedPriorSection:
             group_count=1, merged_content="m", holistic_content="h",
             unaccounted_prior=[self.M1],
         )
-        builder, _ = _PROMPT_BUILDERS[Phase.SYNTHESIS](job, common, extra, "/tmp/r.md")
-        assert "drops the error" in builder.vars["prior_section"]
+        built = review_registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
+        assert "drops the error" in built.builder.vars["prior_section"]
 
     def test_a_synthesis_prompt_with_nothing_left_over_says_nothing(self):
         job = _make_job(_make_preflight())
         common = _build_common_sections(job, max_turns=10)
         extra = dict(group_count=1, merged_content="m", holistic_content="h")
-        builder, _ = _PROMPT_BUILDERS[Phase.SYNTHESIS](job, common, extra, "/tmp/r.md")
-        assert builder.vars["prior_section"] == ""
+        built = review_registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
+        assert built.builder.vars["prior_section"] == ""
 
 
 # ── The ledger instruction and the ledger parser ────────────────────────────

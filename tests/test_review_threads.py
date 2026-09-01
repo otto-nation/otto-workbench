@@ -47,7 +47,7 @@ from review_merge import (
     fetch_reply_threads,
 )
 from review_types import ReplyState
-from review_prompt import (
+from review_prompt_sections import (
     _annotate_with_thread_state, _build_prior_section,
     _build_reply_threads_section, _strip_internal_sections,
     _format_general_comments, _format_review_comments, _format_reviews,

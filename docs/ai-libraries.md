@@ -407,8 +407,8 @@ one of them end to end.
 
 Running an agent phase is the same nine steps whichever phase it is, so there is
 one function rather than one per phase. What differs is what its artifact means
-afterwards, and that is `_SCANS` — one entry per phase, read through `read_scan`
-so the resume path and the run path cannot disagree about it.
+afterwards, and that is `review_registry`'s table, read through `read_scan` so
+the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
@@ -432,29 +432,60 @@ to review_gc, which the orchestrator runs once every phase is done.
 
 ### review_prompt.py
 
-Prompt construction and template rendering for claude-review.
+Prompt construction for claude-review: the byte budget and the render loop.
 
-`build_prompt` renders the prompt for one review phase: a caller names the
-`Phase` and hands over what the phase cannot derive for itself. Which template
-that renders, and which file the agent is told to write, both come off the
-phase's registry entry. Six phases sit in front of eight templates, because two
-of them read an open PR and the working branch differently — which template a
-mode picks is the spec's answer, not the caller's. Includes section builders,
-budget computation, and prompt size logging.
+`PromptBuilder` collects the variables a template is rendered with, and
+`PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
+the sections that can shrink — the pre-collected file contents, the
+incremental delta, and the full diff — after everything fixed is already
+accounted for, and pulls three levers in that order, only as far as the
+shortfall requires. It rewrites the environment section to send the agent
+after whatever it dropped, and reports the cuts in the prompt's size log. A
+prompt still over budget once every lever is pulled raises `PromptTooLarge`
+rather than being sent: the phase reports it before an agent starts, so it
+costs nothing.
 
-Every phase fits its prompt to the token budget through `PromptBuilder.fit`,
-which registers the sections that can shrink — the pre-collected file contents,
-the incremental delta, and the full diff — after everything fixed is already
-accounted for. It pulls three levers in that order and only as far as the
-shortfall requires, rewrites the environment section to send the agent after
-whatever it dropped, and reports the cuts in the prompt's size log. A prompt
-still over budget once every lever is pulled raises `PromptTooLarge` rather than
-being sent: the phase reports it before an agent starts, so it costs nothing.
+One builder per phase assembles the sections `review_prompt_sections` renders
+into a `PromptBuilder`. Which phase reaches which builder, which template it
+renders, and which file the agent is told to write are `review_registry`'s: it
+holds the phase-to-builder table and `build_prompt`, which dispatches on it
+and imports the builders from here.
 
-Scoping the prior review to the files a group is reviewing cuts it a finding at
-a time, and where a finding stops is `review_spans`'s `finding_spans` — the
-same measure the gates that trim a finished review use. A prompt that measured
-it here would quote an agent evidence belonging to a finding it was not shown.
+### review_prompt_sections.py
+
+What a prompt says about the PR, rendered from what was collected.
+
+Every function here takes what it renders and returns markdown, so a phase
+composes the sections it wants without knowing how any of them is built —
+nothing in this module decides which sections a phase asks for or what order
+they run in.
+
+Which sections a phase asks for is `review_prompt`'s, and how much room they
+get is `review_budget`'s.
+
+Scoping the prior review to the files a group is reviewing cuts it a finding
+at a time, and where a finding stops is `review_spans`'s `finding_spans` — the
+same measure the gates that trim a finished review use. A section that
+measured it here would quote an agent evidence belonging to a finding it was
+not shown.
+
+Not to be confused with `review_sections`, which is the posting pipeline's
+config-driven registry of sections already written to a review document —
+that module reads what an agent wrote, this one decides what an agent is
+shown before it writes anything.
+
+### review_registry.py
+
+Which prompt each phase builds, and which scan reads its output.
+
+One table. A phase that prompts names its builder here and nowhere else, and a
+phase whose output is read before the next one starts names its scan here too.
+
+It cannot live on `PhaseSpec`: `agent_types` imports nothing but the standard
+library, and the builders live in `review_prompt`, which imports
+`agent_registry` — putting them on the spec is a cycle as well as a layering
+break. A table one layer down is the same declaration made once, and this is
+that layer.
 
 ### review_retry.py
 

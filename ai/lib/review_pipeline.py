@@ -53,10 +53,9 @@ from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD,
     Group, GroupSkip, PRContext, PRMetadata, ReviewJob, ReviewMeta, ReviewType,
 )
-from review_prompt import (
-    _is_incremental, _scope_prior_review,
-    PromptTooLarge, build_prompt,
-)
+from review_prompt import PromptTooLarge
+from review_prompt_sections import _is_incremental, _scope_prior_review
+from review_registry import build_prompt
 from review_agent import _parse_session_cost
 from review_phases import (
     PhaseResult, PhaseRunner,

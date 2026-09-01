@@ -33,6 +33,8 @@ import agent_invoke as _ai  # noqa: E402
 import agent_phases as _aph  # noqa: E402
 import ai_usage as _au  # noqa: E402
 import review_prompt as _rpmt  # noqa: E402
+import review_prompt_sections as _rpsec  # noqa: E402
+import review_registry as _rreg  # noqa: E402
 import review_agent as _ra  # noqa: E402
 import review_pipeline as _rpl  # noqa: E402
 import review_fix as _rfx  # noqa: E402
@@ -77,8 +79,8 @@ import ai_backend  # noqa: E402
 SCRIPT = Path(__file__).name
 
 _SUBMODULES = (
-    _ad, _ai, _aph, _au, _rpmt, _ra, _rpl, _rfx, _rgc, _rpath, _rph,
-    _rrt, _rst, _rt,
+    _ad, _ai, _aph, _au, _rpmt, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc, _rpath,
+    _rph, _rrt, _rst, _rt,
 )
 
 # Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a

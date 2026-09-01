@@ -39,6 +39,7 @@ from agent_types import Mode, Phase, PhaseShape  # noqa: E402
 import review_fix  # noqa: E402
 import review_grammar  # noqa: E402
 import review_prompt  # noqa: E402
+import review_registry  # noqa: E402
 import review_spans  # noqa: E402
 import review_types  # noqa: E402
 from pr_state import PRIdentity, PRState  # noqa: E402
@@ -547,7 +548,7 @@ def _render_via_build_prompt(
     key: tuple[Phase, Mode], job: ReviewJob | None = None,
 ) -> str:
     phase, mode = key
-    return review_prompt.build_prompt(
+    return review_registry.build_prompt(
         phase, job or _make_review_job(mode=mode), max_turns=15,
         **_BUILD_PROMPT_EXTRAS[key],
     )
@@ -628,11 +629,12 @@ def _unsubstituted(rendered: str) -> list[str]:
 
 
 class TestPromptBuilderRegistry:
-    """`_PROMPT_BUILDERS` and the phase registry name the same phases.
+    """`review_registry`'s table and the phase registry name the same phases.
 
-    Keying the builders by `Phase` is what makes this checkable at all: while
-    they were keyed by template filename the two tables shared no name, so a
-    phase could name a template and reach `build_prompt` with nothing behind it.
+    Keying the table by `Phase` is what makes this checkable at all: while the
+    builders were keyed by template filename the two tables shared no name, so
+    a phase could name a template and reach `build_prompt` with nothing behind
+    it.
     """
 
     def test_every_agent_shaped_review_phase_has_a_builder(self):
@@ -640,17 +642,17 @@ class TestPromptBuilderRegistry:
             phase for phase in REVIEW_PHASES
             if PHASES[phase].shape is PhaseShape.AGENT
         }
-        assert set(review_prompt._PROMPT_BUILDERS) == expected
+        assert set(review_registry.registered()) == expected
 
     def test_a_phase_with_no_builder_is_refused(self):
         """The fix pass is a review phase, but `fix_engine` builds its prompt."""
         with pytest.raises(ValueError, match="renders no review prompt"):
-            review_prompt.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
+            review_registry.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
 
     def test_every_builder_is_reached_by_the_extras_table(self):
         """Coverage below is per (phase, mode), so no builder goes unrendered."""
         assert {phase for phase, _ in _BUILD_PROMPT_EXTRAS} == set(
-            review_prompt._PROMPT_BUILDERS,
+            review_registry.registered(),
         )
 
 
@@ -859,7 +861,7 @@ class TestPromptBudgetAccounting:
         extra = dict(_BUILD_PROMPT_EXTRAS[(Phase.GROUP, Mode.PR)])
         extra["group_file_paths"] = list(self._PATHS)
         extra["group_files_formatted"] = files_formatted
-        return review_prompt.build_prompt(
+        return review_registry.build_prompt(
             Phase.GROUP, job, max_turns=15, **extra,
         )
 

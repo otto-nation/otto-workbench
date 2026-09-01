@@ -192,11 +192,22 @@ step_claude_settings() {
   template=$(jq --argjson dirs "$dirs_json" \
     '.permissions.additionalDirectories = $dirs' <<< "$template")
 
+  # The manifest of what the last sync wrote lives outside the settings file —
+  # see CLAUDE_SETTINGS_MANIFEST in lib/constants.sh for why.
+  local manifest="{}" manifest_content
+  if [[ -f "$CLAUDE_SETTINGS_MANIFEST" ]]; then
+    manifest_content=$(cat "$CLAUDE_SETTINGS_MANIFEST")
+    if [[ -n "$manifest_content" ]]; then manifest="$manifest_content"; fi
+  fi
+
   local result
-  result=$(jq -n --argjson t "$template" --argjson e "$existing" -f "$CLAUDE_SYNC_SETTINGS_JQ") \
+  result=$(jq -n --argjson t "$template" --argjson e "$existing" --argjson m "$manifest" \
+    -f "$CLAUDE_SYNC_SETTINGS_JQ") \
     || { err "Failed to sync settings.json"; return 1; }
 
-  printf '%s\n' "$result" > "$CLAUDE_SETTINGS_FILE"
+  mkdir -p "$(dirname "$CLAUDE_SETTINGS_MANIFEST")"
+  jq '.manifest' <<< "$result" > "$CLAUDE_SETTINGS_MANIFEST"
+  jq '.settings' <<< "$result" > "$CLAUDE_SETTINGS_FILE"
   local label="settings.json synced"
   [[ "$existing" == "{}" ]] && label="settings.json written"
   [[ -f "$USER_SETTINGS_SRC" ]] && label+=" (+ user overrides)"

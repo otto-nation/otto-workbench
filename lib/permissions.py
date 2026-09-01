@@ -80,9 +80,13 @@ RULE_BUCKETS = ('allow', 'deny', 'ask')
 TRACKED_SETTINGS = os.path.join('.claude', 'settings.json')
 LOCAL_SETTINGS = 'settings.local.json'
 
-# The key the workbench stamps on a settings file it generates, recording what
-# it wrote so the next run can tell its own entries from a user's.
-# `ai/claude/sync-settings.jq` writes the same key into ~/.claude/settings.json.
+# The key the workbench stamps on a container mirror it generates, recording
+# what it wrote so the next run can tell its own entries from a user's.
+# ~/.claude/settings.json carries no such key: Claude Code rejects a settings
+# file that declares hook entries under any key but `hooks`, so the equivalent
+# record for that file is a sidecar under the state root — see
+# CLAUDE_SETTINGS_MANIFEST in lib/constants.sh. A mirror holds permissions only,
+# which is why the stamp is still safe to keep inline there.
 MANIFEST_KEY = '_workbench'
 
 

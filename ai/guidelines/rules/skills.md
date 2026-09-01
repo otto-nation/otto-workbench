@@ -1,4 +1,9 @@
-# Claude Skills
+# Skills
+
+Skills live at `ai/skills/<name>/SKILL.md` and are installed into both Claude
+Code (`~/.claude/skills/`) and Pi (`~/.agents/skills/`) from that one tree. Both
+harnesses implement the Agent Skills standard, so a skill is written once and
+read the same way by each.
 
 ## Usage
 

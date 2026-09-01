@@ -35,27 +35,86 @@ _resolve_agent_file() {
   printf '%s' "$CLAUDE_AGENTS_SRC_DIR/${agent}.md"
 }
 
+# _skill_layer_target PATH — resolves a symlink's raw target to an absolute
+# path, lexically, without touching the filesystem.
+#
+# Reads the target with readlink rather than following it, so a dangling
+# symlink (what a retired skill leaves behind) resolves the same as a live
+# one. A relative target is joined against the symlink's own (real) directory
+# before "." and ".." components are collapsed — resolve_layers deals only in
+# absolute paths, so a target has to match one exactly, not merely look close
+# after shell defaulting.
+_skill_layer_target() {
+  local path="$1" target dir raw
+  target="$(readlink "$path")"
+  case "$target" in
+    /*) raw="$target" ;;
+    *)
+      dir="$(cd "$(dirname "$path")" && pwd)"
+      raw="$dir/$target"
+      ;;
+  esac
+  _normalize_path "$raw"
+}
+
+# _normalize_path PATH — collapses "." and ".." segments out of an absolute
+# path string, purely lexically (the input need not exist).
+_normalize_path() {
+  local input="$1" part
+  local -a segments stack
+  IFS='/' read -ra segments <<< "$input"
+  for part in "${segments[@]}"; do
+    case "$part" in
+      '' | '.') continue ;;
+      '..')
+        [[ ${#stack[@]} -eq 0 ]] && continue
+        unset "stack[$((${#stack[@]} - 1))]"
+        ;;
+      *) stack+=("$part") ;;
+    esac
+  done
+  [[ ${#stack[@]} -eq 0 ]] && { printf '/'; return; }
+  printf '/%s' "${stack[@]}"
+}
+
+# _skill_symlink_owned PATH — true when PATH is a symlink whose target
+# resolves under a layer root this step installs from (SKILLS_SRC_DIR or
+# USER_SKILLS_DIR).
+_skill_symlink_owned() {
+  local target
+  target="$(_skill_layer_target "$1")"
+  [[ "$target" == "$SKILLS_SRC_DIR"/* || "$target" == "$USER_SKILLS_DIR"/* ]]
+}
+
 # _clear_skill_entry PATH — empties a discovery-root slot the workbench owns.
 #
 # Returns 0 once the slot is empty — either it already was, or its content was
-# just removed. Returns 1 when the slot holds something the user wrote (no
-# SKILL_INSTALL_MARKER) and is left untouched — a refusal, reported with
+# just removed. Returns 1 when the slot holds something the user wrote (not
+# ours by the tests below) and is left untouched — a refusal, reported with
 # warn(), not a failure. Returns 2 when the slot was the workbench's own but
 # the removal itself failed (permissions, a race) — a real failure, reported
-# with err(). A caller must not fold 2 into the same "leave it alone" path as
-# 1: one is an ordinary skip, the other is an error that happened to leave the
-# previous content in place.
+# with err(). The two codes must stay distinguishable to a caller that is
+# deciding whether to proceed with an install on top of the slot; a caller
+# whose only action either way is to skip the entry (as _prune_skills does)
+# may treat them alike.
 #
-# A symlink is always the workbench's: install_symlink is the only thing that
-# writes one into a discovery root, so removing it is unconditional. A real
-# directory is the workbench's only when it carries SKILL_INSTALL_MARKER, which
-# _install_agent_skill drops in every directory it materialises — both roots are
-# documented homes for hand-written skills, and silently deleting one of those
-# is not this step's call to make. An empty slot is already in the shape the
-# caller wants, so it succeeds.
+# A symlink is the workbench's only when its target resolves under one of the
+# two layer roots resolve_layers reads from — install_symlink is the only
+# thing that writes a symlink into a discovery root, but a hand-placed one
+# pointing anywhere else is the operator's, not ours, and gets the same
+# refusal a marker-less directory does. A real directory is the workbench's
+# only when it carries SKILL_INSTALL_MARKER, which _install_agent_skill drops
+# in every directory it materialises — both roots are documented homes for
+# hand-written skills, and silently deleting one of those is not this step's
+# call to make. An empty slot is already in the shape the caller wants, so it
+# succeeds.
 _clear_skill_entry() {
   local path="$1"
   if [[ -L "$path" ]]; then
+    if ! _skill_symlink_owned "$path"; then
+      warn "$path was not installed by the workbench — leaving it in place"
+      return 1
+    fi
     rm -f "$path" || { err "Could not remove symlink $path"; return 2; }
     return 0
   fi

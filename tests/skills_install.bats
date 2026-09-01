@@ -160,6 +160,21 @@ _run_summary() {
   [ ! -L "$HOME/.agents/skills/anatomy" ]
 }
 
+@test "a hand-placed symlink outside both layer roots survives a prune, warned about" {
+  _make_skill anatomy
+  _run_step
+
+  # Dangling on purpose: ownership must be decided from the link text itself
+  # (readlink), not by resolving the target through the filesystem, so a
+  # symlink pointing nowhere still gets the operator's-not-ours treatment.
+  ln -s "$TMPDIR/not-a-layer-root/mynote.md" "$HOME/.claude/skills/mysymlink"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ -L "$HOME/.claude/skills/mysymlink" ]
+  [[ "$output" == *"$HOME/.claude/skills/mysymlink was not installed by the workbench"* ]]
+}
+
 @test "an agent-backed skill installs to Pi only, with the protocol spliced in" {
   _make_skill reviewer reviewer
   _make_agent reviewer "REVIEW PROTOCOL BODY"

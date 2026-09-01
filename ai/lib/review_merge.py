@@ -116,7 +116,7 @@ from review_document import (
 )
 from review_grammar import (
     ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, FINDING_ID_RE, TRIAGE_LINE_RE,
-    FindingIdentity, parse_finding_line,
+    DedupKey, FindingIdentity, parse_finding_line,
 )
 from review_github import PRData
 from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
@@ -353,7 +353,7 @@ def _dedup_findings(text: str) -> _Deduped:
     the text a dropped one takes with it is `finding_spans`', so a repeat and a
     finding the disprove gate falsifies lose exactly the same lines.
     """
-    seen: dict[tuple[str, str], FindingId | None] = {}
+    seen: dict[DedupKey, FindingId | None] = {}
     merged_into: dict[FindingId, FindingId] = {}
     repeats: list[FindingSpan] = []
     for span in finding_spans(text):

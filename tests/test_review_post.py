@@ -960,6 +960,22 @@ class TestExtractBodyFindings:
         results = rp._extract_body_findings(body)
         assert results[0]["path"] == "handler.go"
 
+    def test_a_colon_that_is_not_a_line_suffix_survives(self, rp):
+        """Dedup compares the path the rest of the pipeline parsed.
+
+        This reader used to truncate at the last colon, so an already-posted
+        comment on `ns:module.py` was recorded against `ns` and matched no
+        finding — the same finding posted again on every re-review.
+        """
+        body = "- **[M1]** **`ns:module.py`** — Fix bug"
+        results = rp._extract_body_findings(body)
+        assert results[0]["path"] == "ns:module.py"
+
+    def test_a_line_suffix_still_comes_off_a_path_carrying_a_colon(self, rp):
+        body = "- **[M1]** **`C:/src/x.py:12`** — Fix bug"
+        results = rp._extract_body_findings(body)
+        assert results[0]["path"] == "C:/src/x.py"
+
 
 class TestFormatFindingLine:
     def test_with_path_and_line(self, rp):

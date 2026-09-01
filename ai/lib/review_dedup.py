@@ -16,7 +16,7 @@ import gh_client
 from review_github import PRData, GQL_REVIEWS_LIMIT
 
 from review_format import CLASS_SKIPPED
-from review_grammar import BODY_FINDING_RE
+from review_grammar import BODY_FINDING_RE, strip_line_suffix
 from review_types import Finding
 
 
@@ -47,8 +47,7 @@ def _extract_body_findings(body: str) -> list[dict]:
     results = []
     for m in BODY_FINDING_RE.finditer(body):
         raw_path = (m.group(1) or m.group(2) or "")
-        path = raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path
-        results.append({"path": path, "body": m.group(3)})
+        results.append({"path": strip_line_suffix(raw_path), "body": m.group(3)})
     return results
 
 

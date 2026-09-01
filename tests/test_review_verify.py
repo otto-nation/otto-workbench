@@ -288,6 +288,31 @@ class TestParseVerificationStripsLine:
         assert findings[0]["path"] == "handler.go"
 
 
+class TestParseVerificationKeepsAColonThatIsNotALineSuffix:
+    """Verification reads the same path the rest of the pipeline parsed.
+
+    This reader used to truncate at the last colon, so a path carrying one of
+    its own verified against its prefix — a file that does not exist, which
+    fails every evidence check. `review_grammar.strip_line_suffix` now takes
+    off a line suffix and nothing else.
+    """
+
+    def test_a_prefixed_path_survives(self):
+        text = '- **[M1]** **`ns:module.py`** — missing error check\n'
+        findings = review_verify._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "ns:module.py"
+
+    def test_a_drive_letter_survives(self):
+        text = '- **[M1]** **`C:/src/x.py`** — missing error check\n'
+        findings = review_verify._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "C:/src/x.py"
+
+    def test_a_line_suffix_still_comes_off_a_prefixed_path(self):
+        text = '- **[M1]** **`C:/src/x.py:12`** — missing error check\n'
+        findings = review_verify._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "C:/src/x.py"
+
+
 class TestParseVerificationSpacedPaths:
     def test_spaced_path_finding_is_not_swallowed_by_the_previous_one(self):
         text = (

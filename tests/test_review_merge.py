@@ -13,7 +13,6 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import review_grammar
 import review_merge
 from review_document import SECTION_PRIOR_FINDINGS
 from review_grammar import FindingIdentity
@@ -30,20 +29,6 @@ class TestStripStableIds:
     def test_no_sids_unchanged(self):
         content = "- **[M1]** **`file.go:42`** — desc\n"
         assert review_merge.strip_stable_ids(content) == content
-
-
-class TestFindingPathReCheckbox:
-    def test_matches_checkbox_format(self):
-        line = '- [ ] **[M1]** **`handler.go:42`** — desc'
-        m = review_grammar._FINDING_PATH_RE.match(line)
-        assert m is not None
-        path = (m.group(1) or m.group(2) or "")
-        assert "handler.go" in path
-
-    def test_matches_with_stable_id(self):
-        line = '- **[M1]** <!-- sid:abc --> **`handler.go:42`** — desc'
-        m = review_grammar._FINDING_PATH_RE.match(line)
-        assert m is not None
 
 
 def _stable_id(path: str, desc: str) -> str:

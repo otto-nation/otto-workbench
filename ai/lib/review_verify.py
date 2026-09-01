@@ -72,7 +72,7 @@ from review_document import (
     ReviewDocument, counts_prose, drop_findings,
     finding_spans, section_span, strip_sections, verdict_from_counts,
 )
-from review_grammar import VERIFY_FINDING_RE
+from review_grammar import VERIFY_FINDING_RE, strip_line_suffix
 from review_merge import renumber_findings, strip_stable_ids
 from review_types import (
     SEVERITY_MUST, SEVERITY_SHOULD, FindingSpan, severity_by_key,
@@ -226,7 +226,7 @@ def _verification_finding(span: FindingSpan, text: str) -> dict | None:
     return {
         "id": f"{m.group(1)}{m.group(2)}",
         "severity": m.group(1),
-        "path": raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path,
+        "path": strip_line_suffix(raw_path),
         "body": _verification_body(span, m.group(5), text),
     }
 

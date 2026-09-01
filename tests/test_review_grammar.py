@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from review_grammar import FindingIdentity  # noqa: E402
+from review_grammar import FindingIdentity, strip_line_suffix  # noqa: E402
 
 DESC = "missing error check"
 
@@ -41,18 +41,32 @@ class TestFindingIdentityReadsEveryLocationShape:
         ident = FindingIdentity.of(f"- **[M1]** ai/lib/x.py:12 — {DESC}")
         assert ident is not None
         assert ident.path == "ai/lib/x.py"
+        assert ident.line == 12
 
     def test_bold_label_that_is_not_a_filename_still_reads(self):
         ident = FindingIdentity.of(f"- **[M1]** **Documentation** — {DESC}")
         assert ident.path == "Documentation"
 
+    def test_checkbox_before_the_severity_still_reads(self):
+        ident = FindingIdentity.of(f"- [ ] **[M1]** **`handler.go:42`** — {DESC}")
+        assert ident.path == "handler.go"
+        assert ident.line == 42
+
+    def test_stable_id_marker_before_the_location_still_reads(self):
+        ident = FindingIdentity.of(
+            f"- **[M1]** <!-- sid:abc --> **`handler.go:42`** — {DESC}"
+        )
+        assert ident.path == "handler.go"
+        assert ident.line == 42
+
 
 class TestDedupStaysLineSensitive:
-    """Two findings at different lines of one file are two findings.
+    """Pins the line a finding starts at as part of its dedup key.
 
     The stable ID is line-insensitive on purpose, so a finding carries forward
     when the code moves. The dedup key is not, and unifying the two readers
-    must not quietly make it so.
+    must not quietly make it so. Where the finding *ends* is the complementary
+    property, pinned by `TestDedupIgnoresWhereARangeEnds`.
     """
 
     def test_same_file_different_lines_do_not_collapse(self):
@@ -64,6 +78,80 @@ class TestDedupStaysLineSensitive:
         a = FindingIdentity.of(f"- **[M1]** **`ai/lib/x.py:12`** — {DESC}")
         b = FindingIdentity.of(f"- **[M1]** `ai/lib/x.py:12` — {DESC}")
         assert a.dedup_key == b.dedup_key
+
+
+class TestDedupIgnoresWhereARangeEnds:
+    """Pins the end of a range as no part of the dedup key.
+
+    Two groups that open at the same line and disagree about how far the
+    problem reaches are one finding reported twice, not two. Dedup used to key
+    on the range as written and ship both. The start line is still read —
+    `TestDedupStaysLineSensitive` pins that half.
+    """
+
+    def test_ranges_sharing_a_start_line_collapse(self):
+        a = FindingIdentity.of(f"- **[M1]** **`ai/lib/x.py:12-18`** — {DESC}")
+        b = FindingIdentity.of(f"- **[M1]** **`ai/lib/x.py:12-40`** — {DESC}")
+        assert a.dedup_key == b.dedup_key
+
+    def test_a_range_collapses_with_the_bare_line_it_starts_at(self):
+        a = FindingIdentity.of(f"- **[M1]** **`ai/lib/x.py:12-18`** — {DESC}")
+        b = FindingIdentity.of(f"- **[M1]** **`ai/lib/x.py:12`** — {DESC}")
+        assert a.dedup_key == b.dedup_key
+
+    def test_ranges_starting_at_different_lines_stay_apart(self):
+        a = FindingIdentity.of(f"- **[M1]** **`ai/lib/x.py:12-18`** — {DESC}")
+        b = FindingIdentity.of(f"- **[M1]** **`ai/lib/x.py:30-40`** — {DESC}")
+        assert a.dedup_key != b.dedup_key
+
+
+class TestBoldLabelsKeepTheirColons:
+    """A bold label that is not a filename is hashed whole.
+
+    Every reader used to truncate a location at its last colon, which read
+    `**Docs: the readme**` as `Docs` and gave it the same stable ID as a
+    separate `**Docs**` finding — a collision that carried one review's
+    finding forward onto the other's. Only a line suffix comes off now.
+    """
+
+    def test_a_labels_colon_no_longer_collides_with_the_bare_label(self):
+        labelled = FindingIdentity.of(f"- **[M1]** **Docs: the readme** — {DESC}")
+        bare = FindingIdentity.of(f"- **[M1]** **Docs** — {DESC}")
+        assert labelled.path == "Docs: the readme"
+        assert labelled.stable_id != bare.stable_id
+
+    def test_a_line_suffix_still_comes_off_a_filename(self):
+        ident = FindingIdentity.of(f"- **[M1]** **`ai/lib/x.py:12`** — {DESC}")
+        assert ident.path == "ai/lib/x.py"
+        assert ident.stable_id == FindingIdentity("ai/lib/x.py", None, DESC).stable_id
+
+
+class TestStripLineSuffix:
+    """Pins what `review_verify` and `review_dedup` take off a captured path.
+
+    Both readers match `LINE_SUFFIX` inside the span they capture and have to
+    remove it afterwards. Truncating at the last colon — what each did for
+    itself — read a path that carries a colon of its own as its own prefix,
+    so the same line verified against a different file than it parsed as.
+    """
+
+    def test_a_trailing_line_number_comes_off(self):
+        assert strip_line_suffix("src/x.py:12") == "src/x.py"
+
+    def test_a_trailing_range_comes_off(self):
+        assert strip_line_suffix("src/x.py:12-18") == "src/x.py"
+        assert strip_line_suffix("src/x.py:12–18") == "src/x.py"
+
+    def test_a_path_with_no_suffix_is_returned_whole(self):
+        assert strip_line_suffix("src/x.py") == "src/x.py"
+
+    def test_a_colon_that_is_not_a_line_suffix_survives(self):
+        assert strip_line_suffix("ns:module.py") == "ns:module.py"
+        assert strip_line_suffix("pkg:sub/x.go") == "pkg:sub/x.go"
+        assert strip_line_suffix("C:/src/x.py") == "C:/src/x.py"
+
+    def test_only_the_suffix_comes_off_a_path_that_also_carries_a_colon(self):
+        assert strip_line_suffix("C:/src/x.py:12") == "C:/src/x.py"
 
 
 class TestStableIdIsUnchanged:

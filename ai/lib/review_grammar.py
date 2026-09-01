@@ -12,6 +12,15 @@ filename with the closing delimiter where `_FIRST_FILE_RE` uses a lookahead,
 and the two have to keep reading the same line the same way for different
 purposes. Both live here so a change to one is made next to the other.
 
+A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
+`:12-18` several of them match inside a span they capture, and
+`strip_line_suffix` is how such a reader takes it back off — each used to
+truncate at the last colon instead, which read `ns:module.py` as `ns` and
+verified a finding against a file that does not exist. The identity itself is
+`FindingIdentity`, and the `DedupKey` its `dedup_key` returns is a pair with
+names rather than two loose strings, because which half is the location is not
+something a call site should have to infer from position.
+
 What a document is assembled from is `review_document`'s; what a finding means
 once parsed is `review_types`'.
 """
@@ -80,7 +89,26 @@ _SEGMENT_CHAR = r"[^\s/:*`—]"
 # rather than a reader: `_FIRST_FILE_RE`, `VERIFY_FINDING_RE` and
 # `BODY_FINDING_RE` each bound it differently, and they have to agree on what a
 # line suffix is or a finding parses one way and verifies against the other.
-LINE_SUFFIX = r"(?::\d+(?:[-–]\d+)?)?"
+# `strip_line_suffix` removes what this matches, so a reader that matched one
+# without capturing it does not decide for itself what it was.
+_LINE_SUFFIX_BODY = r":\d+(?:[-–]\d+)?"
+LINE_SUFFIX = rf"(?:{_LINE_SUFFIX_BODY})?"
+_LINE_SUFFIX_TAIL_RE = re.compile(rf"{_LINE_SUFFIX_BODY}$")
+
+
+def strip_line_suffix(path: str) -> str:
+    """`path` with a trailing `:12` or `:12-18` removed, and nothing else.
+
+    For a reader whose pattern matched `LINE_SUFFIX` inside the span it
+    captured, so the path it hands back still carries it.
+
+    Only a line suffix comes off. Truncating at the last colon instead — which
+    is what each such reader used to do for itself — turns `C:/src/x.py` into
+    `C` and `ns:module.py` into `ns`, because neither reader's path class
+    excludes a colon. That is the same one line read two ways this module
+    exists to prevent, one layer below the location grammar.
+    """
+    return _LINE_SUFFIX_TAIL_RE.sub("", path)
 
 # A filename holding spaces. It has no character class to stop it, so every
 # use has to bound it: the extension ends it, and whatever follows has to be
@@ -218,10 +246,10 @@ def parse_finding_line(stripped: str) -> Finding | None:
 # ends the span above it instead of joining that finding's evidence.
 #
 # The space-free class stays exactly as it was — anything the delimiters cannot
-# hold, line suffix included, which `rsplit` strips at the call site — and the
-# spaced shape is beside it rather than replacing it. Every location that
-# parsed before parses the same way, since a space-free span never reaches the
-# second alternative at all.
+# hold, line suffix included, which `strip_line_suffix` takes off the captured
+# path — and the spaced shape is beside it rather than replacing it. Every
+# location that parsed before parses the same way, since a space-free span
+# never reaches the second alternative at all.
 #
 # `SPACED_FILE` needs the same bound it has in `_FIRST_FILE_RE` above, where a
 # lookahead makes the filename account for the whole span. Here the closing
@@ -295,6 +323,24 @@ def _fallback_location(line: str, after: str) -> tuple[str, int | None]:
 
 
 @dataclass(frozen=True)
+class DedupKey:
+    """What two findings have to share to be the same finding.
+
+    `located` is the path with the line number back on it when the finding
+    named one, `desc` is the finding's first words lowercased. Frozen so it can
+    key the dict that finds the repeats.
+
+    A pair rather than the two strings loose: a caller that unpacked them by
+    position had to know which one was the location, and the reading that
+    decides whether a finding ships twice is not one to leave to the order the
+    fields happen to be in.
+    """
+
+    located: str
+    desc: str
+
+
+@dataclass(frozen=True)
 class FindingIdentity:
     """What makes two findings the same one: where they point and what they say.
 
@@ -333,10 +379,19 @@ class FindingIdentity:
         return cls(path, line, desc_m.group(1).strip() if desc_m else "")
 
     @property
-    def dedup_key(self) -> tuple[str, str]:
-        """Where the finding points and what it says, lowercased."""
-        located = f"{self.path}:{self.line}" if self.line else self.path
-        return (located, self.desc.lower())
+    def dedup_key(self) -> DedupKey:
+        """A `DedupKey` of where the finding points and what it says lowercased.
+
+        `line is not None` rather than a truth test: line 0 is not a line a
+        review writes, but reading it as no line at all would key such a
+        finding on its bare path and merge it with a real one.
+
+        A range keys on where it starts, since `end_line` is not part of the
+        identity: `x.py:12-18` and `x.py:12-40` are two groups disagreeing
+        about how far one problem reaches, not two problems.
+        """
+        located = f"{self.path}:{self.line}" if self.line is not None else self.path
+        return DedupKey(located, self.desc.lower())
 
     @property
     def stable_id(self) -> str:

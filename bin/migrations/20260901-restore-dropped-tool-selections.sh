@@ -10,6 +10,13 @@
 # It therefore names every tool it adds back and how to undo it, rather than
 # repairing silently — a wrong guess here re-syncs a tool, which is recoverable,
 # while leaving it out keeps a machine quietly out of sync.
+#
+# Sub-tools only. `brew.stacks` was emptied by the same bug and is not repaired,
+# because a stack leaves no mark of its own on the filesystem — its packages are
+# indistinguishable from ones installed by hand, so there is nothing to detect.
+# An operator whose brew selection was emptied re-picks the stacks on the next
+# interactive `brew/setup.sh`, which is why the message above names what was
+# restored rather than claiming the machine is now whole.
 
 # _restored_tools COMPONENT BEFORE — prints the tools COMPONENT gained relative
 # to the newline-separated BEFORE list.
@@ -47,4 +54,5 @@ migration_20260901_restore_dropped_tool_selections() {
 
   success "Restored installed tools dropped from install.yml: ${restored[*]}"
   info "Set WORKBENCH_INTERACTIVE=1 and re-run that component's setup.sh to change the selection"
+  return 0
 }

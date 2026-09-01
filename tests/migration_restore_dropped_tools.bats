@@ -32,8 +32,8 @@ teardown() {
   common_teardown
 }
 
-# _claude_is_installed — the state the detector reads for the ai/claude entry.
-_claude_is_installed() {
+# _write_claude_settings_file — the state the detector reads for the ai/claude entry.
+_write_claude_settings_file() {
   echo '{}' > "$CLAUDE_SETTINGS_FILE"
 }
 
@@ -45,7 +45,7 @@ _claude_is_installed() {
 }
 
 @test "a list that never lost anything is a no-op" {
-  _claude_is_installed
+  _write_claude_settings_file
   state_record "ai"
   state_record "ai/claude"
 
@@ -56,7 +56,7 @@ _claude_is_installed() {
 @test "a tool dropped from the list is restored and named" {
   # The reported failure: ai.tools was emptied to ask about a newly added tool,
   # the install ended before answering, and claude never synced again.
-  _claude_is_installed
+  _write_claude_settings_file
   state_record "ai"
   state_set_list "ai.tools" "pi"
 
@@ -71,7 +71,7 @@ _claude_is_installed() {
 @test "restoring keeps the tools already recorded" {
   # pi is not something the detector knows about, so a repair that rebuilt the
   # list instead of merging into it would drop pi on the way past.
-  _claude_is_installed
+  _write_claude_settings_file
   state_record "ai"
   state_set_list "ai.tools" "pi"
 
@@ -83,7 +83,7 @@ _claude_is_installed() {
 }
 
 @test "an emptied list is restored" {
-  _claude_is_installed
+  _write_claude_settings_file
   state_record "ai"
   state_set_list "ai.tools"
 
@@ -108,7 +108,7 @@ _claude_is_installed() {
 }
 
 @test "the repair is idempotent" {
-  _claude_is_installed
+  _write_claude_settings_file
   state_record "ai"
   state_set_list "ai.tools" "pi"
 

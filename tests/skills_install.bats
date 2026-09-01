@@ -88,6 +88,24 @@ _run_step_interrupted() {
   "
 }
 
+# _run_summary — installs skills, then prints the standalone-tool summary.
+# print_skills_summary calls _print_item_list, which lives in the real
+# ai/claude/steps.sh rather than the fake workbench's copy — ai/setup.sh
+# always sources every ai/*/steps.sh ahead of running any tool's steps, so
+# this mirrors that ordering rather than the fake tree's own layout.
+_run_summary() {
+  run bash -c "
+    set -e
+    export WORKBENCH_DIR='$FAKE_WORKBENCH'
+    export WORKBENCH_STABLE_DIR='$FAKE_WORKBENCH'
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/ai/claude/steps.sh'
+    . '$FAKE_WORKBENCH/ai/skills/steps.sh'
+    step_skills >/dev/null
+    print_skills_summary
+  "
+}
+
 @test "installs a plain skill into both discovery roots" {
   _make_skill anatomy
 
@@ -133,8 +151,13 @@ _run_step_interrupted() {
 
   rm -rf "$FAKE_WORKBENCH/ai/skills/anatomy"
   _run_step
+  # -e follows the symlink, so it is already false for a dangling symlink
+  # whether or not the prune actually removed the symlink file itself. -L
+  # is what proves the entry is gone rather than merely broken.
   [ ! -e "$HOME/.claude/skills/anatomy" ]
+  [ ! -L "$HOME/.claude/skills/anatomy" ]
   [ ! -e "$HOME/.agents/skills/anatomy" ]
+  [ ! -L "$HOME/.agents/skills/anatomy" ]
 }
 
 @test "an agent-backed skill installs to Pi only, with the protocol spliced in" {
@@ -257,6 +280,31 @@ _run_step_interrupted() {
   [ -f "$HOME/.agents/skills/reviewer/.installed-by-otto-workbench" ]
 }
 
+@test "a real removal failure during a reinstall is reported, not swallowed as hand-written" {
+  _make_skill reviewer reviewer
+  _make_agent reviewer "REVIEW PROTOCOL BODY"
+  _run_step
+  [ -d "$HOME/.agents/skills/reviewer" ]
+
+  # Strips write permission on the ownership-marked target itself, so
+  # _clear_skill_entry's rm -rf fails for a real reason (permissions) rather
+  # than refusing because the marker is absent — the two outcomes this test
+  # exists to keep distinguishable.
+  chmod 555 "$HOME/.agents/skills/reviewer"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Could not install reviewer"* ]]
+  [[ "$output" != *"was not installed by the workbench"* ]]
+  # The previous good install must survive a failed removal — collapsing it
+  # into the "hand-written, leave it alone" path would skip the reinstall in
+  # silence instead of surfacing the failure.
+  [ -d "$HOME/.agents/skills/reviewer" ]
+  grep -q "REVIEW PROTOCOL BODY" "$HOME/.agents/skills/reviewer/SKILL.md"
+
+  chmod 755 "$HOME/.agents/skills/reviewer"
+}
+
 @test "an interrupted install still leaves the ownership marker behind" {
   _make_skill reviewer reviewer
   _make_agent reviewer "REVIEW PROTOCOL BODY"
@@ -285,4 +333,22 @@ _run_step_interrupted() {
   _run_step
   [ "$status" -eq 0 ]
   [ ! -e "$HOME/.agents/skills/reviewer" ]
+}
+
+@test "print_skills_summary reports a plain skill in both roots and an agent-backed one in Pi only" {
+  _make_skill anatomy
+  _make_skill reviewer reviewer
+  _make_agent reviewer "REVIEW PROTOCOL BODY"
+
+  _run_summary
+  [ "$status" -eq 0 ]
+
+  local claude_section pi_section
+  claude_section="$(printf '%s\n' "$output" | awk '/Claude Code/{f=1} f && /^  Pi /{exit} f')"
+  pi_section="$(printf '%s\n' "$output" | awk '/^  Pi /{f=1} f')"
+
+  [[ "$claude_section" == *"anatomy"* ]]
+  [[ "$claude_section" != *"reviewer"* ]]
+  [[ "$pi_section" == *"anatomy"* ]]
+  [[ "$pi_section" == *"reviewer"* ]]
 }

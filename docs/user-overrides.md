@@ -76,7 +76,7 @@ otto-workbench ai override skill some-skill --enable  # re-enable a disabled def
 - `resolve_layers()` in [`lib/files.sh`](../lib/files.sh) merges base and user directories by basename
 - `is_disabled()` in [`lib/files.sh`](../lib/files.sh) checks for `.disabled` sentinels
 - Constants (`USER_AI_DIR`, `USER_CLAUDE_DIR`, etc.) in [`lib/constants.sh`](../lib/constants.sh)
-- Step functions in [`ai/claude/steps.sh`](../ai/claude/steps.sh) consume the merged results
+- Step functions in [`ai/claude/steps.sh`](../ai/claude/steps.sh) and [`ai/skills/steps.sh`](../ai/skills/steps.sh) consume the merged results — the skill layer's `resolve_layers` call lives in `ai/skills/steps.sh`
 
 ## Examples
 

@@ -35,8 +35,16 @@ _resolve_agent_file() {
   printf '%s' "$CLAUDE_AGENTS_SRC_DIR/${agent}.md"
 }
 
-# _clear_skill_entry PATH — empties a discovery-root slot the workbench owns,
-# returning 1 with the slot untouched when it holds something the user wrote.
+# _clear_skill_entry PATH — empties a discovery-root slot the workbench owns.
+#
+# Returns 0 once the slot is empty — either it already was, or its content was
+# just removed. Returns 1 when the slot holds something the user wrote (no
+# SKILL_INSTALL_MARKER) and is left untouched — a refusal, reported with
+# warn(), not a failure. Returns 2 when the slot was the workbench's own but
+# the removal itself failed (permissions, a race) — a real failure, reported
+# with err(). A caller must not fold 2 into the same "leave it alone" path as
+# 1: one is an ordinary skip, the other is an error that happened to leave the
+# previous content in place.
 #
 # A symlink is always the workbench's: install_symlink is the only thing that
 # writes one into a discovery root, so removing it is unconditional. A real
@@ -48,7 +56,7 @@ _resolve_agent_file() {
 _clear_skill_entry() {
   local path="$1"
   if [[ -L "$path" ]]; then
-    rm -f "$path"
+    rm -f "$path" || { err "Could not remove symlink $path"; return 2; }
     return 0
   fi
   [[ -d "$path" ]] || return 0
@@ -56,7 +64,8 @@ _clear_skill_entry() {
     warn "$path was not installed by the workbench — leaving it in place"
     return 1
   fi
-  rm -rf "${path:?}"
+  rm -rf "${path:?}" || { err "Could not remove $path"; return 2; }
+  return 0
 }
 
 # _install_agent_skill SOURCE_DIR TARGET_DIR AGENT — writes a real SKILL.md with
@@ -69,6 +78,12 @@ _clear_skill_entry() {
 # The body is read before anything is removed, so a protocol that cannot be
 # spliced leaves the previous good install alone instead of replacing it with a
 # skill whose instructions are missing.
+#
+# Returns 1 only when target_dir was the workbench's own install and clearing
+# it failed for real (see _clear_skill_entry's return 2) — that is already
+# reported via err() and must not be treated as an ordinary skip by the
+# caller. Every other skip (agent file missing, no body, target_dir is
+# hand-written) returns 0: an already-warned outcome, not a failure.
 _install_agent_skill() {
   local source_dir="$1" target_dir="$2" agent="$3"
   local name agent_file body
@@ -88,7 +103,14 @@ _install_agent_skill() {
     return 0
   fi
 
-  _clear_skill_entry "$target_dir" || return 0
+  local clear_status=0
+  _clear_skill_entry "$target_dir" || clear_status=$?
+  [[ "$clear_status" -eq 1 ]] && return 0
+  if [[ "$clear_status" -ne 0 ]]; then
+    err "Could not install $name — clearing $target_dir failed"
+    return 1
+  fi
+
   mkdir -p "$target_dir"
 
   # The ownership marker lands before the content, not after. An install
@@ -109,11 +131,17 @@ _install_agent_skill() {
 # The __ prefix on the nameref is required: a local sharing the caller's variable
 # name would shadow the nameref's target and the assignment would silently land
 # in this scope instead.
+#
+# Globs "$target"/* rather than "$target"/*/ — the trailing slash tells bash to
+# match only entries that *resolve* as directories, so a retired skill (its
+# ai/skills/<name>/ source deleted) leaves a dangling symlink in TARGET_DIR that
+# such a glob never matches at all, not even to skip it. The -L check below
+# still needs to run on every entry to keep out a plain file that isn't ours.
 _prune_skills() {
   local target="$1"
   local -n __skill_layers=$2
   local item entry name
-  for item in "$target"/*/; do
+  for item in "$target"/*; do
     entry="${item%/}"
     [[ -L "$entry" || -d "$item" ]] || continue
     name=$(basename "$item")
@@ -172,8 +200,11 @@ step_skills() {
       # Claude-side entry alone — but a skill that has since declared `agent:`
       # belongs to Claude as an agent file, not as a skill. Removed here rather
       # than in _prune_skills because only this loop has read the frontmatter.
+      # A per-skill install failure is reported by _install_agent_skill itself
+      # (err(), not a silent swallow) — it must not abort every other skill
+      # still queued in this loop.
       _clear_skill_entry "$CLAUDE_SKILLS_DIR/$name" || true
-      _install_agent_skill "$source" "$AGENTS_SKILLS_DIR/$name" "$agent"
+      _install_agent_skill "$source" "$AGENTS_SKILLS_DIR/$name" "$agent" || true
       continue
     fi
 
@@ -202,6 +233,25 @@ sync_skills() {
 
 register_skills_steps() {
   register_step "Agent skills" step_skills
+}
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+
+# print_skills_summary — reports what step_skills installed, printed by
+# ai/setup.sh via the print_${_tool}_summary convention once "skills" is a
+# selected tool. Reuses _print_item_list from ai/claude/steps.sh, which
+# ai/setup.sh always sources ahead of running any tool's steps.
+#
+# Both roots are listed, and rarely match: an agent-backed skill installs to
+# $AGENTS_SKILLS_DIR only, with its Claude-side entry cleared instead — see
+# step_skills for why — so it shows in Pi's list and not Claude's.
+print_skills_summary() {
+  echo
+  info "Agent skills"
+  echo
+
+  _print_item_list "Claude Code ($CLAUDE_SKILLS_DIR)" "$CLAUDE_SKILLS_DIR" "*/"
+  _print_item_list "Pi ($AGENTS_SKILLS_DIR)"           "$AGENTS_SKILLS_DIR" "*/"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

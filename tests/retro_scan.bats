@@ -121,37 +121,37 @@ PY
 # ── is_noise ─────────────────────────────────────────────────────────────────
 
 @test "is_noise: approvals are noise" {
-  result=$(_py 'print(mod.is_noise("LGTM"))')
+  result=$(_py 'import retro_github; print(retro_github.is_noise("LGTM"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: looks good is noise" {
-  result=$(_py 'print(mod.is_noise("Looks good!"))')
+  result=$(_py 'import retro_github; print(retro_github.is_noise("Looks good!"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: thumbs up is noise" {
-  result=$(_py 'print(mod.is_noise("+1"))')
+  result=$(_py 'import retro_github; print(retro_github.is_noise("+1"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: substantive comment is not noise" {
-  result=$(_py 'print(mod.is_noise("This should validate the redirect URI against an allowlist"))')
+  result=$(_py 'import retro_github; print(retro_github.is_noise("This should validate the redirect URI against an allowlist"))')
   [[ "$result" == "False" ]]
 }
 
 @test "is_noise: short nit-only is noise" {
-  result=$(_py 'print(mod.is_noise("nit"))')
+  result=$(_py 'import retro_github; print(retro_github.is_noise("nit"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: thumbs up emoji is noise" {
-  result=$(_py 'print(mod.is_noise("\U0001f44d"))')
+  result=$(_py 'import retro_github; print(retro_github.is_noise("\U0001f44d"))')
   [[ "$result" == "True" ]]
 }
 
 @test "is_noise: nit with detail is not noise" {
-  result=$(_py 'print(mod.is_noise("nit: rename this to fooBar for consistency"))')
+  result=$(_py 'import retro_github; print(retro_github.is_noise("nit: rename this to fooBar for consistency"))')
   [[ "$result" == "False" ]]
 }
 
@@ -159,6 +159,7 @@ PY
 
 @test "parse_review_comment: extracts fields from API response" {
   result=$(_py_here <<'PY'
+import retro_github
 comment = {
     "user": {"login": "reviewer1"},
     "body": "This should validate the redirect URI",
@@ -166,7 +167,7 @@ comment = {
     "line": 45,
     "html_url": "https://github.com/org/repo/pull/1#discussion_r123"
 }
-parsed = mod.parse_review_comment(comment)
+parsed = retro_github.parse_review_comment(comment)
 print(parsed["author"], parsed["path"], parsed["line"])
 PY
 )
@@ -175,11 +176,12 @@ PY
 
 @test "parse_review_comment: handles missing path (general comment)" {
   result=$(_py_here <<'PY'
+import retro_github
 comment = {
     "user": {"login": "reviewer1"},
     "body": "Overall this looks good but consider X",
 }
-parsed = mod.parse_review_comment(comment)
+parsed = retro_github.parse_review_comment(comment)
 print(parsed["path"], parsed["line"])
 PY
 )
@@ -188,11 +190,12 @@ PY
 
 @test "parse_review_comment: truncates long bodies" {
   result=$(_py_here <<'PY'
+import retro_github
 comment = {
     "user": {"login": "r"},
     "body": "x" * 1000,
 }
-parsed = mod.parse_review_comment(comment)
+parsed = retro_github.parse_review_comment(comment)
 print(len(parsed["body"]))
 PY
 )
@@ -203,9 +206,10 @@ PY
 
 @test "_threads_for: uses the batch nodes when nothing was truncated" {
   result=$(_py_here <<'PY'
-mod.fetch_review_threads = lambda *a: (_ for _ in ()).throw(AssertionError("refetched"))
+import retro_github
+retro_github.fetch_review_threads = lambda *a: (_ for _ in ()).throw(AssertionError("refetched"))
 pr_node = {"number": 7, "reviewThreads": {"totalCount": 2, "nodes": [{"path": "a.py"}, {"path": "b.py"}]}}
-print(len(mod._threads_for("o/r", pr_node)))
+print(len(retro_github._threads_for("o/r", pr_node)))
 PY
 )
   [[ "$result" == "2" ]]
@@ -213,10 +217,11 @@ PY
 
 @test "_threads_for: refetches every thread when the batch query truncated" {
   result=$(_py_here <<'PY'
+import retro_github
 calls = []
-mod.fetch_review_threads = lambda repo, pr: calls.append((repo, pr)) or [{"path": f"f{i}.py"} for i in range(114)]
+retro_github.fetch_review_threads = lambda repo, pr: calls.append((repo, pr)) or [{"path": f"f{i}.py"} for i in range(114)]
 pr_node = {"number": 7, "reviewThreads": {"totalCount": 114, "nodes": [{"path": "a.py"}] * 100}}
-print(len(mod._threads_for("o/r", pr_node)), calls)
+print(len(retro_github._threads_for("o/r", pr_node)), calls)
 PY
 )
   [[ "$result" == "114 [('o/r', 7)]" ]]
@@ -649,9 +654,9 @@ EOF
 from pathlib import Path
 rules = mod.load_rules(Path("$TMPDIR/wb"))
 counts = {r["filename"]: {"matched": 0} for r in rules}
-repos, unmatched, consumed = mod.scan_local_reviews(Path("$TMPDIR/state/reviews"), rules, counts)
-print(len(consumed))
-print(consumed[0] if consumed else "none")
+scan = mod.scan_local_reviews(Path("$TMPDIR/state/reviews"), rules, counts)
+print(len(scan.consumed))
+print(scan.consumed[0] if scan.consumed else "none")
 PY
 )
   [[ "$result" == *"1"* ]]

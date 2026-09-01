@@ -11,7 +11,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -27,15 +26,10 @@ import workbench_paths  # noqa: E402
 from _version import version_string as _version_string  # noqa: E402
 from trail import Trail, add_trail_args  # noqa: E402
 from review_dedup import DEDUP_THRESHOLD, jaccard, word_set  # noqa: E402
-from review_document import ReviewDocument  # noqa: E402
-from review_paths import (  # noqa: E402
-    ReviewEntry, ReviewEntryKind, iter_review_entries,
-)
-from review_types import Finding  # noqa: E402
-from review_github import (  # noqa: E402
-    GQL_THREADS_LIMIT, GQL_THREAD_COMMENTS_LIMIT, GQL_ISSUE_COMMENTS_LIMIT,
-    fetch_review_threads,
-)
+from retro_github import GQL_MERGED_PRS_LIMIT, fetch_repo_review_data  # noqa: E402
+from retro_report import DATE_FMT, best_matching_bullet, format_report  # noqa: E402
+from retro_reviews import CONSUMED_REVIEWS_NAME, scan_local_reviews  # noqa: E402
+from retro_rules import RULES_REL, find_nearest_rule, load_rules  # noqa: E402
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -44,36 +38,14 @@ SCRIPT = Path(__file__).name
 DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
 WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
 
-RULES_REL = Path("ai") / "guidelines" / "rules"
-
 MACHINE_MD_REL = Path(".claude") / "machine" / "machine.md"
 LAST_RETRO_REL = Path(".claude") / ".last-retro"
-
-DATE_FMT = "%Y-%m-%d"
 
 REGISTRY_TABLE_PATTERN = re.compile(r"^\|\s*(\S+)\s*\|\s*(\S+)\s*\|")
 REGISTRY_SEPARATOR = re.compile(r"^\|\s*[-]+")
 
 SSH_REMOTE_PATTERN = re.compile(r"git@github\.com:(.+?)(?:\.git)?$")
 HTTPS_REMOTE_PATTERN = re.compile(r"https://github\.com/(.+?)(?:\.git)?$")
-
-NOISE_PATTERNS = re.compile(
-    r"^(?:lgtm|looks good|:?\+1:?|approved|nit:?\s*$|\U0001f44d)", re.IGNORECASE
-)
-
-COMMENT_BODY_MAX = 500
-
-# Beside reviews/ under the state root rather than under --home: both are
-# generated data, and retro-complete.sh reads them through the state root too.
-# Its half of this name is RETRO_CONSUMED_REVIEWS_FILE in lib/constants.sh;
-# tests/workbench_roots.bats holds the two together.
-CONSUMED_REVIEWS_NAME = "retro-consumed-reviews.txt"
-
-# The repository a review written before `meta.json` recorded one is for. The
-# sidecar is the answer everywhere it exists — see `_review_repo`.
-REVIEW_TITLE_RE = re.compile(
-    r"^#\s+(?:Self-)?Review:\s+(\S+)\s*(?:—|#)",
-)
 
 
 import log
@@ -126,83 +98,7 @@ def get_repo_remote(repo_path: str) -> str | None:
     return result.stdout.strip() if result.ok else None
 
 
-# ── Comment filtering ───────────────────────────────────────────────────────
-
-def is_noise(body: str) -> bool:
-    stripped = body.strip()
-    if len(stripped) < 3:
-        return True
-    return bool(NOISE_PATTERNS.match(stripped))
-
-
-def parse_review_comment(comment: dict) -> dict:
-    body = comment.get("body", "")
-    return {
-        "author": comment.get("user", {}).get("login", "unknown"),
-        "body": body[:COMMENT_BODY_MAX],
-        "path": comment.get("path"),
-        "line": comment.get("line"),
-        "url": comment.get("html_url", ""),
-    }
-
-
-# ── GitHub API fetching ─────────────────────────────────────────────────────
-
-GQL_MERGED_PRS_LIMIT = 50
-
-_RETRO_QUERY = f"""
-query($owner: String!, $name: String!) {{
-  repository(owner: $owner, name: $name) {{
-    pullRequests(states: MERGED, first: {GQL_MERGED_PRS_LIMIT}, orderBy: {{field: UPDATED_AT, direction: DESC}}) {{
-      nodes {{
-        number
-        title
-        mergedAt
-        author {{ login }}
-        reviewThreads(first: {GQL_THREADS_LIMIT}) {{
-          totalCount
-          nodes {{
-            path
-            line
-            comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
-              nodes {{
-                author {{ login }}
-                body
-              }}
-            }}
-          }}
-        }}
-        comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
-          totalCount
-          nodes {{
-            author {{ login }}
-            body
-          }}
-        }}
-      }}
-    }}
-  }}
-}}
-"""
-
-
-def _gh_api(endpoint: str, repo: str) -> list[dict]:
-    """Every page of a REST endpoint, or an empty list if it could not be read.
-
-    The scan reports what it could not read rather than returning a short list
-    quietly — an empty answer here is indistinguishable from a repo with no
-    review comments, which is the shape a rate-limited scan would take.
-    """
-    r = gh_client.api(f"repos/{repo}/{endpoint}", paginate=True)
-    if not r.ok:
-        log.warn(f"gh api failed for {repo}/{endpoint}: {r.detail}")
-        return []
-    try:
-        return json.loads(r.stdout)
-    except json.JSONDecodeError as e:
-        log.warn(f"gh api error for {repo}/{endpoint}: {e}")
-        return []
-
+# ── Last retro state ─────────────────────────────────────────────────────────
 
 def _read_last_retro(home: Path) -> int:
     stamp = home / LAST_RETRO_REL
@@ -216,214 +112,6 @@ def _read_last_retro(home: Path) -> int:
     except OSError as e:
         log.warn(f"Cannot read last-retro stamp {stamp}: {e}")
         return 0
-
-
-def _graphql_comment_to_dict(node: dict, path: str | None, line: int | None) -> dict:
-    """Convert a single GraphQL comment node to the retro-scan comment format."""
-    return {
-        "author": (node.get("author") or {}).get("login", "unknown"),
-        "body": (node.get("body") or "")[:COMMENT_BODY_MAX],
-        "path": path, "line": line, "url": "",
-    }
-
-
-def _flatten_thread_comments(thread_nodes: list[dict]) -> list[dict]:
-    """Flatten review thread nodes into comment dicts."""
-    raw = [
-        _graphql_comment_to_dict(c, thread.get("path"), thread.get("line"))
-        for thread in thread_nodes
-        for c in thread.get("comments", {}).get("nodes", [])
-    ]
-    return [c for c in raw if not is_noise(c["body"])]
-
-
-def _flatten_issue_comments(comment_nodes: list[dict]) -> list[dict]:
-    """Flatten issue comment nodes into comment dicts."""
-    raw = [_graphql_comment_to_dict(c, None, None) for c in comment_nodes]
-    return [c for c in raw if not is_noise(c["body"])]
-
-
-def _threads_for(repo: str, pr_node: dict) -> list[dict]:
-    """Thread nodes for one PR, refetched in full if the batch query truncated.
-
-    The batch query asks for 50 PRs at once, so it cannot paginate each PR's
-    threads inline. Oversized PRs are rare, so they earn a second round trip
-    rather than costing every PR one.
-    """
-    threads_data = pr_node.get("reviewThreads", {})
-    thread_nodes = threads_data.get("nodes", [])
-    if threads_data.get("totalCount", 0) <= len(thread_nodes):
-        return thread_nodes
-    return fetch_review_threads(repo, pr_node["number"])
-
-
-def _parse_pr_node(repo: str, pr_node: dict, since_date: str) -> dict | None:
-    """Parse a single GraphQL PR node into the retro-scan format."""
-    merged_at = pr_node.get("mergedAt", "")
-    if not merged_at or merged_at < since_date:
-        return None
-
-    thread_nodes = _threads_for(repo, pr_node)
-
-    comments_data = pr_node.get("comments", {})
-    total_comments = comments_data.get("totalCount", 0)
-    comment_nodes = comments_data.get("nodes", [])
-    if total_comments > len(comment_nodes):
-        log.warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: GQL_ISSUE_COMMENTS_LIMIT={GQL_ISSUE_COMMENTS_LIMIT})")
-
-    all_comments = _flatten_thread_comments(thread_nodes)
-    all_comments.extend(_flatten_issue_comments(comment_nodes))
-
-    if not all_comments:
-        return None
-    return {
-        "number": pr_node.get("number"),
-        "title": pr_node.get("title", ""),
-        "user": {"login": (pr_node.get("author") or {}).get("login", "")},
-        "merged_at": merged_at,
-        "comments": all_comments,
-    }
-
-
-def fetch_repo_review_data(repo: str, since_ts: int) -> list[dict]:
-    """Fetch merged PRs with review data in a single GraphQL query.
-
-    Returns list of dicts with: number, title, author, merged_at, comments.
-    Each comment has: author, body, path (optional), line (optional).
-    """
-    since_date = (
-        datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        if since_ts > 0 else "2020-01-01T00:00:00Z"
-    )
-    owner, name = repo.split("/", 1)
-    r = gh_client.graphql(_RETRO_QUERY, variables={"owner": owner, "name": name})
-    if not r.ok:
-        log.warn(f"GraphQL failed for {repo}: {r.detail}")
-        return _fetch_repo_review_data_rest(repo, since_ts)
-    try:
-        data = json.loads(r.stdout)
-    except json.JSONDecodeError as e:
-        log.warn(f"GraphQL error for {repo}: {e}")
-        return _fetch_repo_review_data_rest(repo, since_ts)
-
-    pr_nodes = (
-        data.get("data", {})
-        .get("repository", {})
-        .get("pullRequests", {})
-        .get("nodes", [])
-    )
-
-    results = []
-    for pr_node in pr_nodes:
-        parsed = _parse_pr_node(repo, pr_node, since_date)
-        if parsed:
-            results.append(parsed)
-    return results
-
-
-def _fetch_repo_review_data_rest(repo: str, since_ts: int) -> list[dict]:
-    """REST fallback for fetch_repo_review_data."""
-    merged_prs = fetch_merged_prs(repo, since_ts)
-    results = []
-    for pr in merged_prs:
-        comments = fetch_pr_comments(repo, pr["number"])
-        if comments:
-            results.append({
-                "number": pr["number"],
-                "title": pr.get("title", ""),
-                "user": pr.get("user", {}),
-                "merged_at": pr.get("merged_at", ""),
-                "comments": comments,
-            })
-    return results
-
-
-def fetch_merged_prs(repo: str, since_ts: int) -> list[dict]:
-    since_date = datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if since_ts > 0 else "2020-01-01T00:00:00Z"
-    endpoint = "pulls?state=closed&sort=updated&direction=desc&per_page=100"
-    prs = _gh_api(endpoint, repo)
-    return [
-        pr for pr in prs
-        if pr.get("merged_at") and pr["merged_at"] >= since_date
-    ]
-
-
-def fetch_pr_comments(repo: str, pr_number: int) -> list[dict]:
-    review_comments = _gh_api(f"pulls/{pr_number}/comments", repo)
-    issue_comments = _gh_api(f"issues/{pr_number}/comments", repo)
-    all_comments = []
-    for c in review_comments:
-        parsed = parse_review_comment(c)
-        if not is_noise(parsed["body"]):
-            all_comments.append(parsed)
-    for c in issue_comments:
-        parsed = parse_review_comment(c)
-        if not is_noise(parsed["body"]):
-            all_comments.append(parsed)
-    return all_comments
-
-
-# ── Rules loading and matching ──────────────────────────────────────────────
-
-STOP_WORDS = frozenset({
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "need", "dare", "ought",
-    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-    "as", "into", "through", "during", "before", "after", "above", "below",
-    "between", "out", "off", "over", "under", "again", "further", "then",
-    "once", "here", "there", "when", "where", "why", "how", "all", "each",
-    "every", "both", "few", "more", "most", "other", "some", "such", "no",
-    "nor", "not", "only", "own", "same", "so", "than", "too", "very",
-    "just", "don", "should", "now", "and", "but", "or", "if", "this",
-    "that", "it", "its", "they", "them", "their", "we", "us", "our",
-    "you", "your", "any", "up", "what", "which", "who",
-})
-
-KEYWORD_PATTERN = re.compile(r"[a-z][a-z_-]{2,}")
-
-MIN_KEYWORD_OVERLAP = 2
-
-
-def _extract_keywords(text: str) -> set[str]:
-    words = set(KEYWORD_PATTERN.findall(text.lower()))
-    return words - STOP_WORDS
-
-
-def load_rules(workbench: Path) -> list[dict]:
-    rules_dir = workbench / RULES_REL
-    if not rules_dir.exists():
-        return []
-    results = []
-    for f in sorted(rules_dir.glob("*.md")):
-        content = f.read_text()
-        keywords = _extract_keywords(content)
-        bullets = [
-            line.strip().removeprefix("- ")
-            for line in content.splitlines()
-            if line.strip().startswith("- ")
-        ]
-        results.append({
-            "filename": f.name,
-            "keywords": keywords,
-            "bullets": bullets,
-            "content": content,
-        })
-    return results
-
-
-def find_nearest_rule(comment_body: str, rules: list[dict]) -> dict | None:
-    comment_keywords = _extract_keywords(comment_body)
-    if not comment_keywords:
-        return None
-    best_match = None
-    best_score = 0
-    for rule in rules:
-        overlap = len(comment_keywords & rule["keywords"])
-        if overlap > best_score and overlap >= MIN_KEYWORD_OVERLAP:
-            best_score = overlap
-            best_match = rule
-    return best_match
 
 
 # ── Dedup helpers ──────────────────────────────────────────────────────────
@@ -487,131 +175,6 @@ def _parse_since(since: str) -> int:
         sys.exit(1)
 
 
-# ── Report formatting ───────────────────────────────────────────────────────
-
-def _format_comment_location(comment: dict) -> str:
-    if not comment.get("path"):
-        return ""
-    loc = f" (inline: {comment['path']}"
-    if comment.get("line"):
-        loc += f":{comment['line']}"
-    return loc + ")"
-
-
-def _format_comment(comment: dict) -> list[str]:
-    lines: list[str] = []
-    location = _format_comment_location(comment)
-    lines.append(f"- **Comment by @{comment['author']}**{location}")
-    lines.append(f"  > {comment['body'][:COMMENT_BODY_MAX]}")
-    if comment.get("direction"):
-        lines.append(f"  - Direction: {comment['direction']}")
-    nr = comment.get("nearest_rule")
-    if nr:
-        lines.append(f"  - Nearest rule: {nr['filename']} (\"{nr.get('match_snippet', '')}\")")
-    else:
-        lines.append("  - Nearest rule: (none)")
-    lines.append("")
-    return lines
-
-
-def _format_pr(pr: dict) -> list[str]:
-    if not pr.get("comments"):
-        return []
-    lines: list[str] = []
-    lines.append(f"#### PR #{pr['number']}: {pr['title']} (merged {pr['merged_at']})")
-    lines.append("")
-    for comment in pr["comments"]:
-        lines.extend(_format_comment(comment))
-    return lines
-
-
-def _format_theme(rule_file: str, examples: list[dict]) -> list[str]:
-    lines = [f"### {rule_file} ({len(examples)} occurrences)", ""]
-    for ex in examples[:5]:
-        lines.append(f"- PR #{ex['pr']}: \"{ex['body'][:100]}\"")
-    lines.append("")
-    return lines
-
-
-def format_report(scan_data: dict) -> str:
-    repos = scan_data.get("repos", [])
-    rules_summary = scan_data.get("rules_summary", [])
-    themes = scan_data.get("themes", {})
-
-    total_prs = sum(len(r.get("prs", [])) for r in repos)
-    all_comments = [
-        c
-        for r in repos for pr in r.get("prs", [])
-        for c in pr.get("comments", [])
-    ]
-    total_comments = len(all_comments)
-
-    direction_counts: dict[str, int] = {}
-    for c in all_comments:
-        d = c.get("direction", "")
-        if d:
-            direction_counts[d] = direction_counts.get(d, 0) + 1
-
-    lines: list[str] = []
-    lines.append("# Retro Scan Report")
-    version = _version_string(SCRIPT).split("\n")[0]
-    lines.append(f"<!-- generated: {datetime.now().strftime(DATE_FMT)} | scanner: {version} -->")
-    lines.append(f"<!-- repos: {len(repos)} | prs: {total_prs} | comments: {total_comments} -->")
-    dir_parts = [f"{k}: {v}" for k, v in sorted(direction_counts.items())]
-    if dir_parts:
-        lines.append(f"<!-- {' | '.join(dir_parts)} -->")
-    lines.append("")
-
-    if not repos or total_comments == 0:
-        lines.append("No PR comments found in the scan window.")
-        lines.append("")
-        return "\n".join(lines)
-
-    lines.append("## PR Comments by Repo")
-    lines.append("")
-
-    for repo in repos:
-        repo_unmatched = repo.get("unmatched", 0)
-        if repo_unmatched:
-            lines.append(f"### {repo['github']} ({repo_unmatched} unmatched)")
-        else:
-            lines.append(f"### {repo['github']}")
-        lines.append("")
-        for pr in repo.get("prs", []):
-            lines.extend(_format_pr(pr))
-
-    lines.append("## Rules Coverage Summary")
-    lines.append("")
-    if rules_summary:
-        lines.append("| Rule file | Matched comments |")
-        lines.append("|-----------|-----------------|")
-        for rs in rules_summary:
-            lines.append(f"| {rs['filename']} | {rs['matched']} |")
-        lines.append("")
-
-    repeated = {k: v for k, v in themes.items() if len(v) >= 2}
-    if repeated:
-        lines.append("## Repeated Themes")
-        lines.append("")
-        for rule_file, examples in sorted(repeated.items()):
-            lines.extend(_format_theme(rule_file, examples))
-
-    return "\n".join(lines)
-
-
-def _best_matching_bullet(comment_body: str, rule: dict) -> str:
-    comment_kw = _extract_keywords(comment_body)
-    best_bullet = ""
-    best_overlap = 0
-    for bullet in rule.get("bullets", []):
-        bullet_kw = _extract_keywords(bullet)
-        overlap = len(comment_kw & bullet_kw)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_bullet = bullet
-    return best_bullet[:100] if best_bullet else rule["filename"]
-
-
 # ── Scanning ─────────────────────────────────────────────────────────────────
 
 
@@ -633,7 +196,7 @@ def _annotate_comment(
     if nearest:
         comment["nearest_rule"] = {
             "filename": nearest["filename"],
-            "match_snippet": _best_matching_bullet(comment["body"], nearest),
+            "match_snippet": best_matching_bullet(comment["body"], nearest),
         }
         rule_match_counts[nearest["filename"]]["matched"] += 1
         return "matched"
@@ -673,126 +236,6 @@ def _scan_repo(
                 "unmatched": um,
             })
     return {"prs": repo_prs, "unmatched": unmatched}
-
-
-# ── Local review scanning ──────────────────────────────────────────────────
-
-
-def _review_repo(entry: ReviewEntry, doc: ReviewDocument) -> str:
-    """The repository `entry`'s review is for.
-
-    `meta.json` is the answer wherever there is one — the walk that classified
-    the entry already read it, and it is what every other reader of the tree
-    goes by. A review written before the sidecar recorded a repo has only its
-    title, and one whose title states none has only its directory name, which
-    is the short repo name with the PR number or the branch appended.
-    """
-    if entry.meta.repo:
-        return entry.meta.repo
-    m = REVIEW_TITLE_RE.search(doc.title)
-    if m:
-        return m.group(1)
-    dir_name = entry.path.name
-    parts = dir_name.split("-self-", 1)
-    if len(parts) == 2:
-        return parts[0]
-    parts = dir_name.rsplit("-", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        return parts[0]
-    return dir_name
-
-
-def _finding_to_comment(
-    finding: Finding, source: str, review_file: Path,
-    rules: list[dict], rule_match_counts: dict[str, dict],
-) -> tuple[dict, bool]:
-    comment = {
-        "author": source,
-        "body": f"[{finding.severity}] {finding.body}",
-        "path": finding.path or None,
-        "line": finding.line,
-        "url": "",
-        "direction": "received",
-        "source_file": str(review_file),
-    }
-    nearest = find_nearest_rule(comment["body"], rules)
-    if nearest:
-        comment["nearest_rule"] = {
-            "filename": nearest["filename"],
-            "match_snippet": _best_matching_bullet(comment["body"], nearest),
-        }
-        rule_match_counts[nearest["filename"]]["matched"] += 1
-        return comment, False
-    comment["nearest_rule"] = None
-    return comment, True
-
-
-def _scan_review_entry(
-    entry: ReviewEntry, rules: list[dict],
-    rule_match_counts: dict[str, dict],
-) -> tuple[str, dict, int] | None:
-    review_file = entry.review_file
-    # A REVIEW-kind entry had its review file when the walk classified it, so a
-    # document that comes back None means the file went away or turned
-    # unreadable in between — a concurrent `pr gc` sweep, most likely. Skip the
-    # review rather than abandoning the scan over one directory.
-    doc = ReviewDocument.read(review_file)
-    if doc is None:
-        return None
-    findings = doc.findings
-    if not findings:
-        return None
-
-    dir_name = entry.path.name
-    repo_key = _review_repo(entry, doc)
-    source = "self-review" if "-self-" in dir_name else "claude-review"
-
-    unmatched = 0
-    comments: list[dict] = []
-    for f in findings:
-        comment, was_unmatched = _finding_to_comment(
-            f, source, review_file, rules, rule_match_counts,
-        )
-        if was_unmatched:
-            unmatched += 1
-        comments.append(comment)
-
-    pr_entry = {
-        "number": f"local:{dir_name}",
-        "title": f"Local review ({source})",
-        "author": source,
-        "merged_at": "",
-        "comments": comments,
-    }
-    return repo_key, pr_entry, unmatched
-
-
-def scan_local_reviews(
-    reviews_dir: Path, rules: list[dict], rule_match_counts: dict[str, dict],
-) -> tuple[list[dict], int, list[str]]:
-    """Returns (repo_list, unmatched_count, consumed_dir_names)."""
-    local_repos: dict[str, list[dict]] = {}
-    consumed_dirs: list[str] = []
-    unmatched = 0
-
-    for entry in iter_review_entries(reviews_dir):
-        if entry.kind is not ReviewEntryKind.REVIEW:
-            continue
-        result = _scan_review_entry(entry, rules, rule_match_counts)
-        if not result:
-            continue
-        repo_key, pr_entry, dir_unmatched = result
-        unmatched += dir_unmatched
-        local_repos.setdefault(repo_key, []).append(pr_entry)
-        consumed_dirs.append(entry.path.name)
-
-    result_list = [
-        {"github": f"local/{repo_key}", "prs": prs}
-        for repo_key, prs in local_repos.items()
-    ]
-
-    log.info(f"Found {sum(len(r['prs']) for r in result_list)} local review(s)")
-    return result_list, unmatched, consumed_dirs
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -891,10 +334,10 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
     trail.info("fetch_pr_comments", f"fetched review data from {len(repos)} repos")
 
     state_dir = workbench_paths.state_dir()
-    local_repos, local_unmatched, consumed_dirs = scan_local_reviews(
+    local_scan = scan_local_reviews(
         workbench_paths.reviews_dir(), rules, rule_match_counts,
     )
-    local_repos = _dedup_local_against_github(scan_repos, local_repos)
+    local_repos = _dedup_local_against_github(scan_repos, local_scan.repos)
     for lr in local_repos:
         lr["unmatched"] = sum(
             1 for pr in lr.get("prs", [])
@@ -902,14 +345,14 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
             if not c.get("nearest_rule")
         )
     scan_repos.extend(local_repos)
-    unmatched_count += local_unmatched
+    unmatched_count += local_scan.unmatched
     trail.info("scan_local_reviews", f"scanned {sum(len(r['prs']) for r in local_repos)} local reviews")
 
-    if consumed_dirs:
+    if local_scan.consumed:
         consumed_file = state_dir / CONSUMED_REVIEWS_NAME
         consumed_file.parent.mkdir(parents=True, exist_ok=True)
-        consumed_file.write_text("\n".join(consumed_dirs) + "\n")
-        trail.info("write_consumed", f"wrote {len(consumed_dirs)} consumed review dirs")
+        consumed_file.write_text("\n".join(local_scan.consumed) + "\n")
+        trail.info("write_consumed", f"wrote {len(local_scan.consumed)} consumed review dirs")
 
     themes = _build_themes(scan_repos)
 
@@ -929,7 +372,8 @@ def _run_retro(trail, home, workbench, since_override: str | None = None) -> Non
         "rules_summary": rules_summary,
         "themes": themes,
     }
-    report = format_report(scan_data)
+    version = _version_string(SCRIPT).split("\n")[0]
+    report = format_report(scan_data, version)
     trail.info("generate_report", f"report generated, {len(report)} chars")
     print(report)
 

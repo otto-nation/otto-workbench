@@ -2333,6 +2333,49 @@ escaping exception would take the whole CLI down over a side-feature. Warning
 rather than passing is what keeps a bug in here loud without coupling anything
 to it.
 
+### retro_github.py
+
+Fetching a repo's recent review activity from GitHub.
+
+One GraphQL round trip per repo where the API allows it, falling back to REST
+when it does not, flattened into the plain comment dicts the rest of the retro
+reads. Deciding which comments matter is `retro_rules`'; rendering them is
+`retro_report`'s.
+
+Normalising a raw comment's shape and dropping the noise (approvals,
+thumbs-up, a bare "nit") is part of producing that plain comment dict, so it
+lives here too — every fetch path in this module needs it applied the same
+way before a comment is fit to compare against a rule.
+
+### retro_report.py
+
+Rendering a retro scan's findings into the markdown report retro-scan prints.
+
+Takes the scan's collected repos, per-rule match counts and cross-PR themes
+and lays them out as headed sections — comments by repo, a rules-coverage
+table, and repeated themes. Deciding which rule a comment is nearest to is
+`retro_rules`'; this module only renders what was already decided.
+
+### retro_reviews.py
+
+Turning locally-saved reviews into the same comment shape GitHub PRs produce.
+
+Walks the reviews root `review_paths` already tracks and reads each review's
+findings into the retro's per-repo, per-PR comment structure, so `retro_report`
+renders a local self-review indistinguishably from a GitHub one. Deciding
+which rule a finding is nearest to is `retro_rules`'; matching the comment to
+the exact bullet on the page is `retro_report`'s.
+
+### retro_rules.py
+
+Matching review-comment text against the workbench's coding rules.
+
+Loads each rule file under `ai/guidelines/rules/` into a keyword set and finds
+the rule nearest a piece of comment text by keyword overlap. `extract_keywords`
+is the vocabulary primitive both rule loading and bullet matching are built
+on — `retro_report` reuses it to find which bullet inside a matched rule is
+closest to the comment being annotated.
+
 ### run_lock.py
 
 Advisory whole-run lock, scoped to what a run targets.

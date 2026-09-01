@@ -48,11 +48,17 @@ _make_agent() {
 
 # _run_step — sources the real libraries against the fake workbench and runs the step.
 #
+# `set -e` matches every production caller: bin/otto-workbench:51 and ai/setup.sh:16
+# both set it, so a command that returns non-zero mid-loop aborts the run there.
+# Without it here the suite would exercise the step under shell options nothing
+# in production uses, and could not see a partial install at all.
+#
 # WORKBENCH_STABLE_DIR is pinned to the fake tree as well: lib/constants.sh only
 # derives it when unset, so the real checkout's value would leak in from the
 # environment and install_symlink would rewrite every source path back to it.
 _run_step() {
   run bash -c "
+    set -e
     export WORKBENCH_DIR='$FAKE_WORKBENCH'
     export WORKBENCH_STABLE_DIR='$FAKE_WORKBENCH'
     . '$REPO_ROOT/lib/ui.sh'
@@ -157,4 +163,76 @@ _run_step() {
   _run_step
   [ ! -e "$HOME/.claude/skills/reviewer" ]
   [ -f "$HOME/.agents/skills/reviewer/SKILL.md" ]
+}
+
+@test "a skill that stops being agent-backed becomes a symlink again" {
+  _make_skill reviewer reviewer
+  _make_agent reviewer "REVIEW PROTOCOL BODY"
+  _run_step
+  [ -d "$HOME/.agents/skills/reviewer" ]
+  [ ! -L "$HOME/.agents/skills/reviewer" ]
+
+  _make_skill reviewer
+  _run_step
+  [ "$status" -eq 0 ]
+  [ -L "$HOME/.agents/skills/reviewer" ]
+  [ "$(readlink "$HOME/.agents/skills/reviewer")" = "$FAKE_WORKBENCH/ai/skills/reviewer" ]
+  ! grep -q "REVIEW PROTOCOL BODY" "$HOME/.agents/skills/reviewer/SKILL.md"
+}
+
+@test "a skill directory with no SKILL.md is skipped, not fatal" {
+  _make_skill anatomy
+  mkdir -p "$FAKE_WORKBENCH/ai/skills/halfwritten"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.claude/skills/halfwritten" ]
+  [ -L "$HOME/.claude/skills/anatomy" ]
+  [ -L "$HOME/.agents/skills/anatomy" ]
+}
+
+@test "an override directory with no SKILL.md is skipped, not fatal" {
+  _make_skill anatomy
+  _make_skill machine
+  mkdir -p "$TMPDIR/config/overrides/ai/skills/machine"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.claude/skills/machine" ]
+  [ -L "$HOME/.claude/skills/anatomy" ]
+  [ -L "$HOME/.agents/skills/anatomy" ]
+}
+
+@test "a hand-written skill the workbench never installed survives a prune" {
+  _make_skill anatomy
+  _run_step
+
+  mkdir -p "$HOME/.claude/skills/mine" "$HOME/.agents/skills/mine"
+  echo "mine" > "$HOME/.claude/skills/mine/SKILL.md"
+  echo "mine" > "$HOME/.agents/skills/mine/SKILL.md"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HOME/.claude/skills/mine/SKILL.md")" = "mine" ]
+  [ "$(cat "$HOME/.agents/skills/mine/SKILL.md")" = "mine" ]
+}
+
+@test "a removed agent-backed skill is still pruned from the Pi root" {
+  _make_skill reviewer reviewer
+  _make_agent reviewer "REVIEW PROTOCOL BODY"
+  _run_step
+  [ -d "$HOME/.agents/skills/reviewer" ]
+
+  rm -rf "$FAKE_WORKBENCH/ai/skills/reviewer"
+  _run_step
+  [ ! -e "$HOME/.agents/skills/reviewer" ]
+}
+
+@test "an agent file with no frontmatter is skipped rather than spliced empty" {
+  _make_skill reviewer reviewer
+  printf 'JUST A BODY\n' > "$FAKE_WORKBENCH/ai/claude/agents/reviewer.md"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.agents/skills/reviewer" ]
 }

@@ -17,6 +17,13 @@ fi
 
 AGENT_PROTOCOL_PLACEHOLDER_MARKER="<!-- AGENT_PROTOCOL_PLACEHOLDER:"
 
+# Dropped into every skill directory this step materialises, and the only thing
+# that tells a stale workbench install apart from a hand-written skill when the
+# pruning loop meets a real directory. Both discovery roots are documented homes
+# for personal skills, so "absent from the source tree" is not on its own a
+# licence to delete.
+SKILL_INSTALL_MARKER=".installed-by-otto-workbench"
+
 # _skill_agent SKILL_FILE — prints the agent name the skill's frontmatter declares.
 #
 # Prints nothing for a skill with no `agent:` field, which is every skill that
@@ -40,34 +47,70 @@ _resolve_agent_file() {
   printf '%s' "$CLAUDE_AGENTS_SRC_DIR/${agent}.md"
 }
 
+# _clear_skill_entry PATH — empties a discovery-root slot the workbench owns,
+# returning 1 with the slot untouched when it holds something the user wrote.
+#
+# A symlink is always the workbench's: install_symlink is the only thing that
+# writes one into a discovery root, so removing it is unconditional. A real
+# directory is the workbench's only when it carries SKILL_INSTALL_MARKER, which
+# _install_agent_skill drops in every directory it materialises — both roots are
+# documented homes for hand-written skills, and silently deleting one of those
+# is not this step's call to make. An empty slot is already in the shape the
+# caller wants, so it succeeds.
+_clear_skill_entry() {
+  local path="$1"
+  if [[ -L "$path" ]]; then
+    rm -f "$path"
+    return 0
+  fi
+  [[ -d "$path" ]] || return 0
+  if [[ ! -f "$path/$SKILL_INSTALL_MARKER" ]]; then
+    warn "$path was not installed by the workbench — leaving it in place"
+    return 1
+  fi
+  rm -rf "${path:?}"
+}
+
 # _install_agent_skill SOURCE_DIR TARGET_DIR AGENT — writes a real SKILL.md with
 # the agent's protocol body spliced in place of the placeholder comment.
 #
 # A real file rather than a symlink because the content does not exist on disk
 # anywhere: it is the skill's frontmatter joined to a body that lives in the
 # agent file. Rewritten wholesale on every run so a re-sync cannot append.
+#
+# The body is read before anything is removed, so a protocol that cannot be
+# spliced leaves the previous good install alone instead of replacing it with a
+# skill whose instructions are missing.
 _install_agent_skill() {
   local source_dir="$1" target_dir="$2" agent="$3"
-  local agent_file
+  local name agent_file body
+  name="$(basename "$source_dir")"
   agent_file="$(_resolve_agent_file "$agent")"
 
   if [[ ! -f "$agent_file" ]]; then
-    warn "Agent file missing for skill $(basename "$source_dir"): $agent_file — skipping"
+    warn "Agent file missing for skill $name: $agent_file — skipping"
     return 0
   fi
 
-  rm -rf "$target_dir"
+  body="$(awk 'BEGIN { n = 0 }
+               /^---$/ { n++; if (n == 2) { found = 1; next } }
+               found { print }' "$agent_file")"
+  if [[ -z "$body" ]]; then
+    warn "Agent file has no body after its frontmatter: $agent_file — skipping $name"
+    return 0
+  fi
+
+  _clear_skill_entry "$target_dir" || return 0
   mkdir -p "$target_dir"
   awk -v marker="$AGENT_PROTOCOL_PLACEHOLDER_MARKER" \
     'index($0, marker) { exit } { print }' \
     "$source_dir/SKILL.md" > "$target_dir/SKILL.md"
-  awk 'BEGIN { n = 0 }
-       /^---$/ { n++; if (n == 2) { found = 1; next } }
-       found { print }' "$agent_file" >> "$target_dir/SKILL.md"
+  printf '%s\n' "$body" >> "$target_dir/SKILL.md"
+  : > "$target_dir/$SKILL_INSTALL_MARKER"
 }
 
-# _prune_skills TARGET_DIR LAYERS_VAR — removes entries in TARGET_DIR that
-# neither the default nor the override layer provides.
+# _prune_skills TARGET_DIR LAYERS_VAR — removes the entries in TARGET_DIR that
+# the workbench owns and that neither the default nor the override layer provides.
 #
 # The __ prefix on the nameref is required: a local sharing the caller's variable
 # name would shadow the nameref's target and the assignment would silently land
@@ -75,14 +118,15 @@ _install_agent_skill() {
 _prune_skills() {
   local target="$1"
   local -n __skill_layers=$2
-  local item name
+  local item entry name
   for item in "$target"/*/; do
-    [[ -L "${item%/}" || -d "$item" ]] || continue
+    entry="${item%/}"
+    [[ -L "$entry" || -d "$item" ]] || continue
     name=$(basename "$item")
-    if [[ -z "${__skill_layers[$name]+set}" ]]; then
-      rm -rf "${item%/}"
-      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $name${NC}" || true
-    fi
+    [[ -z "${__skill_layers[$name]+set}" ]] || continue
+
+    _clear_skill_entry "$entry" || continue
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $name${NC}" || true
   done
   return 0
 }
@@ -100,6 +144,10 @@ _prune_skills() {
 #
 # Supports user overrides: overrides/ai/skills/<name>/ replaces the default,
 # overrides/ai/skills/<name>.disabled suppresses it in both harnesses at once.
+#
+# Only what the workbench installed is ever removed. Both roots are where their
+# harness documents personal skills living, so a real directory the workbench
+# did not write is reported and kept — see _clear_skill_entry.
 step_skills() {
   [[ -d "$SKILLS_SRC_DIR" ]] || { warn "No skills found in $SKILLS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_SKILLS_DIR" "$AGENTS_SKILLS_DIR"
@@ -115,6 +163,14 @@ step_skills() {
   local name source agent
   for name in "${!layers[@]}"; do
     source="${layers[$name]}"
+
+    # awk exits 2 on a file it cannot open, and sync runs this step under set -e
+    # with no soft-failure wrapper — one override directory without a SKILL.md
+    # would otherwise abort the whole run with half the skills installed.
+    if [[ ! -f "$source/SKILL.md" ]]; then
+      warn "No SKILL.md in $source — skipping $name"
+      continue
+    fi
     agent="$(_skill_agent "$source/SKILL.md")"
 
     if [[ -n "$agent" ]]; then
@@ -122,13 +178,23 @@ step_skills() {
       # Claude-side entry alone — but a skill that has since declared `agent:`
       # belongs to Claude as an agent file, not as a skill. Removed here rather
       # than in _prune_skills because only this loop has read the frontmatter.
-      rm -rf "${CLAUDE_SKILLS_DIR:?}/$name"
+      _clear_skill_entry "$CLAUDE_SKILLS_DIR/$name" || true
       _install_agent_skill "$source" "$AGENTS_SKILLS_DIR/$name" "$agent"
       continue
     fi
 
-    install_symlink "$source" "$CLAUDE_SKILLS_DIR/$name" "$name"
-    install_symlink "$source" "$AGENTS_SKILLS_DIR/$name" "$name"
+    # The inverse case, and unreachable from pruning for the same reason: a skill
+    # that has *dropped* `agent:` leaves a real directory in the Pi root, and
+    # install_symlink refuses a target holding a real file — under the
+    # SYMLINK_MODE=no-prompt that sync sets it warns and skips, so the stale
+    # spliced copy would survive every later sync. Symlinks are left for
+    # install_symlink to replace in place, which keeps a settled sync silent.
+    if [[ -d "$AGENTS_SKILLS_DIR/$name" && ! -L "$AGENTS_SKILLS_DIR/$name" ]]; then
+      _clear_skill_entry "$AGENTS_SKILLS_DIR/$name" || true
+    fi
+
+    install_symlink "$source" "$CLAUDE_SKILLS_DIR/$name" "$name → claude"
+    install_symlink "$source" "$AGENTS_SKILLS_DIR/$name" "$name → agents"
   done
   return 0
 }

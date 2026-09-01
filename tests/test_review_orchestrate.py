@@ -696,7 +696,7 @@ class TestPhaseSynthesis:
         )
 
     @staticmethod
-    def _patch_pipeline(monkeypatch, ro, **overrides):
+    def _patch_pipeline(monkeypatch, **overrides):
         """Patch the module-level imports `_phase_synthesis` reaches through.
 
         The synthesis phase spans three modules: it builds its own prompt and
@@ -707,6 +707,7 @@ class TestPhaseSynthesis:
         this maps wrong lands the patch on a module the code under test never
         reads and the test passes having mocked nothing.
         """
+        import agent_retry
         import review_outcome
         import review_phases
         import review_steps
@@ -714,7 +715,11 @@ class TestPhaseSynthesis:
             "build_prompt": review_steps,
             "post_process_findings": review_outcome,
             "run_agent": review_phases,
-            "try_recover_output": review_phases,
+            # `_retry_missing_output` is `agent_retry.retry_missing_output`
+            # (aliased in `review_retry`), which recovers through its own
+            # `try_recover_output` binding, not `review_phases`' — that one is
+            # read only by `_review_group`, which this phase never calls.
+            "try_recover_output": agent_retry,
         }
         defaults = {
             "build_prompt": lambda *a, **kw: "mock prompt",
@@ -736,7 +741,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
         ro._phase_synthesis(job, "", 3, "merged content")
 
@@ -755,7 +760,7 @@ class TestPhaseSynthesis:
                 '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
         assert ro._phase_synthesis(job, "", 3, "merged content").cost == 2.5
 
@@ -769,7 +774,7 @@ class TestPhaseSynthesis:
             return 1
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
@@ -799,7 +804,7 @@ class TestPhaseSynthesis:
             raise PromptTooLarge("synthesis.md", 600_000)
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             build_prompt=boom,
             run_agent=lambda inv, **kw: invoked.append(inv),
         )
@@ -821,7 +826,7 @@ class TestPhaseSynthesis:
             return 1
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
@@ -843,7 +848,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
         merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
         ro._phase_synthesis(job, "", 3, merged)
@@ -870,7 +875,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
         ro._phase_synthesis(job, "", 3, "merged content")
 
@@ -894,7 +899,7 @@ class TestPhaseSynthesis:
             return 1
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
@@ -921,7 +926,7 @@ class TestPhaseSynthesis:
             return 1
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
@@ -985,7 +990,7 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
             return 0
 
         TestPhaseSynthesis._patch_pipeline(
-            monkeypatch, ro, build_prompt=capture, run_agent=mock_invoke,
+            monkeypatch, build_prompt=capture, run_agent=mock_invoke,
         )
         ro._phase_synthesis(job, "", 3, merged)
         return seen

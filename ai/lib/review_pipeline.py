@@ -27,10 +27,10 @@ from review_collect import fetch_branch_metadata
 from review_github import (
     PRData, fetch_pr_context, fetch_pr_data, fetch_pr_metadata,
 )
-from review_outcome import _post_process_review, _write_review_sidecar, is_complete_review
 from review_grouping import (
     GROUP_TIER3, group_files, merge_smallest_groups,
 )
+from review_outcome import _post_process_review, _write_review_sidecar, is_complete_review
 from review_types import PRContext, PRMetadata, ReviewJob, ReviewType
 from review_prompt import PromptTooLarge
 from review_prompt_sections import _is_incremental

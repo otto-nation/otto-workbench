@@ -33,10 +33,10 @@ import log
 import pr_context
 from agent_types import Mode
 from review_budget import (
-    FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE,
+    FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE, FileFit,
     MAX_COMMIT_LOG_BYTES, MAX_DELTA_DIFF_BYTES, MAX_DELTA_LOG_BYTES,
     MAX_FILE_BYTES, MAX_PROMPT_BYTES, MAX_TRUNCATED_LINES,
-    TEMPLATE_OVERHEAD_BYTES,
+    TEMPLATE_OVERHEAD_BYTES, fit_files,
 )
 from review_document import ReviewHeader
 from review_grouping import (
@@ -461,38 +461,31 @@ def _fit_to_budget(
     all_permissions: dict[str, str],
     file_changes: dict[str, int],
     base_size: int,
-) -> tuple[dict[str, str], dict[str, str], list[str]]:
+) -> FileFit:
+    """Which of `all_contents` a review can afford, at collection time.
+
+    Drops low-density files first — large ones `file_changes` shows only a
+    sliver of, where the diff already carries what changed — then ranks
+    whatever is left by `(classify_tier, size)` and keeps what fits in
+    `MAX_PROMPT_BYTES` once `base_size` (the diff, the commit log, and the
+    rest of the fixed overhead) is spent.
+    """
     density_skipped = [
         p for p, c in all_contents.items()
         if _is_low_density(p, c, file_changes)
     ]
     candidates = {p: c for p, c in all_contents.items() if p not in set(density_skipped)}
-
-    file_sizes = {p: len(c.encode()) for p, c in candidates.items()}
-    sorted_paths = sorted(candidates, key=lambda p: (classify_tier(p), file_sizes[p]))
-
-    included: dict[str, str] = {}
-    included_perms: dict[str, str] = {}
-    budget_omitted: list[str] = []
-    remaining = max(0, MAX_PROMPT_BYTES - base_size)
-    for path in sorted_paths:
-        if file_sizes[path] <= remaining:
-            included[path] = candidates[path]
-            included_perms[path] = all_permissions[path]
-            remaining -= file_sizes[path]
-        else:
-            budget_omitted.append(path)
-
-    omitted = density_skipped + budget_omitted
+    fit = fit_files(candidates, all_permissions, MAX_PROMPT_BYTES - base_size)
+    omitted = density_skipped + fit.omitted
 
     if density_skipped:
         density_kb = sum(len(all_contents[p].encode()) for p in density_skipped) // 1024
         log.info(f"Skipped {len(density_skipped)} low-density files (~{density_kb}KB) — diff sufficient")
     if omitted:
         omitted_kb = sum(len(all_contents.get(p, "").encode()) for p in omitted) // 1024
-        log.info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
+        log.info(f"Pre-collected {len(fit.included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
 
-    return included, included_perms, omitted
+    return FileFit(fit.included, fit.permissions, omitted)
 
 
 def collect_preflight_data(job: ReviewJob) -> PreflightData:
@@ -514,22 +507,20 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
         + sum(len(v.encode()) for v in review_checklists.values())
         + TEMPLATE_OVERHEAD_BYTES
     )
-    included, included_perms, omitted = _fit_to_budget(
-        all_contents, all_permissions, file_changes, base_size,
-    )
+    fit = _fit_to_budget(all_contents, all_permissions, file_changes, base_size)
 
     delta_diff, delta_commit_log, delta_files, prior_head_sha = _collect_delta(job)
 
     return PreflightData(
         diff=diff,
         commit_log=commit_log,
-        file_contents=included,
-        file_permissions=included_perms,
+        file_contents=fit.included,
+        file_permissions=fit.permissions,
         claude_md=claude_md,
         architecture_md=architecture_md,
         review_checklists=review_checklists,
         review_profiles=profiles,
-        omitted_files=omitted,
+        omitted_files=fit.omitted,
         delta_diff=delta_diff,
         delta_commit_log=delta_commit_log,
         delta_files=delta_files,
@@ -541,36 +532,39 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
 
 def _format_file_contents(
     data: PreflightData, file_filter: list[str] | None,
-    skip_contents: bool = False,
+    files: FileFit | None = None,
 ) -> list[str]:
     """The changed files, inlined or named, scoped to ``file_filter``.
 
-    ``skip_contents`` inlines nothing and names every in-scope file under
-    "Files not pre-collected" instead — the budget's first lever drops the
-    contents, and a file whose contents were dropped is in exactly the position
-    of one that was never collected. Saying so is what lets the agent read it:
-    the section is the only list the prompt gives it to read from, and dropping
+    ``files`` is the prompt budget's fit, if one ran. `None` means no fit ran:
+    everything ``file_filter`` admits from ``data.file_contents`` is inlined,
+    same as before this lever existed. A fit inlines only the files it kept
+    and lists every path it dropped under "Files not pre-collected" instead —
+    a file whose contents were dropped is in exactly the position of one that
+    was never collected, and saying so is what lets the agent read it: the
+    section is the only list the prompt gives it to read from, and dropping
     the contents silently used to drop the list along with them, leaving the
     agent told its files were pre-collected and shown none of them.
     """
     parts: list[str] = []
+    contents = files.included if files is not None else data.file_contents
     files_to_include = [
-        p for p in (file_filter or data.file_contents.keys())
-        if p in data.file_contents
+        p for p in (file_filter or contents.keys())
+        if p in contents
     ]
-    if files_to_include and not skip_contents:
+    if files_to_include:
         parts += ["", "### Changed file contents"]
         for path in files_to_include:
             perms = data.file_permissions.get(path, "?")
             parts.append(f"\n<file path=\"{path}\" permissions=\"{perms}\">")
-            parts.append(data.file_contents[path])
+            parts.append(contents[path])
             parts.append("</file>")
 
     omitted = data.omitted_files
     if file_filter:
         omitted = [p for p in omitted if p in set(file_filter)]
-    if skip_contents:
-        omitted = files_to_include + [p for p in omitted if p not in data.file_contents]
+    if files is not None:
+        omitted = files.omitted + [p for p in omitted if p not in data.file_contents]
     if omitted:
         parts += ["", "### Files not pre-collected (read directly)"]
         for path in omitted:
@@ -614,16 +608,18 @@ def build_project_context(
 def format_preflight_data(
     data: PreflightData,
     file_filter: list[str] | None = None,
-    skip_file_contents: bool = False,
+    files: FileFit | None = None,
     skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
 ) -> str:
     """The "Pre-collected data" block a phase's prompt carries.
 
-    ``file_filter`` scopes the diff and the file contents to one group's files.
-    ``skip_file_contents`` and ``skip_project_context`` are the budget's levers,
-    and ``max_diff_bytes`` caps the diff itself — whatever each drops is named
-    in the block rather than left out of it.
+    ``file_filter`` scopes the diff and the file contents to one group's
+    files. ``files`` is the budget's fit — `None` inlines everything
+    ``file_filter`` admits, and a fit inlines only what it kept and names what
+    it dropped. ``skip_project_context`` is the budget's other lever, and
+    ``max_diff_bytes`` caps the diff itself — whatever each drops is named in
+    the block rather than left out of it.
     """
     parts = [
         "## Pre-collected data",
@@ -643,9 +639,7 @@ def format_preflight_data(
     if data.commit_log:
         parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
 
-    parts += _format_file_contents(
-        data, file_filter, skip_contents=skip_file_contents,
-    )
+    parts += _format_file_contents(data, file_filter, files=files)
 
     if diff_omitted:
         parts += ["", "### Diffs not pre-collected (use `git diff -- <path>` or Read tool)"]

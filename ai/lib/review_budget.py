@@ -14,6 +14,10 @@ budgets retries, not bytes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from review_grouping import classify_tier
+
 # ── Byte budgets ──────────────────────────────────────────────────────────────
 
 MAX_PROMPT_TOKENS = 120_000
@@ -62,3 +66,55 @@ MAX_DELTA_LIST_ENTRIES = 200
 # at that point and the full diff — which covers the same files from the base —
 # is what the agent reviews from.
 MIN_DELTA_DIFF_BYTES = 2_048
+
+
+# ── File fitting ─────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class FileFit:
+    """Which pre-collected files fit under a ceiling, and which did not.
+
+    `included` and `permissions` are keyed the same way — a path present in
+    one is present in the other. `omitted` is every path `fit_files` ranked
+    below the ceiling; a caller names those paths to whoever reads the prompt
+    rather than letting them go missing silently.
+    """
+
+    included: dict[str, str]
+    permissions: dict[str, str]
+    omitted: list[str]
+
+    @property
+    def any_included(self) -> bool:
+        """Whether the fit kept at least one file."""
+        return bool(self.included)
+
+
+def fit_files(
+    contents: dict[str, str],
+    permissions: dict[str, str],
+    ceiling: int,
+) -> FileFit:
+    """The files from `contents` that fit in `ceiling` bytes, cheapest useful first.
+
+    `contents` is every candidate file's text, keyed by path. `permissions` is
+    the per-path mode string a caller read for each of them, carried alongside
+    so it never has to be re-associated with whatever subset makes the cut.
+    `ceiling` is the total bytes the kept files may spend together.
+
+    Ranked by `(classify_tier, size)` — the cheapest useful file first — so a
+    ceiling too low for everything still buys the files most worth having.
+    """
+    sizes = {p: len(c.encode()) for p, c in contents.items()}
+    included: dict[str, str] = {}
+    included_perms: dict[str, str] = {}
+    omitted: list[str] = []
+    remaining = max(0, ceiling)
+    for path in sorted(contents, key=lambda p: (classify_tier(p), sizes[p])):
+        if sizes[path] <= remaining:
+            included[path] = contents[path]
+            included_perms[path] = permissions.get(path, "")
+            remaining -= sizes[path]
+        else:
+            omitted.append(path)
+    return FileFit(included, included_perms, omitted)

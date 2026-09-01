@@ -295,7 +295,8 @@ class TestFormatPreflightData:
             architecture_md="",
             omitted_files=["bar.go"],
         )
-        result = rc.format_preflight_data(data, skip_file_contents=True)
+        dropped_all = review_budget.fit_files(data.file_contents, data.file_permissions, 0)
+        result = rc.format_preflight_data(data, files=dropped_all)
         assert "```diff" in result
         assert "abc123 fix bug" in result
         assert "# Project" in result

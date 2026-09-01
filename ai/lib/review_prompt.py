@@ -43,8 +43,9 @@ from agent_templates import build_output_block, build_worktree_block
 from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from pr_domains import ReviewVerdict
 from review_budget import (
-    MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MAX_REVIEW_BODY_LEN,
+    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MAX_REVIEW_BODY_LEN,
     MIN_DELTA_DIFF_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
+    fit_files,
 )
 from review_collect import (
     build_project_context, format_preflight_data, scope_diff, truncate_diff,
@@ -273,27 +274,33 @@ def _build_reply_threads_section(
 
 def _build_env_section(
     wt_path: str, preflight: PreflightData | None = None,
-    skip_file_contents: bool = False,
+    files: FileFit | None = None,
 ) -> str:
     """Where the branch is checked out, and how much of it the prompt carries.
 
-    ``skip_file_contents`` is the budget's first lever having fired: the diffs
-    are still inlined but no file contents are, so every changed file is one
-    the agent has to open. Telling it otherwise is worse than telling it
-    nothing — an agent that reads "file contents are in the Pre-collected data
-    section" does not go looking for the ones that are not.
+    ``files`` is the budget's fit, if one ran. A fit that dropped every file
+    is the budget's first lever having fired all the way: the diffs are still
+    inlined but no file contents are, so every changed file is one the agent
+    has to open. Telling it otherwise is worse than telling it nothing — an
+    agent that reads "file contents are in the Pre-collected data section"
+    does not go looking for the ones that are not. A fit that dropped only
+    some files, or a preflight with files never collected at all, takes the
+    middle wording instead — the two are indistinguishable to the agent, which
+    reads "Files not pre-collected" either way.
     """
-    if preflight and skip_file_contents:
+    dropped_everything = files is not None and not files.any_included
+    if preflight and dropped_everything:
         return f"""
 ## Environment
 PR branch checked out at: {wt_path}
 Diffs are pre-collected; file contents are not. Read every file listed under "Files not pre-collected" directly from this path."""
-    if preflight and not preflight.omitted_files:
+    has_omissions = bool(preflight and preflight.omitted_files) or bool(files and files.omitted)
+    if preflight and not has_omissions:
         return f"""
 ## Environment
 PR branch checked out at: {wt_path}
 File contents and diffs are in the Pre-collected data section. Use Read/Bash only for files NOT in the PR (callers, tests, cross-references)."""
-    if preflight and preflight.omitted_files:
+    if preflight and has_omissions:
         return f"""
 ## Environment
 PR branch checked out at: {wt_path}
@@ -306,21 +313,23 @@ Read source files directly from this path. Do NOT fetch files via the GitHub API
 
 def _build_omitted_guidance(
     preflight: "PreflightData | None", skip_omitted: bool = False,
-    skip_file_contents: bool = False,
+    files: FileFit | None = None,
 ) -> str:
     """The sentence that sends the agent to read what the prompt left out.
 
-    ``skip_file_contents`` fills the "Files not pre-collected" list with every
-    changed file rather than only the oversized ones, so the batch read is owed
-    even when ``omitted_files`` is empty. ``skip_omitted`` is the opposite case
-    and suppresses the read, but only while the contents are still in the
-    prompt: at an effort level that does not review the large files, naming
-    them invites work the run has declined — whereas a file the *budget* took
-    out is one the phase does review and now has nowhere else to get.
+    ``files`` is the budget's fit, if one ran; a fit that dropped any file
+    adds those paths to the "Files not pre-collected" list, so the batch read
+    is owed even when ``preflight.omitted_files`` is empty. ``skip_omitted`` is
+    the opposite case and suppresses the read, but only while the budget kept
+    every file it fit: at an effort level that does not review the large
+    files, naming them invites work the run has declined — whereas a file the
+    *budget* took out is one the phase does review and now has nowhere else to
+    get.
     """
-    if not preflight or not (preflight.omitted_files or skip_file_contents):
+    dropped_any = bool(files and files.omitted)
+    if not preflight or not (preflight.omitted_files or dropped_any):
         return ""
-    if skip_omitted and not skip_file_contents:
+    if skip_omitted and not dropped_any:
         return " Some large files were excluded — they are not reviewed at this effort level."
     return (
         ' First, read all files listed under "Files not pre-collected"'
@@ -800,20 +809,20 @@ class PromptBuilder:
         self.set("delta_section", plan.delta_section)
         self.set("preflight_data", _build_preflight_section(
             job, file_filter=file_filter,
-            skip_file_contents=plan.skip_file_contents,
+            files=plan.files,
             skip_project_context=skip_project_context,
             max_diff_bytes=plan.diff_bytes,
         ))
         if "env_section" in self._vars:
             self.set("env_section", _build_env_section(
                 job.wt_path, preflight=job.preflight,
-                skip_file_contents=plan.skip_file_contents,
+                files=plan.files,
             ))
         if "omitted_guidance" in self._vars:
             self.set("omitted_guidance", _build_omitted_guidance(
                 job.preflight,
                 skip_omitted=EFFORT_PRESETS[job.effort].skip_omitted_files,
-                skip_file_contents=plan.skip_file_contents,
+                files=plan.files,
             ))
         return self
 
@@ -829,7 +838,7 @@ class PromptBuilder:
 
 def _build_preflight_section(
     job: ReviewJob, file_filter: list[str] | None = None,
-    skip_file_contents: bool = False,
+    files: FileFit | None = None,
     skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
 ) -> str:
@@ -837,7 +846,7 @@ def _build_preflight_section(
         return ""
     return format_preflight_data(
         job.preflight, file_filter=file_filter,
-        skip_file_contents=skip_file_contents,
+        files=files,
         skip_project_context=skip_project_context,
         max_diff_bytes=max_diff_bytes,
     )
@@ -872,11 +881,16 @@ class Cut:
     freed_bytes: int = 0
     shortfall_bytes: int = 0
     floor_bytes: int = 0
+    dropped_files: int = 0
 
     def describe(self) -> str:
         """How the cut reads in the prompt's size log."""
         if self.lever is BudgetLever.FILE_CONTENTS:
-            return f"{self.freed_bytes // 1024}KB of pre-collected file contents"
+            plural = "" if self.dropped_files == 1 else "s"
+            return (
+                f"{self.freed_bytes // 1024}KB of pre-collected file contents "
+                f"({self.dropped_files} file{plural})"
+            )
         if self.lever is BudgetLever.DELTA:
             return f"{self.freed_bytes // 1024}KB of incremental delta"
         still_over = f"{self.shortfall_bytes // 1024}KB still over"
@@ -890,15 +904,16 @@ class BudgetPlan:
     """How much of the prompt each variable-size section gets, and what was cut.
 
     `delta_section` is the rendered incremental context, already shrunk;
-    `diff_bytes` is the cap the full diff is truncated to; `skip_file_contents`
-    says whether the pre-collected contents survived. `cuts` holds one `Cut` per
-    lever the ladder had to pull, in the order it pulled them, and is empty on
-    the ordinary path where everything fit.
+    `diff_bytes` is the cap the full diff is truncated to; `files` is the
+    budget's fit over the pre-collected file contents — which ones survived
+    and which were dropped for room. `cuts` holds one `Cut` per lever the
+    ladder had to pull, in the order it pulled them, and is empty on the
+    ordinary path where everything fit.
     """
 
     delta_section: str
     diff_bytes: int
-    skip_file_contents: bool
+    files: FileFit
     cuts: tuple[Cut, ...]
 
 
@@ -925,6 +940,19 @@ def _file_contents_bytes(
     )
 
 
+def _scoped_contents(
+    pf: PreflightData | None, file_filter: list[str] | None,
+) -> dict[str, str]:
+    """The pre-collected file contents `file_filter` admits, or none without a preflight."""
+    if not pf:
+        return {}
+    filter_set = set(file_filter) if file_filter else None
+    return {
+        k: v for k, v in pf.file_contents.items()
+        if filter_set is None or k in filter_set
+    }
+
+
 def _fit_budget(
     job: ReviewJob,
     known_sections: dict[str, object],
@@ -936,11 +964,14 @@ def _fit_budget(
     """Fit the variable sections into what `known_sections` leaves of the budget.
 
     Three levers, pulled in this order and only as far as the shortfall
-    requires: drop the pre-collected file contents, shrink the incremental
-    delta, then floor the full diff at `min_diff`. Contents go first because
-    they are the only section the agent can recover on its own — the worktree
-    is checked out and `fit` rewrites the environment section to send it there
-    — while a diff it is not shown is a change it does not know happened.
+    requires: keep only the pre-collected file contents that still fit, shrink
+    the incremental delta, then floor the full diff at `min_diff`. Contents go
+    first because they are the only section the agent can recover on its own
+    — the worktree is checked out and `fit` rewrites the environment section
+    to send it there — while a diff it is not shown is a change it does not
+    know happened. The first lever ranks what it keeps by `(classify_tier,
+    size)` rather than dropping the whole collection, so a ceiling too low for
+    everything still buys the files most worth having.
 
     Pulling every lever is not a guarantee of fitting: the fixed overhead alone
     can exceed the budget. The plan then reports the cuts it made and
@@ -954,12 +985,21 @@ def _fit_budget(
     )
     fixed = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + _fixed_preflight_bytes(job.preflight)
     contents = 0 if skip_file_contents else _file_contents_bytes(job.preflight, file_filter)
+    scoped = {} if skip_file_contents else _scoped_contents(job.preflight, file_filter)
+    files = FileFit(scoped, job.preflight.file_permissions if job.preflight else {}, [])
     delta = _build_delta_section(job.preflight, file_filter=file_filter)
     cuts: list[Cut] = []
 
     if contents and fixed + contents + len(delta.encode()) + min_diff > MAX_PROMPT_BYTES:
-        cuts.append(Cut(BudgetLever.FILE_CONTENTS, freed_bytes=contents))
-        skip_file_contents, contents = True, 0
+        room = max(0, MAX_PROMPT_BYTES - fixed - len(delta.encode()) - min_diff)
+        files = fit_files(scoped, files.permissions, room)
+        kept = sum(len(v.encode()) for v in files.included.values())
+        cuts.append(Cut(
+            BudgetLever.FILE_CONTENTS,
+            freed_bytes=contents - kept,
+            dropped_files=len(files.omitted),
+        ))
+        contents = kept
 
     delta_room = max(0, MAX_PROMPT_BYTES - fixed - contents - min_diff)
     if len(delta.encode()) > delta_room:
@@ -987,7 +1027,7 @@ def _fit_budget(
     return BudgetPlan(
         delta_section=delta,
         diff_bytes=diff_bytes,
-        skip_file_contents=skip_file_contents,
+        files=files,
         cuts=tuple(cuts),
     )
 

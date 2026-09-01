@@ -12,7 +12,9 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_budget import MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES
+from review_budget import (
+    MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, fit_files,
+)
 from review_collect import format_preflight_data
 from review_types import (
     FindingRef, PRContext, PreflightData, PriorDisposition, PriorFinding,
@@ -248,11 +250,12 @@ def _make_job(preflight=None, mode=Mode.PR):
 
 class TestFitBudget:
     def test_returns_remaining_when_within_budget(self):
-        job = _make_job(_make_preflight(claude_md="", architecture_md=""))
+        pf = _make_preflight(claude_md="", architecture_md="")
+        job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"})
         assert plan.diff_bytes > MIN_DIFF_BYTES
         assert plan.cuts == ()
-        assert not plan.skip_file_contents
+        assert plan.files.included == pf.file_contents
 
     def test_clamps_to_min_diff_by_default(self):
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
@@ -292,10 +295,10 @@ class TestFitBudget:
         pf = _make_preflight(file_contents={"gen.pb.go": "y" * 400_000})
         job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"}, file_filter=["gen.pb.go"])
-        assert plan.skip_file_contents
+        assert not plan.files.any_included
         assert plan.cuts[0].lever is BudgetLever.FILE_CONTENTS
         assert plan.cuts[0].freed_bytes == 400_000
-        assert plan.cuts[0].describe() == "390KB of pre-collected file contents"
+        assert plan.cuts[0].describe() == "390KB of pre-collected file contents (1 file)"
 
     def test_the_delta_is_cut_before_the_diff_is_floored(self):
         pf = _make_preflight(
@@ -315,6 +318,63 @@ class TestFitBudget:
             len(plan.delta_section.encode()) + plan.diff_bytes
             <= MAX_PROMPT_BYTES
         )
+
+
+class TestBudgetKeepsTheFilesItCanAfford:
+    """An over-ceiling prompt drops the lowest-ranked files, not all of them.
+
+    The collector already ranked the files by tier and size and kept what fit.
+    When the prompt went over anyway, the ladder threw the whole collection
+    away — including the files there was still room for — so a large PR was
+    reviewed with no file contents at all rather than with most of them.
+    """
+
+    def test_a_partial_drop_keeps_what_still_fits(self):
+        # One file that cannot fit beside the others, and two small ones that can.
+        pf = _make_preflight(file_contents={
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "small_a.py": "y" * 1_000,
+            "small_b.py": "z" * 1_000,
+        })
+        plan = _fit_budget(_make_job(pf), {"header": "small"})
+
+        assert plan.files.included, "the ladder dropped every file"
+        assert "huge.py" in plan.files.omitted
+        assert set(plan.files.included) == {"small_a.py", "small_b.py"}
+
+    def test_the_cut_counts_the_files_it_dropped(self):
+        pf = _make_preflight(file_contents={
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "small_a.py": "y" * 1_000,
+        })
+        plan = _fit_budget(_make_job(pf), {"header": "small"})
+
+        cut = next(c for c in plan.cuts if c.lever is BudgetLever.FILE_CONTENTS)
+        assert cut.dropped_files == 1
+        assert "1 file" in cut.describe()
+
+    def test_a_dropped_file_is_named_to_the_agent(self):
+        """A file the budget drops joins the list the prompt tells the agent to read.
+
+        Dropping contents without naming them leaves the agent told its files
+        are in the prompt and shown neither them nor their names.
+        """
+        pf = _make_preflight(file_contents={
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "small_a.py": "y" * 1_000,
+        })
+        plan = _fit_budget(_make_job(pf), {"header": "small"})
+
+        text = format_preflight_data(pf, files=plan.files)
+        assert "- huge.py" in text
+        assert "Files not pre-collected" in text
+
+    def test_nothing_fitting_is_still_a_clean_drop(self):
+        pf = _make_preflight(file_contents={"huge.py": "x" * (MAX_PROMPT_BYTES * 2)})
+        plan = _fit_budget(_make_job(pf), {"header": "small"})
+
+        assert plan.files.included == {}
+        assert not plan.files.any_included
 
 
 class TestCutSurvivesTheJournal:
@@ -340,6 +400,7 @@ class TestCutSurvivesTheJournal:
             "freed_bytes": 400_000,
             "shortfall_bytes": 0,
             "floor_bytes": 0,
+            "dropped_files": 0,
         }
 
 
@@ -357,7 +418,8 @@ class TestDroppedContentsAreDeclared:
 
     def test_skipping_contents_still_names_the_files(self):
         pf = _make_preflight(file_contents={"a.py": "x", "b.py": "y"})
-        text = format_preflight_data(pf, skip_file_contents=True)
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
+        text = format_preflight_data(pf, files=dropped_all)
         assert "### Changed file contents" not in text
         assert "### Files not pre-collected (read directly)" in text
         assert "- a.py" in text
@@ -365,33 +427,37 @@ class TestDroppedContentsAreDeclared:
 
     def test_skipping_contents_does_not_double_list_omitted_files(self):
         pf = _make_preflight(file_contents={"a.py": "x"}, omitted_files=["big.go"])
-        text = format_preflight_data(pf, skip_file_contents=True)
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
+        text = format_preflight_data(pf, files=dropped_all)
         assert text.count("- big.go") == 1
         assert "- a.py" in text
 
     def test_env_section_sends_the_agent_to_the_worktree(self):
         pf = _make_preflight()
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         kept = _build_env_section("/tmp/w", preflight=pf)
-        dropped = _build_env_section("/tmp/w", preflight=pf, skip_file_contents=True)
+        dropped = _build_env_section("/tmp/w", preflight=pf, files=dropped_all)
         assert "File contents and diffs are in the Pre-collected data section" in kept
         assert "file contents are not" in dropped
         assert "Files not pre-collected" in dropped
 
     def test_omitted_guidance_asks_for_the_batch_read(self):
         pf = _make_preflight(omitted_files=[])
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         assert _build_omitted_guidance(pf) == ""
         assert "Files not pre-collected" in _build_omitted_guidance(
-            pf, skip_file_contents=True,
+            pf, files=dropped_all,
         )
 
     def test_skip_omitted_does_not_silence_dropped_contents(self):
         """The effort preset declines the large files, not every file."""
         pf = _make_preflight(omitted_files=["big.go"])
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         assert "not reviewed at this effort level" in _build_omitted_guidance(
             pf, skip_omitted=True,
         )
         assert "Files not pre-collected" in _build_omitted_guidance(
-            pf, skip_omitted=True, skip_file_contents=True,
+            pf, skip_omitted=True, files=dropped_all,
         )
 
 

@@ -14,7 +14,7 @@ This location is the same regardless of how you installed the workbench (git clo
 | Component | Base | User | Mechanism |
 |-----------|------|------|-----------|
 | Rules | `ai/guidelines/rules/*.md` | `overrides/ai/guidelines/rules/*.md` | Same-name file replaces base |
-| Skills | `ai/skills/<name>/` | `overrides/ai/claude/skills/<name>/` | Same-name directory replaces base |
+| Skills | `ai/skills/<name>/` | `overrides/ai/skills/<name>/` | Same-name directory replaces base |
 | Agents | `ai/claude/agents/*.md` | `overrides/ai/claude/agents/*.md` | Same-name file replaces base |
 | Guidelines | `ai/claude/CLAUDE.md` | `overrides/ai/claude/CLAUDE.md` | Full replacement |
 | Guidelines | `ai/claude/CLAUDE.md` | `overrides/ai/claude/CLAUDE.local.md` | Appended after base |
@@ -27,7 +27,7 @@ For guidelines, replacement (`CLAUDE.md`) takes precedence over append (`CLAUDE.
 Create a `.disabled` sentinel in the user directory to suppress a base item entirely:
 
 ```
-~/.config/workbench/overrides/ai/claude/skills/some-skill.disabled
+~/.config/workbench/overrides/ai/skills/some-skill.disabled
 ~/.config/workbench/overrides/ai/claude/agents/reviewer.disabled
 ~/.config/workbench/overrides/ai/guidelines/rules/security.disabled
 ```
@@ -43,12 +43,12 @@ The sentinel is an empty file — only the name matters.
     │   ├── CLAUDE.md              # full guidelines replacement
     │   ├── CLAUDE.local.md        # guidelines append
     │   ├── settings.json          # settings merge
-    │   ├── agents/
-    │   │   ├── debugger.md        # replaces base debugger agent
-    │   │   └── reviewer.disabled  # suppresses base reviewer agent
-    │   └── skills/
-    │       └── my-skill/          # adds a new skill
-    │           └── skill.md
+    │   └── agents/
+    │       ├── debugger.md        # replaces base debugger agent
+    │       └── reviewer.disabled  # suppresses base reviewer agent
+    ├── skills/
+    │   └── my-skill/              # adds a new skill
+    │       └── skill.md
     └── guidelines/
         └── rules/
             ├── my-rule.md         # adds a new rule

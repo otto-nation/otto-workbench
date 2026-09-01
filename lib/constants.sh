@@ -251,9 +251,11 @@ CLAUDE_TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
 
 # ─── User overrides (hand-authored, so they live under the config root) ──────
 USER_AI_DIR="$WORKBENCH_CONFIG_DIR/overrides/ai"
+# Harness-neutral, matching ai/skills — the layer overrides a tree neither
+# harness owns.
+USER_SKILLS_DIR="$USER_AI_DIR/skills"
 USER_CLAUDE_DIR="$USER_AI_DIR/claude"
 USER_AGENTS_DIR="$USER_CLAUDE_DIR/agents"
-USER_SKILLS_DIR="$USER_CLAUDE_DIR/skills"
 USER_RULES_DIR="$USER_AI_DIR/guidelines/rules"
 USER_GUIDELINES_SRC="$USER_CLAUDE_DIR/CLAUDE.md"
 USER_GUIDELINES_LOCAL="$USER_CLAUDE_DIR/CLAUDE.local.md"

@@ -8,7 +8,7 @@ setup() {
   common_setup
   TEST_HOME="$(mktemp -d)"
   export HOME="$TEST_HOME"
-  SHOULD_RETRO="$REPO_ROOT/ai/claude/skills/retro/should-retro.sh"
+  SHOULD_RETRO="$REPO_ROOT/ai/skills/retro/should-retro.sh"
 }
 
 teardown() {

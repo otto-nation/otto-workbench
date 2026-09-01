@@ -242,15 +242,15 @@ step_claude_container_settings() {
 }
 
 # step_claude_skills — symlinks each skill directory into ~/.claude/skills/.
-# Supports user overrides: user/ai/claude/skills/<name>/ replaces the default,
-# user/ai/claude/skills/<name>.disabled suppresses it entirely.
+# Supports user overrides: user/ai/skills/<name>/ replaces the default,
+# user/ai/skills/<name>.disabled suppresses it entirely.
 step_claude_skills() {
-  [[ -d "$CLAUDE_SKILLS_SRC_DIR" ]] || { warn "No skills found in $CLAUDE_SKILLS_SRC_DIR — skipping"; return; }
+  [[ -d "$SKILLS_SRC_DIR" ]] || { warn "No skills found in $SKILLS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_SKILLS_DIR"
   [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Installing Claude Code skills to $CLAUDE_SKILLS_DIR/" || true
 
   local -A layers
-  resolve_layers "$CLAUDE_SKILLS_SRC_DIR" "$USER_SKILLS_DIR" "*/" layers
+  resolve_layers "$SKILLS_SRC_DIR" "$USER_SKILLS_DIR" "*/" layers
 
   # Prune skills in target that are no longer in either layer
   local item target
@@ -483,7 +483,7 @@ _export_claude_config() {
 
   # Skills: copy directories, filtered by profile
   local skill skill_name
-  for skill in "$CLAUDE_SKILLS_SRC_DIR"/*/; do
+  for skill in "$SKILLS_SRC_DIR"/*/; do
     [[ -d "$skill" ]] || continue
     skill_name=$(basename "$skill")
     if _profile_excludes_skill "$profile" "$skill_name"; then

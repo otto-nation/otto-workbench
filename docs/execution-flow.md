@@ -154,7 +154,7 @@ These files are derived from source data and must never be edited directly. Edit
 | `docs/getting-started.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/getting-started.src.md` + `setup.conf` post-install notes |
 | `docs/libraries.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/libraries.src.md` + the `lib/*.sh` module headers |
 | `docs/ai-libraries.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/ai-libraries.src.md` + the `ai/lib/*.py` module docstrings |
-| `.claude/anatomy.md` | [`generate-anatomy.sh`](../ai/claude/skills/anatomy/generate-anatomy.sh) | `git ls-files` |
+| `.claude/anatomy.md` | [`generate-anatomy.sh`](../ai/skills/anatomy/generate-anatomy.sh) | `git ls-files` |
 | [`config.schema.json`](../config.schema.json) | [`generate-config-schema`](../bin/local/generate-config-schema) | [`ai/lib/workbench_config.py`](../ai/lib/workbench_config.py) |
 
 A composed doc names the generators it wants; nothing maps a doc to a generator centrally. `docs/libraries.md` reaches three that way: [`generate-doc-reference`](../bin/local/generate-doc-reference) for the module sections, and — from inside a module header, since compose-docs expands what a generator prints — [`generate-doc-reference --roots-table`](../lib/roots.sh) and [`generate-config-schema --emit config-reference`](../lib/config.sh).

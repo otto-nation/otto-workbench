@@ -154,7 +154,7 @@ _build_tarball() {
 
 @test "_export_claude_config: total skill count matches source minus excluded" {
   local src_count excluded_count dest_count expected
-  src_count=$(find "$REPO_ROOT/ai/claude/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+  src_count=$(find "$REPO_ROOT/ai/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
   excluded_count=$(yq '.profiles.server.exclude.skills | length' "$REPO_ROOT/ai/profiles.yml")
   dest_count=$(find "$EXPORT_DIR/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
   expected=$((src_count - excluded_count))

@@ -7,7 +7,7 @@
 #   - SKILL.md has YAML frontmatter (opening and closing ---)
 #   - Required fields: name, description, source, trigger
 #   - name matches the skill directory name
-#   - source matches otto-workbench/ai/claude/skills/<name>/SKILL.md
+#   - source matches otto-workbench/ai/skills/<name>/SKILL.md
 #   - lifecycle_cadence and lifecycle_scope must appear together
 #   - lifecycle_scope is one of: per-project, global
 #
@@ -91,7 +91,7 @@ _validate_output_schema() {
   fi
 }
 
-SKILLS_DIR="$CLAUDE_SKILLS_SRC_DIR"
+SKILLS_DIR="$SKILLS_SRC_DIR"
 
 for skill_dir in "$SKILLS_DIR"/*/; do
   [[ -d "$skill_dir" ]] || continue
@@ -159,7 +159,7 @@ for skill_dir in "$SKILLS_DIR"/*/; do
 
   # source must match expected path
   if [[ -n "$local_source" ]]; then
-    expected_source="otto-workbench/ai/claude/skills/$dir_name/SKILL.md"
+    expected_source="otto-workbench/ai/skills/$dir_name/SKILL.md"
     [[ "$local_source" == "$expected_source" ]] \
       && _pass "$display: source path valid" \
       || _fail "$display: source '$local_source' does not match expected '$expected_source'"

@@ -8,7 +8,7 @@ setup() {
   common_setup
   export NO_COLOR=1
 
-  SCRIPT="$REPO_ROOT/ai/claude/skills/ceiling-debt/generate-ceiling-debt.sh"
+  SCRIPT="$REPO_ROOT/ai/skills/ceiling-debt/generate-ceiling-debt.sh"
   # Physical path: on macOS mktemp hands back /var/..., git reports the
   # /private/var/... it resolves to, and every path comparison below would fail.
   TMPDIR="$(cd "$(mktemp -d)" && pwd -P)"

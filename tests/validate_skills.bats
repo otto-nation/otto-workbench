@@ -8,7 +8,7 @@ setup() {
   VALIDATE_SKILLS="$REPO_ROOT/bin/local/validate-skills"
 
   FAKE_WORKBENCH="$TMPDIR/workbench"
-  mkdir -p "$FAKE_WORKBENCH/ai/claude/skills"
+  mkdir -p "$FAKE_WORKBENCH/ai/skills"
 }
 
 teardown() {
@@ -22,14 +22,14 @@ _make_skill() {
   local cadence="${2:-}"
   local scope="${3:-}"
   local trigger="${4:-Use when testing}"
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/$name"
+  local dir="$FAKE_WORKBENCH/ai/skills/$name"
   mkdir -p "$dir"
 
   {
     echo "---"
     echo "name: $name"
     echo "description: \"Test skill description.\""
-    echo "source: otto-workbench/ai/claude/skills/$name/SKILL.md"
+    echo "source: otto-workbench/ai/skills/$name/SKILL.md"
     echo "invocation: \"/$name\""
     echo "trigger: \"$trigger\""
     [[ -n "$cadence" ]] && echo "lifecycle_cadence: \"$cadence\""
@@ -93,7 +93,7 @@ _run_validate() {
 # ── Missing frontmatter ─────────────────────────────────────────────────────
 
 @test "missing frontmatter fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/bad-skill"
+  local dir="$FAKE_WORKBENCH/ai/skills/bad-skill"
   mkdir -p "$dir"
   echo "# No frontmatter" > "$dir/SKILL.md"
   _run_validate
@@ -102,7 +102,7 @@ _run_validate() {
 }
 
 @test "unclosed frontmatter fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/bad-skill"
+  local dir="$FAKE_WORKBENCH/ai/skills/bad-skill"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
@@ -117,12 +117,12 @@ EOF
 # ── Missing required fields ──────────────────────────────────────────────────
 
 @test "missing name field fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-name"
+  local dir="$FAKE_WORKBENCH/ai/skills/no-name"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 description: "Has description"
-source: otto-workbench/ai/claude/skills/no-name/SKILL.md
+source: otto-workbench/ai/skills/no-name/SKILL.md
 ---
 EOF
   _run_validate
@@ -131,12 +131,12 @@ EOF
 }
 
 @test "missing description field fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-desc"
+  local dir="$FAKE_WORKBENCH/ai/skills/no-desc"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: no-desc
-source: otto-workbench/ai/claude/skills/no-desc/SKILL.md
+source: otto-workbench/ai/skills/no-desc/SKILL.md
 ---
 EOF
   _run_validate
@@ -145,13 +145,13 @@ EOF
 }
 
 @test "missing invocation field fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-invoc"
+  local dir="$FAKE_WORKBENCH/ai/skills/no-invoc"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: no-invoc
 description: "Has description"
-source: otto-workbench/ai/claude/skills/no-invoc/SKILL.md
+source: otto-workbench/ai/skills/no-invoc/SKILL.md
 ---
 EOF
   _run_validate
@@ -160,7 +160,7 @@ EOF
 }
 
 @test "missing source field fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-source"
+  local dir="$FAKE_WORKBENCH/ai/skills/no-source"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
@@ -174,13 +174,13 @@ EOF
 }
 
 @test "missing trigger field fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-trigger"
+  local dir="$FAKE_WORKBENCH/ai/skills/no-trigger"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: no-trigger
 description: "Has description"
-source: otto-workbench/ai/claude/skills/no-trigger/SKILL.md
+source: otto-workbench/ai/skills/no-trigger/SKILL.md
 invocation: "/no-trigger"
 ---
 EOF
@@ -190,13 +190,13 @@ EOF
 }
 
 @test "valid skill with trigger and skip passes" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/full-skill"
+  local dir="$FAKE_WORKBENCH/ai/skills/full-skill"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: full-skill
 description: "A complete skill"
-source: otto-workbench/ai/claude/skills/full-skill/SKILL.md
+source: otto-workbench/ai/skills/full-skill/SKILL.md
 invocation: "/full-skill"
 trigger: "Use when the user asks for full skill functionality"
 skip: "Do not use for partial operations"
@@ -208,13 +208,13 @@ EOF
 }
 
 @test "skill without skip field passes" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/no-skip"
+  local dir="$FAKE_WORKBENCH/ai/skills/no-skip"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: no-skip
 description: "Has trigger but no skip"
-source: otto-workbench/ai/claude/skills/no-skip/SKILL.md
+source: otto-workbench/ai/skills/no-skip/SKILL.md
 invocation: "/no-skip"
 trigger: "Use when testing skip optionality"
 ---
@@ -226,13 +226,13 @@ EOF
 # ── Name mismatch ────────────────────────────────────────────────────────────
 
 @test "name not matching directory fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/actual-dir"
+  local dir="$FAKE_WORKBENCH/ai/skills/actual-dir"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: wrong-name
 description: "Test"
-source: otto-workbench/ai/claude/skills/actual-dir/SKILL.md
+source: otto-workbench/ai/skills/actual-dir/SKILL.md
 ---
 EOF
   _run_validate
@@ -243,7 +243,7 @@ EOF
 # ── Source mismatch ──────────────────────────────────────────────────────────
 
 @test "source not matching expected path fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/my-skill"
+  local dir="$FAKE_WORKBENCH/ai/skills/my-skill"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
@@ -260,13 +260,13 @@ EOF
 # ── Lifecycle field pairing ──────────────────────────────────────────────────
 
 @test "lifecycle_cadence without lifecycle_scope fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/unpaired"
+  local dir="$FAKE_WORKBENCH/ai/skills/unpaired"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: unpaired
 description: "Test"
-source: otto-workbench/ai/claude/skills/unpaired/SKILL.md
+source: otto-workbench/ai/skills/unpaired/SKILL.md
 lifecycle_cadence: "24h"
 ---
 EOF
@@ -276,13 +276,13 @@ EOF
 }
 
 @test "lifecycle_scope without lifecycle_cadence fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/unpaired"
+  local dir="$FAKE_WORKBENCH/ai/skills/unpaired"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: unpaired
 description: "Test"
-source: otto-workbench/ai/claude/skills/unpaired/SKILL.md
+source: otto-workbench/ai/skills/unpaired/SKILL.md
 lifecycle_scope: per-project
 ---
 EOF
@@ -292,13 +292,13 @@ EOF
 }
 
 @test "invalid lifecycle_scope value fails" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/bad-scope"
+  local dir="$FAKE_WORKBENCH/ai/skills/bad-scope"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: bad-scope
 description: "Test"
-source: otto-workbench/ai/claude/skills/bad-scope/SKILL.md
+source: otto-workbench/ai/skills/bad-scope/SKILL.md
 lifecycle_cadence: "24h"
 lifecycle_scope: invalid
 ---
@@ -319,7 +319,7 @@ EOF
 }
 
 @test "--quiet with failure exits 1 and shows summary" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/bad-skill"
+  local dir="$FAKE_WORKBENCH/ai/skills/bad-skill"
   mkdir -p "$dir"
   echo "# No frontmatter" > "$dir/SKILL.md"
   _run_validate --quiet
@@ -332,13 +332,13 @@ EOF
 # ── Single-quoted values ─────────────────────────────────────────────────────
 
 @test "single-quoted field values are stripped correctly" {
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/quoted"
+  local dir="$FAKE_WORKBENCH/ai/skills/quoted"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<'EOF'
 ---
 name: 'quoted'
 description: 'A skill with single-quoted values'
-source: 'otto-workbench/ai/claude/skills/quoted/SKILL.md'
+source: 'otto-workbench/ai/skills/quoted/SKILL.md'
 invocation: '/quoted'
 trigger: 'Use when testing quote handling'
 ---
@@ -351,7 +351,7 @@ EOF
 # ── Missing SKILL.md ─────────────────────────────────────────────────────────
 
 @test "skill directory without SKILL.md fails" {
-  mkdir -p "$FAKE_WORKBENCH/ai/claude/skills/empty-skill"
+  mkdir -p "$FAKE_WORKBENCH/ai/skills/empty-skill"
   _run_validate
   [ "$status" -eq 1 ]
   [[ "$output" == *"missing SKILL.md"* ]]
@@ -371,13 +371,13 @@ _make_tool() {
 # Helper: create a SKILL.md declaring an output_schema tool
 _make_skill_with_tool() {
   local name="$1" tool="$2"
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/$name"
+  local dir="$FAKE_WORKBENCH/ai/skills/$name"
   mkdir -p "$dir"
   cat > "$dir/SKILL.md" <<EOF
 ---
 name: $name
 description: "Test skill description."
-source: otto-workbench/ai/claude/skills/$name/SKILL.md
+source: otto-workbench/ai/skills/$name/SKILL.md
 invocation: "/$name"
 trigger: "Use when testing output_schema"
 output_schema:
@@ -422,7 +422,7 @@ EOF
 
 @test "mixed valid and invalid reports correct error count" {
   _make_skill "good-skill"
-  local dir="$FAKE_WORKBENCH/ai/claude/skills/bad-skill"
+  local dir="$FAKE_WORKBENCH/ai/skills/bad-skill"
   mkdir -p "$dir"
   echo "# No frontmatter" > "$dir/SKILL.md"
   _run_validate

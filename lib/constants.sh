@@ -228,6 +228,10 @@ ZSH_SNIPPET_GLOB="*.zsh"
 
 # ─── Workbench source — AI ────────────────────────────────────────────────────
 AI_SRC_DIR="$WORKBENCH_DIR/ai"
+# Canonical skills, installed into both harnesses' discovery roots by
+# ai/skills/steps.sh. Harness-neutral: the Agent Skills standard is the format
+# and neither Claude Code nor Pi needs a translated copy.
+SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/skills"
 GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
 RULES_GLOB="*.md"
 
@@ -242,7 +246,6 @@ CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
 CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
 CLAUDE_SETTINGS_SRC="$WORKBENCH_DIR/ai/claude/settings.json"
 CLAUDE_SYNC_SETTINGS_JQ="$WORKBENCH_DIR/ai/claude/sync-settings.jq"
-CLAUDE_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/skills"
 CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
 CLAUDE_TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
 

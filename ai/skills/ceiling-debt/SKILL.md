@@ -1,7 +1,7 @@
 ---
 name: ceiling-debt
 description: "Scan for ceiling: markers and present the debt ledger. TRIGGER when: user asks about ceilings, deferred simplifications, or technical debt markers. SKIP: general tech debt discussion without ceiling markers."
-source: otto-workbench/ai/claude/skills/ceiling-debt/SKILL.md
+source: otto-workbench/ai/skills/ceiling-debt/SKILL.md
 invocation: "/ceiling-debt"
 trigger: "ceiling debt, show ceilings, what did we defer, list simplifications, ceiling markers"
 skip: "General tech debt discussion, architecture review, non-code requests"

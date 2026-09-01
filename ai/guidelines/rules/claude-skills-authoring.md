@@ -1,7 +1,7 @@
 ---
 paths:
   - "**/SKILL.md"
-  - "ai/claude/skills/**"
+  - "ai/skills/**"
   - "ai/claude/bin/**"
 ---
 

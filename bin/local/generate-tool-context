@@ -276,7 +276,7 @@ _emit_ai_installs() {
   local claude_home="~${CLAUDE_DIR#"$HOME"}"
   local claude_rules="~${CLAUDE_RULES_DIR#"$HOME"}"
   # Source dirs within the repo
-  local claude_skills_src="$AI_DIR/claude/skills"
+  local skills_src="$AI_DIR/skills"
   local claude_agents_src="$AI_DIR/claude/agents"
   local claude_mcps_src="$AI_DIR/claude/mcps"
 
@@ -290,7 +290,7 @@ _emit_ai_installs() {
 
   # Skills summary with link to the full Skill Reference section
   local skill_names=()
-  for d in "$claude_skills_src"/*/; do
+  for d in "$skills_src"/*/; do
     [[ -d "$d" ]] || continue
     skill_names+=("$(basename "$d")")
   done
@@ -351,11 +351,11 @@ _emit_lifecycle() {
 # _emit_skill_reference — renders the Skill Reference section for ai-automation.md.
 # Reads invocation, description, output, and lifecycle fields from each SKILL.md frontmatter.
 _emit_skill_reference() {
-  local claude_skills_src="$AI_DIR/claude/skills"
+  local skills_src="$AI_DIR/skills"
 
   printf '## Skill Reference\n'
 
-  for d in "$claude_skills_src"/*/; do
+  for d in "$skills_src"/*/; do
     [[ -d "$d" ]] || continue
     local skill_file="$d/SKILL.md"
     [[ -f "$skill_file" ]] || continue

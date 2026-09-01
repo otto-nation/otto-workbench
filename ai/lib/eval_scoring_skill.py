@@ -12,7 +12,7 @@ the live `SKILL.md` body as the prompt, and scores what the session ran:
 all. Any violation drops precision to zero — a constraint is not something you
 get partial credit for breaking.
 
-The SKILL.md is read live from `ai/claude/skills/`, never copied into a case.
+The SKILL.md is read live from `ai/skills/`, never copied into a case.
 The file is the single source of truth; a copy would let the eval keep passing
 against a skill that no longer says what the copy says. That is the point:
 before this, there was no way to tell whether a change to a `SKILL.md` made the
@@ -346,7 +346,7 @@ def write_shims(
 SKILL_MAX_TURNS = 20
 SKILL_MAX_BUDGET = 1.0
 
-_SKILLS_DIR = Path(__file__).resolve().parent.parent / "claude" / "skills"
+_SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 
 _PROMPT = """You are working in a Claude Code session. The repository is at {repo_dir}.
 
@@ -362,7 +362,7 @@ User request: {request}"""
 def skill_body(name: str) -> str:
     """The SKILL.md body for `name`, with its YAML frontmatter stripped.
 
-    Read live from ai/claude/skills/ rather than copied into a case: the file is
+    Read live from ai/skills/ rather than copied into a case: the file is
     the single source of truth, and a copy would let a case keep passing against
     a skill that no longer says what the copy says.
 

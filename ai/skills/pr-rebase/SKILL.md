@@ -1,7 +1,7 @@
 ---
 name: pr-rebase
 description: "AI-assisted rebase onto the branch's base with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead)."
-source: otto-workbench/ai/claude/skills/pr-rebase/SKILL.md
+source: otto-workbench/ai/skills/pr-rebase/SKILL.md
 invocation: "/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]"
 trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead)."

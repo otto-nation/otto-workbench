@@ -8,7 +8,7 @@ setup() {
   common_setup
   TEST_HOME="$(mktemp -d)"
   export HOME="$TEST_HOME"
-  SHOULD_DREAM="$REPO_ROOT/ai/claude/skills/dream/should-dream.sh"
+  SHOULD_DREAM="$REPO_ROOT/ai/skills/dream/should-dream.sh"
 }
 
 teardown() {

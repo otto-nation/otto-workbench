@@ -21,7 +21,7 @@ setup_file() {
   mkdir -p "$BIG_REPO/.claude"
   _make_dirs_in "$BIG_REPO" 60 40
   _init_repo_at "$BIG_REPO"
-  bash "$REPO_ROOT/ai/claude/skills/anatomy/generate-anatomy.sh" "$BIG_REPO" >/dev/null
+  bash "$REPO_ROOT/ai/skills/anatomy/generate-anatomy.sh" "$BIG_REPO" >/dev/null
   BIG_ANATOMY="$BIG_REPO/.claude/anatomy.md"
   export BIG_REPO BIG_ANATOMY
 }
@@ -32,7 +32,7 @@ setup() {
   # shellcheck source=../lib/portable.sh
   source "$REPO_ROOT/lib/portable.sh"
   TMPDIR="$(mktemp -d)"
-  GEN_ANATOMY="$REPO_ROOT/ai/claude/skills/anatomy/generate-anatomy.sh"
+  GEN_ANATOMY="$REPO_ROOT/ai/skills/anatomy/generate-anatomy.sh"
   REPO="$TMPDIR/repo"
   mkdir -p "$REPO/.claude"
 }

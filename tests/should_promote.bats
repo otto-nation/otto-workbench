@@ -8,7 +8,7 @@ setup() {
   common_setup
   TEST_HOME="$(mktemp -d)"
   export HOME="$TEST_HOME"
-  SHOULD_PROMOTE="$REPO_ROOT/ai/claude/skills/promote/should-promote.sh"
+  SHOULD_PROMOTE="$REPO_ROOT/ai/skills/promote/should-promote.sh"
 }
 
 teardown() {

@@ -1,7 +1,7 @@
 ---
 name: architecture
 description: "On-demand architecture.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/architecture.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or architecture.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine)."
-source: otto-workbench/ai/claude/skills/architecture/SKILL.md
+source: otto-workbench/ai/skills/architecture/SKILL.md
 invocation: "/architecture"
 trigger: "Run after discovering wrong-software assumptions, adding a new service or role to a project, when architecture.md last-reviewed date is more than 14 days old, or after discovering container tool constraints."
 skip: "Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead)."
@@ -28,7 +28,7 @@ resolve-worktree
 ```
 
 `architecture.md` is a tracked project file, so it belongs in a working tree. See
-`ai/claude/skills/analyze-project/SKILL.md` step 1a for the full contract behind these
+`ai/skills/analyze-project/SKILL.md` step 1a for the full contract behind these
 two commands — which one wins, what each `resolve-worktree` exit code means, and why
 this never falls back to the current directory. A container holds no work tree, so an
 `architecture.md` written there is covered by no `.gitignore` rule, reaches no review,

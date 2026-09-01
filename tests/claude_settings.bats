@@ -1355,7 +1355,7 @@ _referenced_home_paths() {
   }
 }
 
-@test "every skill script referenced by settings exists in ai/claude/skills" {
+@test "every skill script referenced by settings exists in ai/skills" {
   local path rel missing=()
   while read -r path; do
     case "$path" in
@@ -1363,11 +1363,11 @@ _referenced_home_paths() {
       *) continue ;;
     esac
     rel=${path#'$HOME/.claude/skills/'}
-    [ -f "$REPO_ROOT/ai/claude/skills/$rel" ] || missing+=("$rel")
+    [ -f "$REPO_ROOT/ai/skills/$rel" ] || missing+=("$rel")
   done < <(_referenced_home_paths)
 
   [ ${#missing[@]} -eq 0 ] || {
-    echo "referenced by settings.json but absent from ai/claude/skills: ${missing[*]}"
+    echo "referenced by settings.json but absent from ai/skills: ${missing[*]}"
     return 1
   }
 }

@@ -277,6 +277,23 @@ print(workbench_paths.state_dir() / mod.CONSUMED_REVIEWS_NAME, end='')
   [ "$(resolve_python_retro_consumed)" = "$consumed" ]
 }
 
+# resolve_python_agents_skills — the shared skills root as ai_backend_pi spells
+# it. Two writers: ai/skills/steps.sh installs into the bash constant's path and
+# ai_backend_pi resolves --skill against the Python one, so a drift here is a
+# review agent loading no skill at all while the installer reports success.
+resolve_python_agents_skills() {
+  python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import ai_backend_pi
+print(ai_backend_pi.AGENTS_SKILLS_DIR, end='')
+"
+}
+
+@test "bash and Python agree on the shared skills root" {
+  [ "$(resolve_constants AGENTS_SKILLS_DIR)" = "$(resolve_python_agents_skills)" ]
+}
+
 # ─── Registry root expansion ────────────────────────────────────────────────
 
 @test "install_check_symlink expands the workbench roots" {

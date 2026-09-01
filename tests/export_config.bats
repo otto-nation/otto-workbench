@@ -147,6 +147,15 @@ _build_tarball() {
   [ ! -d "$EXPORT_DIR/skills/machine" ]
 }
 
+# The export copies the source tree verbatim, so an agent-backed skill would
+# ship a body still holding the unresolved AGENT_PROTOCOL_PLACEHOLDER — the
+# splice happens at install, not here. Claude Code already carries the same
+# protocol as agents/reviewer.md, which the export does include.
+@test "_export_claude_config: excludes the agent-backed reviewer skill" {
+  [ ! -d "$EXPORT_DIR/skills/reviewer" ]
+  [ -f "$EXPORT_DIR/agents/reviewer.md" ]
+}
+
 @test "_export_claude_config: includes non-excluded skills" {
   [ -d "$EXPORT_DIR/skills/anatomy" ]
   [ -d "$EXPORT_DIR/skills/pr-comments" ]

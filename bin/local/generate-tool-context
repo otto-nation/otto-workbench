@@ -288,10 +288,17 @@ _emit_ai_installs() {
   # shellcheck disable=SC2016
   printf -- '- `%s/` — language and tool-specific rules (symlinked)\n' "$claude_rules"
 
-  # Skills summary with link to the full Skill Reference section
+  # Skills summary with link to the full Skill Reference section. An
+  # agent-backed skill is left out of this Claude Code list: ai/skills/steps.sh
+  # installs it to Pi's discovery root only, and Claude Code loads the same
+  # protocol from the agent file in the table below — naming it here would
+  # advertise a Claude skill that is never installed.
   local skill_names=()
   for d in "$skills_src"/*/; do
     [[ -d "$d" ]] || continue
+    if [[ -f "$d/SKILL.md" ]] && [[ -n "$(_extract_frontmatter_field "$d/SKILL.md" "agent")" ]]; then
+      continue
+    fi
     skill_names+=("$(basename "$d")")
   done
   if [[ ${#skill_names[@]} -gt 0 ]]; then
@@ -359,6 +366,13 @@ _emit_skill_reference() {
     [[ -d "$d" ]] || continue
     local skill_file="$d/SKILL.md"
     [[ -f "$skill_file" ]] || continue
+    # Agent-backed skills carry no invocation because there is no command to
+    # type: they reach Pi through a review agent's dispatch, and Claude Code
+    # reads the same protocol as an agent. Falling through would document a
+    # `/<name>` slash command that neither harness answers.
+    if [[ -n "$(_extract_frontmatter_field "$skill_file" "agent")" ]]; then
+      continue
+    fi
 
     local skill_name skill_desc invocation output cadence trigger skip output_tool
     skill_name="$(basename "$d")"

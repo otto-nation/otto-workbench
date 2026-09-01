@@ -571,3 +571,59 @@ EOF
   [[ "$output" == *"Unknown option"* ]]
 }
 
+# ─── Skills ──────────────────────────────────────────────────────────────────
+
+# _write_skill NAME [AGENT] — writes a minimal SKILL.md into the fake AI tree.
+_write_skill() {
+  local name="$1" agent="${2:-}"
+  mkdir -p "$AI_DIR/skills/$name"
+  {
+    echo "---"
+    echo "name: $name"
+    echo "description: \"Does $name things.\""
+    [[ -n "$agent" ]] && echo "agent: $agent" || true
+    echo "---"
+    echo ""
+    echo "# $name"
+  } > "$AI_DIR/skills/$name/SKILL.md"
+}
+
+@test "the Claude Code skills list names an ordinary skill" {
+  _write_skill anatomy
+
+  run main --emit ai-installs
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"**Skills:** anatomy"* ]]
+}
+
+# ai/skills/steps.sh installs an agent-backed skill to Pi's discovery root only,
+# so naming it under "Claude Code:" would document a skill that is never there.
+@test "the Claude Code skills list omits an agent-backed skill" {
+  _write_skill anatomy
+  _write_skill reviewer reviewer
+
+  run main --emit ai-installs
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"anatomy"* ]]
+  [[ "$output" != *"reviewer"* ]]
+}
+
+@test "the Skill Reference documents an ordinary skill's invocation" {
+  _write_skill anatomy
+
+  run main --emit skill-reference
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"/anatomy"* ]]
+}
+
+# An agent-backed skill has no invocation field and no command to type — the
+# fallback would advertise a `/reviewer` slash command neither harness answers.
+@test "the Skill Reference omits an agent-backed skill" {
+  _write_skill anatomy
+  _write_skill reviewer reviewer
+
+  run main --emit skill-reference
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"/anatomy"* ]]
+  [[ "$output" != *"reviewer"* ]]
+}

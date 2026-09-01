@@ -102,11 +102,17 @@ _install_agent_skill() {
 
   _clear_skill_entry "$target_dir" || return 0
   mkdir -p "$target_dir"
+
+  # The ownership marker lands before the content, not after. An install
+  # interrupted between the two then leaves a marked, incomplete directory that
+  # the next run clears and rewrites; written last, the same interruption would
+  # leave a real directory with no marker, which _clear_skill_entry classifies
+  # as hand-written forever — warning on every sync and never repairing itself.
+  : > "$target_dir/$SKILL_INSTALL_MARKER"
   awk -v marker="$AGENT_PROTOCOL_PLACEHOLDER_MARKER" \
     'index($0, marker) { exit } { print }' \
     "$source_dir/SKILL.md" > "$target_dir/SKILL.md"
   printf '%s\n' "$body" >> "$target_dir/SKILL.md"
-  : > "$target_dir/$SKILL_INSTALL_MARKER"
 }
 
 # _prune_skills TARGET_DIR LAYERS_VAR — removes the entries in TARGET_DIR that

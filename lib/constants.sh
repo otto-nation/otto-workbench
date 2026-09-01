@@ -183,7 +183,6 @@ PI_HOME="$HOME/.pi"
 PI_AGENT_DIR="$PI_HOME/agent"
 PI_SETTINGS_FILE="$PI_AGENT_DIR/settings.json"
 PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
-PI_SKILLS_DIR="$PI_AGENT_DIR/skills"
 # Pi's own installer, which step_install_pi pipes to bash. It installs the npm
 # package into a managed root under ~/.pi and links the launcher into the first
 # writable PATH directory it recognises — ~/.local/bin here, which the workbench
@@ -249,7 +248,6 @@ CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
 PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
-PI_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/pi/skills"
 SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
 CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"

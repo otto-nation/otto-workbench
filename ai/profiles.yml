@@ -9,3 +9,8 @@ profiles:
         - dream
         - promote
         - machine
+        # Agent-backed: its body is an unresolved AGENT_PROTOCOL_PLACEHOLDER
+        # until ai/skills/steps.sh splices the protocol in at install time, and
+        # the export copies the source tree verbatim. Claude Code reads the same
+        # protocol from agents/reviewer.md, which the export already carries.
+        - reviewer

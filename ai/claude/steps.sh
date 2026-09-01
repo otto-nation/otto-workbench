@@ -241,37 +241,6 @@ step_claude_container_settings() {
   python3 "$LIB_SRC_DIR/permission_mirror.py"
 }
 
-# step_claude_skills — symlinks each skill directory into ~/.claude/skills/.
-# Supports user overrides: user/ai/skills/<name>/ replaces the default,
-# user/ai/skills/<name>.disabled suppresses it entirely.
-step_claude_skills() {
-  [[ -d "$SKILLS_SRC_DIR" ]] || { warn "No skills found in $SKILLS_SRC_DIR — skipping"; return; }
-  mkdir -p "$CLAUDE_SKILLS_DIR"
-  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Installing Claude Code skills to $CLAUDE_SKILLS_DIR/" || true
-
-  local -A layers
-  resolve_layers "$SKILLS_SRC_DIR" "$USER_SKILLS_DIR" "*/" layers
-
-  # Prune skills in target that are no longer in either layer
-  local item target
-  for item in "$CLAUDE_SKILLS_DIR"/*/; do
-    [[ -L "${item%/}" || -d "$item" ]] || continue
-    local name
-    name=$(basename "$item")
-    if [[ -z "${layers[$name]+set}" ]]; then
-      rm -f "${item%/}"  # remove symlink
-      [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $name${NC}" || true
-    fi
-  done
-
-  # Install from merged layers
-  local name source
-  for name in "${!layers[@]}"; do
-    source="${layers[$name]}"
-    install_symlink "$source" "$CLAUDE_SKILLS_DIR/$name" "$name"
-  done
-}
-
 # step_claude_agents — copies each agent markdown file into ~/.claude/agents/.
 # Supports user overrides: user/ai/claude/agents/<name>.md replaces the default,
 # user/ai/claude/agents/<name>.disabled suppresses it entirely.
@@ -431,7 +400,6 @@ register_claude_steps() {
   register_step "Claude Code guidelines"  step_claude_guidelines
   register_step "Claude Code rules"       step_claude_rules
   register_step "MCP servers"             step_claude_mcps
-  register_step "Claude Code skills"      step_claude_skills
   register_step "Claude Code agents"      step_claude_agents
   register_step "Worktrunk Claude plugin" step_claude_worktrunk_plugin
 }
@@ -531,8 +499,7 @@ sync_claude() {
   sync_header "Claude MCPs"
   step_claude_mcps
 
-  sync_header "Claude skills + agents"
-  step_claude_skills
+  sync_header "Claude agents"
   step_claude_agents
 
   sync_header "Machine profile"

@@ -167,6 +167,15 @@ CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 # which a Homebrew cask still on PATH answers just as readily.
 CLAUDE_NATIVE_BIN="$HOME/.local/bin/claude"
 
+# ─── Agent Skills — cross-harness install root ───────────────────────────────
+# Pi's built-in cross-harness discovery root, and the shared standard's own
+# location. Pi stats each entry before recursing (dist/core/skills.js:171-176),
+# so a symlinked skill directory here is followed like a real one — which is why
+# no per-harness copy is needed. Named for the standard rather than for Pi: the
+# skills installed here belong to no one harness, and CLAUDE_SKILLS_DIR above is
+# its Claude Code counterpart.
+AGENTS_SKILLS_DIR="$HOME/.agents/skills"
+
 # ─── Pi coding agent ──────────────────────────────────────────────────────────
 # Pi reads global settings from ~/.pi/agent/settings.json. PI_LEGACY_SETTINGS_FILE
 # is the path an earlier sync wrote to, which Pi never read.

@@ -10,11 +10,10 @@ behind it describes itself out of the worktree, off the same fork point and the
 same `worktree_diff` the collection uses. Its counterpart for a branch that does
 have a PR is `review_github.fetch_pr_metadata`, and both fill in `PRMetadata`.
 
-The budget is this module's subject as much as the collection is. Every bound
-on what a prompt may carry is a constant here, and `_fit_to_budget` is the one
-place that decides which files a review can afford to inline — so a phase
-asking for less diff and a collector deciding what to gather read the same
-numbers. How the collected files are ranked and divided is `review_grouping`'s,
+The bounds on what a prompt may carry are `review_budget`'s, not this module's —
+`_fit_to_budget` is still here, and is the one place that decides which files a
+review can afford to inline, reading the same numbers `review_prompt` budgets
+against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
 fills in are `review_types`'.
 """
@@ -33,37 +32,17 @@ import git_client
 import log
 import pr_context
 from agent_types import Mode
+from review_budget import (
+    FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE,
+    MAX_COMMIT_LOG_BYTES, MAX_DELTA_DIFF_BYTES, MAX_DELTA_LOG_BYTES,
+    MAX_FILE_BYTES, MAX_PROMPT_BYTES, MAX_TRUNCATED_LINES,
+    TEMPLATE_OVERHEAD_BYTES,
+)
 from review_document import ReviewHeader
 from review_grouping import (
     classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
 from review_types import PreflightData, PRMetadata, ReviewJob
-
-# ── Byte budgets ──────────────────────────────────────────────────────────────
-
-MAX_PROMPT_TOKENS = 120_000
-MAX_PROMPT_BYTES = MAX_PROMPT_TOKENS * 4
-TEMPLATE_OVERHEAD_BYTES = 20_000
-MAX_FILE_BYTES = 100_000
-MAX_TRUNCATED_LINES = 500
-MAX_COMMIT_LOG_BYTES = 50_000
-MAX_DELTA_DIFF_BYTES = 80_000
-MAX_DELTA_LOG_BYTES = 20_000
-
-# ceiling: a flat reserve for everything in a prompt that is not preflight data —
-# the template, the PR header, prior reviews, reply threads. `review_prompt` now
-# measures those sections exactly before it budgets, so this double-counts them:
-# on a typical prompt it holds back ~116KB nothing spends, and the review is
-# smaller than it had room to be. Shrinking it is not free — every byte returned
-# is a byte of diff sent to the model, so it raises per-review cost, which is why
-# it is left as-is while review cost is what is being worked on. Upgrade when a
-# phase reports a cut in its prompt stats that this reserve alone would have
-# covered, or once per-review cost has a budget of its own to spend it against.
-NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
-MIN_DIFF_BYTES = 20_000
-
-FILE_CONTENT_DENSITY_THRESHOLD = 0.15
-FILE_CONTENT_MIN_SIZE = 5120
 
 
 # ── Git reads ────────────────────────────────────────────────────────────────

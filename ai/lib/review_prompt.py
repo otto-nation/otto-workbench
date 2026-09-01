@@ -42,8 +42,11 @@ from agent_registry import PHASES
 from agent_templates import build_output_block, build_worktree_block
 from agent_types import EFFORT_PRESETS, Effort, Mode, Phase
 from pr_domains import ReviewVerdict
+from review_budget import (
+    MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MAX_REVIEW_BODY_LEN,
+    MIN_DELTA_DIFF_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
+)
 from review_collect import (
-    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
     build_project_context, format_preflight_data, scope_diff, truncate_diff,
 )
 from review_document import (
@@ -69,13 +72,6 @@ from review_types import (
 # `## Verdict` line is parsed against — the wording an agent is asked for cannot
 # drift from the wording that is recognised.
 VERDICT_OPTIONS = " / ".join(v.prose for v in ReviewVerdict)
-
-# How much of somebody else's prose a prompt quotes back: a prior review's body,
-# a review comment, the root of a thread being re-reviewed. Each one is a
-# gist — enough for the agent to recognise what was said and go read the thread
-# — and there is no bound on how many of them a busy PR contributes, which is
-# why the cap is per-body rather than on the section they land in.
-MAX_REVIEW_BODY_LEN = 200
 
 
 def _build_pr_header(
@@ -443,23 +439,6 @@ def _build_holistic_block(
         f"Use it to inform your detailed review — especially the flags section.\n\n"
         f"{holistic_content}"
     )
-
-
-# How many paths either file list in the delta section spells out before it
-# summarises the rest. A list is orientation, not content — the diff above it is
-# what the agent reviews — so the tail costs bytes no reader spends. Both lists
-# were uncapped until a rebased branch produced 4,974 delta files for a 107-file
-# PR and 260KB of `- \`path\`` lines pushed the synthesis prompt 75% past its
-# budget. `review_collect` bounds the count itself now, by narrowing the delta to
-# the review's surface; this bounds the rendering, so no future way of
-# over-counting can spend the whole budget on it.
-MAX_DELTA_LIST_ENTRIES = 200
-
-# Below this the diff fence holds a fragment of one hunk, which reads as
-# corruption rather than as context. The delta section drops its diff entirely
-# at that point and the full diff — which covers the same files from the base —
-# is what the agent reviews from.
-MIN_DELTA_DIFF_BYTES = 2_048
 
 
 def _delta_file_list(heading: str, paths: list[str]) -> list[str]:

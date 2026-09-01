@@ -12,9 +12,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_collect import (
-    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, format_preflight_data,
-)
+from review_budget import MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES
+from review_collect import format_preflight_data
 from review_types import (
     FindingRef, PRContext, PreflightData, PriorDisposition, PriorFinding,
     PRMetadata, ReviewJob,
@@ -25,7 +24,6 @@ from dataclasses import asdict
 from review_grammar import parse_ledger_line
 from review_prompt import (
     _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, BudgetLever, Cut,
-    MAX_DELTA_LIST_ENTRIES,
     _build_ci_failure_items, _build_common_sections, _build_delta_section,
     _build_env_section, _build_omitted_guidance, _build_pr_header,
     _build_unaccounted_section, _fit_budget,

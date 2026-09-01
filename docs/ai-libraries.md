@@ -225,6 +225,19 @@ permission to save can still be recovered.
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
 
+### review_budget.py
+
+Every bound on what a prompt may carry, and the one fit that spends them.
+
+A prompt has a byte ceiling, and four things compete for it: the diff, the
+pre-collected file contents, the incremental delta, and the fixed overhead the
+template and the PR header cost. This module owns each of those numbers, so a
+collector deciding what to gather and a phase deciding what to send read the
+same figure rather than two that drifted apart.
+
+`agent_types.RetryBudget` is a different thing that shares the word — it
+budgets retries, not bytes.
+
 ### review_collect.py
 
 What a review collects before a prompt is built, and what it may cost.
@@ -239,11 +252,10 @@ behind it describes itself out of the worktree, off the same fork point and the
 same `worktree_diff` the collection uses. Its counterpart for a branch that does
 have a PR is `review_github.fetch_pr_metadata`, and both fill in `PRMetadata`.
 
-The budget is this module's subject as much as the collection is. Every bound
-on what a prompt may carry is a constant here, and `_fit_to_budget` is the one
-place that decides which files a review can afford to inline — so a phase
-asking for less diff and a collector deciding what to gather read the same
-numbers. How the collected files are ranked and divided is `review_grouping`'s,
+The bounds on what a prompt may carry are `review_budget`'s, not this module's —
+`_fit_to_budget` is still here, and is the one place that decides which files a
+review can afford to inline, reading the same numbers `review_prompt` budgets
+against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
 fills in are `review_types`'.
 

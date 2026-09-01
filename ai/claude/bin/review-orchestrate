@@ -63,7 +63,7 @@ from review_paths import (  # noqa: E402
 )
 from tool_parser import enum_arg  # noqa: E402
 from review_collect import collect_preflight_data  # noqa: E402
-from review_merge import fetch_reply_threads  # noqa: E402
+from review_reconcile import fetch_reply_threads  # noqa: E402
 from review_types import Pipeline, ReviewJob, ViewerRole  # noqa: E402
 from agent_invoke import QuotaThrottle  # noqa: E402
 from review_fix import run_fix_pass  # noqa: E402
@@ -272,7 +272,10 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
             pf_future = pool.submit(collect_preflight_data, job)
             rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)
             job.preflight = pf_future.result()
-            job.reply_threads = rt_future.result()
+            reply_threads = rt_future.result()
+            job.reply_threads = {
+                "threads": reply_threads.threads, "summary": reply_threads.summary,
+            }
     else:
         job.preflight = collect_preflight_data(job)
 

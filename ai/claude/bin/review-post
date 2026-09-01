@@ -51,7 +51,7 @@ from review_github import (  # noqa: E402
 )
 from review_dedup import (  # noqa: E402
     word_set, jaccard, _extract_body_findings, _fetch_bot_comments,
-    _get_bot_login, fetch_bot_reviews,
+    get_bot_login, fetch_bot_reviews,
     check_review_already_posted, REVIEW_BODY_DEDUP_THRESHOLD,
 )
 from review_posting import (  # noqa: E402

@@ -68,7 +68,7 @@ _PUSHBACK_WORDS = {"still", "but", "however", "actually", "i think we should", "
 ACK_MAX_LEN = 100
 
 
-def _is_acknowledgment(body: str) -> bool:
+def is_acknowledgment(body: str) -> bool:
     """Check if a reply body looks like an acknowledgment."""
     lower = body.lower().strip()
     if len(lower) > ACK_MAX_LEN:
@@ -82,7 +82,7 @@ def _is_acknowledgment(body: str) -> bool:
     return False
 
 
-def _is_pushback(body: str) -> bool:
+def is_pushback(body: str) -> bool:
     """Check if a reply body looks like pushback."""
     lower = body.lower().strip()
     for word in _PUSHBACK_WORDS:
@@ -138,9 +138,9 @@ def compute_thread_state(
 
     # Reviewer replied after me — classify the reply
     body = last_comment.get("body", "")
-    if _is_acknowledgment(body):
+    if is_acknowledgment(body):
         return ThreadState.VERIFIED
-    if _is_pushback(body):
+    if is_pushback(body):
         return ThreadState.CONTESTED
     return ThreadState.AMBIGUOUS
 

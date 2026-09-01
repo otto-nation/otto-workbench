@@ -32,6 +32,14 @@ The record is a sidecar in the review directory rather than a section of the
 review. Reconciliation parses its input for finding-shaped lines, so a
 reconciliation written into the review would come back to the next round
 looking like a fresh set of prior findings.
+
+The ledger this module reads is not the only account of what became of a
+prior finding. Every finding posted inline opened a review thread,
+independent of that ledger, and what the author did with that thread —
+answered it, argued with it, resolved it — is the other one. `fetch_reply_threads`
+classifies those threads into `ReplyState` and matches each back to the finding
+ID its root comment declared, so a re-review can read the thread's account of
+a finding beside the ledger's.
 """
 
 # doc-group: findings
@@ -46,15 +54,18 @@ from pathlib import Path
 import git_client
 import log
 import serde
+from pr_comments import fetch_threads, is_acknowledgment, is_pushback
+from review_dedup import get_bot_login
 from review_document import SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader
 from review_grammar import (
     ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, FindingIdentity, parse_ledger_line,
 )
+from review_github import PRData
 from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
 from review_spans import finding_spans
 from review_types import (
     DISPOSITION_TAIL_PUNCTUATION, FindingRef, FindingSpan, LedgerEntry,
-    PriorDisposition, PriorFinding,
+    PriorDisposition, PriorFinding, ReplyState,
 )
 from text import plural
 
@@ -558,3 +569,128 @@ def record_prior_findings(
         return None
     _report(reconciliation, _write(review_file, reconciliation))
     return reconciliation
+
+
+# ── Reply threads on the prior review ────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ThreadVerdict:
+    """What a reply thread says about the finding it hangs off.
+
+    `replies` is every comment after ours, so a caller can quote the pushback
+    rather than only report that there was some.
+    """
+
+    state: ReplyState
+    replies: list[dict]
+
+
+@dataclass(frozen=True)
+class ReplyThreads:
+    """Every reply thread on a PR, and the counts a re-review reports."""
+
+    threads: list[dict]
+    summary: dict
+
+
+def _classify_thread_for_rereview(
+    comments: list[dict], is_resolved: bool, bot_login: str,
+) -> ThreadVerdict:
+    """Classify a review thread from the bot-reviewer's perspective.
+
+    `replies` on the result is every non-bot comment after the first bot
+    comment.
+    """
+    if is_resolved:
+        return ThreadVerdict(ReplyState.RESOLVED, [])
+
+    bot_lower = bot_login.lower()
+    author_replies = []
+    seen_bot = False
+    for c in comments:
+        login = (c.get("author") or {}).get("login", "").lower()
+        if login == bot_lower:
+            seen_bot = True
+        elif seen_bot:
+            author_replies.append(c)
+
+    if not author_replies:
+        return ThreadVerdict(ReplyState.UNREPLIED, [])
+
+    last_reply = author_replies[-1]
+    body = last_reply.get("body", "")
+    if is_acknowledgment(body):
+        return ThreadVerdict(ReplyState.ACKNOWLEDGED, author_replies)
+    if is_pushback(body):
+        return ThreadVerdict(ReplyState.CONTESTED, author_replies)
+    return ThreadVerdict(ReplyState.REPLIED, author_replies)
+
+
+def _match_thread_to_finding(root_body: str) -> str:
+    """Extract finding ID (e.g. 'M1') from a bot-posted review comment body."""
+    m = BOLD_FINDING_ID_RE.search(root_body)
+    return m.group(1) if m else ""
+
+
+def fetch_reply_threads(
+    repo: str, pr_number: str, bot_login: str = "",
+    pr_data: PRData | None = None,
+) -> ReplyThreads:
+    """Fetch and classify reply threads on bot-authored review comments.
+
+    ``bot_login`` is the reviewer whose comments count as roots; it is read off
+    ``pr_data`` or detected when the caller does not name one. ``pr_data`` is a
+    consolidated query's answer, which the threads are taken from rather than
+    re-fetched.
+
+    `threads` is a list of per-thread dicts with state, finding_id, replies,
+    path, line; `summary` is the count per state.
+    """
+    if not bot_login:
+        bot_login = pr_data.viewer_login if pr_data is not None else get_bot_login()
+    if not bot_login:
+        log.warn("Could not detect bot login — skipping reply thread analysis")
+        return ReplyThreads([], {})
+
+    owner, name = repo.split("/", 1)
+    try:
+        raw_threads = fetch_threads(owner, name, int(pr_number), pr_data)
+    except Exception:
+        return ReplyThreads([], {})
+
+    if not raw_threads:
+        return ReplyThreads([], {})
+
+    bot_lower = bot_login.lower()
+    classified = []
+    summary: dict[ReplyState, int] = {}
+
+    for thread in raw_threads:
+        comments = thread.get("comments", {}).get("nodes", [])
+        if not comments:
+            continue
+        root = comments[0]
+        root_author = (root.get("author") or {}).get("login", "").lower()
+        if root_author != bot_lower:
+            continue
+
+        is_resolved = thread.get("isResolved", False)
+        verdict = _classify_thread_for_rereview(comments, is_resolved, bot_login)
+        finding_id = _match_thread_to_finding(root.get("body", ""))
+
+        classified.append({
+            "state": verdict.state,
+            "finding_id": finding_id,
+            "path": thread.get("path", ""),
+            "line": thread.get("line"),
+            "replies": [
+                {
+                    "author": (r.get("author") or {}).get("login", ""),
+                    "body": r.get("body", ""),
+                }
+                for r in verdict.replies
+            ],
+        })
+        summary[verdict.state] = summary.get(verdict.state, 0) + 1
+
+    return ReplyThreads(classified, summary)

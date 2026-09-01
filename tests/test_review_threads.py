@@ -42,8 +42,8 @@ from pr_thread_models import (
 )
 from review_document import SECTION_PRIOR_FINDINGS
 from review_issue import CreatedIssue, IssueDelivery, IssueResult
-from review_merge import (
-    _classify_thread_for_rereview, _match_thread_to_finding,
+from review_reconcile import (
+    ReplyThreads, _classify_thread_for_rereview, _match_thread_to_finding,
     fetch_reply_threads,
 )
 from review_types import ReplyState
@@ -214,51 +214,51 @@ def _make_comments(*entries):
 class TestClassifyThreadForRereview:
     def test_resolved_thread(self):
         comments = _make_comments(("bot", "Missing error check"))
-        state, replies = _classify_thread_for_rereview(comments, True, "bot")
-        assert state == ReplyState.RESOLVED
-        assert replies == []
+        verdict = _classify_thread_for_rereview(comments, True, "bot")
+        assert verdict.state == ReplyState.RESOLVED
+        assert verdict.replies == []
 
     def test_unreplied_no_author_replies(self):
         comments = _make_comments(("bot", "Missing error check"))
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.UNREPLIED
-        assert replies == []
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.UNREPLIED
+        assert verdict.replies == []
 
     def test_acknowledged_reply(self):
         comments = _make_comments(
             ("bot", "Missing error check"),
             ("alice", "Fixed, thanks!"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.ACKNOWLEDGED
-        assert len(replies) == 1
-        assert replies[0]["body"] == "Fixed, thanks!"
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.ACKNOWLEDGED
+        assert len(verdict.replies) == 1
+        assert verdict.replies[0]["body"] == "Fixed, thanks!"
 
     def test_contested_reply(self):
         comments = _make_comments(
             ("bot", "Should use shared helper"),
             ("alice", "I think we should keep it inline actually — it's clearer"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.CONTESTED
-        assert len(replies) == 1
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.CONTESTED
+        assert len(verdict.replies) == 1
 
     def test_generic_reply(self):
         comments = _make_comments(
             ("bot", "Missing error check"),
             ("alice", "I see your point, let me look into this further"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.REPLIED
-        assert len(replies) == 1
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.REPLIED
+        assert len(verdict.replies) == 1
 
     def test_case_insensitive_bot_login(self):
         comments = _make_comments(
             ("Bot-User", "Issue"),
             ("alice", "Done"),
         )
-        state, _ = _classify_thread_for_rereview(comments, False, "bot-user")
-        assert state == ReplyState.ACKNOWLEDGED
+        verdict = _classify_thread_for_rereview(comments, False, "bot-user")
+        assert verdict.state == ReplyState.ACKNOWLEDGED
 
     def test_state_uses_last_reply(self):
         comments = _make_comments(
@@ -266,9 +266,9 @@ class TestClassifyThreadForRereview:
             ("alice", "Done"),
             ("alice", "Actually no, I still think we should keep it"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.CONTESTED
-        assert len(replies) == 2
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.CONTESTED
+        assert len(verdict.replies) == 2
 
     def test_bot_reply_between_author_replies(self):
         comments = _make_comments(
@@ -277,11 +277,11 @@ class TestClassifyThreadForRereview:
             ("bot", "Because X"),
             ("alice", "Done"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.ACKNOWLEDGED
-        assert len(replies) == 2
-        assert replies[0]["body"] == "Why?"
-        assert replies[1]["body"] == "Done"
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.ACKNOWLEDGED
+        assert len(verdict.replies) == 2
+        assert verdict.replies[0]["body"] == "Why?"
+        assert verdict.replies[1]["body"] == "Done"
 
 
 # ── _match_thread_to_finding ─────────────────────────────────────────────────
@@ -308,16 +308,16 @@ class TestMatchThreadToFinding:
 
 class TestFetchReplyThreads:
     def test_empty_when_no_bot_login(self):
-        with patch("review_merge._get_bot_login", return_value=""), \
-             patch("review_merge.fetch_threads", return_value=[]):
+        with patch("review_reconcile.get_bot_login", return_value=""), \
+             patch("review_reconcile.fetch_threads", return_value=[]):
             result = fetch_reply_threads("owner/repo", "42")
-        assert result == {"threads": [], "summary": {}}
+        assert result == ReplyThreads(threads=[], summary={})
 
     def test_empty_when_no_threads(self):
-        with patch("review_merge._get_bot_login", return_value="bot"), \
-             patch("review_merge.fetch_threads", return_value=[]):
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", return_value=[]):
             result = fetch_reply_threads("owner/repo", "42")
-        assert result == {"threads": [], "summary": {}}
+        assert result == ReplyThreads(threads=[], summary={})
 
     def test_filters_to_bot_authored_threads(self):
         threads = [
@@ -336,13 +336,13 @@ class TestFetchReplyThreads:
                 )},
             },
         ]
-        with patch("review_merge._get_bot_login", return_value="bot"), \
-             patch("review_merge.fetch_threads", return_value=threads):
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", return_value=threads):
             result = fetch_reply_threads("owner/repo", "42")
-        assert len(result["threads"]) == 1
-        assert result["threads"][0]["finding_id"] == "M1"
-        assert result["threads"][0]["state"] == ReplyState.ACKNOWLEDGED
-        assert result["summary"] == {ReplyState.ACKNOWLEDGED: 1}
+        assert len(result.threads) == 1
+        assert result.threads[0]["finding_id"] == "M1"
+        assert result.threads[0]["state"] == ReplyState.ACKNOWLEDGED
+        assert result.summary == {ReplyState.ACKNOWLEDGED: 1}
 
     def test_classifies_multiple_states(self):
         threads = [
@@ -355,10 +355,10 @@ class TestFetchReplyThreads:
                 "comments": {"nodes": _make_comments(("bot", "**[S1]** Issue"))},
             },
         ]
-        with patch("review_merge._get_bot_login", return_value="bot"), \
-             patch("review_merge.fetch_threads", return_value=threads):
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", return_value=threads):
             result = fetch_reply_threads("owner/repo", "42")
-        states = {t["state"] for t in result["threads"]}
+        states = {t["state"] for t in result.threads}
         assert ReplyState.RESOLVED in states
         assert ReplyState.UNREPLIED in states
 

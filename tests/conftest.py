@@ -896,12 +896,12 @@ def publishing_on(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _clear_bot_login_cache():
-    """Clear _get_bot_login lru_cache between tests."""
+    """Clear get_bot_login lru_cache between tests."""
     yield
     if LIB_DIR in sys.path or "review_dedup" in sys.modules:
         try:
             import review_dedup
-            review_dedup._get_bot_login.cache_clear()
+            review_dedup.get_bot_login.cache_clear()
         except (ImportError, AttributeError):
             pass
 

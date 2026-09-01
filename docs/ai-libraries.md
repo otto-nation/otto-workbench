@@ -738,14 +738,6 @@ group's IDs are shifted past the groups before it. Deferring that to the
 merge-wide pass would misdirect it: group provenance is gone by then, and the
 pooled map answers with whichever group happens to have declared that number.
 
-The ledger `review_reconcile` reads is not the only account of what became of
-a prior finding. Every finding posted inline opened a review thread,
-independent of that ledger, and what the author did with that thread —
-answered it, argued with it, resolved it — is the other one. `fetch_reply_threads`
-classifies those threads into `ReplyState` and matches each back to the finding
-ID its root comment declared, so a re-review can read the thread's account of
-a finding beside the ledger's.
-
 ### review_reconcile.py
 
 Deciding what became of each finding the last review reported.
@@ -782,6 +774,14 @@ The record is a sidecar in the review directory rather than a section of the
 review. Reconciliation parses its input for finding-shaped lines, so a
 reconciliation written into the review would come back to the next round
 looking like a fresh set of prior findings.
+
+The ledger this module reads is not the only account of what became of a
+prior finding. Every finding posted inline opened a review thread,
+independent of that ledger, and what the author did with that thread —
+answered it, argued with it, resolved it — is the other one. `fetch_reply_threads`
+classifies those threads into `ReplyState` and matches each back to the finding
+ID its root comment declared, so a re-review can read the thread's account of
+a finding beside the ledger's.
 
 ### review_spans.py
 

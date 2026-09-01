@@ -54,7 +54,7 @@ def _extract_body_findings(body: str) -> list[dict]:
 # ── Bot user lookup ─────────────────────────────────────────────────────────
 
 @functools.lru_cache(maxsize=1)
-def _get_bot_login() -> str:
+def get_bot_login() -> str:
     """Return the authenticated GitHub user's login, or empty string on failure."""
     return gh_client.login()
 
@@ -89,7 +89,7 @@ def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData 
 
 
 def _fetch_bot_comments(repo: str, pr: str, pr_data: PRData | None = None) -> list[dict]:
-    bot_user = pr_data.viewer_login if pr_data is not None else _get_bot_login()
+    bot_user = pr_data.viewer_login if pr_data is not None else get_bot_login()
     if not bot_user:
         return []
 
@@ -147,7 +147,7 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list
     if pr_data is not None:
         return pr_data.bot_reviews_visible(pr_data.viewer_login)
 
-    bot_user = _get_bot_login()
+    bot_user = get_bot_login()
     if not bot_user:
         return []
 

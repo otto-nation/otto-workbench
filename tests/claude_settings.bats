@@ -1061,14 +1061,21 @@ _init_test_repo() {
 @test "sync-settings.jq is valid jq syntax" {
   run jq -n -f "$REPO_ROOT/ai/claude/sync-settings.jq" \
     --argjson t '{"permissions":{"allow":[],"deny":[]}}' \
-    --argjson e '{}'
+    --argjson e '{}' --argjson m '{}'
   [ "$status" -eq 0 ]
 }
 
 # ── additionalDirectories merge ─────────────────────────────────────────────
+#
+# _run_sync TEMPLATE EXISTING [MANIFEST] prints the whole envelope, so a test
+# asserts on `.settings` for what lands in ~/.claude/settings.json and on
+# `.manifest` for what lands in the sidecar.
 
 _run_sync() {
-  jq -n --argjson t "$1" --argjson e "$2" -f "$REPO_ROOT/ai/claude/sync-settings.jq"
+  local manifest="${3-}"
+  if [[ -z "$manifest" ]]; then manifest='{}'; fi
+  jq -n --argjson t "$1" --argjson e "$2" --argjson m "$manifest" \
+    -f "$REPO_ROOT/ai/claude/sync-settings.jq"
 }
 
 @test "additionalDirectories: fresh install writes template dirs" {
@@ -1077,17 +1084,17 @@ _run_sync() {
     '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/home/.claude","/home/.config/wb"]},"hooks":{}}' \
     '{}')
   local dirs
-  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  dirs=$(jq -c '.settings.permissions.additionalDirectories' <<< "$result")
   [ "$dirs" = '["/home/.claude","/home/.config/wb"]' ]
 }
 
-@test "additionalDirectories: tracked in _workbench" {
+@test "additionalDirectories: tracked in the manifest" {
   local result
   result=$(_run_sync \
     '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/a","/b"]},"hooks":{}}' \
     '{}')
   local wb_dirs
-  wb_dirs=$(jq -c '._workbench.permissions.additionalDirectories' <<< "$result")
+  wb_dirs=$(jq -c '.manifest.permissions.additionalDirectories' <<< "$result")
   [ "$wb_dirs" = '["/a","/b"]' ]
 }
 
@@ -1095,9 +1102,10 @@ _run_sync() {
   local result
   result=$(_run_sync \
     '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/managed"]},"hooks":{}}' \
-    '{"permissions":{"additionalDirectories":["/managed","/user-custom"]},"_workbench":{"permissions":{"additionalDirectories":["/managed"]}}}')
+    '{"permissions":{"additionalDirectories":["/managed","/user-custom"]}}' \
+    '{"permissions":{"additionalDirectories":["/managed"]}}')
   local dirs
-  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  dirs=$(jq -c '.settings.permissions.additionalDirectories' <<< "$result")
   [ "$dirs" = '["/managed","/user-custom"]' ]
 }
 
@@ -1105,9 +1113,10 @@ _run_sync() {
   local result
   result=$(_run_sync \
     '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/keep"]},"hooks":{}}' \
-    '{"permissions":{"additionalDirectories":["/keep","/old-managed"]},"_workbench":{"permissions":{"additionalDirectories":["/keep","/old-managed"]}}}')
+    '{"permissions":{"additionalDirectories":["/keep","/old-managed"]}}' \
+    '{"permissions":{"additionalDirectories":["/keep","/old-managed"]}}')
   local dirs
-  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  dirs=$(jq -c '.settings.permissions.additionalDirectories' <<< "$result")
   [ "$dirs" = '["/keep"]' ]
 }
 
@@ -1115,9 +1124,10 @@ _run_sync() {
   local result
   result=$(_run_sync \
     '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/managed","/new-managed"]},"hooks":{}}' \
-    '{"permissions":{"additionalDirectories":["/managed","/user-custom"]},"_workbench":{"permissions":{"additionalDirectories":["/managed"]}}}')
+    '{"permissions":{"additionalDirectories":["/managed","/user-custom"]}}' \
+    '{"permissions":{"additionalDirectories":["/managed"]}}')
   local dirs
-  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  dirs=$(jq -c '.settings.permissions.additionalDirectories' <<< "$result")
   [ "$dirs" = '["/managed","/new-managed","/user-custom"]' ]
 }
 
@@ -1125,9 +1135,10 @@ _run_sync() {
   local result
   result=$(_run_sync \
     '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/a","/b"]},"hooks":{}}' \
-    '{"permissions":{"additionalDirectories":["/a"]},"_workbench":{"permissions":{}}}')
+    '{"permissions":{"additionalDirectories":["/a"]}}' \
+    '{"permissions":{}}')
   local count
-  count=$(jq '[.permissions.additionalDirectories[] | select(. == "/a")] | length' <<< "$result")
+  count=$(jq '[.settings.permissions.additionalDirectories[] | select(. == "/a")] | length' <<< "$result")
   [ "$count" -eq 1 ]
 }
 
@@ -1137,18 +1148,143 @@ _run_sync() {
     '{"permissions":{"allow":[],"deny":[]},"hooks":{}}' \
     '{}')
   local dirs
-  dirs=$(jq -c '.permissions.additionalDirectories' <<< "$result")
+  dirs=$(jq -c '.settings.permissions.additionalDirectories' <<< "$result")
   [ "$dirs" = '[]' ]
 }
 
-@test "additionalDirectories: _workbench does not leak user dirs" {
+@test "additionalDirectories: the manifest does not leak user dirs" {
   local result
   result=$(_run_sync \
     '{"permissions":{"allow":[],"deny":[],"additionalDirectories":["/managed"]},"hooks":{}}' \
-    '{"permissions":{"additionalDirectories":["/managed","/secret"]},"_workbench":{"permissions":{"additionalDirectories":["/managed"]}}}')
+    '{"permissions":{"additionalDirectories":["/managed","/secret"]}}' \
+    '{"permissions":{"additionalDirectories":["/managed"]}}')
   local wb_dirs
-  wb_dirs=$(jq -c '._workbench.permissions.additionalDirectories' <<< "$result")
+  wb_dirs=$(jq -c '.manifest.permissions.additionalDirectories' <<< "$result")
   [ "$wb_dirs" = '["/managed"]' ]
+}
+
+# ── manifest lives outside the settings file ─────────────────────────────────
+# Claude Code rejects a settings file that declares hook entries under any key
+# but `hooks` — and skips the whole file, so every permission and hook in it
+# stops applying. The manifest therefore never appears in the settings output.
+
+@test "settings output carries no _workbench key" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":["A"],"deny":[]},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard"}]}]}}' \
+    '{"_workbench":{"permissions":{"allow":["A"]},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard"}]}]}}}')
+  local has_key
+  has_key=$(jq -c '.settings | has("_workbench")' <<< "$result")
+  [ "$has_key" = 'false' ]
+}
+
+@test "manifest: a legacy in-file _workbench seeds the first split sync" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":["managed"],"deny":[]},"hooks":{}}' \
+    '{"permissions":{"allow":["managed","user"]},"_workbench":{"permissions":{"allow":["managed"]}}}')
+  local allow
+  allow=$(jq -c '.settings.permissions.allow' <<< "$result")
+  [ "$allow" = '["managed","user"]' ]
+}
+
+@test "manifest: a sidecar manifest wins over a stale in-file _workbench" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":["managed"],"deny":[]},"hooks":{}}' \
+    '{"permissions":{"allow":["managed","stale"]}}' \
+    '{"permissions":{"allow":["managed","stale"]}}')
+  local allow
+  allow=$(jq -c '.settings.permissions.allow' <<< "$result")
+  [ "$allow" = '["managed"]' ]
+}
+
+@test "manifest: managed hooks are replaced and user hooks preserved" {
+  local result
+  result=$(_run_sync \
+    '{"permissions":{"allow":[],"deny":[]},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard-v2"}]}]}}' \
+    '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard-v1"}]},{"matcher":"Edit","hooks":[{"type":"command","command":"mine"}]}]}}' \
+    '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard-v1"}]}]}}')
+  local cmds
+  cmds=$(jq -c '[.settings.hooks.PreToolUse[].hooks[].command]' <<< "$result")
+  [ "$cmds" = '["guard-v2","mine"]' ]
+  local tracked
+  tracked=$(jq -c '[.manifest.hooks.PreToolUse[].hooks[].command]' <<< "$result")
+  [ "$tracked" = '["guard-v2"]' ]
+}
+
+# ── the shell half: splitting the envelope across two files ──────────────────
+# The tests above drive sync-settings.jq directly. These drive
+# step_claude_settings, which is what reads the sidecar off disk, splits the
+# envelope, and publishes each half — a swapped selector or a wrong path would
+# pass every test above.
+
+# _sync_run FAKE_HOME STATE_DIR — one step_claude_settings against a sandbox.
+# In a subshell because constants.sh freezes every path from HOME and the state
+# root at source time: a second run needs a fresh process, not a second call.
+_sync_run() {
+  ( HOME="$1"
+    export WORKBENCH_STATE_DIR="$2"
+    export WORKBENCH_DIR="$REPO_ROOT"
+    export WORKBENCH_STABLE_DIR="$REPO_ROOT"
+    export NO_COLOR=1
+    mkdir -p "$HOME"
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/lib/ui.sh"
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/ai/claude/steps.sh"
+    step_claude_settings >/dev/null )
+}
+
+@test "shell: the manifest lands in the state root, not the settings file" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _sync_run "$home" "$state"
+  [ -f "$home/.claude/settings.json" ]
+  [ -f "$state/claude-settings.manifest.json" ]
+  # The manifest holds bookkeeping and nothing else; the settings file holds the
+  # template's own keys. Naming both is what catches a swapped selector.
+  run jq -ec 'keys' "$state/claude-settings.manifest.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["hooks","permissions"]' ]
+  run jq -e 'has("statusLine") and has("hooks")' "$home/.claude/settings.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "shell: the settings file it writes carries no _workbench key" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _sync_run "$home" "$state"
+  run jq -e 'has("_workbench")' "$home/.claude/settings.json"
+  [ "$status" -ne 0 ]
+}
+
+@test "shell: a second run reproduces both files byte for byte" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _sync_run "$home" "$state"
+  cp "$home/.claude/settings.json" "$BATS_TEST_TMPDIR/settings.first"
+  cp "$state/claude-settings.manifest.json" "$BATS_TEST_TMPDIR/manifest.first"
+  _sync_run "$home" "$state"
+  diff "$BATS_TEST_TMPDIR/settings.first" "$home/.claude/settings.json"
+  diff "$BATS_TEST_TMPDIR/manifest.first" "$state/claude-settings.manifest.json"
+}
+
+@test "shell: the sidecar it wrote is what the next run classifies against" {
+  local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
+  _sync_run "$home" "$state"
+
+  local settings="$home/.claude/settings.json"
+  local sidecar="$state/claude-settings.manifest.json"
+  # A rule the last sync managed but the template no longer carries, and one the
+  # operator added. Only the first is the sidecar's to withdraw.
+  local tmp="$BATS_TEST_TMPDIR/edit.json"
+  jq '.permissions.allow += ["Bash(retired-managed:*)","Bash(operator-added:*)"]' \
+    "$settings" > "$tmp" && mv "$tmp" "$settings"
+  jq '.permissions.allow += ["Bash(retired-managed:*)"]' "$sidecar" > "$tmp" && mv "$tmp" "$sidecar"
+
+  _sync_run "$home" "$state"
+  run jq -e '.permissions.allow | index("Bash(retired-managed:*)")' "$settings"
+  [ "$status" -ne 0 ]
+  run jq -e '.permissions.allow | index("Bash(operator-added:*)")' "$settings"
+  [ "$status" -eq 0 ]
 }
 
 # ── script paths referenced from settings ────────────────────────────────────

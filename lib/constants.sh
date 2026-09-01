@@ -150,6 +150,12 @@ CLAUDE_DIR="$HOME/.claude"
 CLAUDE_CONFIG_FILE="$HOME/.claude.json"
 CLAUDE_GUIDELINES_FILE="$CLAUDE_DIR/CLAUDE.md"
 CLAUDE_SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+# What the last sync wrote into the file above, so the next one can tell its own
+# entries from a user's. It lives beside the settings file's *state*, not inside
+# it: Claude Code validates settings.json and rejects the whole file when a hook
+# entry appears under any key other than `hooks` — which is what a manifest
+# recording managed hooks inline looked like.
+CLAUDE_SETTINGS_MANIFEST="$WORKBENCH_STATE_DIR/claude-settings.manifest.json"
 CLAUDE_RULES_DIR="$HOME/.claude/rules"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"

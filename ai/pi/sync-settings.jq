@@ -24,8 +24,9 @@
 # Withdrawal is therefore a membership verdict, not a diff against the template.
 # A package the template stops declaring is left in the live file, because
 # nothing here can tell it from one the operator installed — ai/claude's
-# equivalent answers that with a `_workbench` key recording what it managed, and
-# that is a key Pi would have to accept in a file it validates. Removing a
+# equivalent answers that with a manifest recording what it managed, kept in a
+# sidecar under the state root precisely because Claude Code rejects the whole
+# settings file when it finds workbench bookkeeping inside it. Removing a
 # package the workbench once installed is a migration, the same way this branch
 # removes the settings file the sync once wrote to the wrong path.
 #

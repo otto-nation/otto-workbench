@@ -429,3 +429,77 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"1 of"*"failed"* ]]
 }
+
+# ── agent-backed skills ──────────────────────────────────────────────────────
+
+# _make_agent_skill NAME AGENT — a skill backed by an agent file, so it carries
+# no invocation of its own.
+_make_agent_skill() {
+  local name="$1" agent="$2"
+  local dir="$FAKE_WORKBENCH/ai/skills/$name"
+  mkdir -p "$dir" "$FAKE_WORKBENCH/ai/claude/agents"
+  printf -- '---\nname: %s\n---\nbody\n' "$agent" \
+    > "$FAKE_WORKBENCH/ai/claude/agents/$agent.md"
+  {
+    echo "---"
+    echo "name: $name"
+    echo "description: \"Test skill description.\""
+    echo "source: otto-workbench/ai/skills/$name/SKILL.md"
+    echo "agent: $agent"
+    echo "trigger: \"Use when testing\""
+    echo "---"
+    echo ""
+    echo "# $name"
+  } > "$dir/SKILL.md"
+}
+
+@test "an agent-backed skill needs no invocation field" {
+  _make_agent_skill reviewer reviewer
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a skill with neither invocation nor agent fails" {
+  _make_skill anatomy
+  sed -i '' '/^invocation:/d' "$FAKE_WORKBENCH/ai/skills/anatomy/SKILL.md"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing required field: invocation"* ]]
+}
+
+@test "an agent field naming no agent file fails" {
+  _make_agent_skill reviewer reviewer
+  rm "$FAKE_WORKBENCH/ai/claude/agents/reviewer.md"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has no ai/claude/agents/reviewer.md"* ]]
+}
+
+@test "a name violating the Agent Skills standard fails" {
+  _make_skill anatomy
+  local dir="$FAKE_WORKBENCH/ai/skills/anatomy"
+  mv "$dir" "$FAKE_WORKBENCH/ai/skills/Anatomy--x"
+  sed -i '' 's/^name: anatomy/name: Anatomy--x/' \
+    "$FAKE_WORKBENCH/ai/skills/Anatomy--x/SKILL.md"
+  sed -i '' 's|skills/anatomy/|skills/Anatomy--x/|' \
+    "$FAKE_WORKBENCH/ai/skills/Anatomy--x/SKILL.md"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must be lowercase"* ]]
+}
+
+@test "a description over 1024 chars fails" {
+  _make_skill anatomy
+  local long
+  long="$(printf 'x%.0s' $(seq 1 1025))"
+  sed -i '' "s|^description:.*|description: \"$long\"|" \
+    "$FAKE_WORKBENCH/ai/skills/anatomy/SKILL.md"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"caps it at 1024"* ]]
+}

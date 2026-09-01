@@ -57,6 +57,43 @@ _frontmatter_field() {
     || true
 }
 
+_validate_skill_name_standard() {
+  local name="$1" display="$2"
+  [[ -n "$name" ]] || return 0
+
+  if (( ${#name} > 64 )); then
+    _fail "$display: name is ${#name} chars — the Agent Skills standard caps it at 64"
+  elif [[ ! "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+    _fail "$display: name '$name' must be lowercase a-z, 0-9 and single hyphens"
+  else
+    _pass "$display: name meets the Agent Skills standard"
+  fi
+}
+
+_validate_skill_description_standard() {
+  local desc="$1" display="$2"
+  [[ -n "$desc" ]] || return 0
+
+  if (( ${#desc} <= 1024 )); then
+    _pass "$display: description within 1024 chars"
+  else
+    _fail "$display: description is ${#desc} chars — the Agent Skills standard caps it at 1024"
+  fi
+}
+
+# An agent-backed skill installs to Pi with this agent's protocol spliced in.
+# A name resolving to nothing installs nothing, and ai/skills/steps.sh only warns.
+_validate_skill_agent() {
+  local agent="$1" display="$2"
+  [[ -n "$agent" ]] || return 0
+
+  if [[ -f "$WORKBENCH_DIR/ai/claude/agents/$agent.md" ]]; then
+    _pass "$display: agent '$agent' resolves"
+  else
+    _fail "$display: agent '$agent' has no ai/claude/agents/$agent.md"
+  fi
+}
+
 _validate_output_schema() {
   local skill_file="$1" display="$2"
   local has_os tool_name tool_script schema_out
@@ -169,23 +206,8 @@ for skill_dir in "$SKILLS_DIR"/*/; do
 
   # Agent Skills standard limits. Pi warns and loads the skill anyway, so a
   # violation is invisible until a name collides or a description is truncated.
-  if [[ -z "$local_name" ]]; then
-    :
-  elif (( ${#local_name} > 64 )); then
-    _fail "$display: name is ${#local_name} chars — the Agent Skills standard caps it at 64"
-  elif [[ ! "$local_name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
-    _fail "$display: name '$local_name' must be lowercase a-z, 0-9 and single hyphens"
-  else
-    _pass "$display: name meets the Agent Skills standard"
-  fi
-
-  if [[ -z "$local_desc" ]]; then
-    :
-  elif (( ${#local_desc} <= 1024 )); then
-    _pass "$display: description within 1024 chars"
-  else
-    _fail "$display: description is ${#local_desc} chars — the Agent Skills standard caps it at 1024"
-  fi
+  _validate_skill_name_standard "$local_name" "$display"
+  _validate_skill_description_standard "$local_desc" "$display"
 
   # source must match expected path
   if [[ -n "$local_source" ]]; then
@@ -195,15 +217,7 @@ for skill_dir in "$SKILLS_DIR"/*/; do
       || _fail "$display: source '$local_source' does not match expected '$expected_source'"
   fi
 
-  # An agent-backed skill installs to Pi with this agent's protocol spliced in.
-  # A name resolving to nothing installs nothing, and ai/skills/steps.sh only warns.
-  if [[ -z "$local_agent" ]]; then
-    :
-  elif [[ -f "$WORKBENCH_DIR/ai/claude/agents/$local_agent.md" ]]; then
-    _pass "$display: agent '$local_agent' resolves"
-  else
-    _fail "$display: agent '$local_agent' has no ai/claude/agents/$local_agent.md"
-  fi
+  _validate_skill_agent "$local_agent" "$display"
 
   # Lifecycle fields must appear together
   local_cadence="$(_frontmatter_field "$skill_file" "lifecycle_cadence")"

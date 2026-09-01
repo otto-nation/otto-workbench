@@ -13,7 +13,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review_budget import (
-    MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, fit_files,
+    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, fit_files,
 )
 from review_collect import format_preflight_data
 from review_types import (
@@ -440,6 +440,21 @@ class TestDroppedContentsAreDeclared:
         assert "File contents and diffs are in the Pre-collected data section" in kept
         assert "file contents are not" in dropped
         assert "Files not pre-collected" in dropped
+
+    def test_nothing_to_fit_is_not_a_drop(self):
+        """An empty fit with nothing omitted is not the same as a fit that lost everything.
+
+        `_fit_budget` starts every plan at `FileFit(scoped, ..., [])`, so a
+        `file_filter` scoping a section to zero collected files produces this
+        exact shape with no budget cut involved. Reading it as "dropped
+        everything" tells the agent to batch-read a "Files not pre-collected"
+        list that was never populated.
+        """
+        pf = _make_preflight(file_contents={}, omitted_files=[])
+        nothing_to_fit = FileFit({}, {}, [])
+        text = _build_env_section("/tmp/w", preflight=pf, files=nothing_to_fit)
+        assert "File contents and diffs are in the Pre-collected data section" in text
+        assert "file contents are not" not in text
 
     def test_omitted_guidance_asks_for_the_batch_read(self):
         pf = _make_preflight(omitted_files=[])

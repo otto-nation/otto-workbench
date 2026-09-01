@@ -287,8 +287,14 @@ def _build_env_section(
     some files, or a preflight with files never collected at all, takes the
     middle wording instead — the two are indistinguishable to the agent, which
     reads "Files not pre-collected" either way.
+
+    A fit with nothing included is not always a fit that dropped everything:
+    a `file_filter` scoping the prompt to zero collected files also has an
+    empty `included`, with nothing omitted either. Only `files.omitted` being
+    non-empty means the budget actually took something away, so that is the
+    check — `any_included` alone cannot tell the two apart.
     """
-    dropped_everything = files is not None and not files.any_included
+    dropped_everything = bool(files and files.omitted) and not files.any_included
     if preflight and dropped_everything:
         return f"""
 ## Environment

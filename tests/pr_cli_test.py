@@ -1708,7 +1708,7 @@ def _dispatch_stage(*argv, ctx):
     """
     with patch("pr_cli.pr_context.resolve", return_value=ctx) as remote, \
          patch("pr_cli.pr_context.resolve_local", return_value=ctx) as local, \
-         patch("pr_cli.pr_context.update_to_remote", return_value=ctx) as update, \
+         patch("pr_cli.pr_sync.update_to_remote", return_value=ctx) as update, \
          patch("pr_cli._dispatch", return_value=0):
         _run_main(*argv)
     return SimpleNamespace(remote=remote, local=local, update=update)

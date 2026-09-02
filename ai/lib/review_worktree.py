@@ -10,7 +10,7 @@ import gh_client
 import git_client
 import git_topology
 import log
-import pr_context
+import pr_sync
 import proc
 
 
@@ -34,7 +34,7 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
     wt_path = git_topology.wt_switch(f"pr:{pr_number}", repo_dir)
     if wt_path:
         if pr_head:
-            pr_context.fetch_and_reset(wt_path, pr_head)
+            pr_sync.fetch_and_reset(wt_path, pr_head)
         return WorktreeResult(path=wt_path, cleanup_ref=f"pr:{pr_number}", is_fallback=False)
 
     log.info("Branch deleted, fetching via PR ref...")

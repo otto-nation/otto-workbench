@@ -1474,6 +1474,19 @@ The domains this is an envelope over live in ``pr_domains`` — and one of them,
 the comment pass's, in ``pr_comments_fix``. This module imports both; neither
 imports it.
 
+### pr_sync.py
+
+Bringing a worktree in line with its remote, and the guards that refuse to.
+
+Every read behind the guards fails towards blocked: a `git status` that was
+killed or timed out says nothing about the tree, and reading that silence as
+clean is how a worktree full of uncommitted work gets reset. The other
+direction costs a skipped reset and a logged reason.
+
+Split out of `pr_context` because it is a mutation built on the resolver's
+output rather than part of resolving — it takes a `ResolvedContext` and acts on
+it, where `git_topology` is the topology the resolver reads on the way in.
+
 ### pr_target.py
 
 Where a run's bookkeeping lives, keyed by what the run targets.

@@ -136,7 +136,7 @@ def test_setup_pr_worktree_unshallows_if_needed(mock_run):
     assert len(unshallow_calls) == 1
 
 
-@patch("review_worktree.pr_context.fetch_and_reset")
+@patch("review_worktree.pr_sync.fetch_and_reset")
 @patch("proc.subprocess.run")
 def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run, mock_far):
     def side_effect(cmd, **kwargs):

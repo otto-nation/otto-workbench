@@ -39,6 +39,7 @@ import pr_comments_state as pcs
 import pr_context
 import pr_domains
 import pr_state
+import pr_sync
 import proc
 import run_lock
 import publishing
@@ -621,7 +622,7 @@ def _find_and_update_main_worktree(wt_path: Path) -> Path | None:
     if not main_wt:
         return None
 
-    pr_context.fetch_and_reset(str(main_wt), default_branch)
+    pr_sync.fetch_and_reset(str(main_wt), default_branch)
     return main_wt
 
 

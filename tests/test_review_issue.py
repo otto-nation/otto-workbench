@@ -271,7 +271,7 @@ def test_ensure_issue_provider_still_resolves_when_the_write_fails(tmp_path, cap
     with patch("review_issue.prompt.interactive", return_value=True), \
          patch("review_issue.prompt.ask", side_effect=["github", "repo"]), \
          patch(
-             "review_issue.workbench_config.set_project_value",
+             "review_issue.workbench_config_write.set_project_value",
              side_effect=workbench_config.ConfigError("read-only"),
          ):
         result = ensure_issue_provider(str(tmp_path))

@@ -23,6 +23,7 @@ from conftest import _load_lib, seed_repo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import workbench_config as wc
+import workbench_config_write as wcw
 
 config_cli = _load_lib("config_cli")
 
@@ -61,14 +62,14 @@ def test_reads_a_named_repos_own_config(capsys, repo):
 
 
 def test_names_the_global_scope_when_the_repo_inherits(capsys, repo):
-    wc.set_value(KEY, "linear")
+    wcw.set_value(KEY, "linear")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
     assert records == [(wc.GLOBAL_SCOPE, "linear", str(repo))]
 
 
 def test_the_repos_own_answer_outranks_the_machines(capsys, repo):
-    wc.set_value(KEY, "linear")
+    wcw.set_value(KEY, "linear")
     _declare(repo, "github")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
@@ -229,7 +230,9 @@ def test_a_key_only_this_checkout_defines_is_readable(capsys, repo, monkeypatch)
     branch whose own tests could not read its own new key would be unable to
     test it at all.
     """
-    monkeypatch.setattr(config_cli.workbench_config, "check_key", _refuse_everything)
+    monkeypatch.setattr(
+        config_cli.workbench_config_write, "check_key", _refuse_everything,
+    )
     _declare(repo, "github")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0

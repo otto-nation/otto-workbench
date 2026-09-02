@@ -70,8 +70,8 @@ Invoked by its bare name this command *is* the installed workbench — the
 launcher on `PATH` is a symlink into the checkout that installed it — so the
 key surface it validates against is the current one no matter which worktree
 the caller is standing in.  Run out of a stale checkout instead, it still
-refuses: `workbench_config.check_key` asks the installed schema as well as its
-own.  See `ai/lib/workbench_config.py`.
+refuses: `workbench_config_write.check_key` asks the installed schema as well as
+its own.  See `ai/lib/workbench_config_write.py`.
 
 Exit codes: 0 on a completed write, a report that read every scope, or a `get`
 that answered for every DIR; 1 on a refused key, a failed write, or a scope
@@ -105,6 +105,8 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
         sys.path.insert(0, _path)
 
 import workbench_config  # noqa: E402
+import workbench_config_report  # noqa: E402
+import workbench_config_write  # noqa: E402
 from ansi import BOLD, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 
 
@@ -162,7 +164,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 # a person looking at a table. A record another program parses says it with an
 # empty value field, so the only marker in the output is the caller's own — the
 # machine profile's "unset", a bash caller's fallback.
-_NO_VALUE = workbench_config.render_value(None)
+_NO_VALUE = workbench_config_report.render_value(None)
 
 
 def _one_line(value: str) -> str:
@@ -185,7 +187,7 @@ def _resolve(key: str, project_root) -> tuple[str, str]:
     ``DEFAULT_SCOPE`` here rather than an error the batch would have to carry.
     """
     try:
-        status = workbench_config.config_status(project_root)
+        status = workbench_config_report.config_status(project_root)
     except (workbench_config.ConfigError, OSError):
         return workbench_config.DEFAULT_SCOPE, ""
     row = next((entry for entry in status.keys if entry.key == key), None)
@@ -219,7 +221,7 @@ def _status(_args: argparse.Namespace) -> int:
     line explaining why a section is missing lands somewhere other than where
     the section would have been.
     """
-    status = workbench_config.config_status(_project_root())
+    status = workbench_config_report.config_status(_project_root())
 
     print(f"{BOLD}Scopes{NC} {DIM}— highest precedence first{NC}")
     name_width = max(len(scope.name) for scope in status.scopes)
@@ -248,12 +250,21 @@ def _status(_args: argparse.Namespace) -> int:
         for stray in status.strays:
             print(f"  {YELLOW}✗{NC} {stray.key:<{width}}  {DIM}{stray.scope.path}{NC}")
 
+    if status.dropped:
+        print(f"\n{BOLD}Values nothing can read{NC} "
+              f"{DIM}— the key is real, the value is not{NC}")
+        width = max(len(row.key) for row in status.dropped)
+        for row in status.dropped:
+            print(f"  {YELLOW}✗{NC} {row.key:<{width}}  "
+                  f"file says {row.held}, loads as {row.read}  "
+                  f"{DIM}{row.scope.path}{NC}")
+
     return 0 if status.ok else 1
 
 
 def _write(args: argparse.Namespace) -> int:
     if not (args.project or args.container):
-        workbench_config.set_value(args.key, args.value)
+        workbench_config_write.set_value(args.key, args.value)
         return _wrote(args, workbench_config.global_config_path(), "every repo")
 
     root = _project_root()
@@ -263,7 +274,7 @@ def _write(args: argparse.Namespace) -> int:
         return 1
     if args.container:
         return _write_container(args, root)
-    workbench_config.set_project_value(args.key, args.value, root)
+    workbench_config_write.set_project_value(args.key, args.value, root)
     return _wrote(args, workbench_config.project_config_path(root),
                   "commit it so the repo keeps the answer")
 
@@ -280,7 +291,7 @@ def _write_container(args: argparse.Namespace, root: Path) -> int:
         print(f"{RED}✗{NC} --container needs a bare-repo worktree — {root} is a "
               f"plain checkout, whose repo has no container", file=sys.stderr)
         return 1
-    workbench_config.set_container_value(args.key, args.value, root)
+    workbench_config_write.set_container_value(args.key, args.value, root)
     return _wrote(args, target, "every worktree of this repo")
 
 

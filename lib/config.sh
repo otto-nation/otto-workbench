@@ -54,13 +54,21 @@
 # that is still valid where it is standing. Hand-editing stays supported — that
 # is what the modeline is for — but nothing checks the key.
 #
+# The value is checked against the same schema, and written with the type the
+# field holds rather than as a string. `serde` restores an int from `"3"` but
+# refuses a bool from `"true"` on purpose, since `bool("false")` is `True`, so a
+# boolean quoted into the file is a key that reads back as its default with
+# nothing said — the write is refused instead.
+#
 # `otto-workbench config status` reports the read side: every scope in
 # precedence order with its path and whether the file is there, every key with
-# the value it resolved to and the file that supplied it, and any key a file
-# holds that the surface does not have. Nothing else answers that — the loader
-# merges the scopes and returns the result, so an inherited value and a local
-# one are indistinguishable afterwards, and a key written under a name nothing
-# reads is dropped in silence by both the loader and the reader waiting on it.
+# the value it resolved to and the file that supplied it, any key a file holds
+# that the surface does not have, and any key it holds a value the field cannot
+# be built from. Nothing else answers that — the loader merges the scopes and
+# returns the result, so an inherited value and a local one are
+# indistinguishable afterwards, and both a key written under a name nothing
+# reads and a value nothing can restore are dropped in silence by the loader and
+# the reader waiting on it alike.
 #
 # Six layers decide an agent value, highest first:
 #

@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 
 import workbench_config  # noqa: E402
+import workbench_config_write  # noqa: E402
 from workbench_config import ConfigError, ReuseLevel  # noqa: E402
 
 # Re-exported: the writers below raise it, so a hook catching it should not
@@ -50,9 +51,9 @@ def read_level() -> str:
 
 def write_level(level: str) -> None:
     """Persist the active level. Raises ``ConfigError`` when the write fails."""
-    workbench_config.set_value(workbench_config.REUSE_LEVEL_KEY, level)
+    workbench_config_write.set_value(workbench_config.REUSE_LEVEL_KEY, level)
 
 
 def write_default(level: str) -> None:
     """Persist the default level. Raises ``ConfigError`` when the write fails."""
-    workbench_config.set_value(workbench_config.REUSE_DEFAULT_KEY, level)
+    workbench_config_write.set_value(workbench_config.REUSE_DEFAULT_KEY, level)

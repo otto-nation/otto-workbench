@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 430 -->
+<!-- doc-budget: 437 -->
 
 # AI Automation
 
@@ -612,6 +612,13 @@ claude-rules add <domain> "rule text"    # add a local rule
 claude-rules list                        # show all rules
 claude-rules status                      # check sync status
 ```
+
+Pi reads one context file per directory rather than a rules directory, so
+`step_pi_guidelines` ([`ai/pi/steps.sh`](../ai/pi/steps.sh)) concatenates the
+installed rules — minus anything `paths:`-scoped or `harness:`-excluded from
+`pi` — behind the `ai/pi/AGENTS.head.md` preamble, into `~/.pi/agent/AGENTS.md`.
+Write `~/.pi/agent/AGENTS.override.md` to replace it; the workbench never
+touches that file.
 
 ## Scaffolding a New Project
 

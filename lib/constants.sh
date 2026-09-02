@@ -183,6 +183,11 @@ PI_HOME="$HOME/.pi"
 PI_AGENT_DIR="$PI_HOME/agent"
 PI_SETTINGS_FILE="$PI_AGENT_DIR/settings.json"
 PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
+# Pi's global context file — the one-file counterpart to Claude Code's
+# ~/.claude/rules/ directory. AGENTS.md rather than APPEND_SYSTEM.md because
+# AGENTS.override.md sorts ahead of it in Pi's candidate list, which gives the
+# operator an unmanaged escape hatch the workbench needs no code to support.
+PI_CONTEXT_FILE="$PI_AGENT_DIR/AGENTS.md"
 # Pi's own installer, which step_install_pi pipes to bash. It installs the npm
 # package into a managed root under ~/.pi and links the launcher into the first
 # writable PATH directory it recognises — ~/.local/bin here, which the workbench
@@ -253,6 +258,7 @@ CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
 PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
+PI_CONTEXT_HEAD_SRC="$PI_SRC_DIR/AGENTS.head.md"
 SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
 CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"

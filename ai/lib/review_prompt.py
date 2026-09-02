@@ -30,7 +30,7 @@ from pathlib import Path
 import git_client
 import json
 import log
-from agent_templates import build_output_block, build_worktree_block
+from agent_templates import build_output_block
 from agent_types import EFFORT_PRESETS, Mode
 from pr_domains import ReviewVerdict
 from review_budget import (
@@ -111,9 +111,6 @@ class PromptBuilder:
         return self.set(
             "output_block", build_output_block(output_path, stdout_warning=stdout_warning),
         )
-
-    def worktree(self, wt_path: str) -> "PromptBuilder":
-        return self.set("worktree_block", build_worktree_block(wt_path))
 
     def fit(
         self, job: ReviewJob, *,
@@ -270,18 +267,6 @@ def _fixed_preflight_bytes(pf: PreflightData | None) -> int:
     )
 
 
-def _file_contents_bytes(
-    pf: PreflightData | None, file_filter: list[str] | None,
-) -> int:
-    if not pf:
-        return 0
-    filter_set = set(file_filter) if file_filter else None
-    return sum(
-        len(v.encode()) for k, v in pf.file_contents.items()
-        if filter_set is None or k in filter_set
-    )
-
-
 def _scoped_contents(
     pf: PreflightData | None, file_filter: list[str] | None,
 ) -> dict[str, str]:
@@ -293,6 +278,18 @@ def _scoped_contents(
         k: v for k, v in pf.file_contents.items()
         if filter_set is None or k in filter_set
     }
+
+
+def _contents_bytes(contents: dict[str, str]) -> int:
+    """The encoded size of a file-contents mapping.
+
+    The budget weighs the same mapping twice — once to decide whether the
+    FILE_CONTENTS lever has to fire, and again on what `fit_files` kept — so
+    both readings come from here rather than from a second walk of the
+    unfiltered preflight. A size derived from different files than the ones
+    sent is a budget that agrees with the prompt only by coincidence.
+    """
+    return sum(len(v.encode()) for v in contents.values())
 
 
 def _fit_budget(
@@ -326,8 +323,8 @@ def _fit_budget(
         len(str(v).encode()) for v in known_sections.values() if v is not None
     )
     fixed = NON_PREFLIGHT_OVERHEAD_BYTES + known_bytes + _fixed_preflight_bytes(job.preflight)
-    contents = 0 if skip_file_contents else _file_contents_bytes(job.preflight, file_filter)
     scoped = {} if skip_file_contents else _scoped_contents(job.preflight, file_filter)
+    contents = _contents_bytes(scoped)
     files = FileFit(scoped, job.preflight.file_permissions if job.preflight else {}, [])
     delta = _build_delta_section(job.preflight, file_filter=file_filter)
     cuts: list[Cut] = []
@@ -335,7 +332,7 @@ def _fit_budget(
     if contents and fixed + contents + len(delta.encode()) + min_diff > MAX_PROMPT_BYTES:
         room = max(0, MAX_PROMPT_BYTES - fixed - len(delta.encode()) - min_diff)
         files = fit_files(scoped, files.permissions, room)
-        kept = sum(len(v.encode()) for v in files.included.values())
+        kept = _contents_bytes(files.included)
         cuts.append(Cut(
             BudgetLever.FILE_CONTENTS,
             freed_bytes=contents - kept,

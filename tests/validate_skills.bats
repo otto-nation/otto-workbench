@@ -462,7 +462,8 @@ _make_agent_skill() {
 
 @test "a skill with neither invocation nor agent fails" {
   _make_skill anatomy
-  sed -i '' '/^invocation:/d' "$FAKE_WORKBENCH/ai/skills/anatomy/SKILL.md"
+  sed -i.bak '/^invocation:/d' "$FAKE_WORKBENCH/ai/skills/anatomy/SKILL.md" \
+    && rm -f "$FAKE_WORKBENCH/ai/skills/anatomy/SKILL.md.bak"
 
   WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
   [ "$status" -eq 1 ]
@@ -482,10 +483,10 @@ _make_agent_skill() {
   _make_skill anatomy
   local dir="$FAKE_WORKBENCH/ai/skills/anatomy"
   mv "$dir" "$FAKE_WORKBENCH/ai/skills/Anatomy--x"
-  sed -i '' 's/^name: anatomy/name: Anatomy--x/' \
-    "$FAKE_WORKBENCH/ai/skills/Anatomy--x/SKILL.md"
-  sed -i '' 's|skills/anatomy/|skills/Anatomy--x/|' \
-    "$FAKE_WORKBENCH/ai/skills/Anatomy--x/SKILL.md"
+  sed -i.bak -e 's/^name: anatomy/name: Anatomy--x/' \
+    -e 's|skills/anatomy/|skills/Anatomy--x/|' \
+    "$FAKE_WORKBENCH/ai/skills/Anatomy--x/SKILL.md" \
+    && rm -f "$FAKE_WORKBENCH/ai/skills/Anatomy--x/SKILL.md.bak"
 
   WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
   [ "$status" -eq 1 ]
@@ -496,8 +497,9 @@ _make_agent_skill() {
   _make_skill anatomy
   local long
   long="$(printf 'x%.0s' $(seq 1 1025))"
-  sed -i '' "s|^description:.*|description: \"$long\"|" \
-    "$FAKE_WORKBENCH/ai/skills/anatomy/SKILL.md"
+  sed -i.bak "s|^description:.*|description: \"$long\"|" \
+    "$FAKE_WORKBENCH/ai/skills/anatomy/SKILL.md" \
+    && rm -f "$FAKE_WORKBENCH/ai/skills/anatomy/SKILL.md.bak"
 
   WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
   [ "$status" -eq 1 ]

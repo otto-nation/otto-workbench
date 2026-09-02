@@ -602,7 +602,7 @@ and a push typed by hand is recorded by the global `pre-push` hook for `pr` to r
 The workbench installs a layered rule system into Claude Code:
 
 - **Global guidelines** ([`ai/guidelines/`](../ai/guidelines/)) — universal coding principles, language-specific rules
-- **Tool rules** ([`ai/guidelines/rules/`](../ai/guidelines/rules/)) — path-scoped rules that auto-load based on file type
+- **Tool rules** ([`ai/guidelines/rules/`](../ai/guidelines/rules/)) — path-scoped rules that auto-load based on file type, plus always-on, harness-neutral rules
 - **Generated rules** — [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) and [`git.generated.md`](../ai/guidelines/rules/git.generated.md) are derived from registries and conventions
 
 Rules are symlinked to `~/.claude/rules/` during sync. Add machine-specific rules with:
@@ -618,7 +618,8 @@ Pi reads one context file per directory rather than a rules directory, so
 installed rules — minus anything `paths:`-scoped or `harness:`-excluded from
 `pi` — behind the `ai/pi/AGENTS.head.md` preamble, into `~/.pi/agent/AGENTS.md`.
 Write `~/.pi/agent/AGENTS.override.md` to replace it; the workbench never
-touches that file.
+touches that file. See `rules-authoring.md` § Which harnesses a rule reaches
+for the full frontmatter table.
 
 ## Scaffolding a New Project
 
@@ -629,4 +630,4 @@ otto-workbench ai init          # scaffold .claude/ in the current repo
 otto-workbench ai init --force  # re-scaffold an existing project
 ```
 
-This creates a `.claude/` directory with stack-detected rules and a project anatomy file (file index with token estimates).
+This creates a `.claude/` directory with stack-detected rules and a project anatomy file (file index with token estimates), plus a root `CLAUDE.md` — the file every harness reads.

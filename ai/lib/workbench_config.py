@@ -515,9 +515,8 @@ def defines_key(key: str) -> bool:
 
     The local half of ``workbench_config_write.check_key``, on its own for the
     readers. A write is judged by the installed workbench too, because the file
-    outlives the
-    checkout that wrote it and is read by whatever is on ``PATH`` afterwards. A
-    read has no such gap: it resolves the key here and now, so a key only this
-    branch defines is one this branch may perfectly well ask for.
+    outlives the checkout that wrote it and is read by whatever is on ``PATH``
+    afterwards. A read has no such gap: it resolves the key here and now, so a
+    key only this branch defines is one this branch may perfectly well ask for.
     """
     return schema_accepts(surface_schema(), key)

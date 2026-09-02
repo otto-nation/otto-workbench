@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import REPO_ROOT
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -41,10 +42,6 @@ def roots(tmp_path, monkeypatch):
 
 def _write(path: Path, text: str) -> None:
     path.write_text(text.lstrip("\n"))
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
 
 
 def _row(status: wcr.ConfigStatus, key: str) -> wcr.ResolvedKey:
@@ -207,7 +204,7 @@ def test_committed_schema_matches_the_generator():
     appear in two formats. This is that test: renaming a field or adding a
     Phase member fails here until `bin/local/generate-config-schema` is re-run.
     """
-    committed = json.loads((_repo_root() / wc.SCHEMA_PATH).read_text())
+    committed = json.loads((REPO_ROOT / wc.SCHEMA_PATH).read_text())
     assert committed == json.loads(wcr.schema_json())
 
 
@@ -219,7 +216,7 @@ def test_composed_docs_carry_the_generated_reference():
     freshness check cannot see — a doc with no directive is consistent with its
     source and simply has no key reference in it.
     """
-    text = (_repo_root() / wcr.DOCS_PATH).read_text()
+    text = (REPO_ROOT / wcr.DOCS_PATH).read_text()
     assert wcr.docs_reference() in text
 
 
@@ -230,7 +227,7 @@ def test_the_module_header_asks_for_the_reference_block():
     generator — so a rename that misses one leaves the composer failing on an
     unknown block. Naming it here means the pair is checked without composing.
     """
-    header = (_repo_root() / "lib" / "config.sh").read_text()
+    header = (REPO_ROOT / "lib" / "config.sh").read_text()
     assert f"<!-- include: {wcr.GENERATOR_PATH} --emit config-reference -->" in header
 
 
@@ -257,7 +254,7 @@ def test_the_generator_banner_names_a_script_that_exists():
     fails for everyone, which is what a banner pointing at nothing deserves.
     The docs half is the `--emit` directive, checked above.
     """
-    generator = _repo_root() / wcr.GENERATOR_PATH
+    generator = REPO_ROOT / wcr.GENERATOR_PATH
     assert generator.is_file() and os.access(generator, os.X_OK)
     assert wcr.GENERATOR_PATH in json.loads(wcr.schema_json())["description"]
 
@@ -268,7 +265,7 @@ def test_the_docs_link_to_the_schema_resolves_from_the_docs_directory():
     The `../` depth is derived from `DOCS_PATH`, so moving the doc keeps the
     link pointing at the schema instead of quietly pointing above the repo.
     """
-    docs_dir = (_repo_root() / wcr.DOCS_PATH).parent
+    docs_dir = (REPO_ROOT / wcr.DOCS_PATH).parent
     link = f"({wcr._DOCS_TO_ROOT}{wc.SCHEMA_PATH})"
     assert link in wcr.docs_reference()
     assert (docs_dir / f"{wcr._DOCS_TO_ROOT}{wc.SCHEMA_PATH}").resolve().is_file()

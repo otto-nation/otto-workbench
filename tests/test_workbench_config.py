@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import add_worktree, seed_repo
+from conftest import REPO_ROOT, add_worktree, seed_repo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
@@ -44,10 +44,6 @@ def roots(tmp_path, monkeypatch):
 
 def _write(path: Path, text: str) -> None:
     path.write_text(text.lstrip("\n"))
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
 
 
 def _row(status: wcr.ConfigStatus, key: str) -> wcr.ResolvedKey:
@@ -307,7 +303,7 @@ def test_the_schema_url_points_at_a_path_the_repo_actually_has():
     else's editor, months later. No network here, but neither a rename nor a
     move into a subdirectory gets past it.
     """
-    assert (_repo_root() / wc.SCHEMA_PATH).is_file()
+    assert (REPO_ROOT / wc.SCHEMA_PATH).is_file()
     assert wc.SCHEMA_URL == f"{wc.REPO_RAW_URL}/{wc.SCHEMA_PATH}"
 
 

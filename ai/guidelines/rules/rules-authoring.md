@@ -54,3 +54,13 @@ matching is the one conditional load both harnesses share.
 rule off. `bash-tool.md` is the only one today: it catalogues Claude Code's
 static analyzer, and under another harness it forbids commands that were never
 going to prompt.
+
+Two rules carry no `paths:` on purpose, and re-adding one to narrow their load
+is the mistake this section exists to prevent. `security-secrets.md` states
+where a credential may never be written, which is not a fact about the file
+being edited — a glob list naming `*.env*` and `gitconfig*` describes where
+secrets live, not when the prohibition applies, and misses the config file a
+session creates from scratch. `bash.md` would scope to `**/*.sh`, which in a
+repo written in bash is a condition that is almost always true and costs a
+whole style contract under the harness that cannot evaluate it. Both are short
+enough that always-on costs little; the glob costs the rule.

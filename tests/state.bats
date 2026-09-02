@@ -346,23 +346,45 @@ teardown() {
   [[ -z "$output" ]]
 }
 
-# ─── state_clear_list ──────────────────────────────────────────────────────
+# ─── state_set_list ────────────────────────────────────────────────────────
 
-@test "state_clear_list resets list to empty sequence" {
-  state_append_list "brew.stacks" "infra/kubernetes"
-  state_clear_list "brew.stacks"
+@test "state_set_list writes exactly the values it is given" {
+  state_set_list "brew.stacks" "infra/kubernetes" "lang/go"
 
   run state_get_list "brew.stacks"
-  [[ -z "$output" ]]
+  [[ "${lines[0]}" == "infra/kubernetes" ]]
+  [[ "${lines[1]}" == "lang/go" ]]
+  [[ ${#lines[@]} -eq 2 ]]
 }
 
-@test "state_clear_list allows subsequent appends" {
+@test "state_set_list replaces rather than merges" {
   state_append_list "brew.stacks" "infra/kubernetes"
-  state_clear_list "brew.stacks"
-  state_append_list "brew.stacks" "lang/go"
+  state_set_list "brew.stacks" "lang/go"
 
   run state_get_list "brew.stacks"
   [[ "$output" == "lang/go" ]]
+}
+
+@test "state_set_list with no values empties the list" {
+  state_append_list "brew.stacks" "infra/kubernetes"
+  state_set_list "brew.stacks"
+
+  run state_get_list "brew.stacks"
+  [[ -z "$output" ]]
+  # An empty list, not a null — state_get_list has to keep reading it as a list.
+  run yq '.components.brew.stacks | tag' "$INSTALL_YML_FILE"
+  [[ "$output" == "!!seq" ]]
+}
+
+@test "state_set_list preserves order rather than sorting" {
+  # state_append_list sorts through `unique`; a recorded selection is the order
+  # the menu produced, and re-sorting it would churn the file on every install.
+  state_set_list "ai.tools" "serena" "claude" "pi"
+
+  run state_get_list "ai.tools"
+  [[ "${lines[0]}" == "serena" ]]
+  [[ "${lines[1]}" == "claude" ]]
+  [[ "${lines[2]}" == "pi" ]]
 }
 
 # ─── state_load_selections ─────────────────────────────────────────────────
@@ -377,7 +399,7 @@ teardown() {
   [[ ${#RESULT[@]} -eq 2 ]]
 }
 
-@test "state_load_selections returns 1 and clears list when no saved selections" {
+@test "state_load_selections returns 1 when there are no saved selections" {
   echo "components: {}" > "$INSTALL_YML_FILE"
   mkdir -p "$TMPDIR/tools/claude"
 
@@ -396,7 +418,7 @@ teardown() {
   [[ "${RESULT[0]}" == "claude" ]]
 }
 
-@test "state_load_selections clears list when WORKBENCH_INTERACTIVE=1" {
+@test "state_load_selections returns 1 when WORKBENCH_INTERACTIVE=1" {
   mkdir -p "$TMPDIR/tools/claude"
   state_append_list "ai.tools" "claude"
 
@@ -404,6 +426,57 @@ teardown() {
   local RESULT=()
   run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
   unset WORKBENCH_INTERACTIVE
+}
+
+# ─── state_load_selections — the saved list survives being asked about ──────
+
+@test "state_load_selections leaves the saved list alone on every path" {
+  # It reads; it does not answer. Emptying the list to ask the question is what
+  # let an interrupted install make the emptiness permanent — the menu below
+  # never runs here, and the recorded selection still has to be intact.
+  mkdir -p "$TMPDIR/tools/claude" "$TMPDIR/tools/serena" "$TMPDIR/tools/pi"
+  state_set_list "ai.tools" "claude" "serena"
+
+  # Drift: pi is on disk but not saved.
+  local AVAILABLE=("claude" "serena" "pi")
+  local RESULT=()
+  run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT AVAILABLE
+  run state_get_list "ai.tools"
+  [[ "${lines[0]}" == "claude" ]]
+  [[ "${lines[1]}" == "serena" ]]
+
+  # Interactive, which also forces a fresh menu.
+  export WORKBENCH_INTERACTIVE=1
+  run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
+  unset WORKBENCH_INTERACTIVE
+  run state_get_list "ai.tools"
+  [[ "${lines[0]}" == "claude" ]]
+  [[ "${lines[1]}" == "serena" ]]
+
+  # Every saved tool gone from disk.
+  rm -rf "$TMPDIR/tools/claude" "$TMPDIR/tools/serena"
+  run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT
+  run state_get_list "ai.tools"
+  [[ "${lines[0]}" == "claude" ]]
+  [[ "${lines[1]}" == "serena" ]]
+}
+
+@test "an install abandoned after the menu leaves the previous selection syncing" {
+  # The failure this fixes: adding pi to ai/ drifted ai.tools, the menu opened,
+  # the install ended before recording an answer, and the emptied list meant
+  # sync_ai dispatched to nothing. Claude stopped syncing on that machine with
+  # no error printed by anything.
+  mkdir -p "$TMPDIR/tools/claude" "$TMPDIR/tools/serena" "$TMPDIR/tools/pi"
+  state_set_list "ai.tools" "claude" "serena"
+
+  local AVAILABLE=("claude" "serena" "pi")
+  local RESULT=()
+  run -1 state_load_selections "ai.tools" "$TMPDIR/tools" RESULT AVAILABLE
+  # ...and here the install exits: a declined menu, a failed step, a Ctrl-C.
+
+  run state_get_list "ai.tools"
+  [[ -n "$output" ]]
+  [[ "$output" == *"claude"* ]]
 }
 
 # ─── state_load_selections — drift detection ────────────────────────────────

@@ -121,10 +121,14 @@ install_cask() {
 # attribute, so Gatekeeper never asks the question a cask's bare Mach-O cannot
 # answer. Such installers also self-update, which a cask does not.
 #
-# MANAGED_BIN exists because `command -v CMD` cannot tell the installer's
-# launcher apart from a cask or an npm-global of the same name, and answering
-# yes to the wrong one leaves the machine with a copy the tool cannot update
-# itself. Pass it whenever the installer's own path is known.
+# MANAGED_BIN exists for an installer that writes to a fixed path of its own,
+# where `command -v CMD` would also answer to a cask or an npm-global of the
+# same name and skip the install that was meant to replace it. Pass it only when
+# the installer documents that path: a guard naming a file the installer never
+# writes can never be satisfied, so the step reinstalls on every run — and a
+# caller that treats the same guard as a post-check fails forever. An installer
+# that lands in a prefix the machine chooses, such as npm's global one, has no
+# such path and takes the `command -v` default.
 install_via_installer() {
   local cmd="$1" url="$2" label="$3" managed_bin="${4:-}"
   if [[ -n "$managed_bin" ]]; then

@@ -221,20 +221,20 @@ step_pi_guidelines() {
   return 0
 }
 
-# step_install_pi — installs Pi via its own installer unless the managed
-# launcher is already there.
+# step_install_pi — installs Pi via its own installer unless pi is already on
+# PATH.
 #
-# Pi ships as an npm package with no Homebrew formula, and its installer owns
-# the managed install root and the launcher symlink that `pi update` later
-# replaces — so `npm install -g` would produce a copy Pi cannot update itself.
-# The installer prompts on /dev/tty for a missing Node and for a PATH edit it
-# does not need here, and skips both when no terminal is attached.
+# Pi ships as an npm package with no Homebrew formula. The installer is used
+# rather than a bare `npm install -g` because it pins through the published
+# npm-shrinkwrap and applies the registry min-age flags; the copy it leaves
+# behind is an ordinary npm global either way, which `pi update` maintains. The
+# installer prompts on /dev/tty for a missing Node and for a PATH edit it does
+# not need here, and skips both when no terminal is attached.
 #
-# Gated on PI_NATIVE_BIN rather than `command -v pi`: an npm-global copy earlier
-# on PATH answers the latter, and a machine holding one skipped this step
-# entirely while reporting success.
+# Gated on `command -v pi`, not a path: the installer writes to npm's global
+# prefix, which varies by machine, so there is no fixed launcher to test by name.
 step_install_pi() {
-  install_via_installer pi "$PI_INSTALL_URL" "Pi" "$PI_NATIVE_BIN"
+  install_via_installer pi "$PI_INSTALL_URL" "Pi"
 }
 
 # step_pi_settings — merges the workbench's managed keys into Pi's global settings.

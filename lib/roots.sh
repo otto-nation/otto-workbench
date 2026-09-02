@@ -39,6 +39,15 @@
 # review artifacts (`session.jsonl`, `post.jsonl`, `*.holistic.jsonl`) are
 # whole-file writes whose convention is prior-content-first.
 #
+# Sourcing this file twice in one process is routine — `ui.sh` reaches it through
+# `constants.sh`, and `registries.sh` loads it on its own — so each root is
+# resolved afresh every time rather than the first source winning forever. A root
+# a caller named stays put across those re-sources; a root this file derived
+# re-derives, which is what lets a caller change `HOME` and get the roots that go
+# with it. Without that, a test sandboxing `HOME` wrote its settings file to the
+# sandbox and its manifest to the machine's real state root, because `CLAUDE_DIR`
+# re-derives from `HOME` and `WORKBENCH_STATE_DIR` did not.
+#
 # Its own module rather than part of `constants.sh` because two other consumers
 # need the roots without the rest: the `otto-ai-tools` tarball ships `roots.sh`
 # alongside its own `ui.sh` facade (see `BASH_MODULES` in
@@ -76,13 +85,22 @@
 # into `trail/legacy.jsonl`. `otto-log` always reads a file whose stem does not
 # name a month, which is what keeps it visible under `--since`.
 
-# _wb_root OVERRIDE XDG_HOME FALLBACK — resolve one root.
+# _wb_root OVERRIDE PREVIOUS XDG_HOME FALLBACK — resolve one root. OVERRIDE is
+# what the root currently holds, PREVIOUS what this file last resolved it to.
+#
 # An override that is exported but empty counts as unset, matching how the XDG
 # spec reads its own variables — a bare `export WORKBENCH_STATE_DIR=` in a shell
 # profile falls through to the default rather than resolving every root to the
 # filesystem root.
+#
+# An override equal to PREVIOUS is this file's own output rather than a caller's
+# choice, and re-derives — the re-source behaviour the header block describes.
+# Comparing against the last resolution is what separates the two, since by the
+# time a second source runs there is otherwise nothing to tell a caller's value
+# from the one this file wrote there.
 _wb_root() {
-  local override="$1" xdg_home="$2" fallback="$3"
+  local override="$1" previous="$2" xdg_home="$3" fallback="$4"
+  if [[ -n "$previous" && "$override" == "$previous" ]]; then override=""; fi
   if [[ -n "$override" ]]; then
     printf '%s' "$override"
   elif [[ -n "$xdg_home" ]]; then
@@ -92,10 +110,38 @@ _wb_root() {
   fi
 }
 
+# _wb_mark OVERRIDE PREVIOUS NAME RESOLVED — record RESOLVED under NAME as this
+# file's own output, or empty NAME when OVERRIDE was a caller's choice.
+#
+# OVERRIDE and PREVIOUS lead here for the same reason they lead `_wb_root`: the
+# two calls for one root pass that pair identically, so keeping it in the same
+# two positions lets the call sites be compared column by column rather than
+# against two signatures.
+#
+# Emptying is what keeps a caller's root pinned across a re-source: the next one
+# compares against an empty record, so the value it finds can never be mistaken
+# for ours. Recording every resolution instead would retire the override after
+# one source, since a caller's value and our own would then look the same.
+_wb_mark() {
+  local override="$1" previous="$2" name="$3" resolved="$4"
+  if [[ -n "$override" && "$override" != "$previous" ]]; then
+    declare -g "$name="
+  else
+    declare -g "$name=$resolved"
+  fi
+}
+
 # shellcheck disable=SC2034  # All three roots are used by sourcing scripts
 
+# What each root already holds, captured before the resolver overwrites it —
+# _wb_mark needs to know whether a caller named the value or this file did.
+_wb_had_config="${WORKBENCH_CONFIG_DIR:-}"
+_wb_had_state="${WORKBENCH_STATE_DIR:-}"
+_wb_had_cache="${WORKBENCH_CACHE_DIR:-}"
+
 # Hand-authored settings: config.yml, overrides/.
-WORKBENCH_CONFIG_DIR="$(_wb_root "${WORKBENCH_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
+WORKBENCH_CONFIG_DIR="$(_wb_root "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:-}" "$HOME/.config/workbench")"
+_wb_mark "$_wb_had_config" "${_WB_DERIVED_CONFIG_DIR:-}" _WB_DERIVED_CONFIG_DIR "$WORKBENCH_CONFIG_DIR"
 
 # Generated, machine-local data: reviews/, trail/, usage/, install.yml, migrations.applied.
 # Written by setup scripts; read by zsh snippets and sync steps. Never committed.
@@ -103,11 +149,16 @@ WORKBENCH_CONFIG_DIR="$(_wb_root "${WORKBENCH_CONFIG_DIR:-}" "${XDG_CONFIG_HOME:
 # The move off the old ~/.config/workbench default is a hard cut — nothing falls
 # back to the legacy path. What carries the data is the one-time adoption in
 # lib/migrations.sh, which runs before any migration reads its own bookkeeping.
-WORKBENCH_STATE_DIR="$(_wb_root "${WORKBENCH_STATE_DIR:-}" "${XDG_STATE_HOME:-}" "$HOME/.local/state/workbench")"
+WORKBENCH_STATE_DIR="$(_wb_root "$_wb_had_state" "${_WB_DERIVED_STATE_DIR:-}" "${XDG_STATE_HOME:-}" "$HOME/.local/state/workbench")"
+_wb_mark "$_wb_had_state" "${_WB_DERIVED_STATE_DIR:-}" _WB_DERIVED_STATE_DIR "$WORKBENCH_STATE_DIR"
 
 # Recomputable data, safe to delete at any time: vertex-quota/.
-WORKBENCH_CACHE_DIR="$(_wb_root "${WORKBENCH_CACHE_DIR:-}" "${XDG_CACHE_HOME:-}" "$HOME/.cache/workbench")"
+WORKBENCH_CACHE_DIR="$(_wb_root "$_wb_had_cache" "${_WB_DERIVED_CACHE_DIR:-}" "${XDG_CACHE_HOME:-}" "$HOME/.cache/workbench")"
+_wb_mark "$_wb_had_cache" "${_WB_DERIVED_CACHE_DIR:-}" _WB_DERIVED_CACHE_DIR "$WORKBENCH_CACHE_DIR"
 
 # The resolver has done its work. This file is sourced into every script that
-# loads lib/ui.sh, so leaving the helper defined would leak it into all of them.
-unset -f _wb_root
+# loads lib/ui.sh, so leaving the helpers defined would leak them into all of
+# them. The three _WB_DERIVED_* variables outlive the helpers by design — they
+# are the record the next source in this process reads.
+unset -f _wb_root _wb_mark
+unset _wb_had_config _wb_had_state _wb_had_cache

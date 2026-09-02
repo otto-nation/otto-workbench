@@ -1287,6 +1287,37 @@ _sync_run() {
   diff "$BATS_TEST_TMPDIR/manifest.first" "$state/claude-settings.manifest.json"
 }
 
+@test "shell: a sandbox HOME alone keeps the manifest out of the machine state root" {
+  # What setup_file does, in order: load lib/registries.sh — which loads
+  # lib/roots.sh on its own — and only then sandbox HOME and sync. While
+  # roots.sh read its own first answer as an override, the state root stayed
+  # wherever the machine's HOME put it, so the settings file landed in the
+  # sandbox and the manifest in the operator's real ~/.local/state/workbench.
+  # Every run of this suite overwrote the manifest of the machine running it.
+  local machine="$BATS_TEST_TMPDIR/machine" sandbox="$BATS_TEST_TMPDIR/sandbox"
+  mkdir -p "$machine" "$sandbox"
+
+  run env -u WORKBENCH_STATE_DIR -u WORKBENCH_CONFIG_DIR -u WORKBENCH_CACHE_DIR \
+    -u XDG_STATE_HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME \
+    HOME="$machine" NO_COLOR=1 WORKBENCH_DIR="$REPO_ROOT" WORKBENCH_STABLE_DIR="$REPO_ROOT" \
+    bash -c '
+      . "$1/lib/registries.sh"
+      HOME="$2"
+      . "$1/lib/ui.sh"
+      . "$1/ai/claude/steps.sh"
+      step_claude_settings >/dev/null
+      printf "%s" "$CLAUDE_SETTINGS_MANIFEST"
+    ' _ "$REPO_ROOT" "$sandbox"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "$sandbox/.local/state/workbench/claude-settings.manifest.json" ]
+  [ -f "$sandbox/.local/state/workbench/claude-settings.manifest.json" ]
+  [ -f "$sandbox/.claude/settings.json" ]
+  # The machine's own roots stay untouched — the settings file and the manifest
+  # have to land under the same HOME or neither describes the other.
+  [ ! -e "$machine/.local/state/workbench" ]
+}
+
 @test "shell: the sidecar it wrote is what the next run classifies against" {
   local home="$BATS_TEST_TMPDIR/h" state="$BATS_TEST_TMPDIR/s"
   _sync_run "$home" "$state"

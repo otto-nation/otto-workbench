@@ -242,12 +242,15 @@ _brew_select_optional() {
     _brew_select_category "${category_dirs[$((num - 1))]}" "${category_labels[$((num - 1))]}"
   done
 
-  # Record selected stacks in install.yml
+  # Record selected stacks in install.yml — one write replacing the saved list,
+  # so a declined menu above leaves the previous stacks recorded rather than
+  # having emptied them on the way in.
+  local _stacks=()
   for i in "${!_SELECTED_FILES[@]}"; do
     _rel="${_SELECTED_FILES[$i]#"$brew_dir/"}"
-    _rel="${_rel%.Brewfile}"
-    state_append_list "$_BREW_STATE_KEY" "$_rel"
+    _stacks+=("${_rel%.Brewfile}")
   done
+  state_set_list "$_BREW_STATE_KEY" "${_stacks[@]}"
 
   for i in "${!_SELECTED_FILES[@]}"; do
     _brew_select_packages "${_SELECTED_FILES[$i]}" "${_SELECTED_LABELS[$i]}"
@@ -313,7 +316,6 @@ _saved_stacks=$(state_get_list "$_BREW_STATE_KEY")
 if [[ -n "$_saved_stacks" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
   _brew_replay_saved "$SCRIPT_DIR" "$_saved_stacks"
 else
-  state_clear_list "$_BREW_STATE_KEY"
   _brew_select_optional "$SCRIPT_DIR"
 fi
 

@@ -210,13 +210,6 @@ state_set() {
   v="$value" yq -i '.components.'"$key"' = strenv(v)' "$INSTALL_YML_FILE"
 }
 
-# state_clear_list KEY — resets a YAML list to empty sequence.
-state_clear_list() {
-  local key="$1"
-  _state_ensure_yml
-  yq -i '.components.'"$key"' = []' "$INSTALL_YML_FILE"
-}
-
 # state_append_list KEY VALUE — appends VALUE to a YAML list (idempotent).
 # Example: state_append_list "brew.stacks" "infra/kubernetes"
 state_append_list() {
@@ -231,6 +224,23 @@ state_get() {
   local val
   val=$(yq '.components.'"$1"' // ""' "$INSTALL_YML_FILE" 2>/dev/null)
   if [[ -n "$val" ]]; then echo "$val"; fi
+}
+
+# state_set_list KEY [VALUE...] — replaces a YAML list with exactly VALUE..., or
+# empties it when no values are given. Values must not contain newlines, the same
+# assumption `state_get_list` makes by printing one per line.
+#
+# One write, so the recorded answer is never briefly absent. Clearing the list and
+# appending the answer back leaves it empty for the whole length of an install,
+# and every way an install can end early — a declined menu, a step that fails
+# under `set -e`, a Ctrl-C — makes that emptiness the permanent record.
+state_set_list() {
+  local key="$1"
+  shift
+  _state_ensure_yml
+  local joined=""
+  if [[ $# -gt 0 ]]; then joined=$(printf '%s\n' "$@"); fi
+  v="$joined" yq -i '.components.'"$key"' = (strenv(v) | split("\n") | map(select(. != "")))' "$INSTALL_YML_FILE"
 }
 
 # state_get_list KEY — reads a YAML list, one item per line.
@@ -262,7 +272,16 @@ _state_has_new_items() {
 # saved list — forces a fresh menu so the user can opt in (or deselect).
 #
 # Returns 0 (replaying) if valid saved selections found with no drift.
-# Returns 1 (fresh) and clears the list if interactive, no valid saves, or drift detected.
+# Returns 1 (fresh) if interactive, no valid saves, or drift detected.
+#
+# Reads only. Deciding to ask the question is not an answer to it, so the saved
+# selection stays until `state_set_list` replaces it with what the user actually
+# chose. Clearing here instead left the record empty from the moment the menu
+# opened, and nothing between there and the end of the install put it back: a
+# declined menu exits 0, a failing step exits non-zero under `set -e`, and either
+# way the next sync reads an empty list and skips every tool it names. That is
+# how a machine stopped syncing Claude — `ai.tools` was emptied to ask about a
+# newly added tool and never refilled.
 state_load_selections() {
   local state_key="$1" script_dir="$2"
   local -n __selections=$3
@@ -279,7 +298,6 @@ state_load_selections() {
 
   # No saved state or interactive mode — force fresh selection
   if [[ -z "$_saved" ]] || [[ "${WORKBENCH_INTERACTIVE:-}" == "1" ]]; then
-    state_clear_list "$state_key"
     return 1
   fi
 
@@ -290,7 +308,6 @@ state_load_selections() {
 
   # All saved items gone from disk — force fresh selection
   if [[ ${#__selections[@]} -eq 0 ]]; then
-    state_clear_list "$state_key"
     return 1
   fi
 
@@ -299,7 +316,6 @@ state_load_selections() {
   if [[ "$_has_available" == true ]] && _state_has_new_items __selections __available _new_tools; then
     info "New tools available: ${_new_tools[*]}"
     __selections=()
-    state_clear_list "$state_key"
     return 1
   fi
 

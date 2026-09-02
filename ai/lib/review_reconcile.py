@@ -58,7 +58,8 @@ from pr_comments import fetch_threads, is_acknowledgment, is_pushback
 from review_dedup import get_bot_login
 from review_document import SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader
 from review_grammar import (
-    ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, FindingIdentity, parse_ledger_line,
+    ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, SID_MARKER_RE, FindingIdentity,
+    parse_ledger_line,
 )
 from review_github import PRData
 from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
@@ -71,9 +72,6 @@ from text import plural
 
 # ── Carry-forward identity ───────────────────────────────────────────────────
 
-_SID_MARKER_RE = re.compile(r"<!-- sid:(\w+) -->")
-
-
 def _stable_ids(text: str) -> set[str]:
     """Every prior-finding identity the text carries.
 
@@ -82,7 +80,7 @@ def _stable_ids(text: str) -> set[str]:
     drops the marker but keeps the path and the wording, so the recomputed ID
     is the part that survives it.
     """
-    ids = set(_SID_MARKER_RE.findall(text))
+    ids = set(SID_MARKER_RE.findall(text))
     for raw in text.split("\n"):
         identity = FindingIdentity.of(raw.strip())
         if identity:

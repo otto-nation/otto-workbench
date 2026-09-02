@@ -75,7 +75,7 @@ from review_document import (
 )
 from review_grammar import (
     ANNOTATE_FINDING_RE, FINDING_ID_RE, SEVERITY_KEY, TRIAGE_LINE_RE,
-    DedupKey, FindingIdentity, parse_ledger_line,
+    DedupKey, FindingIdentity, has_sid_marker, parse_ledger_line, sid_marker,
 )
 from review_spans import cut_spans, finding_spans
 from review_types import (
@@ -484,7 +484,7 @@ def _annotate_finding_line(line: str, m: re.Match) -> str:
     identity = FindingIdentity.of(line)
     if identity is None:
         return line
-    return f"{m.group(1)} <!-- sid:{identity.stable_id} --> {line[m.end():]}"
+    return f"{m.group(1)}{sid_marker(identity.stable_id)} {line[m.end():]}"
 
 
 def annotate_prior_with_stable_ids(review_text: str) -> str:
@@ -492,12 +492,8 @@ def annotate_prior_with_stable_ids(review_text: str) -> str:
     result: list[str] = []
     for line in lines:
         m = ANNOTATE_FINDING_RE.match(line)
-        if m and "<!-- sid:" not in line:
+        if m and not has_sid_marker(line):
             result.append(_annotate_finding_line(line, m))
         else:
             result.append(line)
     return "\n".join(result)
-
-
-def strip_stable_ids(text: str) -> str:
-    return re.sub(r" <!-- sid:\w+ -->", "", text)

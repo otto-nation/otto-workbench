@@ -16,10 +16,15 @@ A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
 `:12-18` several of them match inside a span they capture, and
 `strip_line_suffix` is how such a reader takes it back off — each used to
 truncate at the last colon instead, which read `ns:module.py` as `ns` and
-verified a finding against a file that does not exist. The identity itself is
-`FindingIdentity`, and the `DedupKey` its `dedup_key` returns is a pair with
-names rather than two loose strings, because which half is the location is not
-something a call site should have to infer from position.
+verified a finding against a file that does not exist. `SEVERITY_KEY` and the
+`<!-- sid: -->` marker are the other two: `sid_marker` writes a marker,
+`strip_sid_markers` takes it back off and `SID_MARKER_RE` reads the identity
+out of one, so a marker a writer emits is one every reader here skips over.
+
+The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
+returns is a pair with names rather than two loose strings, because which half
+is the location is not something a call site should have to infer from
+position.
 
 What a document is assembled from is `review_document`'s; what a finding means
 once parsed is `review_types`'.
@@ -38,7 +43,7 @@ from review_types import (
     PriorDisposition,
 )
 
-# ── The head of a declaration ────────────────────────────────────────────────
+# ── What a declaration is spelled with ───────────────────────────────────────
 
 # The one character class a finding ID's severity key is read through, derived
 # from the severities `review_types` declares rather than spelled out beside
@@ -50,6 +55,57 @@ from review_types import (
 # can be, and a bracketed token whose key is outside it is not a finding ID.
 SEVERITY_KEY = f"[{''.join(severity.key for severity in SEVERITIES)}]"
 
+# The marker a carried-forward finding keeps between its ID and its location,
+# holding the `FindingIdentity.stable_id` that lets a later review recognise it.
+# The literal is written once here and reached through the pieces below: a
+# marker written in a shape the readers do not skip is a finding whose location
+# parses as the marker itself, and one a stripper misses ships to the reader.
+_SID_OPEN = "<!-- sid:"
+_SID_CLOSE = " -->"
+
+# The marker with its ID captured, for a reader that wants the identity back.
+SID_MARKER_RE = re.compile(rf"{_SID_OPEN}(\w+){_SID_CLOSE}")
+
+# The marker as every reader of a declaration head sees it: optional, and
+# taking the whitespace after it, because what follows is the location.
+_SID_PREFIX = rf"(?:{_SID_OPEN}\w+{_SID_CLOSE}\s+)?"
+
+# The marker with the space that precedes it. `sid_marker` writes that space and
+# `strip_sid_markers` takes it back off, so a round trip leaves the line exactly
+# as it was rather than a space wider each time.
+_SID_SPACED_RE = re.compile(rf" {_SID_OPEN}\w+{_SID_CLOSE}")
+
+
+def sid_marker(stable_id: str) -> str:
+    """The stable-ID marker for `stable_id`, including the space before it.
+
+    What a writer appends to the head of a finding line. The space is part of
+    what this returns because it is part of what `strip_sid_markers` removes.
+    """
+    return f" {_SID_OPEN}{stable_id}{_SID_CLOSE}"
+
+
+def has_sid_marker(text: str) -> bool:
+    """Whether `text` already carries a stable-ID marker.
+
+    An opening test rather than a whole-marker match: a writer asking this
+    wants to know whether to write another, and a half-written marker is still
+    one it must not double.
+    """
+    return _SID_OPEN in text
+
+
+def strip_sid_markers(text: str) -> str:
+    """`text` with every stable-ID marker gone, the space before it included.
+
+    The markers are an internal handle on a finding's identity, so a document
+    on its way to a reader loses them.
+    """
+    return _SID_SPACED_RE.sub("", text)
+
+
+# ── The head of a declaration ────────────────────────────────────────────────
+
 # The head of a finding declaration: a list item opening with the bold ID,
 # carrying the fix pass's checkbox and a resolved finding's strikethrough when
 # it has them, and the stable-ID marker a carried finding keeps. What follows
@@ -59,7 +115,7 @@ FINDING_ID_RE = re.compile(
     r"(?:~~)?"
     rf"\*\*\[({SEVERITY_KEY})(\d+)\](?:\*\*)?"
     r"\s+"
-    r"(?:<!-- sid:\w+ -->\s+)?"
+    rf"{_SID_PREFIX}"
 )
 
 # A finding's ID wherever it appears, declaration or reference.
@@ -289,7 +345,7 @@ def parse_ledger_line(raw: str) -> LedgerEntry | None:
 VERIFY_FINDING_RE = re.compile(
     r"^- (?:\[ \] )?"
     rf"\*\*\[({SEVERITY_KEY})(\d+)\]\*\*"
-    r"\s+(?:<!-- sid:\w+ -->\s+)?"
+    rf"\s+{_SID_PREFIX}"
     rf"(?:\*\*[`]?([^`*\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`]?\*\*"
     rf"|[`]([^`\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`])"
     rf"{LINE_SUFFIX}"
@@ -303,7 +359,7 @@ VERIFY_FINDING_RE = re.compile(
 SCOPED_FINDING_RE = re.compile(
     r"- (?:\[[ x]\] )?"                       # optional checkbox
     rf"\*\*\[{SEVERITY_KEY}\d+\]\*\*"          # finding ID
-    r"\s+(?:<!-- sid:\w+ -->\s+)?"             # optional stable ID
+    rf"\s+{_SID_PREFIX}"                       # optional stable ID
     r"(?:\*\*)?[`]?(\S+?)[`]?(?:\*\*)?:\d+"   # path with optional bold/backtick wrapping
 )
 
@@ -331,7 +387,7 @@ TRIAGE_LINE_RE = re.compile(r"^- `([^`]+)`\s")
 
 _FINDING_PATH_RE = re.compile(
     rf"^- (?:\[ \] )?\*\*\[{SEVERITY_KEY}\d+\]\*\*"
-    r"\s+(?:<!-- sid:\w+ -->\s+)?"
+    rf"\s+{_SID_PREFIX}"
     r"\*\*(?:`([^`]+)`|([^*]+))\*\*"
 )
 _FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")

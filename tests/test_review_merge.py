@@ -20,18 +20,6 @@ from review_grammar import FindingIdentity
 from review_types import SEVERITIES, PriorDisposition
 
 
-class TestStripStableIds:
-    def test_removes_sid_comments(self):
-        text = '- **[M1]** <!-- sid:abc12345 --> **`file.go:42`** — desc\n'
-        result = review_merge.strip_stable_ids(text)
-        assert "<!-- sid:" not in result
-        assert "**[M1]** **`file.go:42`**" in result
-
-    def test_no_sids_unchanged(self):
-        content = "- **[M1]** **`file.go:42`** — desc\n"
-        assert review_merge.strip_stable_ids(content) == content
-
-
 def _stable_id(path: str, desc: str) -> str:
     return FindingIdentity(path, None, desc).stable_id
 

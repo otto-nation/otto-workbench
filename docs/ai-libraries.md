@@ -665,10 +665,15 @@ A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
 `:12-18` several of them match inside a span they capture, and
 `strip_line_suffix` is how such a reader takes it back off — each used to
 truncate at the last colon instead, which read `ns:module.py` as `ns` and
-verified a finding against a file that does not exist. The identity itself is
-`FindingIdentity`, and the `DedupKey` its `dedup_key` returns is a pair with
-names rather than two loose strings, because which half is the location is not
-something a call site should have to infer from position.
+verified a finding against a file that does not exist. `SEVERITY_KEY` and the
+`<!-- sid: -->` marker are the other two: `sid_marker` writes a marker,
+`strip_sid_markers` takes it back off and `SID_MARKER_RE` reads the identity
+out of one, so a marker a writer emits is one every reader here skips over.
+
+The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
+returns is a pair with names rather than two loose strings, because which half
+is the location is not something a call site should have to infer from
+position.
 
 What a document is assembled from is `review_document`'s; what a finding means
 once parsed is `review_types`'.

@@ -3,7 +3,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from review_grammar import FindingIdentity, strip_line_suffix  # noqa: E402
+from review_grammar import (  # noqa: E402
+    SID_MARKER_RE, FindingIdentity, has_sid_marker, sid_marker,
+    strip_line_suffix, strip_sid_markers,
+)
 
 DESC = "missing error check"
 
@@ -171,3 +174,35 @@ class TestStableIdIsUnchanged:
         ]
         ids = {FindingIdentity.of(s).stable_id for s in shapes}
         assert ids == {"0e9022af"}
+
+
+class TestSidMarkerIsWrittenAndReadTheSameWay:
+    """One spelling for the marker, across the writer, the readers and the strip.
+
+    The marker was written in `review_merge`, matched inline four times here,
+    tested for with a bare substring, and captured by a regex of
+    `review_reconcile`'s own. A writer and a reader that disagree leave a
+    finding whose identity nothing can recover.
+    """
+
+    def test_a_written_marker_strips_back_off_whole(self):
+        line = f"- **[M1]**{sid_marker('abc12345')} **`file.go:42`** — {DESC}"
+        assert strip_sid_markers(line) == f"- **[M1]** **`file.go:42`** — {DESC}"
+
+    def test_a_line_with_no_marker_is_unchanged(self):
+        line = f"- **[M1]** **`file.go:42`** — {DESC}"
+        assert strip_sid_markers(line) == line
+
+    def test_a_written_marker_is_seen_by_the_containment_test(self):
+        assert has_sid_marker(f"- **[M1]**{sid_marker('abc12345')} rest")
+        assert not has_sid_marker("- **[M1]** rest")
+
+    def test_a_written_marker_yields_its_id_back(self):
+        assert SID_MARKER_RE.findall(sid_marker("abc12345")) == ["abc12345"]
+
+    def test_a_written_marker_is_skipped_by_the_declaration_readers(self):
+        ident = FindingIdentity.of(
+            f"- **[M1]**{sid_marker('abc12345')} **`handler.go:42`** — {DESC}"
+        )
+        assert ident.path == "handler.go"
+        assert ident.line == 42

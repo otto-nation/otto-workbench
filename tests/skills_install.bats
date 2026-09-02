@@ -67,6 +67,25 @@ _run_step() {
   "
 }
 
+# _run_step_from_worktree — runs the step the way every non-main checkout does,
+# with WORKBENCH_STABLE_DIR naming a different tree from WORKBENCH_DIR.
+#
+# install_symlink rewrites each source path through the stable dir, so in this
+# configuration — the everyday one on a worktree-based machine — no installed
+# symlink points at WORKBENCH_DIR at all. Pinning the two together, as the other
+# helpers do, hides whether ownership is decided against the path actually
+# written.
+_run_step_from_worktree() {
+  run bash -c "
+    set -e
+    export WORKBENCH_DIR='$FAKE_WORKBENCH'
+    export WORKBENCH_STABLE_DIR='$TMPDIR/main'
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$FAKE_WORKBENCH/ai/skills/steps.sh'
+    step_skills
+  "
+}
+
 # _run_step_interrupted — runs the step with a zero file-size limit, which is the
 # one way to stop _install_agent_skill between its two writes from the outside.
 #
@@ -201,6 +220,36 @@ _run_summary() {
   _run_step
   [ "$status" -eq 0 ]
   [ ! -L "$HOME/.agents/skills/context" ]
+  [[ "$output" != *"was not installed by the workbench"* ]]
+}
+
+@test "a hand-placed symlink to a non-skill file in the checkout survives a prune" {
+  _make_skill anatomy
+  _run_step
+
+  # Ownership is the skills-directory shape inside the checkout, not the
+  # checkout itself: a link the operator pointed at some other file in the repo
+  # is not something this step ever wrote, and gets the same refusal as a link
+  # pointing outside the workbench.
+  echo "notes" > "$FAKE_WORKBENCH/README.md"
+  ln -s "$FAKE_WORKBENCH/README.md" "$HOME/.claude/skills/mynote"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ -L "$HOME/.claude/skills/mynote" ]
+  [[ "$output" == *"$HOME/.claude/skills/mynote was not installed by the workbench"* ]]
+}
+
+@test "a skill installed from a worktree is pruned once its source is gone" {
+  _make_skill anatomy
+  _run_step_from_worktree
+  [ "$(readlink "$HOME/.claude/skills/anatomy")" = "$TMPDIR/main/ai/skills/anatomy" ]
+
+  rm -rf "$FAKE_WORKBENCH/ai/skills/anatomy"
+  _run_step_from_worktree
+  [ "$status" -eq 0 ]
+  [ ! -L "$HOME/.claude/skills/anatomy" ]
+  [ ! -L "$HOME/.agents/skills/anatomy" ]
   [[ "$output" != *"was not installed by the workbench"* ]]
 }
 

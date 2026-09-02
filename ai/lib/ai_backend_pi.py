@@ -74,7 +74,9 @@ PI_AGENT_TOOLS = f"{PI_TOOLS},{PI_GITHUB_TOOLS},{PI_RESEARCH_TOOLS}"
 PI_FIX_TOOLS = f"{PI_TOOLS},{PI_RESEARCH_TOOLS}"
 
 AGENTS_DIR = Path.home() / ".claude" / "agents"
-PI_SKILLS_DIR = Path.home() / ".pi" / "agent" / "skills"
+# Mirrors AGENTS_SKILLS_DIR in lib/constants.sh, where ai/skills/steps.sh installs.
+# tests/workbench_roots.bats fails when the two drift.
+AGENTS_SKILLS_DIR = Path.home() / ".agents" / "skills"
 REVIEW_EXTENSION = Path(__file__).resolve().parent.parent / "claude" / "pi" / "extensions" / "review-guard.ts"
 
 
@@ -95,7 +97,7 @@ def _resolve_skill_path(agent: str) -> Path | None:
 
     Returns None if the file is missing or still contains the unresolved placeholder.
     """
-    skill_file = PI_SKILLS_DIR / agent / "SKILL.md"
+    skill_file = AGENTS_SKILLS_DIR / agent / "SKILL.md"
     if not skill_file.is_file():
         return None
     if AGENT_PROTOCOL_PLACEHOLDER in skill_file.read_text():

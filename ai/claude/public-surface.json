@@ -54,6 +54,7 @@
     "skill:promote",
     "skill:reference",
     "skill:retro",
+    "skill:reviewer",
     "skill:self-review-fix"
   ]
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # File operations with idempotency: symlinks, copies, directory operations,
-# layer merging.
+# layer merging, and the frontmatter reads that decide where a layered item installs.
 #
 # Bash-only — it uses `local`, arrays, and the prompt helpers.
 
@@ -254,6 +254,31 @@ resolve_layers() {
 # is_disabled USER_DIR NAME — returns 0 if a .disabled sentinel exists.
 is_disabled() {
   [[ -f "${1%/}/${2}.disabled" ]]
+}
+
+# skill_agent SKILL_FILE — prints the agent name SKILL_FILE's frontmatter declares,
+# and nothing at all for a skill that declares none or for a path that does not
+# exist yet.
+#
+# The single answer to "is this skill agent-backed?", which is a question three
+# subsystems ask and would otherwise each answer their own way: ai/skills/steps.sh
+# splices the agent's protocol into the Pi copy and installs nothing Claude-side,
+# ai/claude/steps.sh keeps such a skill out of the config export, and
+# bin/local/generate-tool-context omits it from both Claude-facing doc blocks. The
+# three disagreeing is a skill that installs one way and is documented another.
+#
+# Anchored on a frontmatter block opening at line 1, because a `---` further down
+# is a horizontal rule: reading an `agent:` out of a skill's prose would route it
+# away from Claude Code on the strength of its own documentation. Answering empty
+# for a missing file keeps a caller that meets a half-written skill directory on
+# the skip path rather than on awk's exit 2.
+skill_agent() {
+  [[ -f "$1" ]] || return 0
+  awk 'NR==1 && /^---$/ { in_fm=1; next }
+       in_fm && /^---$/ { exit }
+       in_fm && /^agent:[[:space:]]/ {
+         sub(/^agent:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit
+       }' "$1"
 }
 
 # install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]

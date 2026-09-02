@@ -7,9 +7,12 @@
 #   - SKILL.md has YAML frontmatter (opening and closing ---)
 #   - Required fields: name, description, source, trigger
 #   - name matches the skill directory name
-#   - source matches otto-workbench/ai/claude/skills/<name>/SKILL.md
+#   - source matches otto-workbench/ai/skills/<name>/SKILL.md
 #   - lifecycle_cadence and lifecycle_scope must appear together
 #   - lifecycle_scope is one of: per-project, global
+#   - agent (optional) resolves to an ai/claude/agents/<name>.md file
+#   - invocation is required unless the skill declares an agent
+#   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
 #
 # Exit code: 0 if all checks pass (or no skills found), 1 if any fail.
 
@@ -54,6 +57,43 @@ _frontmatter_field() {
     || true
 }
 
+_validate_skill_name_standard() {
+  local name="$1" display="$2"
+  [[ -n "$name" ]] || return 0
+
+  if (( ${#name} > 64 )); then
+    _fail "$display: name is ${#name} chars — the Agent Skills standard caps it at 64"
+  elif [[ ! "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+    _fail "$display: name '$name' must be lowercase a-z, 0-9 and single hyphens"
+  else
+    _pass "$display: name meets the Agent Skills standard"
+  fi
+}
+
+_validate_skill_description_standard() {
+  local desc="$1" display="$2"
+  [[ -n "$desc" ]] || return 0
+
+  if (( ${#desc} <= 1024 )); then
+    _pass "$display: description within 1024 chars"
+  else
+    _fail "$display: description is ${#desc} chars — the Agent Skills standard caps it at 1024"
+  fi
+}
+
+# An agent-backed skill installs to Pi with this agent's protocol spliced in.
+# A name resolving to nothing installs nothing, and ai/skills/steps.sh only warns.
+_validate_skill_agent() {
+  local agent="$1" display="$2"
+  [[ -n "$agent" ]] || return 0
+
+  if [[ -f "$WORKBENCH_DIR/ai/claude/agents/$agent.md" ]]; then
+    _pass "$display: agent '$agent' resolves"
+  else
+    _fail "$display: agent '$agent' has no ai/claude/agents/$agent.md"
+  fi
+}
+
 _validate_output_schema() {
   local skill_file="$1" display="$2"
   local has_os tool_name tool_script schema_out
@@ -91,7 +131,7 @@ _validate_output_schema() {
   fi
 }
 
-SKILLS_DIR="$CLAUDE_SKILLS_SRC_DIR"
+SKILLS_DIR="$SKILLS_SRC_DIR"
 
 for skill_dir in "$SKILLS_DIR"/*/; do
   [[ -d "$skill_dir" ]] || continue
@@ -129,6 +169,7 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   local_source="$(_frontmatter_field "$skill_file" "source")"
   local_invocation="$(_frontmatter_field "$skill_file" "invocation")"
   local_trigger="$(_frontmatter_field "$skill_file" "trigger")"
+  local_agent="$(skill_agent "$skill_file")"
 
   [[ -n "$local_name" ]] \
     && _pass "$display: name field present" \
@@ -138,9 +179,15 @@ for skill_dir in "$SKILLS_DIR"/*/; do
     && _pass "$display: description field present" \
     || _fail "$display: missing required field: description"
 
-  [[ -n "$local_invocation" ]] \
-    && _pass "$display: invocation field present" \
-    || _fail "$display: missing required field: invocation"
+  if [[ -n "$local_invocation" ]]; then
+    _pass "$display: invocation field present"
+  elif [[ -n "$local_agent" ]]; then
+    # An agent-backed skill is loaded for a dispatched agent, never typed as a
+    # slash command, so it has nothing to declare here.
+    _pass "$display: invocation not required for an agent-backed skill"
+  else
+    _fail "$display: missing required field: invocation"
+  fi
 
   [[ -n "$local_source" ]] \
     && _pass "$display: source field present" \
@@ -157,13 +204,20 @@ for skill_dir in "$SKILLS_DIR"/*/; do
       || _fail "$display: name '$local_name' does not match directory '$dir_name'"
   fi
 
+  # Agent Skills standard limits. Pi warns and loads the skill anyway, so a
+  # violation is invisible until a name collides or a description is truncated.
+  _validate_skill_name_standard "$local_name" "$display"
+  _validate_skill_description_standard "$local_desc" "$display"
+
   # source must match expected path
   if [[ -n "$local_source" ]]; then
-    expected_source="otto-workbench/ai/claude/skills/$dir_name/SKILL.md"
+    expected_source="otto-workbench/ai/skills/$dir_name/SKILL.md"
     [[ "$local_source" == "$expected_source" ]] \
       && _pass "$display: source path valid" \
       || _fail "$display: source '$local_source' does not match expected '$expected_source'"
   fi
+
+  _validate_skill_agent "$local_agent" "$display"
 
   # Lifecycle fields must appear together
   local_cadence="$(_frontmatter_field "$skill_file" "lifecycle_cadence")"

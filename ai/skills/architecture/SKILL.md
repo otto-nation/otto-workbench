@@ -1,0 +1,122 @@
+---
+name: architecture
+description: "On-demand architecture.md refresh. Reads recent sessions and memory to identify architectural facts that are missing or stale, then proposes specific additions to .claude/architecture.md. TRIGGER when: user discovers wrong-software assumptions, adds a new service or role, or architecture.md is stale (last-reviewed >14 days). SKIP: memory consolidation (use dream); machine-level facts (use machine)."
+source: otto-workbench/ai/skills/architecture/SKILL.md
+invocation: "/architecture"
+trigger: "Run after discovering wrong-software assumptions, adding a new service or role to a project, when architecture.md last-reviewed date is more than 14 days old, or after discovering container tool constraints."
+skip: "Do not use for memory consolidation (use dream instead) or machine-level facts (use machine instead)."
+output: ".claude/architecture.md"
+---
+
+# Architecture — Project Architecture Refresh
+
+Refreshes `.claude/architecture.md` with architectural facts discovered in recent sessions.
+Lighter than `/dream` — focuses only on architecture.md, not memory consolidation.
+
+Run manually with `/architecture` after adding a new service, discovering a wrong-API assumption,
+or when `<!-- last-reviewed -->` is more than 14 days old and active work is ongoing.
+
+---
+
+## Steps
+
+### 1. Resolve the project root
+
+```bash
+git rev-parse --show-toplevel
+resolve-worktree
+```
+
+`architecture.md` is a tracked project file, so it belongs in a working tree. See
+`ai/skills/analyze-project/SKILL.md` step 1a for the full contract behind these
+two commands — which one wins, what each `resolve-worktree` exit code means, and why
+this never falls back to the current directory. A container holds no work tree, so an
+`architecture.md` written there is covered by no `.gitignore` rule, reaches no review,
+and is seen by no CI check — the only way it is ever found is by hand.
+
+`cd` to the resolved path and run every step below from there.
+
+### 2. Read current state
+
+```bash
+# Find the current project's architecture.md
+cat .claude/architecture.md
+
+# Find the project's memory files (if any)
+ls ~/.claude/projects/$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo "unknown"))/memory/ 2>/dev/null
+
+# Find the 5 most recent session files for this project
+project_slug=$(pwd | sed 's|/|-|g' | sed 's|^-||')
+ls -t ~/.claude/projects/${project_slug}/*.jsonl 2>/dev/null | head -5
+```
+
+Note:
+- The `<!-- last-reviewed: -->` date from architecture.md
+- Which sections exist (Service Stack, Known Constraints, Conventions)
+- What's already documented so you don't duplicate it
+
+### 3. Read memory topic files
+
+For each file in the project's memory directory, read it and look for entries that describe:
+- Software identity or API facts (what something actually is, not what was assumed)
+- Infrastructure constraints (tool availability, network topology)
+- Architectural decisions that should be stable facts
+
+These may belong in architecture.md rather than (or in addition to) memory.
+
+### 4. Read recent sessions
+
+Read the 5 most recent session `.jsonl` files. For each file, scan for:
+- Wrong-software discoveries: "not Synapse", "actually Conduit", "wrong API", "turned out"
+- Tool-availability findings: "no curl", "no wget", "doesn't have bash", "minimal image"
+- Architectural confirmations: "the convention is", "always goes in", "never edit directly"
+- New services or roles mentioned that aren't in architecture.md's Service Stack
+
+Read ONLY the context around matches — lines where `type` is `"human"` or `"assistant"`.
+
+### 5. Build a proposed diff
+
+For each finding NOT already in architecture.md:
+
+**Format a proposed addition:**
+```
+Section: Known Constraints > Software identity
+Evidence: [session date, quote]
+Proposed addition:
+  - <Fact.> <!-- added by /architecture YYYY-MM-DD -->
+```
+
+Present all proposed additions before writing anything. For each one, confirm before applying.
+
+**Do not:**
+- Remove or modify existing content
+- Add entries already present (even if worded differently)
+- Add session-behavior facts (preferences, decisions) — those belong in memory/
+
+### 6. Apply confirmed additions
+
+After user confirmation for each addition:
+1. Insert the bullet or table row in the correct section
+2. Update `<!-- last-reviewed: YYYY-MM-DD -->` to today at the top of the file
+
+### 7. Summary
+
+Print:
+- How many candidates were found
+- How many were added (vs. skipped or deferred)
+- New `last-reviewed` date
+
+---
+
+## When to use
+
+- After adding a new Ansible role / service to a homelab-style project
+- After a session where Claude assumed the wrong software (e.g., Synapse instead of Conduit)
+- When `last-reviewed` date is >14 days old and work is active
+- After discovering a container lacks a tool you assumed was present
+
+## Output location
+
+`.claude/architecture.md` in the project root (committed, human-maintained) — the root
+step 1 resolves, which for a session rooted at a bare-repo container is the worktree
+that container stands in for, never the container.

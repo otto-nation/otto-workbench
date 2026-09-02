@@ -167,6 +167,15 @@ CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 # which a Homebrew cask still on PATH answers just as readily.
 CLAUDE_NATIVE_BIN="$HOME/.local/bin/claude"
 
+# ─── Agent Skills — cross-harness install root ───────────────────────────────
+# Pi's built-in cross-harness discovery root, and the shared standard's own
+# location. Pi stats each entry before recursing (dist/core/skills.js:171-176),
+# so a symlinked skill directory here is followed like a real one — which is why
+# no per-harness copy is needed. Named for the standard rather than for Pi: the
+# skills installed here belong to no one harness, and CLAUDE_SKILLS_DIR above is
+# its Claude Code counterpart.
+AGENTS_SKILLS_DIR="$HOME/.agents/skills"
+
 # ─── Pi coding agent ──────────────────────────────────────────────────────────
 # Pi reads global settings from ~/.pi/agent/settings.json. PI_LEGACY_SETTINGS_FILE
 # is the path an earlier sync wrote to, which Pi never read.
@@ -174,7 +183,6 @@ PI_HOME="$HOME/.pi"
 PI_AGENT_DIR="$PI_HOME/agent"
 PI_SETTINGS_FILE="$PI_AGENT_DIR/settings.json"
 PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
-PI_SKILLS_DIR="$PI_AGENT_DIR/skills"
 # Pi's own installer, which step_install_pi pipes to bash. It installs the npm
 # package into a managed root under ~/.pi and links the launcher into the first
 # writable PATH directory it recognises — ~/.local/bin here, which the workbench
@@ -228,6 +236,10 @@ ZSH_SNIPPET_GLOB="*.zsh"
 
 # ─── Workbench source — AI ────────────────────────────────────────────────────
 AI_SRC_DIR="$WORKBENCH_DIR/ai"
+# Canonical skills, installed into both harnesses' discovery roots by
+# ai/skills/steps.sh. Harness-neutral: the Agent Skills standard is the format
+# and neither Claude Code nor Pi needs a translated copy.
+SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/skills"
 GUIDELINES_RULES_SRC_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
 RULES_GLOB="*.md"
 
@@ -236,21 +248,21 @@ CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
 PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
-PI_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/pi/skills"
 SERENA_SRC_DIR="$WORKBENCH_DIR/ai/serena"
 CLAUDE_MCPS_SRC_DIR="$WORKBENCH_DIR/ai/claude/mcps"
 CLAUDE_GUIDELINES_SRC="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
 CLAUDE_SETTINGS_SRC="$WORKBENCH_DIR/ai/claude/settings.json"
 CLAUDE_SYNC_SETTINGS_JQ="$WORKBENCH_DIR/ai/claude/sync-settings.jq"
-CLAUDE_SKILLS_SRC_DIR="$WORKBENCH_DIR/ai/claude/skills"
 CLAUDE_AGENTS_SRC_DIR="$WORKBENCH_DIR/ai/claude/agents"
 CLAUDE_TEMPLATES_DIR="$WORKBENCH_DIR/ai/claude/templates"
 
 # ─── User overrides (hand-authored, so they live under the config root) ──────
 USER_AI_DIR="$WORKBENCH_CONFIG_DIR/overrides/ai"
+# Harness-neutral, matching ai/skills — the layer overrides a tree neither
+# harness owns.
+USER_SKILLS_DIR="$USER_AI_DIR/skills"
 USER_CLAUDE_DIR="$USER_AI_DIR/claude"
 USER_AGENTS_DIR="$USER_CLAUDE_DIR/agents"
-USER_SKILLS_DIR="$USER_CLAUDE_DIR/skills"
 USER_RULES_DIR="$USER_AI_DIR/guidelines/rules"
 USER_GUIDELINES_SRC="$USER_CLAUDE_DIR/CLAUDE.md"
 USER_GUIDELINES_LOCAL="$USER_CLAUDE_DIR/CLAUDE.local.md"

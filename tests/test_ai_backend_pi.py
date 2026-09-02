@@ -93,7 +93,7 @@ class TestBuildAgentCmd:
         # Ensure no skill file exists so fallback path is exercised
         empty_skills_dir = tmp_path / "skills"
         empty_skills_dir.mkdir()
-        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", empty_skills_dir)
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", empty_skills_dir)
         cmd = ai_backend_pi._build_agent_cmd(
             ai_backend_pi.AgentInvocation(prompt="", agent="test"),
         )
@@ -107,7 +107,7 @@ class TestBuildAgentCmd:
         monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
         empty_skills_dir = tmp_path / "skills"
         empty_skills_dir.mkdir()
-        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", empty_skills_dir)
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", empty_skills_dir)
         with pytest.raises(FileNotFoundError):
             ai_backend_pi._build_agent_cmd(
                 ai_backend_pi.AgentInvocation(prompt="", agent="nonexistent"),
@@ -234,13 +234,13 @@ class TestResolveSkillPath:
         reviewer_dir.mkdir(parents=True)
         skill_file = reviewer_dir / "SKILL.md"
         skill_file.write_text("---\nname: reviewer\n---\n# Reviewer")
-        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
         assert ai_backend_pi._resolve_skill_path("reviewer") == skill_file
 
     def test_returns_none_when_no_skill(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "pi" / "skills"
         skills_dir.mkdir(parents=True)
-        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
         assert ai_backend_pi._resolve_skill_path("reviewer") is None
 
     def test_returns_none_when_placeholder_present(self, tmp_path, monkeypatch):
@@ -249,7 +249,7 @@ class TestResolveSkillPath:
         reviewer_dir.mkdir(parents=True)
         skill_file = reviewer_dir / "SKILL.md"
         skill_file.write_text("---\nname: reviewer\n---\n<!-- AGENT_PROTOCOL_PLACEHOLDER: replaced by setup -->\n")
-        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
         assert ai_backend_pi._resolve_skill_path("reviewer") is None
 
 
@@ -259,7 +259,7 @@ class TestBuildAgentCmdWithSkills:
         reviewer_dir = skills_dir / "reviewer"
         reviewer_dir.mkdir(parents=True)
         (reviewer_dir / "SKILL.md").write_text("---\nname: reviewer\n---\n# R")
-        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
         cmd = ai_backend_pi._build_agent_cmd(
             ai_backend_pi.AgentInvocation(prompt="", agent="reviewer"),
         )
@@ -269,7 +269,7 @@ class TestBuildAgentCmdWithSkills:
     def test_falls_back_to_append_system_prompt(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "empty_skills"
         skills_dir.mkdir()
-        monkeypatch.setattr(ai_backend_pi, "PI_SKILLS_DIR", skills_dir)
+        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "reviewer.md").write_text("# Reviewer agent")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for ai/claude/skills/machine/generate-machine-profile.sh — how it names
+# Tests for ai/skills/machine/generate-machine-profile.sh — how it names
 # the workbench's own location, which used to be a list of three hardcoded
 # candidate paths, and how it names the repos on the machine, which used to be a
 # `find` over four guessed-at git roots.
@@ -37,7 +37,7 @@ make_repo() {
   # The three hardcoded candidates could promise no such thing: each was a guess
   # at where the repo might be, and a machine that cloned it anywhere else got a
   # profile with the line silently missing.
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
 
   local named
@@ -51,7 +51,7 @@ make_repo() {
   # reporting the miss. It is now visible in the profile and on stderr.
   export WORKBENCH_STABLE_DIR="$TMPDIR/no-such-workbench"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   [[ "$output" == *"did not resolve"* ]]
   grep -q '^- otto-workbench: location unresolved' "$TMPDIR/home/.claude/machine/machine.md"
@@ -61,7 +61,7 @@ make_repo() {
   make_repo "$TMPDIR/alpha"
   project_register "$TMPDIR/alpha"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   grep -q "| alpha | $TMPDIR/alpha |" "$TMPDIR/home/.claude/machine/machine.md"
 }
@@ -85,7 +85,7 @@ profile_row() {
   printf 'issue_tracker:\n  provider: github\n' > "$TMPDIR/alpha/.workbench.yml"
   project_register "$TMPDIR/alpha"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   grep -q '^| Project | Path | Stack | Issues | Memory |$' "$TMPDIR/home/.claude/machine/machine.md"
   [[ "$(profile_row alpha)" == *"| github |"* ]]
@@ -103,7 +103,7 @@ profile_row() {
   printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/container/.workbench.yml"
   project_register "$TMPDIR/container/main"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   # The repo's row, not the checkout's: the tracker is the repository's answer,
   # and the container is where it was recorded.
@@ -120,7 +120,7 @@ profile_row() {
   make_repo "$TMPDIR/zeta"
   project_register "$TMPDIR/zeta"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   [[ "$(profile_row zeta)" == *"| github (global) |"* ]]
 }
@@ -132,7 +132,7 @@ profile_row() {
   make_repo "$TMPDIR/beta"
   project_register "$TMPDIR/beta"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   [[ "$(profile_row beta)" == *"| unset |"* ]]
 }
@@ -147,7 +147,7 @@ profile_row() {
   printf 'issue_tracker:\n  provider: linear\n' > "$TMPDIR/delta/.workbench.yml"
   project_register "$TMPDIR/delta"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   [[ "$(profile_row gamma)" == *"| unset |"* ]]
   [[ "$(profile_row delta)" == *"| linear |"* ]]
@@ -161,7 +161,7 @@ profile_row() {
   printf 'issue_tracker:\n  provider: "a | b"\n' > "$TMPDIR/epsilon/.workbench.yml"
   project_register "$TMPDIR/epsilon"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   [[ "$(profile_row epsilon)" == *"| unset |"* ]]
 }
@@ -182,7 +182,7 @@ profile_row() {
   project_register "$TMPDIR/container/main"
   project_register "$TMPDIR/container/feature"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   local profile="$TMPDIR/home/.claude/machine/machine.md"
   [ "$(grep -c '^| container |' "$profile")" = "1" ]
@@ -200,7 +200,7 @@ profile_row() {
   make_worktree_container "$TMPDIR/container" "$TMPDIR/seed"
   project_register "$TMPDIR/container/main"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   [[ "$(profile_row container)" == *"| node |"* ]]
 }
@@ -217,7 +217,7 @@ profile_row() {
   mkdir -p "$TMPDIR/home/.claude/projects/${TMPDIR//\//-}-container/memory"
   printf 'a fact\n' > "$TMPDIR/home/.claude/projects/${TMPDIR//\//-}-container/memory/one.md"
 
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   [[ "$(profile_row container)" == *"| yes (1 files) |"* ]]
 }
@@ -226,7 +226,7 @@ profile_row() {
   # The heading used to be inside the conditional, so an empty list took the
   # whole section with it and the profile read as though the machine had no
   # repos rather than as though nothing had registered yet.
-  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/claude/skills/machine/generate-machine-profile.sh" --force
+  HOME="$TMPDIR/home" run "$REPO_ROOT/ai/skills/machine/generate-machine-profile.sh" --force
   [ "$status" -eq 0 ]
   grep -q '^## Project Registry' "$TMPDIR/home/.claude/machine/machine.md"
   grep -q 'No repos registered yet' "$TMPDIR/home/.claude/machine/machine.md"

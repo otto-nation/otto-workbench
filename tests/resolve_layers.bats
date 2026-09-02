@@ -114,3 +114,76 @@ teardown() {
 @test "is_disabled: returns false when no sentinel" {
   ! is_disabled "$USER_DIR" "foo"
 }
+
+# ─── skill_agent ─────────────────────────────────────────────────────────────
+
+# _skill_file NAME CONTENT — writes a SKILL.md and prints its path.
+_skill_file() {
+  mkdir -p "$BASE_DIR/$1"
+  printf '%s' "$2" > "$BASE_DIR/$1/SKILL.md"
+  printf '%s' "$BASE_DIR/$1/SKILL.md"
+}
+
+@test "skill_agent: prints the declared agent" {
+  local f
+  f="$(_skill_file reviewer '---
+name: reviewer
+agent: reviewer
+---
+body
+')"
+  [ "$(skill_agent "$f")" = "reviewer" ]
+}
+
+@test "skill_agent: prints nothing for a skill declaring none" {
+  local f
+  f="$(_skill_file anatomy '---
+name: anatomy
+---
+body
+')"
+  [ -z "$(skill_agent "$f")" ]
+}
+
+@test "skill_agent: strips quotes around the value" {
+  local f
+  f="$(_skill_file reviewer '---
+agent: "reviewer"
+---
+')"
+  [ "$(skill_agent "$f")" = "reviewer" ]
+}
+
+# The divergence this helper exists to close: a `---` rule in the body opens no
+# frontmatter block, so an `agent:` line in a skill's prose is documentation and
+# must not route the skill away from Claude Code.
+@test "skill_agent: ignores an agent line below a horizontal rule in the body" {
+  local f
+  f="$(_skill_file anatomy '---
+name: anatomy
+---
+
+# anatomy
+
+---
+agent: reviewer
+---
+')"
+  [ -z "$(skill_agent "$f")" ]
+}
+
+@test "skill_agent: ignores a body that opens with no frontmatter at all" {
+  local f
+  f="$(_skill_file anatomy 'agent: reviewer
+')"
+  [ -z "$(skill_agent "$f")" ]
+}
+
+# Callers glob skill directories, so they meet a half-written one before its
+# SKILL.md exists. Answering empty keeps them on the skip path rather than on
+# awk's exit 2, which under set -e would abort a whole sync or export.
+@test "skill_agent: answers empty for a file that is not there" {
+  run skill_agent "$BASE_DIR/ghost/SKILL.md"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}

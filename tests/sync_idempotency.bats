@@ -303,18 +303,6 @@ _claude_setup() {
   [[ "$content1" == "$content2" ]]
 }
 
-@test "step_claude_skills: second run produces identical symlinks" {
-  _claude_setup
-
-  step_claude_skills >/dev/null 2>&1
-  state1=$(_symlinks "$FAKE_HOME/.claude/skills" 2)
-
-  step_claude_skills >/dev/null 2>&1
-  state2=$(_symlinks "$FAKE_HOME/.claude/skills" 2)
-
-  [[ "$state1" == "$state2" ]]
-}
-
 @test "step_claude_agents: second run produces identical files" {
   _claude_setup
 
@@ -335,4 +323,18 @@ _claude_setup() {
 
   run step_claude_mcps
   [ "$status" -eq 0 ]
+}
+
+# ─── step_skills (cross-harness) ────────────────────────────────────────────
+
+@test "step_skills: second run produces identical symlinks in both roots" {
+  _source_with "$FAKE_HOME" "ai/skills/steps.sh"
+
+  step_skills >/dev/null 2>&1
+  state1=$(_symlinks "$FAKE_HOME/.claude/skills" 2)$(_symlinks "$FAKE_HOME/.agents/skills" 2)
+
+  step_skills >/dev/null 2>&1
+  state2=$(_symlinks "$FAKE_HOME/.claude/skills" 2)$(_symlinks "$FAKE_HOME/.agents/skills" 2)
+
+  [[ "$state1" == "$state2" ]]
 }

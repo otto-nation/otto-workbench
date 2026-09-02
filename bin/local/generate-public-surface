@@ -204,7 +204,7 @@ _claude_artifacts() {
     [[ -f "$f" ]] || continue
     printf 'agent:%s\n' "$(basename "$f" .md)"
   done
-  for d in "$REPO_ROOT"/ai/claude/skills/*/; do
+  for d in "$REPO_ROOT"/ai/skills/*/; do
     [[ -d "$d" ]] || continue
     printf 'skill:%s\n' "$(basename "$d")"
   done

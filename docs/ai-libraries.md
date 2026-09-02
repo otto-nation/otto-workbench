@@ -1685,7 +1685,7 @@ the live `SKILL.md` body as the prompt, and scores what the session ran:
 all. Any violation drops precision to zero — a constraint is not something you
 get partial credit for breaking.
 
-The SKILL.md is read live from `ai/claude/skills/`, never copied into a case.
+The SKILL.md is read live from `ai/skills/`, never copied into a case.
 The file is the single source of truth; a copy would let the eval keep passing
 against a skill that no longer says what the copy says. That is the point:
 before this, there was no way to tell whether a change to a `SKILL.md` made the

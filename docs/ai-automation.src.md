@@ -24,7 +24,7 @@ First-time setup:
 ai/setup.sh
 ```
 
-Prompts for confirmation at each step. Safe to re-run. This installs Claude Code configuration, rules, skills, and agents.
+Prompts for confirmation at each step. Safe to re-run. This installs Claude Code configuration, rules, and agents, plus skills — shared between Claude Code (`~/.claude/skills/`) and Pi (`~/.agents/skills/`) from the one `ai/skills/` tree.
 
 After setup, configure the AI tool for global task automation:
 

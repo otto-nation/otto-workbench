@@ -440,6 +440,23 @@ def reconcile(
     nothing is inferred and the review's own account stands alone, which is
     what a caller reconciling two documents rather than a run wants.
     """
+    return _reconcile_findings(
+        _parse_prior_findings(prior_text), prior_text, review_text, wt_path, head_sha,
+    )
+
+
+def _reconcile_findings(
+    findings: list[PriorFinding],
+    prior_text: str,
+    review_text: str,
+    wt_path: str,
+    head_sha: str,
+) -> Reconciliation:
+    """`reconcile()`'s body, taking the prior findings already parsed.
+
+    Split out so `passed_over()` can reuse the one parse of `prior_text`
+    instead of paying for a second one just to get the findings back.
+    """
     carried = _stable_ids(review_text)
     ledger = _parse_ledger(review_text)
     prior = ReviewHeader.parse(prior_text)
@@ -448,10 +465,7 @@ def reconcile(
         prior_sha=tree.prior_sha,
         prior_date=prior.date,
         head_sha=head_sha or (git_client.head_sha(wt_path) if wt_path else ""),
-        records=[
-            _settle(finding, carried, ledger, tree)
-            for finding in _parse_prior_findings(prior_text)
-        ],
+        records=[_settle(finding, carried, ledger, tree) for finding in findings],
     )
 
 
@@ -479,12 +493,11 @@ def passed_over(
     """
     if not prior_text:
         return []
-    reconciliation = reconcile(prior_text, review_text, wt_path, head_sha)
+    findings = _parse_prior_findings(prior_text)
+    reconciliation = _reconcile_findings(findings, prior_text, review_text, wt_path, head_sha)
     return [
         finding
-        for finding, record in zip(
-            _parse_prior_findings(prior_text), reconciliation.records, strict=True,
-        )
+        for finding, record in zip(findings, reconciliation.records, strict=True)
         if not record.decided and record.reason is UndecidedReason.NOT_MENTIONED
     ]
 

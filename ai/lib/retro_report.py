@@ -37,6 +37,9 @@ def _format_comment(comment: dict) -> list[str]:
     lines: list[str] = []
     location = _format_comment_location(comment)
     lines.append(f"- **Comment by @{comment['author']}**{location}")
+    # Re-truncated defensively: every builder of this dict already caps `body`
+    # at COMMENT_BODY_MAX, but this renderer has no way to enforce that on a
+    # comment built elsewhere, so it does not trust the cap arrived intact.
     lines.append(f"  > {comment['body'][:COMMENT_BODY_MAX]}")
     if comment.get("direction"):
         lines.append(f"  - Direction: {comment['direction']}")

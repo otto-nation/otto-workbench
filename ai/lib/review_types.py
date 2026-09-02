@@ -565,7 +565,7 @@ class ReviewJob:
     # cannot do once the two sources read the same.
     skip_phases: frozenset[Phase] = frozenset()
     include_generated: bool = False
-    reply_threads: "ReplyThreads | None" = None
+    reply_threads: ReplyThreads | None = None
     verification: dict | None = None
     pr_state_data: "PRState | None" = None
     viewer_role: str = ""

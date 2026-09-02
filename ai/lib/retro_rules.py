@@ -55,7 +55,7 @@ def load_rules(workbench: Path) -> list[dict]:
         return []
     results = []
     for f in sorted(rules_dir.glob("*.md")):
-        content = f.read_text()
+        content = f.read_text(encoding="utf-8")
         keywords = extract_keywords(content)
         bullets = [
             line.strip().removeprefix("- ")

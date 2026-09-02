@@ -40,7 +40,7 @@ from dataclasses import dataclass
 
 from review_types import (
     SEVERITIES, Finding, FindingLocation, FindingRef, LedgerEntry,
-    PriorDisposition,
+    PriorDisposition, severity_by_key,
 )
 
 # ── What a declaration is spelled with ───────────────────────────────────────
@@ -54,6 +54,20 @@ from review_types import (
 # The narrow reading is the right one: `SEVERITIES` says what a severity key
 # can be, and a bracketed token whose key is outside it is not a finding ID.
 SEVERITY_KEY = f"[{''.join(severity.key for severity in SEVERITIES)}]"
+
+# The severity's human label, as a posted comment carries it after the ID. Read
+# off `SEVERITIES` for the same reason `SEVERITY_KEY` is: this is the half of
+# the posted spelling the readers below have to recognise, and a label added to
+# `review_types` that they do not know is a comment none of them match.
+_SEVERITY_LABEL = "|".join(re.escape(severity.label) for severity in SEVERITIES)
+
+# The label as the readers see it, between the ID's `]` and the closing `**`.
+# Optional, because a finding wears one tag in the review file and another once
+# posted, and a reader of a finding ID has to accept both — that is what the
+# posted spelling having no owner cost: `format_inline_comment` wrote the label
+# and every reader required the `**` adjacent to the `]`, so a posted comment
+# matched nothing and the thread-state annotation downstream never ran.
+_POSTED_LABEL = rf"(?:\s+\[(?:{_SEVERITY_LABEL})\])?"
 
 # The marker a carried-forward finding keeps between its ID and its location,
 # holding the `FindingIdentity.stable_id` that lets a later review recognise it.
@@ -118,8 +132,9 @@ FINDING_ID_RE = re.compile(
     rf"{_SID_PREFIX}"
 )
 
-# A finding's ID wherever it appears, declaration or reference.
-BOLD_FINDING_ID_RE = re.compile(rf"\*\*\[({SEVERITY_KEY}\d+)\]\*\*")
+# A finding's ID wherever it appears, in either spelling: a review file's
+# declaration or reference, and a posted comment's labelled tag.
+BOLD_FINDING_ID_RE = re.compile(rf"\*\*\[({SEVERITY_KEY}\d+)\]{_POSTED_LABEL}\*\*")
 
 # A declaration the review struck through, which is how it says the finding was
 # resolved. It ends the body above it and opens nothing.
@@ -134,6 +149,29 @@ STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
 ANNOTATE_FINDING_RE = re.compile(
     rf"^(- (?:\[ \] )?\*\*\[{SEVERITY_KEY}\d+\]\*\*)\s+"
 )
+
+
+def finding_tag(posted_id: str) -> str:
+    """The bold tag a review file's finding opens with.
+
+    The plainer of the two spellings, and the one every reader above was
+    written for.
+    """
+    return f"**[{posted_id}]**"
+
+
+def posted_finding_tag(posted_id: str, severity: str) -> str:
+    """The bold tag a posted comment's finding opens with, severity label included.
+
+    The other spelling, and the reason it is written here rather than where it
+    is posted from: it was spelled at two sites in `review_format` and read by
+    nothing that understood it, so the label the writer added was the label
+    every reader tripped over. `BOLD_FINDING_ID_RE` and `BODY_FINDING_RE` accept
+    what this emits, and the label comes from the same `SEVERITIES` those
+    patterns are built from, so a new severity reaches the writer and the
+    readers together.
+    """
+    return f"**[{posted_id}] [{severity_by_key(severity).label}]**"
 
 
 # ── The location a declaration names ─────────────────────────────────────────
@@ -365,12 +403,13 @@ SCOPED_FINDING_RE = re.compile(
 )
 
 # A declaration as it reads once posted, in the body of a review comment rather
-# than in the review file: no checkbox, since the fix pass has not seen it, and
-# the path and the body captured so a finding about to be posted can be matched
-# against one already there. Scanned with `finditer` over a whole comment body,
-# which is why it is the one reader here carrying `re.MULTILINE`.
+# than in the review file: no checkbox, since the fix pass has not seen it, the
+# severity label the posted spelling carries, and the path and the body captured
+# so a finding about to be posted can be matched against one already there.
+# Scanned with `finditer` over a whole comment body, which is why it is the one
+# reader here carrying `re.MULTILINE`.
 BODY_FINDING_RE = re.compile(
-    rf"^- \*\*\[{SEVERITY_KEY}\d+\]\*\*\s+"
+    rf"^- \*\*\[{SEVERITY_KEY}\d+\]{_POSTED_LABEL}\*\*\s+"
     r"(?:\*\*`?([^`*\s]+?)`?\*\*|`([^`\s]+?)`)"
     rf"{LINE_SUFFIX}"
     r"\s*—\s*(.*)",

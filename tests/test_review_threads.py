@@ -46,7 +46,8 @@ from review_reconcile import (
     ReplyThreads, _classify_thread_for_rereview, _match_thread_to_finding,
     fetch_reply_threads,
 )
-from review_types import ReplyState
+from review_format import format_inline_comment
+from review_types import SEVERITIES, Finding, ReplyState
 from review_prompt_sections import (
     _annotate_with_thread_state, _build_prior_section,
     _build_reply_threads_section, _strip_internal_sections,
@@ -303,6 +304,24 @@ class TestMatchThreadToFinding:
         body = "**[M1]** first\n**[M2]** second"
         assert _match_thread_to_finding(body) == "M1"
 
+    @pytest.mark.parametrize("severity", [s.key for s in SEVERITIES])
+    def test_the_body_the_poster_actually_writes_matches(self, severity):
+        """The bodies this reads are labelled, and it used to match none of them.
+
+        `format_inline_comment` has always written the severity label between
+        the ID and the closing `**`, and the regex required them adjacent — so
+        every thread came back with an empty `finding_id` and the annotation
+        downstream was dead code. The round trip is the assertion: whatever the
+        writer emits, the reader gets the ID back out of it.
+        """
+        finding = Finding(
+            id=f"{severity}1", severity=severity, seq=1, path="ai/lib/x.py",
+            line=12, end_line=None, body="missing error check",
+        )
+        finding.posted_id = f"{severity}1"
+        body = format_inline_comment(finding)["body"]
+        assert _match_thread_to_finding(body) == f"{severity}1"
+
 
 # ── fetch_reply_threads ─────────────────────────────────────────────────────
 
@@ -370,6 +389,39 @@ class TestFetchReplyThreads:
         states = {t["state"] for t in result.threads}
         assert ReplyState.RESOLVED in states
         assert ReplyState.UNREPLIED in states
+
+    def test_a_thread_on_a_real_posted_comment_reaches_the_prior_review(self):
+        """The whole path, from the body the poster wrote to the annotated line.
+
+        Every test above hands the classifier a hand-written `**[M1]**` body,
+        which is the review file's spelling and not the one that reaches
+        GitHub. Posting the finding for real is what caught that the reader
+        never matched: the tag it looks for carries the severity label.
+        """
+        finding = Finding(
+            id="M1", severity="M", seq=1, path="a.py", line=10, end_line=None,
+            body="Missing error check",
+        )
+        finding.posted_id = "M1"
+        posted = format_inline_comment(finding)["body"]
+
+        threads = [{
+            "id": "T1", "isResolved": False, "path": "a.py", "line": 10,
+            "comments": {"nodes": _make_comments(
+                ("bot", posted),
+                ("alice", "However, the error is handled upstream"),
+            )},
+        }]
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", return_value=threads):
+            result = fetch_reply_threads("owner/repo", "42")
+
+        assert result.threads[0]["finding_id"] == "M1"
+        assert result.threads[0]["state"] == ReplyState.CONTESTED
+
+        review = "## Must fix\n- **[M1]** `a.py:10` — Missing error check\n"
+        annotated = _annotate_with_thread_state(review, result)
+        assert annotated.split("\n")[1].endswith("Missing error check  [CONTESTED]")
 
 
 # ── _build_reply_threads_section ─────────────────────────────────────────────

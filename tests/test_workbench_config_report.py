@@ -194,10 +194,15 @@ def test_a_rejected_value_still_reports_the_scopes_and_the_strays(roots):
 # silent loss a stray key causes, one level down — and the report has to catch
 # it for the same reason.
 
+# The same key spelled twice: as the boolean the field holds, and as the quoted
+# string it does not. The pair is what every test in this section contrasts.
+QUOTED_BOOL = 'github:\n  ssh_over_443: "true"\n'
+REAL_BOOL = "github:\n  ssh_over_443: true\n"
+
 
 def test_a_value_the_field_cannot_hold_is_reported_as_dropped(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", 'github:\n  ssh_over_443: "true"\n')
+    _write(config_root / "config.yml", QUOTED_BOOL)
     status = wcr.config_status(project)
     assert [(d.key, d.held, d.read) for d in status.dropped] == [
         (wc.GITHUB_SSH_443_KEY, "true", "false"),
@@ -207,7 +212,7 @@ def test_a_value_the_field_cannot_hold_is_reported_as_dropped(roots):
 
 def test_a_value_the_field_does_hold_is_not_reported(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "github:\n  ssh_over_443: true\n")
+    _write(config_root / "config.yml", REAL_BOOL)
     assert wcr.config_status(project).dropped == []
 
 
@@ -227,15 +232,15 @@ def test_a_value_the_loader_restores_is_not_a_dropped_one(roots):
 def test_a_dropped_value_is_reported_against_the_file_that_won(roots):
     """A value a higher scope overrode is not the one the reader has to fix."""
     config_root, project = roots
-    _write(config_root / "config.yml", 'github:\n  ssh_over_443: "true"\n')
-    _write(project / ".workbench.yml", "github:\n  ssh_over_443: true\n")
+    _write(config_root / "config.yml", QUOTED_BOOL)
+    _write(project / ".workbench.yml", REAL_BOOL)
     assert wcr.config_status(project).dropped == []
 
 
 def test_a_dropped_value_does_not_make_the_report_a_failure(roots):
     """Same cost as a stray key, and reported the same way: one value, not the scope."""
     config_root, project = roots
-    _write(config_root / "config.yml", 'github:\n  ssh_over_443: "true"\n')
+    _write(config_root / "config.yml", QUOTED_BOOL)
     assert wcr.config_status(project).ok
 
 

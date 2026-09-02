@@ -843,6 +843,29 @@ def test_the_pyyaml_fallback_writes_the_same_types(roots, monkeypatch):
     assert cfg.agent.model == "sonnet"
 
 
+def test_a_numeric_field_is_parsed_into_the_number_it_names(monkeypatch):
+    """No key on the surface is numeric yet, so the branch is reached by its type."""
+    monkeypatch.setattr(wcw, "schema_type", lambda _: "integer")
+    assert wcw.coerce_value("some.count", "3") == 3
+    monkeypatch.setattr(wcw, "schema_type", lambda _: "number")
+    assert wcw.coerce_value("some.ratio", "1.5") == 1.5
+
+
+def test_a_numeric_field_refuses_a_value_that_is_not_a_number(monkeypatch):
+    monkeypatch.setattr(wcw, "schema_type", lambda _: "integer")
+    with pytest.raises(wc.ConfigValueError) as exc:
+        wcw.coerce_value("some.count", "a few")
+    assert "some.count" in str(exc.value)
+
+
+def test_a_numeric_field_refuses_the_floats_yaml_cannot_spell(monkeypatch):
+    """`float("nan")` parses, and `.key = nan` is a bare word yq reads as nothing."""
+    monkeypatch.setattr(wcw, "schema_type", lambda _: "number")
+    for spelled in ("nan", "inf", "-inf"):
+        with pytest.raises(wc.ConfigValueError):
+            wcw.coerce_value("some.ratio", spelled)
+
+
 def test_an_optional_field_is_typed_through_its_null_half():
     """`str | None` is a union in the schema and a string to a writer."""
     schema = wc.surface_schema()

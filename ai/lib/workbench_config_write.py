@@ -22,6 +22,7 @@ which is why ``workbench_config`` carries no part of them.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -186,13 +187,27 @@ def coerce_value(key: str, value: str) -> bool | int | float | str:
                 f"{key} is true or false, and {value!r} is neither")
         return spelled == "true"
     if wanted in ("integer", "number"):
-        try:
-            return int(value) if wanted == "integer" else float(value)
-        except ValueError:
-            raise ConfigValueError(
-                f"{key} is a{'n' if wanted == 'integer' else ''} {wanted}, "
-                f"and {value!r} is not one") from None
+        return _coerce_number(key, value, wanted)
     return value
+
+
+def _coerce_number(key: str, value: str, wanted: str) -> int | float:
+    """``value`` as the number *wanted* names, or a ``ConfigValueError``.
+
+    ``float`` accepts ``nan`` and ``inf``, which YAML has no plain spelling for
+    and ``_yq_assignment`` would put into the expression as a bare word yq reads
+    as nothing. They are refused here so the caller gets the same sentence every
+    other unusable value gets, rather than a subprocess failure one layer down.
+    """
+    try:
+        number = int(value) if wanted == "integer" else float(value)
+    except ValueError:
+        number = None
+    if number is None or not math.isfinite(number):
+        raise ConfigValueError(
+            f"{key} is a{'n' if wanted == 'integer' else ''} {wanted}, "
+            f"and {value!r} is not one")
+    return number
 
 
 def _yq_assignment(key: str, value: bool | int | float | str) -> str:

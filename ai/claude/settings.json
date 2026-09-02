@@ -191,7 +191,6 @@
       "Bash(tr:*)",
       "Bash(true:*)",
       "Bash(uniq:*)",
-      "Bash(validate-nesting:*)",
       "Bash(wc:*)",
       "Bash(which:*)",
       "Bash(while:*)",

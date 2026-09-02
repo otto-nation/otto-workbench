@@ -47,10 +47,8 @@ def _worktree_is_dirty(cwd: str) -> bool:
 
     Fails towards dirty, the direction `_unpushed_count` below fails in and for
     the same reason: both answer `_reset_blocker`, which is deciding whether a
-    `git reset --hard` would destroy work. A `status` that was killed or timed
-    out says nothing about the tree, and reading that silence as clean is how a
-    worktree full of uncommitted work gets reset. The other direction costs a
-    skipped reset and a logged reason.
+    `git reset --hard` would destroy work. See the module docstring for why
+    failing towards blocked is the safe direction here.
     """
     r = _reset_guard_read(cwd, "status", "--porcelain")
     if r.returncode != 0:

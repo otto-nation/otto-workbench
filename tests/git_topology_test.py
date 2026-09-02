@@ -14,16 +14,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import git_topology  # noqa: E402
 
 
-_PORCELAIN = (
-    "worktree /repo/main\nHEAD abc\nbranch refs/heads/main\n\n"
-    "worktree /repo/feat-x\nHEAD def\nbranch refs/heads/feat/x\n\n"
-    "worktree /repo/.git\nbare\n"
-)
+def _porcelain(*entries: tuple[str, str | None], bare: str | None = None) -> str:
+    """``git worktree list --porcelain`` output for (path, branch) entries.
+
+    A None branch renders as a detached-HEAD entry. *bare* prepends the bare
+    repository's own entry at that path — present in real `wt list` output and
+    dropped by the parser, so every fixture exercising that drop passes it
+    instead of hand-rolling the block.
+    """
+    blocks = []
+    if bare is not None:
+        blocks.append(f"worktree {bare}\nbare\n")
+    blocks += [
+        f"worktree {path}\nHEAD abc1234\n"
+        + (f"branch refs/heads/{branch}\n" if branch else "detached\n")
+        for path, branch in entries
+    ]
+    return "\n".join(blocks)
 
 
 @patch("git_topology.subprocess.run")
 def test_worktree_entries_names_its_fields(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout=_PORCELAIN)
+    mock_run.return_value = MagicMock(returncode=0, stdout=_porcelain(
+        ("/repo/main", "main"), ("/repo/feat-x", "feat/x"), bare="/repo/.git",
+    ))
 
     entries = git_topology.worktree_entries("/repo")
 
@@ -33,16 +47,11 @@ def test_worktree_entries_names_its_fields(mock_run):
 
 @patch("git_topology.subprocess.run")
 def test_worktree_entries_drops_the_bare_repo(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout=_PORCELAIN)
+    mock_run.return_value = MagicMock(returncode=0, stdout=_porcelain(
+        ("/repo/main", "main"), ("/repo/feat-x", "feat/x"), bare="/repo/.git",
+    ))
 
     assert all(e.path.name != ".git" for e in git_topology.worktree_entries("/repo"))
-
-
-@patch("git_topology.subprocess.run")
-def test_find_worktree_for_branch_prefers_the_branch_over_the_directory_name(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout=_PORCELAIN)
-
-    assert git_topology.find_worktree_for_branch("feat/x", "/repo") == Path("/repo/feat-x")
 
 
 # ── Bare-repo helpers (unit) ───────────────────────────────────────────────
@@ -58,19 +67,6 @@ def test_is_bare_repo_true(mock_sub):
 def test_is_bare_repo_false(mock_sub):
     mock_sub.run.return_value = MagicMock(stdout="false\n")
     assert git_topology.is_bare_repo("/some/path") is False
-
-
-def _porcelain(*entries: tuple[str, str | None]) -> str:
-    """``git worktree list --porcelain`` output for (path, branch) pairs.
-
-    A None branch renders as a detached-HEAD entry.
-    """
-    blocks = [
-        f"worktree {path}\nHEAD abc1234\n"
-        + (f"branch refs/heads/{branch}\n" if branch else "detached\n")
-        for path, branch in entries
-    ]
-    return "\n".join(blocks)
 
 
 @patch.object(git_topology, "subprocess")
@@ -265,23 +261,16 @@ def test_default_branch_scopes_the_lookup_to_the_given_directory(mock_run):
 # ── find_worktree_for_branch ──────────────────────────────────────────────
 
 
-_WORKTREE_LIST_HIJACKED = (
-    "worktree /repo\n"
-    "bare\n"
-    "\n"
-    "worktree /repo/main\n"
-    "HEAD f94475d\n"
-    "branch refs/heads/feat/x\n"
-    "\n"
-    "worktree /repo/feat-other\n"
-    "HEAD abc1234\n"
-    "branch refs/heads/feat/other\n"
-)
+def _hijacked_worktree_list() -> str:
+    """A bare repo whose main/ dir holds feat/x, plus feat-other's own worktree."""
+    return _porcelain(
+        ("/repo/main", "feat/x"), ("/repo/feat-other", "feat/other"), bare="/repo",
+    )
 
 
 @patch("git_topology.subprocess.run")
 def test_find_worktree_for_branch_prefers_exact_tag(mock_run):
-    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    mock_run.return_value = MagicMock(returncode=0, stdout=_hijacked_worktree_list())
     assert git_topology.find_worktree_for_branch("feat/other") == Path("/repo/feat-other")
 
 
@@ -291,14 +280,14 @@ def test_find_worktree_for_branch_ignores_dir_named_like_another_branch(mock_run
 
     review-threads then hard-reset it to origin/main, destroying feat/x.
     """
-    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    mock_run.return_value = MagicMock(returncode=0, stdout=_hijacked_worktree_list())
     assert git_topology.find_worktree_for_branch("main") is None
 
 
 @patch("git_topology.subprocess.run")
 def test_find_worktree_dir_named_matches_regardless_of_occupant(mock_run):
     """The lenient lookup answers "which directory", not "which branch"."""
-    mock_run.return_value = MagicMock(returncode=0, stdout=_WORKTREE_LIST_HIJACKED)
+    mock_run.return_value = MagicMock(returncode=0, stdout=_hijacked_worktree_list())
     assert git_topology.find_worktree_dir_named("main") == Path("/repo/main")
 
 
@@ -306,7 +295,7 @@ def test_find_worktree_dir_named_matches_regardless_of_occupant(mock_run):
 def test_find_worktree_dir_named_skips_the_bare_repo(mock_run):
     """The bare entry is not a checkout and must never be handed back as one."""
     mock_run.return_value = MagicMock(
-        returncode=0, stdout="worktree /repo/main\nbare\n",
+        returncode=0, stdout=_porcelain(bare="/repo/main"),
     )
     assert git_topology.find_worktree_dir_named("main") is None
 
@@ -314,11 +303,7 @@ def test_find_worktree_dir_named_skips_the_bare_repo(mock_run):
 @patch("git_topology.subprocess.run")
 def test_find_worktree_for_branch_still_matches_detached_head_by_name(mock_run):
     mock_run.return_value = MagicMock(
-        returncode=0,
-        stdout=(
-            "worktree /repo\nbare\n\n"
-            "worktree /repo/main\nHEAD f94475d\ndetached\n"
-        ),
+        returncode=0, stdout=_porcelain(("/repo/main", None), bare="/repo"),
     )
     assert git_topology.find_worktree_for_branch("main") == Path("/repo/main")
 
@@ -327,12 +312,7 @@ def test_find_worktree_for_branch_still_matches_detached_head_by_name(mock_run):
 def test_find_worktree_for_branch_handles_paths_with_spaces_and_brackets(mock_run):
     """The human listing packs path and [branch] onto one line; porcelain doesn't."""
     mock_run.return_value = MagicMock(
-        returncode=0,
-        stdout=(
-            "worktree /repo/we ird [x]\n"
-            "HEAD abc1234\n"
-            "branch refs/heads/spacey\n"
-        ),
+        returncode=0, stdout=_porcelain(("/repo/we ird [x]", "spacey")),
     )
     assert git_topology.find_worktree_for_branch("spacey") == Path("/repo/we ird [x]")
 
@@ -341,7 +321,7 @@ def test_find_worktree_for_branch_handles_paths_with_spaces_and_brackets(mock_ru
 
 
 @patch("git_topology.find_worktree_for_branch")
-def testresolve_bare_repo_worktree_prefers_branch(mock_find):
+def test_resolve_bare_repo_worktree_prefers_branch(mock_find):
     mock_find.return_value = Path("/wt/feat-branch")
     result = git_topology.resolve_bare_repo_worktree(None, "feat/branch")
     assert result == Path("/wt/feat-branch")
@@ -350,7 +330,7 @@ def testresolve_bare_repo_worktree_prefers_branch(mock_find):
 
 @patch("git_topology.create_worktree_for_branch")
 @patch("git_topology.find_worktree_for_branch")
-def testresolve_bare_repo_worktree_creates_missing_branch_worktree(mock_find, mock_create):
+def test_resolve_bare_repo_worktree_creates_missing_branch_worktree(mock_find, mock_create):
     """A requested branch with no worktree gets one created, not main's."""
     mock_find.return_value = None
     mock_create.return_value = Path("/wt/nonexistent")
@@ -361,7 +341,7 @@ def testresolve_bare_repo_worktree_creates_missing_branch_worktree(mock_find, mo
 
 @patch("git_topology.create_worktree_for_branch", return_value=None)
 @patch("git_topology.find_worktree_for_branch")
-def testresolve_bare_repo_worktree_never_substitutes_default(mock_find, mock_create):
+def test_resolve_bare_repo_worktree_never_substitutes_default(mock_find, mock_create):
     """Regression: returning main's worktree here let callers hijack main/."""
     mock_find.return_value = None
     result = git_topology.resolve_bare_repo_worktree(None, "nonexistent")
@@ -375,7 +355,7 @@ def testresolve_bare_repo_worktree_never_substitutes_default(mock_find, mock_cre
 @patch("git_topology.find_worktree_dir_named", return_value=None)
 @patch("git_topology.find_worktree_for_branch", return_value=None)
 @patch("git_topology.subprocess.run")
-def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find, mock_named):
+def test_resolve_bare_repo_worktree_returns_none(mock_run, mock_find, mock_named):
     mock_run.return_value = MagicMock(returncode=0, stdout="refs/remotes/origin/main\n")
     result = git_topology.resolve_bare_repo_worktree(None, None)
     assert result is None
@@ -384,7 +364,7 @@ def testresolve_bare_repo_worktree_returns_none(mock_run, mock_find, mock_named)
 @patch("git_topology.find_worktree_dir_named", return_value=Path("/repo/main"))
 @patch("git_topology.find_worktree_for_branch", return_value=None)
 @patch("git_topology.subprocess.run")
-def testresolve_bare_repo_worktree_falls_back_to_dir_name(mock_run, mock_find, mock_named):
+def test_resolve_bare_repo_worktree_falls_back_to_dir_name(mock_run, mock_find, mock_named):
     """No branch requested: a main/ holding someone else's branch is still a cwd.
 
     Regression: tightening find_worktree_for_branch made this return None, and

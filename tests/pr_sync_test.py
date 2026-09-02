@@ -17,43 +17,18 @@ from pr_sync import fetch_and_reset, update_to_remote  # noqa: E402
 from conftest import make_ctx  # noqa: E402
 
 
-@patch("pr_sync.git_topology.current_branch_quiet", return_value="feat/x")
-@patch("pr_sync.subprocess.run")
-def test_fetch_and_reset_runs_fetch_then_reset(mock_run, _branch):
-    # One result per guard read in call order: fetch, status --porcelain
-    # (clean), rev-list --count (0 unpushed), reset --hard. A blanket
-    # stdout="" for every call fails _unpushed_count's isdigit() check and
-    # blocks the reset this test means to exercise.
-    mock_run.side_effect = [
-        MagicMock(returncode=0, stdout=""),
-        MagicMock(returncode=0, stdout=""),
-        MagicMock(returncode=0, stdout="0"),
-        MagicMock(returncode=0, stdout=""),
-    ]
-
-    pr_sync.fetch_and_reset("/wt", "feat/x")
-
-    argvs = [call.args[0] for call in mock_run.call_args_list]
-    assert ["git", "-C", "/wt", "fetch", "origin", "feat/x"] in argvs
-    assert ["git", "-C", "/wt", "reset", "--hard", "origin/feat/x"] in argvs
-
-
-@patch("pr_sync.git_topology.current_branch_quiet", return_value="main")
-@patch("pr_sync.subprocess.run")
-def test_fetch_and_reset_skips_when_on_another_branch(mock_run, _branch):
-    mock_run.return_value = MagicMock(returncode=0, stdout="")
-
-    pr_sync.fetch_and_reset("/wt", "feat/x")
-
-    argvs = [call.args[0] for call in mock_run.call_args_list]
-    assert not any("reset" in argv for argv in argvs)
-
-
 # ── fetch_and_reset ────────────────────────────────────────────────────────
 
 
 def _safe_reset_runs():
-    """subprocess.run results for a worktree that is safe to hard-reset."""
+    """subprocess.run results for a worktree that is safe to hard-reset.
+
+    Patching `pr_sync.subprocess.run` also serves `git_topology.current_branch_quiet`'s
+    own `rev-parse --abbrev-ref` call below (the second result in this list) — both
+    modules import the same `subprocess` module object, so a patch on its `run`
+    attribute reaches every caller regardless of which module name it was applied
+    through. That is why these tests do not also mock `current_branch_quiet` directly.
+    """
     return [
         MagicMock(returncode=0),                        # fetch
         MagicMock(returncode=0, stdout="feat/x\n"),     # rev-parse --abbrev-ref

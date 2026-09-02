@@ -319,6 +319,31 @@ class TestFormatInlineComment:
         assert f"[{label}]" in body
 
 
+class TestPostedCommentsCarryTheFindingIdentity:
+    """The comment carries the hash, because the number it wears is reassigned.
+
+    `renumber_for_posting` numbers by diff position, so the `[M1]` a reviewer
+    reads names a different finding in the review file a round later. The hash
+    goes in an HTML comment: invisible to the reviewer, and the only handle the
+    next round has on which finding a reply thread belongs to.
+    """
+
+    def _finding(self, rp, **kwargs):
+        return rp.Finding(
+            id="M1", severity="M", seq=1, path="file.go", line=42,
+            end_line=None, body="Fix bug", full_path="pkg/file.go",
+            posted_id="M1", **kwargs,
+        )
+
+    def test_the_identity_rides_along_in_an_html_comment(self, rp):
+        body = rp.format_inline_comment(self._finding(rp, stable_id="abc12345"))["body"]
+        assert body == "**[M1] [must-fix]** <!-- sid:abc12345 --> Fix bug"
+
+    def test_a_finding_with_no_identity_posts_what_it_always_did(self, rp):
+        body = rp.format_inline_comment(self._finding(rp))["body"]
+        assert body == "**[M1] [must-fix]** Fix bug"
+
+
 class TestFormatBodyText:
     def test_with_inline_shows_have_some_comments(self, rp):
         result = rp.format_body_text([], has_inline=True, severity_filter={"M", "S", "N"})
@@ -1499,6 +1524,22 @@ class TestCollectInlineComments:
         with patch("gh_client.api_json", return_value=[]):
             result = rp._collect_inline_comments("org/repo", "1", "bot")
             assert result == []
+
+    def test_the_identity_marker_comes_off_before_anything_compares_the_text(self, rp):
+        """The marker is a handle on the finding, not part of what it says.
+
+        A fresh finding carries no marker, so left on, it is two tokens only the
+        posted side has — every similarity score against it comes out lower than
+        the wording earns.
+        """
+        comments = [{
+            "path": "a.go",
+            "body": "**[M1] [must-fix]** <!-- sid:abc12345 --> Fix bug",
+            "user": {"login": "bot"},
+        }]
+        with patch("gh_client.api_json", return_value=comments):
+            result = rp._collect_inline_comments("org/repo", "1", "bot")
+        assert result[0]["body"] == "**[M1] [must-fix]** Fix bug"
 
 
 class TestCollectReviewFindings:

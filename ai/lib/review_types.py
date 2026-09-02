@@ -313,6 +313,12 @@ class Finding:
     body: str
     full_path: str = ""
     posted_id: str = ""
+    # The `FindingIdentity.stable_id` of the line this was parsed from, which a
+    # posted comment carries so a later round can match a reply thread back to
+    # the finding it hangs off. Set where the line is read rather than derived
+    # from the fields beside it: `finding_spans` replaces `body` with the whole
+    # span, and the identity hashes the declaration line's wording.
+    stable_id: str = ""
     classification: str = ""
     skip_reason: str = ""
     checked: bool = False

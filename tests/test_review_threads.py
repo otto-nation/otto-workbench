@@ -42,9 +42,10 @@ from pr_thread_models import (
 )
 from review_document import SECTION_PRIOR_FINDINGS
 from review_issue import CreatedIssue, IssueDelivery, IssueResult
+from review_grammar import FindingIdentity, sid_marker
 from review_reply_threads import (
-    ReplyThreads, _classify_thread_for_rereview, _match_thread_to_finding,
-    fetch_reply_threads,
+    ReplyThreads, ThreadFinding, _classify_thread_for_rereview,
+    _match_thread_to_finding, fetch_reply_threads,
 )
 from review_format import format_inline_comment
 from review_types import SEVERITIES, Finding, ReplyState
@@ -292,19 +293,19 @@ class TestClassifyThreadForRereview:
 class TestMatchThreadToFinding:
     def test_extracts_finding_id(self):
         body = "**[M1]** `handler.go:42` — Missing error check on db.Query()"
-        assert _match_thread_to_finding(body) == "M1"
+        assert _match_thread_to_finding(body).posted_id == "M1"
 
     def test_extracts_different_severities(self):
-        assert _match_thread_to_finding("**[S3]** something") == "S3"
-        assert _match_thread_to_finding("**[N2]** nit") == "N2"
-        assert _match_thread_to_finding("**[I1]** info") == "I1"
+        assert _match_thread_to_finding("**[S3]** something").posted_id == "S3"
+        assert _match_thread_to_finding("**[N2]** nit").posted_id == "N2"
+        assert _match_thread_to_finding("**[I1]** info").posted_id == "I1"
 
     def test_no_finding_id(self):
-        assert _match_thread_to_finding("Just a comment") == ""
+        assert _match_thread_to_finding("Just a comment") == ThreadFinding()
 
     def test_first_match_wins(self):
         body = "**[M1]** first\n**[M2]** second"
-        assert _match_thread_to_finding(body) == "M1"
+        assert _match_thread_to_finding(body).posted_id == "M1"
 
     @pytest.mark.parametrize("severity", [s.key for s in SEVERITIES])
     def test_the_body_the_poster_actually_writes_matches(self, severity):
@@ -322,7 +323,22 @@ class TestMatchThreadToFinding:
         )
         finding.posted_id = f"{severity}1"
         body = format_inline_comment(finding)["body"]
-        assert _match_thread_to_finding(body) == f"{severity}1"
+        assert _match_thread_to_finding(body).posted_id == f"{severity}1"
+
+    def test_the_identity_comes_back_out_of_a_posted_body(self):
+        """The durable half of the match, which the posted comment carries.
+
+        `posted_id` is reassigned every round, so on its own it names whatever
+        finding happens to hold that number in the review file being annotated.
+        """
+        body = f"**[M1] [must-fix]**{sid_marker('abc12345')} Missing error check"
+        assert _match_thread_to_finding(body) == ThreadFinding(
+            posted_id="M1", stable_id="abc12345",
+        )
+
+    def test_a_comment_posted_before_the_marker_existed_keeps_its_number(self):
+        body = "**[M1] [must-fix]** Missing error check"
+        assert _match_thread_to_finding(body) == ThreadFinding(posted_id="M1")
 
 
 # ── fetch_reply_threads ─────────────────────────────────────────────────────
@@ -424,6 +440,77 @@ class TestFetchReplyThreads:
         review = "## Must fix\n- **[M1]** `a.py:10` — Missing error check\n"
         annotated = _annotate_with_thread_state(review, result)
         assert annotated.split("\n")[1].endswith("Missing error check  [CONTESTED]")
+
+    def test_a_thread_carries_both_names_of_the_finding_it_hangs_off(self):
+        threads = [{
+            "id": "T1", "isResolved": False, "path": "a.py", "line": 10,
+            "comments": {"nodes": _make_comments(
+                ("bot", f"**[M1] [must-fix]**{sid_marker('abc12345')} Missing error check"),
+                ("alice", "Fixed in the next commit"),
+            )},
+        }]
+        with patch("review_reply_threads.get_bot_login", return_value="bot"), \
+             patch("review_reply_threads.fetch_threads", return_value=threads):
+            result = fetch_reply_threads("owner/repo", "42")
+
+        assert result.threads[0]["finding_id"] == "M1"
+        assert result.threads[0]["stable_id"] == "abc12345"
+
+
+# ── _annotate_with_thread_state ──────────────────────────────────────────────
+
+class TestThreadStateFollowsTheIdentityNotTheNumber:
+    """The annotation lands on the finding the thread hangs off, after a renumber.
+
+    `renumber_for_posting` numbers inline findings by `(path, line)` on every
+    round, so the `[M1]` a thread's root carries is the number *its* round
+    assigned. Matched on that number, a thread rooted a round earlier annotates
+    whatever finding now holds it — silently, and on the wrong line.
+    """
+
+    REVIEW = (
+        f"- **[M2]**{sid_marker('aaaa1111')} `a.py:10` — Missing error check\n"
+        f"- **[M1]**{sid_marker('bbbb2222')} `b.py:5` — SQL injection\n"
+    )
+
+    def _threads(self, **thread) -> ReplyThreads:
+        return ReplyThreads(threads=[{"state": ReplyState.CONTESTED, **thread}], summary={})
+
+    def test_the_state_lands_on_the_finding_the_thread_hangs_off(self):
+        threads = self._threads(finding_id="M1", stable_id="aaaa1111")
+        annotated = _annotate_with_thread_state(self.REVIEW, threads).split("\n")
+        assert annotated[0].endswith("[CONTESTED]")
+        assert not annotated[1].endswith("[CONTESTED]")
+
+    def test_a_thread_with_no_identity_still_matches_on_its_number(self):
+        threads = self._threads(finding_id="M1", stable_id="")
+        annotated = _annotate_with_thread_state(self.REVIEW, threads).split("\n")
+        assert annotated[1].endswith("[CONTESTED]")
+        assert not annotated[0].endswith("[CONTESTED]")
+
+    def test_an_identity_matching_nothing_annotates_nothing(self):
+        threads = self._threads(finding_id="M1", stable_id="cccc3333")
+        assert _annotate_with_thread_state(self.REVIEW, threads) == self.REVIEW
+
+    def test_the_prior_review_is_stamped_with_the_ids_the_comments_carry(self):
+        """End to end, on a prior review that carries no markers of its own.
+
+        `_build_prior_section` runs `annotate_prior_with_stable_ids` over the
+        review before annotating it, so the hash a posted comment carries and
+        the hash that stamps have to be the same one — this is the test that
+        they are.
+        """
+        line = "- **[M9]** `a.py:10` — Missing error check"
+        prior = f"## Must fix\n{line}\n"
+        identity = FindingIdentity.of(line)
+        # Both sides carrying "" would match each other and prove nothing.
+        assert identity.stable_id
+        threads = self._threads(finding_id="M1", stable_id=identity.stable_id)
+
+        section = _build_prior_section(prior, reply_threads=threads)
+
+        assert "Missing error check" in section
+        assert "[CONTESTED]" in section
 
 
 # ── _build_reply_threads_section ─────────────────────────────────────────────

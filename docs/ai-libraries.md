@@ -810,8 +810,11 @@ Every finding posted inline opened a review thread, and what the author did
 with that thread — answered it, argued with it, resolved it — is an account of
 the finding independent of the `## Prior findings` ledger `review_reconcile`
 reads. `fetch_reply_threads` classifies each thread into a `ReplyState` and
-matches it back to the finding ID its root comment declared, so a re-review can
-read the thread's account of a finding beside the ledger's.
+matches it back to the finding its root comment declared, so a re-review can
+read the thread's account of a finding beside the ledger's. That match is a
+`ThreadFinding` carrying both of the names a posted comment gives a finding,
+because the visible one is renumbered every round and only the stable ID
+survives to the next.
 
 Only a thread whose first comment is the reviewing bot's own counts. A thread
 the author opened is a comment on the PR rather than a reply to a finding, and

@@ -16,7 +16,7 @@ import gh_client
 from review_github import PRData, GQL_REVIEWS_LIMIT
 
 from review_format import CLASS_SKIPPED
-from review_grammar import BODY_FINDING_RE, strip_line_suffix
+from review_grammar import BODY_FINDING_RE, strip_line_suffix, strip_sid_markers
 from review_types import Finding
 
 
@@ -63,13 +63,19 @@ def get_bot_login() -> str:
 
 def _collect_inline_comments(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[dict]:
     if pr_data is not None:
-        return pr_data.bot_inline_comments(bot_user)
-    all_comments = gh_client.api_json(f"repos/{repo}/pulls/{pr}/comments", default=[])
-    return [
-        {"path": c.get("path", ""), "body": c.get("body", "")}
-        for c in all_comments
-        if c.get("user", {}).get("login") == bot_user
-    ]
+        posted = pr_data.bot_inline_comments(bot_user)
+    else:
+        all_comments = gh_client.api_json(f"repos/{repo}/pulls/{pr}/comments", default=[])
+        posted = [
+            {"path": c.get("path", ""), "body": c.get("body", "")}
+            for c in all_comments
+            if c.get("user", {}).get("login") == bot_user
+        ]
+    # The stable-ID marker a posted comment carries is a handle on the finding
+    # rather than part of what it says, and the fresh finding it is about to be
+    # scored against carries none — so it comes off before the words are
+    # counted, or every comparison loses the two tokens only this side has.
+    return [{**c, "body": strip_sid_markers(c.get("body", ""))} for c in posted]
 
 
 def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData | None = None) -> list[dict]:

@@ -7,8 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from review_grammar import (  # noqa: E402
     BODY_FINDING_RE, BOLD_FINDING_ID_RE, SID_MARKER_RE, FindingIdentity,
-    finding_tag, has_sid_marker, posted_finding_tag, sid_marker,
-    strip_line_suffix, strip_sid_markers,
+    finding_tag, has_sid_marker, parse_finding_line, posted_finding_tag,
+    sid_marker, strip_line_suffix, strip_sid_markers,
 )
 from review_types import SEVERITIES  # noqa: E402
 
@@ -243,3 +243,24 @@ class TestThePostedSpellingIsWrittenAndReadTheSameWay:
 
     def test_a_bracketed_token_that_is_not_a_severity_label_is_not_the_tag(self):
         assert BOLD_FINDING_ID_RE.search("**[M1] [whatever]**") is None
+
+
+class TestAParsedFindingCarriesTheIdentityItHashesTo:
+    """The `stable_id` comes off the declaration line, where the identity is.
+
+    Set here rather than derived from the parsed finding, because
+    `finding_spans` replaces `body` with the whole multi-line span and the hash
+    is over the declaration's own wording.
+    """
+
+    def test_a_parsed_findings_id_is_the_one_the_annotator_stamps(self):
+        line = f"- **[M1]** **`handler.go:42`** — {DESC}"
+        assert parse_finding_line(line).stable_id == FindingIdentity.of(line).stable_id
+
+    def test_a_plain_backtick_line_hashes_the_same_as_a_bold_one(self):
+        bold = parse_finding_line(f"- **[M1]** **`handler.go:42`** — {DESC}")
+        plain = parse_finding_line(f"- **[M1]** `handler.go:42` — {DESC}")
+        assert bold.stable_id == plain.stable_id != ""
+
+    def test_a_line_the_identity_cannot_read_carries_none(self):
+        assert parse_finding_line("- **[M1]** no location here").stable_id == ""

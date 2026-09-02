@@ -29,7 +29,7 @@ from review_document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
     SECTION_STATIC_ANALYSIS, strip_sections,
 )
-from review_grammar import BOLD_FINDING_ID_RE, SCOPED_FINDING_RE
+from review_grammar import BOLD_FINDING_ID_RE, SCOPED_FINDING_RE, SID_MARKER_RE
 from review_merge import annotate_prior_with_stable_ids
 from review_reply_threads import ReplyThreads
 from review_spans import finding_spans
@@ -111,25 +111,40 @@ _STATE_LABELS = {
 }
 
 
+def _state_of(line: str, by_sid: dict[str, str], by_id: dict[str, str]) -> str:
+    """The label the thread on `line`'s finding earns, or empty for no thread.
+
+    The stable ID answers first. A thread's `[M1]` is the number its comment was
+    posted under, which `renumber_for_posting` assigned by diff position, so it
+    names a different finding in the review file whenever anything above it
+    moved. The number is the fallback for a comment posted before the marker
+    existed, where a wrong-but-adjacent label beats none at all.
+    """
+    sid = SID_MARKER_RE.search(line)
+    if sid and sid.group(1) in by_sid:
+        return by_sid[sid.group(1)]
+    m = BOLD_FINDING_ID_RE.search(line)
+    return by_id.get(m.group(1), "") if m else ""
+
+
 def _annotate_with_thread_state(review_text: str, reply_threads: ReplyThreads | None) -> str:
     threads = reply_threads.threads if reply_threads else []
-    if not threads:
-        return review_text
-    id_to_state = {}
+    by_sid: dict[str, str] = {}
+    by_id: dict[str, str] = {}
     for t in threads:
-        fid = t.get("finding_id", "")
-        if fid and t["state"] in _STATE_LABELS:
-            id_to_state[fid] = _STATE_LABELS[t["state"]]
-    if not id_to_state:
+        if t["state"] not in _STATE_LABELS:
+            continue
+        label = _STATE_LABELS[t["state"]]
+        if t.get("stable_id"):
+            by_sid[t["stable_id"]] = label
+        elif t.get("finding_id"):
+            by_id[t["finding_id"]] = label
+    if not by_sid and not by_id:
         return review_text
-    lines = review_text.split("\n")
     result = []
-    for line in lines:
-        m = BOLD_FINDING_ID_RE.search(line)
-        if m and m.group(1) in id_to_state:
-            label = id_to_state[m.group(1)]
-            line = f"{line}  {label}"
-        result.append(line)
+    for line in review_text.split("\n"):
+        label = _state_of(line, by_sid, by_id)
+        result.append(f"{line}  {label}" if label else line)
     return "\n".join(result)
 
 

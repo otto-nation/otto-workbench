@@ -3,6 +3,11 @@
   "defaultProvider": "google-vertex-claude",
   "defaultModel": "claude-opus-4-6",
   "defaultThinkingLevel": "medium",
+  "enabledModels": [
+    "google-vertex-claude/claude-opus-4-6",
+    "google-vertex-claude/claude-sonnet-5",
+    "google-vertex-claude/claude-haiku-4-5@20251001"
+  ],
   "packages": [
     "git:github.com/usemaximum/pi-extensions"
   ]

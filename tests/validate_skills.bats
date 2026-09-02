@@ -566,3 +566,47 @@ _make_agent_skill() {
   _run_validate --quiet
   [ "$status" -eq 0 ]
 }
+
+# ── Agent protocols table parity ────────────────────────────────────────────
+
+_make_protocol_tables() {
+  local claude_row="$1" pi_row="$2"
+  mkdir -p "$FAKE_WORKBENCH/ai/claude" "$FAKE_WORKBENCH/ai/pi"
+  {
+    echo "# Claude Code"
+    echo ""
+    echo "## Agent Protocols"
+    echo ""
+    echo "| Situation | Agent file | Constraint |"
+    echo "|-----------|-----------|------------|"
+    echo "$claude_row"
+  } > "$FAKE_WORKBENCH/ai/claude/CLAUDE.md"
+  {
+    echo "# Workbench guidelines"
+    echo ""
+    echo "## Agent protocols"
+    echo ""
+    echo "| Situation | Skill | Constraint |"
+    echo "|-----------|-------|------------|"
+    echo "$pi_row"
+  } > "$FAKE_WORKBENCH/ai/pi/AGENTS.head.md"
+}
+
+@test "matching protocol tables pass" {
+  _make_protocol_tables \
+    "| Investigating a bug | \`debugger.md\` | Diagnose before fixing |" \
+    "| Investigating a bug | \`debugger\` | Diagnose before fixing |"
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a protocol table row missing from AGENTS.head.md fails" {
+  _make_protocol_tables \
+    "| Investigating a bug | \`debugger.md\` | Diagnose before fixing |" \
+    "| Investigating a bug | \`debugger\` | Wrong constraint |"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Agent protocols table diverges"* ]]
+}

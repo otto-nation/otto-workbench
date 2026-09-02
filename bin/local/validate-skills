@@ -14,6 +14,7 @@
 #   - invocation is required unless the skill declares an agent
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
 #   - every non-programmatic agent has a matching agent-backed skill
+#   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/CLAUDE.md's
 #
 # Exit code: 0 if all checks pass (or no skills found), 1 if any fail.
 
@@ -277,6 +278,42 @@ for agent_file in "$AGENTS_DIR"/*.md; do
     _fail "agents/$agent_name: ai/skills/$agent_name/SKILL.md declares agent '${declared_agent:-<none>}', so this agent's protocol never reaches Pi — set agent: $agent_name"
   fi
 done
+
+# ai/pi/AGENTS.head.md hand-authors its own "Agent protocols" table rather than
+# reading ai/claude/CLAUDE.md's — the two must list the same situations, agent
+# names and constraints or a row added to one silently goes missing from the
+# other. Both files carry exactly one table, so extracting every table row is
+# enough; strip_md=1 drops CLAUDE.md's ".md" suffix so its agent-file names
+# compare equal to AGENTS.head.md's bare skill names.
+_protocol_rows() {
+  local file="$1" strip_md="$2"
+  awk -F'|' -v strip_md="$strip_md" '
+    /^\| *Situation *\|/ { next }
+    /^\|[-| ]+\|$/ { next }
+    NF < 5 { next }
+    {
+      sit = $2; name = $3; constraint = $4
+      gsub(/^ +| +$/, "", sit)
+      gsub(/^ +| +$/, "", name)
+      gsub(/^ +| +$/, "", constraint)
+      gsub(/`/, "", name)
+      if (strip_md == "1") { sub(/\.md$/, "", name) }
+      print sit "|" name "|" constraint
+    }
+  ' "$file" | sort
+}
+
+CLAUDE_MD="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
+PI_AGENTS_HEAD="$WORKBENCH_DIR/ai/pi/AGENTS.head.md"
+if [[ -f "$CLAUDE_MD" && -f "$PI_AGENTS_HEAD" ]]; then
+  claude_protocol_rows="$(_protocol_rows "$CLAUDE_MD" 1)"
+  pi_protocol_rows="$(_protocol_rows "$PI_AGENTS_HEAD" 0)"
+  if [[ "$claude_protocol_rows" == "$pi_protocol_rows" ]]; then
+    _pass "ai/pi/AGENTS.head.md: Agent protocols table matches ai/claude/CLAUDE.md"
+  else
+    _fail "ai/pi/AGENTS.head.md: Agent protocols table diverges from ai/claude/CLAUDE.md — sync the two tables"
+  fi
+fi
 
 # Summary
 echo

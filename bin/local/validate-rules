@@ -45,6 +45,10 @@ FOUND=0
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
+# Every harness this workbench installs into — not to be confused with
+# ai/steps.sh's _AI_TOOL_ORDER, which is only the subset with a fixed sync
+# order. The two happen to list the same names today; a harness with no
+# ordering constraint would need adding here without ever touching the other.
 KNOWN_HARNESSES=(claude pi)
 
 # Tool names that exist only in Claude Code. Word-boundary matched, so prose
@@ -121,16 +125,17 @@ _declares_harness() {
        END { exit !found }' "$1"
 }
 
-# _check_vocabulary FILE DISPLAY — fails on a Claude-only tool name in a rule Pi loads.
+# _check_vocabulary FILE DISPLAY — fails on every Claude-only tool name in a
+# rule Pi loads, not just the first, so one run surfaces the whole list.
 _check_vocabulary() {
-  local file="$1" display="$2" tool
+  local file="$1" display="$2" tool found=false
   for tool in "${CLAUDE_ONLY_TOOLS[@]}"; do
     if grep -qE "\\b${tool}\\b" "$file"; then
       _fail "$display: names the Claude-only tool '$tool' but reaches Pi — scope it with 'harness: [claude]' or reword it"
-      return
+      found=true
     fi
   done
-  _pass "$display: no Claude-only tool names"
+  $found || _pass "$display: no Claude-only tool names"
 }
 
 RULES_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
@@ -145,7 +150,15 @@ for rule_file in "$RULES_DIR"/*.md; do
     _check_harness "$display" "$(frontmatter_field "$rule_file" harness)"
     rule_harness_ok "$rule_file" pi || reaches_pi=false
   fi
-  if [[ -n "$(frontmatter_field "$rule_file" paths)" ]]; then
+  # `paths: []` reads back as the literal `[]` — an empty list scopes the rule
+  # to nothing, which is not a scope, so it is normalized away here the same
+  # way ai/pi/steps.sh's _pi_rule_reaches_pi does before testing it.
+  rule_paths="$(frontmatter_field "$rule_file" paths)"
+  rule_paths="${rule_paths//[[:space:]]/}"
+  if [[ "$rule_paths" == "[]" ]]; then
+    rule_paths=""
+  fi
+  if [[ -n "$rule_paths" ]]; then
     reaches_pi=false
   fi
 

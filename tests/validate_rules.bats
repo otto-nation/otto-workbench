@@ -84,3 +84,13 @@ _rule() {
   WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
   [ "$status" -eq 0 ]
 }
+
+@test "a claude tool name in a rule with paths: [] fails" {
+  # An empty paths list scopes the rule to nothing, which is not a scope — the
+  # rule still reaches Pi, the same normalization _pi_rule_reaches_pi applies.
+  _rule odd.md "$(printf -- '---\npaths: []\n---\n- The TodoWrite tool')"
+
+  WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE" --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"TodoWrite"* ]]
+}

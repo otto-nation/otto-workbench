@@ -12,13 +12,23 @@ fi
 
 _AI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ai_sub_tool_dirs DIR — prints the tool subdirectories of DIR that contain a
+# steps.sh, one per line. The single definition of "what counts as an AI
+# sub-tool": used here to source every steps.sh, and by ai/setup.sh's
+# _ai_discover_tools to build the tool list it presents, so the two glob the
+# same rule instead of two copies that could drift apart.
+ai_sub_tool_dirs() {
+  local base="$1" dir
+  for dir in "$base"/*/; do
+    if [[ -f "${dir}steps.sh" ]]; then printf '%s\n' "$dir"; fi
+  done
+}
+
 # Source all sub-tool steps.sh files so sync_<tool> functions are available.
-for _ai_sub in "$_AI_DIR"/*/; do
-  if [[ -f "${_ai_sub}steps.sh" ]]; then
-    # shellcheck source=/dev/null
-    . "${_ai_sub}steps.sh"
-  fi
-done
+while IFS= read -r _ai_sub; do
+  # shellcheck source=/dev/null
+  . "${_ai_sub}steps.sh"
+done < <(ai_sub_tool_dirs "$_AI_DIR")
 unset _ai_sub _AI_DIR
 
 # The AI sub-tools whose steps have to run in a fixed relative order, first to
@@ -70,9 +80,13 @@ sync_ai() {
   local _tool
   local -a _tools=()
   while IFS= read -r _tool; do
-    if [[ -n "$_tool" ]]; then _tools+=("$_tool"); fi
+    [[ -z "$_tool" ]] && continue
+    _tools+=("$_tool")
   done < <(state_get_list "ai.tools")
 
+  # Redundant with the loop below (ai_tool_order on an empty list prints
+  # nothing), kept as an explicit short-circuit so "no tools configured" reads
+  # as its own case rather than an empty loop.
   if [[ ${#_tools[@]} -eq 0 ]]; then
     return 0
   fi

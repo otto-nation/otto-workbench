@@ -197,6 +197,14 @@ PI_INSTALL_URL="https://pi.dev/install.sh"
 # rather than asking `command -v pi`, which an npm-global copy under Homebrew's
 # node answers just as readily — and such a copy cannot be replaced by
 # `pi update`, which is the whole reason the vendor installer is used here.
+#
+# ceiling: hardcodes ~/.local/bin as the installer's link target from observed
+# behavior, not a documented contract — Pi's installer script doesn't commit to
+# it. If it ever picks a different writable PATH directory on some machine,
+# step_install_pi re-runs harmlessly but the shadow-pi migration
+# (ai/pi/migrations/20260902-replace-shadow-pi.sh) never converges there.
+# Upgrade to reading the installer's own output/log for the real link target
+# if a machine surfaces this mismatch.
 PI_NATIVE_BIN="$HOME/.local/bin/pi"
 
 # ─── Workbench source — root ──────────────────────────────────────────────────
@@ -256,6 +264,12 @@ RULES_GLOB="*.md"
 AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
+# PI_SETTINGS_SRC's enabledModels pins claude-haiku-4-5 to the @20251001
+# snapshot while opus and sonnet float on rolling aliases: at the time this
+# was authored, Vertex only published haiku-4-5 under the snapshot id, with
+# no rolling alias yet to track. Drop the pin once Vertex ships one — check
+# before assuming the omission was an oversight. JSON has no comment syntax,
+# so the rationale lives here instead of inline.
 PI_SETTINGS_SRC="$PI_SRC_DIR/settings.json"
 PI_SYNC_SETTINGS_JQ="$PI_SRC_DIR/sync-settings.jq"
 PI_CONTEXT_HEAD_SRC="$PI_SRC_DIR/AGENTS.head.md"

@@ -60,6 +60,14 @@ _run_migration() {
   [ -f "$REPO/.claude/CLAUDE.md" ]
 }
 
+@test "leaves the pair alone when the root file outranks CLAUDE.md in Pi's resolution order" {
+  echo "ROOT" > "$REPO/AGENTS.override.md"
+  echo "NESTED" > "$REPO/.claude/CLAUDE.md"
+
+  _run_migration
+  [ -f "$REPO/.claude/CLAUDE.md" ]
+}
+
 @test "is a no-op for a repo already scaffolded at the root" {
   echo "ROOT" > "$REPO/CLAUDE.md"
 

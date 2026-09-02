@@ -27,7 +27,8 @@ migration_20260902_project_context_to_root() {
   [[ -f "$nested" ]] || return "$MIGRATION_NOOP"
 
   local existing
-  for existing in "$root" "$work_tree/AGENTS.md"; do
+  for existing in "$root" "$work_tree/AGENTS.md" "$work_tree/AGENTS.MD" \
+    "$work_tree/CLAUDE.MD" "$work_tree/AGENTS.override.md"; do
     if [[ -e "$existing" ]]; then
       warn "$work_tree has both $(basename "$existing") and .claude/CLAUDE.md — merge them by hand; leaving both in place"
       return "$MIGRATION_NOOP"

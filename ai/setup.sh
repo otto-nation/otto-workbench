@@ -43,12 +43,14 @@ prompt_secret() {
 SELECTED_TOOLS=()
 
 # _ai_discover_tools — prints the name of each AI tool subdirectory that
-# contains a steps.sh, one per line. Caller reads into an array.
+# contains a steps.sh, one per line. Caller reads into an array. Delegates to
+# ai/steps.sh's ai_sub_tool_dirs so this list and the one that sourced
+# sync_<tool> in can't independently disagree about what counts as a tool.
 _ai_discover_tools() {
   local dir
-  for dir in "$SCRIPT_DIR"/*/; do
-    if [[ -f "${dir}steps.sh" ]]; then basename "$dir"; fi
-  done
+  while IFS= read -r dir; do
+    basename "$dir"
+  done < <(ai_sub_tool_dirs "$SCRIPT_DIR")
 }
 
 # select_tools — presents available AI tools and populates SELECTED_TOOLS.

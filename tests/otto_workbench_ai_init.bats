@@ -82,3 +82,17 @@ _run_in() {
   [ -f "$container/main/CLAUDE.md" ]
   [ ! -e "$container/main/.claude/CLAUDE.md" ]
 }
+
+@test "ai init --force overwrites a hand-authored root CLAUDE.md" {
+  # --force now targets the file every harness reads first, not a nested
+  # .claude/CLAUDE.md — confirm it still overwrites deliberately rather than
+  # silently skipping or landing somewhere else.
+  local container="$TMPDIR/c"
+  make_worktree_container "$container" "$SEED"
+  printf 'HAND-AUTHORED CONTENT\n' > "$container/main/CLAUDE.md"
+
+  run _run_in "$container" ai init --force
+  [ "$status" -eq 0 ]
+  [ -f "$container/main/CLAUDE.md" ]
+  [ "$(cat "$container/main/CLAUDE.md")" != "HAND-AUTHORED CONTENT" ]
+}

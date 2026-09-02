@@ -149,6 +149,15 @@ cmd_sync() {
   local -A layers
   resolve_layers "$rules_src" "$USER_RULES_DIR" "$RULES_GLOB" layers
 
+  # Drop the rules this harness is scoped out of, before the prune loop below
+  # sees the map. Removing them here rather than at install time is what makes a
+  # rule that *becomes* Pi-only get pruned from ~/.claude/rules/ on the next
+  # sync, instead of lingering as a symlink nothing will ever remove.
+  local rule
+  for rule in "${!layers[@]}"; do
+    rule_harness_ok "${layers[$rule]}" claude || unset "layers[$rule]"
+  done
+
   # Prune stale symlinks pointing into the workbench or user source dirs
   local item target
   for item in "$RULES_DIR"/$RULES_GLOB; do

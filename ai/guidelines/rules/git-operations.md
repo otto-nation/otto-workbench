@@ -1,11 +1,15 @@
 # Git — Operations
 
+## Commit & PR Authorship
+
+Never mention Claude Code, AI assistance, or co-authorship in commit messages, PR descriptions, or any git artifacts.
+
 ## Worktree-First Development
 
 - Never edit or write files directly on `main`, `master`, or any shared/protected branch — always create a worktree first
 - For implementation work on any branch, prefer using a worktree to isolate changes from the working tree — this prevents accidental modifications to uncommitted work and keeps the primary checkout clean
 - Read-only operations (searching, reading files, exploring code) do not require a worktree
-- Use the `wt` CLI for worktree management (`wt switch -c <branch>`) — never use the built-in `EnterWorktree` tool or the `superpowers:using-git-worktrees` skill
+- Use the `wt` CLI for worktree management (`wt switch -c <branch>`) — never a worktree tool built into the harness you are running in, and never the `superpowers:using-git-worktrees` skill. Only `wt` applies this machine's naming rules and pre-switch hooks; anything else cuts a worktree somewhere the rest of these rules do not describe
 
 ## Worktree Naming
 
@@ -35,7 +39,7 @@
 
 - Never run tests, builds, or git-mutating commands in a worktree other than the current session's — test harnesses create temporary git repos that can corrupt the target worktree's branch and commit state
 - When applying changes to another worktree, only use `git apply` and file copies — then tell the user to run tests there themselves
-- In a subagent this is the default outcome rather than a mistake you have to make: cwd resets between Bash calls, so an unqualified command runs against the parent session's worktree however many times the subagent has `cd`-ed into its own. Absolute paths and `git -C` are what keep a subagent inside its worktree — see `bash-tool.md` § Subagents Reset the Working Directory
+- In a subagent this is the default outcome rather than a mistake you have to make: cwd resets between shell calls, so an unqualified command runs against the parent session's worktree however many times the subagent has `cd`-ed into its own. Nothing warns — the command succeeds, against the wrong tree. A suite run that way reports the parent's worktree green and the change under test was never exercised; `git rev-parse --abbrev-ref HEAD` answers the parent's branch, so a subagent can commit against the wrong worktree believing it is on its own. Every path a subagent uses must therefore be absolute or `-C`-qualified — `git -C /abs/path status`, `bats /abs/path/tests/foo.bats` — with no dependence on a prior `cd`, and a suite that must resolve from the repo root goes in a wrapper script whose own first line is the `cd`. When dispatching a subagent that will run tests or git commands, give it the absolute worktree path and say its cwd will not persist. Under Claude Code, `bash-tool.md` § Subagents Reset the Working Directory has the fuller treatment, including the wrapper-script form and the permission rules around it; the statement here stands on its own without it
 
 ## PR Creation
 

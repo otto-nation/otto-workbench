@@ -295,6 +295,8 @@ Bash-only — it uses `local`, arrays, and the prompt helpers.
 | `list_shell_scripts ROOT` | prints every file under ROOT whose *first* line is a shell or bats shebang, one per line, sorted. Skips .git, ignore/, __pycache__, node_modules/, and .py. |
 | `resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF` | Merges two directory layers into an associative array: basename -> source_path. User dir wins for same-named files. A .disabled sentinel in user dir suppresses both. RESULT_NAMEREF must be a declared associative array in the caller. |
 | `is_disabled USER_DIR NAME` | returns 0 if a .disabled sentinel exists. |
+| `frontmatter_field FILE KEY` | prints the value KEY carries in FILE's opening YAML frontmatter block, and nothing at all when the key is absent, the file has no frontmatter, or the path does not exist. A block sequence prints one entry per line; an inline value prints as one line. |
+| `rule_harness_ok FILE HARNESS` | true when FILE's `harness:` frontmatter list is absent, or is present and names HARNESS. Either YAML list form is accepted, and whitespace, brackets and quotes around the entries are ignored; a list naming nothing at all is false for every harness. |
 | `skill_agent SKILL_FILE` | prints the agent name SKILL_FILE's frontmatter declares, and nothing at all for a skill that declares none or for a path that does not exist yet. |
 | `install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]` | Writes a thin dispatcher script that execs the hook from the current worktree. Unlike symlinks, dispatchers resolve at runtime — so worktrees always run their own branch's version of the hook, not main's. |
 | `apply_config_patch FILE OLD NEW` | Replaces OLD with NEW in FILE if OLD is present. Idempotent — no-op if already patched or if FILE does not exist. Assumes OLD and NEW do not contain the \| character. |
@@ -785,7 +787,7 @@ Bash-only. Used primarily by `install.sh` and component setup scripts.
 | `require_command NAME [MESSAGE]` | returns 1 with a warning if NAME is not in PATH. Caller decides whether to exit or return: require_command foo "msg" \|\| exit 0 |
 | `run_remote_installer URL` | downloads the install script at URL and runs it, returning non-zero when either the download or the script fails. Prints nothing: the caller owns the message. |
 | `install_cask CMD CASK LABEL MANUAL_URL` | installs CASK through Homebrew when CMD is not already in PATH, announcing it as LABEL and returning non-zero with a pointer to MANUAL_URL when Homebrew is missing or the install fails. |
-| `install_via_installer CMD URL LABEL` | installs LABEL by running the vendor's own install script at URL when CMD is not already in PATH, announcing it as LABEL and returning non-zero with a pointer to URL when curl is missing or the installer fails. |
+| `install_via_installer CMD URL LABEL [MANAGED_BIN]` | installs LABEL by running the vendor's own install script at URL, announcing it as LABEL and returning non-zero with a pointer to URL when curl is missing or the installer fails. The install is skipped when MANAGED_BIN is an executable file, or — when MANAGED_BIN is omitted — when CMD is already in PATH. |
 | `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. This function sources a single migrations.sh file with no state tracking. Kept for backward compatibility until all callers are migrated. |
 
 Loaded via `ui.sh`.

@@ -110,18 +110,29 @@ install_cask() {
   success "$label installed"
 }
 
-# install_via_installer CMD URL LABEL — installs LABEL by running the vendor's
-# own install script at URL when CMD is not already in PATH, announcing it as
-# LABEL and returning non-zero with a pointer to URL when curl is missing or the
-# installer fails.
+# install_via_installer CMD URL LABEL [MANAGED_BIN] — installs LABEL by running
+# the vendor's own install script at URL, announcing it as LABEL and returning
+# non-zero with a pointer to URL when curl is missing or the installer fails.
+# The install is skipped when MANAGED_BIN is an executable file, or — when
+# MANAGED_BIN is omitted — when CMD is already in PATH.
 #
 # The counterpart to install_cask for a tool whose artifact is a bare
 # executable: the installer's curl download carries no com.apple.quarantine
 # attribute, so Gatekeeper never asks the question a cask's bare Mach-O cannot
 # answer. Such installers also self-update, which a cask does not.
+#
+# MANAGED_BIN exists because `command -v CMD` cannot tell the installer's
+# launcher apart from a cask or an npm-global of the same name, and answering
+# yes to the wrong one leaves the machine with a copy the tool cannot update
+# itself. Pass it whenever the installer's own path is known.
 install_via_installer() {
-  local cmd="$1" url="$2" label="$3"
-  if command -v "$cmd" >/dev/null 2>&1; then
+  local cmd="$1" url="$2" label="$3" managed_bin="${4:-}"
+  if [[ -n "$managed_bin" ]]; then
+    if [[ -x "$managed_bin" ]]; then
+      success "$label already installed"
+      return
+    fi
+  elif command -v "$cmd" >/dev/null 2>&1; then
     success "$label already installed"
     return
   fi

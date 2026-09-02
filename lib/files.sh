@@ -256,6 +256,81 @@ is_disabled() {
   [[ -f "${1%/}/${2}.disabled" ]]
 }
 
+# frontmatter_field FILE KEY — prints the value KEY carries in FILE's opening
+# YAML frontmatter block, and nothing at all when the key is absent, the file
+# has no frontmatter, or the path does not exist. A block sequence prints one
+# entry per line; an inline value prints as one line.
+#
+# Both YAML list forms are read, because the two this repo uses are written
+# differently: `harness: [claude]` inline, and the `paths:` of every scoped rule
+# as an indented `- ` sequence on the lines below. A reader that only takes the
+# same-line value answers empty for the second, and every caller asking "is this
+# rule path-scoped?" then silently answers no.
+#
+# Only a matched surrounding quote pair is stripped, never quotes inside the
+# value — several skill descriptions carry an apostrophe, and deleting it
+# corrupts the prose this was only meant to unwrap. Brackets are left in place
+# for the same reason in reverse: `harness: []` must stay distinguishable from a
+# harness key that is not there at all, and stripping them makes both empty.
+#
+# Anchored on a block opening at line 1, because a `---` further down is a
+# horizontal rule: reading a key out of a file's prose would act on the
+# strength of its own documentation. Answering empty for a missing file keeps a
+# caller that meets a half-written directory on its skip path rather than on
+# awk's exit 2.
+frontmatter_field() {
+  [[ -f "$1" ]] || return 0
+  awk -v key="$2" '
+    function unquote(s) {
+      sub(/^[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
+      return s
+    }
+    NR == 1 && /^---$/ { in_fm = 1; next }
+    in_fm && /^---$/ { exit }
+    in_fm && collecting {
+      if ($0 ~ /^[[:space:]]*-[[:space:]]*/) {
+        sub(/^[[:space:]]*-[[:space:]]*/, "")
+        print unquote($0)
+        next
+      }
+      exit
+    }
+    in_fm && index($0, key ":") == 1 {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      if ($0 == "") { collecting = 1; next }
+      print unquote($0)
+      exit
+    }' "$1"
+}
+
+# rule_harness_ok FILE HARNESS — true when FILE's `harness:` frontmatter list is
+# absent, or is present and names HARNESS. Either YAML list form is accepted,
+# and whitespace, brackets and quotes around the entries are ignored; a list
+# naming nothing at all is false for every harness.
+#
+# An absent key means every harness, which is all but one rule today — declaring
+# the common case would put the burden on the many to spare the one. A list that
+# resolves to no harness is a typo the caller should not silently honour, so it
+# answers false here and bin/local/validate-rules fails on it outright.
+#
+# Path scoping is deliberately not part of this answer. A `paths:` rule is
+# conditionally loaded under Claude Code and cannot be loaded at all under Pi,
+# so what to do about it is the caller's question, not this one's.
+rule_harness_ok() {
+  local harnesses
+  harnesses="$(frontmatter_field "$1" harness)"
+  [[ -z "$harnesses" ]] && return 0
+  harnesses="${harnesses//$'\n'/,}"
+  harnesses="${harnesses//[[:space:]]/}"
+  harnesses="${harnesses//\[/}"
+  harnesses="${harnesses//\]/}"
+  harnesses="${harnesses//\"/}"
+  harnesses="${harnesses//\'/}"
+  [[ ",${harnesses}," == *",$2,"* ]]
+}
+
 # skill_agent SKILL_FILE — prints the agent name SKILL_FILE's frontmatter declares,
 # and nothing at all for a skill that declares none or for a path that does not
 # exist yet.
@@ -273,12 +348,7 @@ is_disabled() {
 # for a missing file keeps a caller that meets a half-written skill directory on
 # the skip path rather than on awk's exit 2.
 skill_agent() {
-  [[ -f "$1" ]] || return 0
-  awk 'NR==1 && /^---$/ { in_fm=1; next }
-       in_fm && /^---$/ { exit }
-       in_fm && /^agent:[[:space:]]/ {
-         sub(/^agent:[[:space:]]*/, ""); gsub(/["\047]/, ""); print; exit
-       }' "$1"
+  frontmatter_field "$1" agent
 }
 
 # install_hook_dispatcher SOURCE_RELPATH TARGET [LABEL]

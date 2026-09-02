@@ -445,3 +445,36 @@ _run_summary() {
   [[ "$pi_section" == *"anatomy"* ]]
   [[ "$pi_section" == *"reviewer"* ]]
 }
+
+@test "every agent-backed skill in the real tree splices cleanly" {
+  # Phase 1 asserted this for reviewer alone. The set is what matters: a stub
+  # whose agent name is misspelled installs nothing and only warns.
+  local name
+  for name in reviewer debugger incident migrate; do
+    [ -f "$REPO_ROOT/ai/skills/$name/SKILL.md" ]
+    [ -f "$REPO_ROOT/ai/claude/agents/$name.md" ]
+  done
+}
+
+@test "the real debugger, incident and migrate stubs splice against their real agent files" {
+  # Exercises the real _install_agent_skill against the actual repo tree, under
+  # a fake HOME, rather than installing into the operator's real discovery
+  # roots — that install is the operator's call, not this suite's.
+  run bash -c "
+    set -e
+    export WORKBENCH_DIR='$REPO_ROOT'
+    export WORKBENCH_STABLE_DIR='$REPO_ROOT'
+    export HOME='$HOME'
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/ai/skills/steps.sh'
+    step_skills
+  "
+  [ "$status" -eq 0 ]
+
+  local name
+  for name in debugger incident migrate; do
+    [ -f "$HOME/.agents/skills/$name/SKILL.md" ]
+    [ ! -e "$HOME/.claude/skills/$name" ]
+    ! grep -q "AGENT_PROTOCOL_PLACEHOLDER" "$HOME/.agents/skills/$name/SKILL.md"
+  done
+}

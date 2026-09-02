@@ -13,6 +13,8 @@
 #   - agent (optional) resolves to an ai/claude/agents/<name>.md file
 #   - invocation is required unless the skill declares an agent
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
+#   - every non-programmatic agent has a matching agent-backed skill
+#   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/CLAUDE.md's
 #
 # Exit code: 0 if all checks pass (or no skills found), 1 if any fail.
 
@@ -46,15 +48,21 @@ FOUND=0
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
-# Read a field from YAML frontmatter (between first and second ---). Returns empty if not found.
-_frontmatter_field() {
-  local file="$1" field="$2"
-  awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { exit } in_fm { print }' "$file" \
-    | grep "^${field}:" \
-    | sed "s/^${field}:[[:space:]]*//" \
-    | sed "s/^['\"]\\(.*\\)['\"]$/\\1/" \
-    | head -1 \
-    || true
+# Agents invoked by task automation and by the review pipeline, never by a
+# situation match. A description-triggered skill for one of these would be a
+# surface no human ever wants hit, so they are exempt from needing a skill.
+PROGRAMMATIC_AGENTS=(changelog ci-cd explain reviewer-lite)
+
+# _agent_is_programmatic NAME — whether NAME is dispatched by code rather than
+# matched to a situation.
+_agent_is_programmatic() {
+  local known
+  for known in "${PROGRAMMATIC_AGENTS[@]}"; do
+    if [[ "$1" == "$known" ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 _validate_skill_name_standard() {
@@ -164,11 +172,11 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   _pass "$display: frontmatter present"
 
   # Required fields
-  local_name="$(_frontmatter_field "$skill_file" "name")"
-  local_desc="$(_frontmatter_field "$skill_file" "description")"
-  local_source="$(_frontmatter_field "$skill_file" "source")"
-  local_invocation="$(_frontmatter_field "$skill_file" "invocation")"
-  local_trigger="$(_frontmatter_field "$skill_file" "trigger")"
+  local_name="$(frontmatter_field "$skill_file" "name")"
+  local_desc="$(frontmatter_field "$skill_file" "description")"
+  local_source="$(frontmatter_field "$skill_file" "source")"
+  local_invocation="$(frontmatter_field "$skill_file" "invocation")"
+  local_trigger="$(frontmatter_field "$skill_file" "trigger")"
   local_agent="$(skill_agent "$skill_file")"
 
   [[ -n "$local_name" ]] \
@@ -220,8 +228,8 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   _validate_skill_agent "$local_agent" "$display"
 
   # Lifecycle fields must appear together
-  local_cadence="$(_frontmatter_field "$skill_file" "lifecycle_cadence")"
-  local_scope="$(_frontmatter_field "$skill_file" "lifecycle_scope")"
+  local_cadence="$(frontmatter_field "$skill_file" "lifecycle_cadence")"
+  local_scope="$(frontmatter_field "$skill_file" "lifecycle_scope")"
 
   if [[ -n "$local_cadence" && -z "$local_scope" ]]; then
     _fail "$display: lifecycle_cadence present but lifecycle_scope missing"
@@ -241,15 +249,87 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   _validate_output_schema "$skill_file" "$display"
 done
 
+# Every situation-matched agent must have a skill, or Pi never learns the
+# protocol. Claude reads the agent file either way, which is exactly why the gap
+# is invisible without this check — debugger, incident and migrate each had an
+# agent file and no skill for a whole phase and nothing said so.
+#
+# The skill's `agent:` field is what carries the protocol, not the directory
+# name: ai/skills/steps.sh splices in the agent the field names. A matching
+# directory whose field points elsewhere installs that other agent's protocol
+# twice under two names and leaves this one reaching Pi nowhere — which a
+# filename check reports as covered.
+AGENTS_DIR="$WORKBENCH_DIR/ai/claude/agents"
+for agent_file in "$AGENTS_DIR"/*.md; do
+  [[ -f "$agent_file" ]] || continue
+  agent_name="$(basename "$agent_file" .md)"
+  if _agent_is_programmatic "$agent_name"; then
+    continue
+  fi
+  agent_skill="$WORKBENCH_DIR/ai/skills/$agent_name/SKILL.md"
+  if [[ ! -f "$agent_skill" ]]; then
+    _fail "agents/$agent_name: has no ai/skills/$agent_name/SKILL.md, so its protocol never reaches Pi — add an agent-backed skill stub or list it in PROGRAMMATIC_AGENTS"
+    continue
+  fi
+  declared_agent="$(skill_agent "$agent_skill")"
+  if [[ "$declared_agent" == "$agent_name" ]]; then
+    _pass "agents/$agent_name: reaches Pi as a skill"
+  else
+    _fail "agents/$agent_name: ai/skills/$agent_name/SKILL.md declares agent '${declared_agent:-<none>}', so this agent's protocol never reaches Pi — set agent: $agent_name"
+  fi
+done
+
+# ai/pi/AGENTS.head.md hand-authors its own "Agent protocols" table rather than
+# reading ai/claude/CLAUDE.md's — the two must list the same situations, agent
+# names and constraints or a row added to one silently goes missing from the
+# other. Both files carry exactly one table, so extracting every table row is
+# enough; strip_md=1 drops CLAUDE.md's ".md" suffix so its agent-file names
+# compare equal to AGENTS.head.md's bare skill names.
+_protocol_rows() {
+  local file="$1" strip_md="$2"
+  awk -F'|' -v strip_md="$strip_md" '
+    /^\| *Situation *\|/ { next }
+    /^\|[-| ]+\|$/ { next }
+    NF < 5 { next }
+    {
+      sit = $2; name = $3; constraint = $4
+      gsub(/^ +| +$/, "", sit)
+      gsub(/^ +| +$/, "", name)
+      gsub(/^ +| +$/, "", constraint)
+      gsub(/`/, "", name)
+      if (strip_md == "1") { sub(/\.md$/, "", name) }
+      print sit "|" name "|" constraint
+    }
+  ' "$file" | sort
+}
+
+CLAUDE_MD="$WORKBENCH_DIR/ai/claude/CLAUDE.md"
+PI_AGENTS_HEAD="$WORKBENCH_DIR/ai/pi/AGENTS.head.md"
+if [[ -f "$CLAUDE_MD" && -f "$PI_AGENTS_HEAD" ]]; then
+  claude_protocol_rows="$(_protocol_rows "$CLAUDE_MD" 1)"
+  pi_protocol_rows="$(_protocol_rows "$PI_AGENTS_HEAD" 0)"
+  if [[ "$claude_protocol_rows" == "$pi_protocol_rows" ]]; then
+    _pass "ai/pi/AGENTS.head.md: Agent protocols table matches ai/claude/CLAUDE.md"
+  else
+    _fail "ai/pi/AGENTS.head.md: Agent protocols table diverges from ai/claude/CLAUDE.md — sync the two tables"
+  fi
+fi
+
 # Summary
 echo
 if (( FOUND == 0 )); then
   echo -e "  ${DIM}no skill directories found${NC}"
-  exit 0
-elif (( ERRORS == 0 )); then
-  success "$CHECKS checks passed ($FOUND skills)"
-  exit 0
-else
+fi
+
+# FOUND == 0 no longer implies a clean run: the agent-coverage loop above can
+# fail with no skill directories present at all — an agent with no ai/skills/
+# tree whatsoever is a finding, not an empty run.
+if (( ERRORS > 0 )); then
   err "$ERRORS of $CHECKS checks failed"
   exit 1
+elif (( FOUND == 0 )); then
+  exit 0
+else
+  success "$CHECKS checks passed ($FOUND skills)"
+  exit 0
 fi

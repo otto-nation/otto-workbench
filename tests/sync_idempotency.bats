@@ -325,6 +325,42 @@ _claude_setup() {
   [ "$status" -eq 0 ]
 }
 
+# ─── sync_pi ─────────────────────────────────────────────────────────────────
+
+_pi_setup() {
+  _source_with "$FAKE_HOME" "ai/pi/steps.sh"
+  make_fake_binary "$FAKE_HOME/.local/bin" "pi"
+  export PATH="$FAKE_HOME/.local/bin:$PATH"
+  # The org-membership verdict is the one thing here that would reach the
+  # network. pi_settings.bats owns the verdict's own behaviour; this file is
+  # about running the sync twice, so the answer is pinned.
+  _pi_org_membership() { printf 'member'; }
+  mkdir -p "$CLAUDE_RULES_DIR"
+  printf -- 'GENERAL RULE BODY\n' > "$CLAUDE_RULES_DIR/general.md"
+}
+
+@test "sync_pi: second run produces identical settings and context file" {
+  _pi_setup
+
+  sync_pi >/dev/null 2>&1
+  settings1=$(cat "$PI_SETTINGS_FILE")
+  context1=$(_checksum "$PI_CONTEXT_FILE")
+
+  sync_pi >/dev/null 2>&1
+  settings2=$(cat "$PI_SETTINGS_FILE")
+  context2=$(_checksum "$PI_CONTEXT_FILE")
+
+  [[ "$settings1" == "$settings2" ]]
+  [[ "$context1" == "$context2" ]]
+}
+
+@test "sync_pi: leaves no temp file behind" {
+  _pi_setup
+  sync_pi >/dev/null 2>&1
+
+  [ ! -e "$PI_CONTEXT_FILE.tmp" ]
+}
+
 # ─── step_skills (cross-harness) ────────────────────────────────────────────
 
 @test "step_skills: second run produces identical symlinks in both roots" {

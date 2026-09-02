@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# Validate rule frontmatter conventions across ai/guidelines/rules/.
+#
+# Usage: bin/local/validate-rules [--quiet]
+#
+# Checks:
+#   - harness: names only harnesses that exist, and names at least one, in
+#     whichever YAML form it is written — inline list or block sequence
+#   - a rule that reaches Pi (no paths:, harness absent or including pi) uses
+#     no Claude-only tool vocabulary
+#
+# The second check exists because such a rule now loads into Pi's global context
+# file, where an instruction to use a tool Pi does not have is an instruction it
+# cannot follow and will improvise around.
+#
+# Exit code: 0 if all checks pass (or no rules found), 1 if any fail.
+
+set -e
+
+_SCRIPT_ROOT="$(git rev-parse --show-toplevel)"
+WORKBENCH_DIR="${WORKBENCH_DIR:-$_SCRIPT_ROOT}"
+# shellcheck source=/dev/null
+. "$_SCRIPT_ROOT/lib/ui.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Validate rule frontmatter conventions across ai/guidelines/rules/.
+
+Options:
+  --quiet     Suppress per-check output; show only the final summary
+  -h, --help  Show this help
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+ERRORS=0
+CHECKS=0
+FOUND=0
+
+_pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
+_fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
+
+# Every harness this workbench installs into — not to be confused with
+# ai/steps.sh's _AI_TOOL_ORDER, which is only the subset with a fixed sync
+# order. The two happen to list the same names today; a harness with no
+# ordering constraint would need adding here without ever touching the other.
+KNOWN_HARNESSES=(claude pi)
+
+# Tool names that exist only in Claude Code. Word-boundary matched, so prose
+# mentioning "the task" or "an agent" is not a hit.
+#
+# Not exhaustive, and cannot be: Claude Code's tool surface is not published
+# anywhere this repo can read, and it grows between releases. The list is the
+# set of names rule text has actually reached for, so maintaining it means
+# adding a name the moment a rule names it — not auditing Claude Code. A rule
+# that names a tool missing from here passes and reaches Pi saying it, which is
+# how `EnterWorktree` sat in git-operations.md for a whole phase.
+CLAUDE_ONLY_TOOLS=(TodoWrite NotebookEdit ExitPlanMode EnterPlanMode EnterWorktree ExitWorktree)
+
+# _harness_known NAME — whether NAME is a harness this workbench installs into.
+_harness_known() {
+  local known
+  for known in "${KNOWN_HARNESSES[@]}"; do
+    if [[ "$1" == "$known" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# _check_harness DISPLAY RAW — validates a harness: list's members and arity.
+#
+# RAW arrives in whichever form the rule was authored in: inline `[claude, pi]`
+# reads back with its brackets, a block sequence reads back one entry per line.
+# Both are flattened to a comma list here so the member loop sees every name —
+# reading RAW as a single line would validate only a block sequence's first entry.
+_check_harness() {
+  local display="$1" raw="$2"
+  local -a names
+  raw="${raw//$'\n'/,}"
+  raw="${raw//[[:space:]]/}"
+  raw="${raw//\[/}"
+  raw="${raw//\]/}"
+  raw="${raw//\"/}"
+  raw="${raw//\'/}"
+  IFS=',' read -ra names <<< "$raw"
+
+  local declared=0 bad=0 name
+  for name in "${names[@]}"; do
+    [[ -z "$name" ]] && continue
+    declared=$(( declared + 1 ))
+    if ! _harness_known "$name"; then
+      _fail "$display: harness '$name' is not one of: ${KNOWN_HARNESSES[*]}"
+      bad=1
+    fi
+  done
+
+  if (( declared == 0 )); then
+    _fail "$display: harness: names no harness — the rule would load nowhere"
+    return
+  fi
+  # Only a list whose every member is known resolves. Reporting a pass beside
+  # the failure would put both verdicts on one rule and inflate CHECKS twice.
+  (( bad == 0 )) && _pass "$display: harness scope resolves"
+  return 0
+}
+
+# _declares_harness FILE — whether FILE's frontmatter carries a harness: key at all.
+#
+# Presence is read from the key line rather than from the value because the two
+# empty forms answer differently: inline `harness: []` reads back as `[]`, but a
+# block sequence with no entries reads back empty — the same answer an absent key
+# gives. Gating the harness check on a non-empty value would therefore skip the
+# block-form typo entirely, and rule_harness_ok would read it as "no key" and let
+# the rule reach every harness. Both forms are the same mistake and both fail here.
+_declares_harness() {
+  awk 'NR == 1 && /^---$/ { in_fm = 1; next }
+       in_fm && /^---$/ { exit }
+       in_fm && index($0, "harness:") == 1 { found = 1; exit }
+       END { exit !found }' "$1"
+}
+
+# _check_vocabulary FILE DISPLAY — fails on every Claude-only tool name in a
+# rule Pi loads, not just the first, so one run surfaces the whole list.
+_check_vocabulary() {
+  local file="$1" display="$2" tool found=false
+  for tool in "${CLAUDE_ONLY_TOOLS[@]}"; do
+    if grep -qE "\\b${tool}\\b" "$file"; then
+      _fail "$display: names the Claude-only tool '$tool' but reaches Pi — scope it with 'harness: [claude]' or reword it"
+      found=true
+    fi
+  done
+  $found || _pass "$display: no Claude-only tool names"
+}
+
+RULES_DIR="$WORKBENCH_DIR/ai/guidelines/rules"
+
+for rule_file in "$RULES_DIR"/*.md; do
+  [[ -f "$rule_file" ]] || continue
+  FOUND=$(( FOUND + 1 ))
+  display="rules/$(basename "$rule_file")"
+
+  reaches_pi=true
+  if _declares_harness "$rule_file"; then
+    _check_harness "$display" "$(frontmatter_field "$rule_file" harness)"
+    rule_harness_ok "$rule_file" pi || reaches_pi=false
+  fi
+  # `paths: []` reads back as the literal `[]` — an empty list scopes the rule
+  # to nothing, which is not a scope, so it is normalized away here the same
+  # way ai/pi/steps.sh's _pi_rule_reaches_pi does before testing it.
+  rule_paths="$(frontmatter_field "$rule_file" paths)"
+  rule_paths="${rule_paths//[[:space:]]/}"
+  if [[ "$rule_paths" == "[]" ]]; then
+    rule_paths=""
+  fi
+  if [[ -n "$rule_paths" ]]; then
+    reaches_pi=false
+  fi
+
+  if [[ "$reaches_pi" == true ]]; then
+    _check_vocabulary "$rule_file" "$display"
+  fi
+done
+
+# Summary
+echo
+if (( FOUND == 0 )); then
+  echo -e "  ${DIM}no rule files found${NC}"
+fi
+
+# ERRORS is consulted before FOUND, not after: every _fail today sits inside the
+# per-file loop, so FOUND == 0 does imply a clean run — but only today. The first
+# check added outside that loop would be swallowed by an early exit here, which
+# is exactly what happened in validate-skills before this shape replaced it.
+if (( ERRORS > 0 )); then
+  err "$ERRORS of $CHECKS checks failed"
+  exit 1
+elif (( FOUND == 0 )); then
+  exit 0
+else
+  success "$CHECKS checks passed ($FOUND rules)"
+  exit 0
+fi

@@ -69,3 +69,30 @@ _run_in() {
   [[ "$output" == *"No worktree resolved"* ]]
   [ ! -e "$container/.claude" ]
 }
+
+@test "ai init writes the context file at the worktree root, not inside .claude/" {
+  # Pi's ancestor walk reads one context file per directory root and never looks
+  # inside .claude/ — a file there is invisible to it while Claude Code reads it,
+  # which is exactly the gap that stays silent.
+  local container="$TMPDIR/c"
+  make_worktree_container "$container" "$SEED"
+
+  run _run_in "$container" ai init
+  [ "$status" -eq 0 ]
+  [ -f "$container/main/CLAUDE.md" ]
+  [ ! -e "$container/main/.claude/CLAUDE.md" ]
+}
+
+@test "ai init --force overwrites a hand-authored root CLAUDE.md" {
+  # --force now targets the file every harness reads first, not a nested
+  # .claude/CLAUDE.md — confirm it still overwrites deliberately rather than
+  # silently skipping or landing somewhere else.
+  local container="$TMPDIR/c"
+  make_worktree_container "$container" "$SEED"
+  printf 'HAND-AUTHORED CONTENT\n' > "$container/main/CLAUDE.md"
+
+  run _run_in "$container" ai init --force
+  [ "$status" -eq 0 ]
+  [ -f "$container/main/CLAUDE.md" ]
+  [ "$(cat "$container/main/CLAUDE.md")" != "HAND-AUTHORED CONTENT" ]
+}

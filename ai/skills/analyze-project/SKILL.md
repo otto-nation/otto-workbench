@@ -1,15 +1,15 @@
 ---
 name: analyze-project
-description: "Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty .claude/CLAUDE.md or .claude/rules/ sections."
+description: "Analyze a project's codebase and populate scaffolded CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty CLAUDE.md or .claude/rules/ sections."
 source: otto-workbench/ai/skills/analyze-project/SKILL.md
 invocation: "/analyze-project"
-trigger: "Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when .claude/CLAUDE.md or .claude/rules/ files have empty sections."
-output: ".claude/CLAUDE.md, .claude/rules/"
+trigger: "Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when CLAUDE.md or .claude/rules/ files have empty sections."
+output: "CLAUDE.md, .claude/rules/"
 ---
 
 # Analyze Project
 
-Reads the codebase and proposes content for scaffolded `.claude/CLAUDE.md` and `.claude/rules/` files.
+Reads the codebase and proposes content for scaffolded `CLAUDE.md` and `.claude/rules/` files.
 Run with `/analyze-project` after `otto-workbench ai init` scaffolds a new project.
 
 ---
@@ -43,7 +43,7 @@ container, which has no working tree of its own.
 `resolve-worktree` exiting 2 means this is not a container either — with no repo root
 printed above it, there is no project here to analyze. Any other non-zero exit means
 the container names no worktree to write into: say so and stop. Never fall back to
-the current directory. A container holds no work tree, so a `.claude/CLAUDE.md`
+the current directory. A container holds no work tree, so a `CLAUDE.md`
 written there is tracked by nothing and read by no session.
 
 `cd` to the resolved path and run every phase below from there. Invoked through
@@ -52,7 +52,7 @@ written there is tracked by nothing and read by no session.
 ### 1b. Read existing scaffold
 
 ```bash
-cat .claude/CLAUDE.md
+cat CLAUDE.md
 ls .claude/rules/
 ```
 
@@ -88,7 +88,6 @@ Use Glob and Grep to understand:
 **Existing conventions:**
 - Linter configs (`.eslintrc`, `.golangci.yml`, etc.) — these encode existing rules
 - `.editorconfig`, `prettier`, formatting configs
-- CLAUDE.md at the project root (distinct from `.claude/CLAUDE.md`)
 
 ### Output
 
@@ -105,7 +104,7 @@ A structured list of findings organized by target file:
 For each file that needs content, present a proposal:
 
 ```
-## .claude/CLAUDE.md
+## CLAUDE.md
 
 ### Description (proposed)
 > <1-2 sentence project description>
@@ -172,9 +171,9 @@ After all writes:
 
 - After `otto-workbench ai init` scaffolds a new project
 - After `otto-workbench ai init --force` re-scaffolds an existing project
-- When `.claude/CLAUDE.md` or `.claude/rules/` files have empty sections
+- When `CLAUDE.md` or `.claude/rules/` files have empty sections
 
 ## Output location
 
-- `.claude/CLAUDE.md` — project description, workflow, key paths, notes
+- `CLAUDE.md` — project description, workflow, key paths, notes
 - `.claude/rules/*.md` — project-specific conventions

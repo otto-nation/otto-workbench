@@ -253,3 +253,13 @@ _live() {
   [ "$status" -eq 0 ]
   [ "$output" = "$PKG" ]
 }
+
+@test "the template's defaultModel is one of its enabledModels" {
+  # Pi will not select a default that is not enabled, and the failure is a
+  # silent fall-through to whatever the provider offers first.
+  run jq -e '
+    (.enabledModels // []) as $m
+    | ((.defaultProvider + "/" + .defaultModel) as $d | $m | index($d))
+  ' "$REPO_ROOT/ai/pi/settings.json"
+  [ "$status" -eq 0 ]
+}

@@ -19,12 +19,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 . "$WORKBENCH_DIR/lib/ui.sh"
 
-# Source all tool step files — any subdirectory containing steps.sh is a tool
-for _dir in "$SCRIPT_DIR"/*/; do
-  # shellcheck source=/dev/null
-  if [[ -f "${_dir}steps.sh" ]]; then . "${_dir}steps.sh"; fi
-done
-unset _dir
+# The AI dispatcher sources every tool's steps.sh — any subdirectory containing
+# one is a tool — and owns ai_tool_order, the constraint on the order those
+# tools' steps run in. Sourced rather than re-globbed here so setup and sync
+# read the same list of tools and the same ordering rule.
+# shellcheck source=./steps.sh
+. "$SCRIPT_DIR/steps.sh"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,12 +43,14 @@ prompt_secret() {
 SELECTED_TOOLS=()
 
 # _ai_discover_tools — prints the name of each AI tool subdirectory that
-# contains a steps.sh, one per line. Caller reads into an array.
+# contains a steps.sh, one per line. Caller reads into an array. Delegates to
+# ai/steps.sh's ai_sub_tool_dirs so this list and the one that sourced
+# sync_<tool> in can't independently disagree about what counts as a tool.
 _ai_discover_tools() {
   local dir
-  for dir in "$SCRIPT_DIR"/*/; do
-    if [[ -f "${dir}steps.sh" ]]; then basename "$dir"; fi
-  done
+  while IFS= read -r dir; do
+    basename "$dir"
+  done < <(ai_sub_tool_dirs "$SCRIPT_DIR")
 }
 
 # select_tools — presents available AI tools and populates SELECTED_TOOLS.
@@ -118,11 +120,15 @@ unset _tool_dir
 
 # Framework contract: missing register_<tool>_steps is a hard error — the tool's
 # steps.sh is broken and cannot run. Individual step failures are soft (warn + continue).
-for _tool in "${SELECTED_TOOLS[@]}"; do
+#
+# run_steps runs in registration order, so registration is where the ordering
+# constraint is applied — the saved selection is the order the operator typed at
+# the menu and says nothing about what depends on what.
+while IFS= read -r _tool; do
   declare -f "register_${_tool}_steps" > /dev/null \
     || { err "register_${_tool}_steps is not defined — check ${_tool}/steps.sh"; exit 1; }
   "register_${_tool}_steps"
-done
+done < <(ai_tool_order "${SELECTED_TOOLS[@]}")
 
 run_steps
 

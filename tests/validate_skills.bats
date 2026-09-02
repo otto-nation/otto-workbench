@@ -505,3 +505,108 @@ _make_agent_skill() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"caps it at 1024"* ]]
 }
+
+# ── Agent coverage ───────────────────────────────────────────────────────────
+
+@test "an agent file with no skill and no allowlist entry fails" {
+  # The omission this task fixes: debugger, incident and migrate each had an
+  # agent file and no skill for a whole phase, and nothing said so.
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents"
+  printf -- '---\nname: orphan\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/orphan.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"orphan"* ]]
+}
+
+@test "an agent with a matching skill passes" {
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+  printf -- '---\nname: paired\nagent: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
+
+  _run_validate --quiet
+  [[ "$output" != *"never reaches Pi"* ]]
+}
+
+@test "a skill whose agent field names another agent fails" {
+  # The filename check this replaced passed on exactly this: the directory is
+  # there, so the agent reads as covered, while ai/skills/steps.sh splices the
+  # other agent's protocol in and this one reaches Pi nowhere.
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+  printf -- '---\nname: paired\nagent: elsewhere\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"declares agent 'elsewhere'"* ]]
+}
+
+@test "a skill directory that declares no agent at all fails" {
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"declares agent '<none>'"* ]]
+}
+
+@test "a programmatic agent needs no skill" {
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents"
+  printf -- '---\nname: changelog\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/changelog.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+# ── Agent protocols table parity ────────────────────────────────────────────
+
+_make_protocol_tables() {
+  local claude_row="$1" pi_row="$2"
+  mkdir -p "$FAKE_WORKBENCH/ai/claude" "$FAKE_WORKBENCH/ai/pi"
+  {
+    echo "# Claude Code"
+    echo ""
+    echo "## Agent Protocols"
+    echo ""
+    echo "| Situation | Agent file | Constraint |"
+    echo "|-----------|-----------|------------|"
+    echo "$claude_row"
+  } > "$FAKE_WORKBENCH/ai/claude/CLAUDE.md"
+  {
+    echo "# Workbench guidelines"
+    echo ""
+    echo "## Agent protocols"
+    echo ""
+    echo "| Situation | Skill | Constraint |"
+    echo "|-----------|-------|------------|"
+    echo "$pi_row"
+  } > "$FAKE_WORKBENCH/ai/pi/AGENTS.head.md"
+}
+
+@test "matching protocol tables pass" {
+  _make_protocol_tables \
+    "| Investigating a bug | \`debugger.md\` | Diagnose before fixing |" \
+    "| Investigating a bug | \`debugger\` | Diagnose before fixing |"
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "a protocol table row missing from AGENTS.head.md fails" {
+  _make_protocol_tables \
+    "| Investigating a bug | \`debugger.md\` | Diagnose before fixing |" \
+    "| Investigating a bug | \`debugger\` | Wrong constraint |"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Agent protocols table diverges"* ]]
+}

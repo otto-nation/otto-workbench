@@ -22,6 +22,8 @@ This location is the same regardless of how you installed the workbench (git clo
 
 For guidelines, replacement (`CLAUDE.md`) takes precedence over append (`CLAUDE.local.md`). Use append mode to add machine-specific instructions without losing base content.
 
+An override or a `.disabled` sentinel under `overrides/ai/guidelines/rules/` now moves both harnesses at once, because Pi's context file is generated from the installed result — the same rule change reaches `~/.claude/rules/` and `~/.pi/agent/AGENTS.md` from a single override.
+
 ## Disabling Items
 
 Create a `.disabled` sentinel in the user directory to suppress a base item entirely:

@@ -13,6 +13,10 @@ setup() {
   export NO_COLOR=1
   # shellcheck source=/dev/null
   source "$CLAUDE_RULES"
+
+  # Fake source tree for cmd_sync tests — modeled on skills_install.bats.
+  FAKE_WORKBENCH="$TMPDIR/workbench"
+  mkdir -p "$FAKE_WORKBENCH/ai/guidelines/rules"
 }
 
 teardown() {
@@ -23,6 +27,12 @@ teardown() {
 # Helper: run claude-rules CLI with overridden HOME
 _run_rules() {
   HOME="$TMPDIR" NO_COLOR=1 run "$CLAUDE_RULES" "$@"
+}
+
+# _run_sync — runs `claude-rules sync` against the fake workbench's rules tree.
+_run_sync() {
+  HOME="$TMPDIR" WORKBENCH_DIR="$FAKE_WORKBENCH" WORKBENCH_SYNC=true NO_COLOR=1 \
+    run "$CLAUDE_RULES" sync
 }
 
 # _make_repo DIR — a real repo with one commit at DIR.
@@ -273,4 +283,35 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"No worktree resolved"* ]]
   [ ! -e "$container/CLAUDE.md" ]
+}
+
+# ── CLI: sync — harness scoping ──────────────────────────────────────────────
+
+@test "a rule scoped away from claude is not installed into the claude rules dir" {
+  printf -- '---\nharness: [pi]\n---\n# Pi only\n' \
+    > "$FAKE_WORKBENCH/ai/guidelines/rules/pi-only.md"
+  printf -- '# Shared\n' > "$FAKE_WORKBENCH/ai/guidelines/rules/shared.md"
+
+  _run_sync
+  [ ! -e "$HOME/.claude/rules/pi-only.md" ]
+  [ -L "$HOME/.claude/rules/shared.md" ]
+}
+
+@test "a rule naming claude among its harnesses is installed" {
+  printf -- '---\nharness: [claude, pi]\n---\n# Both\n' \
+    > "$FAKE_WORKBENCH/ai/guidelines/rules/both.md"
+
+  _run_sync
+  [ -L "$HOME/.claude/rules/both.md" ]
+}
+
+@test "a rule that stops naming claude is pruned on the next sync" {
+  printf -- '# Shared\n' > "$FAKE_WORKBENCH/ai/guidelines/rules/shared.md"
+  _run_sync
+  [ -L "$HOME/.claude/rules/shared.md" ]
+
+  printf -- '---\nharness: [pi]\n---\n# Pi only now\n' \
+    > "$FAKE_WORKBENCH/ai/guidelines/rules/shared.md"
+  _run_sync
+  [ ! -e "$HOME/.claude/rules/shared.md" ]
 }

@@ -68,6 +68,33 @@ MAX_DELTA_LIST_ENTRIES = 200
 MIN_DELTA_DIFF_BYTES = 2_048
 
 
+def fixed_preflight_bytes(
+    commit_log: str,
+    claude_md: str,
+    architecture_md: str,
+    review_checklists: dict[str, str],
+) -> int:
+    """The bytes of preflight data no budget lever can shrink.
+
+    `commit_log` is the log the collector gathered, `claude_md` and
+    `architecture_md` are the project context files, and `review_checklists`
+    is every checklist keyed by name — the four sections that go into a prompt
+    whole or not at all. The diff, the pre-collected file contents and the
+    incremental delta are all levers a fit can pull, so none of them is here.
+
+    Taken as four values rather than as a `PreflightData`: the collector holds
+    them as locals before it has a `PreflightData` to put them in, and this
+    module knowing that type would invert the dependency. A caller that has one
+    reads the four fields off it, and one that does not spends nothing.
+    """
+    return (
+        len(commit_log.encode())
+        + len(claude_md.encode())
+        + len(architecture_md.encode())
+        + sum(len(v.encode()) for v in review_checklists.values())
+    )
+
+
 # ── File fitting ─────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)

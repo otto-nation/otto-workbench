@@ -36,7 +36,7 @@ from review_budget import (
     FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE, FileFit,
     MAX_COMMIT_LOG_BYTES, MAX_DELTA_DIFF_BYTES, MAX_DELTA_LOG_BYTES,
     MAX_FILE_BYTES, MAX_PROMPT_BYTES, MAX_TRUNCATED_LINES,
-    TEMPLATE_OVERHEAD_BYTES, fit_files,
+    TEMPLATE_OVERHEAD_BYTES, fit_files, fixed_preflight_bytes,
 )
 from review_document import ReviewHeader
 from review_grouping import (
@@ -501,10 +501,9 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
 
     base_size = (
         len(diff.encode())
-        + len(commit_log.encode())
-        + len(claude_md.encode())
-        + len(architecture_md.encode())
-        + sum(len(v.encode()) for v in review_checklists.values())
+        + fixed_preflight_bytes(
+            commit_log, claude_md, architecture_md, review_checklists,
+        )
         + TEMPLATE_OVERHEAD_BYTES
     )
     fit = _fit_to_budget(all_contents, all_permissions, file_changes, base_size)

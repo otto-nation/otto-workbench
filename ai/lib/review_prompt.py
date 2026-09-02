@@ -35,7 +35,7 @@ from agent_types import EFFORT_PRESETS, Mode
 from pr_domains import ReviewVerdict
 from review_budget import (
     FileFit, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, NON_PREFLIGHT_OVERHEAD_BYTES,
-    fit_files,
+    fit_files, fixed_preflight_bytes,
 )
 from review_collect import build_project_context, format_preflight_data
 from review_paths import FILENAME_PROMPT_STATS, review_artifact_path
@@ -265,11 +265,8 @@ class BudgetPlan:
 def _fixed_preflight_bytes(pf: PreflightData | None) -> int:
     if not pf:
         return 0
-    return (
-        len(pf.commit_log.encode())
-        + len(pf.claude_md.encode())
-        + len(pf.architecture_md.encode())
-        + sum(len(v.encode()) for v in pf.review_checklists.values())
+    return fixed_preflight_bytes(
+        pf.commit_log, pf.claude_md, pf.architecture_md, pf.review_checklists,
     )
 
 

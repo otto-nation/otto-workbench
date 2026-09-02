@@ -46,17 +46,6 @@ FOUND=0
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 
-# Read a field from YAML frontmatter (between first and second ---). Returns empty if not found.
-_frontmatter_field() {
-  local file="$1" field="$2"
-  awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { exit } in_fm { print }' "$file" \
-    | grep "^${field}:" \
-    | sed "s/^${field}:[[:space:]]*//" \
-    | sed "s/^['\"]\\(.*\\)['\"]$/\\1/" \
-    | head -1 \
-    || true
-}
-
 _validate_skill_name_standard() {
   local name="$1" display="$2"
   [[ -n "$name" ]] || return 0
@@ -164,11 +153,11 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   _pass "$display: frontmatter present"
 
   # Required fields
-  local_name="$(_frontmatter_field "$skill_file" "name")"
-  local_desc="$(_frontmatter_field "$skill_file" "description")"
-  local_source="$(_frontmatter_field "$skill_file" "source")"
-  local_invocation="$(_frontmatter_field "$skill_file" "invocation")"
-  local_trigger="$(_frontmatter_field "$skill_file" "trigger")"
+  local_name="$(frontmatter_field "$skill_file" "name")"
+  local_desc="$(frontmatter_field "$skill_file" "description")"
+  local_source="$(frontmatter_field "$skill_file" "source")"
+  local_invocation="$(frontmatter_field "$skill_file" "invocation")"
+  local_trigger="$(frontmatter_field "$skill_file" "trigger")"
   local_agent="$(skill_agent "$skill_file")"
 
   [[ -n "$local_name" ]] \
@@ -220,8 +209,8 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   _validate_skill_agent "$local_agent" "$display"
 
   # Lifecycle fields must appear together
-  local_cadence="$(_frontmatter_field "$skill_file" "lifecycle_cadence")"
-  local_scope="$(_frontmatter_field "$skill_file" "lifecycle_scope")"
+  local_cadence="$(frontmatter_field "$skill_file" "lifecycle_cadence")"
+  local_scope="$(frontmatter_field "$skill_file" "lifecycle_scope")"
 
   if [[ -n "$local_cadence" && -z "$local_scope" ]]; then
     _fail "$display: lifecycle_cadence present but lifecycle_scope missing"

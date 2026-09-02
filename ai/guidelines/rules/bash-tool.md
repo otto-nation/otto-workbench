@@ -1,6 +1,10 @@
+---
+harness: [claude]
+---
+
 # Bash Tool — Permission Patterns
 
-Patterns that trigger unsuppressible permission prompts in Claude Code's static analyzer, plus one silent-failure pattern (§ Subagents Reset the Working Directory) that produces no prompt but breaks correctness the same way. These apply to Bash tool usage, not to writing shell scripts.
+Patterns that trigger unsuppressible permission prompts in Claude Code's static analyzer, plus one silent-failure pattern (§ Subagents Reset the Working Directory) that produces no prompt but breaks correctness the same way. These apply to Bash tool usage, not to writing shell scripts. Every pattern here describes Claude Code's own static analyzer or its file-access gate, so the file is scoped to that harness — under another one the rules would forbid commands that were never going to prompt. Its § Subagents Reset the Working Directory may be the exception, but whether Pi's extension-supplied subagents share the cwd-reset behaviour is unverified; the section stays here until someone checks.
 
 `ai/claude/bin/claude-bash-guard`, the PreToolUse hook for the Bash tool, enforces the patterns below that can be matched mechanically — not every section has a guard rule. Each block message cites the section holding its alternatives (`See bash-tool.md § <Section>`), so a new guard rule needs a section here to cite; `tests/claude_settings.bats` fails if it has none.
 

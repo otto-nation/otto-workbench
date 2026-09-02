@@ -653,7 +653,11 @@ def fetch_reply_threads(
     owner, name = repo.split("/", 1)
     try:
         raw_threads = fetch_threads(owner, name, int(pr_number), pr_data)
-    except Exception:
+    except Exception as exc:
+        # Context, not a prerequisite — but announced, for the same reason the
+        # missing-login skip above is: a silent one is indistinguishable from a
+        # PR that simply has no threads.
+        log.warn(f"Could not fetch reply threads — skipping thread analysis: {exc}")
         return ReplyThreads([], {})
 
     if not raw_threads:

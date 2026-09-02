@@ -319,6 +319,15 @@ class TestFetchReplyThreads:
             result = fetch_reply_threads("owner/repo", "42")
         assert result == ReplyThreads(threads=[], summary={})
 
+    def test_warns_when_the_fetch_raises(self):
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", side_effect=RuntimeError("boom")), \
+             patch("review_reconcile.log.warn") as warn:
+            result = fetch_reply_threads("owner/repo", "42")
+        assert result == ReplyThreads(threads=[], summary={})
+        assert warn.call_count == 1
+        assert "boom" in warn.call_args[0][0]
+
     def test_filters_to_bot_authored_threads(self):
         threads = [
             {

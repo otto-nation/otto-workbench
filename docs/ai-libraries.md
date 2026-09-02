@@ -2689,6 +2689,45 @@ machine profile call a repo's tracker ``unset`` while the SessionStart line in
 the same session named it — so if a bash caller needs a config value, give it
 that command rather than a third implementation of the scopes.
 
+What the config *is* is here: the dataclasses, the files, the merge, and the
+key surface a dotted key is judged against. How it is *shown* —
+``config.schema.json``, the docs key reference, ``config status`` — is
+``workbench_config_report``; how it is *changed* is ``workbench_config_write``.
+Both of those import this one and neither is imported back, so the module every
+Claude hook loads on every prompt carries nothing a reader does not need.
+
+### workbench_config_report.py
+
+How the workbench config is shown.
+
+Three renderings of one surface: the JSON Schema an editor validates a config
+file against, the key reference the docs print, and the resolved status
+``otto-workbench config status`` reports. All three walk ``WorkbenchConfig``
+through ``serde.classify`` rather than listing the keys a second time, so none
+of them can disagree with the config ``workbench_config.load_config`` returns.
+
+Reading only. Nothing here opens a file for writing or decides whether a key
+may be written — that is ``workbench_config_write``. The split is what the
+config *is* (``workbench_config``), how it is *shown* (here), and how it is
+*changed* (there), and it runs one way: both of the others import the config,
+neither imports this.
+
+### workbench_config_write.py
+
+How the workbench config is changed.
+
+One dotted key at a time, into one of the three scopes ``config_scopes``
+merges, and only after the key has been judged against the surface that will
+read the file back. Every write here goes through ``set_value``, so the yq-first
+ordering that preserves a hand-authored file's comments and the key check that
+keeps a dead key out of a shared file are each written once.
+
+The check is what makes this its own module rather than three functions on the
+config. A write is judged against two surfaces — this checkout's
+``WorkbenchConfig`` and the schema of the workbench actually installed on the
+machine — because the file outlives the checkout that wrote it. Reading needs
+neither, which is why ``workbench_config`` carries no part of it.
+
 ### workbench_paths.py
 
 Where the workbench keeps things.

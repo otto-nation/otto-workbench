@@ -1,9 +1,16 @@
-"""Tests for workbench_config — the typed, layered workbench configuration."""
+"""Tests for the typed, layered workbench configuration and the writes into it.
+
+``workbench_config`` and ``workbench_config_write`` are tested together because
+nearly every assertion about a write is "write it, then load it back" — the
+scope a value lands in and the scope it is read from are the same question, and
+splitting them would leave two files that only make sense read side by side.
+The renderings in ``workbench_config_report`` read and nothing else, so they
+stand alone in ``test_workbench_config_report.py``.
+"""
 
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -14,6 +21,8 @@ from conftest import add_worktree, seed_repo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import workbench_config as wc
+import workbench_config_report as wcr
+import workbench_config_write as wcw
 from agent_types import Effort, Phase, Thinking
 
 # The PyYAML write path only exists for a machine without yq, so the tests for
@@ -39,6 +48,10 @@ def _write(path: Path, text: str) -> None:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def _row(status: wcr.ConfigStatus, key: str) -> wcr.ResolvedKey:
+    return next(row for row in status.keys if row.key == key)
 
 
 # ── Loading and merging ─────────────────────────────────────────────────────
@@ -182,7 +195,7 @@ def test_the_container_sits_between_the_two_older_scopes(roots, container):
     assert [s.name for s in wc.config_scopes(container / "main")] == [
         wc.GLOBAL_SCOPE, wc.CONTAINER_SCOPE, wc.PROJECT_SCOPE,
     ]
-    assert [s.name for s in wc.config_status(container / "main").scopes] == [
+    assert [s.name for s in wcr.config_status(container / "main").scopes] == [
         wc.PROJECT_SCOPE, wc.CONTAINER_SCOPE, wc.GLOBAL_SCOPE,
     ]
 
@@ -217,12 +230,12 @@ def test_the_container_does_not_discard_global_siblings(roots, container):
 
 def test_a_container_value_names_the_container_in_the_report(roots, container):
     _write(container / wc.PROJECT_CONFIG_NAME, "issue_tracker:\n  provider: github\n")
-    status = wc.config_status(container / "main")
+    status = wcr.config_status(container / "main")
     assert _row(status, "issue_tracker.provider").scope.name == wc.CONTAINER_SCOPE
 
 
 def test_set_container_value_writes_above_the_worktrees(roots, container):
-    wc.set_container_value("issue_tracker.provider", "github", container / "main")
+    wcw.set_container_value("issue_tracker.provider", "github", container / "main")
     assert not (container / "main" / wc.PROJECT_CONFIG_NAME).exists()
     assert "github" in (container / wc.PROJECT_CONFIG_NAME).read_text()
 
@@ -230,7 +243,7 @@ def test_set_container_value_writes_above_the_worktrees(roots, container):
 def test_a_sibling_worktree_reads_what_the_container_recorded(roots, container):
     """The reason the scope exists: `wt switch -c` cuts a checkout holding
     nothing, and a worktree file would have to be copied into it by hand."""
-    wc.set_container_value("issue_tracker.provider", "github", container / "main")
+    wcw.set_container_value("issue_tracker.provider", "github", container / "main")
     feature = add_worktree(container, "feature")
     assert wc.load_config(feature).issue_tracker.provider is wc.IssueProvider.GITHUB
 
@@ -240,247 +253,25 @@ def test_set_container_value_refuses_a_plain_clone(roots, tmp_path):
     that file is deleted by `wt remove` and unseen by every sibling checkout."""
     clone = seed_repo(tmp_path / "clone")
     with pytest.raises(wc.ConfigError, match="container"):
-        wc.set_container_value("issue_tracker.provider", "github", clone)
+        wcw.set_container_value("issue_tracker.provider", "github", clone)
     assert not (clone / wc.PROJECT_CONFIG_NAME).exists()
 
 
 def test_set_container_value_refuses_the_same_keys(roots, container):
     with pytest.raises(wc.ConfigKeyError):
-        wc.set_container_value("issue_tracker.providr", "github", container / "main")
+        wcw.set_container_value("issue_tracker.providr", "github", container / "main")
 
 
-# ── Status ──────────────────────────────────────────────────────────────────
-
-
-def _row(status: wc.ConfigStatus, key: str) -> wc.ResolvedKey:
-    return next(row for row in status.keys if row.key == key)
-
-
-def test_scopes_are_reported_highest_precedence_first(roots):
-    config_root, project = roots
-    status = wc.config_status(project)
-    assert [s.name for s in status.scopes] == [wc.PROJECT_SCOPE, wc.GLOBAL_SCOPE]
-    assert [s.path for s in status.scopes] == [
-        project / wc.PROJECT_CONFIG_NAME, config_root / wc.CONFIG_NAME,
-    ]
-
-
-def test_the_merge_and_the_report_read_the_same_files(roots):
-    """`config_scopes` is the one owner, so neither can gain a file alone."""
-    _, project = roots
-    reported = [s.path for s in wc.config_status(project).scopes]
-    assert sorted(reported) == sorted(s.path for s in wc.config_scopes(project))
-
-
-def test_a_scope_with_no_file_is_reported_as_absent(roots):
-    config_root, project = roots
-    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
-    status = wc.config_status(project)
-    by_name = {s.name: s for s in status.scopes}
-    assert by_name[wc.GLOBAL_SCOPE].exists
-    assert not by_name[wc.PROJECT_SCOPE].exists
-
-
-def test_outside_a_repo_there_is_only_the_global_scope(roots):
-    status = wc.config_status()
-    assert [s.name for s in status.scopes] == [wc.GLOBAL_SCOPE]
-
-
-def test_a_value_names_the_file_that_supplied_it(roots):
-    config_root, project = roots
-    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
-    _write(project / ".workbench.yml", "issue_tracker:\n  provider: github\n")
-    status = wc.config_status(project)
-    assert _row(status, "reuse.level").scope.name == wc.GLOBAL_SCOPE
-    assert _row(status, "issue_tracker.provider").scope.name == wc.PROJECT_SCOPE
-
-
-def test_an_overridden_value_names_the_file_that_won(roots):
-    config_root, project = roots
-    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
-    _write(project / ".workbench.yml", "reuse:\n  level: lite\n")
-    row = _row(wc.config_status(project), "reuse.level")
-    assert row.value == "lite"
-    assert row.scope.name == wc.PROJECT_SCOPE
-
-
-def test_a_key_no_file_sets_is_reported_as_a_default(roots):
-    _, project = roots
-    row = _row(wc.config_status(project), "reuse.default")
-    assert row.value == "full"
-    assert row.is_default
-
-
-def test_a_phase_override_is_reported_under_its_own_key(roots):
-    config_root, project = roots
-    _write(config_root / "config.yml", """
-agent:
-  phases:
-    scout:
-      model: haiku
-""")
-    row = _row(wc.config_status(project), "agent.phases.scout.model")
-    assert row.value == "haiku"
-    assert row.scope.name == wc.GLOBAL_SCOPE
-
-
-def test_a_phase_nobody_overrode_is_not_reported(roots):
-    """Every phase would bury the ones a file actually names."""
-    _, project = roots
-    keys = [row.key for row in wc.config_status(project).keys]
-    assert not [key for key in keys if key.startswith("agent.phases.")]
-
-
-def test_the_reported_keys_are_the_documented_keys(roots):
-    """One walk over `WorkbenchConfig`, not a second listing of its keys.
-
-    The docs table and the report both derive from the dataclass, so a renamed
-    field moves in both at once. The placeholder rows are dropped because the
-    report expands those over the entries a file actually holds.
-    """
-    _, project = roots
-    documented = [key for key, _, _ in wc._reference_rows(wc.WorkbenchConfig)
-                  if "<" not in key]
-    assert [row.key for row in wc.config_status(project).keys] == documented
-
-
-def test_a_key_the_surface_does_not_have_is_reported_as_a_stray(roots):
-    """The incident this command exists for: the right value, the wrong key."""
-    config_root, project = roots
-    _write(config_root / "config.yml", "review:\n  issue_tracker:\n    provider: github\n")
-    status = wc.config_status(project)
-    assert [(s.key, s.scope.name) for s in status.strays] == [
-        ("review.issue_tracker.provider", wc.GLOBAL_SCOPE),
-    ]
-    assert _row(status, "issue_tracker.provider").is_default
-
-
-def test_a_stray_key_does_not_make_the_report_a_failure(roots):
-    config_root, project = roots
-    _write(config_root / "config.yml", "reuse:\n  levl: ultra\n")
-    assert wc.config_status(project).ok
-
-
-def test_an_unreadable_scope_is_a_problem_and_the_rest_still_reports(roots):
-    config_root, project = roots
-    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
-    _write(project / ".workbench.yml", "reuse: [unclosed\n")
-    status = wc.config_status(project)
-    assert not status.ok
-    assert str(project / ".workbench.yml") in status.problems[0]
-    assert _row(status, "reuse.level").value == "ultra"
-
-
-def test_a_rejected_value_names_the_one_file_holding_it(roots):
-    """The merged failure names every file that exists; this names the culprit."""
-    config_root, project = roots
-    _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
-    _write(project / ".workbench.yml", "reuse:\n  level: sideways\n")
-    status = wc.config_status(project)
-    assert not status.ok
-    assert status.problems == [
-        f"{project / '.workbench.yml'}: 'sideways' is not a valid ReuseLevel",
-    ]
-    assert status.keys == []
-
-
-def test_a_rejected_value_still_reports_the_scopes_and_the_strays(roots):
-    config_root, project = roots
-    _write(config_root / "config.yml", "reuse:\n  levl: ultra\n  level: sideways\n")
-    status = wc.config_status(project)
-    assert [s.name for s in status.scopes] == [wc.PROJECT_SCOPE, wc.GLOBAL_SCOPE]
-    assert [s.key for s in status.strays] == ["reuse.levl"]
-
-
-def test_render_value_writes_what_a_config_file_would_hold():
-    assert wc.render_value(True) == "true"
-    assert wc.render_value(wc.ReuseLevel.FULL) == "full"
-    assert wc.render_value(None) == "—"
-    assert wc.render_value("") == "—"
-
-
-# ── Schema ──────────────────────────────────────────────────────────────────
-
-
-def test_committed_schema_matches_the_generator():
-    """The committed schema is generated, so drift is a test failure.
-
-    CLAUDE.md requires a cross-validation test wherever the same defaults
-    appear in two formats. This is that test: renaming a field or adding a
-    Phase member fails here until `bin/local/generate-config-schema` is re-run.
-    """
-    committed = json.loads((_repo_root() / wc.SCHEMA_PATH).read_text())
-    assert committed == json.loads(wc.schema_json())
-
-
-def test_composed_docs_carry_the_generated_reference():
-    """The key table in the docs is generated from the same dataclass.
-
-    `bin/local/validate-docs-composed` is what fails on a stale artifact; this
-    fails on a directive that stopped asking for the block at all, which the
-    freshness check cannot see — a doc with no directive is consistent with its
-    source and simply has no key reference in it.
-    """
-    text = (_repo_root() / wc.DOCS_PATH).read_text()
-    assert wc.docs_reference() in text
-
-
-def test_the_module_header_asks_for_the_reference_block():
-    """`lib/config.sh` is where the directive that pulls the block in lives.
-
-    The block name is a string in two files — the directive and `BLOCKS` in the
-    generator — so a rename that misses one leaves the composer failing on an
-    unknown block. Naming it here means the pair is checked without composing.
-    """
-    header = (_repo_root() / "lib" / "config.sh").read_text()
-    assert f"<!-- include: {wc.GENERATOR_PATH} --emit config-reference -->" in header
-
-
-def test_every_written_key_resolves_to_a_field():
-    """A dotted key nothing answers to writes a field `serde` then drops.
-
-    `set_value` does not check its argument, so the constants naming the keys
-    other modules write are checked here instead — against the same walk the
-    docs table is built from, so a renamed field fails rather than silently
-    stranding the value it used to hold.
-    """
-    keys = {key for key, _, _ in wc._reference_rows(wc.WorkbenchConfig)}
-    assert wc.REUSE_LEVEL_KEY in keys
-    assert wc.REUSE_DEFAULT_KEY in keys
-    assert wc.ISSUE_PROVIDER_KEY in keys
-    assert wc.GITHUB_SSH_443_KEY in keys
-
-
-def test_the_generator_banner_names_a_script_that_exists():
-    """The schema tells the reader to run `GENERATOR_PATH`, and so does the doc.
-
-    The generator itself compares the constant against its own location, so a
-    move it did not follow fails there — but only for someone who runs it. This
-    fails for everyone, which is what a banner pointing at nothing deserves.
-    The docs half is the `--emit` directive, checked above.
-    """
-    generator = _repo_root() / wc.GENERATOR_PATH
-    assert generator.is_file() and os.access(generator, os.X_OK)
-    assert wc.GENERATOR_PATH in json.loads(wc.schema_json())["description"]
-
-
-def test_the_docs_link_to_the_schema_resolves_from_the_docs_directory():
-    """The block links to a repo-root file from a doc that is not at the root.
-
-    The `../` depth is derived from `DOCS_PATH`, so moving the doc keeps the
-    link pointing at the schema instead of quietly pointing above the repo.
-    """
-    docs_dir = (_repo_root() / wc.DOCS_PATH).parent
-    link = f"({wc._DOCS_TO_ROOT}{wc.SCHEMA_PATH})"
-    assert link in wc.docs_reference()
-    assert (docs_dir / f"{wc._DOCS_TO_ROOT}{wc.SCHEMA_PATH}").resolve().is_file()
+# ── The key surface ─────────────────────────────────────────────────────────
 
 
 def test_schema_lists_every_phase_as_a_valid_key():
-    import schema_gen
+    """`surface_schema` is what a dotted key is judged against, here and installed.
 
-    schema = schema_gen.dataclass_to_schema(wc.WorkbenchConfig)
-    phases = schema["properties"]["agent"]["properties"]["phases"]
+    The renderings built on it are `workbench_config_report`'s, and are tested
+    there; this is the surface itself, which the write guard reads directly.
+    """
+    phases = wc.surface_schema()["properties"]["agent"]["properties"]["phases"]
     assert phases["propertyNames"]["enum"] == [p.value for p in Phase]
 
 
@@ -489,9 +280,9 @@ def test_schema_lists_every_phase_as_a_valid_key():
 
 def test_set_value_creates_and_updates_the_global_file(roots):
     config_root, _ = roots
-    wc.set_value("reuse.level", "ultra")
+    wcw.set_value("reuse.level", "ultra")
     assert wc.load_config().reuse.level is wc.ReuseLevel.ULTRA
-    wc.set_value("reuse.level", "lite")
+    wcw.set_value("reuse.level", "lite")
     assert wc.load_config().reuse.level is wc.ReuseLevel.LITE
     assert (config_root / "config.yml").is_file()
 
@@ -499,7 +290,7 @@ def test_set_value_creates_and_updates_the_global_file(roots):
 def test_set_value_preserves_unrelated_keys(roots):
     config_root, _ = roots
     _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
-    wc.set_value("reuse.level", "ultra")
+    wcw.set_value("reuse.level", "ultra")
     cfg = wc.load_config()
     assert cfg.agent.model == "sonnet"
     assert cfg.reuse.level is wc.ReuseLevel.ULTRA
@@ -522,15 +313,15 @@ def test_the_schema_url_points_at_a_path_the_repo_actually_has():
 
 def test_a_new_config_file_is_born_with_the_modeline(roots):
     config_root, _ = roots
-    wc.set_value("reuse.level", "ultra")
+    wcw.set_value("reuse.level", "ultra")
     assert (config_root / "config.yml").read_text().startswith(wc.CONFIG_HEADER)
 
 
 def test_the_modeline_survives_later_writes(roots):
     """yq is the writer precisely because it carries comments through."""
     config_root, _ = roots
-    wc.set_value("reuse.level", "ultra")
-    wc.set_value("agent.model", "sonnet")
+    wcw.set_value("reuse.level", "ultra")
+    wcw.set_value("agent.model", "sonnet")
     text = (config_root / "config.yml").read_text()
     assert text.startswith(wc.CONFIG_HEADER)
     assert text.count(wc.CONFIG_HEADER) == 1
@@ -556,9 +347,9 @@ def test_the_pyyaml_fallback_puts_the_modeline_back(roots, monkeypatch):
     the one this module owns and can restore.
     """
     config_root, _ = roots
-    monkeypatch.setattr(wc.shutil, "which", lambda _: None)
-    wc.set_value("reuse.level", "ultra")
-    wc.set_value("agent.model", "sonnet")
+    monkeypatch.setattr(wcw.shutil, "which", lambda _: None)
+    wcw.set_value("reuse.level", "ultra")
+    wcw.set_value("agent.model", "sonnet")
     text = (config_root / "config.yml").read_text()
     assert text.startswith(wc.CONFIG_HEADER)
     assert text.count(wc.CONFIG_HEADER) == 1
@@ -571,8 +362,8 @@ def test_the_pyyaml_fallback_adds_no_modeline_to_a_file_without_one(
 ):
     config_root, _ = roots
     _write(config_root / "config.yml", "agent:\n  model: sonnet\n")
-    monkeypatch.setattr(wc.shutil, "which", lambda _: None)
-    wc.set_value("reuse.level", "ultra")
+    monkeypatch.setattr(wcw.shutil, "which", lambda _: None)
+    wcw.set_value("reuse.level", "ultra")
     assert wc.CONFIG_HEADER not in (config_root / "config.yml").read_text()
 
 
@@ -838,7 +629,7 @@ issue_tracker:
 
 def test_set_project_value_writes_the_repo_config(roots):
     _, project = roots
-    wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
+    wcw.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     cfg = wc.load_config(project)
     assert cfg.issue_tracker.provider is wc.IssueProvider.GITHUB
 
@@ -851,7 +642,7 @@ def test_set_project_value_preserves_hand_written_comments(roots):
 issue_tracker:
   team: ENG
 """)
-    wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
+    wcw.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     assert "# we file on GitHub, not Linear" in (project / wc.PROJECT_CONFIG_NAME).read_text()
     assert wc.load_config(project).issue_tracker.team == "ENG"
 
@@ -859,13 +650,13 @@ issue_tracker:
 def test_set_project_value_seeds_the_schema_modeline(roots):
     """A file the workbench creates gets completion, same as the global one."""
     _, project = roots
-    wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
+    wcw.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     assert (project / wc.PROJECT_CONFIG_NAME).read_text().startswith(wc.CONFIG_HEADER)
 
 
 def test_set_project_value_does_not_touch_the_global_config(roots):
     config_root, project = roots
-    wc.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
+    wcw.set_project_value(wc.ISSUE_PROVIDER_KEY, "github", project)
     assert not (config_root / wc.CONFIG_NAME).exists()
 
 
@@ -888,20 +679,20 @@ def stale_install(tmp_path, monkeypatch):
     and it is the only direction a test can build, since the local surface is
     whatever this checkout ships.
     """
-    schema = json.loads(wc.schema_json())
+    schema = json.loads(wcr.schema_json())
     tracker = schema["properties"].pop("issue_tracker")
     schema["properties"]["review"]["properties"]["issue_tracker"] = tracker
     path = tmp_path / "installed" / wc.SCHEMA_PATH
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(schema))
-    monkeypatch.setattr(wc, "installed_schema_path", lambda: path)
+    monkeypatch.setattr(wcw, "installed_schema_path", lambda: path)
     return path
 
 
 def test_set_value_refuses_a_key_the_config_does_not_define(roots):
     config_root, _ = roots
     with pytest.raises(wc.ConfigKeyError) as exc:
-        wc.set_value("reuse.levl", "ultra")
+        wcw.set_value("reuse.levl", "ultra")
     assert "reuse.levl" in str(exc.value)
     assert not (config_root / wc.CONFIG_NAME).exists()
 
@@ -909,42 +700,42 @@ def test_set_value_refuses_a_key_the_config_does_not_define(roots):
 def test_set_value_refuses_the_shape_the_key_moved_off(roots):
     """The literal key the incident wrote, judged by the surface it moved to."""
     with pytest.raises(wc.ConfigKeyError):
-        wc.set_value("review.issue_tracker.provider", "github")
+        wcw.set_value("review.issue_tracker.provider", "github")
 
 
 def test_a_refused_key_is_a_config_error_too(roots):
     """A caller that only handles the general failure still catches this one."""
     assert issubclass(wc.ConfigKeyError, wc.ConfigError)
     with pytest.raises(wc.ConfigError):
-        wc.set_value("nonsense", "x")
+        wcw.set_value("nonsense", "x")
 
 
 def test_set_project_value_refuses_the_same_keys(roots):
     """A repo file is committed, so a dead key travels to everyone who clones."""
     _, project = roots
     with pytest.raises(wc.ConfigKeyError):
-        wc.set_project_value("issue_tracker.provdier", "github", project)
+        wcw.set_project_value("issue_tracker.provdier", "github", project)
     assert not (project / wc.PROJECT_CONFIG_NAME).exists()
 
 
 def test_a_key_the_installed_workbench_does_not_read_is_refused(roots, stale_install):
     config_root, _ = roots
     with pytest.raises(wc.ConfigKeyError) as exc:
-        wc.set_value(wc.ISSUE_PROVIDER_KEY, "github")
+        wcw.set_value(wc.ISSUE_PROVIDER_KEY, "github")
     assert str(stale_install) in str(exc.value)
     assert not (config_root / wc.CONFIG_NAME).exists()
 
 
 def test_a_key_both_surfaces_read_is_written(roots, stale_install):
     """The installed surface refuses keys; it does not refuse writing."""
-    wc.set_value("reuse.level", "ultra")
+    wcw.set_value("reuse.level", "ultra")
     assert wc.load_config().reuse.level is wc.ReuseLevel.ULTRA
 
 
 def test_no_installed_workbench_leaves_the_local_surface(roots, monkeypatch):
     """CI and a fresh clone have no install, and still have to be able to write."""
-    monkeypatch.setattr(wc, "installed_schema_path", lambda: None)
-    wc.set_value(wc.ISSUE_PROVIDER_KEY, "github")
+    monkeypatch.setattr(wcw, "installed_schema_path", lambda: None)
+    wcw.set_value(wc.ISSUE_PROVIDER_KEY, "github")
     assert wc.load_config().issue_tracker.provider is wc.IssueProvider.GITHUB
 
 
@@ -952,43 +743,43 @@ def test_an_unreadable_installed_schema_leaves_the_local_surface(roots, tmp_path
     """One broken file must not make the config unwritable machine-wide."""
     broken = tmp_path / "broken.json"
     broken.write_text("{not json")
-    monkeypatch.setattr(wc, "installed_schema_path", lambda: broken)
-    wc.set_value(wc.ISSUE_PROVIDER_KEY, "github")
+    monkeypatch.setattr(wcw, "installed_schema_path", lambda: broken)
+    wcw.set_value(wc.ISSUE_PROVIDER_KEY, "github")
     assert wc.load_config().issue_tracker.provider is wc.IssueProvider.GITHUB
 
 
 def test_an_enum_keyed_section_is_writable_by_its_declared_keys(roots):
     """`agent.phases.<phase>` is a dict, so the guard reads propertyNames."""
-    wc.set_value(f"agent.phases.{Phase.SCOUT}.model", "sonnet")
+    wcw.set_value(f"agent.phases.{Phase.SCOUT}.model", "sonnet")
     assert wc.load_config().agent.phases[Phase.SCOUT].model == "sonnet"
     with pytest.raises(wc.ConfigKeyError):
-        wc.set_value("agent.phases.nosuchphase.model", "sonnet")
+        wcw.set_value("agent.phases.nosuchphase.model", "sonnet")
 
 
 def test_check_key_says_which_surface_refused(stale_install):
-    assert wc.check_key("reuse.level").ok
-    here = wc.check_key("reuse.levl")
+    assert wcw.check_key("reuse.level").ok
+    here = wcw.check_key("reuse.levl")
     assert not here.ok
-    assert here.verdict is wc.KeyVerdict.UNKNOWN_HERE
+    assert here.verdict is wcw.KeyVerdict.UNKNOWN_HERE
     assert "WorkbenchConfig defines" in here.reason
-    installed = wc.check_key(wc.ISSUE_PROVIDER_KEY)
+    installed = wcw.check_key(wc.ISSUE_PROVIDER_KEY)
     assert not installed.ok
-    assert installed.verdict is wc.KeyVerdict.UNKNOWN_INSTALLED
+    assert installed.verdict is wcw.KeyVerdict.UNKNOWN_INSTALLED
     assert "the two disagree about where the value lives" in installed.reason
-    assert wc.check_key("reuse.level").reason == ""
+    assert wcw.check_key("reuse.level").reason == ""
 
 
 def test_installed_schema_path_resolves_through_the_launcher(tmp_path, monkeypatch):
     """The PATH symlink is the whole mechanism — a worktree cannot fake it."""
     installed = tmp_path / "checkout"
     (installed / "bin").mkdir(parents=True)
-    (installed / "bin" / wc.INSTALLED_LAUNCHER).write_text("#!/bin/sh\n")
+    (installed / "bin" / wcw.INSTALLED_LAUNCHER).write_text("#!/bin/sh\n")
     (installed / wc.SCHEMA_PATH).write_text("{}")
-    monkeypatch.setattr(wc.shutil, "which",
+    monkeypatch.setattr(wcw.shutil, "which",
                         lambda name: str(installed / "bin" / name))
-    assert wc.installed_schema_path() == installed / wc.SCHEMA_PATH
+    assert wcw.installed_schema_path() == installed / wc.SCHEMA_PATH
 
 
 def test_installed_schema_path_is_none_without_an_install(monkeypatch):
-    monkeypatch.setattr(wc.shutil, "which", lambda name: None)
-    assert wc.installed_schema_path() is None
+    monkeypatch.setattr(wcw.shutil, "which", lambda name: None)
+    assert wcw.installed_schema_path() is None

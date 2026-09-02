@@ -38,22 +38,26 @@ over ``config_status``. A partial reader in another language is what let the
 machine profile call a repo's tracker ``unset`` while the SessionStart line in
 the same session named it — so if a bash caller needs a config value, give it
 that command rather than a third implementation of the scopes.
+
+What the config *is* is here: the dataclasses, the files, the merge, and the
+key surface a dotted key is judged against. How it is *shown* —
+``config.schema.json``, the docs key reference, ``config status`` — is
+``workbench_config_report``; how it is *changed* is ``workbench_config_write``.
+Both of those import this one and neither is imported back, so the module every
+Claude hook loads on every prompt carries nothing a reader does not need.
 """
 
 # doc-group: platform
 
 from __future__ import annotations
 
-import dataclasses
 import json
-import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from enum import Enum, StrEnum
+from enum import StrEnum
 from pathlib import Path
-from typing import get_type_hints
 
 import serde
 import timeouts
@@ -94,7 +98,7 @@ DEFAULT_SCOPE = "default"
 
 # Where the generated schema lives, repo-relative, and the raw URL that serves
 # it. One spelling of the path: bin/local/generate-config-schema writes there,
-# the modeline below points there, ``installed_schema_path`` reads it out of
+# the modeline below points there, ``workbench_config_write`` reads it out of
 # the installed checkout, and tests/test_workbench_config.py fails if they stop
 # agreeing — so moving the file is a one-line change here.
 # Pinned to main rather than a release tag: the config on a machine tracks
@@ -108,21 +112,6 @@ SCHEMA_URL = f"{REPO_RAW_URL}/{SCHEMA_PATH}"
 # tests/config.bats cross-validates every pair.
 CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
 
-# The doc the key reference is composed into. `lib/config.sh` asks for the block
-# by name — `generate-config-schema --emit config-reference` — and
-# bin/local/compose-docs expands that directive on the way to this file.
-DOCS_PATH = "docs/libraries.md"
-
-# Repo root as a link from inside DOCS_PATH, so a link the block renders to a
-# repo-root file survives moving the doc to another depth.
-_DOCS_TO_ROOT = "../" * DOCS_PATH.count("/")
-
-# The script that renders both generated files, named in the "do not edit"
-# banner each one carries. Spelled here because both banners are rendered here;
-# the script checks this against its own path, so a rename that misses this line
-# fails loudly rather than pointing readers at a command that does not exist.
-GENERATOR_PATH = "bin/local/generate-config-schema"
-
 # The dotted keys written from outside this module. Spelled here rather than at
 # the call site so a rename of the dataclass field and a rename of the key are
 # the same edit; test_workbench_config.py resolves each one against
@@ -134,14 +123,6 @@ ISSUE_PROVIDER_KEY = "issue_tracker.provider"
 # wb_config_get. lib/constants.sh spells the same string, and tests/config.bats
 # cross-validates the pair.
 GITHUB_SSH_443_KEY = "github.ssh_over_443"
-
-# The launcher that resolves to the workbench this machine has installed. It is
-# a symlink into the checkout that installed it, so resolving it from any
-# worktree lands on that one — which is what lets a write be judged by the key
-# surface the machine actually reads rather than by the writing checkout's.
-# `bin/otto-workbench` derives the same root from its own location; there is no
-# equivalent here, so PATH is the link.
-INSTALLED_LAUNCHER = "otto-workbench"
 
 
 class ConfigError(ValueError):
@@ -269,158 +250,6 @@ class WorkbenchConfig:
     github: GitHubConfig = field(default_factory=GitHubConfig)
 
 
-def schema_json() -> str:
-    """``WorkbenchConfig`` as the JSON Schema text ``config.schema.json`` holds.
-
-    Here rather than in the generator script so the write and the ``--check``
-    comparison render through one code path, and so the schema's wrapper
-    metadata sits beside the dataclass it describes.
-
-    Nothing sets ``additionalProperties: false``, so an editor validating
-    against this will not flag a misspelled key. That is deliberate: the schema
-    is committed at one version while the config on disk may have been written
-    by a newer workbench, and a closed schema would turn every new key into an
-    error in the editor of anyone who has not pulled yet. ``serde`` drops keys
-    it does not know, so an unrecognised key is inert either way.
-    """
-    import schema_gen
-
-    schema = {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "otto-workbench configuration",
-        "description": (
-            f"Generated from WorkbenchConfig by {GENERATOR_PATH}. Do not edit by hand."
-        ),
-        **schema_gen.dataclass_to_schema(WorkbenchConfig),
-    }
-    return json.dumps(schema, indent=2)
-
-
-def _is_enum(hint) -> bool:
-    return isinstance(hint, type) and issubclass(hint, Enum)
-
-
-def _values_column(hint) -> str:
-    """How the reference table describes what a key accepts."""
-    kind, args = serde.classify(hint)
-    if kind is serde.HintKind.OPTIONAL:
-        return _values_column(args[0])
-    if kind is serde.HintKind.ENUM:
-        return ", ".join(f"`{member.value}`" for member in hint)
-    if kind is serde.HintKind.SCALAR:
-        return {bool: "boolean", int: "integer", float: "number"}.get(hint, "string")
-    return "any"
-
-
-def render_value(value) -> str:
-    """One config value as a reader sees it, or an em dash for no value.
-
-    ``None`` and the empty string are both "nothing is set" — a config file
-    that leaves the key alone and one that spells it out as empty are the same
-    thing to everything downstream.
-
-    A bool is written the way YAML spells it rather than the way Python does,
-    since the rendering is read as something to copy into a config file and
-    ``True`` is a string there, not a boolean. An enum renders as its value for
-    the same reason: that is the spelling the file holds.
-    """
-    if value is None or value == "":
-        return "—"
-    if isinstance(value, bool):
-        return str(value).lower()
-    if isinstance(value, Enum):
-        return str(value.value)
-    return str(value)
-
-
-def _default_column(f: dataclasses.Field) -> str:
-    """A field's default as the table writes it, or an em dash for no value."""
-    if f.default is dataclasses.MISSING:
-        return "—"
-    rendered = render_value(f.default)
-    return rendered if rendered == "—" else f"`{rendered}`"
-
-
-def _reference_rows(cls, prefix: str = "") -> list[tuple[str, str, str]]:
-    """``(key, values, default)`` for every leaf key under a dataclass.
-
-    Walks through ``serde.classify`` for the same reason ``schema_gen`` does:
-    what a hint means is one question with one owner, so the table and the
-    schema cannot disagree about which keys exist. A nested dataclass extends
-    the dotted prefix; a dict keyed by an enum contributes a ``<placeholder>``
-    segment and lists the names it accepts in the row's key.
-    """
-    rows: list[tuple[str, str, str]] = []
-    hints = get_type_hints(cls)
-    for f in dataclasses.fields(cls):
-        kind, args = serde.classify(hints[f.name])
-        key = f"{prefix}{f.name}"
-        if kind is serde.HintKind.DATACLASS:
-            rows += _reference_rows(hints[f.name], f"{key}.")
-        elif kind is serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
-            placeholder = f"<{args[0].__name__.lower()}>"
-            rows += _reference_rows(args[1], f"{key}.{placeholder}.")
-        else:
-            rows.append((key, _values_column(hints[f.name]), _default_column(f)))
-    return rows
-
-
-def _key_placeholders(cls) -> list[tuple[str, str]]:
-    """``(placeholder, accepted names)`` for each enum-keyed section."""
-    notes: list[tuple[str, str]] = []
-    hints = get_type_hints(cls)
-    for f in dataclasses.fields(cls):
-        kind, args = serde.classify(hints[f.name])
-        if kind is serde.HintKind.DATACLASS:
-            notes += _key_placeholders(hints[f.name])
-        elif kind is serde.HintKind.DICT and args and _is_enum(args[0]):
-            names = ", ".join(f"`{member.value}`" for member in args[0])
-            notes.append((f"<{args[0].__name__.lower()}>", names))
-    return notes
-
-
-def docs_reference() -> str:
-    """The generated half of the ``config.sh`` section in ``DOCS_PATH``.
-
-    Beside ``schema_json`` for the same reason: the block a composer asks for
-    and the one ``--check`` compares against render through one code path, and
-    both derive from the dataclass rather than from a second listing of the keys
-    that someone has to remember to update. The prose around it — what the
-    reader is for, how the layers rank, the config unification migration — is
-    hand-written and lives in ``lib/config.sh``'s header.
-
-    It carries no "do not edit" banner of its own: the whole of ``DOCS_PATH`` is
-    composed, and ``bin/local/compose-docs`` puts one at the top of the file.
-    """
-    lines = [
-        "| Scope | File |",
-        "|-------|------|",
-        f"| Project | `{PROJECT_CONFIG_NAME}` at a repo toplevel |",
-        f"| Container | `{PROJECT_CONFIG_NAME}` beside a bare repo's worktrees |",
-        f"| Global | `{CONFIG_NAME}` under the [config root](#rootssh) |",
-        "",
-        f"A new config file is born holding one line, the modeline that points an "
-        f"editor's YAML language server at "
-        f"[`{SCHEMA_PATH}`]({_DOCS_TO_ROOT}{SCHEMA_PATH}):",
-        "",
-        "```yaml",
-        CONFIG_HEADER,
-        "```",
-        "",
-        "Every key any of them accepts:",
-        "",
-        "| Key | Values | Default |",
-        "|-----|--------|---------|",
-    ]
-    lines += [f"| `{key}` | {values} | {default} |" for key, values, default in
-              _reference_rows(WorkbenchConfig)]
-    placeholders = _key_placeholders(WorkbenchConfig)
-    if placeholders:
-        lines.append("")
-        lines += [f"`{name}` is one of: {values}" for name, values in placeholders]
-    return "\n".join(lines)
-
-
 def global_config_path() -> Path:
     return workbench_paths.config_dir() / CONFIG_NAME
 
@@ -509,19 +338,24 @@ def yaml_dump(data: dict) -> str:
     return result.stdout
 
 
-def _deep_merge(base: dict, over: dict) -> dict:
+def deep_merge(base: dict, over: dict) -> dict:
     """``over`` on top of ``base``, recursing into mappings.
 
     Recursive rather than a top-level update so a project file that sets one
     key under ``review`` keeps the rest of the global ``review`` section. A
     non-mapping value replaces whatever it lands on, including a mapping —
     there is no sensible merge of a scalar into a section.
+
+    Published because ``config_status`` merges the same scopes a second time,
+    to record which file answered for each key as it goes. Two merges with one
+    rule between them, rather than a report that can disagree with the loader
+    about what the config resolves to.
     """
     merged = dict(base)
     for key, value in over.items():
         current = merged.get(key)
         if isinstance(current, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge(current, value)
+            merged[key] = deep_merge(current, value)
         else:
             merged[key] = value
     return merged
@@ -577,7 +411,7 @@ def load_config(project_root: Path | str | None = None) -> WorkbenchConfig:
 
     merged: dict = {}
     for path in paths:
-        merged = _deep_merge(merged, read_yaml(path))
+        merged = deep_merge(merged, read_yaml(path))
 
     try:
         return serde.from_dict(WorkbenchConfig, merged)
@@ -602,228 +436,22 @@ def load_config_or_default(
         return WorkbenchConfig()
 
 
-@dataclass(frozen=True)
-class ResolvedKey:
-    """One key of the config surface, and which file answered for it.
+def surface_schema() -> dict:
+    """``WorkbenchConfig`` as a JSON Schema fragment describing its keys.
 
-    ``scope`` is ``None`` when no file named the key and the value is the
-    dataclass default. A caller renders that differently from an inherited
-    value: one is a decision nobody has made, the other is a decision made
-    somewhere else.
-    """
+    The one caller of ``schema_gen.dataclass_to_schema`` for this dataclass, so
+    the schema the docs publish, the one ``config status`` measures strays
+    against, and the one ``defines_key`` resolves a dotted key through are the
+    same object rather than three renderings that could drift.
 
-    key: str
-    value: str
-    scope: ConfigScope | None = None
-
-    @property
-    def is_default(self) -> bool:
-        return self.scope is None
-
-
-@dataclass(frozen=True)
-class StrayKey:
-    """A key a config file holds that no version of the surface reads.
-
-    The whole reason ``config status`` exists. ``serde`` drops what it does not
-    recognise, so a key spelled slightly wrong is a value that is simply gone,
-    and every reader downstream sees the default and says nothing.
-    """
-
-    key: str
-    scope: ConfigScope
-
-
-@dataclass(frozen=True)
-class ConfigStatus:
-    """What the config resolves to right now, and where each piece came from.
-
-    ``scopes`` is highest precedence first — the order the answer is decided
-    in, which is the order a reader reasons about, and the reverse of the merge
-    order ``config_scopes`` returns.
-
-    ``problems`` holds anything that stopped a file from being read or typed.
-    It is separate from ``strays`` because the two cost different things: a
-    stray key loses one value, an unreadable file loses the whole scope.
-    """
-
-    scopes: list[ConfigScope]
-    keys: list[ResolvedKey]
-    strays: list[StrayKey]
-    problems: list[str]
-
-    @property
-    def ok(self) -> bool:
-        return not self.problems
-
-
-def _flatten(data: dict, prefix: str = "") -> dict[str, object]:
-    """Every leaf of a raw config mapping, keyed by its dotted path.
-
-    An empty mapping is a leaf: it sets nothing, so recursing into it would
-    contribute no key, and treating it as one records that the file mentioned
-    the section at all.
-    """
-    flat: dict[str, object] = {}
-    for key, value in data.items():
-        dotted = f"{prefix}{key}"
-        if isinstance(value, dict) and value:
-            flat.update(_flatten(value, f"{dotted}."))
-        else:
-            flat[dotted] = value
-    return flat
-
-
-def _entry_rows(
-    cls, held: dict | None, provenance: dict[str, ConfigScope], prefix: str,
-) -> list[ResolvedKey]:
-    """Rows for the entries an enum-keyed section actually holds.
-
-    An enum key contributes its value rather than its member name, because the
-    value is what the config file spells.
-    """
-    rows: list[ResolvedKey] = []
-    for entry, value in (held or {}).items():
-        name = entry.value if isinstance(entry, Enum) else entry
-        rows += _resolved_rows(cls, value, provenance, f"{prefix}{name}.")
-    return rows
-
-
-def _resolved_rows(
-    cls, obj, provenance: dict[str, ConfigScope], prefix: str = "",
-) -> list[ResolvedKey]:
-    """One row per leaf key of a typed config object.
-
-    Walks ``dataclasses.fields`` through ``serde.classify``, the same way
-    ``_reference_rows`` builds the docs table and ``schema_gen`` builds the
-    schema — so the keys reported here are the keys the workbench reads, with
-    no second listing to keep in step.
-
-    An enum-keyed section expands over the entries the config actually holds
-    rather than over every member of the enum. A phase nobody has overridden
-    has nothing to report, and listing all of them would bury the ones that do.
-    """
-    rows: list[ResolvedKey] = []
-    hints = get_type_hints(cls)
-    for f in dataclasses.fields(cls):
-        kind, args = serde.classify(hints[f.name])
-        key = f"{prefix}{f.name}"
-        value = getattr(obj, f.name)
-        if kind is serde.HintKind.DATACLASS:
-            rows += _resolved_rows(hints[f.name], value, provenance, f"{key}.")
-        elif kind is serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
-            rows += _entry_rows(args[1], value, provenance, f"{key}.")
-        else:
-            rows.append(ResolvedKey(key, render_value(value), provenance.get(key)))
-    return rows
-
-
-def config_status(project_root: Path | str | None = None) -> ConfigStatus:
-    """The resolved config for a scope, with the file each value came from.
-
-    ``load_config`` answers what the value is and discards how it got there,
-    which leaves a key written into the wrong file indistinguishable from a key
-    nobody ever set. This answers both, and reports what it could not read
-    rather than raising: a command whose whole job is diagnosing a config file
-    has to survive the file being the problem.
+    ``schema_gen`` is imported inside the function rather than at module scope.
+    Every Claude hook loads this module on every prompt to read one config
+    value; the schema walk is only wanted by the three readers above, and none
+    of them is on that path.
     """
     import schema_gen
 
-    scopes = config_scopes(project_root)
-    problems: list[str] = []
-    strays: list[StrayKey] = []
-    provenance: dict[str, ConfigScope] = {}
-    schema = schema_gen.dataclass_to_schema(WorkbenchConfig)
-
-    merged: dict = {}
-    loaded: list[tuple[ConfigScope, dict]] = []
-    for scope in scopes:
-        try:
-            raw = read_yaml(scope.path)
-        except ConfigError as exc:
-            problems.append(str(exc))
-            continue
-        loaded.append((scope, raw))
-        merged = _deep_merge(merged, raw)
-        flat = _flatten(raw)
-        provenance.update(dict.fromkeys(flat, scope))
-        strays += [StrayKey(key, scope) for key in flat
-                   if not _schema_accepts(schema, key)]
-
-    try:
-        config = serde.from_dict(WorkbenchConfig, merged)
-    except (TypeError, ValueError) as exc:
-        problems += _typing_problems(loaded) or [f"{scopes[0].path}: {exc}"]
-        return ConfigStatus(list(reversed(scopes)), [], strays, problems)
-
-    keys = _resolved_rows(WorkbenchConfig, config, provenance)
-    return ConfigStatus(list(reversed(scopes)), keys, strays, problems)
-
-
-def _typing_problems(loaded: list[tuple[ConfigScope, dict]]) -> list[str]:
-    """Which individual scopes hold a value the config cannot be built from.
-
-    The merged failure names every file that exists, because that is all it
-    knows. Typing each scope on its own instead names the file to open — which
-    is the whole question a reader has when a value is rejected.
-
-    Empty when no scope fails alone, which leaves the caller its joint message:
-    a merge can only override, so this should not happen, and inventing a
-    culprit would be worse than repeating what the loader would have said.
-    """
-    problems: list[str] = []
-    for scope, raw in loaded:
-        try:
-            serde.from_dict(WorkbenchConfig, raw)
-        except (TypeError, ValueError) as exc:
-            problems.append(f"{scope.path}: {exc}")
-    return problems
-
-
-class KeyVerdict(StrEnum):
-    """What ``check_key`` found for a dotted key.
-
-    Two ways of being unrecognised, because they mean different things to
-    whoever has to act on them. A key this checkout does not define is a typo
-    or a key built at runtime. A key this checkout defines but the installed
-    workbench does not is the two disagreeing about where a value lives, which
-    is what a worktree standing off to the side of `main` produces.
-    """
-
-    KNOWN = "known"
-    UNKNOWN_HERE = "unknown_here"
-    UNKNOWN_INSTALLED = "unknown_installed"
-
-
-@dataclass(frozen=True)
-class KeyCheck:
-    """Whether one dotted key names something the workbench actually reads.
-
-    Read ``ok`` rather than comparing ``verdict``, so a call site states what
-    it is asking. ``source`` names the schema that refused, and is empty when
-    nothing did or when the refusal came from this checkout's own dataclasses.
-    """
-
-    verdict: KeyVerdict
-    key: str
-    source: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return self.verdict is KeyVerdict.KNOWN
-
-    @property
-    def reason(self) -> str:
-        """Why the key was refused, or ``""`` when it was not."""
-        if self.verdict is KeyVerdict.UNKNOWN_HERE:
-            return f"{self.key} is not a key WorkbenchConfig defines"
-        if self.verdict is KeyVerdict.UNKNOWN_INSTALLED:
-            return (
-                f"{self.key} is a key this checkout defines and the installed "
-                f"workbench does not ({self.source}) — the two disagree about "
-                f"where the value lives, and the file is read by the installed one"
-            )
-        return ""
+    return schema_gen.dataclass_to_schema(WorkbenchConfig)
 
 
 def _object_branch(schema: dict) -> dict:
@@ -867,8 +495,13 @@ def _named_property(schema: dict, name: str) -> dict | None:
     return {}
 
 
-def _schema_accepts(schema: dict, key: str) -> bool:
-    """Whether a JSON Schema describes a document that can hold this dotted key."""
+def schema_accepts(schema: dict, key: str) -> bool:
+    """Whether a JSON Schema describes a document that can hold this dotted key.
+
+    Takes the schema rather than reaching for ``surface_schema`` so the same
+    walk answers for the *installed* workbench's committed schema, which is the
+    second surface ``workbench_config_write.check_key`` judges a write against.
+    """
     cursor: dict | None = schema
     for part in key.split("."):
         if cursor is None:
@@ -880,167 +513,11 @@ def _schema_accepts(schema: dict, key: str) -> bool:
 def defines_key(key: str) -> bool:
     """Whether ``key`` names something this checkout's ``WorkbenchConfig`` reads.
 
-    The local half of ``check_key``, on its own for the readers. A write is
-    judged by the installed workbench as well, because the file outlives the
+    The local half of ``workbench_config_write.check_key``, on its own for the
+    readers. A write is judged by the installed workbench too, because the file
+    outlives the
     checkout that wrote it and is read by whatever is on ``PATH`` afterwards. A
     read has no such gap: it resolves the key here and now, so a key only this
     branch defines is one this branch may perfectly well ask for.
     """
-    import schema_gen
-
-    return _schema_accepts(schema_gen.dataclass_to_schema(WorkbenchConfig), key)
-
-
-def installed_schema_path() -> Path | None:
-    """``config.schema.json`` from the workbench installed on this machine.
-
-    ``None`` when there is no installed workbench to ask: a CI checkout, a
-    container, a clone with nothing on ``PATH``. The caller then has only its
-    own checkout's answer, which is where this started.
-
-    The launcher is resolved rather than read, so a ``~/.local/bin`` symlink
-    into a bare repo's ``main`` worktree lands on that worktree whichever
-    worktree the caller is running from.
-    """
-    launcher = shutil.which(INSTALLED_LAUNCHER)
-    if not launcher:
-        return None
-    schema = Path(launcher).resolve().parents[1] / SCHEMA_PATH
-    return schema if schema.is_file() else None
-
-
-def check_key(key: str) -> KeyCheck:
-    """Whether ``key`` is one the workbench reads, here and where it is installed.
-
-    Two surfaces, because only one of them can be trusted to be current. This
-    checkout answers first and catches a typo or a key assembled at runtime.
-    The installed workbench answers second and is the only one that can catch
-    the case this guard exists for: a worktree weeks behind ``main`` writing a
-    key that was valid when the branch was cut and has since moved, into a file
-    every repo on the machine shares.
-
-    The same comparison refuses the opposite direction, and that one is a
-    contributor rather than a mistake: a key added on a branch is a key the
-    installed workbench has not learned yet, so writing it here is refused
-    until the branch reaches ``main`` and the install follows. There is no flag
-    for it, deliberately — an override would be reached for by exactly the
-    stale writer this exists to stop. Edit the file by hand meanwhile; nothing
-    checks a hand-edit, and a key only your branch reads is one only your
-    branch has to load.
-    """
-    if not defines_key(key):
-        return KeyCheck(KeyVerdict.UNKNOWN_HERE, key)
-    path = installed_schema_path()
-    if path is None:
-        return KeyCheck(KeyVerdict.KNOWN, key)
-    try:
-        installed = json.loads(path.read_text())
-    except (OSError, ValueError):
-        # A broken installed schema leaves the local surface, which is the only
-        # check there was before there were two. Refusing here would turn one
-        # unreadable file into a config nobody on the machine can write.
-        return KeyCheck(KeyVerdict.KNOWN, key)
-    if not isinstance(installed, dict) or _schema_accepts(installed, key):
-        return KeyCheck(KeyVerdict.KNOWN, key)
-    return KeyCheck(KeyVerdict.UNKNOWN_INSTALLED, key, str(path))
-
-
-def set_value(key: str, value: str, path: Path | None = None) -> None:
-    """Write one dotted key into a config file, creating it if needed.
-
-    Through ``yq -i`` so the write preserves the comments and ordering of a
-    file the user hand-authored. PyYAML is the fallback and does not preserve
-    them, which is why it is second rather than first.
-
-    Raises ``ConfigError`` when the write cannot happen — a caller running in a
-    Claude hook has one exception type to catch, whichever writer ran — and the
-    ``ConfigKeyError`` subclass when ``key`` is not one the workbench reads.
-
-    ``check_key`` is what decides, and it asks the installed workbench as well
-    as this checkout. Both files this writes are shared — the global one by
-    every repo on the machine, a project one by everybody who clones the repo —
-    and ``serde`` drops an unrecognised key on the way back in. Without the
-    check the write reports success and the value is simply gone, which is a
-    rule quietly not applying rather than anything anybody can see.
-    """
-    if path is None:
-        path = global_config_path()
-    check = check_key(key)
-    if not check.ok:
-        raise ConfigKeyError(f"not writing {path}: {check.reason}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        path.write_text(CONFIG_HEADER + "\n")
-    if shutil.which("yq"):
-        env = dict(os.environ, WB_CONFIG_VALUE=value)
-        try:
-            subprocess.run(
-                ["yq", "-i", f".{key} = strenv(WB_CONFIG_VALUE)", str(path)],
-                check=True, timeout=timeouts.LOCAL, env=env,
-            )
-        except subprocess.SubprocessError as exc:
-            raise ConfigError(f"could not write {key} to {path}: {exc}") from exc
-        return
-    _set_value_with_pyyaml(path, key, value)
-
-
-def set_project_value(key: str, value: str, project_root: Path | str) -> None:
-    """Write one dotted key into a repo's ``.workbench.yml``.
-
-    Shares ``set_value`` rather than reimplementing the write: the yq-first
-    ordering exists so a hand-authored file keeps its comments, and a second
-    writer would have to reproduce that ordering and would drift from it. The
-    key check comes with it, which a repo file needs as much as the global one
-    — this one is committed, so a dead key travels to everybody who clones.
-
-    The file is committed in the consumer repo, so this dirties a working tree
-    the user may not have meant to modify. That is the same trade
-    ``adopt_project_review_yml`` already makes, and the caller treats a failed
-    write as a non-event.
-    """
-    set_value(key, value, project_config_path(project_root))
-
-
-def set_container_value(key: str, value: str, project_root: Path | str) -> None:
-    """Write one dotted key into the file above a bare repo's worktrees.
-
-    Raises ``ConfigError`` when the repo has no container, rather than falling
-    back to the worktree. The two files differ in what survives: a worktree one
-    is deleted by ``wt remove`` and unseen by every sibling checkout, so a
-    caller that asked for the durable scope and silently got the disposable one
-    has been told the opposite of what happened.
-
-    Same ``set_value`` and therefore the same key check as the other two. This
-    file is not committed, which makes the check matter more rather than less:
-    nobody reviews it, so a key nothing reads is never noticed by anyone.
-    """
-    path = container_config_path(project_root)
-    if path is None:
-        raise ConfigError(
-            f"{project_root} is not a bare-repo worktree, so it has no "
-            f"container to write {PROJECT_CONFIG_NAME} into",
-        )
-    set_value(key, value, path)
-
-
-def _set_value_with_pyyaml(path: Path, key: str, value: str) -> None:
-    if yaml is None:
-        raise ConfigError("neither yq nor PyYAML is available to write config")
-    # PyYAML re-renders the document, so every comment in it is lost. The
-    # modeline is the one comment this module owns, so it is the one it can put
-    # back; a comment the user wrote is gone, which is why yq goes first.
-    had_header = path.is_file() and path.read_text().startswith(CONFIG_HEADER)
-    data = read_yaml(path)
-    cursor = data
-    parts = key.split(".")
-    for part in parts[:-1]:
-        nxt = cursor.get(part)
-        if not isinstance(nxt, dict):
-            nxt = {}
-            cursor[part] = nxt
-        cursor = nxt
-    cursor[parts[-1]] = value
-    text = yaml_dump(data)
-    if had_header:
-        text = f"{CONFIG_HEADER}\n{text}"
-    path.write_text(text)
+    return schema_accepts(surface_schema(), key)

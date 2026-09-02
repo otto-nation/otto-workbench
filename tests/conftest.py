@@ -280,11 +280,12 @@ def _isolate_installed_schema(monkeypatch):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    import workbench_config
+    import workbench_config_write
 
     real_which = shutil.which
-    monkeypatch.setattr(workbench_config.shutil, "which", lambda name, *a, **kw: (
-        None if name == workbench_config.INSTALLED_LAUNCHER else real_which(name, *a, **kw)
+    launcher = workbench_config_write.INSTALLED_LAUNCHER
+    monkeypatch.setattr(workbench_config_write.shutil, "which", lambda name, *a, **kw: (
+        None if name == launcher else real_which(name, *a, **kw)
     ))
 
 

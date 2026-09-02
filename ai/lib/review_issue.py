@@ -22,6 +22,7 @@ import prompt
 import publishing
 import timeouts
 import workbench_config
+import workbench_config_write
 from workbench_config import yaml_dump
 
 _ISSUE_PATTERN_JIRA_LINEAR = re.compile(r"[A-Z]+-[0-9]+")
@@ -279,7 +280,9 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
 
     try:
         if scope_all:
-            workbench_config.set_value(workbench_config.ISSUE_PROVIDER_KEY, provider)
+            workbench_config_write.set_value(
+                workbench_config.ISSUE_PROVIDER_KEY, provider,
+            )
             log.ok(f"Recorded {provider} as the tracker for all repos")
             return
         _record_for_repo(provider, wt_path)
@@ -304,7 +307,7 @@ def _record_for_repo(provider: str, wt_path: str) -> None:
     """
     container = workbench_config.container_config_path(wt_path)
     if container is None:
-        workbench_config.set_project_value(
+        workbench_config_write.set_project_value(
             workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
         )
         log.ok(
@@ -312,7 +315,7 @@ def _record_for_repo(provider: str, wt_path: str) -> None:
             f"— commit it so the repo keeps the answer",
         )
         return
-    workbench_config.set_container_value(
+    workbench_config_write.set_container_value(
         workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
     )
     log.ok(f"Recorded {provider} in {container} — every worktree of this repo reads it")

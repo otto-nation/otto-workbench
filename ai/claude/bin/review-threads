@@ -692,11 +692,8 @@ class CommitClaim(StrEnum):
     # The row rode the running pass's own commit. Whether that commit may be
     # named is the pass's question, not the row's — an unpushed one would 404.
     PASS = "pass"
-    # The pass recorded no commit and exactly one published commit landed
-    # outside it: the operator landed the pass's work by hand.
-    RECONCILED = "reconciled"
-    # Work landed outside the pass across more than one commit, and the row's
-    # own line history says which one carries it.
+    # Work landed outside the pass, and the row's own line history says which
+    # commit carries it.
     RESOLVED = "resolved"
     # The same, with nothing at the row's line to resolve it: the thread is
     # outdated, or the fix landed somewhere the thread is not anchored to.
@@ -975,22 +972,22 @@ def _attribute_commit(
       with it, so the entry was fixed in an earlier round or satisfied with no
       commit at all. Crediting the pass would name a commit that does not
       carry the change.
-    - RECONCILED — the pass recorded nothing and exactly one published commit
-      landed outside it. The operator landed the pass's work by hand and that
-      commit is the honest citation.
-    - RESOLVED — the work landed across several commits and `history` found
-      the one that changed this row's own line after the reviewer asked. That
+    - RESOLVED — the work landed outside the pass and `history` found the
+      commit that changed this row's own line after the reviewer asked. That
       is per-row evidence, which is the thing reconciliation lacked.
     - UNDETERMINED — the same, with nothing at the row's line to go on, or a
       row `_handled_outside` recognises, which `history` declines to cite for.
 
-    "Several commits landed" is a fact about the branch; "which commit carries
-    this row" is a fact about the row. Reconciliation only ever knew the first,
-    so it declined — correctly, since stamping every row with HEAD names a
-    commit picked for having no relationship to the row. The line history is
-    the second, and it is not the same kind of answer: the newest commit to
-    touch the line a thread is anchored to is evidence about that thread, not a
-    guess standing in for one.
+    "Commits landed outside the pass" is a fact about the branch; "which commit
+    carries this row" is a fact about the row. Reconciliation only ever knew
+    the first, so it may not answer the second — stamping every row with the
+    commit that happens to be HEAD names one picked for having no relationship
+    to the row, and a branch that moved by exactly one commit makes that no
+    truer. A row replayed from an earlier round is the case that proves it: its
+    fix landed rounds ago, and the commit reconciliation recovered demonstrably
+    does not carry it. The line history is the second kind of answer: the
+    newest commit to touch the line a thread is anchored to is evidence about
+    that thread, not a guess standing in for one.
 
     Passing no `history` keeps that decline, which is what a caller with no
     worktree to read can honestly claim.
@@ -1020,8 +1017,6 @@ def _attribute_commit(
         if framing.in_response and framing.cited:
             return CommitAttribution(CommitClaim.RESOLVED, framing.sha)
         return CommitAttribution(CommitClaim.UNDETERMINED)
-    if cp.claim is CommitClaim.RECONCILED:
-        return CommitAttribution(CommitClaim.RECONCILED, pass_sha)
     if pass_sha:
         return CommitAttribution(CommitClaim.UNRECORDED)
     # The pass has no commit of its own and none landed outside it, so there is
@@ -1221,11 +1216,10 @@ def _thread_opened_at(thread: ReportThread | None) -> float:
 # and the row's own line history — from being credited is
 # `SettledBy.RECONCILIATION`, recorded beside it.
 #
-# Distinct from CommitClaim.RECONCILED, the commit-attribution resolver's
-# claim for "the pass recorded nothing and exactly one published commit
-# landed outside it" — this reason accompanies snapshot reconciliation against
-# GitHub instead (see _reconcile_fix_snapshot). The two "reconciled" names are
-# not the same mechanism.
+# Distinct from CommitStatus.RECONCILED, which `_reconciled_commit` reports for
+# a branch that moved past the fix snapshot — this reason accompanies snapshot
+# reconciliation against GitHub instead (see _reconcile_fix_snapshot). The two
+# "reconciled" names are not the same mechanism.
 _RECONCILED_REASON = "reconciled: handled outside the fix pass"
 
 # Prose for an outcome the operator settled by hand and told the CLI about with
@@ -3884,14 +3878,15 @@ def _reconciled_commit(
     unpushed one falls back to the same non-committal cell a reconciled
     outcome gets.
 
-    It can also mean someone committed outside the pass *several times*, and
-    this function has no per-row input with which to tell those commits apart.
-    It still answers "is this branch's work published?" in that case, but hands
-    the SHA on as `UNDETERMINED` — a tree for the permalinks to pin to, and not
-    a commit any surface may cite as the one carrying a row. Telling those
-    commits apart is a per-row question, so it is asked per row: `_attribute_
-    commit` reads each thread's own line history and cites the commit that
-    changed it after the reviewer asked.
+    What it cannot say is which of those commits carries any particular row.
+    Whether one landed or several, this function sees only the branch, and a
+    record holds rows from every round the fix pass has run — a row an earlier
+    round settled sits in it attributed to nothing, and the commit that just
+    landed is not the one that carried it. So the SHA is handed on as
+    `UNDETERMINED`: a tree for the permalinks to pin to, and not a commit any
+    surface may cite as the one carrying a row. That is a per-row question, so
+    it is asked per row: `_attribute_commit` reads each thread's own line
+    history and cites the commit that changed it after the reviewer asked.
     """
     if record.commit_sha or not wt_path or not record.head_sha:
         return CommitPushResult(record.commit_sha or None, status, "")
@@ -3900,33 +3895,14 @@ def _reconciled_commit(
         return CommitPushResult(None, status, "")
     if not push.holds(wt_path, current):
         return CommitPushResult(None, CommitStatus.RECONCILED, "")
-    landed = _commits_since(wt_path, record.head_sha, current)
-    if len(landed) > 1:
-        log.warn(
-            f"{len(landed)} commits landed outside the fix pass — rows it did "
-            "not record are resolved from their own line history, and left "
-            "unattributed rather than credited to HEAD where that finds nothing"
-        )
-        return CommitPushResult(
-            current, CommitStatus.PUSHED, "", claim=CommitClaim.UNDETERMINED,
-        )
-    log.info(f"Attributing fixes to {current} — HEAD moved past the fix snapshot")
-    return CommitPushResult(
-        current, CommitStatus.PUSHED, "", claim=CommitClaim.RECONCILED,
+    log.info(
+        "Work landed outside the fix pass — each row is attributed from its "
+        "own line history, and left unattributed rather than credited to "
+        f"{current} where that finds nothing"
     )
-
-
-def _commits_since(wt_path: Path, base: str, head: str) -> list[str]:
-    """The commits `head` has that `base` does not, newest first.
-
-    Empty covers both "nothing landed" and "git could not say", and the two are
-    deliberately not told apart. The only caller uses this to *withhold* a
-    citation on positive evidence of more than one commit, so a range git
-    cannot resolve — a rebased-away snapshot, most likely — leaves the
-    single-commit reading it already had rather than silently dropping every
-    attribution on the branch.
-    """
-    return git_client.lines("rev-list", f"{base}..{head}", cwd=wt_path)
+    return CommitPushResult(
+        current, CommitStatus.PUSHED, "", claim=CommitClaim.UNDETERMINED,
+    )
 
 
 def _render_deferred_summary(

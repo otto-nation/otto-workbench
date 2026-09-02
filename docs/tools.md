@@ -75,6 +75,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-doc-reference` | Validates that a source doc renders every module group its source set declares |
 | `validate-doc-budget` | Validates that a doc declaring a line budget stays within it and holds no '####' heading |
 | `validate-tracked-ignored` | Validates that no tracked file lives under a path .gitignore claims to ignore |
+| `validate-rules` | Validates rule frontmatter conventions — harness scoping resolves, no Claude-only tool vocabulary in a rule that reaches Pi |
 | `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
 | `generate-doc-reference` | Renders a module reference from the doc blocks of a source set's own modules |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |

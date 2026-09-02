@@ -119,6 +119,11 @@ tools:
     visibility: brief
     description: "Validates that no tracked file lives under a path .gitignore claims to ignore"
 
+  - name: validate-rules
+    permission: false
+    visibility: brief
+    description: "Validates rule frontmatter conventions — harness scoping resolves, no Claude-only tool vocabulary in a rule that reaches Pi"
+
   - name: compose-docs
     permission: false
     visibility: brief

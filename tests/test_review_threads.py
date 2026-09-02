@@ -1009,18 +1009,8 @@ class TestAttributeCommit:
         assert got.claim is rt.CommitClaim.UNRECORDED
         assert got.cited is False
 
-    def test_a_reconciled_pass_lends_the_commit_it_recovered(self, rt):
-        """One published commit landed outside the pass — the operator's."""
-        got = rt._attribute_commit(
-            self._entry(),
-            rt.CommitPushResult(_PASS_SHA, "pushed", "",
-                                claim=rt.CommitClaim.RECONCILED),
-        )
-        assert got.claim is rt.CommitClaim.RECONCILED
-        assert got.sha == _PASS_SHA
-
     def test_an_undetermined_pass_lends_nothing(self, rt):
-        """Several commits landed outside the pass; none of them answers for a row."""
+        """Commits landed outside the pass; none of them answers for a row."""
         got = rt._attribute_commit(
             self._entry(),
             rt.CommitPushResult(_PASS_SHA, "pushed", "",
@@ -1757,30 +1747,18 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         assert run.commits
         assert run.pushes == []
 
-    def test_a_hand_commit_gets_the_credit(self, rt):
-        """HEAD moved past the snapshot: attribute the fixes to what landed."""
-        fix = _fix(
-            items=[ItemOutcome(id="t1", summary="t1 summary", file="f.go",
-                                   line=10, outcome=FixOutcome.FIXED)],
-            commit_status="commit_failed", head_sha="aaa1111",
-            summary_deferred=True,
-        )
-        with patch.object(rt, "_get_head_sha", return_value="bbb2222"), \
-             patch.object(rt.push, "holds", return_value=True), \
-             patch("pr_comments.post_issue_comment", return_value="u") as post:
-            rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
-        body = post.call_args[0][2]
-        assert "bbb2222" in body
-        assert "no commit needed" not in body
-        assert rt._UNATTRIBUTED_STATUS_TEXT not in body
-
-    def test_several_hand_commits_credit_none_of_them(self, rt):
+    def test_a_hand_commit_credits_no_row_on_its_own(self, rt):
         """Reconciliation is one yes/no about the branch, not per-row evidence.
 
-        HEAD moved by more than one commit, so "the operator landed the pass's
-        work" stops identifying a commit. Naming HEAD anyway would credit the
-        last commit for every row, including rows that landed two commits
-        earlier — a link that opens a diff the reviewer's thread is not in.
+        "HEAD moved past the snapshot" says work landed outside the pass. It
+        does not say which row any of it carries, and the count of commits
+        cannot make it say so: with one commit the record still holds rows an
+        earlier round settled, whose fix that commit demonstrably does not
+        contain. Naming HEAD anyway credits it for every row — a link that
+        opens a diff the reviewer's thread is not in.
+
+        Nothing here can be resolved per row either: the summary is rendered
+        from state with no worktree to read a line history out of.
         """
         fix = _fix(
             items=[ItemOutcome(id="t1", summary="t1 summary", file="f.go",
@@ -1790,25 +1768,15 @@ class TestFailedCommitIsNotReportedAsNoCommit:
         )
         with patch.object(rt, "_get_head_sha", return_value="ccc3333"), \
              patch.object(rt.push, "holds", return_value=True), \
-             patch.object(rt, "_commits_since", return_value=["ccc3333", "bbb2222"]), \
              patch("pr_comments.post_issue_comment", return_value="u") as post:
             rt._render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
         assert rt._UNATTRIBUTED_STATUS_TEXT in body
         assert "Fixed in" not in body
+        assert "no commit needed" not in body
         # Where to look stays knowable even when who landed it does not: the
         # file cell pins the tree that holds the work.
         assert "/blob/ccc3333/f.go" in body
-
-    def test_a_range_git_cannot_read_keeps_the_single_commit_reading(self, rt, worktree):
-        """An unresolvable range must not withdraw every attribution on the branch.
-
-        The multi-commit guard fires on positive evidence of more than one
-        commit. A rebased-away snapshot makes `rev-list` fail, which is not
-        that evidence — so this asks a real repo for a range neither end of
-        which it has, rather than standing that in with an absent worktree.
-        """
-        assert rt._commits_since(worktree, "aaa1111", "bbb2222") == []
 
     def test_an_unpushed_hand_commit_claims_nothing(self, rt):
         """A SHA a reviewer cannot open is not worth naming."""
@@ -2696,13 +2664,21 @@ class TestPendingFixReplies:
             rt._post_pending_fix_replies(state, "owner/repo", 1, {})
         mock_reply.assert_not_called()
 
-    def test_attributes_the_commit_the_operator_landed_by_hand(self, rt, publishing_on):
-        """A hook-rejected commit records no SHA; the summary reconciled, the reply did not.
+    def test_a_hand_landed_commit_pins_the_tree_without_being_credited(
+        self, rt, publishing_on,
+    ):
+        """A hook-rejected commit records no SHA, and the moved HEAD is a tree.
 
         The pass edits the files, a pre-commit hook rejects the commit, and the
-        operator commits and pushes the same work themselves. The summary rows
-        pick that commit up off the moved HEAD, so the reply has to as well —
-        otherwise the reviewer gets "Fixed in ``" over an empty commit link.
+        operator commits and pushes the same work themselves. The reply reads
+        that HEAD for the permalink, which is a claim about where the file now
+        stands — but not for the citation, which is a claim about which commit
+        carried this thread's fix. This queue spans rounds, so some of its rows
+        landed long before the commit that just moved HEAD.
+
+        Resolving the difference is per row and needs a line history; the fake
+        worktree here has none, so nothing is cited. `TestOneHandLandedCommit
+        IsStillAskedOfEachRow` is the same shape over a real one.
         """
         fix, threads_by_id = self._queue(
             commit_status="commit_failed", commit_sha="", replies_pending=True,
@@ -2715,7 +2691,7 @@ class TestPendingFixReplies:
              patch("pr_comments.resolve_thread", return_value=True):
             rt._post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)
         body = mock_reply.call_args[0][3]
-        assert "Fixed in [`def5678`](https://github.com/owner/repo/commit/def5678)" in body
+        assert "Fixed in" not in body
         assert "owner/repo/blob/def5678/x.py" in body
         assert fix.replies_pending is False
 
@@ -7270,6 +7246,133 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
         assert not rt._handled_outside(
             CommentItem(id="t1", reasoning=rt._SETTLED_REASON),
         )
+
+
+@pytest.fixture
+def one_hand_landed_commit(worktree):
+    """One hand-landed commit after the snapshot, over an earlier round's work.
+
+    The shape a count of landed commits waves through: the branch moved by
+    exactly one commit, so reconciliation used to read that as "the operator
+    landed the pass's work" and credit it to every row the record held.
+    `round_one` is a prior round's fix — landed after the review, before the
+    snapshot, and recorded against no SHA — so a row anchored to its line is one
+    the new commit demonstrably does not carry. `stale` predates the review and
+    is the control.
+    """
+    hooks = worktree / ".git" / "empty-hooks"
+    hooks.mkdir()
+    _git_at(worktree, "config", "user.email", "test@example.com")
+    _git_at(worktree, "config", "user.name", "Test")
+    _git_at(worktree, "config", "commit.gpgsign", "false")
+    _git_at(worktree, "config", "core.hooksPath", str(hooks))
+    (worktree / "a.py").write_text("one\ntwo\nthree\n")
+    _git_at(worktree, "add", "-A")
+    _git_at(worktree, "commit", "-qm", "base")
+    _git_at(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+    (worktree / "a.py").write_text("one\ntwo\nTHREE\n")
+    _git_at(worktree, "commit", "-qam", "line three, before the review",
+            when=_BEFORE_THE_REVIEW)
+    stale = _rev(worktree, "HEAD")
+    (worktree / "a.py").write_text("one\nTWO\nTHREE\n")
+    _git_at(worktree, "commit", "-qam", "line two, round one", when=_AFTER_THE_REVIEW)
+    snapshot = _rev(worktree, "HEAD")
+    (worktree / "a.py").write_text("ONE\nTWO\nTHREE\n")
+    _git_at(worktree, "commit", "-qam", "line one, by hand", when=_AFTER_THE_REVIEW)
+    landed = git_out(worktree, "rev-list", f"{snapshot}..HEAD").split()
+    assert len(landed) == 1, "one commit is the shape under test"
+    return SimpleNamespace(
+        path=worktree, snapshot=snapshot, stale=stale,
+        round_one=snapshot, landed=landed[0],
+    )
+
+
+class TestOneHandLandedCommitIsStillAskedOfEachRow:
+    """A branch that moved by one commit says nothing about which row it carries.
+
+    Reconciliation treated the single-commit case as settled: every row with no
+    commit of its own was stamped with the one that landed, and the summary told
+    reviewers a finding was fixed in a commit that does not contain the fix.
+    Counting the landed commits could not catch it — that asks whether the
+    *branch* moved by more than one commit, and a row's fix being in a given
+    commit is a fact about the row.
+
+    So the single-commit case asks each row what the multi-commit case already
+    asked: which commit changed the line this thread is anchored to, after the
+    reviewer raised it. The class above is the same questions over a branch that
+    moved by two.
+    """
+
+    def test_a_prior_round_row_keeps_the_commit_that_carried_it(
+        self, rt, content, one_hand_landed_commit,
+    ):
+        """The defect: this row was credited to the commit landed after it."""
+        branch = one_hand_landed_commit
+        body = _summary_over(
+            rt, content, branch, [_row("t2", 2, "second point")],
+            {"t2": _reviewed("t2", 222)},
+        )
+        assert f"Fixed in [`{branch.round_one}`]" in body
+        assert f"Fixed in [`{branch.landed}`]" not in body
+
+    def test_the_row_the_new_commit_carries_is_still_cited(
+        self, rt, content, one_hand_landed_commit,
+    ):
+        """The control: declining is the row's evidence talking, not the fixture."""
+        branch = one_hand_landed_commit
+        body = _summary_over(
+            rt, content, branch, [_row("t1", 1, "first point")],
+            {"t1": _reviewed("t1", 111)},
+        )
+        assert f"Fixed in [`{branch.landed}`]" in body
+
+    def test_a_row_whose_line_predates_the_review_is_not_credited(
+        self, rt, content, one_hand_landed_commit,
+    ):
+        branch = one_hand_landed_commit
+        body = _summary_over(
+            rt, content, branch, [_row("t3", 3, "third point")],
+            {"t3": _reviewed("t3", 333)},
+        )
+        assert "Fixed in [`" not in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+        # Where to look stays knowable even when who landed it does not: the
+        # file cell pins the tree that holds the work.
+        assert f"/blob/{branch.landed[:7]}/a.py" in body
+
+    def test_a_decomposed_body_row_is_not_credited_either(
+        self, rt, content, one_hand_landed_commit,
+    ):
+        """A review-level comment anchors to no line, so no history reads for it.
+
+        The honest answer is the one an anchored row with nothing at its line
+        gets: no citation. Line history is the only per-row evidence there is,
+        and a row that cannot supply it is a row nothing supports.
+        """
+        branch = one_hand_landed_commit
+        entry = CommentItem(
+            id="c-9-1", summary="a body point", reviewer="kgn",
+            source_type="issue", source_id="9",
+        )
+        body = _summary_over(rt, content, branch, [entry], {})
+        assert "Fixed in [`" not in body
+        assert rt._UNATTRIBUTED_STATUS_TEXT in body
+
+    def test_the_reply_names_the_commit_the_table_names(
+        self, rt, one_hand_landed_commit,
+    ):
+        """One prior-round thread, two surfaces, one resolver."""
+        branch = one_hand_landed_commit
+        entry = CommentItem(id="t2", summary="second point", file="a.py", line=2)
+        with patch.object(rt, "_resolve_default_branch", return_value="main"), \
+             patch("pr_comments.post_thread_reply", return_value=True) as post:
+            rt._reply_to_fixed(
+                [entry], {"t2": _reviewed("t2", 222)}, "owner/repo", 42,
+                _undetermined_pass(rt, branch), branch.path,
+            )
+        reply = post.call_args[0][3]
+        assert f"Fixed in [`{branch.round_one}`]" in reply
+        assert f"/commit/{branch.landed}" not in reply
 
 
 # ── default-branch resolution in commit lookups ────────────────────────────

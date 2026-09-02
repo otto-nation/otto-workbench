@@ -13,7 +13,7 @@ paths:
 When adding or modifying a review phase, verify these integration points:
 - `review_types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
 - `review_merge.py`: iteration over `SEVERITIES` in `_Merge` and `merge_reviews()` — merging the group reviews into one document. Renumbering reads and rewrites every severity section together, so a new severity has to be in `SEVERITIES` for a reference to it to survive the merge
-- `review_reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`
+- `review_reconcile.py`: reconciliation against the prior review — `reconcile()`, `passed_over()`, `record_prior_findings()`. The ledger's other half is `review_reply_threads.py`: what the author did with the thread each posted finding opened (`fetch_reply_threads()`, `ReplyState`)
 - `review_registry.py`: a builder in its phase table keyed by the new `Phase` — the template and the output path come off the phase spec, so the builder supplies neither
 - `review_grammar.py`: the finding-line grammar (`FINDING_ID_RE`, `finding_location()`, `parse_finding_line()`) and the identity two findings are compared on (`FindingIdentity`, which owns both the dedup key and the stable ID). A pass that needs to read a finding line adds its selection pattern here rather than compiling one of its own
 - `review_document.py`: `ReviewDocument.findings`, the one reading every consumer of a review's findings goes through
@@ -27,9 +27,9 @@ When adding or modifying a review phase, verify these integration points:
 A re-review accounts for every prior finding in a `## Prior findings` ledger —
 one line per prior finding, `- **[M1]** \`path\` — Fixed`, `— Still open`, or
 `— Declined`, with the ID and path copied from the prior review. Those three
-verdicts are `PriorDisposition`, and `_build_prior_section()`'s instruction
-interpolates the enum's values, so the words asked for and the words parsed
-cannot drift apart. Where the verdict sits in the line is held together by a
+verdicts are `PriorDisposition`, and `review_prompt_prior._build_prior_section()`'s
+instruction interpolates the enum's values, so the words asked for and the
+words parsed cannot drift apart. Where the verdict sits in the line is held together by a
 test instead: `TestLedgerInstructionParses` reads every example the instruction
 shows back through `review_grammar.parse_ledger_line`, because an example the parser rejects
 is invisible until a whole re-review's bookkeeping is lost. A verdict parses

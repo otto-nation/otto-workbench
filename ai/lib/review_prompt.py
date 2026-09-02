@@ -11,11 +11,11 @@ prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
 costs nothing.
 
-One builder per phase assembles the sections `review_prompt_sections` renders
-into a `PromptBuilder`. Which phase reaches which builder, which template it
-renders, and which file the agent is told to write are `review_registry`'s: it
-holds the phase-to-builder table and `build_prompt`, which dispatches on it
-and imports the builders from here.
+One builder per phase assembles the sections `review_prompt_sections` and
+`review_prompt_prior` render into a `PromptBuilder`. Which phase reaches which
+builder, which template it renders, and which file the agent is told to write
+are `review_registry`'s: it holds the phase-to-builder table and
+`build_prompt`, which dispatches on it and imports the builders from here.
 """
 
 # doc-group: pipeline
@@ -39,12 +39,12 @@ from review_budget import (
 )
 from review_collect import build_project_context, format_preflight_data
 from review_paths import FILENAME_PROMPT_STATS, review_artifact_path
+from review_prompt_prior import _build_prior_section, _build_unaccounted_section
 from review_prompt_sections import (
     _build_delta_section, _build_env_section, _build_holistic_block,
     _build_issue_section, _build_omitted_guidance, _build_pr_header,
-    _build_prior_section, _build_reply_threads_section,
-    _build_reviews_section, _build_state_context_section,
-    _build_unaccounted_section, _is_incremental,
+    _build_reply_threads_section, _build_reviews_section,
+    _build_state_context_section, _is_incremental,
 )
 from review_types import PreflightData, ReviewJob
 

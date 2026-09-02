@@ -33,6 +33,7 @@ import agent_invoke as _ai  # noqa: E402
 import agent_phases as _aph  # noqa: E402
 import ai_usage as _au  # noqa: E402
 import review_prompt as _rpmt  # noqa: E402
+import review_prompt_prior as _rprior  # noqa: E402
 import review_prompt_sections as _rpsec  # noqa: E402
 import review_registry as _rreg  # noqa: E402
 import review_agent as _ra  # noqa: E402
@@ -63,7 +64,7 @@ from review_paths import (  # noqa: E402
 )
 from tool_parser import enum_arg  # noqa: E402
 from review_collect import collect_preflight_data  # noqa: E402
-from review_reconcile import fetch_reply_threads  # noqa: E402
+from review_reply_threads import fetch_reply_threads  # noqa: E402
 from review_types import Pipeline, ReviewJob, ViewerRole  # noqa: E402
 from agent_invoke import QuotaThrottle  # noqa: E402
 from review_fix import run_fix_pass  # noqa: E402
@@ -81,8 +82,8 @@ import ai_backend  # noqa: E402
 SCRIPT = Path(__file__).name
 
 _SUBMODULES = (
-    _ad, _ai, _aph, _au, _rpmt, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc, _rpath,
-    _rph, _rstp, _rout, _rrt, _rst, _rt,
+    _ad, _ai, _aph, _au, _rpmt, _rprior, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc,
+    _rpath, _rph, _rstp, _rout, _rrt, _rst, _rt,
 )
 
 # Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a

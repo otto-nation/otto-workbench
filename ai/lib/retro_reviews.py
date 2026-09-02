@@ -64,10 +64,23 @@ def _review_repo(entry: ReviewEntry, doc: ReviewDocument) -> str:
     return dir_name
 
 
+@dataclass(frozen=True)
+class RuleMatch:
+    """A finding rendered as a retro comment, and whether a rule claimed it.
+
+    ``matched`` is the question the caller actually asks, so it is named for
+    the answer rather than for the tally it feeds — an unmatched finding is
+    what the retro counts, but "did a rule match" is what the comment knows.
+    """
+
+    comment: dict
+    matched: bool
+
+
 def _finding_to_comment(
     finding: Finding, source: str, review_file: Path,
     rules: list[dict], rule_match_counts: dict[str, dict],
-) -> tuple[dict, bool]:
+) -> RuleMatch:
     comment = {
         "author": source,
         "body": f"[{finding.severity}] {finding.body}",
@@ -84,15 +97,28 @@ def _finding_to_comment(
             "match_snippet": best_matching_bullet(comment["body"], nearest),
         }
         rule_match_counts[nearest["filename"]]["matched"] += 1
-        return comment, False
+        return RuleMatch(comment, matched=True)
     comment["nearest_rule"] = None
-    return comment, True
+    return RuleMatch(comment, matched=False)
+
+
+@dataclass(frozen=True)
+class ScannedReview:
+    """One local review's findings, in the shape the retro groups them by.
+
+    ``pr_entry`` is a whole review rendered as the single pseudo-PR the retro
+    files it under; ``unmatched`` is how many of its findings matched no rule.
+    """
+
+    repo_key: str
+    pr_entry: dict
+    unmatched: int
 
 
 def _scan_review_entry(
     entry: ReviewEntry, rules: list[dict],
     rule_match_counts: dict[str, dict],
-) -> tuple[str, dict, int] | None:
+) -> ScannedReview | None:
     review_file = entry.review_file
     # A REVIEW-kind entry had its review file when the walk classified it, so a
     # document that comes back None means the file went away or turned
@@ -112,12 +138,12 @@ def _scan_review_entry(
     unmatched = 0
     comments: list[dict] = []
     for f in findings:
-        comment, was_unmatched = _finding_to_comment(
+        match = _finding_to_comment(
             f, source, review_file, rules, rule_match_counts,
         )
-        if was_unmatched:
+        if not match.matched:
             unmatched += 1
-        comments.append(comment)
+        comments.append(match.comment)
 
     pr_entry = {
         "number": f"local:{dir_name}",
@@ -126,7 +152,7 @@ def _scan_review_entry(
         "merged_at": "",
         "comments": comments,
     }
-    return repo_key, pr_entry, unmatched
+    return ScannedReview(repo_key=repo_key, pr_entry=pr_entry, unmatched=unmatched)
 
 
 @dataclass(frozen=True)
@@ -156,12 +182,13 @@ def scan_local_reviews(
     for entry in iter_review_entries(reviews_dir):
         if entry.kind is not ReviewEntryKind.REVIEW:
             continue
-        result = _scan_review_entry(entry, rules, rule_match_counts)
-        if not result:
+        # `is None`, not truthiness — a `ScannedReview` is always truthy, so a
+        # falsy test here would read as a skip that can never fire.
+        scanned = _scan_review_entry(entry, rules, rule_match_counts)
+        if scanned is None:
             continue
-        repo_key, pr_entry, dir_unmatched = result
-        unmatched += dir_unmatched
-        local_repos.setdefault(repo_key, []).append(pr_entry)
+        unmatched += scanned.unmatched
+        local_repos.setdefault(scanned.repo_key, []).append(scanned.pr_entry)
         consumed_dirs.append(entry.path.name)
 
     result_list = [

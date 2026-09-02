@@ -86,6 +86,19 @@ _run_dispatch() {
   [ ! -e "$RAN" ]
 }
 
+@test "setup feeds its registration loop from the ordering, not the selection" {
+  # The install-time half of the same contract, and the half with no seam to run:
+  # ai/setup.sh performs its main flow at source time — installing bin scripts,
+  # running steps, recording state — so the registration loop cannot be exercised
+  # on its own without doing all of that to the machine. The contract is asserted
+  # against the source instead. run_steps runs in registration order, so this loop
+  # is where install-time ordering is decided, and a selection listing pi first
+  # would otherwise build Pi's context file before Claude's rules exist at all.
+  run awk '/register_\$\{_tool\}_steps"$/,/^done/' "$REPO_ROOT/ai/setup.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ai_tool_order"* ]]
+}
+
 @test "ai_tool_order drops nothing it was given" {
   run bash -c '
     HOME="$2"

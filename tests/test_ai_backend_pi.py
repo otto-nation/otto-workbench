@@ -371,6 +371,12 @@ class TestExtensionFlag:
         sig = inspect.signature(ai_backend_pi._build_prompt_cmd)
         assert "extension" not in sig.parameters
 
+    def test_review_extension_exists_on_disk(self):
+        """Both call sites gate on is_file(), so a stale path drops the guard silently."""
+        assert ai_backend_pi.REVIEW_EXTENSION.is_file(), (
+            f"{ai_backend_pi.REVIEW_EXTENSION} is missing — the review agent would run ungated"
+        )
+
 
 class TestWriteAwareSteer:
     """The 80% steer names the write mechanism when nothing has been written."""

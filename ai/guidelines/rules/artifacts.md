@@ -1,0 +1,42 @@
+# Generated Project Artifacts
+
+Context files other tools in this workbench regenerate for you. Each is written
+on a schedule and read at session start; none is authored by hand.
+
+## Machine Profile
+
+If `~/.claude/machine/machine.md` exists, read it at session start — it contains
+hardware, OS, runtime versions, Docker setup, Git identity, and the project registry.
+Use it to answer environment questions without re-discovering system state. Check
+`<!-- last-updated -->`: if more than 7 days ago, mention it may be stale and suggest
+running `/machine` to refresh. Auto-regenerates every 24h via Stop hook; run `/machine`
+to force a refresh.
+
+## Project Anatomy
+
+If `.claude/anatomy.md` exists in the project, read it before exploring unfamiliar parts of the codebase. It contains a file index with descriptions and token estimates — use it to decide which files to open instead of browsing blindly. Regenerated automatically via Stop hook; run `/anatomy` to force a refresh.
+
+If `.claude/architecture.md` exists in the project, read it alongside anatomy.md — it contains architecture narrative, service identity, and known constraints that anatomy.md does not capture. Check the `<!-- last-reviewed: -->` date at the top: if it is more than 30 days ago, note that architecture.md may be stale. When working on infrastructure tasks, explicitly state which service you are targeting and confirm its software identity against architecture.md before writing any tasks or config.
+
+## Ceiling Debt
+
+If `.claude/ceiling-debt.md` exists in the project, read it at session start — it
+lists deliberate simplifications marked with `// ceiling:` comments. Each entry names
+the tradeoff and the upgrade trigger. Entries flagged **no-trigger** are rot risk;
+entries flagged **permanent** are accepted for good and are not debt. Auto-regenerated
+via Stop hook; run `/ceiling-debt` to force a refresh.
+
+## Reuse Level
+
+If `reuse.level` is set in `~/.config/workbench/config.yml`, read it at session
+start — it controls how aggressively the reuse ladder (in `general.md`) is enforced:
+
+| Level | Behavior |
+|---|---|
+| **lite** | Build what's asked, name the lazier alternative in one line. User picks |
+| **full** | Enforce the reuse ladder. Stdlib and native first. Shortest diff (default) |
+| **ultra** | Challenge the requirement. Deletion before addition. Ship the one-liner |
+
+When `reuse.level` is unset, the level is the value of `reuse.default` in the
+same file, and `full` when that is unset too. Change either with
+`/reuse lite|full|ultra` or `/reuse default lite|full|ultra`.

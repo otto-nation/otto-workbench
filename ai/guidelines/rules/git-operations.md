@@ -1,5 +1,9 @@
 # Git — Operations
 
+## Commit & PR Authorship
+
+Never mention Claude Code, AI assistance, or co-authorship in commit messages, PR descriptions, or any git artifacts.
+
 ## Worktree-First Development
 
 - Never edit or write files directly on `main`, `master`, or any shared/protected branch — always create a worktree first

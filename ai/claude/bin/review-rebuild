@@ -18,10 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "lib"))
 import log
 from trail import Trail, add_trail_args
 from agent_registry import PHASES
-from agent_types import Mode, Phase
+from agent_types import Phase
 from review_document import ReviewDocument, ReviewHeader, review_title
 from review_paths import read_review_meta
-from review_verdict import build_mechanical_body
+from review_verdict import build_mechanical_body, states_verdict
 from review_verify import post_process_findings
 from review_merge import merge_reviews
 
@@ -100,7 +100,7 @@ def main():
                 processed,
                 group_count=len(group_files),
                 summary_note=REBUILD_SUMMARY,
-                include_verdict=(meta.mode != Mode.SELF),
+                include_verdict=states_verdict(meta.mode),
                 file_count=meta.changed_files,
             ),
         )

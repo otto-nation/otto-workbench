@@ -77,7 +77,7 @@ AGENTS_DIR = Path.home() / ".claude" / "agents"
 # Mirrors AGENTS_SKILLS_DIR in lib/constants.sh, where ai/skills/steps.sh installs.
 # tests/workbench_roots.bats fails when the two drift.
 AGENTS_SKILLS_DIR = Path.home() / ".agents" / "skills"
-REVIEW_EXTENSION = Path(__file__).resolve().parent.parent / "claude" / "pi" / "extensions" / "review-guard.ts"
+REVIEW_EXTENSION = Path(__file__).resolve().parent.parent / "pi" / "extensions" / "review-guard.ts"
 
 
 def _read_agent_prompt(agent: str) -> str | None:

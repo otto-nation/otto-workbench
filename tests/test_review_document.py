@@ -37,7 +37,7 @@ from review_types import Finding, ReviewMeta, ReviewType
 from review_verdict import (
     CLEAN_VERDICT, MECHANICAL_NOTE,
     build_mechanical_body, counts_prose, mechanical_verdict,
-    open_counts, resolve_review_verdict, verdict_from_counts,
+    open_counts, resolve_review_verdict, states_verdict, verdict_from_counts,
 )
 
 
@@ -1095,6 +1095,25 @@ class TestVerdict:
         assert ReviewDocument.parse(text).verdict is None
 
 
+class TestStatesVerdict:
+    """The one reading of which runs state a verdict at all.
+
+    Both the resolver and the mechanically merged body ask this rather than
+    testing the mode for themselves, so a self-review cannot state a verdict
+    in one place and withhold it in the other.
+    """
+
+    def test_a_pr_review_states_one(self):
+        assert states_verdict(Mode.PR)
+
+    def test_a_self_review_does_not(self):
+        assert not states_verdict(Mode.SELF)
+
+    def test_a_review_whose_metadata_named_no_mode_still_states_one(self):
+        """A missing mode is not a claim that the review had no PR."""
+        assert states_verdict(None)
+
+
 class TestResolveVerdict:
     def test_the_counts_speak_when_the_prose_does_not(self):
         document = ReviewDocument.parse("## Should fix\n- **[S1]** a.py:1 — improvement\n")
@@ -1118,12 +1137,12 @@ class TestResolveVerdict:
 
     def test_a_self_review_is_advisory(self):
         document = ReviewDocument.parse("## Must fix\n- **[M1]** a.py:1 — bug\n")
-        assert resolve_review_verdict(document, self_review=True) is None
+        assert resolve_review_verdict(document, mode=Mode.SELF) is None
 
     def test_a_self_review_still_reports_disapprove(self):
         """Disapprove judges the approach, which holds with or without a PR."""
         document = ReviewDocument.parse("## Verdict\nDisapprove — wrong approach.\n")
-        assert resolve_review_verdict(document, self_review=True) is ReviewVerdict.DISAPPROVE
+        assert resolve_review_verdict(document, mode=Mode.SELF) is ReviewVerdict.DISAPPROVE
 
     def test_a_review_that_was_never_written_reaches_no_verdict(self):
         assert resolve_review_verdict(None) is None

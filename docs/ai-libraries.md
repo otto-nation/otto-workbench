@@ -576,8 +576,8 @@ What a set of counts means, and the review a run without an agent writes.
 
 The policy layer over `review_document`: how many open findings of each
 severity add up to an approve or a request-for-changes, how that reads in
-prose, and the body a mechanically merged review carries when no synthesis
-agent produced one.
+prose, whether the run states a verdict at all, and the body a mechanically
+merged review carries when no synthesis agent produced one.
 
 Kept apart from the document itself because the document is a shape and this is
 a judgement — a review file parses the same way whatever this module decides.

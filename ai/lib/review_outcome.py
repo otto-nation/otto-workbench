@@ -19,7 +19,6 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
-from agent_types import Mode
 from pr_domains import ReviewStatus
 from review_document import (
     SECTION_SUMMARY, SECTION_VERDICT,
@@ -32,7 +31,7 @@ from review_state import PipelineState, pipeline_status, set_failures_section
 from review_types import ReviewJob, ReviewMeta, ReviewType
 from review_verdict import (
     CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY,
-    build_mechanical_body,
+    build_mechanical_body, states_verdict,
 )
 from review_verify import post_process_findings
 
@@ -135,7 +134,7 @@ def _build_mechanical_fallback(
         merged_content,
         group_count=group_count,
         summary_note=FALLBACK_SUMMARY,
-        include_verdict=(job.mode != Mode.SELF),
+        include_verdict=states_verdict(job.mode),
         file_count=job.pr.changed_files,
     )
     if pipeline_state:
@@ -213,10 +212,7 @@ def _write_clean_review(
         merged_content,
         group_count=group_count,
         summary_note=CLEAN_SUMMARY,
-        # A self-review is advisory and has no PR to approve, so it states no
-        # verdict — the same rule `resolve_review_verdict` applies when reading
-        # one.
-        include_verdict=(job.mode != Mode.SELF),
+        include_verdict=states_verdict(job.mode),
         verdict=CLEAN_VERDICT,
         file_count=job.pr.changed_files,
     )

@@ -81,7 +81,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import serde
-from agent_types import Mode
 from review_paths import (
     ReviewEntry, ReviewEntryKind, aggregate_session_usage, iter_review_entries,
 )
@@ -152,7 +151,7 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
 
     doc = ReviewDocument.read(review_file)
     by_key = open_counts(doc)
-    verdict = resolve_review_verdict(doc, self_review=meta.mode is Mode.SELF)
+    verdict = resolve_review_verdict(doc, mode=meta.mode)
     usage = aggregate_session_usage(entry.path)
 
     return ReviewRow(

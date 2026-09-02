@@ -2,8 +2,8 @@
 
 The policy layer over `review_document`: how many open findings of each
 severity add up to an approve or a request-for-changes, how that reads in
-prose, and the body a mechanically merged review carries when no synthesis
-agent produced one.
+prose, whether the run states a verdict at all, and the body a mechanically
+merged review carries when no synthesis agent produced one.
 
 Kept apart from the document itself because the document is a shape and this is
 a judgement — a review file parses the same way whatever this module decides.
@@ -13,6 +13,7 @@ a judgement — a review file parses the same way whatever this module decides.
 
 from __future__ import annotations
 
+from agent_types import Mode
 from pr_domains import ReviewVerdict
 from review_document import SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument
 from review_types import SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
@@ -57,10 +58,30 @@ def counts_prose(counts: dict[str, int]) -> str:
     return ", ".join(f"{counts[s.key]} {s.label}" for s in SEVERITIES if counts.get(s.key))
 
 
+def states_verdict(mode: Mode | None) -> bool:
+    """Whether a review run in `mode` reaches a verdict at all.
+
+    False for a self-review, true for everything else — a review whose
+    metadata never stated a mode included, since a missing mode is not a claim
+    that the review had no PR. A self-review is advisory: there is nothing to
+    approve or block, so the verdict it would otherwise state is a call on
+    nothing. Every path that writes or reads a verdict asks here rather than
+    testing the mode for itself.
+
+    Disapprove is the one call that survives this, because it judges the
+    approach rather than the PR — `resolve_review_verdict` is where that
+    exception lives.
+    """
+    return mode is not Mode.SELF
+
+
 def resolve_review_verdict(
-    doc: ReviewDocument | None, *, self_review: bool = False,
+    doc: ReviewDocument | None, *, mode: Mode | None = Mode.PR,
 ) -> ReviewVerdict | None:
     """The verdict to record and report for a finished review.
+
+    `mode` is what the review was run as, and decides through `states_verdict`
+    whether it states a verdict at all.
 
     The prose the synthesis agent wrote and the findings that survived
     verification are two readings of the same document, and this is the only
@@ -78,9 +99,9 @@ def resolve_review_verdict(
     stated = doc.verdict
     if stated is ReviewVerdict.DISAPPROVE:
         return stated
-    # A self-review is advisory — it has no PR to approve or block. Disapprove
-    # is the exception above: it judges the approach, which holds without a PR.
-    if self_review:
+    # Disapprove is the exception above: it judges the approach, which holds
+    # without a PR.
+    if not states_verdict(mode):
         return None
     derived = verdict_from_counts(doc.open_counts)
     return stated if stated and stated.outranks(derived) else derived

@@ -779,3 +779,81 @@ def test_installed_schema_path_resolves_through_the_launcher(tmp_path, monkeypat
 def test_installed_schema_path_is_none_without_an_install(monkeypatch):
     monkeypatch.setattr(wcw.shutil, "which", lambda name: None)
     assert wcw.installed_schema_path() is None
+
+
+# ── The value guard ─────────────────────────────────────────────────────────
+#
+# The same loss as the key guard catches, one level down. Every value arrives
+# as a string off a command line, and `serde` replaces a scalar it cannot
+# convert with the field's default — so a boolean written as `"true"` is a
+# write that reports success and leaves the setting off.
+
+
+def test_a_boolean_key_is_written_as_a_boolean(roots):
+    config_root, _ = roots
+    wcw.set_value(wc.GITHUB_SSH_443_KEY, "true")
+    assert "ssh_over_443: true" in (config_root / wc.CONFIG_NAME).read_text()
+    assert wc.load_config().github.ssh_over_443 is True
+
+
+def test_a_boolean_key_round_trips_back_to_false(roots):
+    wcw.set_value(wc.GITHUB_SSH_443_KEY, "true")
+    wcw.set_value(wc.GITHUB_SSH_443_KEY, "false")
+    assert wc.load_config().github.ssh_over_443 is False
+
+
+def test_a_boolean_key_refuses_a_value_that_is_neither(roots):
+    """`bool("yes")` is True and so is `bool("no")`, which is why nothing guesses."""
+    config_root, _ = roots
+    with pytest.raises(wc.ConfigValueError) as exc:
+        wcw.set_value(wc.GITHUB_SSH_443_KEY, "yes")
+    assert wc.GITHUB_SSH_443_KEY in str(exc.value)
+    assert not (config_root / wc.CONFIG_NAME).exists()
+
+
+def test_a_refused_value_is_a_config_error_too(roots):
+    """A caller that only handles the general failure still catches this one."""
+    assert issubclass(wc.ConfigValueError, wc.ConfigError)
+    with pytest.raises(wc.ConfigError):
+        wcw.set_value(wc.GITHUB_SSH_443_KEY, "sideways")
+
+
+def test_a_refused_value_is_not_a_refused_key(roots):
+    """The two failures owe the caller different advice, so they are different types."""
+    with pytest.raises(wc.ConfigValueError):
+        wcw.set_value(wc.GITHUB_SSH_443_KEY, "sideways")
+    assert not issubclass(wc.ConfigValueError, wc.ConfigKeyError)
+
+
+def test_a_string_key_is_written_as_the_string_it_was_given(roots):
+    """A value that looks like a bool under a string field stays a string."""
+    _, project = roots
+    wcw.set_project_value("issue_tracker.team", "true", project)
+    assert wc.load_config(project).issue_tracker.team == "true"
+
+
+@needs_yaml
+def test_the_pyyaml_fallback_writes_the_same_types(roots, monkeypatch):
+    """Two writers, one coercion — the fallback cannot disagree about the type."""
+    monkeypatch.setattr(wcw.shutil, "which", lambda _: None)
+    wcw.set_value(wc.GITHUB_SSH_443_KEY, "true")
+    wcw.set_value("agent.model", "sonnet")
+    cfg = wc.load_config()
+    assert cfg.github.ssh_over_443 is True
+    assert cfg.agent.model == "sonnet"
+
+
+def test_an_optional_field_is_typed_through_its_null_half():
+    """`str | None` is a union in the schema and a string to a writer."""
+    schema = wc.surface_schema()
+    assert wc.schema_type(wc.schema_at(schema, "reuse.level")) == "string"
+    assert wc.schema_type(wc.schema_at(schema, wc.GITHUB_SSH_443_KEY)) == "boolean"
+
+
+def test_a_fragment_that_names_no_type_is_left_permissive():
+    """`schema_gen` emits an open fragment for a hint it cannot describe.
+
+    A check that cannot see the type must not be the thing that refuses a
+    write, which is the same direction the key walk is permissive in.
+    """
+    assert wc.schema_type({}) is None

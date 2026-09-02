@@ -187,6 +187,67 @@ def test_a_rejected_value_still_reports_the_scopes_and_the_strays(roots):
     assert [s.key for s in status.strays] == ["reuse.levl"]
 
 
+# ── Values the loader dropped ───────────────────────────────────────────────
+#
+# A key the surface reads, holding a value the field cannot be built from.
+# `serde` restores what it can and omits what it cannot, so this is the same
+# silent loss a stray key causes, one level down — and the report has to catch
+# it for the same reason.
+
+
+def test_a_value_the_field_cannot_hold_is_reported_as_dropped(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", 'github:\n  ssh_over_443: "true"\n')
+    status = wcr.config_status(project)
+    assert [(d.key, d.held, d.read) for d in status.dropped] == [
+        (wc.GITHUB_SSH_443_KEY, "true", "false"),
+    ]
+    assert status.dropped[0].scope.path == config_root / wc.CONFIG_NAME
+
+
+def test_a_value_the_field_does_hold_is_not_reported(roots):
+    config_root, project = roots
+    _write(config_root / "config.yml", "github:\n  ssh_over_443: true\n")
+    assert wcr.config_status(project).dropped == []
+
+
+def test_a_value_the_loader_restores_is_not_a_dropped_one(roots):
+    """`serde` recovers a string field from a number, so nothing was lost.
+
+    The report derives this from the loader rather than from a type table of
+    its own, which is the only way the two can agree about what survived.
+    """
+    config_root, project = roots
+    _write(config_root / "config.yml", "issue_tracker:\n  team: 42\n")
+    status = wcr.config_status(project)
+    assert status.dropped == []
+    assert _row(status, "issue_tracker.team").value == "42"
+
+
+def test_a_dropped_value_is_reported_against_the_file_that_won(roots):
+    """A value a higher scope overrode is not the one the reader has to fix."""
+    config_root, project = roots
+    _write(config_root / "config.yml", 'github:\n  ssh_over_443: "true"\n')
+    _write(project / ".workbench.yml", "github:\n  ssh_over_443: true\n")
+    assert wcr.config_status(project).dropped == []
+
+
+def test_a_dropped_value_does_not_make_the_report_a_failure(roots):
+    """Same cost as a stray key, and reported the same way: one value, not the scope."""
+    config_root, project = roots
+    _write(config_root / "config.yml", 'github:\n  ssh_over_443: "true"\n')
+    assert wcr.config_status(project).ok
+
+
+def test_a_stray_key_is_not_also_reported_as_a_dropped_value(roots):
+    """The two are disjoint by construction — a stray has no resolved row."""
+    config_root, project = roots
+    _write(config_root / "config.yml", "reuse:\n  levl: ultra\n")
+    status = wcr.config_status(project)
+    assert [s.key for s in status.strays] == ["reuse.levl"]
+    assert status.dropped == []
+
+
 def test_render_value_writes_what_a_config_file_would_hold():
     assert wcr.render_value(True) == "true"
     assert wcr.render_value(wc.ReuseLevel.FULL) == "full"

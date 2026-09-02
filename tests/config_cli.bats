@@ -253,6 +253,39 @@ _make_repo() {
   [[ "$output" == *"review.issue_tracker.provider"* ]]
 }
 
+@test "status reports a value nothing can read, and names both readings" {
+  _make_repo
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'github:\n  ssh_over_443: "true"\n' > "$CONFIG"
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Values nothing can read"* ]]
+  [[ "$output" == *"github.ssh_over_443"*"file says true"*"loads as false"* ]]
+}
+
+@test "set refuses a value the field cannot hold, and writes nothing" {
+  _make_repo
+
+  run "$REPO_ROOT/bin/otto-workbench" config set github.ssh_over_443 yes
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"github.ssh_over_443"* ]]
+  [ ! -f "$CONFIG" ]
+}
+
+@test "set writes a boolean the loader reads back" {
+  _make_repo
+
+  run "$REPO_ROOT/bin/otto-workbench" config set github.ssh_over_443 true
+  [ "$status" -eq 0 ]
+  grep -q 'ssh_over_443: true' "$CONFIG"
+
+  run "$REPO_ROOT/bin/otto-workbench" config status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"github.ssh_over_443"*"true"*"global"* ]]
+  [[ "$output" != *"Values nothing can read"* ]]
+}
+
 @test "status fails and names the file when a scope cannot be read" {
   _make_repo
   printf 'reuse: [unclosed\n' > "$TMPDIR/repo/.workbench.yml"

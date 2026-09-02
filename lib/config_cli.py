@@ -250,6 +250,15 @@ def _status(_args: argparse.Namespace) -> int:
         for stray in status.strays:
             print(f"  {YELLOW}✗{NC} {stray.key:<{width}}  {DIM}{stray.scope.path}{NC}")
 
+    if status.dropped:
+        print(f"\n{BOLD}Values nothing can read{NC} "
+              f"{DIM}— the key is real, the value is not{NC}")
+        width = max(len(row.key) for row in status.dropped)
+        for row in status.dropped:
+            print(f"  {YELLOW}✗{NC} {row.key:<{width}}  "
+                  f"file says {row.held}, loads as {row.read}  "
+                  f"{DIM}{row.scope.path}{NC}")
+
     return 0 if status.ok else 1
 
 

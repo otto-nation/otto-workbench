@@ -2717,16 +2717,20 @@ neither imports this.
 How the workbench config is changed.
 
 One dotted key at a time, into one of the three scopes ``config_scopes``
-merges, and only after the key has been judged against the surface that will
-read the file back. Every write here goes through ``set_value``, so the yq-first
-ordering that preserves a hand-authored file's comments and the key check that
-keeps a dead key out of a shared file are each written once.
+merges, and only after the key and the value have both been judged against the
+surface that will read the file back. Every write here goes through
+``set_value``, so the yq-first ordering that preserves a hand-authored file's
+comments and the checks that keep a value nothing reads out of a shared file are
+each written once.
 
-The check is what makes this its own module rather than three functions on the
-config. A write is judged against two surfaces — this checkout's
+Those checks are what make this its own module rather than three functions on
+the config. A key is judged against two surfaces — this checkout's
 ``WorkbenchConfig`` and the schema of the workbench actually installed on the
-machine — because the file outlives the checkout that wrote it. Reading needs
-neither, which is why ``workbench_config`` carries no part of it.
+machine — because the file outlives the checkout that wrote it. The value is
+judged against the type the field declares, because everything arriving here is
+a string off a command line and ``serde`` replaces a scalar of the wrong type
+with the field's default rather than complaining. Reading needs neither check,
+which is why ``workbench_config`` carries no part of them.
 
 ### workbench_paths.py
 

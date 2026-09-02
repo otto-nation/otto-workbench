@@ -238,6 +238,26 @@ class StrayKey:
 
 
 @dataclasses.dataclass(frozen=True)
+class DroppedValue:
+    """A key the surface reads, holding a value the field cannot be built from.
+
+    The other half of what ``StrayKey`` catches, one level down. ``serde``
+    restores a scalar where it can and omits it where it cannot, so a boolean
+    written as ``"true"`` resolves to the field's default with the file still
+    saying otherwise — the right key, the wrong shape, and no complaint.
+
+    ``held`` is what the file spells and ``read`` is what the loader gave back,
+    both rendered the way ``config status`` prints a value, because a reader
+    diagnosing this needs to see the two disagree.
+    """
+
+    key: str
+    scope: ConfigScope
+    held: str
+    read: str
+
+
+@dataclasses.dataclass(frozen=True)
 class ConfigStatus:
     """What the config resolves to right now, and where each piece came from.
 
@@ -246,14 +266,16 @@ class ConfigStatus:
     order ``config_scopes`` returns.
 
     ``problems`` holds anything that stopped a file from being read or typed.
-    It is separate from ``strays`` because the two cost different things: a
-    stray key loses one value, an unreadable file loses the whole scope.
+    It is separate from ``strays`` and ``dropped`` because the three cost
+    different things: a stray key or a dropped value loses one value, an
+    unreadable file loses the whole scope.
     """
 
     scopes: list[ConfigScope]
     keys: list[ResolvedKey]
     strays: list[StrayKey]
     problems: list[str]
+    dropped: list[DroppedValue] = dataclasses.field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -334,6 +356,7 @@ def config_status(project_root: Path | str | None = None) -> ConfigStatus:
     problems: list[str] = []
     strays: list[StrayKey] = []
     provenance: dict[str, ConfigScope] = {}
+    held: dict[str, object] = {}
     schema = surface_schema()
 
     merged: dict = {}
@@ -348,6 +371,7 @@ def config_status(project_root: Path | str | None = None) -> ConfigStatus:
         merged = deep_merge(merged, raw)
         flat = _flatten(raw)
         provenance.update(dict.fromkeys(flat, scope))
+        held.update(flat)
         strays += [StrayKey(key, scope) for key in flat
                    if not schema_accepts(schema, key)]
 
@@ -358,7 +382,33 @@ def config_status(project_root: Path | str | None = None) -> ConfigStatus:
         return ConfigStatus(list(reversed(scopes)), [], strays, problems)
 
     keys = _resolved_rows(WorkbenchConfig, config, provenance)
-    return ConfigStatus(list(reversed(scopes)), keys, strays, problems)
+    dropped = _dropped_values(held, provenance, keys)
+    return ConfigStatus(list(reversed(scopes)), keys, strays, problems, dropped)
+
+
+def _dropped_values(
+    held: dict[str, object],
+    provenance: dict[str, ConfigScope],
+    keys: list[ResolvedKey],
+) -> list[DroppedValue]:
+    """The keys whose winning file says one thing and the loaded config another.
+
+    Derived from the loader rather than from a second type table, which is the
+    only way the report can agree with it. ``serde`` restores a scalar wherever
+    it can — ``"3"`` into an int field is not a dropped value, it is a recovered
+    one — so the question is not whether the types match but whether the value
+    survived, and the resolved row is what answers it.
+
+    ``held`` holds the leaf of whichever scope won the key, the same one
+    ``provenance`` names, so a value overridden by a higher scope is not
+    reported against the file it was overridden in.
+    """
+    resolved = {row.key: row.value for row in keys}
+    return [
+        DroppedValue(key, provenance[key], render_value(value), resolved[key])
+        for key, value in held.items()
+        if key in resolved and render_value(value) != resolved[key]
+    ]
 
 
 def _typing_problems(loaded: list[tuple[ConfigScope, dict]]) -> list[str]:

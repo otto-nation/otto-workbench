@@ -144,6 +144,16 @@ class ConfigKeyError(ConfigError):
     """
 
 
+class ConfigValueError(ConfigError):
+    """A write named a real key and a value the field behind it cannot hold.
+
+    The same cost as ``ConfigKeyError`` and for the same reason: ``serde``
+    restores what it can and omits what it cannot, so a value of the wrong type
+    is a key that reads back as its default with nothing said. Refusing at write
+    time is the only place the caller still knows what it asked for.
+    """
+
+
 class ReuseLevel(StrEnum):
     """How hard the reuse ladder in ``general.md`` is enforced."""
 
@@ -495,8 +505,8 @@ def _named_property(schema: dict, name: str) -> dict | None:
     return {}
 
 
-def schema_accepts(schema: dict, key: str) -> bool:
-    """Whether a JSON Schema describes a document that can hold this dotted key.
+def schema_at(schema: dict, key: str) -> dict | None:
+    """The fragment a dotted key lands on, or ``None`` when it lands nowhere.
 
     Takes the schema rather than reaching for ``surface_schema`` so the same
     walk answers for the *installed* workbench's committed schema, which is the
@@ -505,9 +515,29 @@ def schema_accepts(schema: dict, key: str) -> bool:
     cursor: dict | None = schema
     for part in key.split("."):
         if cursor is None:
-            return False
+            return None
         cursor = _named_property(cursor, part)
-    return cursor is not None
+    return cursor
+
+
+def schema_accepts(schema: dict, key: str) -> bool:
+    """Whether a JSON Schema describes a document that can hold this dotted key."""
+    return schema_at(schema, key) is not None
+
+
+def schema_type(fragment: dict) -> str | None:
+    """The JSON Schema type a fragment names, or ``None`` when it names none.
+
+    Reads through the null half of an optional field the same way the key walk
+    does, so ``str | None`` answers ``"string"`` rather than a union nothing can
+    act on.
+
+    ``None`` means the fragment is open — what ``schema_gen`` emits for a hint
+    it cannot describe — and is permissive for the same reason the key walk is:
+    a check that cannot see the type must not be the thing that refuses a write.
+    """
+    found = _object_branch(fragment).get("type")
+    return found if isinstance(found, str) else None
 
 
 def defines_key(key: str) -> bool:

@@ -1,16 +1,20 @@
 """How the workbench config is changed.
 
 One dotted key at a time, into one of the three scopes ``config_scopes``
-merges, and only after the key has been judged against the surface that will
-read the file back. Every write here goes through ``set_value``, so the yq-first
-ordering that preserves a hand-authored file's comments and the key check that
-keeps a dead key out of a shared file are each written once.
+merges, and only after the key and the value have both been judged against the
+surface that will read the file back. Every write here goes through
+``set_value``, so the yq-first ordering that preserves a hand-authored file's
+comments and the checks that keep a value nothing reads out of a shared file are
+each written once.
 
-The check is what makes this its own module rather than three functions on the
-config. A write is judged against two surfaces — this checkout's
+Those checks are what make this its own module rather than three functions on
+the config. A key is judged against two surfaces — this checkout's
 ``WorkbenchConfig`` and the schema of the workbench actually installed on the
-machine — because the file outlives the checkout that wrote it. Reading needs
-neither, which is why ``workbench_config`` carries no part of it.
+machine — because the file outlives the checkout that wrote it. The value is
+judged against the type the field declares, because everything arriving here is
+a string off a command line and ``serde`` replaces a scalar of the wrong type
+with the field's default rather than complaining. Reading needs neither check,
+which is why ``workbench_config`` carries no part of them.
 """
 
 # doc-group: platform
@@ -32,12 +36,16 @@ from workbench_config import (
     SCHEMA_PATH,
     ConfigError,
     ConfigKeyError,
+    ConfigValueError,
     container_config_path,
     defines_key,
     global_config_path,
     project_config_path,
     read_yaml,
     schema_accepts,
+    schema_at,
+    schema_type,
+    surface_schema,
     yaml_dump,
 )
 
@@ -156,6 +164,52 @@ def check_key(key: str) -> KeyCheck:
     return KeyCheck(KeyVerdict.UNKNOWN_INSTALLED, key, str(path))
 
 
+def coerce_value(key: str, value: str) -> bool | int | float | str:
+    """``value`` as the scalar the field behind ``key`` actually holds.
+
+    Everything arriving here is a string, because everything comes off a command
+    line, and the file has to end up holding a real YAML scalar. ``serde``
+    restores an int from ``"3"`` but refuses a bool from ``"true"`` on purpose —
+    ``bool("false")`` is ``True``, so guessing there invents a value rather than
+    recovering one — which makes a boolean written as a quoted string a key that
+    reads back as the field's default with nothing said.
+
+    Raises ``ConfigValueError`` when the string is not one the field could hold.
+    A field whose type the schema does not name keeps its string, permissive in
+    the same direction ``schema_type`` and the key walk are.
+    """
+    wanted = schema_type(schema_at(surface_schema(), key) or {})
+    if wanted == "boolean":
+        spelled = value.strip().lower()
+        if spelled not in ("true", "false"):
+            raise ConfigValueError(
+                f"{key} is true or false, and {value!r} is neither")
+        return spelled == "true"
+    if wanted in ("integer", "number"):
+        try:
+            return int(value) if wanted == "integer" else float(value)
+        except ValueError:
+            raise ConfigValueError(
+                f"{key} is a{'n' if wanted == 'integer' else ''} {wanted}, "
+                f"and {value!r} is not one") from None
+    return value
+
+
+def _yq_assignment(key: str, value: bool | int | float | str) -> str:
+    """The ``yq`` expression that writes *value* under *key* with its own type.
+
+    A string goes through ``strenv`` so the shell never sees it and yq never
+    reinterprets it. A bool or a number is spelled into the expression instead,
+    because ``strenv`` would quote it back into a string — and it is safe to
+    spell because ``coerce_value`` has already parsed it out of the input.
+    """
+    if isinstance(value, bool):
+        return f".{key} = {'true' if value else 'false'}"
+    if isinstance(value, (int, float)):
+        return f".{key} = {value}"
+    return f".{key} = strenv(WB_CONFIG_VALUE)"
+
+
 def set_value(key: str, value: str, path: Path | None = None) -> None:
     """Write one dotted key into a config file, creating it if needed.
 
@@ -164,21 +218,24 @@ def set_value(key: str, value: str, path: Path | None = None) -> None:
     them, which is why it is second rather than first.
 
     Raises ``ConfigError`` when the write cannot happen — a caller running in a
-    Claude hook has one exception type to catch, whichever writer ran — and the
-    ``ConfigKeyError`` subclass when ``key`` is not one the workbench reads.
+    Claude hook has one exception type to catch, whichever writer ran — with the
+    ``ConfigKeyError`` subclass when ``key`` is not one the workbench reads and
+    ``ConfigValueError`` when ``value`` is not one the field can hold.
 
-    ``check_key`` is what decides, and it asks the installed workbench as well
-    as this checkout. Both files this writes are shared — the global one by
-    every repo on the machine, a project one by everybody who clones the repo —
-    and ``serde`` drops an unrecognised key on the way back in. Without the
-    check the write reports success and the value is simply gone, which is a
-    rule quietly not applying rather than anything anybody can see.
+    ``check_key`` decides the first, and asks the installed workbench as well as
+    this checkout; ``coerce_value`` decides the second. Both files this writes
+    are shared — the global one by every repo on the machine, a project one by
+    everybody who clones the repo — and ``serde`` drops an unrecognised key, and
+    replaces a scalar of the wrong type with the default, on the way back in.
+    Without the checks the write reports success and the value is simply gone,
+    which is a rule quietly not applying rather than anything anybody can see.
     """
     if path is None:
         path = global_config_path()
     check = check_key(key)
     if not check.ok:
         raise ConfigKeyError(f"not writing {path}: {check.reason}")
+    typed = coerce_value(key, value)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(CONFIG_HEADER + "\n")
@@ -186,13 +243,13 @@ def set_value(key: str, value: str, path: Path | None = None) -> None:
         env = dict(os.environ, WB_CONFIG_VALUE=value)
         try:
             subprocess.run(
-                ["yq", "-i", f".{key} = strenv(WB_CONFIG_VALUE)", str(path)],
+                ["yq", "-i", _yq_assignment(key, typed), str(path)],
                 check=True, timeout=timeouts.LOCAL, env=env,
             )
         except subprocess.SubprocessError as exc:
             raise ConfigError(f"could not write {key} to {path}: {exc}") from exc
         return
-    _set_value_with_pyyaml(path, key, value)
+    _set_value_with_pyyaml(path, key, typed)
 
 
 def set_project_value(key: str, value: str, project_root: Path | str) -> None:
@@ -234,7 +291,9 @@ def set_container_value(key: str, value: str, project_root: Path | str) -> None:
     set_value(key, value, path)
 
 
-def _set_value_with_pyyaml(path: Path, key: str, value: str) -> None:
+def _set_value_with_pyyaml(
+    path: Path, key: str, value: bool | int | float | str,
+) -> None:
     if yaml is None:
         raise ConfigError("neither yq nor PyYAML is available to write config")
     # PyYAML re-renders the document, so every comment in it is lost. The

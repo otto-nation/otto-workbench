@@ -1,8 +1,3 @@
----
-paths:
-  - "**/*.sh"
----
-
 # Bash / Shell
 
 ## Shebang & Invocation

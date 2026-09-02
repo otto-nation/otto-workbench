@@ -1,13 +1,3 @@
----
-paths:
-  - "**/*.env*"
-  - "**/taskfile.env"
-  - "**/gitconfig*"
-  - "**/setup.sh"
-  - "**/setup.conf"
-  - "**/lib/ai/**"
----
-
 # Security
 
 ## Secrets and Credentials

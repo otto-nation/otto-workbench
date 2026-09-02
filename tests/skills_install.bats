@@ -175,6 +175,35 @@ _run_summary() {
   [[ "$output" == *"$HOME/.claude/skills/mysymlink was not installed by the workbench"* ]]
 }
 
+@test "a dangling symlink into a retired source path inside the workbench is pruned" {
+  _make_skill anatomy
+  _run_step
+
+  # What an earlier release of this step left on real machines: a symlink it
+  # wrote itself, pointing at a source directory that has since moved. The
+  # target no longer exists and is under no current layer root, but it is
+  # inside the checkout, so the workbench owns the leftover and clears it.
+  ln -s "$FAKE_WORKBENCH/ai/claude/skills/context" "$HOME/.claude/skills/context"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -L "$HOME/.claude/skills/context" ]
+  [[ "$output" != *"was not installed by the workbench"* ]]
+}
+
+@test "a dangling symlink into the retired override path is pruned" {
+  _make_skill anatomy
+  _run_step
+
+  ln -s "$TMPDIR/config/overrides/ai/claude/skills/context" \
+    "$HOME/.agents/skills/context"
+
+  _run_step
+  [ "$status" -eq 0 ]
+  [ ! -L "$HOME/.agents/skills/context" ]
+  [[ "$output" != *"was not installed by the workbench"* ]]
+}
+
 @test "an agent-backed skill installs to Pi only, with the protocol spliced in" {
   _make_skill reviewer reviewer
   _make_agent reviewer "REVIEW PROTOCOL BODY"

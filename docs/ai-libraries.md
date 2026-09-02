@@ -460,11 +460,32 @@ prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
 costs nothing.
 
-One builder per phase assembles the sections `review_prompt_sections` renders
-into a `PromptBuilder`. Which phase reaches which builder, which template it
-renders, and which file the agent is told to write are `review_registry`'s: it
-holds the phase-to-builder table and `build_prompt`, which dispatches on it
-and imports the builders from here.
+One builder per phase assembles the sections `review_prompt_sections` and
+`review_prompt_prior` render into a `PromptBuilder`. Which phase reaches which
+builder, which template it renders, and which file the agent is told to write
+are `review_registry`'s: it holds the phase-to-builder table and
+`build_prompt`, which dispatches on it and imports the builders from here.
+
+### review_prompt_prior.py
+
+What a prompt says about the review that came before it.
+
+A re-review is shown the prior review scoped to the files it is reviewing,
+stripped of the sections that were bookkeeping rather than findings, annotated
+with what the author said in reply to each finding, and followed by the
+instruction that asks for a disposition for every finding it carries.
+
+Scoping the prior review to a group's files cuts it a finding at a time, and
+where a finding stops is `review_spans`'s `finding_spans` — the same measure
+the gates that trim a finished review use. A section that measured it here
+would quote an agent evidence belonging to a finding it was not shown.
+
+`_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
+an agent; both sections here interpolate it rather than restating it, and
+`review_reconcile` is what reads the ledger back afterwards.
+
+Everything else a prompt says about the PR is `review_prompt_sections`'s, and
+which sections a phase asks for is `review_prompt`'s.
 
 ### review_prompt_sections.py
 
@@ -476,13 +497,9 @@ nothing in this module decides which sections a phase asks for or what order
 they run in.
 
 Which sections a phase asks for is `review_prompt`'s, and how much room they
-get is `review_budget`'s.
-
-Scoping the prior review to the files a group is reviewing cuts it a finding
-at a time, and where a finding stops is `review_spans`'s `finding_spans` — the
-same measure the gates that trim a finished review use. A section that
-measured it here would quote an agent evidence belonging to a finding it was
-not shown.
+get is `review_budget`'s. What a prompt says about the *prior* review — the
+scoped findings, the ledger instruction, the thread annotations — is
+`review_prompt_prior`'s.
 
 Not to be confused with `review_sections`, which is the posting pipeline's
 config-driven registry of sections already written to a review document —
@@ -782,11 +799,26 @@ looking like a fresh set of prior findings.
 
 The ledger this module reads is not the only account of what became of a
 prior finding. Every finding posted inline opened a review thread,
-independent of that ledger, and what the author did with that thread —
-answered it, argued with it, resolved it — is the other one. `fetch_reply_threads`
-classifies those threads into `ReplyState` and matches each back to the finding
-ID its root comment declared, so a re-review can read the thread's account of
-a finding beside the ledger's.
+independent of that ledger, and what the author did with that thread is the
+other one — `review_reply_threads` reads it.
+
+### review_reply_threads.py
+
+What the author did with the threads the prior review's findings opened.
+
+Every finding posted inline opened a review thread, and what the author did
+with that thread — answered it, argued with it, resolved it — is an account of
+the finding independent of the `## Prior findings` ledger `review_reconcile`
+reads. `fetch_reply_threads` classifies each thread into a `ReplyState` and
+matches it back to the finding ID its root comment declared, so a re-review can
+read the thread's account of a finding beside the ledger's.
+
+Only a thread whose first comment is the reviewing bot's own counts. A thread
+the author opened is a comment on the PR rather than a reply to a finding, and
+there is no finding for it to be an account of.
+
+Fetching is `pr_comments`'s; what a re-review is shown of the result is
+`review_prompt_sections`' and `review_prompt_prior`'s.
 
 ### review_spans.py
 

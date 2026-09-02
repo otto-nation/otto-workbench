@@ -40,7 +40,7 @@ from review_phases import (
     read_scan, run_phase,
 )
 from review_prompt import PromptTooLarge
-from review_prompt_sections import _scope_prior_review
+from review_prompt_prior import _scope_prior_review
 from review_reconcile import passed_over
 from review_registry import build_prompt
 from review_retry import GroupFailure, _has_output, _retry_missing_output

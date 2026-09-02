@@ -42,16 +42,18 @@ from pr_thread_models import (
 )
 from review_document import SECTION_PRIOR_FINDINGS
 from review_issue import CreatedIssue, IssueDelivery, IssueResult
-from review_reconcile import (
+from review_reply_threads import (
     ReplyThreads, _classify_thread_for_rereview, _match_thread_to_finding,
     fetch_reply_threads,
 )
 from review_format import format_inline_comment
 from review_types import SEVERITIES, Finding, ReplyState
+from review_prompt_prior import (
+    _annotate_with_thread_state, _build_prior_section, _strip_internal_sections,
+)
 from review_prompt_sections import (
-    _annotate_with_thread_state, _build_prior_section,
-    _build_reply_threads_section, _strip_internal_sections,
-    _format_general_comments, _format_review_comments, _format_reviews,
+    _build_reply_threads_section, _format_general_comments,
+    _format_review_comments, _format_reviews,
 )
 
 
@@ -327,21 +329,21 @@ class TestMatchThreadToFinding:
 
 class TestFetchReplyThreads:
     def test_empty_when_no_bot_login(self):
-        with patch("review_reconcile.get_bot_login", return_value=""), \
-             patch("review_reconcile.fetch_threads", return_value=[]):
+        with patch("review_reply_threads.get_bot_login", return_value=""), \
+             patch("review_reply_threads.fetch_threads", return_value=[]):
             result = fetch_reply_threads("owner/repo", "42")
         assert result == ReplyThreads(threads=[], summary={})
 
     def test_empty_when_no_threads(self):
-        with patch("review_reconcile.get_bot_login", return_value="bot"), \
-             patch("review_reconcile.fetch_threads", return_value=[]):
+        with patch("review_reply_threads.get_bot_login", return_value="bot"), \
+             patch("review_reply_threads.fetch_threads", return_value=[]):
             result = fetch_reply_threads("owner/repo", "42")
         assert result == ReplyThreads(threads=[], summary={})
 
     def test_warns_when_the_fetch_raises(self):
-        with patch("review_reconcile.get_bot_login", return_value="bot"), \
-             patch("review_reconcile.fetch_threads", side_effect=RuntimeError("boom")), \
-             patch("review_reconcile.log.warn") as warn:
+        with patch("review_reply_threads.get_bot_login", return_value="bot"), \
+             patch("review_reply_threads.fetch_threads", side_effect=RuntimeError("boom")), \
+             patch("review_reply_threads.log.warn") as warn:
             result = fetch_reply_threads("owner/repo", "42")
         assert result == ReplyThreads(threads=[], summary={})
         assert warn.call_count == 1
@@ -364,8 +366,8 @@ class TestFetchReplyThreads:
                 )},
             },
         ]
-        with patch("review_reconcile.get_bot_login", return_value="bot"), \
-             patch("review_reconcile.fetch_threads", return_value=threads):
+        with patch("review_reply_threads.get_bot_login", return_value="bot"), \
+             patch("review_reply_threads.fetch_threads", return_value=threads):
             result = fetch_reply_threads("owner/repo", "42")
         assert len(result.threads) == 1
         assert result.threads[0]["finding_id"] == "M1"
@@ -383,8 +385,8 @@ class TestFetchReplyThreads:
                 "comments": {"nodes": _make_comments(("bot", "**[S1]** Issue"))},
             },
         ]
-        with patch("review_reconcile.get_bot_login", return_value="bot"), \
-             patch("review_reconcile.fetch_threads", return_value=threads):
+        with patch("review_reply_threads.get_bot_login", return_value="bot"), \
+             patch("review_reply_threads.fetch_threads", return_value=threads):
             result = fetch_reply_threads("owner/repo", "42")
         states = {t["state"] for t in result.threads}
         assert ReplyState.RESOLVED in states
@@ -412,8 +414,8 @@ class TestFetchReplyThreads:
                 ("alice", "However, the error is handled upstream"),
             )},
         }]
-        with patch("review_reconcile.get_bot_login", return_value="bot"), \
-             patch("review_reconcile.fetch_threads", return_value=threads):
+        with patch("review_reply_threads.get_bot_login", return_value="bot"), \
+             patch("review_reply_threads.fetch_threads", return_value=threads):
             result = fetch_reply_threads("owner/repo", "42")
 
         assert result.threads[0]["finding_id"] == "M1"

@@ -59,7 +59,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-components` | Validates all component framework contracts — Tier 1 sync_<name>() presence, Tier 2 registry consistency |
 | `validate-migrations` | Validates migration file naming, function naming, and shebang conventions |
 | `validate-errexit` | Validates bash scripts for dangerous && patterns that silently exit under set -e |
-| `validate-skills` | Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing |
+| `validate-skills` | Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing, agent-to-skill coverage |
 | `validate-cli-flags` | Validates CLI flag conventions — no --repo alias, --pr/--branch mutual exclusivity |
 | `validate-worktree-guards` | Validates that ctx.worktree_root is never dereferenced without a guard or require_worktree() |
 | `validate-timeouts` | Validates that every subprocess timeout comes from the ai/lib/timeouts.py tiers |

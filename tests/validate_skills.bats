@@ -505,3 +505,37 @@ _make_agent_skill() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"caps it at 1024"* ]]
 }
+
+# ── Agent coverage ───────────────────────────────────────────────────────────
+
+@test "an agent file with no skill and no allowlist entry fails" {
+  # The omission this task fixes: debugger, incident and migrate each had an
+  # agent file and no skill for a whole phase, and nothing said so.
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents"
+  printf -- '---\nname: orphan\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/orphan.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"orphan"* ]]
+}
+
+@test "an agent with a matching skill passes" {
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+  printf -- '---\nname: paired\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
+
+  _run_validate --quiet
+  [[ "$output" != *"never reaches Pi"* ]]
+}
+
+@test "a programmatic agent needs no skill" {
+  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents"
+  printf -- '---\nname: changelog\n---\nbody\n' \
+    > "$FAKE_WORKBENCH/ai/claude/agents/changelog.md"
+
+  _run_validate --quiet
+  [ "$status" -eq 0 ]
+}

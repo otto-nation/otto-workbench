@@ -13,6 +13,7 @@
 #   - agent (optional) resolves to an ai/claude/agents/<name>.md file
 #   - invocation is required unless the skill declares an agent
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
+#   - every non-programmatic agent has a matching agent-backed skill
 #
 # Exit code: 0 if all checks pass (or no skills found), 1 if any fail.
 
@@ -45,6 +46,23 @@ FOUND=0
 
 _pass() { CHECKS=$(( CHECKS + 1 )); $QUIET || echo -e "  ${GREEN}✓${NC} $*"; }
 _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
+
+# Agents invoked by task automation and by the review pipeline, never by a
+# situation match. A description-triggered skill for one of these would be a
+# surface no human ever wants hit, so they are exempt from needing a skill.
+PROGRAMMATIC_AGENTS=(changelog ci-cd explain reviewer-lite)
+
+# _agent_is_programmatic NAME — whether NAME is dispatched by code rather than
+# matched to a situation.
+_agent_is_programmatic() {
+  local known
+  for known in "${PROGRAMMATIC_AGENTS[@]}"; do
+    if [[ "$1" == "$known" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 _validate_skill_name_standard() {
   local name="$1" display="$2"
@@ -230,15 +248,39 @@ for skill_dir in "$SKILLS_DIR"/*/; do
   _validate_output_schema "$skill_file" "$display"
 done
 
+# Every situation-matched agent must have a skill, or Pi never learns the
+# protocol. Claude reads the agent file either way, which is exactly why the gap
+# is invisible without this check — debugger, incident and migrate each had an
+# agent file and no skill for a whole phase and nothing said so.
+AGENTS_DIR="$WORKBENCH_DIR/ai/claude/agents"
+for agent_file in "$AGENTS_DIR"/*.md; do
+  [[ -f "$agent_file" ]] || continue
+  agent_name="$(basename "$agent_file" .md)"
+  if _agent_is_programmatic "$agent_name"; then
+    continue
+  fi
+  if [[ -f "$WORKBENCH_DIR/ai/skills/$agent_name/SKILL.md" ]]; then
+    _pass "agents/$agent_name: reaches Pi as a skill"
+  else
+    _fail "agents/$agent_name: has no ai/skills/$agent_name/SKILL.md, so its protocol never reaches Pi — add an agent-backed skill stub or list it in PROGRAMMATIC_AGENTS"
+  fi
+done
+
 # Summary
 echo
 if (( FOUND == 0 )); then
   echo -e "  ${DIM}no skill directories found${NC}"
-  exit 0
-elif (( ERRORS == 0 )); then
-  success "$CHECKS checks passed ($FOUND skills)"
-  exit 0
-else
+fi
+
+# FOUND == 0 no longer implies a clean run: the agent-coverage loop above can
+# fail with no skill directories present at all — an agent with no ai/skills/
+# tree whatsoever is a finding, not an empty run.
+if (( ERRORS > 0 )); then
   err "$ERRORS of $CHECKS checks failed"
   exit 1
+elif (( FOUND == 0 )); then
+  exit 0
+else
+  success "$CHECKS checks passed ($FOUND skills)"
+  exit 0
 fi

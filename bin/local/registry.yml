@@ -42,7 +42,7 @@ tools:
   - name: validate-skills
     permission: false
     visibility: brief
-    description: "Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing"
+    description: "Validates SKILL.md frontmatter conventions — required fields, name/directory consistency, lifecycle field pairing, agent-to-skill coverage"
 
   - name: validate-cli-flags
     permission: false

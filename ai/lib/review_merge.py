@@ -74,7 +74,7 @@ from review_document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument,
 )
 from review_grammar import (
-    ANNOTATE_FINDING_RE, FINDING_ID_RE, TRIAGE_LINE_RE,
+    ANNOTATE_FINDING_RE, FINDING_ID_RE, SEVERITY_KEY, TRIAGE_LINE_RE,
     DedupKey, FindingIdentity, parse_ledger_line,
 )
 from review_spans import cut_spans, finding_spans
@@ -102,16 +102,16 @@ _REFERENCE_CUES = (
 )
 
 
-_ID_PREFIXES = "".join(severity.key for severity in SEVERITIES)
-
 # Every way a review names a finding: `[M1]`, and a cited bare `M1`. One pattern
 # over every prefix rather than one per prefix, because a rewrite may move a
 # reference from one severity to another — a duplicate filed under the wrong one
 # is merged into a survivor that carries the right one — and a pass per prefix
-# would then hand what it just wrote to the next pass.
+# would then hand what it just wrote to the next pass. Which prefixes those are
+# is `review_grammar`'s `SEVERITY_KEY`, the same class every reader of a finding
+# ID goes through.
 _ID_REFERENCE_RE = re.compile(
-    rf"\[([{_ID_PREFIXES}])(\d+)\]"
-    rf"|(\b(?i:{_REFERENCE_CUES})\s+)([{_ID_PREFIXES}])(\d+)(?![\d\]])"
+    rf"\[({SEVERITY_KEY})(\d+)\]"
+    rf"|(\b(?i:{_REFERENCE_CUES})\s+)({SEVERITY_KEY})(\d+)(?![\d\]])"
 )
 
 

@@ -34,10 +34,21 @@ import re
 from dataclasses import dataclass
 
 from review_types import (
-    Finding, FindingLocation, FindingRef, LedgerEntry, PriorDisposition,
+    SEVERITIES, Finding, FindingLocation, FindingRef, LedgerEntry,
+    PriorDisposition,
 )
 
 # ── The head of a declaration ────────────────────────────────────────────────
+
+# The one character class a finding ID's severity key is read through, derived
+# from the severities `review_types` declares rather than spelled out beside
+# them. Every reader here matched a key its own way — `[MSNI]` in four,
+# `[A-Z]` in two, `\w+` in one — so a key outside the set was a finding ID to
+# three of them and not to the rest.
+#
+# The narrow reading is the right one: `SEVERITIES` says what a severity key
+# can be, and a bracketed token whose key is outside it is not a finding ID.
+SEVERITY_KEY = f"[{''.join(severity.key for severity in SEVERITIES)}]"
 
 # The head of a finding declaration: a list item opening with the bold ID,
 # carrying the fix pass's checkbox and a resolved finding's strikethrough when
@@ -46,13 +57,13 @@ from review_types import (
 FINDING_ID_RE = re.compile(
     r"^- (?:\[([ x])\] )?"
     r"(?:~~)?"
-    r"\*\*\[([MSNI])(\d+)\](?:\*\*)?"
+    rf"\*\*\[({SEVERITY_KEY})(\d+)\](?:\*\*)?"
     r"\s+"
     r"(?:<!-- sid:\w+ -->\s+)?"
 )
 
 # A finding's ID wherever it appears, declaration or reference.
-BOLD_FINDING_ID_RE = re.compile(r"\*\*\[([MSNI]\d+)\]\*\*")
+BOLD_FINDING_ID_RE = re.compile(rf"\*\*\[({SEVERITY_KEY}\d+)\]\*\*")
 
 # A declaration the review struck through, which is how it says the finding was
 # resolved. It ends the body above it and opens nothing.
@@ -65,7 +76,7 @@ STRIKETHROUGH_RE = re.compile(r"^- ~~\*\*\[")
 # findings still open. The marker is deliberately outside the match — the
 # annotator asks whether the line already carries one before it writes another.
 ANNOTATE_FINDING_RE = re.compile(
-    r"^(- (?:\[ \] )?\*\*\[[A-Z]\d+\]\*\*)\s+"
+    rf"^(- (?:\[ \] )?\*\*\[{SEVERITY_KEY}\d+\]\*\*)\s+"
 )
 
 
@@ -277,7 +288,7 @@ def parse_ledger_line(raw: str) -> LedgerEntry | None:
 # and a greedy space run cannot walk past the real filename.
 VERIFY_FINDING_RE = re.compile(
     r"^- (?:\[ \] )?"
-    r"\*\*\[([MSNI])(\d+)\]\*\*"
+    rf"\*\*\[({SEVERITY_KEY})(\d+)\]\*\*"
     r"\s+(?:<!-- sid:\w+ -->\s+)?"
     rf"(?:\*\*[`]?([^`*\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`]?\*\*"
     rf"|[`]([^`\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`])"
@@ -291,7 +302,7 @@ VERIFY_FINDING_RE = re.compile(
 # the `:\d+` is required here where every other reader has it optional.
 SCOPED_FINDING_RE = re.compile(
     r"- (?:\[[ x]\] )?"                       # optional checkbox
-    r"\*\*\[[A-Z]\d+\]\*\*"                   # finding ID
+    rf"\*\*\[{SEVERITY_KEY}\d+\]\*\*"          # finding ID
     r"\s+(?:<!-- sid:\w+ -->\s+)?"             # optional stable ID
     r"(?:\*\*)?[`]?(\S+?)[`]?(?:\*\*)?:\d+"   # path with optional bold/backtick wrapping
 )
@@ -302,7 +313,7 @@ SCOPED_FINDING_RE = re.compile(
 # against one already there. Scanned with `finditer` over a whole comment body,
 # which is why it is the one reader here carrying `re.MULTILINE`.
 BODY_FINDING_RE = re.compile(
-    r"^- \*\*\[[MSNI]\d+\]\*\*\s+"
+    rf"^- \*\*\[{SEVERITY_KEY}\d+\]\*\*\s+"
     r"(?:\*\*`?([^`*\s]+?)`?\*\*|`([^`\s]+?)`)"
     rf"{LINE_SUFFIX}"
     r"\s*—\s*(.*)",
@@ -319,7 +330,7 @@ TRIAGE_LINE_RE = re.compile(r"^- `([^`]+)`\s")
 # ── The identity two findings are compared on ────────────────────────────────
 
 _FINDING_PATH_RE = re.compile(
-    r"^- (?:\[ \] )?\*\*\[\w+\d+\]\*\*"
+    rf"^- (?:\[ \] )?\*\*\[{SEVERITY_KEY}\d+\]\*\*"
     r"\s+(?:<!-- sid:\w+ -->\s+)?"
     r"\*\*(?:`([^`]+)`|([^*]+))\*\*"
 )

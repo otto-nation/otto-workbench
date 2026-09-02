@@ -16,8 +16,26 @@
 # No adoption-sensitive header: ~/.local/bin and Homebrew's prefix are neither
 # the config root nor the state root, so legacy-root adoption never re-seeds
 # what this writes.
+#
+# Gated on the recorded ai.tools selection because migrations are not: every
+# */migrations directory is globbed unconditionally and run before the component
+# state gate, so this file executes on a machine that chose only claude. Every
+# other migration on this branch edits files; this one downloads and runs a
+# network payload, which would install an agent the operator declined — once,
+# silently, and recorded as applied.
 
 migration_20260902_replace_shadow_pi() {
+  local tool selected=false
+  while IFS= read -r tool; do
+    if [[ "$tool" == "pi" ]]; then selected=true; fi
+  done < <(state_get_list "ai.tools")
+
+  # NOOP, not deferred: an operator who adds pi later gets the managed copy from
+  # step_install_pi, which this migration exists only to reach behind.
+  if [[ "$selected" != true ]]; then
+    return "$MIGRATION_NOOP"
+  fi
+
   # NOOP, not deferred: a machine with no pi has nothing shadowed, and one that
   # installs pi later gets the managed copy from step_install_pi.
   [[ -x "$PI_NATIVE_BIN" ]] && return "$MIGRATION_NOOP"

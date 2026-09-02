@@ -260,17 +260,6 @@ _emit_tasks_block() {
   printf '```\n'
 }
 
-# _extract_frontmatter_field FILE FIELD — reads a YAML frontmatter field from a markdown file.
-_extract_frontmatter_field() {
-  local file="$1" field="$2"
-  sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null \
-    | grep "^${field}:" \
-    | sed "s/^${field}:[[:space:]]*//" \
-    | sed 's/^"\(.*\)"$/\1/' \
-    | head -1 \
-    || true
-}
-
 _emit_ai_installs() {
   # Derive display paths from constants, replacing $HOME prefix with ~
   local claude_home="~${CLAUDE_DIR#"$HOME"}"
@@ -319,7 +308,7 @@ _emit_ai_installs() {
     fi
     local agent_name agent_desc
     agent_name="$(basename "${f%.md}")"
-    agent_desc="$(_extract_frontmatter_field "$f" "description")"
+    agent_desc="$(frontmatter_field "$f" description)"
     [[ -z "$agent_desc" ]] && agent_desc="—"
     printf '| %s | %s |\n' "$agent_name" "$agent_desc"
   done
@@ -376,12 +365,12 @@ _emit_skill_reference() {
 
     local skill_name skill_desc invocation output cadence trigger skip output_tool
     skill_name="$(basename "$d")"
-    skill_desc="$(_extract_frontmatter_field "$skill_file" "description")"
-    invocation="$(_extract_frontmatter_field "$skill_file" "invocation")"
-    output="$(_extract_frontmatter_field "$skill_file" "output")"
-    cadence="$(_extract_frontmatter_field "$skill_file" "lifecycle_cadence")"
-    trigger="$(_extract_frontmatter_field "$skill_file" "trigger")"
-    skip="$(_extract_frontmatter_field "$skill_file" "skip")"
+    skill_desc="$(frontmatter_field "$skill_file" description)"
+    invocation="$(frontmatter_field "$skill_file" invocation)"
+    output="$(frontmatter_field "$skill_file" output)"
+    cadence="$(frontmatter_field "$skill_file" lifecycle_cadence)"
+    trigger="$(frontmatter_field "$skill_file" trigger)"
+    skip="$(frontmatter_field "$skill_file" skip)"
     output_tool=$(awk '
       NR==1 && /^---$/ { in_fm=1; next }
       in_fm && /^---$/ { exit }

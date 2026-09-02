@@ -12,23 +12,25 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review_collect import (
-    MAX_PROMPT_BYTES, MIN_DIFF_BYTES, format_preflight_data,
+from review_budget import (
+    FileFit, MAX_DELTA_LIST_ENTRIES, MAX_PROMPT_BYTES, MIN_DIFF_BYTES, fit_files,
 )
+from review_collect import format_preflight_data
 from review_types import (
-    PRContext, PreflightData, PRMetadata, PriorDisposition, ReviewJob,
+    FindingRef, PRContext, PreflightData, PriorDisposition, PriorFinding,
+    PRMetadata, ReviewJob,
 )
 from agent_types import Effort, Mode, Phase
 from dataclasses import asdict
 
-from review_merge import FindingRef, PriorFinding, _parse_ledger_line
-from review_prompt import (
-    _LEDGER_INSTRUCTION, _PROMPT_BUILDERS, BudgetLever, Cut,
-    MAX_DELTA_LIST_ENTRIES,
-    _build_ci_failure_items, _build_common_sections, _build_delta_section,
+from review_grammar import parse_ledger_line
+from review_prompt import BudgetLever, Cut, _build_common_sections, _fit_budget
+from review_prompt_sections import (
+    _LEDGER_INSTRUCTION, _build_ci_failure_items, _build_delta_section,
     _build_env_section, _build_omitted_guidance, _build_pr_header,
-    _build_unaccounted_section, _fit_budget,
+    _build_unaccounted_section,
 )
+import review_registry
 from ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr_domains import CIDomain
 
@@ -249,11 +251,12 @@ def _make_job(preflight=None, mode=Mode.PR):
 
 class TestFitBudget:
     def test_returns_remaining_when_within_budget(self):
-        job = _make_job(_make_preflight(claude_md="", architecture_md=""))
+        pf = _make_preflight(claude_md="", architecture_md="")
+        job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"})
         assert plan.diff_bytes > MIN_DIFF_BYTES
         assert plan.cuts == ()
-        assert not plan.skip_file_contents
+        assert plan.files.included == pf.file_contents
 
     def test_clamps_to_min_diff_by_default(self):
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
@@ -293,10 +296,10 @@ class TestFitBudget:
         pf = _make_preflight(file_contents={"gen.pb.go": "y" * 400_000})
         job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"}, file_filter=["gen.pb.go"])
-        assert plan.skip_file_contents
+        assert not plan.files.any_included
         assert plan.cuts[0].lever is BudgetLever.FILE_CONTENTS
         assert plan.cuts[0].freed_bytes == 400_000
-        assert plan.cuts[0].describe() == "390KB of pre-collected file contents"
+        assert plan.cuts[0].describe() == "390KB of pre-collected file contents (1 file)"
 
     def test_the_delta_is_cut_before_the_diff_is_floored(self):
         pf = _make_preflight(
@@ -316,6 +319,63 @@ class TestFitBudget:
             len(plan.delta_section.encode()) + plan.diff_bytes
             <= MAX_PROMPT_BYTES
         )
+
+
+class TestBudgetKeepsTheFilesItCanAfford:
+    """An over-ceiling prompt drops the lowest-ranked files, not all of them.
+
+    The collector already ranked the files by tier and size and kept what fit.
+    When the prompt went over anyway, the ladder threw the whole collection
+    away — including the files there was still room for — so a large PR was
+    reviewed with no file contents at all rather than with most of them.
+    """
+
+    def test_a_partial_drop_keeps_what_still_fits(self):
+        # One file that cannot fit beside the others, and two small ones that can.
+        pf = _make_preflight(file_contents={
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "small_a.py": "y" * 1_000,
+            "small_b.py": "z" * 1_000,
+        })
+        plan = _fit_budget(_make_job(pf), {"header": "small"})
+
+        assert plan.files.included, "the ladder dropped every file"
+        assert "huge.py" in plan.files.omitted
+        assert set(plan.files.included) == {"small_a.py", "small_b.py"}
+
+    def test_the_cut_counts_the_files_it_dropped(self):
+        pf = _make_preflight(file_contents={
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "small_a.py": "y" * 1_000,
+        })
+        plan = _fit_budget(_make_job(pf), {"header": "small"})
+
+        cut = next(c for c in plan.cuts if c.lever is BudgetLever.FILE_CONTENTS)
+        assert cut.dropped_files == 1
+        assert "1 file" in cut.describe()
+
+    def test_a_dropped_file_is_named_to_the_agent(self):
+        """A file the budget drops joins the list the prompt tells the agent to read.
+
+        Dropping contents without naming them leaves the agent told its files
+        are in the prompt and shown neither them nor their names.
+        """
+        pf = _make_preflight(file_contents={
+            "huge.py": "x" * (MAX_PROMPT_BYTES - 50_000),
+            "small_a.py": "y" * 1_000,
+        })
+        plan = _fit_budget(_make_job(pf), {"header": "small"})
+
+        text = format_preflight_data(pf, files=plan.files)
+        assert "- huge.py" in text
+        assert "Files not pre-collected" in text
+
+    def test_nothing_fitting_is_still_a_clean_drop(self):
+        pf = _make_preflight(file_contents={"huge.py": "x" * (MAX_PROMPT_BYTES * 2)})
+        plan = _fit_budget(_make_job(pf), {"header": "small"})
+
+        assert plan.files.included == {}
+        assert not plan.files.any_included
 
 
 class TestCutSurvivesTheJournal:
@@ -341,6 +401,7 @@ class TestCutSurvivesTheJournal:
             "freed_bytes": 400_000,
             "shortfall_bytes": 0,
             "floor_bytes": 0,
+            "dropped_files": 0,
         }
 
 
@@ -358,7 +419,8 @@ class TestDroppedContentsAreDeclared:
 
     def test_skipping_contents_still_names_the_files(self):
         pf = _make_preflight(file_contents={"a.py": "x", "b.py": "y"})
-        text = format_preflight_data(pf, skip_file_contents=True)
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
+        text = format_preflight_data(pf, files=dropped_all)
         assert "### Changed file contents" not in text
         assert "### Files not pre-collected (read directly)" in text
         assert "- a.py" in text
@@ -366,33 +428,52 @@ class TestDroppedContentsAreDeclared:
 
     def test_skipping_contents_does_not_double_list_omitted_files(self):
         pf = _make_preflight(file_contents={"a.py": "x"}, omitted_files=["big.go"])
-        text = format_preflight_data(pf, skip_file_contents=True)
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
+        text = format_preflight_data(pf, files=dropped_all)
         assert text.count("- big.go") == 1
         assert "- a.py" in text
 
     def test_env_section_sends_the_agent_to_the_worktree(self):
         pf = _make_preflight()
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         kept = _build_env_section("/tmp/w", preflight=pf)
-        dropped = _build_env_section("/tmp/w", preflight=pf, skip_file_contents=True)
+        dropped = _build_env_section("/tmp/w", preflight=pf, files=dropped_all)
         assert "File contents and diffs are in the Pre-collected data section" in kept
         assert "file contents are not" in dropped
         assert "Files not pre-collected" in dropped
 
+    def test_nothing_to_fit_is_not_a_drop(self):
+        """An empty fit with nothing omitted is not the same as a fit that lost everything.
+
+        `_fit_budget` starts every plan at `FileFit(scoped, ..., [])`, so a
+        `file_filter` scoping a section to zero collected files produces this
+        exact shape with no budget cut involved. Reading it as "dropped
+        everything" tells the agent to batch-read a "Files not pre-collected"
+        list that was never populated.
+        """
+        pf = _make_preflight(file_contents={}, omitted_files=[])
+        nothing_to_fit = FileFit({}, {}, [])
+        text = _build_env_section("/tmp/w", preflight=pf, files=nothing_to_fit)
+        assert "File contents and diffs are in the Pre-collected data section" in text
+        assert "file contents are not" not in text
+
     def test_omitted_guidance_asks_for_the_batch_read(self):
         pf = _make_preflight(omitted_files=[])
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         assert _build_omitted_guidance(pf) == ""
         assert "Files not pre-collected" in _build_omitted_guidance(
-            pf, skip_file_contents=True,
+            pf, files=dropped_all,
         )
 
     def test_skip_omitted_does_not_silence_dropped_contents(self):
         """The effort preset declines the large files, not every file."""
         pf = _make_preflight(omitted_files=["big.go"])
+        dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         assert "not reviewed at this effort level" in _build_omitted_guidance(
             pf, skip_omitted=True,
         )
         assert "Files not pre-collected" in _build_omitted_guidance(
-            pf, skip_omitted=True, skip_file_contents=True,
+            pf, skip_omitted=True, files=dropped_all,
         )
 
 
@@ -405,8 +486,8 @@ class TestSharedPromptBodies:
     def _vars(self, phase, output, mode=Mode.PR, **extra):
         job = _make_job(_make_preflight(), mode=mode)
         common = _build_common_sections(job, max_turns=10)
-        builder, _ = _PROMPT_BUILDERS[phase](job, common, extra, output)
-        return builder.vars
+        built = review_registry.for_phase(phase).build(job, common, extra, output)
+        return built.builder.vars
 
     def test_scout_and_holistic_are_the_same_prompt(self):
         """One builder, two artifacts: the phase spec is the whole difference.
@@ -415,7 +496,10 @@ class TestSharedPromptBodies:
         the builder is what keeps them that way — a section added for one is
         added for both, and the file each writes is the spec's answer.
         """
-        assert _PROMPT_BUILDERS[Phase.HOLISTIC] is _PROMPT_BUILDERS[Phase.SCOUT]
+        assert (
+            review_registry.for_phase(Phase.HOLISTIC).build
+            is review_registry.for_phase(Phase.SCOUT).build
+        )
         holistic = self._vars(Phase.HOLISTIC, "/tmp/h.md")
         scout = self._vars(Phase.SCOUT, "/tmp/s.md")
         assert holistic.keys() == scout.keys()
@@ -457,7 +541,8 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         return job
 
     def test_a_prompt_over_the_budget_raises(self, tmp_path):
-        from review_prompt import PromptTooLarge, build_prompt
+        from review_prompt import PromptTooLarge
+        from review_registry import build_prompt
 
         job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge) as exc:
@@ -466,7 +551,8 @@ class TestBuildPromptRefusesAnOversizedPrompt:
 
     def test_the_oversized_prompt_is_on_disk_to_look_at(self, tmp_path):
         """The stats are written before the raise, so the run is diagnosable."""
-        from review_prompt import PromptTooLarge, build_prompt
+        from review_prompt import PromptTooLarge
+        from review_registry import build_prompt
 
         job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge):
@@ -476,7 +562,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         assert (tmp_path / "prompt-scout.md").exists()
 
     def test_an_ordinary_prompt_still_renders(self, tmp_path):
-        from review_prompt import build_prompt
+        from review_registry import build_prompt
 
         prompt = build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         assert len(prompt.encode()) <= MAX_PROMPT_BYTES
@@ -527,15 +613,15 @@ class TestUnaccountedPriorSection:
             group_count=1, merged_content="m", holistic_content="h",
             unaccounted_prior=[self.M1],
         )
-        builder, _ = _PROMPT_BUILDERS[Phase.SYNTHESIS](job, common, extra, "/tmp/r.md")
-        assert "drops the error" in builder.vars["prior_section"]
+        built = review_registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
+        assert "drops the error" in built.builder.vars["prior_section"]
 
     def test_a_synthesis_prompt_with_nothing_left_over_says_nothing(self):
         job = _make_job(_make_preflight())
         common = _build_common_sections(job, max_turns=10)
         extra = dict(group_count=1, merged_content="m", holistic_content="h")
-        builder, _ = _PROMPT_BUILDERS[Phase.SYNTHESIS](job, common, extra, "/tmp/r.md")
-        assert builder.vars["prior_section"] == ""
+        built = review_registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
+        assert built.builder.vars["prior_section"] == ""
 
 
 # ── The ledger instruction and the ledger parser ────────────────────────────
@@ -569,6 +655,6 @@ class TestLedgerInstructionParses:
         examples = self._examples()
         assert examples, "the instruction shows no ledger lines"
         for example in examples:
-            entry = _parse_ledger_line(example)
+            entry = parse_ledger_line(example)
             assert entry, f"the instruction's example does not parse: {example}"
             assert entry.disposition and entry.disposition.value in example

@@ -33,6 +33,7 @@ import review_gc
 import review_phases
 import review_pipeline
 import review_state
+import review_steps
 
 _MAX_TURNS_RECORD = json.dumps({
     "type": "result", "subtype": "error_max_turns", "is_error": True,
@@ -139,9 +140,9 @@ def job(tmp_path):
 def run(monkeypatch):
     """Run the pipeline with a scripted agent, returning that agent."""
     # Both modules bind build_prompt: the phases build the group prompts,
-    # review_pipeline builds the synthesis one.
+    # review_steps builds the synthesis one.
     monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
-    monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review_steps, "build_prompt", lambda *a, **k: "PROMPT")
 
     def _run(
         job, fails=None, denied=None, costs=None,

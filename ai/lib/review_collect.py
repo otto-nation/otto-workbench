@@ -10,11 +10,10 @@ behind it describes itself out of the worktree, off the same fork point and the
 same `worktree_diff` the collection uses. Its counterpart for a branch that does
 have a PR is `review_github.fetch_pr_metadata`, and both fill in `PRMetadata`.
 
-The budget is this module's subject as much as the collection is. Every bound
-on what a prompt may carry is a constant here, and `_fit_to_budget` is the one
-place that decides which files a review can afford to inline — so a phase
-asking for less diff and a collector deciding what to gather read the same
-numbers. How the collected files are ranked and divided is `review_grouping`'s,
+The bounds on what a prompt may carry are `review_budget`'s, not this module's —
+`_fit_to_budget` is still here, and is the one place that decides which files a
+review can afford to inline, reading the same numbers `review_prompt` budgets
+against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
 fills in are `review_types`'.
 """
@@ -33,37 +32,17 @@ import git_client
 import log
 import pr_context
 from agent_types import Mode
+from review_budget import (
+    FILE_CONTENT_DENSITY_THRESHOLD, FILE_CONTENT_MIN_SIZE, FileFit,
+    MAX_COMMIT_LOG_BYTES, MAX_DELTA_DIFF_BYTES, MAX_DELTA_LOG_BYTES,
+    MAX_FILE_BYTES, MAX_PROMPT_BYTES, MAX_TRUNCATED_LINES,
+    TEMPLATE_OVERHEAD_BYTES, fit_files, fixed_preflight_bytes,
+)
 from review_document import ReviewHeader
 from review_grouping import (
     classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
 from review_types import PreflightData, PRMetadata, ReviewJob
-
-# ── Byte budgets ──────────────────────────────────────────────────────────────
-
-MAX_PROMPT_TOKENS = 120_000
-MAX_PROMPT_BYTES = MAX_PROMPT_TOKENS * 4
-TEMPLATE_OVERHEAD_BYTES = 20_000
-MAX_FILE_BYTES = 100_000
-MAX_TRUNCATED_LINES = 500
-MAX_COMMIT_LOG_BYTES = 50_000
-MAX_DELTA_DIFF_BYTES = 80_000
-MAX_DELTA_LOG_BYTES = 20_000
-
-# ceiling: a flat reserve for everything in a prompt that is not preflight data —
-# the template, the PR header, prior reviews, reply threads. `review_prompt` now
-# measures those sections exactly before it budgets, so this double-counts them:
-# on a typical prompt it holds back ~116KB nothing spends, and the review is
-# smaller than it had room to be. Shrinking it is not free — every byte returned
-# is a byte of diff sent to the model, so it raises per-review cost, which is why
-# it is left as-is while review cost is what is being worked on. Upgrade when a
-# phase reports a cut in its prompt stats that this reserve alone would have
-# covered, or once per-review cost has a budget of its own to spend it against.
-NON_PREFLIGHT_OVERHEAD_BYTES = 120_000
-MIN_DIFF_BYTES = 20_000
-
-FILE_CONTENT_DENSITY_THRESHOLD = 0.15
-FILE_CONTENT_MIN_SIZE = 5120
 
 
 # ── Git reads ────────────────────────────────────────────────────────────────
@@ -482,38 +461,31 @@ def _fit_to_budget(
     all_permissions: dict[str, str],
     file_changes: dict[str, int],
     base_size: int,
-) -> tuple[dict[str, str], dict[str, str], list[str]]:
+) -> FileFit:
+    """Which of `all_contents` a review can afford, at collection time.
+
+    Drops low-density files first — large ones `file_changes` shows only a
+    sliver of, where the diff already carries what changed — then ranks
+    whatever is left by `(classify_tier, size)` and keeps what fits in
+    `MAX_PROMPT_BYTES` once `base_size` (the diff, the commit log, and the
+    rest of the fixed overhead) is spent.
+    """
     density_skipped = [
         p for p, c in all_contents.items()
         if _is_low_density(p, c, file_changes)
     ]
     candidates = {p: c for p, c in all_contents.items() if p not in set(density_skipped)}
-
-    file_sizes = {p: len(c.encode()) for p, c in candidates.items()}
-    sorted_paths = sorted(candidates, key=lambda p: (classify_tier(p), file_sizes[p]))
-
-    included: dict[str, str] = {}
-    included_perms: dict[str, str] = {}
-    budget_omitted: list[str] = []
-    remaining = max(0, MAX_PROMPT_BYTES - base_size)
-    for path in sorted_paths:
-        if file_sizes[path] <= remaining:
-            included[path] = candidates[path]
-            included_perms[path] = all_permissions[path]
-            remaining -= file_sizes[path]
-        else:
-            budget_omitted.append(path)
-
-    omitted = density_skipped + budget_omitted
+    fit = fit_files(candidates, all_permissions, MAX_PROMPT_BYTES - base_size)
+    omitted = density_skipped + fit.omitted
 
     if density_skipped:
         density_kb = sum(len(all_contents[p].encode()) for p in density_skipped) // 1024
         log.info(f"Skipped {len(density_skipped)} low-density files (~{density_kb}KB) — diff sufficient")
     if omitted:
         omitted_kb = sum(len(all_contents.get(p, "").encode()) for p in omitted) // 1024
-        log.info(f"Pre-collected {len(included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
+        log.info(f"Pre-collected {len(fit.included)}/{len(all_contents)} files ({len(omitted)} omitted, ~{omitted_kb}KB)")
 
-    return included, included_perms, omitted
+    return FileFit(fit.included, fit.permissions, omitted)
 
 
 def collect_preflight_data(job: ReviewJob) -> PreflightData:
@@ -529,28 +501,25 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
 
     base_size = (
         len(diff.encode())
-        + len(commit_log.encode())
-        + len(claude_md.encode())
-        + len(architecture_md.encode())
-        + sum(len(v.encode()) for v in review_checklists.values())
+        + fixed_preflight_bytes(
+            commit_log, claude_md, architecture_md, review_checklists,
+        )
         + TEMPLATE_OVERHEAD_BYTES
     )
-    included, included_perms, omitted = _fit_to_budget(
-        all_contents, all_permissions, file_changes, base_size,
-    )
+    fit = _fit_to_budget(all_contents, all_permissions, file_changes, base_size)
 
     delta_diff, delta_commit_log, delta_files, prior_head_sha = _collect_delta(job)
 
     return PreflightData(
         diff=diff,
         commit_log=commit_log,
-        file_contents=included,
-        file_permissions=included_perms,
+        file_contents=fit.included,
+        file_permissions=fit.permissions,
         claude_md=claude_md,
         architecture_md=architecture_md,
         review_checklists=review_checklists,
         review_profiles=profiles,
-        omitted_files=omitted,
+        omitted_files=fit.omitted,
         delta_diff=delta_diff,
         delta_commit_log=delta_commit_log,
         delta_files=delta_files,
@@ -562,36 +531,39 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
 
 def _format_file_contents(
     data: PreflightData, file_filter: list[str] | None,
-    skip_contents: bool = False,
+    files: FileFit | None = None,
 ) -> list[str]:
     """The changed files, inlined or named, scoped to ``file_filter``.
 
-    ``skip_contents`` inlines nothing and names every in-scope file under
-    "Files not pre-collected" instead — the budget's first lever drops the
-    contents, and a file whose contents were dropped is in exactly the position
-    of one that was never collected. Saying so is what lets the agent read it:
-    the section is the only list the prompt gives it to read from, and dropping
+    ``files`` is the prompt budget's fit, if one ran. `None` means no fit ran:
+    everything ``file_filter`` admits from ``data.file_contents`` is inlined,
+    same as before this lever existed. A fit inlines only the files it kept
+    and lists every path it dropped under "Files not pre-collected" instead —
+    a file whose contents were dropped is in exactly the position of one that
+    was never collected, and saying so is what lets the agent read it: the
+    section is the only list the prompt gives it to read from, and dropping
     the contents silently used to drop the list along with them, leaving the
     agent told its files were pre-collected and shown none of them.
     """
     parts: list[str] = []
+    contents = files.included if files is not None else data.file_contents
     files_to_include = [
-        p for p in (file_filter or data.file_contents.keys())
-        if p in data.file_contents
+        p for p in (file_filter or contents.keys())
+        if p in contents
     ]
-    if files_to_include and not skip_contents:
+    if files_to_include:
         parts += ["", "### Changed file contents"]
         for path in files_to_include:
             perms = data.file_permissions.get(path, "?")
             parts.append(f"\n<file path=\"{path}\" permissions=\"{perms}\">")
-            parts.append(data.file_contents[path])
+            parts.append(contents[path])
             parts.append("</file>")
 
     omitted = data.omitted_files
     if file_filter:
         omitted = [p for p in omitted if p in set(file_filter)]
-    if skip_contents:
-        omitted = files_to_include + [p for p in omitted if p not in data.file_contents]
+    if files is not None:
+        omitted = files.omitted + [p for p in omitted if p not in data.file_contents]
     if omitted:
         parts += ["", "### Files not pre-collected (read directly)"]
         for path in omitted:
@@ -635,16 +607,18 @@ def build_project_context(
 def format_preflight_data(
     data: PreflightData,
     file_filter: list[str] | None = None,
-    skip_file_contents: bool = False,
+    files: FileFit | None = None,
     skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
 ) -> str:
     """The "Pre-collected data" block a phase's prompt carries.
 
-    ``file_filter`` scopes the diff and the file contents to one group's files.
-    ``skip_file_contents`` and ``skip_project_context`` are the budget's levers,
-    and ``max_diff_bytes`` caps the diff itself — whatever each drops is named
-    in the block rather than left out of it.
+    ``file_filter`` scopes the diff and the file contents to one group's
+    files. ``files`` is the budget's fit — `None` inlines everything
+    ``file_filter`` admits, and a fit inlines only what it kept and names what
+    it dropped. ``skip_project_context`` is the budget's other lever, and
+    ``max_diff_bytes`` caps the diff itself — whatever each drops is named in
+    the block rather than left out of it.
     """
     parts = [
         "## Pre-collected data",
@@ -664,9 +638,7 @@ def format_preflight_data(
     if data.commit_log:
         parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
 
-    parts += _format_file_contents(
-        data, file_filter, skip_contents=skip_file_contents,
-    )
+    parts += _format_file_contents(data, file_filter, files=files)
 
     if diff_omitted:
         parts += ["", "### Diffs not pre-collected (use `git diff -- <path>` or Read tool)"]

@@ -1,9 +1,10 @@
-"""Tests for `review_merge` — what happens to findings across reviews.
+"""Tests for `review_merge` — merging group reviews into one document.
 
-Merging a review's groups into one document, the stable IDs that give a finding
-an identity later reviews can recognise, and reading the prior review's ledger.
-Reconciling this review against the prior one is the same module's other half
-and lives in `test_review_reconcile.py`.
+Folding the group reviews together, deduplicating and renumbering findings,
+unioning the prior-findings ledger across groups, and the stable IDs that give
+a finding an identity later reviews can recognise. Reconciling this review
+against the prior one is `review_reconcile`'s job, tested in
+`test_review_reconcile.py`.
 """
 
 import sys
@@ -15,60 +16,39 @@ if LIB_DIR not in sys.path:
 
 import review_merge
 from review_document import SECTION_PRIOR_FINDINGS
+from review_grammar import FindingIdentity
 from review_types import SEVERITIES, PriorDisposition
 
 
-class TestStripStableIds:
-    def test_removes_sid_comments(self):
-        text = '- **[M1]** <!-- sid:abc12345 --> **`file.go:42`** — desc\n'
-        result = review_merge.strip_stable_ids(text)
-        assert "<!-- sid:" not in result
-        assert "**[M1]** **`file.go:42`**" in result
-
-    def test_no_sids_unchanged(self):
-        content = "- **[M1]** **`file.go:42`** — desc\n"
-        assert review_merge.strip_stable_ids(content) == content
-
-
-class TestFindingPathReCheckbox:
-    def test_matches_checkbox_format(self):
-        line = '- [ ] **[M1]** **`handler.go:42`** — desc'
-        m = review_merge._FINDING_PATH_RE.match(line)
-        assert m is not None
-        path = (m.group(1) or m.group(2) or "")
-        assert "handler.go" in path
-
-    def test_matches_with_stable_id(self):
-        line = '- **[M1]** <!-- sid:abc --> **`handler.go:42`** — desc'
-        m = review_merge._FINDING_PATH_RE.match(line)
-        assert m is not None
+def _stable_id(path: str, desc: str) -> str:
+    return FindingIdentity(path, None, desc).stable_id
 
 
 class TestComputeStableId:
     def test_deterministic(self):
-        a = review_merge.compute_stable_id("pkg/handler.go", "missing error check on db.Query()")
-        b = review_merge.compute_stable_id("pkg/handler.go", "missing error check on db.Query()")
+        a = _stable_id("pkg/handler.go", "missing error check on db.Query()")
+        b = _stable_id("pkg/handler.go", "missing error check on db.Query()")
         assert a == b
 
     def test_eight_hex_chars(self):
-        sid = review_merge.compute_stable_id("file.go", "desc")
+        sid = _stable_id("file.go", "desc")
         assert len(sid) == 8
         assert all(c in "0123456789abcdef" for c in sid)
 
     def test_case_insensitive_path(self):
-        a = review_merge.compute_stable_id("Pkg/Handler.go", "desc")
-        b = review_merge.compute_stable_id("pkg/handler.go", "desc")
+        a = _stable_id("Pkg/Handler.go", "desc")
+        b = _stable_id("pkg/handler.go", "desc")
         assert a == b
 
     def test_different_descriptions_differ(self):
-        a = review_merge.compute_stable_id("file.go", "missing error check")
-        b = review_merge.compute_stable_id("file.go", "unused import")
+        a = _stable_id("file.go", "missing error check")
+        b = _stable_id("file.go", "unused import")
         assert a != b
 
     def test_truncates_description_at_80(self):
         desc_80 = "x" * 80
         desc_100 = desc_80 + "y" * 20
-        assert review_merge.compute_stable_id("f.go", desc_80) == review_merge.compute_stable_id("f.go", desc_100)
+        assert _stable_id("f.go", desc_80) == _stable_id("f.go", desc_100)
 
 
 class TestAnnotatePriorWithStableIds:
@@ -175,12 +155,6 @@ class TestMergeReviewsCleanup:
         assert "---" not in result
 
 
-PRIOR_ONE_FINDING = (
-    "## Must fix\n"
-    "- **[M1]** **`handler.go:42`** — missing error check\n"
-)
-
-
 class TestPriorDisposition:
     def test_parses_the_word_the_prompt_asks_for(self):
         assert PriorDisposition.parse("Fixed") is PriorDisposition.FIXED
@@ -223,24 +197,6 @@ class TestPriorDisposition:
             > PriorDisposition.FIXED.precedence
         )
 
-
-class TestParsePriorFindings:
-    """Reconciliation's view of the prior review — see test_review_reconcile.py."""
-
-    def test_a_findings_quotation_below_its_first_line_travels_with_it(self):
-        prior = (
-            PRIOR_ONE_FINDING
-            + "  The call reads `rows, _ := db.Query(sql)` today.\n"
-            + "- **[M2]** **`cache.go:9`** — stale entry\n"
-        )
-        first, second = review_merge._parse_prior_findings(prior)
-        assert "rows, _ := db.Query(sql)" in first.text
-        assert "rows, _ := db.Query(sql)" not in second.text
-
-    def test_a_findings_text_stops_at_the_next_section(self):
-        prior = PRIOR_ONE_FINDING + "\n## Verdict\nRequest changes.\n"
-        first = review_merge._parse_prior_findings(prior)[0]
-        assert "Request changes" not in first.text
 
 # ── 3. shifting one group's IDs ─────────────────────────────────────────────
 
@@ -819,31 +775,31 @@ class TestDedupTriage:
         assert review_merge._dedup_triage("") == ""
 
 
-# ── 10. _finding_dedup_key ──────────────────────────────────────────────────
+# ── 10. FindingIdentity ─────────────────────────────────────────────────────
 
 
 class TestFindingDedupKey:
     def test_standard_finding(self):
         line = "- **[M1]** **`pkg/handler.go:42`** — missing error check"
-        result = review_merge._finding_dedup_key(line)
+        result = FindingIdentity.of(line)
         assert result is not None
         assert "handler.go" in result.path
         assert "missing error check" in result.desc
 
     def test_checkbox_finding(self):
         line = "- [ ] **[S1]** **`handler.go:10`** — issue here"
-        result = review_merge._finding_dedup_key(line)
+        result = FindingIdentity.of(line)
         assert result is not None
         assert "handler.go" in result.path
 
     def test_stable_id(self):
         line = "- **[M1]** <!-- sid:abc12345 --> **`file.go:1`** — desc"
-        result = review_merge._finding_dedup_key(line)
+        result = FindingIdentity.of(line)
         assert result is not None
         assert "file.go" in result.path
 
     def test_non_finding_line(self):
-        assert review_merge._finding_dedup_key("just some text") is None
+        assert FindingIdentity.of("just some text") is None
 
 
 # ── 11. _dedup_findings ─────────────────────────────────────────────────────

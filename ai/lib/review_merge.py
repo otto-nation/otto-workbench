@@ -1,23 +1,24 @@
-"""What becomes of findings across the reviews that report them.
+"""What becomes of findings as the group reviews are folded into one document.
 
-Three jobs over one vocabulary: merging the group reviews into a single
-document, giving each finding an identity that outlives the review carrying
-it, and reconciling what the previous review reported against what this one
-did. They live together because they read the same finding line — the path and
-description that decide whether two findings are duplicates are the pair that
-hashes to a stable ID, and a stable ID is how reconciliation recognises a
-finding a later review restates.
+Two jobs over one vocabulary: merging the group reviews into a single
+document, and giving each finding an identity that outlives the review
+carrying it. They live together because they act on the same identity — the
+path and description that decide whether two findings are duplicates are the
+pair that hashes to a stable ID, and a stable ID is how a later reconciliation
+recognises a finding a review restates.
 
-Reading a review is `review_document`'s job, checking findings against the
-tree is `review_verify`'s, and the `Finding` every side holds is
-`review_types`' — a consumer that only holds findings needs none of this.
+Reading that identity off a finding line is `review_grammar`'s job, not this
+module's: `FindingIdentity` answers both questions, so deduplication and
+carry-forward cannot come to different conclusions about one line. Reading a
+review is `review_document`'s job, checking findings against the tree is
+`review_verify`'s, and the `Finding` every side holds is `review_types`' — a
+consumer that only holds findings needs none of this. Deciding what became of
+a finding the prior review reported is `review_reconcile`'s.
 
-Where a finding's body ends is `review_document`'s too. Deduplication and the
+Where a finding's body ends is `review_spans`'s. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
 `cut_spans`, so a duplicate takes exactly the lines out of the merged document
-that a falsified finding does. Each keeps its own head pattern for *which*
-declarations it wants — `_finding_dedup_key` and `_ANNOTATE_FINDING_RE` read
-different things off a finding line — and neither says where one stops.
+that a falsified finding does. Neither says where one stops.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -59,142 +60,28 @@ own group declared; one that names anything else becomes ``[removed]`` as the
 group's IDs are shifted past the groups before it. Deferring that to the
 merge-wide pass would misdirect it: group provenance is gone by then, and the
 pooled map answers with whichever group happens to have declared that number.
-
-Reconciliation is the cross-review half. A re-review ends with a `## Prior
-findings` ledger: one line per finding the previous review reported, saying
-whether the change fixed it, left it open, or declined it. The ledger is
-bookkeeping — it is stripped before the review is published — and it is written
-by the agent that has just spent its attention on the review itself, so it is
-the first thing to come up short.
-
-Coming up short used to mean a line on stderr and nothing else. `reconcile`
-replaces that with a disposition for every prior finding and a record of them
-that outlives the run. A finding the ledger passes over is not automatically
-unaccounted for: whether the file it names is still in the tree, and whether
-the code it quotes is still in that file, are questions the worktree answers
-without asking an agent anything. Only what neither the review nor the tree
-settles is reported as undecided, and every record says which of the two
-settled it, so an inference is never read back as a statement.
-
-Reporting is not the only outcome. `passed_over` asks the same question one
-phase early, against the merged group findings, and hands back the findings
-neither the groups nor the tree settled — while there is still an agent that
-can decide them, rather than after the document is written and the only thing
-left to do is warn.
-
-The record is a sidecar in the review directory rather than a section of the
-review. Reconciliation parses its input for finding-shaped lines, so a
-reconciliation written into the review would come back to the next round
-looking like a fresh set of prior findings.
-
-The ledger is not the only account of what became of a prior finding. Every
-finding posted inline opened a review thread, and what the author did with that
-thread — answered it, argued with it, resolved it — is the other one.
-`fetch_reply_threads` classifies those threads into `ReplyState` and matches
-each back to the finding ID its root comment declared, so a re-review reads both
-accounts of the same set of findings.
 """
 
 # doc-group: findings
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 
-import git_client
-import log
-import serde
-from pr_comments import _is_acknowledgment, _is_pushback, fetch_threads
-from review_dedup import _get_bot_login
 from review_document import (
-    BOLD_FINDING_ID_RE, FINDING_ID_RE, SECTION_FILE_TRIAGE,
-    SECTION_PRIOR_FINDINGS, FindingSpan, ReviewDocument, ReviewHeader,
-    cut_spans, finding_location, finding_spans, parse_finding_line,
+    SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument,
 )
-from review_github import PRData
-from review_paths import FILENAME_PRIOR_FINDINGS, review_artifact_path
+from review_grammar import (
+    ANNOTATE_FINDING_RE, FINDING_ID_RE, SEVERITY_KEY, TRIAGE_LINE_RE,
+    DedupKey, FindingIdentity, has_sid_marker, parse_ledger_line, sid_marker,
+)
+from review_spans import cut_spans, finding_spans
 from review_types import (
-    DISPOSITION_TAIL_PUNCTUATION, SEVERITIES, PriorDisposition, ReplyState,
+    SEVERITIES, FindingRef, FindingSpan, LedgerEntry,
     disposition_precedence,
 )
-from text import plural
-
-
-# ── Prior-finding vocabulary ─────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class FindingRef:
-    """How a re-review names a prior finding: its ID and its path.
-
-    The pair travels together because neither half identifies a finding on its
-    own — IDs are per-review sequence numbers and one file holds many findings.
-    """
-
-    finding_id: str = ""
-    path: str = ""
-
-    @property
-    def label(self) -> str:
-        """How the reference reads in a log line.
-
-        A reference with no path is the ID alone rather than the ID and an
-        empty pair of backticks — the line is already reporting that nothing
-        read a path off the finding, and printing `` there says it twice.
-        """
-        if not self.path:
-            return self.finding_id
-        return f"{self.finding_id} `{self.path}`".strip()
-
-
-@dataclass(frozen=True)
-class LedgerEntry:
-    """One `## Prior findings` line: a prior finding, and what became of it."""
-
-    ref: FindingRef
-    disposition: PriorDisposition | None
-    text: str
-
-    def covers(self, ref: FindingRef) -> bool:
-        """Whether this entry accounts for `ref`.
-
-        An entry that names no path stands on its ID alone; one that names a
-        path has to name the right one, or a single entry would account for
-        every prior finding in its file.
-        """
-        if self.ref.finding_id != ref.finding_id:
-            return False
-        return not self.ref.path or self.ref.path == ref.path
-
-
-@dataclass(frozen=True)
-class PriorFinding:
-    """A finding line from the prior review, as reconciliation sees it.
-
-    `text` runs from the finding line to whatever ends it, so a finding that
-    quotes the code it objects to below its first line keeps the quotation —
-    which is what lets reconciliation ask whether that code is still there.
-    """
-
-    ref: FindingRef
-    stable_id: str
-    text: str = ""
-
-
-def _parse_ledger_line(raw: str) -> LedgerEntry | None:
-    """The entry a ledger line carries, or None when it names no finding."""
-    parsed = parse_finding_line(raw.strip())
-    if not parsed:
-        return None
-    return LedgerEntry(
-        ref=FindingRef(parsed.id, parsed.path),
-        disposition=PriorDisposition.parse(parsed.body),
-        text=raw,
-    )
-
 
 # ── Renumbering ──────────────────────────────────────────────────────────────
 
@@ -215,16 +102,16 @@ _REFERENCE_CUES = (
 )
 
 
-_ID_PREFIXES = "".join(severity.key for severity in SEVERITIES)
-
 # Every way a review names a finding: `[M1]`, and a cited bare `M1`. One pattern
 # over every prefix rather than one per prefix, because a rewrite may move a
 # reference from one severity to another — a duplicate filed under the wrong one
 # is merged into a survivor that carries the right one — and a pass per prefix
-# would then hand what it just wrote to the next pass.
+# would then hand what it just wrote to the next pass. Which prefixes those are
+# is `review_grammar`'s `SEVERITY_KEY`, the same class every reader of a finding
+# ID goes through.
 _ID_REFERENCE_RE = re.compile(
-    rf"\[([{_ID_PREFIXES}])(\d+)\]"
-    rf"|(\b(?i:{_REFERENCE_CUES})\s+)([{_ID_PREFIXES}])(\d+)(?![\d\]])"
+    rf"\[({SEVERITY_KEY})(\d+)\]"
+    rf"|(\b(?i:{_REFERENCE_CUES})\s+)({SEVERITY_KEY})(\d+)(?![\d\]])"
 )
 
 
@@ -367,39 +254,11 @@ def _clean_section_text(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-_TRIAGE_LINE_RE = re.compile(r"^- `[^`]+`\s")
-
-
 def _clean_triage(text: str) -> str:
     return "\n".join(
         line for line in text.split("\n")
-        if _TRIAGE_LINE_RE.match(line)
+        if TRIAGE_LINE_RE.match(line)
     )
-
-
-_FINDING_PATH_RE = re.compile(
-    r"^- (?:\[ \] )?\*\*\[\w+\d+\]\*\*"
-    r"\s+(?:<!-- sid:\w+ -->\s+)?"
-    r"\*\*(?:`([^`]+)`|([^*]+))\*\*"
-)
-_FINDING_DESC_RE = re.compile(r"—\s*(.{0,80})")
-
-
-@dataclass(frozen=True)
-class FindingKey:
-    """What makes two findings the same one: where they point and what they say."""
-
-    path: str
-    desc: str
-
-
-def _finding_dedup_key(line: str) -> FindingKey | None:
-    m = _FINDING_PATH_RE.match(line)
-    if not m:
-        return None
-    path = (m.group(1) or m.group(2) or "").replace("\\_", "_").strip()
-    dm = _FINDING_DESC_RE.search(line)
-    return FindingKey(path, dm.group(1).strip().lower() if dm else "")
 
 
 def _record_merge(
@@ -433,17 +292,18 @@ class _Deduped:
 def _dedup_findings(text: str) -> _Deduped:
     """One severity's text with the repeats removed, and where each one went.
 
-    `_finding_dedup_key` chooses which declarations are candidates; how much of
+    `FindingIdentity` chooses which declarations are candidates; how much of
     the text a dropped one takes with it is `finding_spans`', so a repeat and a
     finding the disprove gate falsifies lose exactly the same lines.
     """
-    seen: dict[FindingKey, FindingId | None] = {}
+    seen: dict[DedupKey, FindingId | None] = {}
     merged_into: dict[FindingId, FindingId] = {}
     repeats: list[FindingSpan] = []
     for span in finding_spans(text):
-        key = _finding_dedup_key(span.line)
-        if key is None:
+        identity = FindingIdentity.of(span.line)
+        if identity is None:
             continue
+        key = identity.dedup_key
         if key in seen:
             repeats.append(span)
             _record_merge(merged_into, seen[key], _declaration(span.line))
@@ -476,7 +336,7 @@ def _dedup_triage(triage: str) -> str:
     seen: set[str] = set()
     lines = []
     for line in triage.split("\n"):
-        m = re.match(r"^- `([^`]+)`", line)
+        m = TRIAGE_LINE_RE.match(line)
         key = m.group(1) if m else line
         if key not in seen:
             seen.add(key)
@@ -495,7 +355,7 @@ def _dedup_ledger(ledger: str) -> str:
     seen_prose: set[str] = set()
     lines: list[str] = []
     for line in ledger.split("\n"):
-        entry = _parse_ledger_line(line)
+        entry = parse_ledger_line(line)
         if entry and entry.ref in slot:
             _keep_strongest_disposition(lines, slot[entry.ref], entry)
             continue
@@ -518,7 +378,7 @@ def _keep_strongest_disposition(
     when a later one only repeats it. The ordering is `PriorDisposition`'s —
     a still-open verdict cannot reopen a finding another group declined.
     """
-    kept = _parse_ledger_line(lines[index])
+    kept = parse_ledger_line(lines[index])
     kept_rank = disposition_precedence(kept.disposition if kept else None)
     if disposition_precedence(entry.disposition) > kept_rank:
         lines[index] = entry.text
@@ -620,680 +480,20 @@ def merge_reviews(group_files: list[str]) -> str:
 
 # ── Stable IDs for carry-forward ─────────────────────────────────────────────
 
-def compute_stable_id(path: str, desc: str) -> str:
-    key = f"{path.strip().lower()}:{desc[:80].strip().lower()}"
-    return hashlib.sha256(key.encode()).hexdigest()[:8]
-
-
-_ANNOTATE_FINDING_RE = re.compile(
-    r"^(- (?:\[ \] )?\*\*\[[A-Z]\d+\]\*\*)\s+"
-)
-
-
-def _extract_finding_path(line: str, after: str) -> str:
-    """The file a finding line names, or "" when it names none.
-
-    `finding_location` answers first because it is the same reading the rest of
-    the parser gives a location, and it is the only rung that recognises a
-    plain-backtick file with no `:<line>` after it — the shape a review writes
-    whenever the finding is about a file rather than a line of one. Reading
-    that as no path at all left the finding with no stable ID either, so
-    neither carry-forward nor the tree could account for it.
-
-    The two rungs below it are what this function used to be, kept because they
-    read locations `finding_location` declines: a bold span that is a label
-    rather than a filename, and a bare `path:12` in no span at all. Identity
-    is the point here — a finding whose location is `**Documentation**` still
-    has to hash to the same thing across reviews to be carried forward.
-    """
-    location = finding_location(after)
-    if location.named:
-        return location.path
-    path_m = _FINDING_PATH_RE.match(line)
-    if path_m:
-        path_str = (path_m.group(1) or path_m.group(2) or "").replace("\\_", "_").strip()
-        return path_str.rsplit(":", 1)[0] if ":" in path_str else path_str
-    cb_path_re = re.match(r"[`]?(\S+?)[`]?:\d+", after)
-    return cb_path_re.group(1) if cb_path_re else ""
-
-
-def _finding_stable_id(line: str, m: re.Match) -> str:
-    """The stable ID a finding line hashes to, or "" when it names no path."""
-    path_str = _extract_finding_path(line, line[m.end():])
-    if not path_str:
-        return ""
-    desc_m = _FINDING_DESC_RE.search(line)
-    return compute_stable_id(path_str, desc_m.group(1).strip() if desc_m else "")
-
-
 def _annotate_finding_line(line: str, m: re.Match) -> str:
-    sid = _finding_stable_id(line, m)
-    if not sid:
+    identity = FindingIdentity.of(line)
+    if identity is None:
         return line
-    return f"{m.group(1)} <!-- sid:{sid} --> {line[m.end():]}"
+    return f"{m.group(1)}{sid_marker(identity.stable_id)} {line[m.end():]}"
 
 
 def annotate_prior_with_stable_ids(review_text: str) -> str:
     lines = review_text.split("\n")
     result: list[str] = []
     for line in lines:
-        m = _ANNOTATE_FINDING_RE.match(line)
-        if m and "<!-- sid:" not in line:
+        m = ANNOTATE_FINDING_RE.match(line)
+        if m and not has_sid_marker(line):
             result.append(_annotate_finding_line(line, m))
         else:
             result.append(line)
     return "\n".join(result)
-
-
-def strip_stable_ids(text: str) -> str:
-    return re.sub(r" <!-- sid:\w+ -->", "", text)
-
-
-_SID_MARKER_RE = re.compile(r"<!-- sid:(\w+) -->")
-
-
-def _stable_ids(text: str) -> set[str]:
-    """Every prior-finding identity the text carries.
-
-    Both the markers in carried-forward text and the ID each finding line
-    hashes to on its own — a synthesis agent that retypes a carried finding
-    drops the marker but keeps the path and the wording, so the recomputed ID
-    is the part that survives it.
-    """
-    ids = set(_SID_MARKER_RE.findall(text))
-    for raw in text.split("\n"):
-        line = raw.strip()
-        m = _ANNOTATE_FINDING_RE.match(line)
-        if m:
-            ids.add(_finding_stable_id(line, m))
-    ids.discard("")
-    return ids
-
-
-# ── Reading the prior review ─────────────────────────────────────────────────
-
-def _parse_ledger(review_text: str) -> list[LedgerEntry]:
-    """The entries of the review's prior-findings ledger, in order."""
-    section = ReviewDocument.parse(review_text).section(SECTION_PRIOR_FINDINGS)
-    entries = (_parse_ledger_line(raw) for raw in section.split("\n"))
-    return [entry for entry in entries if entry]
-
-
-def _prior_finding(span: FindingSpan, prior_text: str) -> PriorFinding:
-    """One prior finding, read from its own line down to whatever ends it."""
-    line = span.line
-    m = _ANNOTATE_FINDING_RE.match(line)
-    label_m = BOLD_FINDING_ID_RE.search(line)
-    body = [raw.strip() for raw in span.text_of(prior_text).split("\n")]
-    return PriorFinding(
-        ref=FindingRef(
-            label_m.group(1) if label_m else "",
-            _extract_finding_path(line, line[m.end():]),
-        ),
-        stable_id=_finding_stable_id(line, m),
-        text="\n".join(body).strip(),
-    )
-
-
-def _parse_prior_findings(prior_text: str) -> list[PriorFinding]:
-    """Every finding the prior review reported, each with the text reporting it.
-
-    `_ANNOTATE_FINDING_RE` chooses which declarations count — the shape the
-    stable-ID annotator writes, which is what carry-forward matches on — and
-    `finding_spans` says how far down each one's text runs.
-    """
-    return [
-        _prior_finding(span, prior_text)
-        for span in finding_spans(prior_text)
-        if _ANNOTATE_FINDING_RE.match(span.line)
-    ]
-
-
-# ── Reconciliation against the prior review ──────────────────────────────────
-
-# The bucket a finding lands in when nothing settled it. Not a
-# `PriorDisposition` member: those are verdicts a review may state, and "no
-# verdict" is the absence of one rather than a fourth thing to state.
-UNDECIDED_LABEL = "Undecided"
-
-_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
-
-# Below this a backtick span is a token rather than a quotation — `ok`, `nil`,
-# a flag name — and it leaves a file for reasons that have nothing to do with
-# the finding that mentioned it.
-_MIN_QUOTE_CHARS = 12
-
-# How much of a quoted span a basis line reproduces before it stops being a
-# log line and starts being the code.
-_BASIS_QUOTE_CHARS = 60
-
-
-class DispositionSource(StrEnum):
-    """What settled a prior finding's disposition.
-
-    Recorded next to the disposition rather than folded into it: a verdict the
-    pipeline worked out from the tree carries less authority than one the
-    review stated, and the two must never be read as the same claim.
-    """
-
-    LEDGER = "ledger"
-    CARRIED = "carried"
-    TREE = "tree"
-    NONE = "none"
-
-    @property
-    def stated(self) -> bool:
-        """Whether the review said this, rather than the pipeline inferring it."""
-        return self in (DispositionSource.LEDGER, DispositionSource.CARRIED)
-
-
-class UndecidedReason(StrEnum):
-    """Why a finding reached no verdict.
-
-    Undecided is only a useful warning while it means "the review passed this
-    by". Three of the four members below are something else — two of them a
-    line this pipeline could not read, one a check it was in no position to run
-    — and lumping them in with the omissions is what turns the warning into
-    noise the reader learns to skip.
-
-    Declaration order is the order `_report` prints the groups: the ones a
-    reader can act on come first.
-    """
-
-    UNREADABLE_VERDICT = "unreadable verdict"
-    NO_LOCATION = "no location parsed"
-    NOT_MENTIONED = "not accounted for"
-    NOT_CHECKABLE = "not checkable"
-
-    @property
-    def heading(self) -> str:
-        """How the group reads above the findings in it."""
-        return _UNDECIDED_HEADINGS[self]
-
-
-_UNDECIDED_HEADINGS = {
-    UndecidedReason.UNREADABLE_VERDICT: "the ledger names these but states no verdict this could read",
-    UndecidedReason.NO_LOCATION: "these name no file this could read, so nothing could be checked",
-    UndecidedReason.NOT_MENTIONED: "neither this review nor the tree accounts for these",
-    UndecidedReason.NOT_CHECKABLE: "there was nothing to check these against",
-}
-
-
-@dataclass(frozen=True)
-class PriorRecord:
-    """One prior finding, what became of it, and how that was settled.
-
-    `disposition` is None when nothing settled it, and `reason` then says which
-    kind of nothing — the ledger naming the finding without a verdict this can
-    read is a different failure from the review never mentioning it, and only
-    the second is the review's.
-    """
-
-    ref: FindingRef = field(default_factory=FindingRef)
-    disposition: PriorDisposition | None = None
-    source: DispositionSource = DispositionSource.NONE
-    basis: str = ""
-    reason: UndecidedReason | None = None
-
-    @property
-    def decided(self) -> bool:
-        """Whether this finding reached a verdict."""
-        return self.disposition is not None
-
-
-@dataclass
-class Reconciliation:
-    """Every finding of the prior review, and what this review made of each."""
-
-    prior_sha: str = ""
-    prior_date: str = ""
-    head_sha: str = ""
-    records: list[PriorRecord] = field(default_factory=list)
-
-    @property
-    def undecided(self) -> list[PriorRecord]:
-        """The findings neither the review nor the tree accounted for."""
-        return [record for record in self.records if not record.decided]
-
-    @property
-    def unaccounted(self) -> list[str]:
-        """How the undecided findings read in a log line."""
-        return [record.ref.label for record in self.undecided]
-
-    @property
-    def undecided_groups(self) -> list[tuple[UndecidedReason, list[PriorRecord]]]:
-        """The undecided findings by why they are, in the order they are reported."""
-        return [
-            (reason, [record for record in self.undecided if record.reason is reason])
-            for reason in UndecidedReason
-            if any(record.reason is reason for record in self.undecided)
-        ]
-
-    @property
-    def inferred(self) -> int:
-        """How many verdicts came from the tree rather than from the review."""
-        return sum(1 for r in self.records if r.source is DispositionSource.TREE)
-
-    @property
-    def counts(self) -> dict[str, int]:
-        """How many findings reached each verdict, the undecided among them."""
-        tally = {d.value: 0 for d in PriorDisposition}
-        tally[UNDECIDED_LABEL] = 0
-        for record in self.records:
-            key = record.disposition.value if record.decided else UNDECIDED_LABEL
-            tally[key] += 1
-        return tally
-
-    @property
-    def tally(self) -> str:
-        """The counts as a log line, with the empty buckets left out."""
-        parts = [f"{n} {label}" for label, n in self.counts.items() if n]
-        if self.inferred:
-            parts.append(f"{self.inferred} inferred from the tree")
-        return ", ".join(parts)
-
-    @property
-    def range_label(self) -> str:
-        """The pair of trees the reconciliation compared, as far as it knows them."""
-        ends = [git_client.abbrev(sha) for sha in (self.prior_sha, self.head_sha) if sha]
-        return " → ".join(ends) if len(ends) == 2 else (ends[0] if ends else "an unnamed commit")
-
-
-@dataclass(frozen=True)
-class _Inference:
-    """What the tree says about a prior finding, and why it says it.
-
-    `reason` is what the finding falls to when the tree settles nothing, and
-    defaults to the review's own omission because that is what most of the
-    tree's silences mean: it looked, and found the finding's subject intact.
-    """
-
-    disposition: PriorDisposition | None = None
-    basis: str = ""
-    reason: UndecidedReason = UndecidedReason.NOT_MENTIONED
-
-
-@dataclass
-class _Tree:
-    """The two versions of the worktree a reconciliation compares.
-
-    Blob reads are cached because findings cluster in files — a review reports
-    four things about one module, and re-reading its prior text once per
-    finding is four `git show` calls for one answer.
-    """
-
-    wt_path: str = ""
-    prior_sha: str = ""
-    _before: dict[str, str] = field(default_factory=dict)
-
-    def infer(self, finding: PriorFinding) -> _Inference:
-        """What the tree makes of `finding`, or why it makes nothing of it."""
-        path = finding.ref.path
-        if not self.wt_path:
-            return _Inference(
-                basis="there was no worktree to check it against",
-                reason=UndecidedReason.NOT_CHECKABLE,
-            )
-        if not path:
-            return _Inference(
-                basis="it names no file",
-                reason=UndecidedReason.NO_LOCATION,
-            )
-        if not self.prior_sha:
-            return _Inference(
-                basis="the prior review names no commit to compare against",
-                reason=UndecidedReason.NOT_CHECKABLE,
-            )
-        if not (Path(self.wt_path) / path).is_file():
-            return self._absent(path)
-        return self._quotes(finding, path)
-
-    def _absent(self, path: str) -> _Inference:
-        """The verdict on a finding whose file is not in the current tree.
-
-        A file the prior commit did not hold either was never this finding's
-        subject — the path was misread — so its absence now settles nothing.
-        """
-        if not self._existed(path):
-            return _Inference(basis=f"`{path}` is in neither tree")
-        return _Inference(PriorDisposition.FIXED, f"`{path}` is no longer in the tree")
-
-    def _existed(self, path: str) -> bool:
-        return git_client.ok("cat-file", "-e", f"{self.prior_sha}:{path}", cwd=self.wt_path)
-
-    def _before_text(self, path: str) -> str:
-        if path not in self._before:
-            blob = git_client.out("show", f"{self.prior_sha}:{path}", cwd=self.wt_path)
-            self._before[path] = _norm(blob)
-        return self._before[path]
-
-    def _quoted(self, finding: PriorFinding, path: str) -> list[str]:
-        """The spans the finding quotes that its file really held at `prior_sha`.
-
-        Quoting is how a review points at code, but a review also quotes what
-        it is merely naming: a symbol defined elsewhere, a phrase from the
-        prompt, a paraphrase of what the code ought to say instead. Requiring
-        the span to reproduce in the file's own prior text drops all three, and
-        leaves the spans whose disappearance means something happened here.
-        """
-        before = self._before_text(path)
-        spans = dict.fromkeys(m.group(1) for m in _CODE_SPAN_RE.finditer(finding.text))
-        return [
-            span for span in spans
-            if len(span) >= _MIN_QUOTE_CHARS
-            and not span.startswith(path)
-            and _norm(span) in before
-        ]
-
-    def _quotes(self, finding: PriorFinding, path: str) -> _Inference:
-        """The verdict on a finding by whether the code it quoted survived."""
-        quoted = self._quoted(finding, path)
-        if not quoted:
-            return _Inference(
-                basis=f"nothing it quotes was in `{path}` at {git_client.abbrev(self.prior_sha)}")
-        after = _norm((Path(self.wt_path) / path).read_text(errors="replace"))
-        gone = [span for span in quoted if _norm(span) not in after]
-        if not gone:
-            return _Inference(basis=f"the code it quotes is still in `{path}`")
-        # ceiling: one vanished quotation is read as the finding's subject
-        # having gone, which a large enough unrelated edit to the same file can
-        # fake. The record names the span that decided it, so a wrong call is
-        # auditable rather than silent — upgrade to matching the span against
-        # the diff hunks if a review is ever recorded as fixed on a span the
-        # change only moved.
-        basis = f"`{_shorten(gone[0])}` is no longer in `{path}`"
-        if len(gone) > 1:
-            basis += f", nor {len(gone) - 1} other span{plural(len(gone) - 1)} it quotes"
-        return _Inference(PriorDisposition.FIXED, basis)
-
-
-def _norm(text: str) -> str:
-    """Collapse whitespace, so a quotation matches code that has been rewrapped."""
-    return " ".join(text.split())
-
-
-def _shorten(span: str) -> str:
-    if len(span) <= _BASIS_QUOTE_CHARS:
-        return span
-    return span[:_BASIS_QUOTE_CHARS] + "…"
-
-
-def _settle(
-    finding: PriorFinding,
-    carried: set[str],
-    ledger: list[LedgerEntry],
-    tree: _Tree,
-) -> PriorRecord:
-    """The disposition of one prior finding, from the first source that has one.
-
-    The ledger goes first because it is the only source that can say `Declined`
-    — a judgement no amount of reading the tree recovers. A carry-forward comes
-    next and means the finding is still open, whatever the tree looks like: a
-    reviewer who just looked at the code outranks an inference about it.
-    """
-    entry = next((e for e in ledger if e.covers(finding.ref)), None)
-    if entry and entry.disposition:
-        return PriorRecord(finding.ref, entry.disposition, DispositionSource.LEDGER,
-                           "the ledger says so")
-    if finding.stable_id in carried:
-        return PriorRecord(finding.ref, PriorDisposition.STILL_OPEN,
-                           DispositionSource.CARRIED, "this review restates it")
-    inference = tree.infer(finding)
-    if inference.disposition:
-        return PriorRecord(finding.ref, inference.disposition, DispositionSource.TREE,
-                           inference.basis)
-    if entry:
-        return PriorRecord(finding.ref, None, DispositionSource.LEDGER,
-                           f'the ledger line reads "{entry.text.strip()}"',
-                           UndecidedReason.UNREADABLE_VERDICT)
-    return PriorRecord(finding.ref, None, DispositionSource.NONE, inference.basis,
-                       inference.reason)
-
-
-def reconcile(
-    prior_text: str,
-    review_text: str,
-    wt_path: str = "",
-    head_sha: str = "",
-) -> Reconciliation:
-    """What `review_text` made of every finding the prior review reported.
-
-    `wt_path` is the worktree the review was written against. Without it
-    nothing is inferred and the review's own account stands alone, which is
-    what a caller reconciling two documents rather than a run wants.
-    """
-    carried = _stable_ids(review_text)
-    ledger = _parse_ledger(review_text)
-    prior = ReviewHeader.parse(prior_text)
-    tree = _Tree(wt_path, prior.head_sha)
-    return Reconciliation(
-        prior_sha=tree.prior_sha,
-        prior_date=prior.date,
-        head_sha=head_sha or (git_client.head_sha(wt_path) if wt_path else ""),
-        records=[
-            _settle(finding, carried, ledger, tree)
-            for finding in _parse_prior_findings(prior_text)
-        ],
-    )
-
-
-def passed_over(
-    prior_text: str, review_text: str, wt_path: str = "", head_sha: str = "",
-) -> list[PriorFinding]:
-    """The prior findings `review_text` left out that the tree at `wt_path` still holds.
-
-    Findings rather than records: a `PriorRecord` says what became of a
-    finding, and a caller asking for a disposition needs the finding itself —
-    the lines the prior review wrote, to put back in front of an agent.
-
-    `head_sha` only reaches `reconcile()` to skip its own `git_client.head_sha`
-    lookup — this function never reads `Reconciliation.head_sha` itself, so a
-    caller that already has the value in hand should pass it.
-
-    Only `NOT_MENTIONED` qualifies. It is the one undecided reason that is the
-    review's own omission; the other three are this pipeline's failures — a
-    verdict it could not parse, a location it could not read, a tree it had
-    nothing to check against — and asking an agent again settles none of them.
-
-    Records come back one per finding in parse order, so the two lists are
-    zipped rather than matched on a label, which two findings in one file may
-    share.
-    """
-    if not prior_text:
-        return []
-    reconciliation = reconcile(prior_text, review_text, wt_path, head_sha)
-    return [
-        finding
-        for finding, record in zip(
-            _parse_prior_findings(prior_text), reconciliation.records, strict=True,
-        )
-        if not record.decided and record.reason is UndecidedReason.NOT_MENTIONED
-    ]
-
-
-def _write(review_file: str, reconciliation: Reconciliation) -> str:
-    """Record `reconciliation` beside `review_file`, returning the sidecar's path."""
-    path = review_artifact_path(review_file, FILENAME_PRIOR_FINDINGS)
-    serde.write_json(Path(path), serde.to_dict(reconciliation))
-    return path
-
-
-def _report(reconciliation: Reconciliation, sidecar: str = "") -> None:
-    """Say what was reconciled, against which review, and what is left undecided.
-
-    An undecided finding is a gap in the bookkeeping, not a defect in the code,
-    so the line says what was checked before it says what was missed — a
-    warning that only ever names findings reads as a defect report and trains
-    the reader to skip it.
-
-    The undecided are then printed by `UndecidedReason` rather than as one
-    list, because they are not one thing: a line this could not read is a
-    defect here and says what shape would have parsed, while a finding the
-    review passed by is a defect there. Run together they read as the second,
-    which is how six unreadable verdicts once reported as six omissions.
-    """
-    if not reconciliation.records:
-        return
-    total = len(reconciliation.records)
-    scope = (
-        f"{total} prior finding{plural(total)} across {reconciliation.range_label}"
-        f": {reconciliation.tally}"
-    )
-    undecided = reconciliation.undecided
-    if not undecided:
-        log.info(f"Reconciled {scope}")
-        return
-    log.warn(f"{len(undecided)} of {total} prior finding{plural(total)} undecided")
-    log.dim(f"checked {scope}")
-    for reason, records in reconciliation.undecided_groups:
-        _report_group(reason, records)
-    if sidecar:
-        log.dim(f"recorded in {sidecar}")
-
-
-def _report_group(reason: UndecidedReason, records: list[PriorRecord]) -> None:
-    """Print one reason's findings under a heading saying what the reason means."""
-    log.dim(f"{reason.heading} ({len(records)}):")
-    for record in records:
-        log.dim(f"  {record.ref.label} — {record.basis}")
-    if reason is UndecidedReason.UNREADABLE_VERDICT:
-        log.dim(f"  {_VERDICT_SHAPE}")
-
-
-# What to write instead, for the reader who has just been shown a line that did
-# not parse. Both the words and the punctuation come from what the parser
-# accepts, so this cannot describe a shape the parser would reject.
-_VERDICT_SHAPE = (
-    f"write one of {', '.join(d.value for d in PriorDisposition)} first, then "
-    f"end the line or break with one of: {' '.join(DISPOSITION_TAIL_PUNCTUATION)}"
-)
-
-
-def record_prior_findings(
-    review_file: str,
-    prior_text: str,
-    wt_path: str = "",
-) -> Reconciliation | None:
-    """Reconcile the review at `review_file` against `prior_text` and record it.
-
-    Runs before post-processing strips the ledger, which is the only window in
-    which the review still says what it made of the prior findings. Returns
-    None when there is nothing to reconcile — no prior review, no review file,
-    or a prior review that reported no findings.
-    """
-    path = Path(review_file)
-    if not prior_text or not path.exists():
-        return None
-    reconciliation = reconcile(prior_text, path.read_text(), wt_path)
-    if not reconciliation.records:
-        return None
-    _report(reconciliation, _write(review_file, reconciliation))
-    return reconciliation
-
-
-# ── Reply threads on the prior review ────────────────────────────────────────
-
-def _classify_thread_for_rereview(
-    comments: list[dict], is_resolved: bool, bot_login: str,
-) -> tuple[ReplyState, list[dict]]:
-    """Classify a review thread from the bot-reviewer's perspective.
-
-    Returns (state, author_replies) where author_replies are non-bot comments
-    after the first bot comment.
-    """
-    if is_resolved:
-        return ReplyState.RESOLVED, []
-
-    bot_lower = bot_login.lower()
-    author_replies = []
-    seen_bot = False
-    for c in comments:
-        login = (c.get("author") or {}).get("login", "").lower()
-        if login == bot_lower:
-            seen_bot = True
-        elif seen_bot:
-            author_replies.append(c)
-
-    if not author_replies:
-        return ReplyState.UNREPLIED, []
-
-    last_reply = author_replies[-1]
-    body = last_reply.get("body", "")
-    if _is_acknowledgment(body):
-        return ReplyState.ACKNOWLEDGED, author_replies
-    if _is_pushback(body):
-        return ReplyState.CONTESTED, author_replies
-    return ReplyState.REPLIED, author_replies
-
-
-def _match_thread_to_finding(root_body: str) -> str:
-    """Extract finding ID (e.g. 'M1') from a bot-posted review comment body."""
-    m = BOLD_FINDING_ID_RE.search(root_body)
-    return m.group(1) if m else ""
-
-
-def fetch_reply_threads(
-    repo: str, pr_number: str, bot_login: str = "",
-    pr_data: PRData | None = None,
-) -> dict:
-    """Fetch and classify reply threads on bot-authored review comments.
-
-    ``bot_login`` is the reviewer whose comments count as roots; it is read off
-    ``pr_data`` or detected when the caller does not name one. ``pr_data`` is a
-    consolidated query's answer, which the threads are taken from rather than
-    re-fetched.
-
-    Returns a dict with:
-      - threads: list of per-thread dicts with state, finding_id, replies, path, line
-      - summary: count per state
-    """
-    if not bot_login:
-        bot_login = pr_data.viewer_login if pr_data is not None else _get_bot_login()
-    if not bot_login:
-        log.warn("Could not detect bot login — skipping reply thread analysis")
-        return {"threads": [], "summary": {}}
-
-    owner, name = repo.split("/", 1)
-    try:
-        raw_threads = fetch_threads(owner, name, int(pr_number), pr_data)
-    except Exception:
-        return {"threads": [], "summary": {}}
-
-    if not raw_threads:
-        return {"threads": [], "summary": {}}
-
-    bot_lower = bot_login.lower()
-    classified = []
-    summary: dict[ReplyState, int] = {}
-
-    for thread in raw_threads:
-        comments = thread.get("comments", {}).get("nodes", [])
-        if not comments:
-            continue
-        root = comments[0]
-        root_author = (root.get("author") or {}).get("login", "").lower()
-        if root_author != bot_lower:
-            continue
-
-        is_resolved = thread.get("isResolved", False)
-        state, author_replies = _classify_thread_for_rereview(
-            comments, is_resolved, bot_login,
-        )
-        finding_id = _match_thread_to_finding(root.get("body", ""))
-
-        classified.append({
-            "state": state,
-            "finding_id": finding_id,
-            "path": thread.get("path", ""),
-            "line": thread.get("line"),
-            "replies": [
-                {
-                    "author": (r.get("author") or {}).get("login", ""),
-                    "body": r.get("body", ""),
-                }
-                for r in author_replies
-            ],
-        })
-        summary[state] = summary.get(state, 0) + 1
-
-    return {"threads": classified, "summary": summary}

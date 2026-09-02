@@ -9,22 +9,23 @@ one of them end to end.
 
 Running an agent phase is the same nine steps whichever phase it is, so there is
 one function rather than one per phase. What differs is what its artifact means
-afterwards, and that is `_SCANS` — one entry per phase, read through `read_scan`
-so the resume path and the run path cannot disagree about it.
+afterwards, and that is `review_registry`'s table, read through `read_scan` so
+the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
 share the executor and its budget rules.
 
-What a phase *produces* is somebody else's problem: the review document, the
-synthesis and the run drivers stay in review_pipeline.
+What a phase *produces* is somebody else's problem: sequencing the phases into
+a run is `review_pipeline`'s, deciding what each phase's output means for the
+run is `review_steps`', and writing the result to the review file is
+`review_outcome`'s.
 """
 
 # doc-group: pipeline
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,20 +48,15 @@ from review_paths import (
     phase_output_path,
 )
 from review_document import SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument
-from review_merge import merge_reviews
-from review_prompt import PromptTooLarge, build_prompt
+from review_prompt import PromptTooLarge
+from review_registry import PhaseScan, build_prompt, for_phase
 from review_retry import (
     GroupFailure,
     _check_serial_abort, _has_output, _is_retryable,
     _retry_hint_for, _retry_missing_output, _was_skipped,
 )
-from review_scout import format_leads_block, parse_scout_output
 from review_state import PipelineState, _update_group_done, _update_group_failed
-from review_types import (
-    FILE_STAT_FMT, SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD, Group, GroupSkip,
-    ReviewJob,
-)
-from review_verify import apply_disprove_results, parse_disprove_output
+from review_types import FILE_STAT_FMT, SEVERITIES, Group, GroupSkip, ReviewJob
 
 # The group phase's own retry ceiling, off its registry entry. Synthesis borrows
 # it as an upper bound for the same reason it always has: both are review phases
@@ -210,77 +206,35 @@ def _synthesis_max_turns(merged_content: str) -> int:
 # ── One agent phase ──────────────────────────────────────────────────────────
 
 
-def _verbatim(raw: str) -> str:
-    """A phase whose successors read its artifact exactly as it was written."""
-    return raw
-
-
-def _scout_leads(raw: str) -> str:
-    """A scout scan as the leads block a group prompt embeds.
-
-    Reports the tally as it goes, so a resumed run says what it recovered from
-    the file rather than reaching the group phases having logged nothing.
-    """
-    leads, no_scrutiny = parse_scout_output(raw)
-    log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
-    return format_leads_block(leads, no_scrutiny)
-
-
-@dataclass(frozen=True)
-class PhaseScan:
-    """What one phase's artifact means to the run, in the two places it matters.
-
-    `read` turns the raw file into what the phases after it consume — and is
-    what reports the scan, so the tally is logged wherever the file is read
-    rather than only where the agent wrote it. `without` completes the warning
-    when nothing came back — "keeping all findings" rather than a generic
-    apology, so the log says what the run lost rather than only that it lost
-    something.
-
-    Neither can live on the phase's `PhaseSpec`: `agent_types` imports nothing
-    but the standard library, and that is the point. A table here is the same
-    declaration one layer down, so a phase still spells each of these once.
-    """
-
-    without: str
-    read: Callable[[str], str] = _verbatim
-
-
-# Phase 1's two candidates each write for a successor, so each names how its
-# file becomes the block a group prompt embeds. Disprove reads as itself: it
-# edits the review document in place rather than handing anything on.
-_SCANS: dict[Phase, PhaseScan] = {
-    Phase.HOLISTIC: PhaseScan("continuing without it"),
-    Phase.SCOUT: PhaseScan("continuing without leads", read=_scout_leads),
-    Phase.DISPROVE: PhaseScan("keeping all findings"),
-}
-
-
 def _scan(phase: Phase) -> PhaseScan:
     """`phase`'s scan entry, or a `ValueError` naming the phase that owes one.
 
     Raises the way `build_prompt` and `PhaseSpec.template_for` do rather than
-    letting a bare `KeyError` out: a phase added to the registry but not to
-    `_SCANS` is a missing declaration, and the message should say so at the
-    table rather than at whichever line first indexed it.
+    letting a bare `None` through: a phase added to the registry but not to
+    `review_registry` is a missing declaration, and the message should say so
+    at the table rather than at whichever line first dereferenced it.
     """
-    scan = _SCANS.get(phase)
-    if scan is None:
+    entry = for_phase(phase)
+    if entry is None or entry.scan is None:
         raise ValueError(f"{phase} declares no scan of its own")
-    return scan
+    return entry.scan
 
 
 def read_scan(phase: Phase, raw: str) -> str:
     """`phase`'s raw artifact as the content the phases after it read.
 
     Empty in, empty out — a scan that produced nothing has no leads to render.
+    A scan with no `read` of its own hands the raw text back unchanged.
 
     Exposed alongside `run_phase` because a resumed run reaches the same file
     without running the agent that wrote it. Reading it a second way there is
     how the resume path and the run path came to disagree about what a scout
     scan is.
     """
-    return _scan(phase).read(raw) if raw else ""
+    if not raw:
+        return ""
+    scan = _scan(phase)
+    return scan.read(raw) if scan.read else raw
 
 
 def run_phase(
@@ -337,7 +291,7 @@ def run_phase(
         log.warn(f"{label} produced no output ({diagnosis.message}) — {scan.without}")
         return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
 
-    content = scan.read(Path(output).read_text())
+    content = read_scan(phase, Path(output).read_text())
     return PhaseResult.of(runner.session_log, content, output)
 
 
@@ -449,42 +403,6 @@ def _review_group(
             _update_group_done(job, i, pipeline_state)
 
     return (i, group_output, failed)
-
-
-def _phase_disprove(job: ReviewJob) -> PhaseResult:
-    review_content = Path(job.review_file).read_text() if Path(job.review_file).exists() else ""
-    counts = ReviewDocument(body=review_content).open_counts
-    ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
-    label = PHASES[Phase.DISPROVE].label
-    if ms_count == 0:
-        log.info(f"{label} skipped — no must-fix or should-fix findings")
-        return PhaseResult()
-
-    result = run_phase(
-        job, Phase.DISPROVE,
-        f"{label} — challenging {ms_count} must-fix/should-fix findings...",
-        review_content=review_content,
-    )
-    if not result.content:
-        return result
-
-    results = parse_disprove_output(result.content)
-    updated_text, summary = apply_disprove_results(review_content, results)
-    falsified = summary.get("falsified", 0)
-    if falsified > 0:
-        Path(job.review_file).write_text(updated_text)
-        log.info(f"{label}: {summary['survived']} survived, {falsified} falsified")
-        _log_disprove_falsified(summary)
-    else:
-        log.info(f"{label}: all {summary['survived']} findings survived")
-
-    return result
-
-
-def _log_disprove_falsified(summary: dict) -> None:
-    for fid in summary.get("falsified_ids", []):
-        reason = summary.get("reasons", {}).get(fid, "")
-        log.dim(f"  Falsified [{fid}]: {reason}")
 
 
 def _should_disprove(job: ReviewJob, explicit_disprove: bool | None = None) -> bool:
@@ -684,16 +602,3 @@ def _phase_group_reviews(
         )
 
     return group_outputs, failed_groups
-
-
-def _phase_merge(group_outputs: list[str], failed_groups: list[GroupFailure]) -> str:
-    log.info("Phase 3: Merging findings...")
-    merged_content = merge_reviews(group_outputs)
-
-    if failed_groups:
-        merged_content += "\n## Review gaps\n"
-        merged_content += "The following file groups were not reviewed due to agent failure:\n"
-        for failed in failed_groups:
-            merged_content += f"- {failed.group}: {failed.diagnosis.message}\n"
-
-    return merged_content

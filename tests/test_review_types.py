@@ -91,7 +91,7 @@ class TestReplyStateIsAStringOnTheWire:
     """`ReplyState` keys thread dicts and their per-state tally.
 
     Both are read back with plain strings by callers that never import the
-    enum, and `fetch_reply_threads`' answer is serialised as-is.
+    enum, and `fetch_reply_threads`' threads and summary are serialised as-is.
     """
 
     def test_members_are_their_own_string_values(self):

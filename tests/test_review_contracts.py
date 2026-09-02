@@ -36,12 +36,14 @@ import fix_engine  # noqa: E402
 import fix_tracking  # noqa: E402
 from agent_registry import PHASES, REVIEW_PHASES  # noqa: E402
 from agent_types import Mode, Phase, PhaseShape  # noqa: E402
-import review_document  # noqa: E402
 import review_fix  # noqa: E402
+import review_grammar  # noqa: E402
 import review_prompt  # noqa: E402
+import review_registry  # noqa: E402
+import review_spans  # noqa: E402
 import review_types  # noqa: E402
 from pr_state import PRIdentity, PRState  # noqa: E402
-from review_collect import MAX_PROMPT_BYTES  # noqa: E402
+from review_budget import MAX_PROMPT_BYTES  # noqa: E402
 from review_types import (  # noqa: E402
     PRContext, PreflightData, PRMetadata, ReviewJob,
 )
@@ -243,7 +245,7 @@ class TestSeverityConsistency:
 
     def test_finding_id_regex_accepts_all_severity_keys(self):
         keys = [s.key for s in review_types.SEVERITIES]
-        regex_keys = review_document.FINDING_ID_RE.pattern
+        regex_keys = review_grammar.FINDING_ID_RE.pattern
         for key in keys:
             assert key in regex_keys, f"FINDING_ID_RE does not include severity key {key}"
 
@@ -313,7 +315,7 @@ class TestFindingIdRegex:
         ids=["must-fix", "should-fix", "nit", "idiom"],
     )
     def test_standard_finding_format(self, severity, seq, line):
-        m = review_document.FINDING_ID_RE.match(line)
+        m = review_grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match: {line!r}"
         assert m.group(2) == severity
         assert int(m.group(3)) == seq
@@ -327,7 +329,7 @@ class TestFindingIdRegex:
         ids=["checkbox-M", "checkbox-S"],
     )
     def test_checkbox_format(self, line):
-        m = review_document.FINDING_ID_RE.match(line)
+        m = review_grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match checkbox format: {line!r}"
 
     @pytest.mark.parametrize(
@@ -339,12 +341,12 @@ class TestFindingIdRegex:
         ids=["strikethrough-S", "strikethrough-M"],
     )
     def test_strikethrough_format(self, line):
-        m = review_document.FINDING_ID_RE.match(line)
+        m = review_grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match strikethrough: {line!r}"
 
     def test_extracts_severity_and_seq(self):
         line = '- **[N7]** **`foo.py:1`** — trailing whitespace'
-        m = review_document.FINDING_ID_RE.match(line)
+        m = review_grammar.FINDING_ID_RE.match(line)
         assert m is not None
         assert m.group(2) == "N"
         assert m.group(3) == "7"
@@ -362,8 +364,8 @@ class TestFindingIdRegex:
             '- [x] **[N3]** `README.md:1` — typo',
             '- ~~**[I4]** **`old.go:1`** — resolved~~',
         ]:
-            assert review_document.FINDING_ID_RE.match(line)
-            assert review_document.ends_finding_body(line), (
+            assert review_grammar.FINDING_ID_RE.match(line)
+            assert review_spans.ends_finding_body(line), (
                 f"opens a finding but does not end the one above it: {line!r}"
             )
 
@@ -383,7 +385,7 @@ class TestFindingIdRegex:
             if example_re.match(line.strip())
         ]
         for line in example_lines:
-            m = review_document.FINDING_ID_RE.match(line.strip())
+            m = review_grammar.FINDING_ID_RE.match(line.strip())
             assert m is not None, (
                 f"FINDING_ID_RE does not match reviewer.md example: {line.strip()!r}"
             )
@@ -446,7 +448,7 @@ class TestSpecBodyShapesBelongToTheFindingAboveThem:
     )
     def test_no_documented_body_line_ends_the_finding(self, source, block):
         for line in _documented_body_lines(block):
-            assert not review_document.ends_finding_body(line), (
+            assert not review_spans.ends_finding_body(line), (
                 f"{source} writes this under a finding, "
                 f"but ends_finding_body reads it as a boundary: {line!r}"
             )
@@ -456,7 +458,7 @@ class TestSpecBodyShapesBelongToTheFindingAboveThem:
     )
     def test_every_documented_body_line_lands_in_a_span(self, source, block):
         claimed: set[str] = set()
-        for span in review_document.finding_spans(block):
+        for span in review_spans.finding_spans(block):
             claimed.update(
                 line.strip() for line in span.text_of(block).split("\n") if line.strip()
             )
@@ -546,7 +548,7 @@ def _render_via_build_prompt(
     key: tuple[Phase, Mode], job: ReviewJob | None = None,
 ) -> str:
     phase, mode = key
-    return review_prompt.build_prompt(
+    return review_registry.build_prompt(
         phase, job or _make_review_job(mode=mode), max_turns=15,
         **_BUILD_PROMPT_EXTRAS[key],
     )
@@ -627,11 +629,12 @@ def _unsubstituted(rendered: str) -> list[str]:
 
 
 class TestPromptBuilderRegistry:
-    """`_PROMPT_BUILDERS` and the phase registry name the same phases.
+    """`review_registry`'s table and the phase registry name the same phases.
 
-    Keying the builders by `Phase` is what makes this checkable at all: while
-    they were keyed by template filename the two tables shared no name, so a
-    phase could name a template and reach `build_prompt` with nothing behind it.
+    Keying the table by `Phase` is what makes this checkable at all: while the
+    builders were keyed by template filename the two tables shared no name, so
+    a phase could name a template and reach `build_prompt` with nothing behind
+    it.
     """
 
     def test_every_agent_shaped_review_phase_has_a_builder(self):
@@ -639,17 +642,17 @@ class TestPromptBuilderRegistry:
             phase for phase in REVIEW_PHASES
             if PHASES[phase].shape is PhaseShape.AGENT
         }
-        assert set(review_prompt._PROMPT_BUILDERS) == expected
+        assert set(review_registry.registered()) == expected
 
     def test_a_phase_with_no_builder_is_refused(self):
         """The fix pass is a review phase, but `fix_engine` builds its prompt."""
         with pytest.raises(ValueError, match="renders no review prompt"):
-            review_prompt.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
+            review_registry.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
 
     def test_every_builder_is_reached_by_the_extras_table(self):
         """Coverage below is per (phase, mode), so no builder goes unrendered."""
         assert {phase for phase, _ in _BUILD_PROMPT_EXTRAS} == set(
-            review_prompt._PROMPT_BUILDERS,
+            review_registry.registered(),
         )
 
 
@@ -858,7 +861,7 @@ class TestPromptBudgetAccounting:
         extra = dict(_BUILD_PROMPT_EXTRAS[(Phase.GROUP, Mode.PR)])
         extra["group_file_paths"] = list(self._PATHS)
         extra["group_files_formatted"] = files_formatted
-        return review_prompt.build_prompt(
+        return review_registry.build_prompt(
             Phase.GROUP, job, max_turns=15, **extra,
         )
 

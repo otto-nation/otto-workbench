@@ -42,12 +42,12 @@ from pr_thread_models import (
 )
 from review_document import SECTION_PRIOR_FINDINGS
 from review_issue import CreatedIssue, IssueDelivery, IssueResult
-from review_merge import (
-    _classify_thread_for_rereview, _match_thread_to_finding,
+from review_reconcile import (
+    ReplyThreads, _classify_thread_for_rereview, _match_thread_to_finding,
     fetch_reply_threads,
 )
 from review_types import ReplyState
-from review_prompt import (
+from review_prompt_sections import (
     _annotate_with_thread_state, _build_prior_section,
     _build_reply_threads_section, _strip_internal_sections,
     _format_general_comments, _format_review_comments, _format_reviews,
@@ -214,51 +214,51 @@ def _make_comments(*entries):
 class TestClassifyThreadForRereview:
     def test_resolved_thread(self):
         comments = _make_comments(("bot", "Missing error check"))
-        state, replies = _classify_thread_for_rereview(comments, True, "bot")
-        assert state == ReplyState.RESOLVED
-        assert replies == []
+        verdict = _classify_thread_for_rereview(comments, True, "bot")
+        assert verdict.state == ReplyState.RESOLVED
+        assert verdict.replies == []
 
     def test_unreplied_no_author_replies(self):
         comments = _make_comments(("bot", "Missing error check"))
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.UNREPLIED
-        assert replies == []
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.UNREPLIED
+        assert verdict.replies == []
 
     def test_acknowledged_reply(self):
         comments = _make_comments(
             ("bot", "Missing error check"),
             ("alice", "Fixed, thanks!"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.ACKNOWLEDGED
-        assert len(replies) == 1
-        assert replies[0]["body"] == "Fixed, thanks!"
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.ACKNOWLEDGED
+        assert len(verdict.replies) == 1
+        assert verdict.replies[0]["body"] == "Fixed, thanks!"
 
     def test_contested_reply(self):
         comments = _make_comments(
             ("bot", "Should use shared helper"),
             ("alice", "I think we should keep it inline actually — it's clearer"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.CONTESTED
-        assert len(replies) == 1
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.CONTESTED
+        assert len(verdict.replies) == 1
 
     def test_generic_reply(self):
         comments = _make_comments(
             ("bot", "Missing error check"),
             ("alice", "I see your point, let me look into this further"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.REPLIED
-        assert len(replies) == 1
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.REPLIED
+        assert len(verdict.replies) == 1
 
     def test_case_insensitive_bot_login(self):
         comments = _make_comments(
             ("Bot-User", "Issue"),
             ("alice", "Done"),
         )
-        state, _ = _classify_thread_for_rereview(comments, False, "bot-user")
-        assert state == ReplyState.ACKNOWLEDGED
+        verdict = _classify_thread_for_rereview(comments, False, "bot-user")
+        assert verdict.state == ReplyState.ACKNOWLEDGED
 
     def test_state_uses_last_reply(self):
         comments = _make_comments(
@@ -266,9 +266,9 @@ class TestClassifyThreadForRereview:
             ("alice", "Done"),
             ("alice", "Actually no, I still think we should keep it"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.CONTESTED
-        assert len(replies) == 2
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.CONTESTED
+        assert len(verdict.replies) == 2
 
     def test_bot_reply_between_author_replies(self):
         comments = _make_comments(
@@ -277,11 +277,11 @@ class TestClassifyThreadForRereview:
             ("bot", "Because X"),
             ("alice", "Done"),
         )
-        state, replies = _classify_thread_for_rereview(comments, False, "bot")
-        assert state == ReplyState.ACKNOWLEDGED
-        assert len(replies) == 2
-        assert replies[0]["body"] == "Why?"
-        assert replies[1]["body"] == "Done"
+        verdict = _classify_thread_for_rereview(comments, False, "bot")
+        assert verdict.state == ReplyState.ACKNOWLEDGED
+        assert len(verdict.replies) == 2
+        assert verdict.replies[0]["body"] == "Why?"
+        assert verdict.replies[1]["body"] == "Done"
 
 
 # ── _match_thread_to_finding ─────────────────────────────────────────────────
@@ -308,16 +308,25 @@ class TestMatchThreadToFinding:
 
 class TestFetchReplyThreads:
     def test_empty_when_no_bot_login(self):
-        with patch("review_merge._get_bot_login", return_value=""), \
-             patch("review_merge.fetch_threads", return_value=[]):
+        with patch("review_reconcile.get_bot_login", return_value=""), \
+             patch("review_reconcile.fetch_threads", return_value=[]):
             result = fetch_reply_threads("owner/repo", "42")
-        assert result == {"threads": [], "summary": {}}
+        assert result == ReplyThreads(threads=[], summary={})
 
     def test_empty_when_no_threads(self):
-        with patch("review_merge._get_bot_login", return_value="bot"), \
-             patch("review_merge.fetch_threads", return_value=[]):
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", return_value=[]):
             result = fetch_reply_threads("owner/repo", "42")
-        assert result == {"threads": [], "summary": {}}
+        assert result == ReplyThreads(threads=[], summary={})
+
+    def test_warns_when_the_fetch_raises(self):
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", side_effect=RuntimeError("boom")), \
+             patch("review_reconcile.log.warn") as warn:
+            result = fetch_reply_threads("owner/repo", "42")
+        assert result == ReplyThreads(threads=[], summary={})
+        assert warn.call_count == 1
+        assert "boom" in warn.call_args[0][0]
 
     def test_filters_to_bot_authored_threads(self):
         threads = [
@@ -336,13 +345,13 @@ class TestFetchReplyThreads:
                 )},
             },
         ]
-        with patch("review_merge._get_bot_login", return_value="bot"), \
-             patch("review_merge.fetch_threads", return_value=threads):
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", return_value=threads):
             result = fetch_reply_threads("owner/repo", "42")
-        assert len(result["threads"]) == 1
-        assert result["threads"][0]["finding_id"] == "M1"
-        assert result["threads"][0]["state"] == ReplyState.ACKNOWLEDGED
-        assert result["summary"] == {ReplyState.ACKNOWLEDGED: 1}
+        assert len(result.threads) == 1
+        assert result.threads[0]["finding_id"] == "M1"
+        assert result.threads[0]["state"] == ReplyState.ACKNOWLEDGED
+        assert result.summary == {ReplyState.ACKNOWLEDGED: 1}
 
     def test_classifies_multiple_states(self):
         threads = [
@@ -355,10 +364,10 @@ class TestFetchReplyThreads:
                 "comments": {"nodes": _make_comments(("bot", "**[S1]** Issue"))},
             },
         ]
-        with patch("review_merge._get_bot_login", return_value="bot"), \
-             patch("review_merge.fetch_threads", return_value=threads):
+        with patch("review_reconcile.get_bot_login", return_value="bot"), \
+             patch("review_reconcile.fetch_threads", return_value=threads):
             result = fetch_reply_threads("owner/repo", "42")
-        states = {t["state"] for t in result["threads"]}
+        states = {t["state"] for t in result.threads}
         assert ReplyState.RESOLVED in states
         assert ReplyState.UNREPLIED in states
 
@@ -367,11 +376,11 @@ class TestFetchReplyThreads:
 
 class TestBuildReplyThreadsSection:
     def test_empty_when_no_threads(self):
-        assert _build_reply_threads_section({}) == ""
-        assert _build_reply_threads_section({"threads": []}) == ""
+        assert _build_reply_threads_section(None) == ""
+        assert _build_reply_threads_section(ReplyThreads(threads=[], summary={})) == ""
 
     def test_groups_by_state(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.CONTESTED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "I disagree because X"},
@@ -380,7 +389,7 @@ class TestBuildReplyThreadsSection:
              "line": 5, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "Fixed"},
              ]},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "### Contested" in section
         assert "### Acknowledged" in section
@@ -388,46 +397,46 @@ class TestBuildReplyThreadsSection:
         assert "[S1]" in section
 
     def test_includes_reply_text_for_contested(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.CONTESTED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "I disagree because X"},
              ]},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "@alice: I disagree because X" in section
 
     def test_no_reply_text_for_resolved(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.RESOLVED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": []},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "### Resolved" in section
         assert "> @" not in section
 
     def test_unreplied_threads(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.UNREPLIED, "finding_id": "M2", "path": "c.py",
              "line": 1, "root_body": "issue", "replies": []},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "### No reply" in section
         assert "[M2]" in section
 
     def test_replied_threads_include_text(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.REPLIED, "finding_id": "S1", "path": "d.py",
              "line": 3, "root_body": "issue", "replies": [
                  {"author": "bob", "body": "Let me look into this"},
              ]},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data)
         assert "### Author replied" in section
         assert "@bob: Let me look into this" in section
 
     def test_file_filter_scopes_to_matching_paths(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.CONTESTED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "I disagree"},
@@ -436,27 +445,27 @@ class TestBuildReplyThreadsSection:
              "line": 5, "root_body": "issue", "replies": [
                  {"author": "alice", "body": "Also disagree"},
              ]},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data, file_filter=["a.py"])
         assert "[M1]" in section
         assert "[M2]" not in section
 
     def test_file_filter_none_includes_all(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.ACKNOWLEDGED, "finding_id": "S1", "path": "a.py",
              "line": 1, "root_body": "issue", "replies": []},
             {"state": ReplyState.ACKNOWLEDGED, "finding_id": "S2", "path": "b.py",
              "line": 2, "root_body": "issue", "replies": []},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data, file_filter=None)
         assert "[S1]" in section
         assert "[S2]" in section
 
     def test_file_filter_no_matches_returns_empty(self):
-        data = {"threads": [
+        data = ReplyThreads(threads=[
             {"state": ReplyState.CONTESTED, "finding_id": "M1", "path": "a.py",
              "line": 10, "root_body": "issue", "replies": []},
-        ]}
+        ], summary={})
         section = _build_reply_threads_section(data, file_filter=["other.py"])
         assert section == ""
 
@@ -470,31 +479,31 @@ class TestAnnotateWithThreadState:
             "- **[M1]** `a.py:10` — Missing error check\n"
             "- **[M2]** `b.py:5` — SQL injection\n"
         )
-        threads = {"threads": [
+        threads = ReplyThreads(threads=[
             {"finding_id": "M1", "state": ReplyState.CONTESTED},
             {"finding_id": "M2", "state": ReplyState.ACKNOWLEDGED},
-        ]}
+        ], summary={})
         result = _annotate_with_thread_state(review, threads)
         assert "[CONTESTED]" in result
         assert "[ACKNOWLEDGED]" in result
 
     def test_no_label_for_unreplied(self):
         review = "- **[M1]** `a.py:10` — Issue\n"
-        threads = {"threads": [
+        threads = ReplyThreads(threads=[
             {"finding_id": "M1", "state": ReplyState.UNREPLIED},
-        ]}
+        ], summary={})
         result = _annotate_with_thread_state(review, threads)
         assert "[UNREPLIED]" not in result
         assert result.strip() == review.strip()
 
     def test_empty_threads(self):
         review = "- **[M1]** `a.py:10` — Issue\n"
-        result = _annotate_with_thread_state(review, {"threads": []})
+        result = _annotate_with_thread_state(review, ReplyThreads(threads=[], summary={}))
         assert result == review
 
-    def test_no_threads_key(self):
+    def test_no_reply_threads_at_all(self):
         review = "- **[M1]** `a.py:10` — Issue\n"
-        result = _annotate_with_thread_state(review, {})
+        result = _annotate_with_thread_state(review, None)
         assert result == review
 
 
@@ -507,9 +516,9 @@ class TestBuildPriorSectionWithThreads:
         assert "Prior review" in result
 
     def test_with_threads_annotates(self):
-        threads = {"threads": [
+        threads = ReplyThreads(threads=[
             {"finding_id": "M1", "state": ReplyState.CONTESTED},
-        ]}
+        ], summary={})
         result = _build_prior_section(
             "## Must-fix\n- **[M1]** `a.py:10` — Issue",
             reply_threads=threads,
@@ -517,7 +526,7 @@ class TestBuildPriorSectionWithThreads:
         assert "[CONTESTED]" in result
 
     def test_empty_prior_returns_empty(self):
-        assert _build_prior_section("", reply_threads={"threads": []}) == ""
+        assert _build_prior_section("", reply_threads=ReplyThreads(threads=[], summary={})) == ""
 
 
 class TestBuildPriorSectionLedger:

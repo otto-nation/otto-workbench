@@ -77,7 +77,7 @@ EXIT_OWNERS = (
 CAP_OWNERS = (
     ('proc', 'DETAIL_LIMIT'),
     ('trail', 'EXCERPT_LIMIT'),
-    ('review_prompt', 'MAX_REVIEW_BODY_LEN'),
+    ('review_budget', 'MAX_REVIEW_BODY_LEN'),
 )
 
 ABBREV = 'git_client.abbrev(...)'

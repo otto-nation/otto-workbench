@@ -225,6 +225,19 @@ permission to save can still be recovered.
 The split matters for the quota retry, whose two halves live apart: this module
 reads the 429 out of the log, and ``agent_invoke`` decides how long to wait.
 
+### review_budget.py
+
+Every bound on what a prompt may carry, and the one fit that spends them.
+
+A prompt has a byte ceiling, and four things compete for it: the diff, the
+pre-collected file contents, the incremental delta, and the fixed overhead the
+template and the PR header cost. This module owns each of those numbers, so a
+collector deciding what to gather and a phase deciding what to send read the
+same figure rather than two that drifted apart.
+
+`agent_types.RetryBudget` is a different thing that shares the word — it
+budgets retries, not bytes.
+
 ### review_collect.py
 
 What a review collects before a prompt is built, and what it may cost.
@@ -239,11 +252,10 @@ behind it describes itself out of the worktree, off the same fork point and the
 same `worktree_diff` the collection uses. Its counterpart for a branch that does
 have a PR is `review_github.fetch_pr_metadata`, and both fill in `PRMetadata`.
 
-The budget is this module's subject as much as the collection is. Every bound
-on what a prompt may carry is a constant here, and `_fit_to_budget` is the one
-place that decides which files a review can afford to inline — so a phase
-asking for less diff and a collector deciding what to gather read the same
-numbers. How the collected files are ranked and divided is `review_grouping`'s,
+The bounds on what a prompt may carry are `review_budget`'s, not this module's —
+`_fit_to_budget` is still here, and is the one place that decides which files a
+review can afford to inline, reading the same numbers `review_prompt` budgets
+against. How the collected files are ranked and divided is `review_grouping`'s,
 what a phase does with the block is `review_prompt`'s, and the records this
 fills in are `review_types`'.
 
@@ -282,21 +294,17 @@ severity, and the call it reached — is answered off the parsed document rather
 than by a regex each caller brings, so two readers of one review cannot report
 different things about it.
 
-A finding declaration is part of that format, so the grammar of one lives here
-too: the ID at the head of a list item, the location after it, the body after
-that, and the annotations a later pass writes onto it — declined, skipped.
-`parse_finding_line` is for a caller holding a single line that is not in a
-findings section — the prior-findings ledger is the one — and every other
-reader asks `ReviewDocument.findings`.
-
-Where that body stops is the same one owner. `ends_finding_body` is the answer
-and `finding_spans` is the traversal built on it, so a reader walking a review
-a finding at a time gets the same line ranges wherever it walks from.
-`drop_findings` is what an editing caller asks instead: the gates that trim a
-finished review remove spans this module measured rather than lines each of
-them recognised, because two gates that disagreed about where a body ended cut
-one review two different ways — one of them swallowing the resolved finding
-below the one it was told to drop.
+A finding declaration is part of that format, but not part of this module: the
+grammar of one — the ID at the head of a list item, the location after it, the
+body after that — is `review_grammar`'s, and this module reads a document
+through it. `parse_finding_line` is for a caller holding a single line that is
+not in a findings section — the prior-findings ledger is the one — and every
+other reader asks `ReviewDocument.findings`. The annotation a fix pass writes
+onto a finding it left alone is the exception that stays: `is_skipped` is a
+question about a `Finding` this module has already parsed rather than about
+the line that declared it. Where a finding's body starts and stops is
+`review_spans`'s, and this module reads through `finding_spans` the same way
+it reads a single line through `review_grammar`.
 
 Counting them is that same parse, not a second grammar over the same text:
 `open_counts` tallies `open_findings`, so which findings a review is reported
@@ -304,11 +312,9 @@ to have and how many it is reported to have are one answer. A tally written as
 its own regex is how a review came to report four findings it had none of —
 the ledger's lines look like declarations from anywhere but inside the parse.
 
-`build_mechanical_body` is the document this module writes rather than reads:
-the whole body a review has when no synthesis agent produced one. It belongs
-beside the format it renders for the same reason the readers do — a summary,
-findings and a verdict assembled anywhere else would be the canonical form
-stated twice.
+What a tally of them means — the verdict it supports, and the body a review
+carries when no synthesis agent wrote one — is `review_verdict`'s: a judgement
+over this module's shape rather than part of the shape itself.
 
 ### review_gc.py
 
@@ -349,6 +355,20 @@ a group by the paths it holds.
 The three answer one question between them — what a given file is worth to a
 reviewer — which is why the prompt's byte budget asks here before deciding what
 it can afford to carry.
+
+### review_outcome.py
+
+What a run writes to the review file, and what it claims about itself.
+
+Every path that reaches a review file without a synthesis agent comes through
+here: the clean review, the mechanical fallback, the two skip paths. Each
+carries a different summary and a different claim about whether a verdict was
+reached, and getting those to agree is this module's whole job — a header that
+says the run completed while the sidecar beside it says otherwise is a document
+nobody can act on.
+
+Deciding which of those paths a run takes is `review_steps`'; sequencing the
+phases that lead there is `review_pipeline`'s.
 
 ### review_paths.py
 
@@ -401,24 +421,25 @@ one of them end to end.
 
 Running an agent phase is the same nine steps whichever phase it is, so there is
 one function rather than one per phase. What differs is what its artifact means
-afterwards, and that is `_SCANS` — one entry per phase, read through `read_scan`
-so the resume path and the run path cannot disagree about it.
+afterwards, and that is `review_registry`'s table, read through `read_scan` so
+the resume path and the run path cannot disagree about it.
 
 The group fan-out lives here too — serial, parallel, retry and the
 previously-skipped sweep are all ways of running the group phase, and they
 share the executor and its budget rules.
 
-What a phase *produces* is somebody else's problem: the review document, the
-synthesis and the run drivers stay in review_pipeline.
+What a phase *produces* is somebody else's problem: sequencing the phases into
+a run is `review_pipeline`'s, deciding what each phase's output means for the
+run is `review_steps`', and writing the result to the review file is
+`review_outcome`'s.
 
 ### review_pipeline.py
 
 Pipeline orchestration for claude-review.
 
 Drives the single-agent and multi-phase runs end to end: sequencing the phases
-review_phases defines, deciding what a resumed run may skip, assembling the
-review document (synthesis, mechanical fallback, meta header), consolidating
-the session logs, and fetching the PR metadata a run starts from.
+review_steps defines, deciding what a resumed run may skip, consolidating the
+session logs, and fetching the PR metadata a run starts from.
 
 The run ends when the review file is written — what happens to the findings
 afterwards belongs to review_fix, and removing what the run left behind belongs
@@ -426,29 +447,60 @@ to review_gc, which the orchestrator runs once every phase is done.
 
 ### review_prompt.py
 
-Prompt construction and template rendering for claude-review.
+Prompt construction for claude-review: the byte budget and the render loop.
 
-`build_prompt` renders the prompt for one review phase: a caller names the
-`Phase` and hands over what the phase cannot derive for itself. Which template
-that renders, and which file the agent is told to write, both come off the
-phase's registry entry. Six phases sit in front of eight templates, because two
-of them read an open PR and the working branch differently — which template a
-mode picks is the spec's answer, not the caller's. Includes section builders,
-budget computation, and prompt size logging.
+`PromptBuilder` collects the variables a template is rendered with, and
+`PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
+the sections that can shrink — the pre-collected file contents, the
+incremental delta, and the full diff — after everything fixed is already
+accounted for, and pulls three levers in that order, only as far as the
+shortfall requires. It rewrites the environment section to send the agent
+after whatever it dropped, and reports the cuts in the prompt's size log. A
+prompt still over budget once every lever is pulled raises `PromptTooLarge`
+rather than being sent: the phase reports it before an agent starts, so it
+costs nothing.
 
-Every phase fits its prompt to the token budget through `PromptBuilder.fit`,
-which registers the sections that can shrink — the pre-collected file contents,
-the incremental delta, and the full diff — after everything fixed is already
-accounted for. It pulls three levers in that order and only as far as the
-shortfall requires, rewrites the environment section to send the agent after
-whatever it dropped, and reports the cuts in the prompt's size log. A prompt
-still over budget once every lever is pulled raises `PromptTooLarge` rather than
-being sent: the phase reports it before an agent starts, so it costs nothing.
+One builder per phase assembles the sections `review_prompt_sections` renders
+into a `PromptBuilder`. Which phase reaches which builder, which template it
+renders, and which file the agent is told to write are `review_registry`'s: it
+holds the phase-to-builder table and `build_prompt`, which dispatches on it
+and imports the builders from here.
 
-Scoping the prior review to the files a group is reviewing cuts it a finding at
-a time, and where a finding stops is `review_document`'s `finding_spans` — the
-same measure the gates that trim a finished review use. A prompt that measured
-it here would quote an agent evidence belonging to a finding it was not shown.
+### review_prompt_sections.py
+
+What a prompt says about the PR, rendered from what was collected.
+
+Every function here takes what it renders and returns markdown, so a phase
+composes the sections it wants without knowing how any of them is built —
+nothing in this module decides which sections a phase asks for or what order
+they run in.
+
+Which sections a phase asks for is `review_prompt`'s, and how much room they
+get is `review_budget`'s.
+
+Scoping the prior review to the files a group is reviewing cuts it a finding
+at a time, and where a finding stops is `review_spans`'s `finding_spans` — the
+same measure the gates that trim a finished review use. A section that
+measured it here would quote an agent evidence belonging to a finding it was
+not shown.
+
+Not to be confused with `review_sections`, which is the posting pipeline's
+config-driven registry of sections already written to a review document —
+that module reads what an agent wrote, this one decides what an agent is
+shown before it writes anything.
+
+### review_registry.py
+
+Which prompt each phase builds, and which scan reads its output.
+
+One table. A phase that prompts names its builder here and nowhere else, and a
+phase whose output is read before the next one starts names its scan here too.
+
+It cannot live on `PhaseSpec`: `agent_types` imports nothing but the standard
+library, and the builders live in `review_prompt`, which imports
+`agent_registry` — putting them on the spec is a cycle as well as a layering
+break. A table one layer down is the same declaration made once, and this is
+that layer.
 
 ### review_retry.py
 
@@ -501,6 +553,34 @@ Static analysis framework for the review pipeline.
 Runs machine-checkable tools against changed files and formats violations
 for inclusion in review output. Each checker is a plain function with the
 signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
+
+### review_steps.py
+
+One function per phase of a multi-phase review.
+
+Each takes the job and the run's state, does that phase's work, and reports
+what it spent. They are ordered here as the run orders them, but none of them
+calls the next: sequencing is `review_pipeline`'s, so a phase can be skipped,
+resumed, or budgeted out without any other phase knowing.
+
+`review_phases` owns the phase runner, the group fan-out, and the disprove and
+synthesis rules this module drives without reimplementing: invoking an agent,
+running the group phase (`_phase_group_reviews`), deciding whether the
+disprove gate runs (`_should_disprove`), and sizing the synthesis turn budget
+(`_synthesis_max_turns`) all read from there. Writing the result to the review
+file is `review_outcome`'s.
+
+### review_verdict.py
+
+What a set of counts means, and the review a run without an agent writes.
+
+The policy layer over `review_document`: how many open findings of each
+severity add up to an approve or a request-for-changes, how that reads in
+prose, whether the run states a verdict at all, and the body a mechanically
+merged review carries when no synthesis agent produced one.
+
+Kept apart from the document itself because the document is a shape and this is
+a judgement — a review file parses the same way whatever this module decides.
 
 ### review_worktree.py
 
@@ -565,28 +645,62 @@ here: which lines a hunk covers is the same question as whether a finding can
 be posted inline against them, and asking it twice is how a comment lands on a
 line the diff never touched.
 
+### review_grammar.py
+
+The one reading of a finding line: its ID, its location, its identity.
+
+Every regex that parses a finding declaration lives here, and so does the
+identity two findings are compared on. Before this module there were eleven
+such regexes in five files, and they disagreed: dedup read a path only when it
+was bold, while carry-forward read all four shapes and hashed them together, so
+a finding written with plain backticks was carried forward and deduplicated
+against nothing.
+
+One owner does not mean one pattern. `VERIFY_FINDING_RE` bounds a spaced
+filename with the closing delimiter where `_FIRST_FILE_RE` uses a lookahead,
+and the two have to keep reading the same line the same way for different
+purposes. Both live here so a change to one is made next to the other.
+
+A pattern here is also not always a whole reader. `LINE_SUFFIX` is the `:12` or
+`:12-18` several of them match inside a span they capture, and
+`strip_line_suffix` is how such a reader takes it back off — each used to
+truncate at the last colon instead, which read `ns:module.py` as `ns` and
+verified a finding against a file that does not exist. `SEVERITY_KEY` and the
+`<!-- sid: -->` marker are the other two: `sid_marker` writes a marker,
+`strip_sid_markers` takes it back off and `SID_MARKER_RE` reads the identity
+out of one, so a marker a writer emits is one every reader here skips over.
+
+The identity itself is `FindingIdentity`, and the `DedupKey` its `dedup_key`
+returns is a pair with names rather than two loose strings, because which half
+is the location is not something a call site should have to infer from
+position.
+
+What a document is assembled from is `review_document`'s; what a finding means
+once parsed is `review_types`'.
+
 ### review_merge.py
 
-What becomes of findings across the reviews that report them.
+What becomes of findings as the group reviews are folded into one document.
 
-Three jobs over one vocabulary: merging the group reviews into a single
-document, giving each finding an identity that outlives the review carrying
-it, and reconciling what the previous review reported against what this one
-did. They live together because they read the same finding line — the path and
-description that decide whether two findings are duplicates are the pair that
-hashes to a stable ID, and a stable ID is how reconciliation recognises a
-finding a later review restates.
+Two jobs over one vocabulary: merging the group reviews into a single
+document, and giving each finding an identity that outlives the review
+carrying it. They live together because they act on the same identity — the
+path and description that decide whether two findings are duplicates are the
+pair that hashes to a stable ID, and a stable ID is how a later reconciliation
+recognises a finding a review restates.
 
-Reading a review is `review_document`'s job, checking findings against the
-tree is `review_verify`'s, and the `Finding` every side holds is
-`review_types`' — a consumer that only holds findings needs none of this.
+Reading that identity off a finding line is `review_grammar`'s job, not this
+module's: `FindingIdentity` answers both questions, so deduplication and
+carry-forward cannot come to different conclusions about one line. Reading a
+review is `review_document`'s job, checking findings against the tree is
+`review_verify`'s, and the `Finding` every side holds is `review_types`' — a
+consumer that only holds findings needs none of this. Deciding what became of
+a finding the prior review reported is `review_reconcile`'s.
 
-Where a finding's body ends is `review_document`'s too. Deduplication and the
+Where a finding's body ends is `review_spans`'s. Deduplication and the
 prior-review reading both walk `finding_spans`, and a repeat is removed with
 `cut_spans`, so a duplicate takes exactly the lines out of the merged document
-that a falsified finding does. Each keeps its own head pattern for *which*
-declarations it wants — `_finding_dedup_key` and `_ANNOTATE_FINDING_RE` read
-different things off a finding line — and neither says where one stops.
+that a falsified finding does. Neither says where one stops.
 
 Finding IDs (``M1``, ``S2``, ``N3``, ``I1``) are assigned mechanically and are
 only meaningful inside the review that carries them. Agents write whatever IDs
@@ -629,12 +743,22 @@ group's IDs are shifted past the groups before it. Deferring that to the
 merge-wide pass would misdirect it: group provenance is gone by then, and the
 pooled map answers with whichever group happens to have declared that number.
 
-Reconciliation is the cross-review half. A re-review ends with a `## Prior
-findings` ledger: one line per finding the previous review reported, saying
-whether the change fixed it, left it open, or declined it. The ledger is
-bookkeeping — it is stripped before the review is published — and it is written
-by the agent that has just spent its attention on the review itself, so it is
-the first thing to come up short.
+### review_reconcile.py
+
+Deciding what became of each finding the last review reported.
+
+Given a prior review and this round's merged output, works out for every prior
+finding whether it was fixed, still stands, was declined, or was passed over
+with nobody accounting for it — and where that answer came from.
+
+The merge that produces this round's output is `review_merge`'s; the identity
+two findings are matched on is `review_grammar`'s. This module only decides.
+
+A re-review ends with a `## Prior findings` ledger: one line per finding the
+previous review reported, saying whether the change fixed it, left it open, or
+declined it. The ledger is bookkeeping — it is stripped before the review is
+published — and it is written by the agent that has just spent its attention
+on the review itself, so it is the first thing to come up short.
 
 Coming up short used to mean a line on stderr and nothing else. `reconcile`
 replaces that with a disposition for every prior finding and a record of them
@@ -656,12 +780,31 @@ review. Reconciliation parses its input for finding-shaped lines, so a
 reconciliation written into the review would come back to the next round
 looking like a fresh set of prior findings.
 
-The ledger is not the only account of what became of a prior finding. Every
-finding posted inline opened a review thread, and what the author did with that
-thread — answered it, argued with it, resolved it — is the other one.
-`fetch_reply_threads` classifies those threads into `ReplyState` and matches
-each back to the finding ID its root comment declared, so a re-review reads both
-accounts of the same set of findings.
+The ledger this module reads is not the only account of what became of a
+prior finding. Every finding posted inline opened a review thread,
+independent of that ledger, and what the author did with that thread —
+answered it, argued with it, resolved it — is the other one. `fetch_reply_threads`
+classifies those threads into `ReplyState` and matches each back to the finding
+ID its root comment declared, so a re-review can read the thread's account of
+a finding beside the ledger's.
+
+### review_spans.py
+
+Where a finding declaration starts in a document, and where its body stops.
+
+Where that body stops is the same one owner. `ends_finding_body` is the answer
+and `finding_spans` is the traversal built on it, so a reader walking a review
+a finding at a time gets the same line ranges wherever it walks from.
+`drop_findings` is what an editing caller asks instead: the gates that trim a
+finished review remove spans this module measured rather than lines each of
+them recognised, because two gates that disagreed about where a body ended cut
+one review two different ways — one of them swallowing the resolved finding
+below the one it was told to drop.
+
+`finding_spans` makes one traversal guarantee: a declaration starts where
+`FINDING_ID_RE` says and its body stops where `ends_finding_body` says, in a
+single pass over the text, so no two readers of one review can cut it in
+different places.
 
 ### review_summary.py
 
@@ -739,18 +882,19 @@ and the review says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review_document`'s, and
-so is the finding-line grammar read here: `_VERIFY_FINDING_RE` is a stricter
-shape over the same location vocabulary, and the two have to agree or a finding
-parses one way and verifies against the other.
+Which verdict a tally supports in the first place is `review_verdict`'s. The
+finding-line grammar read here is `review_grammar`'s: `VERIFY_FINDING_RE` is a
+stricter shape over the same location vocabulary, and the two have to agree or
+a finding parses one way and verifies against the other — which is why they
+live next to each other rather than here.
 
-So is where a finding's body ends. Both gates walk the review through
-`finding_spans` and remove what they drop through `drop_findings`, because two
-gates that measured a finding themselves measured it differently: one of them
-took the resolved finding below a dropped one out with it, and neither of them
-left a `### ` sub-heading standing. `_VERIFY_FINDING_RE` selects which findings
-this gate checks and reads the location it checks them against; it no longer
-says where one stops.
+Where a finding's body ends is `review_spans`'s. Both gates walk the review
+through `finding_spans` and remove what they drop through `drop_findings`,
+because two gates that measured a finding themselves measured it differently:
+one of them took the resolved finding below a dropped one out with it, and
+neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
+which findings this gate checks and reads the location it checks them against;
+it does not say where one stops.
 
 ## Publishing
 
@@ -2193,6 +2337,49 @@ passes through it on the way to work that has nothing to do with pushing, so an
 escaping exception would take the whole CLI down over a side-feature. Warning
 rather than passing is what keeps a bug in here loud without coupling anything
 to it.
+
+### retro_github.py
+
+Fetching a repo's recent review activity from GitHub.
+
+One GraphQL round trip per repo where the API allows it, falling back to REST
+when it does not, flattened into the plain comment dicts the rest of the retro
+reads. Deciding which comments matter is `retro_rules`'; rendering them is
+`retro_report`'s.
+
+Normalising a raw comment's shape and dropping the noise (approvals,
+thumbs-up, a bare "nit") is part of producing that plain comment dict, so it
+lives here too — every fetch path in this module needs it applied the same
+way before a comment is fit to compare against a rule.
+
+### retro_report.py
+
+Rendering a retro scan's findings into the markdown report retro-scan prints.
+
+Takes the scan's collected repos, per-rule match counts and cross-PR themes
+and lays them out as headed sections — comments by repo, a rules-coverage
+table, and repeated themes. Deciding which rule a comment is nearest to is
+`retro_rules`'; this module only renders what was already decided.
+
+### retro_reviews.py
+
+Turning locally-saved reviews into the same comment shape GitHub PRs produce.
+
+Walks the reviews root `review_paths` already tracks and reads each review's
+findings into the retro's per-repo, per-PR comment structure, so `retro_report`
+renders a local self-review indistinguishably from a GitHub one. Deciding
+which rule a finding is nearest to is `retro_rules`'; matching the comment to
+the exact bullet on the page is `retro_report`'s.
+
+### retro_rules.py
+
+Matching review-comment text against the workbench's coding rules.
+
+Loads each rule file under `ai/guidelines/rules/` into a keyword set and finds
+the rule nearest a piece of comment text by keyword overlap. `extract_keywords`
+is the vocabulary primitive both rule loading and bullet matching are built
+on — `retro_report` reuses it to find which bullet inside a matched rule is
+closest to the comment being annotated.
 
 ### run_lock.py
 

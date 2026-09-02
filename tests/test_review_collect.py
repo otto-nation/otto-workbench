@@ -20,6 +20,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import git_client
+import review_budget
 import review_collect as rc
 from review_collect import fetch_branch_metadata
 from review_types import PRContext, PreflightData, PRMetadata, ReviewJob
@@ -138,7 +139,7 @@ class TestReadFileSafe:
 
     def test_large_file_truncation(self, tmp_path):
         f = tmp_path / "large.txt"
-        f.write_text("x" * (rc.MAX_FILE_BYTES * 2))
+        f.write_text("x" * (review_budget.MAX_FILE_BYTES * 2))
         assert "truncated" in rc._read_file_safe(f)
 
     @pytest.mark.skipif(
@@ -294,7 +295,8 @@ class TestFormatPreflightData:
             architecture_md="",
             omitted_files=["bar.go"],
         )
-        result = rc.format_preflight_data(data, skip_file_contents=True)
+        dropped_all = review_budget.fit_files(data.file_contents, data.file_permissions, 0)
+        result = rc.format_preflight_data(data, files=dropped_all)
         assert "```diff" in result
         assert "abc123 fix bug" in result
         assert "# Project" in result
@@ -568,12 +570,20 @@ class TestCollectPreflightData:
             ],
             wt_path=str(repo),
         )
-        # Set budget so diff fits but only ~1000 bytes remain for file contents
+        # Set budget so diff fits but only ~1000 bytes remain for file contents.
+        #
+        # The patch targets `rc` (`review_collect`), not `review_budget`, because
+        # `collect_preflight_data` reads the name `review_collect` bound into its
+        # own module namespace when it imported it — patching `review_budget`
+        # would rebind a name `review_collect` already copied, which the code
+        # under test would never see. `TEMPLATE_OVERHEAD_BYTES` on the same line
+        # is a plain read rather than a patch, so it names its owner directly.
         diff_size = len(git_client.out(
             "diff", "origin/main...HEAD", cwd=str(repo),
         ).encode())
         monkeypatch.setattr(
-            rc, "MAX_PROMPT_BYTES", diff_size + rc.TEMPLATE_OVERHEAD_BYTES + 1000,
+            rc, "MAX_PROMPT_BYTES",
+            diff_size + review_budget.TEMPLATE_OVERHEAD_BYTES + 1000,
         )
         with contextlib.redirect_stdout(io.StringIO()):
             data = rc.collect_preflight_data(job)

@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import review_gc
+import review_outcome
 import review_phases
 import review_pipeline
 import review_retry
@@ -373,3 +374,30 @@ class TestResolveRecoveryPinnedMetadata:
         assert plan.state is None
         assert plan.already_complete is False
         assert not state_path.exists()
+
+
+class TestCompleteReviewReadsSectionConstants:
+    """A finished review is recognised by the constant, not by a typed string.
+
+    `is_complete_review` gates whether a resumed run re-enters synthesis. While
+    it matched "## Summary" as a literal, renaming the section would have made
+    every finished review look unfinished and sent every resumed run back
+    through an agent it did not need.
+    """
+
+    def test_summary_section_marks_a_review_complete(self, tmp_path):
+        from review_document import SECTION_SUMMARY
+        f = tmp_path / "review.md"
+        f.write_text(f"## {SECTION_SUMMARY}\n\nAll good.\n")
+        assert review_outcome.is_complete_review(str(f))
+
+    def test_verdict_section_marks_a_review_complete(self, tmp_path):
+        from review_document import SECTION_VERDICT
+        f = tmp_path / "review.md"
+        f.write_text(f"## {SECTION_VERDICT}\n\nApprove.\n")
+        assert review_outcome.is_complete_review(str(f))
+
+    def test_a_body_with_neither_section_is_incomplete(self, tmp_path):
+        f = tmp_path / "review.md"
+        f.write_text("- **[M1]** **`x.py:1`** — a finding\n")
+        assert not review_outcome.is_complete_review(str(f))

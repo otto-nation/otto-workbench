@@ -16,6 +16,7 @@ import gh_client
 from review_github import PRData, GQL_REVIEWS_LIMIT
 
 from review_format import CLASS_SKIPPED
+from review_grammar import BODY_FINDING_RE, strip_line_suffix
 from review_types import Finding
 
 
@@ -42,28 +43,18 @@ def jaccard(a: set[str], b: set[str]) -> float:
 
 # ── Body finding extraction ────────────────────────────────────────────────
 
-_BODY_FINDING_RE = re.compile(
-    r"^- \*\*\[[MSNI]\d+\]\*\*\s+"
-    r"(?:\*\*`?([^`*\s]+?)`?\*\*|`([^`\s]+?)`)"
-    r"(?::\d+(?:[-–]\d+)?)?"
-    r"\s*—\s*(.*)",
-    re.MULTILINE,
-)
-
-
 def _extract_body_findings(body: str) -> list[dict]:
     results = []
-    for m in _BODY_FINDING_RE.finditer(body):
+    for m in BODY_FINDING_RE.finditer(body):
         raw_path = (m.group(1) or m.group(2) or "")
-        path = raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path
-        results.append({"path": path, "body": m.group(3)})
+        results.append({"path": strip_line_suffix(raw_path), "body": m.group(3)})
     return results
 
 
 # ── Bot user lookup ─────────────────────────────────────────────────────────
 
 @functools.lru_cache(maxsize=1)
-def _get_bot_login() -> str:
+def get_bot_login() -> str:
     """Return the authenticated GitHub user's login, or empty string on failure."""
     return gh_client.login()
 
@@ -98,7 +89,7 @@ def _collect_review_findings(repo: str, pr: str, bot_user: str, pr_data: PRData 
 
 
 def _fetch_bot_comments(repo: str, pr: str, pr_data: PRData | None = None) -> list[dict]:
-    bot_user = pr_data.viewer_login if pr_data is not None else _get_bot_login()
+    bot_user = pr_data.viewer_login if pr_data is not None else get_bot_login()
     if not bot_user:
         return []
 
@@ -156,7 +147,7 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> list
     if pr_data is not None:
         return pr_data.bot_reviews_visible(pr_data.viewer_login)
 
-    bot_user = _get_bot_login()
+    bot_user = get_bot_login()
     if not bot_user:
         return []
 

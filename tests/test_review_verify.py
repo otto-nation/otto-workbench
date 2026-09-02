@@ -31,7 +31,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import review_document
+import review_spans
 import review_verify
 from review_document import SECTION_PRIOR_FINDINGS
 from review_types import SEVERITY_MUST, severity_by_key
@@ -288,6 +288,31 @@ class TestParseVerificationStripsLine:
         assert findings[0]["path"] == "handler.go"
 
 
+class TestParseVerificationKeepsAColonThatIsNotALineSuffix:
+    """Verification reads the same path the rest of the pipeline parsed.
+
+    This reader used to truncate at the last colon, so a path carrying one of
+    its own verified against its prefix — a file that does not exist, which
+    fails every evidence check. `review_grammar.strip_line_suffix` now takes
+    off a line suffix and nothing else.
+    """
+
+    def test_a_prefixed_path_survives(self):
+        text = '- **[M1]** **`ns:module.py`** — missing error check\n'
+        findings = review_verify._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "ns:module.py"
+
+    def test_a_drive_letter_survives(self):
+        text = '- **[M1]** **`C:/src/x.py`** — missing error check\n'
+        findings = review_verify._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "C:/src/x.py"
+
+    def test_a_line_suffix_still_comes_off_a_prefixed_path(self):
+        text = '- **[M1]** **`C:/src/x.py:12`** — missing error check\n'
+        findings = review_verify._parse_findings_for_verification(text)
+        assert findings[0]["path"] == "C:/src/x.py"
+
+
 class TestParseVerificationSpacedPaths:
     def test_spaced_path_finding_is_not_swallowed_by_the_previous_one(self):
         text = (
@@ -333,7 +358,7 @@ class TestParseVerificationSpacedPaths:
 class TestVerificationReadsEachFindingsOwnBody:
     """A finding is checked against the evidence written under it and no other.
 
-    `_VERIFY_FINDING_RE` selects which findings this gate checks; it does not
+    `VERIFY_FINDING_RE` selects which findings this gate checks; it does not
     decide where one ends. A declaration it cannot read used to be appended to
     the finding above it, which is how a finding came to be verified against a
     quotation belonging to its neighbour.
@@ -451,7 +476,7 @@ class TestStripEvidenceBlocks:
 
 def _by_evidence_gate(text: str, ids: list[str]) -> str:
     """What evidence verification leaves behind when it drops `ids`."""
-    return review_document.drop_findings(text, ids)
+    return review_spans.drop_findings(text, ids)
 
 
 def _by_disprove_gate(text: str, ids: list[str]) -> str:

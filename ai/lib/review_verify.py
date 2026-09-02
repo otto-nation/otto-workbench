@@ -42,18 +42,19 @@ and the review says what left it:
 Both are idempotent — a review that already carries the note is left alone, so
 re-running post-processing does not stack notes or re-lower a verdict.
 
-Which verdict a tally supports in the first place is `review_document`'s, and
-so is the finding-line grammar read here: `_VERIFY_FINDING_RE` is a stricter
-shape over the same location vocabulary, and the two have to agree or a finding
-parses one way and verifies against the other.
+Which verdict a tally supports in the first place is `review_verdict`'s. The
+finding-line grammar read here is `review_grammar`'s: `VERIFY_FINDING_RE` is a
+stricter shape over the same location vocabulary, and the two have to agree or
+a finding parses one way and verifies against the other — which is why they
+live next to each other rather than here.
 
-So is where a finding's body ends. Both gates walk the review through
-`finding_spans` and remove what they drop through `drop_findings`, because two
-gates that measured a finding themselves measured it differently: one of them
-took the resolved finding below a dropped one out with it, and neither of them
-left a `### ` sub-heading standing. `_VERIFY_FINDING_RE` selects which findings
-this gate checks and reads the location it checks them against; it no longer
-says where one stops.
+Where a finding's body ends is `review_spans`'s. Both gates walk the review
+through `finding_spans` and remove what they drop through `drop_findings`,
+because two gates that measured a finding themselves measured it differently:
+one of them took the resolved finding below a dropped one out with it, and
+neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
+which findings this gate checks and reads the location it checks them against;
+it does not say where one stops.
 """
 
 # doc-group: findings
@@ -67,12 +68,18 @@ from pathlib import Path
 import log
 from pr_domains import ReviewVerdict
 from review_document import (
-    LINE_SUFFIX, SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
-    SPACED_FILE, FindingSpan, ReviewDocument, counts_prose, drop_findings,
-    finding_spans, section_span, strip_sections, verdict_from_counts,
+    SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
+    ReviewDocument, section_span, strip_sections,
 )
-from review_merge import renumber_findings, strip_stable_ids
-from review_types import SEVERITY_MUST, SEVERITY_SHOULD, severity_by_key
+from review_grammar import (
+    VERIFY_FINDING_RE, strip_line_suffix, strip_sid_markers,
+)
+from review_merge import renumber_findings
+from review_spans import drop_findings, finding_spans
+from review_types import (
+    SEVERITY_MUST, SEVERITY_SHOULD, FindingSpan, severity_by_key,
+)
+from review_verdict import counts_prose, verdict_from_counts
 from text import plural
 
 # ── Evidence verification ────────────────────────────────────────────────────
@@ -196,33 +203,6 @@ def _match_evidence(path: str, evidence: str | None, wt_path: str) -> dict:
     return detail
 
 
-# This pattern selects: which findings this gate checks, and the location it
-# checks each one against. Where a finding's body ends is not its business —
-# `finding_spans` measures that, so a line this pattern cannot read ends the
-# span above it instead of joining that finding's evidence.
-#
-# The space-free class stays exactly as it was — anything the delimiters cannot
-# hold, line suffix included, which `rsplit` strips below — and the spaced
-# shape is beside it rather than replacing it. Every location that parsed
-# before parses the same way, since a space-free span never reaches the second
-# alternative at all.
-#
-# `SPACED_FILE` needs the same bound it has in `review_document`'s location
-# grammar, where a lookahead makes the filename account for the whole span.
-# Here the closing delimiter is that bound: the extension and its optional line
-# suffix have to run right up to it, so "the fix lands in v2.0 of the tool" is
-# still no path and a greedy space run cannot walk past the real filename.
-_VERIFY_FINDING_RE = re.compile(
-    r"^- (?:\[ \] )?"
-    r"\*\*\[([MSNI])(\d+)\]\*\*"
-    r"\s+(?:<!-- sid:\w+ -->\s+)?"
-    rf"(?:\*\*[`]?([^`*\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`]?\*\*"
-    rf"|[`]([^`\s]+?|{SPACED_FILE}{LINE_SUFFIX})[`])"
-    rf"{LINE_SUFFIX}"
-    r"\s*—\s*(.*)"
-)
-
-
 def _verification_body(span: FindingSpan, head: str, text: str) -> str:
     """The finding's own words: what follows the em dash, and the lines below it.
 
@@ -236,20 +216,20 @@ def _verification_body(span: FindingSpan, head: str, text: str) -> str:
 def _verification_finding(span: FindingSpan, text: str) -> dict | None:
     """What this gate checks about one finding, or None when it checks none.
 
-    A declaration whose location `_VERIFY_FINDING_RE` cannot read is skipped:
+    A declaration whose location `VERIFY_FINDING_RE` cannot read is skipped:
     there is no path to match the evidence against, so the check has nothing to
     say about it. A declaration in the prior-findings ledger is skipped too —
     it reports the last review's finding, and the file it names was quoted
     against a commit this one is not looking at.
     """
-    m = _VERIFY_FINDING_RE.match(span.line)
+    m = VERIFY_FINDING_RE.match(span.line)
     if not m or span.reported:
         return None
     raw_path = (m.group(3) or m.group(4) or "").replace("\\_", "_")
     return {
         "id": f"{m.group(1)}{m.group(2)}",
         "severity": m.group(1),
-        "path": raw_path.rsplit(":", 1)[0] if ":" in raw_path else raw_path,
+        "path": strip_line_suffix(raw_path),
         "body": _verification_body(span, m.group(5), text),
     }
 
@@ -482,7 +462,7 @@ def post_process_findings(review_file: str, wt_path: str = "") -> dict | None:
         if dropped:
             log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
     text = _strip_evidence_blocks(text)
-    text = strip_stable_ids(text)
+    text = strip_sid_markers(text)
     text = strip_sections(text, [SECTION_PRIOR_FINDINGS])
     text = renumber_findings(text)
     if verification:

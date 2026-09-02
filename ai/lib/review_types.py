@@ -323,6 +323,139 @@ class Finding:
     decline_reason: str = ""
 
 
+# ── Prior-finding vocabulary ─────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class FindingRef:
+    """How a re-review names a prior finding: its ID and its path.
+
+    The pair travels together because neither half identifies a finding on its
+    own — IDs are per-review sequence numbers and one file holds many findings.
+    """
+
+    finding_id: str = ""
+    path: str = ""
+
+    @property
+    def label(self) -> str:
+        """How the reference reads in a log line.
+
+        A reference with no path is the ID alone rather than the ID and an
+        empty pair of backticks — the line is already reporting that nothing
+        read a path off the finding, and printing `` there says it twice.
+        """
+        if not self.path:
+            return self.finding_id
+        return f"{self.finding_id} `{self.path}`".strip()
+
+
+@dataclass(frozen=True)
+class LedgerEntry:
+    """One `## Prior findings` line: a prior finding, and what became of it."""
+
+    ref: FindingRef
+    disposition: PriorDisposition | None
+    text: str
+
+    def covers(self, ref: FindingRef) -> bool:
+        """Whether this entry accounts for `ref`.
+
+        An entry that names no path stands on its ID alone; one that names a
+        path has to name the right one, or a single entry would account for
+        every prior finding in its file.
+        """
+        if self.ref.finding_id != ref.finding_id:
+            return False
+        return not self.ref.path or self.ref.path == ref.path
+
+
+@dataclass(frozen=True)
+class PriorFinding:
+    """A finding line from the prior review, as reconciliation sees it.
+
+    `text` runs from the finding line to whatever ends it, so a finding that
+    quotes the code it objects to below its first line keeps the quotation —
+    which is what lets reconciliation ask whether that code is still there.
+    """
+
+    ref: FindingRef
+    stable_id: str
+    text: str = ""
+
+
+# ── Finding location and span ────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class FindingLocation:
+    """Where in the tree a finding line says its finding is.
+
+    `line` and `end_line` are the range the location names — both absent when
+    it names a file and no line of it.
+    """
+
+    path: str = ""
+    line: int | None = None
+    end_line: int | None = None
+
+    @property
+    def named(self) -> bool:
+        """Whether the line named a location at all."""
+        return bool(self.path)
+
+
+class FindingScope(StrEnum):
+    """What the heading above a finding declaration makes of it.
+
+    `DECLARED` is a declaration under a severity heading — a finding the text
+    reports as its own. `REPORTED` is one under a heading that names no
+    severity: the `## Prior findings` ledger repeats the last review's findings
+    there, and its IDs number that review rather than this one, so an edit that
+    touched them would rewrite the record of a review it is not looking at.
+    `UNHEADED` is a declaration with no heading above it at all, which is what
+    a caller holding one severity's findings on their own hands in.
+    """
+
+    DECLARED = "declared"
+    REPORTED = "reported"
+    UNHEADED = "unheaded"
+
+
+@dataclass(frozen=True)
+class FindingSpan:
+    """A finding declaration and the lines belonging to it.
+
+    `line` is the declaration itself, stripped — what a caller with a narrower
+    grammar than `FINDING_ID_RE` matches against to decide whether this is a
+    finding it wants. `start` and `end` are line indices into the text the span
+    was read from: the declaration's own line, and the line after the last one
+    its body claims. `text_of` is the slice they name.
+
+    The coordinates live here rather than on `Finding`, which the fix pass
+    serializes to disk — a line number from one reading of one document is not
+    something a stored finding should carry around.
+    """
+
+    finding: Finding
+    line: str
+    start: int
+    end: int
+    scope: FindingScope = FindingScope.UNHEADED
+
+    @property
+    def reported(self) -> bool:
+        """Whether the span sits under a heading reporting on another review."""
+        return self.scope is FindingScope.REPORTED
+
+    def text_of(self, text: str) -> str:
+        """The lines the span claims, verbatim.
+
+        Trailing blank lines included, since a caller removing the span has to
+        name every line the span owns or it leaves the gap behind.
+        """
+        return "\n".join(text.split("\n")[self.start:self.end])
+
+
 # ── What is under review ─────────────────────────────────────────────────────
 
 # One file's churn, as the prompt and the review header both list it.
@@ -432,7 +565,7 @@ class ReviewJob:
     # cannot do once the two sources read the same.
     skip_phases: frozenset[Phase] = frozenset()
     include_generated: bool = False
-    reply_threads: dict = field(default_factory=dict)
+    reply_threads: ReplyThreads | None = None
     verification: dict | None = None
     pr_state_data: "PRState | None" = None
     viewer_role: str = ""

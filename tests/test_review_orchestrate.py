@@ -13,7 +13,7 @@ from conftest import add_self_origin, commit_all, git_out, init_repo, synthetic_
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent_types import Phase
-from review_document import BUDGET_SUMMARY, FALLBACK_SUMMARY, SKIPPED_SUMMARY
+from review_verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, SKIPPED_SUMMARY
 
 
 
@@ -653,32 +653,32 @@ class TestParseSessionCost:
         assert ro._parse_session_cost(str(log)) == 0.0
 
 
-# ── 35. _is_complete_review ─────────────────────────────────────────────────
+# ── 35. is_complete_review ──────────────────────────────────────────────────
 
 
 class TestIsCompleteReview:
     def test_has_summary(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("# Review\n\n## Summary\nLooks good.\n")
-        assert ro._is_complete_review(str(f)) is True
+        assert ro.is_complete_review(str(f)) is True
 
     def test_has_verdict(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("# Review\n\n## Verdict\nApprove.\n")
-        assert ro._is_complete_review(str(f)) is True
+        assert ro.is_complete_review(str(f)) is True
 
     def test_missing_headers(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("# Review\n\nSome content without required headers.\n")
-        assert ro._is_complete_review(str(f)) is False
+        assert ro.is_complete_review(str(f)) is False
 
     def test_file_not_exists(self, ro, tmp_path):
-        assert ro._is_complete_review(str(tmp_path / "nonexistent.md")) is False
+        assert ro.is_complete_review(str(tmp_path / "nonexistent.md")) is False
 
     def test_empty_file(self, ro, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("")
-        assert ro._is_complete_review(str(f)) is False
+        assert ro.is_complete_review(str(f)) is False
 
 
 class TestPhaseSynthesis:
@@ -696,24 +696,40 @@ class TestPhaseSynthesis:
         )
 
     @staticmethod
-    def _patch_pipeline(monkeypatch, ro, **overrides):
+    def _patch_pipeline(monkeypatch, **overrides):
         """Patch the module-level imports `_phase_synthesis` reaches through.
 
-        The synthesis phase spans two modules: it builds its own prompt and
-        post-processes its own findings, but invokes the agent through
-        `PhaseRunner`, whose bindings live in review_phases. Each name is
-        patched on whichever module binds it.
+        The synthesis phase spans three modules: it builds its own prompt and
+        post-processes its own findings in `review_steps`, writes the result
+        through `review_outcome`, but invokes the agent through `PhaseRunner`,
+        whose bindings live in `review_phases`. Each name is patched on the
+        module that owns it — an explicit map, not a guess, because a name
+        this maps wrong lands the patch on a module the code under test never
+        reads and the test passes having mocked nothing.
         """
+        import agent_retry
+        import review_outcome
         import review_phases
-        import review_pipeline
+        import review_steps
+        owners = {
+            "build_prompt": review_steps,
+            "post_process_findings": review_outcome,
+            "run_agent": review_phases,
+            # `_retry_missing_output` is `agent_retry.retry_missing_output`
+            # (aliased in `review_retry`), which recovers through its own
+            # `try_recover_output` binding, not `review_phases`' — that one is
+            # read only by `_review_group`, which this phase never calls.
+            "try_recover_output": agent_retry,
+        }
         defaults = {
             "build_prompt": lambda *a, **kw: "mock prompt",
             "post_process_findings": lambda *a, **kw: None,
         }
         defaults.update(overrides)
         for name, func in defaults.items():
-            owner = review_pipeline if hasattr(review_pipeline, name) else review_phases
-            monkeypatch.setattr(owner, name, func)
+            if name not in owners:
+                raise ValueError(f"_patch_pipeline has no owner mapped for {name!r}")
+            monkeypatch.setattr(owners[name], name, func)
 
     def test_successful_synthesis(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
@@ -725,7 +741,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
         ro._phase_synthesis(job, "", 3, "merged content")
 
@@ -744,7 +760,7 @@ class TestPhaseSynthesis:
                 '{"type":"result","subtype":"success","total_cost_usd":2.5}\n')
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
         assert ro._phase_synthesis(job, "", 3, "merged content").cost == 2.5
 
@@ -758,7 +774,7 @@ class TestPhaseSynthesis:
             return 1
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
@@ -788,7 +804,7 @@ class TestPhaseSynthesis:
             raise PromptTooLarge("synthesis.md", 600_000)
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             build_prompt=boom,
             run_agent=lambda inv, **kw: invoked.append(inv),
         )
@@ -810,7 +826,7 @@ class TestPhaseSynthesis:
             return 1
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
@@ -832,7 +848,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
         merged = "## Should fix\n- **[S1]** **`api.go:10`** — cleanup\n"
         ro._phase_synthesis(job, "", 3, merged)
@@ -859,7 +875,7 @@ class TestPhaseSynthesis:
             Path(inv.session_log).write_text("")
             return 0
 
-        self._patch_pipeline(monkeypatch, ro, run_agent=mock_invoke)
+        self._patch_pipeline(monkeypatch, run_agent=mock_invoke)
 
         ro._phase_synthesis(job, "", 3, "merged content")
 
@@ -883,7 +899,7 @@ class TestPhaseSynthesis:
             return 1
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
@@ -910,7 +926,7 @@ class TestPhaseSynthesis:
             return 1
 
         self._patch_pipeline(
-            monkeypatch, ro,
+            monkeypatch,
             run_agent=mock_invoke,
             try_recover_output=lambda *a: False,
         )
@@ -974,7 +990,7 @@ class TestSynthesisIsAskedAboutWhatTheGroupsPassedOver:
             return 0
 
         TestPhaseSynthesis._patch_pipeline(
-            monkeypatch, ro, build_prompt=capture, run_agent=mock_invoke,
+            monkeypatch, build_prompt=capture, run_agent=mock_invoke,
         )
         ro._phase_synthesis(job, "", 3, merged)
         return seen
@@ -1033,6 +1049,7 @@ class TestRunSynthesisOrFallback:
     def test_self_review_fallback_detected(self, ro, tmp_path, monkeypatch):
         """Self-reviews without verdict must still detect mechanical fallback."""
         import review_pipeline
+        import review_steps
 
         job = self._make_job(ro, tmp_path, mode="self")
         state = self._make_state(ro)
@@ -1043,8 +1060,8 @@ class TestRunSynthesisOrFallback:
             ).write(job.review_file)
             return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
 
-        monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         ro._run_synthesis_or_fallback(
@@ -1054,6 +1071,7 @@ class TestRunSynthesisOrFallback:
 
     def test_synthesis_reports_what_its_log_records(self, ro, tmp_path, monkeypatch):
         import review_pipeline
+        import review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
@@ -1064,8 +1082,8 @@ class TestRunSynthesisOrFallback:
                 "# Review\n\n## Summary\nok\n\n## Verdict\nApprove\n")
             return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"), 1.25)
 
-        monkeypatch.setattr(review_pipeline, "_phase_synthesis", mock_synthesis)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
@@ -1075,10 +1093,11 @@ class TestRunSynthesisOrFallback:
 
     def test_a_clean_review_spends_nothing(self, ro, tmp_path, monkeypatch):
         import review_pipeline
+        import review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, "No findings.\n", [], 0, 0.0, 20.0,
@@ -1089,12 +1108,13 @@ class TestRunSynthesisOrFallback:
         """The merge declares nothing, so the review is clean — a triage note
         naming a prior ID used to send the run to synthesis with no findings."""
         import review_pipeline
+        import review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
         monkeypatch.setattr(
-            review_pipeline, "_phase_synthesis",
+            review_steps, "_phase_synthesis",
             lambda *a, **kw: pytest.fail("synthesis ran for a review with no findings"))
 
         result = ro._run_synthesis_or_fallback(
@@ -1106,10 +1126,11 @@ class TestRunSynthesisOrFallback:
 
     def test_a_synthesis_skipped_on_budget_spends_nothing(self, ro, tmp_path, monkeypatch):
         import review_pipeline
+        import review_steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
@@ -1125,11 +1146,12 @@ class TestRunSynthesisOrFallback:
         agents for a review nobody asked to run.
         """
         import review_pipeline
+        import review_steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.GROUP}))
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         skipped = ro.Diagnosis(ro.DiagnosisKind.SKIPPED, detail="--no-group")
@@ -1143,6 +1165,7 @@ class TestRunSynthesisOrFallback:
     def test_no_synthesis_writes_the_mechanical_merge(self, ro, tmp_path, monkeypatch):
         """`--no-synthesis` reaches the review file without an agent."""
         import review_pipeline
+        import review_steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
@@ -1151,9 +1174,9 @@ class TestRunSynthesisOrFallback:
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
         monkeypatch.setattr(
-            review_pipeline, "_phase_synthesis",
+            review_steps, "_phase_synthesis",
             lambda *a, **kw: pytest.fail("synthesis ran despite --no-synthesis"))
 
         merged = self.MERGED
@@ -1168,19 +1191,20 @@ class TestRunSynthesisOrFallback:
     def test_no_synthesis_writes_a_summary_the_gate_can_resume_from(
         self, ro, tmp_path, monkeypatch,
     ):
-        """`--no-synthesis` leaves a review `_is_complete_review` accepts.
+        """`--no-synthesis` leaves a review `is_complete_review` accepts.
 
         Without the section a run resumed at the disprove gate reads its own
         review as unfinished and re-enters synthesis to rewrite it.
         """
         import review_pipeline
+        import review_steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         ro._run_synthesis_or_fallback(
             job, state, "", 1, self.MERGED, [], 0, 0.0, 20.0,
@@ -1191,19 +1215,20 @@ class TestRunSynthesisOrFallback:
         assert SKIPPED_SUMMARY in written
         # The operator stopped synthesis; no agent failed.
         assert FALLBACK_SUMMARY not in written
-        assert ro._is_complete_review(job.review_file)
+        assert ro.is_complete_review(job.review_file)
 
     def test_a_budget_cut_off_writes_a_summary_naming_the_budget(
         self, ro, tmp_path, monkeypatch,
     ):
         """The budget path says why synthesis did not run, not that it failed."""
         import review_pipeline
+        import review_steps
 
         job = self._make_job(ro, tmp_path)
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         ro._run_synthesis_or_fallback(
             job, state, "", 1, self.MERGED, [], 0, 25.0, 20.0,
@@ -1213,7 +1238,7 @@ class TestRunSynthesisOrFallback:
         assert "## Summary" in written
         assert BUDGET_SUMMARY in written
         assert FALLBACK_SUMMARY not in written
-        assert ro._is_complete_review(job.review_file)
+        assert ro.is_complete_review(job.review_file)
 
     def test_a_budget_cut_off_still_checks_its_findings_against_the_tree(
         self, ro, tmp_path, monkeypatch,
@@ -1225,12 +1250,13 @@ class TestRunSynthesisOrFallback:
         group output on a cut-off post-processes it like every other one.
         """
         import review_pipeline
+        import review_steps
 
         job = self._make_job(ro, tmp_path)
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         ro._run_synthesis_or_fallback(
             job, state, "", 1, self.MERGED, [], 0, 25.0, 20.0,
@@ -1247,6 +1273,7 @@ class TestRunSynthesisOrFallback:
     ):
         """Neither path weighed the review, so neither approves or blocks it."""
         import review_pipeline
+        import review_steps
 
         job = self._make_job(
             ro, tmp_path,
@@ -1255,7 +1282,7 @@ class TestRunSynthesisOrFallback:
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_pipeline, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
 
         ro._run_synthesis_or_fallback(
             job, state, "", 1, self.MERGED, [], 0, cost_so_far, 20.0,
@@ -2045,7 +2072,8 @@ class TestFetchMetadataSelfMode:
             lambda repo_name, pr_number: _pr_metadata(ro),
         )
 
-        pr, ctx, pr_data = ro._fetch_metadata("o/r", "1", ro.Mode.SELF, str(repo))
+        run_ctx = ro._fetch_metadata("o/r", "1", ro.Mode.SELF, str(repo))
+        pr, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
 
         assert [f["path"] for f in pr.files] == ["unpushed.go"]
         assert pr.head_sha != "a" * 40
@@ -2540,7 +2568,8 @@ class TestCleanupScope:
         monkeypatch.setattr(ro.ai_backend, "preflight", lambda *a, **k: True)
         monkeypatch.setattr(ro.pr_state, "load_state", lambda *a, **k: None)
         monkeypatch.setattr(
-            ro, "_fetch_metadata", lambda *a, **k: (pr, ro.PRContext(), None),
+            ro, "_fetch_metadata",
+            lambda *a, **k: ro.RunContext(pr, ro.PRContext(), None),
         )
         monkeypatch.setattr(ro, "collect_preflight_data", lambda job: MagicMock())
         monkeypatch.setattr(ro, "run_single_agent", pipeline or _pipeline)

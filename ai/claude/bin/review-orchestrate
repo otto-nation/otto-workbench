@@ -33,12 +33,16 @@ import agent_invoke as _ai  # noqa: E402
 import agent_phases as _aph  # noqa: E402
 import ai_usage as _au  # noqa: E402
 import review_prompt as _rpmt  # noqa: E402
+import review_prompt_sections as _rpsec  # noqa: E402
+import review_registry as _rreg  # noqa: E402
 import review_agent as _ra  # noqa: E402
 import review_pipeline as _rpl  # noqa: E402
 import review_fix as _rfx  # noqa: E402
 import review_gc as _rgc  # noqa: E402
 import review_paths as _rpath  # noqa: E402
 import review_phases as _rph  # noqa: E402
+import review_steps as _rstp  # noqa: E402
+import review_outcome as _rout  # noqa: E402
 import review_retry as _rrt  # noqa: E402
 import review_state as _rst  # noqa: E402
 import review_types as _rt  # noqa: E402
@@ -59,7 +63,7 @@ from review_paths import (  # noqa: E402
 )
 from tool_parser import enum_arg  # noqa: E402
 from review_collect import collect_preflight_data  # noqa: E402
-from review_merge import fetch_reply_threads  # noqa: E402
+from review_reconcile import fetch_reply_threads  # noqa: E402
 from review_types import Pipeline, ReviewJob, ViewerRole  # noqa: E402
 from agent_invoke import QuotaThrottle  # noqa: E402
 from review_fix import run_fix_pass  # noqa: E402
@@ -77,8 +81,8 @@ import ai_backend  # noqa: E402
 SCRIPT = Path(__file__).name
 
 _SUBMODULES = (
-    _ad, _ai, _aph, _au, _rpmt, _ra, _rpl, _rfx, _rgc, _rpath, _rph,
-    _rrt, _rst, _rt,
+    _ad, _ai, _aph, _au, _rpmt, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc, _rpath,
+    _rph, _rstp, _rout, _rrt, _rst, _rt,
 )
 
 # Pre-patch values, keyed by (module name, attribute), so __delattr__ can put a
@@ -224,9 +228,10 @@ def _run_orchestrate(trail, args, repo, session_log) -> None:
     _log_ai_backend(trail)
     if not ai_backend.preflight(collect_phase_models(args.model), trail):
         sys.exit(1)
-    pr, ctx, pr_data = _fetch_metadata(
+    run_ctx = _fetch_metadata(
         repo, args.pr, args.mode, args.repo_dir, args.recover_sha,
     )
+    pr, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():

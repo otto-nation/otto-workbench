@@ -14,14 +14,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_types import Mode
 from review_paths import (
     aggregate_session_usage,
     read_review_meta,
 )
-from review_document import ReviewDocument, open_counts, resolve_review_verdict
+from review_document import ReviewDocument
 from review_state import build_failure_detail, read_pipeline_status
 from review_types import SEVERITIES, ReviewMeta
+from review_verdict import open_counts, resolve_review_verdict
 
 
 def _read_review(path: Path | None) -> str | None:
@@ -50,7 +50,7 @@ def build_review_summary(repo: str, pr_number: str, review_file: str) -> dict:
     review_dir = Path(review_file).parent if review_file else None
     meta = read_review_meta(review_dir) if review_dir else ReviewMeta()
 
-    resolved = resolve_review_verdict(doc, self_review=meta.mode is Mode.SELF)
+    resolved = resolve_review_verdict(doc, mode=meta.mode)
     verdict = resolved.value if resolved else ""
 
     usage = aggregate_session_usage(review_dir)

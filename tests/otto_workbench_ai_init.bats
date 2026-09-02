@@ -69,3 +69,16 @@ _run_in() {
   [[ "$output" == *"No worktree resolved"* ]]
   [ ! -e "$container/.claude" ]
 }
+
+@test "ai init writes the context file at the worktree root, not inside .claude/" {
+  # Pi's ancestor walk reads one context file per directory root and never looks
+  # inside .claude/ — a file there is invisible to it while Claude Code reads it,
+  # which is exactly the gap that stays silent.
+  local container="$TMPDIR/c"
+  make_worktree_container "$container" "$SEED"
+
+  run _run_in "$container" ai init
+  [ "$status" -eq 0 ]
+  [ -f "$container/main/CLAUDE.md" ]
+  [ ! -e "$container/main/.claude/CLAUDE.md" ]
+}

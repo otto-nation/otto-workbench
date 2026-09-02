@@ -636,8 +636,11 @@ ${workflow}
 ## Notes
 
 ## Rules
-Project conventions load from \`.claude/rules/\` automatically.
+Project conventions load from \`.claude/rules/\` automatically in Claude Code.
 Add personal rules as \`.claude/rules/<topic>.local.md\` (gitignored).
+
+This file lives at the repository root so every agent harness reads it — Pi
+resolves a context file per directory and never looks inside \`.claude/\`.
 EOF
   success "CLAUDE.md"
 }
@@ -671,7 +674,8 @@ _scaffold_gitignore() {
   done
 }
 
-# scaffold_project_claude [--force] — scaffolds .claude/ in the current directory.
+# scaffold_project_claude [--force] — scaffolds .claude/ and the root CLAUDE.md
+# in the current directory.
 # Called by `otto-workbench ai init` for project-level setup.
 scaffold_project_claude() {
   local force=false
@@ -688,12 +692,11 @@ scaffold_project_claude() {
   fi
   echo
 
-  mkdir -p .claude/rules .claude/review
-
-  info "Scaffolding .claude/"
-  _generate_claude_md ".claude/CLAUDE.md" "$force"
+  info "Scaffolding CLAUDE.md"
+  _generate_claude_md "CLAUDE.md" "$force"
 
   echo
+  mkdir -p .claude/rules .claude/review
   info "Scaffolding .claude/rules/"
   _scaffold_file "$CLAUDE_TEMPLATES_DIR/rules/conventions.md" ".claude/rules/conventions.md" "conventions.md" "$force"
   _scaffold_file "$CLAUDE_TEMPLATES_DIR/rules/testing.md"     ".claude/rules/testing.md"     "testing.md"     "$force"

@@ -66,14 +66,14 @@ This creates `~/.config/task/taskfile.env` with:
 
 ### `/analyze-project`
 
-Analyze a project's codebase and populate scaffolded .claude/CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty .claude/CLAUDE.md or .claude/rules/ sections.
+Analyze a project's codebase and populate scaffolded CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty CLAUDE.md or .claude/rules/ sections.
 
 ```
 /analyze-project
 ```
 
-**Output:** `.claude/CLAUDE.md, .claude/rules/`
-**Trigger:** Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when .claude/CLAUDE.md or .claude/rules/ files have empty sections.
+**Output:** `CLAUDE.md, .claude/rules/`
+**Trigger:** Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when CLAUDE.md or .claude/rules/ files have empty sections.
 
 ### `/anatomy`
 

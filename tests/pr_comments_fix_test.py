@@ -14,8 +14,9 @@ if str(LIB_DIR) not in sys.path:
 
 import pr_comments_fix
 import pr_domains
+from land import CommitStatus
 from pr_comments_fix import CLOSEOUT_COMMAND
-from pr_fix import CommitStatus, FixOutcome, FixRecord, ItemOutcome
+from pr_fix import FixOutcome, FixRecord, ItemOutcome
 
 # When the run being described happened. Any non-empty stamp means "written",
 # which is the only thing render_status and readiness read it for.

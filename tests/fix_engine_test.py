@@ -29,7 +29,8 @@ from agent_diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
 from agent_registry import PHASES  # noqa: E402
 from agent_types import Phase  # noqa: E402
 from fix_types import FixItem  # noqa: E402
-from pr_fix import CommitStatus, FixOutcome  # noqa: E402
+from land import CommitStatus  # noqa: E402
+from pr_fix import FixOutcome  # noqa: E402
 
 
 # ── the stub domain ─────────────────────────────────────────────────────────

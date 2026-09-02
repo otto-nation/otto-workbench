@@ -15,6 +15,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import land
 import pr_domains
 import pr_fix
 import pr_state
@@ -197,7 +198,7 @@ def test_a_record_survives_the_state_file():
     state.ci.fix = pr_fix.FixRecord(
         items=[pr_fix.ItemOutcome(id="i1", outcome=pr_fix.FixOutcome.SKIPPED)],
         commit_sha="abc1234",
-        commit_status=pr_fix.CommitStatus.PUSH_HELD,
+        commit_status=land.CommitStatus.PUSH_HELD,
         head_sha="def5678",
         updated_at="2026-07-14T00:00:00+00:00",
     )

@@ -31,7 +31,7 @@ import pr_domains  # noqa: E402
 import pr_state  # noqa: E402
 import push  # noqa: E402
 import timeouts  # noqa: E402
-from pr_fix import CommitStatus  # noqa: E402
+from land import CommitStatus  # noqa: E402
 
 
 def _unconfigured(cmd):

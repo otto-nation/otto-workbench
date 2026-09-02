@@ -478,7 +478,7 @@ instruction that asks for a disposition for every finding it carries.
 Scoping the prior review to a group's files cuts it a finding at a time, and
 where a finding stops is `review_spans`'s `finding_spans` — the same measure
 the gates that trim a finished review use. A section that measured it here
-would quote an agent evidence belonging to a finding it was not shown.
+would quote evidence belonging to a finding the agent was never shown.
 
 `_LEDGER_INSTRUCTION` is the one place the ledger's shape is written down for
 an agent; both sections here interpolate it rather than restating it, and
